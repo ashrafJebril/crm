@@ -34,6 +34,12 @@ async function reset() {
   await prisma.contact.deleteMany();
   await prisma.template.deleteMany();
   await prisma.campaign.deleteMany();
+  await prisma.note.deleteMany();
+  await prisma.mention.deleteMany();
+  await prisma.keyword.deleteMany();
+  await prisma.integration.deleteMany();
+  await prisma.workspaceMember.deleteMany();
+  await prisma.workspace.deleteMany();
   await prisma.user.deleteMany();
 }
 
@@ -41,20 +47,39 @@ async function reset() {
 async function main() {
   await reset();
 
+  // Default Workspace
+  const defaultWs = await prisma.workspace.create({
+    data: {
+      name: "Default Workspace",
+      slug: "default",
+      timezone: "Asia/Riyadh",
+      lang: "ar",
+      plan: "free",
+    },
+  });
+  const wsId = defaultWs.id;
+
   // Users (a.k.a. team)
   const password = await bcrypt.hash("demo1234", 10);
   const yara = await prisma.user.create({
     data: { email: "yara@samemha.com",  password, name: "Yara Khaled",   role: "Owner",   initials: "YK", color: "150", status: "online" },
   });
-  await prisma.user.create({
+  await prisma.workspaceMember.create({ data: { userId: yara.id, workspaceId: wsId, role: "owner" } });
+
+  const omar = await prisma.user.create({
     data: { email: "omar@samemha.com",  password, name: "Omar Daher",    role: "Manager", initials: "OD", color: "240", status: "online", twoFA: true },
   });
-  await prisma.user.create({
+  await prisma.workspaceMember.create({ data: { userId: omar.id, workspaceId: wsId, role: "admin" } });
+
+  const lina = await prisma.user.create({
     data: { email: "lina@samemha.com",  password, name: "Lina Saad",     role: "Agent",   initials: "LS", color: "320", status: "away",   twoFA: true },
   });
-  await prisma.user.create({
+  await prisma.workspaceMember.create({ data: { userId: lina.id, workspaceId: wsId, role: "agent" } });
+
+  const karim = await prisma.user.create({
     data: { email: "karim@samemha.com", password, name: "Karim Idrissi", role: "Agent",   initials: "KI", color: "60",  status: "offline" },
   });
+  await prisma.workspaceMember.create({ data: { userId: karim.id, workspaceId: wsId, role: "agent" } });
 
   // No mock contacts — they get materialized from real Inbox conversations
   // when the user clicks "Convert to ticket".  Keeps the workspace clean.
@@ -69,7 +94,7 @@ async function main() {
     { name: "abandoned_cart_24h", lang: "en", category: "MARKETING",     status: "approved", uses: 412 },
     { name: "tahdid_eid_promo",   lang: "ar", category: "MARKETING",     status: "pending",  uses: 0 },
   ];
-  for (const t of tpls) await prisma.template.create({ data: t });
+  for (const t of tpls) await prisma.template.create({ data: { ...t, workspaceId: wsId } });
 
   // Campaigns
   const cmps = [
@@ -80,7 +105,7 @@ async function main() {
     { name: "Ramadan menu launch",     status: "draft",     audience: "All customers",         recipients: 0,    sent: 0,    delivered: 0,    read: 0,    replied: 0,   conversions: 0,   channel: "Broadcast",      schedule: null,            agent: "atlas" },
     { name: "Q1 NPS survey",           status: "completed", audience: "Repeat · 60d",          recipients: 2104, sent: 2104, delivered: 2087, read: 1612, replied: 904, conversions: 0,   channel: "Broadcast",      schedule: "Mar 03, 11:00", agent: "atlas" },
   ];
-  for (const c of cmps) await prisma.campaign.create({ data: c });
+  for (const c of cmps) await prisma.campaign.create({ data: { ...c, workspaceId: wsId } });
 
   // ─── Pipeline + stages ───────────────────────────────────────────────────
   // Single Sales pipeline.  Each stage is its own column — no sub-states.
@@ -90,19 +115,22 @@ async function main() {
       name: "Sales",
       nameAr: "المبيعات",
       isDefault: true,
+      workspaceId: wsId,
     },
   });
   await Promise.all([
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, key: "new",        label: "New",        labelAr: "جديد",        color: "info",   order: 0, groupKey: "new",        slaMinutes: 60 * 4 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, key: "contacted",  label: "Contacted",  labelAr: "تم التواصل",  color: "info",   order: 1, groupKey: "contacted",  slaMinutes: 60 * 24 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, key: "interested", label: "Interested", labelAr: "مهتم",         color: "accent", order: 2, groupKey: "interested", slaMinutes: 60 * 48 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, key: "waiting",    label: "Waiting",    labelAr: "بالانتظار",    color: "warn",   order: 3, groupKey: "waiting",    slaMinutes: 60 * 72 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, key: "won",        label: "Won",        labelAr: "تم الفوز",     color: "ok",     order: 4, groupKey: "won",        isTerminal: true, isWon: true } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, key: "lost",       label: "Lost",       labelAr: "خسارة",        color: "bad",    order: 5, groupKey: "lost",        isTerminal: true } }),
+    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "new",        label: "New",        labelAr: "جديد",        color: "info",   order: 0, groupKey: "new",        slaMinutes: 60 * 4 } }),
+    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "contacted",  label: "Contacted",  labelAr: "تم التواصل",  color: "info",   order: 1, groupKey: "contacted",  slaMinutes: 60 * 24 } }),
+    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "interested", label: "Interested", labelAr: "مهتم",         color: "accent", order: 2, groupKey: "interested", slaMinutes: 60 * 48 } }),
+    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "waiting",    label: "Waiting",    labelAr: "بالانتظار",    color: "warn",   order: 3, groupKey: "waiting",    slaMinutes: 60 * 72 } }),
+    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "won",        label: "Won",        labelAr: "تم الفوز",     color: "ok",     order: 4, groupKey: "won",        isTerminal: true, isWon: true } }),
+    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "lost",       label: "Lost",       labelAr: "خسارة",        color: "bad",    order: 5, groupKey: "lost",        isTerminal: true } }),
   ]);
 
   console.log(`✓ Seeded with default user yara@samemha.com / demo1234`);
+  console.log(`  Workspace: ${defaultWs.name} (id: ${wsId}, slug: ${defaultWs.slug})`);
   console.log(`  Owner user id: ${yara.id}`);
+  console.log(`  WorkspaceMembers: owner(yara), admin(omar), agent(lina), agent(karim)`);
   console.log(`  Pipeline: Sales (6 stages: new, contacted, interested, waiting, won, lost)`);
   console.log(`  Tickets: 0 — start clean, create your own from the Inbox`);
 }
