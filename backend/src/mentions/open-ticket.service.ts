@@ -5,15 +5,17 @@ import { PrismaService } from "../prisma/prisma.service";
 export class OpenTicketService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async fromMention(mentionId: string) {
-    const mention = await this.prisma.mention.findUnique({ where: { id: mentionId } });
+  async fromMention(workspaceId: string, mentionId: string) {
+    const mention = await this.prisma.mention.findFirst({
+      where: { id: mentionId, workspaceId },
+    });
     if (!mention) throw new NotFoundException("Mention not found");
     if (mention.status === "triaged" || mention.status === "engaged") {
       throw new ConflictException("Ticket already opened for this mention");
     }
 
     const pipeline = await this.prisma.pipeline.findFirst({
-      where: { isDefault: true },
+      where: { isDefault: true, workspaceId },
       include: { stages: { orderBy: { order: "asc" } } },
     });
     if (!pipeline || pipeline.stages.length === 0) {
@@ -24,6 +26,7 @@ export class OpenTicketService {
     return this.prisma.$transaction(async (tx) => {
       const contact = await tx.contact.create({
         data: {
+          workspaceId,
           name: mention.author,
           phone: null,
           industry: "social",
@@ -35,13 +38,14 @@ export class OpenTicketService {
       });
 
       const lastTicket = await tx.ticket.findFirst({
-        where: { pipelineId: pipeline.id },
+        where: { pipelineId: pipeline.id, workspaceId },
         orderBy: { number: "desc" },
       });
       const number = (lastTicket?.number ?? 0) + 1;
 
       const ticket = await tx.ticket.create({
         data: {
+          workspaceId,
           number,
           pipelineId: pipeline.id,
           stageId: firstStage.id,

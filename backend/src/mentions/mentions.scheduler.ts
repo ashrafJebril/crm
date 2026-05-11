@@ -5,6 +5,7 @@ import { EnrichmentService } from "./enrichment.service";
 import { GoogleCsePoller } from "./sources/google-cse.poller";
 import { MetaIgPoller } from "./sources/meta-ig.poller";
 import { Poller, RawMention } from "./sources/poller.types";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Injectable()
 export class MentionsScheduler {
@@ -22,18 +23,35 @@ export class MentionsScheduler {
 
   @Cron(CronExpression.EVERY_30_MINUTES)
   async cronTick() {
-    await this.runOnce();
+    await this.runAllWorkspaces();
   }
 
-  async runOnce(): Promise<{ scanned: number; ingested: number }> {
-    const keywords = await this.prisma.keyword.findMany({ where: { enabled: true } });
+  async runAllWorkspaces(): Promise<{ scanned: number; ingested: number }> {
+    const workspaces = await this.prisma.workspace.findMany();
+    let totalScanned = 0;
+    let totalIngested = 0;
+    for (const ws of workspaces) {
+      const r = await this.runOnceForWorkspace(ws.id);
+      totalScanned += r.scanned;
+      totalIngested += r.ingested;
+    }
+    this.logger.log(
+      `Poll cycle complete (all workspaces): scanned=${totalScanned}, ingested=${totalIngested}`,
+    );
+    return { scanned: totalScanned, ingested: totalIngested };
+  }
+
+  async runOnceForWorkspace(workspaceId: string): Promise<{ scanned: number; ingested: number }> {
+    const keywords = await this.prisma.keyword.findMany({
+      where: { workspaceId, enabled: true },
+    });
     let scanned = 0;
     let ingested = 0;
     for (const kw of keywords) {
       for (const poller of this.pollers) {
         let raws: RawMention[];
         try {
-          raws = await poller.fetchFor(kw);
+          raws = await poller.fetchFor(workspaceId, kw);
         } catch (err) {
           this.logger.warn(`Poller ${poller.source} threw: ${(err as Error).message}`);
           continue;
@@ -48,6 +66,7 @@ export class MentionsScheduler {
             const enr = await this.enrichment.enrich(r.body);
             await this.prisma.mention.create({
               data: {
+                workspaceId,
                 keywordId: kw.id,
                 source: r.source,
                 sourceUrl: r.sourceUrl,
@@ -66,12 +85,14 @@ export class MentionsScheduler {
             });
             ingested += 1;
           } catch (err) {
-            this.logger.warn(`Failed to ingest mention ${r.externalId} from ${r.source}: ${(err as Error).message}`);
+            this.logger.warn(
+              `Failed to ingest mention ${r.externalId} from ${r.source}: ${(err as Error).message}`,
+            );
           }
         }
       }
     }
-    this.logger.log(`Poll cycle complete: scanned=${scanned}, ingested=${ingested}`);
+    this.logger.log(`Poll cycle complete (workspace=${workspaceId}): scanned=${scanned}, ingested=${ingested}`);
     return { scanned, ingested };
   }
 }
@@ -81,7 +102,7 @@ export class MentionsAdminController {
   constructor(private readonly scheduler: MentionsScheduler) {}
 
   @Post("run")
-  run() {
-    return this.scheduler.runOnce();
+  run(@CurrentWorkspace() workspaceId: string) {
+    return this.scheduler.runOnceForWorkspace(workspaceId);
   }
 }

@@ -8,9 +8,10 @@ const LIST_LIMIT = 200; // Phase 1 — replace with cursor pagination if volume 
 export class MentionsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list(q: ListMentionsQuery) {
+  list(workspaceId: string, q: ListMentionsQuery) {
     return this.prisma.mention.findMany({
       where: {
+        workspaceId,
         status: q.status,
         keywordId: q.keywordId,
         source: q.source,
@@ -21,17 +22,17 @@ export class MentionsService {
     });
   }
 
-  async get(id: string) {
-    const row = await this.prisma.mention.findUnique({
-      where: { id },
+  async get(workspaceId: string, id: string) {
+    const row = await this.prisma.mention.findFirst({
+      where: { id, workspaceId },
       include: { keyword: true },
     });
     if (!row) throw new NotFoundException("Mention not found");
     return row;
   }
 
-  async update(id: string, dto: UpdateMentionDto) {
-    await this.get(id);
+  async update(workspaceId: string, id: string, dto: UpdateMentionDto) {
+    await this.get(workspaceId, id);
     return this.prisma.mention.update({
       where: { id },
       data: dto,

@@ -27,11 +27,14 @@ export class MetaIgPoller implements Poller {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async fetchFor(keyword: { id: string; value: string; kind: string }): Promise<RawMention[]> {
+  async fetchFor(
+    workspaceId: string,
+    keyword: { id: string; value: string; kind: string },
+  ): Promise<RawMention[]> {
     if (keyword.kind !== "hashtag") return [];
 
     const integration = await this.prisma.integration.findFirst({
-      where: { platform: "instagram" },
+      where: { workspaceId, platform: "instagram" },
     });
     if (!integration?.accessToken || !integration.pageId) {
       this.logger.warn("Instagram integration not connected — skipping IG poller");
