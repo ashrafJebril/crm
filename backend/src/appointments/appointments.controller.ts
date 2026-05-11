@@ -9,16 +9,38 @@ import {
 } from "@nestjs/common";
 import { AppointmentsService } from "./appointments.service";
 import { CreateAppointmentDto, UpdateAppointmentDto } from "./appointments.dto";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("appointments")
 export class AppointmentsController {
   constructor(private readonly svc: AppointmentsService) {}
 
-  @Get() list() { return this.svc.list(); }
-  @Get(":id") get(@Param("id") id: string) { return this.svc.get(id); }
-  @Post() create(@Body() dto: CreateAppointmentDto) { return this.svc.create(dto); }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateAppointmentDto) {
-    return this.svc.update(id, dto);
+  @Get()
+  list(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.list(workspaceId);
   }
-  @Delete(":id") remove(@Param("id") id: string) { return this.svc.remove(id); }
+
+  @Get(":id")
+  get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.get(workspaceId, id);
+  }
+
+  @Post()
+  create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateAppointmentDto) {
+    return this.svc.create(workspaceId, dto);
+  }
+
+  @Patch(":id")
+  update(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: UpdateAppointmentDto,
+  ) {
+    return this.svc.update(workspaceId, id, dto);
+  }
+
+  @Delete(":id")
+  remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.remove(workspaceId, id);
+  }
 }

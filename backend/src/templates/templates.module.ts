@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Module, Param, Post } from "@nestjs/common";
 import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 class CreateTemplateDto {
   @IsString() @IsNotEmpty() name!: string;
@@ -14,17 +15,23 @@ class CreateTemplateDto {
 class TemplatesController {
   constructor(private readonly prisma: PrismaService) {}
 
-  @Get() list() {
-    return this.prisma.template.findMany({ orderBy: { uses: "desc" } });
+  @Get()
+  list(@CurrentWorkspace() workspaceId: string) {
+    return this.prisma.template.findMany({
+      where: { workspaceId },
+      orderBy: { uses: "desc" },
+    });
   }
 
-  @Get(":id") get(@Param("id") id: string) {
-    return this.prisma.template.findUnique({ where: { id } });
+  @Get(":id")
+  get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.prisma.template.findFirst({ where: { id, workspaceId } });
   }
 
-  @Post() create(@Body() dto: CreateTemplateDto) {
+  @Post()
+  create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateTemplateDto) {
     return this.prisma.template.create({
-      data: { ...dto, status: dto.status ?? "pending", uses: dto.uses ?? 0 },
+      data: { ...dto, workspaceId, status: dto.status ?? "pending", uses: dto.uses ?? 0 },
     });
   }
 }

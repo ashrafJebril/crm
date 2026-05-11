@@ -6,24 +6,29 @@ import { CreateAppointmentDto, UpdateAppointmentDto } from "./appointments.dto";
 export class AppointmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list() {
-    return this.prisma.appointment.findMany({ orderBy: { startAt: "asc" } });
+  list(workspaceId: string) {
+    return this.prisma.appointment.findMany({
+      where: { workspaceId },
+      orderBy: { startAt: "asc" },
+    });
   }
 
-  async get(id: string) {
-    const row = await this.prisma.appointment.findUnique({ where: { id } });
+  async get(workspaceId: string, id: string) {
+    const row = await this.prisma.appointment.findFirst({
+      where: { id, workspaceId },
+    });
     if (!row) throw new NotFoundException("Appointment not found");
     return row;
   }
 
-  create(dto: CreateAppointmentDto) {
+  create(workspaceId: string, dto: CreateAppointmentDto) {
     return this.prisma.appointment.create({
-      data: { ...dto, startAt: new Date(dto.startAt) },
+      data: { ...dto, workspaceId, startAt: new Date(dto.startAt) },
     });
   }
 
-  async update(id: string, dto: UpdateAppointmentDto) {
-    await this.get(id);
+  async update(workspaceId: string, id: string, dto: UpdateAppointmentDto) {
+    await this.get(workspaceId, id);
     return this.prisma.appointment.update({
       where: { id },
       data: {
@@ -33,8 +38,8 @@ export class AppointmentsService {
     });
   }
 
-  async remove(id: string) {
-    await this.get(id);
+  async remove(workspaceId: string, id: string) {
+    await this.get(workspaceId, id);
     await this.prisma.appointment.delete({ where: { id } });
     return { ok: true };
   }
