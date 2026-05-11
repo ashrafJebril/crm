@@ -14,7 +14,7 @@ Return strict JSON: { "lang": "en" | "ar" | "mixed",
                        "sentiment": number between -1 and 1,
                        "topic": short 2-4 word topic label or null }.
 Rules:
-- dialect MUST be null when lang is "en".
+- dialect MUST be null when lang is "en" or "mixed".
 - dialect MUST NOT be null when lang is "ar".
 - sentiment: -1 very negative, 0 neutral, +1 very positive.
 - topic: lowercase, no punctuation, e.g. "delivery delay", "product quality".
@@ -37,7 +37,7 @@ export class EnrichmentService {
     try {
       const resp = await this.client.messages.create({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 200,
+        max_tokens: 400,
         system: [
           {
             type: "text",
@@ -69,14 +69,18 @@ export class EnrichmentService {
   private coerce(e: Partial<Enrichment>): Enrichment {
     const lang = e.lang === "ar" || e.lang === "mixed" || e.lang === "en" ? e.lang : "en";
     const dialect =
-      lang === "en"
+      lang === "en" || lang === "mixed"
         ? null
         : ["msa", "gulf", "egyptian", "levantine", "maghrebi"].includes(e.dialect as string)
           ? (e.dialect as Enrichment["dialect"])
           : "msa";
     const rawSent = typeof e.sentiment === "number" ? e.sentiment : 0;
     const sentiment = Math.max(-1, Math.min(1, rawSent));
-    const topic = typeof e.topic === "string" && e.topic.length > 0 && e.topic.length < 40 ? e.topic : null;
+    const normalizedTopic =
+      typeof e.topic === "string"
+        ? e.topic.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, " ")
+        : "";
+    const topic = normalizedTopic.length > 0 && normalizedTopic.length < 40 ? normalizedTopic : null;
     return { lang, dialect, sentiment, topic };
   }
 }
