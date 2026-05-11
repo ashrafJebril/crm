@@ -60,7 +60,13 @@ export class MentionsScheduler {
         for (const r of raws) {
           try {
             const existing = await this.prisma.mention.findUnique({
-              where: { source_externalId: { source: r.source, externalId: r.externalId } },
+              where: {
+                workspaceId_source_externalId: {
+                  workspaceId,
+                  source: r.source,
+                  externalId: r.externalId,
+                },
+              },
             });
             if (existing) continue;
             const enr = await this.enrichment.enrich(r.body);
