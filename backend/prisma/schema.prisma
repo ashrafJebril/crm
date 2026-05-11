@@ -1,0 +1,243 @@
+// tkana — Prisma schema
+// SQLite for dev. Switch `provider` to "postgresql" for prod.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & users ──────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // bcrypt hash
+  name      String
+  role      String   @default("Agent") // Owner | Manager | Agent | Viewer
+  initials  String
+  color     String   // oklch hue as string e.g. "150"
+  status    String   @default("offline") // online | away | offline
+  twoFA     Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─── Core CRM entities ─────────────────────────────────────────────────────
+
+model Contact {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String
+  industry  String
+  lifecycle String
+  source    String
+  value     String?
+  lastSeen  String   // human-readable like "2m"
+  tags      String   @default("[]") // JSON-encoded string array
+  convs     Int      @default(0)
+
+  conversations Conversation[]
+  appointments  Appointment[]
+  tickets       Ticket[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Conversation {
+  id         String   @id @default(cuid())
+  contactId  String
+  agent      String   // agent name id, e.g. "luna" — agents are static seeded data
+  unread     Int      @default(0)
+  pinned     Boolean  @default(false)
+  lastAt     String
+  lastFrom   String   // them | ai | human
+  preview    String
+  channel    String   // whatsapp | instagram | facebook | webchat
+  status     String   // ai | human | closed | spam
+  intent     String
+  confidence Float
+  escalated  Boolean  @default(false)
+  suggested  String?
+
+  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contactId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  from           String   // them | ai | human
+  t              String   // display time, e.g. "10:42"
+  body           String
+  agent          String?
+  attach         String?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+}
+
+model Appointment {
+  id           String   @id @default(cuid())
+  contactId    String
+  agentId      String?
+  staffId      String?  // FK to User.id
+  service      String
+  serviceAr    String
+  startAt      DateTime
+  durationMin  Int
+  status       String   // confirmed | pending | completed | cancelled | no-show
+  source       String   // ai | human | self-booking
+  note         String?
+  noteAr       String?
+  reminderSent Boolean  @default(false)
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contactId])
+  @@index([startAt])
+}
+
+model Template {
+  id       String @id @default(cuid())
+  name     String
+  lang     String // en | ar
+  category String // TRANSACTIONAL | UTILITY | MARKETING | AUTHENTICATION
+  status   String // approved | pending | rejected
+  uses     Int    @default(0)
+
+  createdAt DateTime @default(now())
+}
+
+// ─── Sales / ticket pipelines ─────────────────────────────────────────────
+
+model Pipeline {
+  id        String  @id @default(cuid())
+  key       String  @unique // "retail" | "bulk" | …
+  name      String
+  nameAr    String
+  isDefault Boolean @default(false)
+
+  stages   TicketStage[]
+  tickets  Ticket[]
+
+  createdAt DateTime @default(now())
+}
+
+model TicketStage {
+  id         String  @id @default(cuid())
+  pipelineId String
+  key        String  // unique within a pipeline
+  label      String
+  labelAr    String
+  color      String  // semantic key: "ink" | "info" | "ok" | "warn" | "bad" | "accent" | "human"
+  order      Int
+  groupKey   String  // visual column: "new" | "discovery" | "quoted" | "payment" | "fulfill" | "done"
+  isTerminal Boolean @default(false)
+  isWon      Boolean @default(false)
+  slaMinutes Int?
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  tickets  Ticket[]
+
+  @@unique([pipelineId, key])
+  @@index([pipelineId])
+}
+
+model Ticket {
+  id             String  @id @default(cuid())
+  number         Int
+  pipelineId     String
+  stageId        String
+  contactId      String
+  conversationId String?
+  ownerId        String?
+
+  title       String
+  description String?
+  value       Float?
+  currency    String  @default("SAR")
+
+  lostReason String?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  closedAt       DateTime?
+  enteredStageAt DateTime  @default(now())
+
+  pipeline   Pipeline         @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  stage      TicketStage      @relation(fields: [stageId], references: [id])
+  contact    Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  activities TicketActivity[]
+
+  @@unique([pipelineId, number])
+  @@index([contactId])
+  @@index([stageId])
+  @@index([ownerId])
+}
+
+model TicketActivity {
+  id        String  @id @default(cuid())
+  ticketId  String
+  kind      String  // "created" | "stage_changed" | "owner_changed" | "value_changed" | "note" | "won" | "lost"
+  note      String?
+  fromStage String?
+  toStage   String?
+  byUserId  String?
+
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+model Integration {
+  id           String   @id @default(cuid())
+  platform     String   @unique // "facebook" | "instagram" | "tiktok" — one row per platform
+  pageId       String?  // FB Page id / IG Business Account id / TikTok user id
+  pageName     String?  // human-friendly identifier
+  accessToken  String   // long-lived token (NOT the App Secret). Plaintext in dev only.
+  scopes       String?  // CSV of granted scopes
+  expiresAt    DateTime?
+  lastFetchedAt DateTime?
+  raw          String?  // JSON metadata blob from the platform
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Campaign {
+  id          String   @id @default(cuid())
+  name        String
+  status      String   // running | scheduled | draft | completed | paused
+  audience    String
+  recipients  Int      @default(0)
+  sent        Int      @default(0)
+  delivered   Int      @default(0)
+  read        Int      @default(0)
+  replied     Int      @default(0)
+  conversions Int      @default(0)
+  channel     String   // Broadcast | Drip | Trigger
+  schedule    String?
+  agent       String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

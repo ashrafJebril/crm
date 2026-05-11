@@ -1,0 +1,28 @@
+import { Body, Controller, Get, Post, Req } from "@nestjs/common";
+import type { Request } from "express";
+import { AuthService } from "./auth.service";
+import { LoginDto, RegisterDto } from "./dto";
+import { Public } from "./public.decorator";
+import type { JwtPayload } from "./auth.guard";
+
+@Controller("auth")
+export class AuthController {
+  constructor(private readonly auth: AuthService) {}
+
+  @Public()
+  @Post("login")
+  login(@Body() dto: LoginDto) {
+    return this.auth.login(dto);
+  }
+
+  @Public()
+  @Post("register")
+  register(@Body() dto: RegisterDto) {
+    return this.auth.register(dto);
+  }
+
+  @Get("me")
+  me(@Req() req: Request & { user: JwtPayload }) {
+    return this.auth.me(req.user.sub);
+  }
+}

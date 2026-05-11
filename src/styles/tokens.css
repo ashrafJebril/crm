@@ -1,0 +1,134 @@
+/* ─── tkana design tokens ─────────────────────────────────────────────── */
+
+:root {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  --font-display: "Instrument Serif", "Geist", serif;
+
+  --accent: oklch(0.78 0.18 150);
+  --accent-ink: oklch(0.18 0.04 150);
+  --accent-soft: oklch(0.78 0.18 150 / 0.14);
+  --accent-ring: oklch(0.78 0.18 150 / 0.35);
+
+  --ok: oklch(0.78 0.16 150);
+  --warn: oklch(0.82 0.17 78);
+  --bad: oklch(0.7 0.22 24);
+  --info: oklch(0.74 0.13 240);
+  --human: oklch(0.74 0.13 270);
+
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+
+  --row-h: 40px;
+  --pad: 14px;
+}
+
+/* ─── DARK (default) ──────────────────────────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  --bg: oklch(0.16 0.01 240);
+  --bg-1: oklch(0.18 0.012 240);
+  --bg-2: oklch(0.21 0.013 240);
+  --bg-3: oklch(0.24 0.014 240);
+  --bg-elev: oklch(0.22 0.013 240);
+  --line: oklch(0.3 0.012 240);
+  --line-soft: oklch(0.26 0.011 240 / 0.6);
+
+  --ink: oklch(0.97 0.005 240);
+  --ink-1: oklch(0.85 0.008 240);
+  --ink-2: oklch(0.68 0.01 240);
+  --ink-3: oklch(0.52 0.012 240);
+  --ink-4: oklch(0.4 0.012 240);
+
+  --shadow-sm: 0 1px 0 oklch(0 0 0 / 0.4), 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow: 0 8px 24px -8px oklch(0 0 0 / 0.5), 0 2px 6px oklch(0 0 0 / 0.3);
+  --shadow-lg: 0 24px 48px -16px oklch(0 0 0 / 0.6);
+
+  --bubble-out: oklch(0.78 0.18 150 / 0.18);
+  --bubble-out-line: oklch(0.78 0.18 150 / 0.45);
+  --bubble-in: oklch(0.24 0.014 240);
+  --bubble-in-line: oklch(0.3 0.012 240);
+  --grid: oklch(0.24 0.014 240 / 0.7);
+}
+
+/* ─── LIGHT ────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg: oklch(0.985 0.003 240);
+  --bg-1: oklch(0.98 0.003 240);
+  --bg-2: oklch(0.96 0.004 240);
+  --bg-3: oklch(0.93 0.005 240);
+  --bg-elev: #ffffff;
+  --line: oklch(0.88 0.007 240);
+  --line-soft: oklch(0.92 0.006 240);
+
+  --ink: oklch(0.18 0.01 240);
+  --ink-1: oklch(0.32 0.012 240);
+  --ink-2: oklch(0.48 0.012 240);
+  --ink-3: oklch(0.62 0.012 240);
+  --ink-4: oklch(0.74 0.012 240);
+
+  --accent: oklch(0.62 0.16 150);
+  --accent-ink: white;
+  --accent-soft: oklch(0.62 0.16 150 / 0.12);
+  --accent-ring: oklch(0.62 0.16 150 / 0.3);
+
+  --shadow-sm: 0 1px 0 oklch(0.7 0.01 240 / 0.06), 0 1px 2px oklch(0.5 0.01 240 / 0.06);
+  --shadow: 0 8px 24px -10px oklch(0.4 0.01 240 / 0.18),
+    0 2px 6px oklch(0.5 0.01 240 / 0.06);
+  --shadow-lg: 0 24px 48px -16px oklch(0.4 0.01 240 / 0.2);
+
+  --bubble-out: oklch(0.62 0.16 150 / 0.12);
+  --bubble-out-line: oklch(0.62 0.16 150 / 0.3);
+  --bubble-in: white;
+  --bubble-in-line: oklch(0.88 0.007 240);
+  --grid: oklch(0.92 0.006 240);
+}
+
+/* ─── ACCENT VARIATIONS ───────────────────────────────────────────────── */
+[data-accent="green"] {
+  --accent: oklch(0.78 0.18 150);
+  --accent-soft: oklch(0.78 0.18 150 / 0.14);
+  --accent-ring: oklch(0.78 0.18 150 / 0.35);
+  --bubble-out: oklch(0.78 0.18 150 / 0.18);
+  --bubble-out-line: oklch(0.78 0.18 150 / 0.45);
+}
+[data-theme="light"][data-accent="green"] {
+  --accent: oklch(0.62 0.16 150);
+  --accent-soft: oklch(0.62 0.16 150 / 0.12);
+  --accent-ring: oklch(0.62 0.16 150 / 0.3);
+}
+[data-accent="indigo"] {
+  --accent: oklch(0.72 0.18 268);
+  --accent-soft: oklch(0.72 0.18 268 / 0.14);
+  --accent-ring: oklch(0.72 0.18 268 / 0.35);
+  --bubble-out: oklch(0.72 0.18 268 / 0.18);
+  --bubble-out-line: oklch(0.72 0.18 268 / 0.45);
+}
+[data-accent="amber"] {
+  --accent: oklch(0.84 0.17 78);
+  --accent-soft: oklch(0.84 0.17 78 / 0.14);
+  --accent-ring: oklch(0.84 0.17 78 / 0.35);
+  --bubble-out: oklch(0.84 0.17 78 / 0.18);
+  --bubble-out-line: oklch(0.84 0.17 78 / 0.45);
+}
+[data-accent="magenta"] {
+  --accent: oklch(0.72 0.22 350);
+  --accent-soft: oklch(0.72 0.22 350 / 0.14);
+  --accent-ring: oklch(0.72 0.22 350 / 0.35);
+  --bubble-out: oklch(0.72 0.22 350 / 0.18);
+  --bubble-out-line: oklch(0.72 0.22 350 / 0.45);
+}
+
+/* Density */
+[data-density="compact"] {
+  --row-h: 34px;
+  --pad: 10px;
+}
+[data-density="cozy"] {
+  --row-h: 48px;
+  --pad: 18px;
+}
