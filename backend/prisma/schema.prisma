@@ -32,7 +32,7 @@ model User {
 model Contact {
   id        String   @id @default(cuid())
   name      String
-  phone     String
+  phone     String?
   industry  String
   lifecycle String
   source    String
@@ -240,4 +240,46 @@ model Campaign {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Social listening ──────────────────────────────────────────────────────
+
+model Keyword {
+  id        String   @id @default(cuid())
+  value     String   @unique
+  kind      String   // "brand" | "hashtag" | "handle" | "competitor"
+  enabled   Boolean  @default(true)
+  notes     String?
+
+  mentions  Mention[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Mention {
+  id           String   @id @default(cuid())
+  keywordId    String
+  source       String   // "google" | "ig-hashtag" | "fb-page" | "news"
+  sourceUrl    String?
+  externalId   String   // dedup key within a source
+  author       String
+  authorHandle String?
+  authorReach  Int?
+  body         String
+  lang         String?  // "en" | "ar" | "mixed"
+  dialect      String?  // "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi"
+  sentiment    Float?   // -1..+1
+  topic        String?
+  postedAt     DateTime?
+  ingestedAt   DateTime @default(now())
+  status       String   @default("new") // "new" | "triaged" | "engaged" | "dismissed"
+  raw          String?  // JSON blob from source
+
+  keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([keywordId])
+  @@index([status])
+  @@index([ingestedAt])
 }
