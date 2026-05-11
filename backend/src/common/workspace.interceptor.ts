@@ -1,6 +1,6 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from "@nestjs/common";
 import type { Request } from "express";
-import { Observable } from "rxjs";
+import { Observable, Subscription } from "rxjs";
 import { workspaceContext } from "./workspace-context";
 import type { JwtPayload } from "../auth/auth.guard";
 
@@ -19,13 +19,18 @@ export class WorkspaceInterceptor implements NestInterceptor {
     const userId = req.user?.sub;
     if (wsId && userId) {
       return new Observable((subscriber) => {
+        let innerSub: Subscription | undefined;
         workspaceContext.run({ workspaceId: wsId, userId }, () => {
-          next.handle().subscribe({
+          innerSub = next.handle().subscribe({
             next: (v) => subscriber.next(v),
             error: (e) => subscriber.error(e),
             complete: () => subscriber.complete(),
           });
         });
+        // Teardown: when the outer subscriber unsubscribes (client disconnect,
+        // SSE/WS cancel), tear down the inner subscription too — otherwise the
+        // handler keeps running and we leak resources.
+        return () => innerSub?.unsubscribe();
       });
     }
     return next.handle();
