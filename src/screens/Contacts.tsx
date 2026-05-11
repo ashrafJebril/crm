@@ -65,6 +65,7 @@ interface ContactsTableProps {
   selected: Set<string>;
   setSelected: (next: Set<string>) => void;
   onBulkDelete: () => void;
+  onBulkTag: () => void;
   bulkDeleting: boolean;
 }
 
@@ -80,6 +81,7 @@ function ContactsTable({
   selected,
   setSelected,
   onBulkDelete,
+  onBulkTag,
   bulkDeleting,
 }: ContactsTableProps) {
   const toggle = (id: string) => {
@@ -105,7 +107,7 @@ function ContactsTable({
             {selected.size} {tx("selected", "محدد")}
           </span>
           <span style={{ flex: 1 }} />
-          <button className="btn sm">
+          <button className="btn sm" onClick={onBulkTag}>
             <IconTag w={12} />
             {tx("Tag", "وسم")}
           </button>
@@ -667,6 +669,56 @@ function ContactsImpl() {
     window.setTimeout(() => setStatusMsg(null), 2000);
   };
 
+  const [showBulkTag, setShowBulkTag] = useState(false);
+  const [bulkTagging, setBulkTagging] = useState(false);
+
+  const onBulkTag = () => {
+    if (selected.size === 0) return;
+    setShowBulkTag(true);
+  };
+
+  const applyBulkTags = (raw: string) => {
+    if (selected.size === 0 || bulkTagging) return;
+    const newTags = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (newTags.length === 0) {
+      setShowBulkTag(false);
+      return;
+    }
+    setBulkTagging(true);
+    const run = async () => {
+      try {
+        const ids = Array.from(selected);
+        await Promise.all(
+          ids.map((id) => {
+            const existing =
+              contacts.find((c) => c.id === id)?.tags ?? [];
+            const merged = Array.from(new Set([...existing, ...newTags]));
+            return api.patch<Contact>(`/contacts/${id}`, { tags: merged });
+          }),
+        );
+        setShowBulkTag(false);
+        setSelected(new Set<string>());
+        refetch();
+        showStatus(
+          tx(
+            `Tagged ${ids.length} contact${ids.length === 1 ? "" : "s"}.`,
+            `تم وسم ${ids.length} جهة.`,
+          ),
+        );
+      } catch (err) {
+        showStatus(
+          err instanceof Error ? err.message : tx("Tag failed.", "فشل الوسم."),
+        );
+      } finally {
+        setBulkTagging(false);
+      }
+    };
+    void run();
+  };
+
   const onBulkDelete = () => {
     if (selected.size === 0 || bulkDeleting) return;
     const ids = Array.from(selected);
@@ -865,6 +917,7 @@ function ContactsImpl() {
             selected={selected}
             setSelected={setSelected}
             onBulkDelete={onBulkDelete}
+            onBulkTag={onBulkTag}
             bulkDeleting={bulkDeleting}
           />
         )}
@@ -883,6 +936,119 @@ function ContactsImpl() {
           }}
         />
       )}
+
+      {showBulkTag && (
+        <BulkTagModal
+          tx={tx}
+          count={selected.size}
+          saving={bulkTagging}
+          onClose={() => setShowBulkTag(false)}
+          onApply={applyBulkTags}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── Bulk tag modal ─────────────────────────────────────────────────── */
+
+interface BulkTagModalProps {
+  tx: Tx;
+  count: number;
+  saving: boolean;
+  onClose: () => void;
+  onApply: (raw: string) => void;
+}
+
+function BulkTagModal({ tx, count, saving, onClose, onApply }: BulkTagModalProps) {
+  const [value, setValue] = useState("");
+  const canSubmit = value.trim().length > 0 && !saving;
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "var(--scrim, rgba(0,0,0,0.55))",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1)",
+          border: "1px solid var(--line-soft)",
+          borderRadius: 12,
+          width: 420,
+          maxWidth: "92vw",
+          padding: 20,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          boxShadow: "var(--shadow-lg)",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>
+            {tx("Add tags", "إضافة وسوم")}
+          </div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+            {tx(
+              `Add tags to ${count} contact${count === 1 ? "" : "s"}.`,
+              `إضافة وسوم إلى ${count} جهة.`,
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label
+            className="mono muted"
+            style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.06 }}
+          >
+            {tx("Tags (comma-separated)", "وسوم (بفواصل)")}
+          </label>
+          <input
+            type="text"
+            value={value}
+            autoFocus
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canSubmit) onApply(value);
+              if (e.key === "Escape") onClose();
+            }}
+            placeholder={tx("VIP, Hot, Riyadh", "مهم, ساخن, الرياض")}
+            style={{
+              width: "100%",
+              marginTop: 6,
+              padding: "9px 11px",
+              borderRadius: 8,
+              border: "1px solid var(--line)",
+              background: "var(--bg)",
+              color: "var(--ink-1)",
+              fontSize: 13,
+              fontFamily: "inherit",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn" type="button" onClick={onClose} disabled={saving}>
+            {tx("Cancel", "إلغاء")}
+          </button>
+          <button
+            className="btn primary"
+            type="button"
+            onClick={() => onApply(value)}
+            disabled={!canSubmit}
+          >
+            {saving ? tx("Applying…", "جارٍ التطبيق…") : tx("Apply", "تطبيق")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
