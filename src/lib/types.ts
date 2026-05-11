@@ -17,6 +17,8 @@ export type RouteId =
   | "inbox"
   | "calendar"
   | "social"
+  | "mentions"
+  | "keywords"
   | "pipeline"
   | "agents"
   | "campaigns"
@@ -267,4 +269,43 @@ export interface Template {
   category: "TRANSACTIONAL" | "UTILITY" | "MARKETING";
   status: "approved" | "pending" | "rejected";
   uses: number;
+}
+
+// ─── Social listening: keywords & mentions ────────────────────────────────
+
+export type KeywordKind = "brand" | "hashtag" | "handle" | "competitor";
+
+export interface Keyword {
+  id: string;
+  value: string;
+  kind: KeywordKind;
+  enabled: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MentionSource = "google" | "ig-hashtag" | "fb-page" | "news";
+export type MentionStatus = "new" | "triaged" | "engaged" | "dismissed";
+export type MentionLang = "en" | "ar" | "mixed";
+export type MentionDialect = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi";
+
+export interface Mention {
+  id: string;
+  keywordId: string;
+  source: MentionSource;
+  sourceUrl: string | null;
+  externalId: string;
+  author: string;
+  authorHandle: string | null;
+  authorReach: number | null;
+  body: string;
+  lang: MentionLang | null;
+  dialect: MentionDialect | null;
+  sentiment: number | null;
+  topic: string | null;
+  postedAt: string | null;
+  ingestedAt: string;
+  status: MentionStatus;
+  keyword?: Keyword;
 }
