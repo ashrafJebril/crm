@@ -1,10 +1,11 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from "class-validator";
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MinLength } from "class-validator";
 
 export const KEYWORD_KINDS = ["brand", "hashtag", "handle", "competitor"] as const;
 export type KeywordKind = (typeof KEYWORD_KINDS)[number];
 
 export class CreateKeywordDto {
   @IsString()
+  @IsNotEmpty()
   @MinLength(1)
   value!: string;
 
