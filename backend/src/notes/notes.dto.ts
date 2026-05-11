@@ -10,6 +10,10 @@ export class CreateNoteDto {
   conversationId?: string;
 
   @IsString()
+  @IsOptional()
+  ticketId?: string;
+
+  @IsString()
   @MinLength(1)
   body!: string;
 }

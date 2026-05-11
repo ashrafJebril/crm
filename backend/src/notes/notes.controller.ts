@@ -22,7 +22,9 @@ export class NotesController {
   list(
     @Query("contactId") contactId?: string,
     @Query("conversationId") conversationId?: string,
+    @Query("ticketId") ticketId?: string,
   ) {
+    if (ticketId) return this.svc.listForTicket(ticketId);
     if (conversationId) return this.svc.listForConversation(conversationId);
     if (contactId) return this.svc.listForContact(contactId);
     return [];

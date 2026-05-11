@@ -20,6 +20,13 @@ export class NotesService {
     });
   }
 
+  listForTicket(ticketId: string) {
+    return this.prisma.note.findMany({
+      where: { ticketId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
   async get(id: string) {
     const row = await this.prisma.note.findUnique({ where: { id } });
     if (!row) throw new NotFoundException("Note not found");
@@ -35,6 +42,7 @@ export class NotesService {
       data: {
         contactId: dto.contactId,
         conversationId: dto.conversationId ?? null,
+        ticketId: dto.ticketId ?? null,
         body: dto.body,
         authorUserId,
       },

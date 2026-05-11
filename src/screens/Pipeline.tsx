@@ -27,6 +27,7 @@ import { api } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import type {
   Contact,
+  Note,
   Pipeline,
   Ticket,
   TicketActivity,
@@ -690,6 +691,7 @@ function NewTicketModal({
 
 interface DetailPanelProps {
   detail: TicketDetail;
+  notes: Note[];
   owner: TeamMember | undefined;
   pipeline: Pipeline | undefined;
   tx: Tx;
@@ -705,6 +707,7 @@ interface DetailPanelProps {
 
 function DetailPanel({
   detail,
+  notes,
   owner,
   pipeline,
   tx,
@@ -744,13 +747,43 @@ function DetailPanel({
     return m;
   }, [pipeline]);
 
-  const sortedActivities = useMemo(
+  type TimelineItem =
+    | { kind: "activity"; at: string; activity: TicketActivity }
+    | { kind: "note"; at: string; note: Note };
+
+  const timeline = useMemo<TimelineItem[]>(() => {
+    const items: TimelineItem[] = [];
+    for (const a of detail.activities) {
+      // Hide the legacy "note" kind from TicketActivity to avoid duplicates
+      // — notes now live in the Note table and are rendered from `notes`.
+      if (a.kind === "note") continue;
+      items.push({ kind: "activity", at: a.createdAt, activity: a });
+    }
+    for (const n of notes) {
+      items.push({ kind: "note", at: n.createdAt, note: n });
+    }
+    items.sort(
+      (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+    );
+    return items;
+  }, [detail.activities, notes]);
+
+  // Legacy notes that were written to TicketActivity before the unification.
+  // Show them inline alongside the new Note model entries so no history is lost.
+  const legacyTicketNotes = useMemo<TimelineItem[]>(
     () =>
-      [...detail.activities].sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      ),
+      detail.activities
+        .filter((a) => a.kind === "note")
+        .map<TimelineItem>((a) => ({ kind: "activity", at: a.createdAt, activity: a })),
     [detail.activities],
+  );
+
+  const sortedTimeline = useMemo(
+    () =>
+      [...timeline, ...legacyTicketNotes].sort(
+        (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+      ),
+    [timeline, legacyTicketNotes],
   );
 
   return (
@@ -1061,12 +1094,70 @@ function DetailPanel({
               gap: 8,
             }}
           >
-            {sortedActivities.length === 0 && (
+            {sortedTimeline.length === 0 && (
               <li className="muted" style={{ fontSize: 12 }}>
                 {tx("No activity yet", "لا يوجد نشاط بعد")}
               </li>
             )}
-            {sortedActivities.map((a) => {
+            {sortedTimeline.map((item) => {
+              if (item.kind === "note") {
+                const n = item.note;
+                const origin =
+                  n.ticketId === detail.id
+                    ? tx("ticket note", "ملاحظة على الصفقة")
+                    : n.conversationId
+                      ? tx("from chat", "من المحادثة")
+                      : n.ticketId
+                        ? tx("from another deal", "من صفقة أخرى")
+                        : tx("contact note", "ملاحظة على العميل");
+                return (
+                  <li
+                    key={`note-${n.id}`}
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      fontSize: 12,
+                      alignItems: "flex-start",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--line-soft)",
+                      background: "var(--bg-2)",
+                    }}
+                  >
+                    <span style={{ color: "var(--accent)", marginTop: 1 }}>
+                      {activityIcon("note")}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ color: "var(--ink-1)", fontWeight: 500 }}>
+                        {tx("Note", "ملاحظة")}
+                        <span className="muted" style={{ fontWeight: 400 }}>
+                          {" "}· {origin}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 3,
+                          color: "var(--ink-2)",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {n.body}
+                      </div>
+                      <div
+                        className="mono"
+                        style={{ marginTop: 3, fontSize: 10, color: "var(--ink-3)" }}
+                      >
+                        {n.authorUserId
+                          ? TEAM.find((m) => m.id === n.authorUserId)?.name ??
+                            n.authorUserId
+                          : tx("System", "النظام")}{" "}
+                        · {relTime(n.createdAt, tx)}
+                      </div>
+                    </div>
+                  </li>
+                );
+              }
+              const a = item.activity;
               const fromS = a.fromStage ? stageById.get(a.fromStage) : null;
               const toS = a.toStage ? stageById.get(a.toStage) : null;
               const author = a.byUserId
@@ -1225,6 +1316,12 @@ function PipelineImpl() {
     { key: `${selectedId ?? ""}:${refetchTick}` },
   );
 
+  const _notesContactId = detailQ.data?.contactId ?? null;
+  const notesQ = useFetch<Note[]>(
+    _notesContactId ? `/notes?contactId=${encodeURIComponent(_notesContactId)}` : null,
+    { key: `${_notesContactId ?? ""}:${refetchTick}` },
+  );
+
   /* ─── Mutations ─────────────────────────────────────────────────────── */
 
   const createTicket = useMutation<NewTicketInput, Ticket>((input) =>
@@ -1244,8 +1341,15 @@ function PipelineImpl() {
     return api.post<Ticket>(`/tickets/${input.id}/move`, body);
   });
 
-  const addNote = useMutation<{ id: string; note: string }, TicketActivity>(
-    (input) => api.post<TicketActivity>(`/tickets/${input.id}/notes`, { note: input.note }),
+  const addNote = useMutation<
+    { ticketId: string; contactId: string; body: string },
+    Note
+  >((input) =>
+    api.post<Note>("/notes", {
+      ticketId: input.ticketId,
+      contactId: input.contactId,
+      body: input.body,
+    }),
   );
 
   const deleteTicket = useMutation<string, void>((id) =>
@@ -1370,10 +1474,12 @@ function PipelineImpl() {
   const handleAddNote = useCallback(
     async (note: string): Promise<void> => {
       if (!selectedId) return;
-      await addNote.mutate({ id: selectedId, note });
+      const contactId = detailQ.data?.contactId;
+      if (!contactId) return;
+      await addNote.mutate({ ticketId: selectedId, contactId, body: note });
       bumpRefetch();
     },
-    [addNote, selectedId, bumpRefetch],
+    [addNote, selectedId, detailQ.data?.contactId, bumpRefetch],
   );
 
   const handleMarkWon = useCallback((): void => {
@@ -1879,6 +1985,7 @@ function PipelineImpl() {
       {detail && (
         <DetailPanel
           detail={detail}
+          notes={notesQ.data ?? []}
           owner={detailOwner}
           pipeline={detail.pipeline ?? activePipeline ?? undefined}
           tx={tx}

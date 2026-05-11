@@ -194,6 +194,7 @@ model Ticket {
   stage      TicketStage      @relation(fields: [stageId], references: [id])
   contact    Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
   activities TicketActivity[]
+  notes      Note[]
 
   @@unique([pipelineId, number])
   @@index([contactId])
@@ -260,16 +261,21 @@ model Note {
   // conversation id like "t_..."), so this is intentionally a plain string,
   // not a FK relation.
   conversationId String?
+  // Optional link to a Ticket — set when the note was written from the
+  // pipeline ticket panel. Notes without ticketId are contact-level.
+  ticketId       String?
   body           String
   authorUserId   String?  // FK to User.id, nullable for system-generated notes
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  ticket  Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([contactId])
   @@index([conversationId])
+  @@index([ticketId])
 }
 
 // ─── Social listening ──────────────────────────────────────────────────────

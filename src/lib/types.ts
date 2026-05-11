@@ -277,6 +277,7 @@ export interface Note {
   id: string;
   contactId: string;
   conversationId: string | null;
+  ticketId: string | null;
   body: string;
   authorUserId: string | null;
   createdAt: string;
