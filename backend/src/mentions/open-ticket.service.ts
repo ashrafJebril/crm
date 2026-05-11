@@ -18,40 +18,42 @@ export class OpenTicketService {
     }
     const firstStage = pipeline.stages[0];
 
-    const contact = await this.prisma.contact.create({
-      data: {
-        name: mention.author,
-        phone: null,
-        industry: "social",
-        lifecycle: "lead",
-        source: mention.source,
-        lastSeen: "just now",
-        tags: JSON.stringify(["mention", mention.source]),
-      },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const contact = await tx.contact.create({
+        data: {
+          name: mention.author,
+          phone: null,
+          industry: "social",
+          lifecycle: "lead",
+          source: mention.source,
+          lastSeen: "just now",
+          tags: JSON.stringify(["mention", mention.source]),
+        },
+      });
 
-    const lastTicket = await this.prisma.ticket.findFirst({
-      where: { pipelineId: pipeline.id },
-      orderBy: { number: "desc" },
-    });
-    const number = (lastTicket?.number ?? 0) + 1;
+      const lastTicket = await tx.ticket.findFirst({
+        where: { pipelineId: pipeline.id },
+        orderBy: { number: "desc" },
+      });
+      const number = (lastTicket?.number ?? 0) + 1;
 
-    const ticket = await this.prisma.ticket.create({
-      data: {
-        number,
-        pipelineId: pipeline.id,
-        stageId: firstStage.id,
-        contactId: contact.id,
-        title: mention.body.slice(0, 80),
-        description: mention.sourceUrl ?? null,
-      },
-    });
+      const ticket = await tx.ticket.create({
+        data: {
+          number,
+          pipelineId: pipeline.id,
+          stageId: firstStage.id,
+          contactId: contact.id,
+          title: mention.body.slice(0, 80),
+          description: mention.sourceUrl ?? null,
+        },
+      });
 
-    await this.prisma.mention.update({
-      where: { id: mentionId },
-      data: { status: "triaged" },
-    });
+      await tx.mention.update({
+        where: { id: mentionId },
+        data: { status: "triaged" },
+      });
 
-    return { ticketId: ticket.id, contactId: contact.id };
+      return { ticketId: ticket.id, contactId: contact.id };
+    });
   }
 }
