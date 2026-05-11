@@ -10,25 +10,27 @@ import {
 export class ConversationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list() {
+  list(workspaceId: string) {
     return this.prisma.conversation.findMany({
+      where: { workspaceId },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
     });
   }
 
-  async get(id: string) {
-    const conv = await this.prisma.conversation.findUnique({
-      where: { id },
+  async get(workspaceId: string, id: string) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id, workspaceId },
       include: { messages: { orderBy: { createdAt: "asc" } } },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
     return conv;
   }
 
-  create(dto: CreateConversationDto) {
+  create(workspaceId: string, dto: CreateConversationDto) {
     return this.prisma.conversation.create({
       data: {
         ...dto,
+        workspaceId,
         unread: 0,
         pinned: dto.pinned ?? false,
         escalated: dto.escalated ?? false,
@@ -36,39 +38,43 @@ export class ConversationsService {
     });
   }
 
-  async update(id: string, dto: UpdateConversationDto) {
-    await this.get(id);
+  async update(workspaceId: string, id: string, dto: UpdateConversationDto) {
+    await this.get(workspaceId, id);
     return this.prisma.conversation.update({ where: { id }, data: dto });
   }
 
-  async markRead(id: string) {
-    await this.get(id);
+  async markRead(workspaceId: string, id: string) {
+    await this.get(workspaceId, id);
     return this.prisma.conversation.update({
       where: { id },
       data: { unread: 0 },
     });
   }
 
-  async remove(id: string) {
-    await this.get(id);
+  async remove(workspaceId: string, id: string) {
+    await this.get(workspaceId, id);
     await this.prisma.conversation.delete({ where: { id } });
     return { ok: true };
   }
 
-  // ── messages ────────────────────────────────────────────────────────────
-  listMessages(conversationId: string) {
+  async listMessages(workspaceId: string, conversationId: string) {
+    await this.get(workspaceId, conversationId);
     return this.prisma.message.findMany({
-      where: { conversationId },
+      where: { conversationId, workspaceId },
       orderBy: { createdAt: "asc" },
     });
   }
 
-  async addMessage(conversationId: string, dto: CreateMessageDto) {
-    await this.get(conversationId);
+  async addMessage(
+    workspaceId: string,
+    conversationId: string,
+    dto: CreateMessageDto,
+  ) {
+    await this.get(workspaceId, conversationId);
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const message = await this.prisma.message.create({
-      data: { ...dto, conversationId, t },
+      data: { ...dto, conversationId, workspaceId, t },
     });
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -76,11 +82,7 @@ export class ConversationsService {
         preview: dto.body.slice(0, 140),
         lastAt: "now",
         lastFrom: dto.from,
-        // Reading from your side resets unread; an inbound bumps it.
-        unread:
-          dto.from === "them"
-            ? { increment: 1 }
-            : 0,
+        unread: dto.from === "them" ? { increment: 1 } : 0,
       },
     });
     return message;
