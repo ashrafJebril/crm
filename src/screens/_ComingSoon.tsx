@@ -42,3 +42,8 @@ function ComingSoonImpl({
 }
 
 export const ComingSoon = memo(ComingSoonImpl);
+
+/** Default no-prop wrapper used by router placeholder routes. */
+export default function ComingSoonPlaceholder() {
+  return <ComingSoon titleEn="Coming Soon" titleAr="قريبًا" />;
+}

@@ -185,3 +185,11 @@ export const IconSun = (p: IconProps) => (
 export const IconMoon = (p: IconProps) => (
   <I {...p}><path d="M21 13a9 9 0 1 1-10-10c-.5 4 2 8 6 9 .9.2 2.6.5 4 1z" /></I>
 );
+export const IconRadar = (p: IconProps) => (
+  <I {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <circle cx="12" cy="12" r="5" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <path d="M12 3 L12 12 L19 8" />
+  </I>
+);
