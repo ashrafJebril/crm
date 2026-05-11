@@ -28,4 +28,16 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   color?: string;
+
+  // Workspace name to create for this new user (they become owner).
+  // Falls back to "{name}'s workspace" if omitted.
+  @IsOptional()
+  @IsString()
+  workspaceName?: string;
+}
+
+export class SwitchWorkspaceDto {
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
 }
