@@ -13,6 +13,7 @@ import { DashboardModule } from "./dashboard/dashboard.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { TicketsModule } from "./tickets/tickets.module";
 import { MentionsModule } from "./mentions/mentions.module";
+import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotesModule } from "./notes/notes.module";
 
 @Module({
@@ -31,6 +32,7 @@ import { NotesModule } from "./notes/notes.module";
     IntegrationsModule,
     TicketsModule,
     MentionsModule,
+    WorkspacesModule,
     NotesModule,
   ],
 })
