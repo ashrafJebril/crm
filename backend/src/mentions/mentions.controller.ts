@@ -1,10 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Query } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { MentionsService } from "./mentions.service";
+import { OpenTicketService } from "./open-ticket.service";
 import { ListMentionsQuery, UpdateMentionDto } from "./mentions.dto";
 
 @Controller("mentions")
 export class MentionsController {
-  constructor(private readonly svc: MentionsService) {}
+  constructor(
+    private readonly svc: MentionsService,
+    private readonly tickets: OpenTicketService,
+  ) {}
 
   @Get()
   list(@Query() q: ListMentionsQuery) {
@@ -19,5 +23,10 @@ export class MentionsController {
   @Patch(":id")
   update(@Param("id") id: string, @Body() dto: UpdateMentionDto) {
     return this.svc.update(id, dto);
+  }
+
+  @Post(":id/open-ticket")
+  openTicket(@Param("id") id: string) {
+    return this.tickets.fromMention(id);
   }
 }

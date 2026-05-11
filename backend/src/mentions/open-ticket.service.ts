@@ -1,0 +1,57 @@
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+
+@Injectable()
+export class OpenTicketService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async fromMention(mentionId: string) {
+    const mention = await this.prisma.mention.findUnique({ where: { id: mentionId } });
+    if (!mention) throw new NotFoundException("Mention not found");
+
+    const pipeline = await this.prisma.pipeline.findFirst({
+      where: { isDefault: true },
+      include: { stages: { orderBy: { order: "asc" } } },
+    });
+    if (!pipeline || pipeline.stages.length === 0) {
+      throw new NotFoundException("No default pipeline configured");
+    }
+    const firstStage = pipeline.stages[0];
+
+    const contact = await this.prisma.contact.create({
+      data: {
+        name: mention.author,
+        phone: null,
+        industry: "social",
+        lifecycle: "lead",
+        source: mention.source,
+        lastSeen: "just now",
+        tags: JSON.stringify(["mention", mention.source]),
+      },
+    });
+
+    const lastTicket = await this.prisma.ticket.findFirst({
+      where: { pipelineId: pipeline.id },
+      orderBy: { number: "desc" },
+    });
+    const number = (lastTicket?.number ?? 0) + 1;
+
+    const ticket = await this.prisma.ticket.create({
+      data: {
+        number,
+        pipelineId: pipeline.id,
+        stageId: firstStage.id,
+        contactId: contact.id,
+        title: mention.body.slice(0, 80),
+        description: mention.sourceUrl ?? null,
+      },
+    });
+
+    await this.prisma.mention.update({
+      where: { id: mentionId },
+      data: { status: "triaged" },
+    });
+
+    return { ticketId: ticket.id, contactId: contact.id };
+  }
+}
