@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconBot, IconCampaign, IconUsers, IconFlow,
   IconChart, IconTemplate, IconTeam, IconBilling, IconCog, IconCal, IconGlobe,
-  IconLayers, IconRadar,
+  IconLayers, IconRadar, IconTag,
 } from "@/icons";
 
 interface NavItem {
@@ -37,7 +37,7 @@ export const NAV: NavEntry[] = [
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
   { section: "Manage" },
   { id: "templates",   label: "Templates",   ar: "القوالب",       Icon: IconTemplate },
-  { id: "keywords",    label: "Keywords",    ar: "الكلمات المتابَعة", Icon: IconRadar },
+  { id: "keywords",    label: "Keywords",    ar: "الكلمات المتابَعة", Icon: IconTag },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "billing",     label: "Billing",     ar: "الفواتير",      Icon: IconBilling },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },

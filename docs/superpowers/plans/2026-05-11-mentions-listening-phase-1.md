@@ -36,7 +36,7 @@
 - `backend/src/mentions/sources/poller.types.ts` — shared `Poller` interface and `RawMention` type
 - `backend/src/mentions/sources/google-cse.poller.ts` — Google Custom Search ingestion
 - `backend/src/mentions/sources/meta-ig.poller.ts` — Instagram hashtag ingestion (reuses existing `Integration` rows)
-- `backend/src/mentions/mentions.scheduler.ts` — `@nestjs/schedule` cron, calls each poller every 15 min, plus manual-trigger endpoint
+- `backend/src/mentions/mentions.scheduler.ts` — `@nestjs/schedule` cron, calls each poller every 30 min, plus manual-trigger endpoint
 - `backend/src/mentions/open-ticket.service.ts` — creates a Contact (phone null) + Ticket from a mention
 
 **Backend — modified:**

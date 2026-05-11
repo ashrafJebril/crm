@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
@@ -8,6 +8,9 @@ export class OpenTicketService {
   async fromMention(mentionId: string) {
     const mention = await this.prisma.mention.findUnique({ where: { id: mentionId } });
     if (!mention) throw new NotFoundException("Mention not found");
+    if (mention.status === "triaged" || mention.status === "engaged") {
+      throw new ConflictException("Ticket already opened for this mention");
+    }
 
     const pipeline = await this.prisma.pipeline.findFirst({
       where: { isDefault: true },
