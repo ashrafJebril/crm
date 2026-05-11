@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { ListMentionsQuery, UpdateMentionDto } from "./mentions.dto";
 
+const LIST_LIMIT = 200; // Phase 1 — replace with cursor pagination if volume grows
+
 @Injectable()
 export class MentionsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -14,7 +16,7 @@ export class MentionsService {
         source: q.source,
       },
       orderBy: { ingestedAt: "desc" },
-      take: 200,
+      take: LIST_LIMIT,
       include: { keyword: true },
     });
   }
@@ -30,6 +32,10 @@ export class MentionsService {
 
   async update(id: string, dto: UpdateMentionDto) {
     await this.get(id);
-    return this.prisma.mention.update({ where: { id }, data: dto });
+    return this.prisma.mention.update({
+      where: { id },
+      data: dto,
+      include: { keyword: true },
+    });
   }
 }

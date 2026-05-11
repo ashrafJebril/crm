@@ -10,9 +10,9 @@ export class UpdateMentionDto {
 }
 
 export class ListMentionsQuery {
-  @IsString()
+  @IsIn(MENTION_STATUSES as unknown as string[])
   @IsOptional()
-  status?: string;
+  status?: MentionStatus;
 
   @IsString()
   @IsOptional()
