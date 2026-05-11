@@ -1008,11 +1008,54 @@ function DetailPanel({
 
         <div>
           <SectionLabel>{tx("Activity", "النشاط")}</SectionLabel>
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+            }}
+          >
+            <textarea
+              value={noteDraft}
+              onChange={(e) => setNoteDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  submitNote();
+                }
+              }}
+              placeholder={tx("Add a note…", "أضف ملاحظة…")}
+              rows={2}
+              style={{
+                flex: 1,
+                background: "var(--bg-2)",
+                border: "1px solid var(--line)",
+                borderRadius: "var(--r)",
+                padding: "8px 10px",
+                color: "var(--ink)",
+                fontSize: 13,
+                outline: "none",
+                resize: "vertical",
+                minHeight: 38,
+                maxHeight: 120,
+                fontFamily: "inherit",
+                lineHeight: 1.4,
+              }}
+            />
+            <button
+              className="btn primary"
+              onClick={submitNote}
+              disabled={noteSaving || noteDraft.trim().length === 0}
+            >
+              {noteSaving ? tx("…", "…") : tx("Add", "إضافة")}
+            </button>
+          </div>
           <ul
             style={{
               listStyle: "none",
               padding: 0,
-              margin: "8px 0 0",
+              margin: "12px 0 0",
               display: "flex",
               flexDirection: "column",
               gap: 8,
@@ -1086,40 +1129,6 @@ function DetailPanel({
         </div>
       </div>
 
-      <div
-        style={{
-          padding: 12,
-          borderTop: "1px solid var(--line-soft)",
-          display: "flex",
-          gap: 8,
-        }}
-      >
-        <textarea
-          style={{
-            flex: 1,
-            background: "var(--bg-2)",
-            border: "1px solid var(--line)",
-            borderRadius: "var(--r)",
-            padding: "8px 10px",
-            color: "var(--ink)",
-            fontSize: 13,
-            outline: "none",
-            resize: "none",
-            minHeight: 38,
-            maxHeight: 100,
-          }}
-          value={noteDraft}
-          onChange={(e) => setNoteDraft(e.target.value)}
-          placeholder={tx("Add a note…", "أضف ملاحظة…")}
-        />
-        <button
-          className="btn primary"
-          onClick={submitNote}
-          disabled={noteSaving || noteDraft.trim().length === 0}
-        >
-          {noteSaving ? tx("…", "…") : tx("Add", "إضافة")}
-        </button>
-      </div>
     </aside>
   );
 }
