@@ -9,7 +9,7 @@ import {
 
 export class CreateContactDto {
   @IsString() @IsNotEmpty() name!: string;
-  @IsString() @IsOptional() phone?: string;
+  @IsOptional() @IsString() phone?: string;
   @IsString() @IsNotEmpty() industry!: string;
   @IsString() @IsNotEmpty() lifecycle!: string;
   @IsString() @IsNotEmpty() source!: string;
