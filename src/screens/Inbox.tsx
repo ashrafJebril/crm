@@ -228,6 +228,7 @@ interface ConversationPaneProps {
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
+  messagesLoading: boolean;
   tx: Tx;
 }
 
@@ -1188,6 +1189,7 @@ function ConversationPane({
   sending,
   sendError,
   onConvertToTicket,
+  messagesLoading,
   tx,
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
@@ -1197,6 +1199,8 @@ function ConversationPane({
   const messages: Message[] =
     conv.messages.length > 0
       ? conv.messages
+      : messagesLoading
+      ? []
       : [
           { from: "them", t: "10:42", body: conv.preview },
           {
@@ -1373,9 +1377,22 @@ function ConversationPane({
         <div className="day-divider">
           <span>{tx("Today", "اليوم")}</span>
         </div>
-        {messages.map((m, i) => (
-          <Bubble key={`${conv.id}-${i}`} m={m} agent={agent} />
-        ))}
+        {messagesLoading && messages.length === 0 ? (
+          <div
+            aria-label={tx("Loading messages", "جارٍ تحميل الرسائل")}
+            style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 8 }}
+          >
+            <MessageSkeleton side="left" />
+            <MessageSkeleton side="right" />
+            <MessageSkeleton side="left" />
+            <MessageSkeleton side="right" />
+            <MessageSkeleton side="left" />
+          </div>
+        ) : (
+          messages.map((m, i) => (
+            <Bubble key={`${conv.id}-${i}`} m={m} agent={agent} />
+          ))
+        )}
       </div>
 
       {conv.suggested && (
@@ -2002,9 +2019,9 @@ function InboxImpl() {
           activeId={activeId}
           setActiveId={setActiveId}
           contactById={contactById}
-          loading={convsQ.loading}
-          error={convsQ.error}
-          onRetry={convsQ.refetch}
+          loading={fbConnected ? fbConvsQ.loading : convsQ.loading}
+          error={fbConnected ? fbConvsQ.error : convsQ.error}
+          onRetry={fbConnected ? fbConvsQ.refetch : convsQ.refetch}
           tx={tx}
         />
       </div>
@@ -2016,6 +2033,7 @@ function InboxImpl() {
           sending={sendMessage.loading || sendFbMessage.loading}
           sendError={sendMessage.error ?? sendFbMessage.error}
           onConvertToTicket={() => setShowConvertModal(true)}
+          messagesLoading={activeIsFb ? fbMsgsQ.loading : activeQ.loading}
           tx={tx}
         />
       ) : activeQ.loading ? (
