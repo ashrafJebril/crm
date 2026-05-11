@@ -30,7 +30,7 @@ export class MetaIgPoller implements Poller {
   async fetchFor(keyword: { id: string; value: string; kind: string }): Promise<RawMention[]> {
     if (keyword.kind !== "hashtag") return [];
 
-    const integration = await this.prisma.integration.findUnique({
+    const integration = await this.prisma.integration.findFirst({
       where: { platform: "instagram" },
     });
     if (!integration?.accessToken || !integration.pageId) {

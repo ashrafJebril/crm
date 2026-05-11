@@ -449,7 +449,7 @@ export class FacebookService {
 
   // ─── Internals ──────────────────────────────────────────────────────────
   private async find() {
-    return this.prisma.integration.findUnique({ where: { platform: "facebook" } });
+    return this.prisma.integration.findFirst({ where: { platform: "facebook" } });
   }
 
   private async requireToken(): Promise<{ token: string; pageId: string }> {
