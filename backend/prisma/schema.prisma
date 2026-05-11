@@ -280,6 +280,5 @@ model Mention {
 
   @@unique([source, externalId])
   @@index([keywordId])
-  @@index([status])
-  @@index([ingestedAt])
+  @@index([status, ingestedAt])
 }
