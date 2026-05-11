@@ -341,13 +341,17 @@ model WorkspaceMember {
   id          String @id @default(cuid())
   userId      String
   workspaceId String
-  role        String // "owner" | "admin" | "agent" | "viewer"
+  // Workspace-scoped role, separate from User.role (which is a system-level
+  // legacy field). Values: "owner" | "admin" | "agent" | "viewer".
+  role        String
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, workspaceId])
   @@index([workspaceId])
+  @@index([userId])
 }
