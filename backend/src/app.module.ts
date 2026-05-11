@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
+import { WorkspaceInterceptor } from "./common/workspace.interceptor";
 import { ScheduleModule } from "@nestjs/schedule";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
@@ -34,6 +36,9 @@ import { NotesModule } from "./notes/notes.module";
     MentionsModule,
     WorkspacesModule,
     NotesModule,
+  ],
+  providers: [
+    { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },
   ],
 })
 export class AppModule {}
