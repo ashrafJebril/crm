@@ -58,18 +58,22 @@ export class WorkspacesService {
       suffix += 1;
       slug = `${baseSlug}-${suffix}`;
     }
-    const ws = await this.prisma.workspace.create({
-      data: {
-        name: dto.name,
-        slug,
-        timezone: dto.timezone ?? "Asia/Riyadh",
-        lang: dto.lang ?? "ar",
-      },
+    // Wrapped in a transaction so we never leave an orphaned Workspace if the
+    // owner-membership insert fails (e.g. invalid userId FK).
+    return this.prisma.$transaction(async (tx) => {
+      const ws = await tx.workspace.create({
+        data: {
+          name: dto.name,
+          slug,
+          timezone: dto.timezone ?? "Asia/Riyadh",
+          lang: dto.lang ?? "ar",
+        },
+      });
+      await tx.workspaceMember.create({
+        data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
+      });
+      return ws;
     });
-    await this.prisma.workspaceMember.create({
-      data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
-    });
-    return ws;
   }
 
   async update(id: string, dto: UpdateWorkspaceDto) {
@@ -88,7 +92,19 @@ export class WorkspacesService {
   async listMembers(workspaceId: string) {
     return this.prisma.workspaceMember.findMany({
       where: { workspaceId },
-      include: { user: true },
+      include: {
+        // Project only safe user fields — never leak password hash via this API.
+        user: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            initials: true,
+            color: true,
+            status: true,
+          },
+        },
+      },
       orderBy: { createdAt: "asc" },
     });
   }

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -36,36 +37,73 @@ export class WorkspacesController {
   }
 
   @Get(":id")
-  get(@Param("id") id: string) {
+  async get(
+    @Param("id") id: string,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    await this.svc.requireMember(req.user.sub, id);
     return this.svc.get(id);
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() dto: UpdateWorkspaceDto) {
+  async update(
+    @Param("id") id: string,
+    @Body() dto: UpdateWorkspaceDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const role = await this.svc.requireMember(req.user.sub, id);
+    if (role !== "owner" && role !== "admin") {
+      throw new ForbiddenException("Only owner or admin can edit a workspace");
+    }
     return this.svc.update(id, dto);
   }
 
   @Get(":id/members")
-  listMembers(@Param("id") id: string) {
+  async listMembers(
+    @Param("id") id: string,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    await this.svc.requireMember(req.user.sub, id);
     return this.svc.listMembers(id);
   }
 
   @Post(":id/members")
-  addMember(@Param("id") id: string, @Body() dto: AddMemberDto) {
+  async addMember(
+    @Param("id") id: string,
+    @Body() dto: AddMemberDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const role = await this.svc.requireMember(req.user.sub, id);
+    if (role !== "owner" && role !== "admin") {
+      throw new ForbiddenException("Only owner or admin can add members");
+    }
     return this.svc.addMember(id, dto);
   }
 
   @Patch(":id/members/:userId")
-  updateMemberRole(
+  async updateMemberRole(
     @Param("id") id: string,
     @Param("userId") userId: string,
     @Body() dto: UpdateMemberRoleDto,
+    @Req() req: Request & { user: JwtPayload },
   ) {
+    const role = await this.svc.requireMember(req.user.sub, id);
+    if (role !== "owner" && role !== "admin") {
+      throw new ForbiddenException("Only owner or admin can change member roles");
+    }
     return this.svc.updateMemberRole(id, userId, dto);
   }
 
   @Delete(":id/members/:userId")
-  removeMember(@Param("id") id: string, @Param("userId") userId: string) {
+  async removeMember(
+    @Param("id") id: string,
+    @Param("userId") userId: string,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const role = await this.svc.requireMember(req.user.sub, id);
+    if (role !== "owner" && role !== "admin") {
+      throw new ForbiddenException("Only owner or admin can remove members");
+    }
     return this.svc.removeMember(id, userId);
   }
 }
