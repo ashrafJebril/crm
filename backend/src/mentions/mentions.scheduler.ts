@@ -40,30 +40,34 @@ export class MentionsScheduler {
         }
         scanned += raws.length;
         for (const r of raws) {
-          const existing = await this.prisma.mention.findUnique({
-            where: { source_externalId: { source: r.source, externalId: r.externalId } },
-          });
-          if (existing) continue;
-          const enr = await this.enrichment.enrich(r.body);
-          await this.prisma.mention.create({
-            data: {
-              keywordId: kw.id,
-              source: r.source,
-              sourceUrl: r.sourceUrl,
-              externalId: r.externalId,
-              author: r.author,
-              authorHandle: r.authorHandle,
-              authorReach: r.authorReach,
-              body: r.body,
-              postedAt: r.postedAt,
-              lang: enr.lang,
-              dialect: enr.dialect,
-              sentiment: enr.sentiment,
-              topic: enr.topic,
-              raw: JSON.stringify(r.raw),
-            },
-          });
-          ingested += 1;
+          try {
+            const existing = await this.prisma.mention.findUnique({
+              where: { source_externalId: { source: r.source, externalId: r.externalId } },
+            });
+            if (existing) continue;
+            const enr = await this.enrichment.enrich(r.body);
+            await this.prisma.mention.create({
+              data: {
+                keywordId: kw.id,
+                source: r.source,
+                sourceUrl: r.sourceUrl,
+                externalId: r.externalId,
+                author: r.author,
+                authorHandle: r.authorHandle,
+                authorReach: r.authorReach,
+                body: r.body,
+                postedAt: r.postedAt,
+                lang: enr.lang,
+                dialect: enr.dialect,
+                sentiment: enr.sentiment,
+                topic: enr.topic,
+                raw: JSON.stringify(r.raw),
+              },
+            });
+            ingested += 1;
+          } catch (err) {
+            this.logger.warn(`Failed to ingest mention ${r.externalId} from ${r.source}: ${(err as Error).message}`);
+          }
         }
       }
     }
