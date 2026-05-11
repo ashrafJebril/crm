@@ -21,3 +21,6 @@ dist-ssr
 
 # TypeScript incremental build artifacts
 *.tsbuildinfo
+
+# Dev server logs
+*.log
