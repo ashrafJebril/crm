@@ -5,7 +5,7 @@ import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 interface ContactRow {
   id: string;
   name: string;
-  phone: string;
+  phone: string | null;
   industry: string;
   lifecycle: string;
   source: string;
@@ -18,7 +18,7 @@ interface ContactRow {
 const shape = (c: ContactRow) => ({
   id: c.id,
   name: c.name,
-  phone: c.phone,
+  phone: c.phone ?? "",
   industry: c.industry,
   lifecycle: c.lifecycle,
   source: c.source,
@@ -49,7 +49,7 @@ export class ContactsService {
     const row = await this.prisma.contact.create({
       data: {
         name: dto.name,
-        phone: dto.phone,
+        phone: dto.phone ?? null,
         industry: dto.industry,
         lifecycle: dto.lifecycle,
         source: dto.source,
