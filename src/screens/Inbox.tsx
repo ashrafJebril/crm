@@ -4,6 +4,7 @@ import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import { ConvRowSkeleton, MessageSkeleton } from "@/components/Skeleton";
+import { NotesPanel } from "@/components/NotesPanel";
 import {
   IconAttach,
   IconBook,
@@ -1395,6 +1396,31 @@ function ConversationPane({
         )}
       </div>
 
+      <details style={{ borderTop: "1px solid var(--line-soft)", background: "var(--bg-1)" }}>
+        <summary
+          style={{
+            padding: "8px 18px",
+            cursor: "pointer",
+            fontSize: 12,
+            color: "var(--ink-2)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            userSelect: "none",
+          }}
+        >
+          <IconBook w={12} />
+          {tx("Internal notes for this thread", "ملاحظات داخلية لهذه المحادثة")}
+        </summary>
+        <div style={{ padding: "8px 18px 12px" }}>
+          <NotesPanel
+            contactId={conv.contactId}
+            conversationId={conv.id}
+            scope="conversation"
+          />
+        </div>
+      </details>
+
       {conv.suggested && (
         <div
           style={{
@@ -1578,15 +1604,16 @@ function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactR
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <button className="btn">
-          <IconPhone w={13} />
-          {tx("Call", "اتصال")}
-        </button>
-        <button className="btn">
-          <IconBook w={13} />
-          {tx("Notes", "ملاحظات")}
-        </button>
+      <button className="btn" style={{ width: "100%" }}>
+        <IconPhone w={13} />
+        {tx("Call", "اتصال")}
+      </button>
+
+      <div>
+        <SectionLabel>{tx("Notes", "الملاحظات")}</SectionLabel>
+        <div style={{ marginTop: 8 }}>
+          <NotesPanel contactId={contact?.id} scope="contact" />
+        </div>
       </div>
 
       <div>

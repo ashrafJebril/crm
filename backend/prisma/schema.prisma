@@ -41,12 +41,21 @@ model Contact {
   tags      String   @default("[]") // JSON-encoded string array
   convs     Int      @default(0)
 
+  // Identity link to an external platform user (FB PSID, IG user id, etc.).
+  // Used by the FB integration to upsert a real Contact row for each
+  // conversation participant.
+  externalSource String? // "facebook" | "instagram" | "tiktok"
+  externalId     String?
+
   conversations Conversation[]
   appointments  Appointment[]
   tickets       Ticket[]
+  notes         Note[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([externalSource, externalId])
 }
 
 model Conversation {
@@ -240,6 +249,27 @@ model Campaign {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Notes ────────────────────────────────────────────────────────────────
+
+model Note {
+  id             String   @id @default(cuid())
+  contactId      String
+  // Opaque conversation id (may be a DB Conversation.id OR a Facebook
+  // conversation id like "t_..."), so this is intentionally a plain string,
+  // not a FK relation.
+  conversationId String?
+  body           String
+  authorUserId   String?  // FK to User.id, nullable for system-generated notes
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contactId])
+  @@index([conversationId])
 }
 
 // ─── Social listening ──────────────────────────────────────────────────────

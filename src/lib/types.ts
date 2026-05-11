@@ -271,6 +271,18 @@ export interface Template {
   uses: number;
 }
 
+// ─── Notes ────────────────────────────────────────────────────────────────
+
+export interface Note {
+  id: string;
+  contactId: string;
+  conversationId: string | null;
+  body: string;
+  authorUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ─── Social listening: keywords & mentions ────────────────────────────────
 
 export type KeywordKind = "brand" | "hashtag" | "handle" | "competitor";

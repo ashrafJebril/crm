@@ -336,11 +336,50 @@ export class FacebookService {
         participants?: { data: Array<{ id: string; name?: string }> };
       }>;
     }>(`/${pageId}/conversations?fields=${encodeURIComponent(fields)}&limit=${limit}`, token);
-    return (res.data ?? []).map((c) => {
+
+    const rows = res.data ?? [];
+
+    // Upsert each non-Page participant as a real Contact in our DB so that
+    // downstream features (notes, tickets, tags, analytics) can attach to a
+    // stable id. Dedup is keyed on (externalSource, externalId).
+    const contactByPsid = new Map<string, string>(); // psid -> DB contact id
+    for (const c of rows) {
       const other = c.participants?.data.find((p) => p.id !== pageId);
+      if (!other?.id) continue;
+      if (contactByPsid.has(other.id)) continue;
+      const contact = await this.prisma.contact.upsert({
+        where: {
+          externalSource_externalId: {
+            externalSource: "facebook",
+            externalId: other.id,
+          },
+        },
+        create: {
+          name: other.name ?? "Facebook user",
+          industry: "social",
+          lifecycle: "lead",
+          source: "facebook",
+          lastSeen: this.fmtCompact(c.updated_time),
+          externalSource: "facebook",
+          externalId: other.id,
+        },
+        update: {
+          // Refresh the display name and last-seen on each sync; leave
+          // user-edited fields like industry/lifecycle/tags alone.
+          name: other.name ?? undefined,
+          lastSeen: this.fmtCompact(c.updated_time),
+        },
+      });
+      contactByPsid.set(other.id, contact.id);
+    }
+
+    return rows.map((c) => {
+      const other = c.participants?.data.find((p) => p.id !== pageId);
+      const dbContactId = other?.id ? contactByPsid.get(other.id) : undefined;
       return {
         id: c.id,
-        contactId: other?.id,
+        contactId: dbContactId, // now a real DB cuid, not the FB PSID
+        contactPsid: other?.id, // keep PSID for sending replies via Graph
         contactName: other?.name ?? "Unknown",
         snippet: c.snippet ?? "",
         unread: c.unread_count ?? 0,
@@ -348,6 +387,21 @@ export class FacebookService {
         updatedAt: c.updated_time,
       };
     });
+  }
+
+  /** Compact relative-time formatter to keep Contact.lastSeen short and human. */
+  private fmtCompact(iso?: string): string {
+    if (!iso) return "—";
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return "—";
+    const diffMin = Math.floor((Date.now() - t) / 60000);
+    if (diffMin < 1) return "now";
+    if (diffMin < 60) return `${diffMin}m`;
+    const h = Math.floor(diffMin / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d}d`;
+    return new Date(t).toLocaleDateString();
   }
 
   async listMessagesInConversation(conversationId: string, limit = 25) {
