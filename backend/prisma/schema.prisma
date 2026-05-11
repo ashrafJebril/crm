@@ -49,8 +49,8 @@ model Contact {
   externalSource String? // "facebook" | "instagram" | "tiktok"
   externalId     String?
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceContacts", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceContacts", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   conversations Conversation[]
   appointments  Appointment[]
@@ -80,8 +80,8 @@ model Conversation {
   escalated  Boolean  @default(false)
   suggested  String?
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
@@ -102,8 +102,8 @@ model Message {
   agent          String?
   attach         String?
 
-  workspaceId  String?
-  workspace    Workspace?   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId  String
+  workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -128,8 +128,8 @@ model Appointment {
   noteAr       String?
   reminderSent Boolean  @default(false)
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
@@ -149,8 +149,8 @@ model Template {
   status   String // approved | pending | rejected
   uses     Int    @default(0)
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceTemplates", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTemplates", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
@@ -166,8 +166,8 @@ model Pipeline {
   nameAr    String
   isDefault Boolean @default(false)
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspacePipelines", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspacePipelines", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   stages   TicketStage[]
   tickets  Ticket[]
@@ -191,8 +191,8 @@ model TicketStage {
   isWon      Boolean @default(false)
   slaMinutes Int?
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceTicketStages", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTicketStages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   tickets  Ticket[]
@@ -223,8 +223,8 @@ model Ticket {
   closedAt       DateTime?
   enteredStageAt DateTime  @default(now())
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceTickets", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTickets", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   pipeline   Pipeline         @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   stage      TicketStage      @relation(fields: [stageId], references: [id])
@@ -250,8 +250,8 @@ model TicketActivity {
 
   createdAt DateTime @default(now())
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceTicketActivities", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTicketActivities", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
@@ -270,8 +270,8 @@ model Integration {
   lastFetchedAt DateTime?
   raw          String?  // JSON metadata blob from the platform
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceIntegrations", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceIntegrations", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -295,8 +295,8 @@ model Campaign {
   schedule    String?
   agent       String
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -319,8 +319,8 @@ model Note {
   body           String
   authorUserId   String?  // FK to User.id, nullable for system-generated notes
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceNotes", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceNotes", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
   ticket  Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
@@ -343,8 +343,8 @@ model Keyword {
   enabled   Boolean  @default(true)
   notes     String?
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceKeywords", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceKeywords", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   mentions  Mention[]
 
@@ -373,8 +373,8 @@ model Mention {
   status       String   @default("new") // "new" | "triaged" | "engaged" | "dismissed"
   raw          String?  // JSON blob from source
 
-  workspaceId String?
-  workspace   Workspace? @relation("WorkspaceMentions", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceMentions", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
 
