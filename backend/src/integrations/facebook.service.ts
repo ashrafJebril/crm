@@ -79,8 +79,8 @@ export class FacebookService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ─── Public API ─────────────────────────────────────────────────────────
-  async status() {
-    const integ = await this.find();
+  async status(workspaceId: string) {
+    const integ = await this.find(workspaceId);
     if (!integ) return { connected: false };
     return {
       connected: true,
@@ -91,7 +91,7 @@ export class FacebookService {
     };
   }
 
-  async connect(rawToken: string) {
+  async connect(workspaceId: string, rawToken: string) {
     // Validate the token + get a label.  /me works for both User and Page tokens.
     const me = await this.graphGet<FbMe>("/me?fields=id,name", rawToken);
     if (!me?.id) throw new BadRequestException("Token did not resolve to anything");
@@ -165,10 +165,10 @@ export class FacebookService {
       raw: JSON.stringify({ me, candidates: candidates.map((c) => ({ id: c.id, name: c.name })) }),
     };
 
-    const existing = await this.find();
+    const existing = await this.find(workspaceId);
     const row = existing
       ? await this.prisma.integration.update({ where: { id: existing.id }, data })
-      : await this.prisma.integration.create({ data });
+      : await this.prisma.integration.create({ data: { ...data, workspaceId } });
 
     return {
       connected: true,
@@ -192,16 +192,16 @@ export class FacebookService {
     return this.fetchJson<LongLivedTokenResponse>(url, { method: "GET" });
   }
 
-  async disconnect() {
-    const integ = await this.find();
+  async disconnect(workspaceId: string) {
+    const integ = await this.find(workspaceId);
     if (!integ) return { ok: true };
     await this.prisma.integration.delete({ where: { id: integ.id } });
     return { ok: true };
   }
 
   /** List every Page the currently-stored token can access. Lets the UI switch. */
-  async listPages() {
-    const { token } = await this.requireToken();
+  async listPages(workspaceId: string) {
+    const { token } = await this.requireToken(workspaceId);
     // Try /me/accounts. If the stored token is a Page Access Token (no
     // /me/accounts), return just the connected page as a single entry.
     let res: FbAccountsResponse | null = null;
@@ -213,7 +213,7 @@ export class FacebookService {
     } catch {
       res = null;
     }
-    const integ = await this.find();
+    const integ = await this.find(workspaceId);
     if (!res?.data?.length) {
       // Single-page mode (token is already a Page token)
       return integ
@@ -228,8 +228,8 @@ export class FacebookService {
   }
 
   /** Switch the active Page. Re-derives the long-lived token for that page. */
-  async selectPage(pageId: string) {
-    const integ = await this.find();
+  async selectPage(workspaceId: string, pageId: string) {
+    const integ = await this.find(workspaceId);
     if (!integ) throw new NotFoundException("Facebook is not connected");
     // Try to get the page's access_token from the stored user-level token.
     let pageToken = integ.accessToken;
@@ -277,8 +277,8 @@ export class FacebookService {
     };
   }
 
-  async listPosts(limit = 25) {
-    const { token, pageId } = await this.requireToken();
+  async listPosts(workspaceId: string, limit = 25) {
+    const { token, pageId } = await this.requireToken(workspaceId);
     const fields = [
       "id",
       "message",
@@ -294,12 +294,12 @@ export class FacebookService {
       `/${pageId}/posts?fields=${encodeURIComponent(fields)}&limit=${limit}`,
       token,
     );
-    await this.touchFetched();
+    await this.touchFetched(workspaceId);
     return (res.data ?? []).map((p) => this.shapePost(p));
   }
 
-  async listComments(postId: string, limit = 25) {
-    const { token } = await this.requireToken();
+  async listComments(workspaceId: string, postId: string, limit = 25) {
+    const { token } = await this.requireToken(workspaceId);
     const fields = "id,message,created_time,from,like_count,parent,comment_count";
     const res = await this.graphGet<FbCommentsResponse>(
       `/${postId}/comments?fields=${encodeURIComponent(fields)}&order=reverse_chronological&limit=${limit}`,
@@ -316,15 +316,15 @@ export class FacebookService {
     }));
   }
 
-  async replyToComment(commentId: string, message: string) {
-    const { token } = await this.requireToken();
+  async replyToComment(workspaceId: string, commentId: string, message: string) {
+    const { token } = await this.requireToken(workspaceId);
     const res = await this.graphPost<{ id: string }>(`/${commentId}/comments`, token, { message });
     return { id: res.id, ok: true };
   }
 
   // ─── Page Messenger conversations (DMs) ─────────────────────────────────
-  async listConversations(limit = 25) {
-    const { token, pageId } = await this.requireToken();
+  async listConversations(workspaceId: string, limit = 25) {
+    const { token, pageId } = await this.requireToken(workspaceId);
     const fields = "id,updated_time,snippet,unread_count,message_count,participants";
     const res = await this.graphGet<{
       data: Array<{
@@ -341,7 +341,7 @@ export class FacebookService {
 
     // Upsert each non-Page participant as a real Contact in our DB so that
     // downstream features (notes, tickets, tags, analytics) can attach to a
-    // stable id. Dedup is keyed on (externalSource, externalId).
+    // stable id. Dedup is keyed on (workspaceId, externalSource, externalId).
     const contactByPsid = new Map<string, string>(); // psid -> DB contact id
     for (const c of rows) {
       const other = c.participants?.data.find((p) => p.id !== pageId);
@@ -349,12 +349,14 @@ export class FacebookService {
       if (contactByPsid.has(other.id)) continue;
       const contact = await this.prisma.contact.upsert({
         where: {
-          externalSource_externalId: {
+          workspaceId_externalSource_externalId: {
+            workspaceId,
             externalSource: "facebook",
             externalId: other.id,
           },
         },
         create: {
+          workspaceId,
           name: other.name ?? "Facebook user",
           industry: "social",
           lifecycle: "lead",
@@ -404,8 +406,8 @@ export class FacebookService {
     return new Date(t).toLocaleDateString();
   }
 
-  async listMessagesInConversation(conversationId: string, limit = 25) {
-    const { token } = await this.requireToken();
+  async listMessagesInConversation(workspaceId: string, conversationId: string, limit = 25) {
+    const { token } = await this.requireToken(workspaceId);
     const fields = "id,from,to,message,created_time,attachments";
     const res = await this.graphGet<{
       data: Array<{
@@ -418,7 +420,7 @@ export class FacebookService {
     }>(`/${conversationId}/messages?fields=${encodeURIComponent(fields)}&limit=${limit}`, token);
     // FB returns messages newest-first; return oldest-first for thread display.
     const messages = (res.data ?? []).slice().reverse();
-    const { pageId } = await this.requireToken();
+    const { pageId } = await this.requireToken(workspaceId);
     return messages.map((m) => ({
       id: m.id,
       from: m.from?.id === pageId ? "page" : "them",
@@ -429,8 +431,8 @@ export class FacebookService {
     }));
   }
 
-  async sendDirectMessage(recipientId: string, message: string) {
-    const { token, pageId } = await this.requireToken();
+  async sendDirectMessage(workspaceId: string, recipientId: string, message: string) {
+    const { token, pageId } = await this.requireToken(workspaceId);
     // Note: Graph requires { recipient: {id}, message: {text} } as JSON.
     // Our existing graphPost is form-encoded; use a JSON variant inline.
     const url = `${GRAPH}/${pageId}/messages?access_token=${encodeURIComponent(token)}`;
@@ -448,21 +450,23 @@ export class FacebookService {
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────
-  private async find() {
-    return this.prisma.integration.findFirst({ where: { platform: "facebook" } });
+  private async find(workspaceId: string) {
+    return this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "facebook" },
+    });
   }
 
-  private async requireToken(): Promise<{ token: string; pageId: string }> {
-    const integ = await this.find();
+  private async requireToken(workspaceId: string): Promise<{ token: string; pageId: string }> {
+    const integ = await this.find(workspaceId);
     if (!integ?.accessToken || !integ.pageId) {
       throw new NotFoundException("Facebook is not connected");
     }
     return { token: integ.accessToken, pageId: integ.pageId };
   }
 
-  private async touchFetched() {
+  private async touchFetched(workspaceId: string) {
     await this.prisma.integration.updateMany({
-      where: { platform: "facebook" },
+      where: { workspaceId, platform: "facebook" },
       data: { lastFetchedAt: new Date() },
     });
   }

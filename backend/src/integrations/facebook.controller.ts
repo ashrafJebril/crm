@@ -8,70 +8,85 @@ import {
 } from "@nestjs/common";
 import { FacebookService } from "./facebook.service";
 import { ConnectFacebookDto, ReplyToCommentDto } from "./facebook.dto";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("integrations/facebook")
 export class FacebookController {
   constructor(private readonly fb: FacebookService) {}
 
   @Get("status")
-  status() {
-    return this.fb.status();
+  status(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.status(workspaceId);
   }
 
   @Post("connect")
-  connect(@Body() dto: ConnectFacebookDto) {
-    return this.fb.connect(dto.accessToken);
+  connect(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: ConnectFacebookDto,
+  ) {
+    return this.fb.connect(workspaceId, dto.accessToken);
   }
 
   @Delete("disconnect")
-  disconnect() {
-    return this.fb.disconnect();
+  disconnect(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.disconnect(workspaceId);
   }
 
   @Get("pages")
-  listPages() {
-    return this.fb.listPages();
+  listPages(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.listPages(workspaceId);
   }
 
   @Post("select-page")
-  selectPage(@Body() dto: { pageId: string }) {
-    return this.fb.selectPage(dto.pageId);
+  selectPage(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: { pageId: string },
+  ) {
+    return this.fb.selectPage(workspaceId, dto.pageId);
   }
 
   @Get("posts")
-  listPosts() {
-    return this.fb.listPosts();
+  listPosts(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.listPosts(workspaceId);
   }
 
   @Get("posts/:postId/comments")
-  listComments(@Param("postId") postId: string) {
-    return this.fb.listComments(postId);
+  listComments(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("postId") postId: string,
+  ) {
+    return this.fb.listComments(workspaceId, postId);
   }
 
   @Post("comments/:commentId/reply")
   replyToComment(
+    @CurrentWorkspace() workspaceId: string,
     @Param("commentId") commentId: string,
     @Body() dto: ReplyToCommentDto,
   ) {
-    return this.fb.replyToComment(commentId, dto.message);
+    return this.fb.replyToComment(workspaceId, commentId, dto.message);
   }
 
   // ── Page DMs ────────────────────────────────────────────────────────────
   @Get("conversations")
-  listConversations() {
-    return this.fb.listConversations();
+  listConversations(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.listConversations(workspaceId);
   }
 
   @Get("conversations/:conversationId/messages")
-  listMessagesInConversation(@Param("conversationId") conversationId: string) {
-    return this.fb.listMessagesInConversation(conversationId);
+  listMessagesInConversation(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("conversationId") conversationId: string,
+  ) {
+    return this.fb.listMessagesInConversation(workspaceId, conversationId);
   }
 
   @Post("conversations/:recipientId/send")
   sendDirectMessage(
+    @CurrentWorkspace() workspaceId: string,
     @Param("recipientId") recipientId: string,
     @Body() dto: ReplyToCommentDto,
   ) {
-    return this.fb.sendDirectMessage(recipientId, dto.message);
+    return this.fb.sendDirectMessage(workspaceId, recipientId, dto.message);
   }
 }

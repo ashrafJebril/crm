@@ -60,7 +60,7 @@ model Contact {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([externalSource, externalId])
+  @@unique([workspaceId, externalSource, externalId])
   @@index([workspaceId])
 }
 
