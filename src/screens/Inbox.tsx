@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
+import { ConvRowSkeleton, MessageSkeleton } from "@/components/Skeleton";
 import {
   IconAttach,
   IconBook,
@@ -937,15 +938,10 @@ function InboxList({
       </div>
       <div style={{ flex: 1, overflowY: "auto" }}>
         {loading && allConvs.length === 0 && (
-          <div
-            className="mono pulse"
-            style={{
-              padding: "16px 14px",
-              fontSize: 12,
-              color: "var(--ink-3)",
-            }}
-          >
-            {tx("loading…", "جارٍ التحميل…")}
+          <div aria-label={tx("Loading conversations", "جارٍ تحميل المحادثات")}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <ConvRowSkeleton key={i} />
+            ))}
           </div>
         )}
         {error && (
@@ -2022,6 +2018,23 @@ function InboxImpl() {
           onConvertToTicket={() => setShowConvertModal(true)}
           tx={tx}
         />
+      ) : activeQ.loading ? (
+        <div
+          aria-label={tx("Loading conversation", "جارٍ تحميل المحادثة")}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            padding: "24px 0",
+            overflowY: "auto",
+          }}
+        >
+          <MessageSkeleton side="left" />
+          <MessageSkeleton side="right" />
+          <MessageSkeleton side="left" />
+          <MessageSkeleton side="right" />
+          <MessageSkeleton side="left" />
+        </div>
       ) : (
         <div
           style={{
@@ -2032,11 +2045,6 @@ function InboxImpl() {
             fontSize: 13,
           }}
         >
-          {activeQ.loading && (
-            <div className="mono" style={{ opacity: 0.7 }}>
-              {tx("loading…", "جارٍ التحميل…")}
-            </div>
-          )}
           {activeQ.error && (
             <div
               style={{
@@ -2054,7 +2062,7 @@ function InboxImpl() {
               </button>
             </div>
           )}
-          {!activeQ.loading && !activeQ.error && (
+          {!activeQ.error && (
             <span>{tx("Select a conversation", "اختر محادثة")}</span>
           )}
         </div>

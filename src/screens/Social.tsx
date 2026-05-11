@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import { PhotoSlot } from "@/components/PhotoSlot";
+import { CommentSkeleton, PostCardSkeleton } from "@/components/Skeleton";
 import {
   IconBolt,
   IconCheckCircle,
@@ -599,7 +600,17 @@ function SocialImpl() {
               gap: 12,
             }}
           >
-            {feed.map((post) => {
+            {isFbLive && liveFbQ.loading && feed.length === 0 ? (
+              <div
+                aria-label={tx("Loading posts", "جارٍ تحميل المنشورات")}
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              >
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <PostCardSkeleton key={i} />
+                ))}
+              </div>
+            ) : null}
+            {!(isFbLive && liveFbQ.loading && feed.length === 0) && feed.map((post) => {
               const isActive = selected?.id === post.id;
               const body = isAr && post.bodyAr ? post.bodyAr : post.body;
               const liveComments = getCurrentComments(post);
@@ -861,7 +872,17 @@ function SocialImpl() {
                   gap: 12,
                 }}
               >
-                {sortedComments.map((c) => {
+                {selectedIsLive && liveCommentsQ.loading && sortedComments.length === 0 ? (
+                  <div
+                    aria-label={tx("Loading comments", "جارٍ تحميل التعليقات")}
+                    style={{ display: "flex", flexDirection: "column", gap: 12 }}
+                  >
+                    {Array.from({ length: 3 }).map((_, i) => (
+                      <CommentSkeleton key={i} />
+                    ))}
+                  </div>
+                ) : null}
+                {!(selectedIsLive && liveCommentsQ.loading && sortedComments.length === 0) && sortedComments.map((c) => {
                   const cBody = isAr && c.bodyAr ? c.bodyAr : c.body;
                   return (
                     <div
@@ -956,7 +977,7 @@ function SocialImpl() {
                     </div>
                   );
                 })}
-                {sortedComments.length === 0 && (
+                {sortedComments.length === 0 && !(selectedIsLive && liveCommentsQ.loading) && (
                   <div
                     className="mono muted"
                     style={{ fontSize: 12, padding: 12 }}
