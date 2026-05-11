@@ -16,6 +16,7 @@ import {
   MoveTicketDto,
   UpdateTicketDto,
 } from "./tickets.dto";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller()
 export class TicketsController {
@@ -23,53 +24,65 @@ export class TicketsController {
 
   // ── Pipelines ──────────────────────────────────────────────────────────
   @Get("pipelines")
-  listPipelines() {
-    return this.svc.listPipelines();
+  listPipelines(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.listPipelines(workspaceId);
   }
 
   @Get("pipelines/:id")
-  getPipeline(@Param("id") id: string) {
-    return this.svc.getPipeline(id);
+  getPipeline(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.getPipeline(workspaceId, id);
   }
 
   // ── Tickets ────────────────────────────────────────────────────────────
   @Get("tickets")
-  listTickets(@Query() query: ListTicketsQuery) {
-    return this.svc.listTickets(query);
+  listTickets(@CurrentWorkspace() workspaceId: string, @Query() query: ListTicketsQuery) {
+    return this.svc.listTickets(workspaceId, query);
   }
 
   @Get("tickets/dashboard/summary")
-  dashboardSummary() {
-    return this.svc.dashboardSummary();
+  dashboardSummary(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.dashboardSummary(workspaceId);
   }
 
   @Get("tickets/:id")
-  getTicket(@Param("id") id: string) {
-    return this.svc.getTicket(id);
+  getTicket(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.getTicket(workspaceId, id);
   }
 
   @Post("tickets")
-  createTicket(@Body() dto: CreateTicketDto) {
-    return this.svc.createTicket(dto);
+  createTicket(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateTicketDto) {
+    return this.svc.createTicket(workspaceId, dto);
   }
 
   @Patch("tickets/:id")
-  updateTicket(@Param("id") id: string, @Body() dto: UpdateTicketDto) {
-    return this.svc.updateTicket(id, dto);
+  updateTicket(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: UpdateTicketDto,
+  ) {
+    return this.svc.updateTicket(workspaceId, id, dto);
   }
 
   @Post("tickets/:id/move")
-  moveTicket(@Param("id") id: string, @Body() dto: MoveTicketDto) {
-    return this.svc.moveTicket(id, dto);
+  moveTicket(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: MoveTicketDto,
+  ) {
+    return this.svc.moveTicket(workspaceId, id, dto);
   }
 
   @Post("tickets/:id/notes")
-  addNote(@Param("id") id: string, @Body() dto: AddNoteDto) {
-    return this.svc.addNote(id, dto);
+  addNote(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: AddNoteDto,
+  ) {
+    return this.svc.addNote(workspaceId, id, dto);
   }
 
   @Delete("tickets/:id")
-  deleteTicket(@Param("id") id: string) {
-    return this.svc.deleteTicket(id);
+  deleteTicket(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.deleteTicket(workspaceId, id);
   }
 }

@@ -17,8 +17,9 @@ export class TicketsService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ─── Pipelines ─────────────────────────────────────────────────────────
-  async listPipelines() {
+  async listPipelines(workspaceId: string) {
     return this.prisma.pipeline.findMany({
+      where: { workspaceId },
       orderBy: { createdAt: "asc" },
       include: {
         stages: { orderBy: { order: "asc" } },
@@ -27,9 +28,9 @@ export class TicketsService {
     });
   }
 
-  async getPipeline(id: string) {
-    const p = await this.prisma.pipeline.findUnique({
-      where: { id },
+  async getPipeline(workspaceId: string, id: string) {
+    const p = await this.prisma.pipeline.findFirst({
+      where: { id, workspaceId },
       include: { stages: { orderBy: { order: "asc" } } },
     });
     if (!p) throw new NotFoundException("Pipeline not found");
@@ -37,9 +38,10 @@ export class TicketsService {
   }
 
   // ─── Tickets ───────────────────────────────────────────────────────────
-  async listTickets(query: ListTicketsQuery) {
+  async listTickets(workspaceId: string, query: ListTicketsQuery) {
     return this.prisma.ticket.findMany({
       where: {
+        workspaceId,
         pipelineId: query.pipelineId,
         stageId: query.stageId,
         contactId: query.contactId,
@@ -54,9 +56,9 @@ export class TicketsService {
     });
   }
 
-  async getTicket(id: string) {
-    const t = await this.prisma.ticket.findUnique({
-      where: { id },
+  async getTicket(workspaceId: string, id: string) {
+    const t = await this.prisma.ticket.findFirst({
+      where: { id, workspaceId },
       include: {
         contact: true,
         stage: true,
@@ -68,18 +70,18 @@ export class TicketsService {
     return t;
   }
 
-  async createTicket(dto: CreateTicketDto) {
+  async createTicket(workspaceId: string, dto: CreateTicketDto) {
     // Validate pipeline and stage and that the stage belongs to the pipeline.
-    const stage = await this.prisma.ticketStage.findUnique({
-      where: { id: dto.stageId },
+    const stage = await this.prisma.ticketStage.findFirst({
+      where: { id: dto.stageId, workspaceId },
     });
     if (!stage || stage.pipelineId !== dto.pipelineId) {
       throw new BadRequestException("stageId does not belong to pipelineId");
     }
 
-    // Per-pipeline auto-incrementing number
+    // Per-pipeline, per-workspace auto-incrementing number
     const lastInPipeline = await this.prisma.ticket.findFirst({
-      where: { pipelineId: dto.pipelineId },
+      where: { pipelineId: dto.pipelineId, workspaceId },
       orderBy: { number: "desc" },
       select: { number: true },
     });
@@ -87,6 +89,7 @@ export class TicketsService {
 
     const ticket = await this.prisma.ticket.create({
       data: {
+        workspaceId,
         number,
         pipelineId: dto.pipelineId,
         stageId: dto.stageId,
@@ -103,6 +106,7 @@ export class TicketsService {
 
     await this.prisma.ticketActivity.create({
       data: {
+        workspaceId,
         ticketId: ticket.id,
         kind: "created",
         toStage: stage.key,
@@ -112,8 +116,10 @@ export class TicketsService {
     return ticket;
   }
 
-  async updateTicket(id: string, dto: UpdateTicketDto) {
-    const existing = await this.prisma.ticket.findUnique({ where: { id } });
+  async updateTicket(workspaceId: string, id: string, dto: UpdateTicketDto) {
+    const existing = await this.prisma.ticket.findFirst({
+      where: { id, workspaceId },
+    });
     if (!existing) throw new NotFoundException("Ticket not found");
 
     const updated = await this.prisma.ticket.update({
@@ -130,6 +136,7 @@ export class TicketsService {
     if (dto.value !== undefined && dto.value !== existing.value) {
       await this.prisma.ticketActivity.create({
         data: {
+          workspaceId,
           ticketId: id,
           kind: "value_changed",
           note: `${existing.value ?? 0} → ${dto.value}`,
@@ -139,6 +146,7 @@ export class TicketsService {
     if (dto.ownerId !== undefined && dto.ownerId !== existing.ownerId) {
       await this.prisma.ticketActivity.create({
         data: {
+          workspaceId,
           ticketId: id,
           kind: "owner_changed",
           note: `${existing.ownerId ?? "—"} → ${dto.ownerId ?? "—"}`,
@@ -149,15 +157,15 @@ export class TicketsService {
     return updated;
   }
 
-  async moveTicket(id: string, dto: MoveTicketDto) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { id },
+  async moveTicket(workspaceId: string, id: string, dto: MoveTicketDto) {
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id, workspaceId },
       include: { stage: true },
     });
     if (!ticket) throw new NotFoundException("Ticket not found");
 
-    const targetStage = await this.prisma.ticketStage.findUnique({
-      where: { id: dto.stageId },
+    const targetStage = await this.prisma.ticketStage.findFirst({
+      where: { id: dto.stageId, workspaceId },
     });
     if (!targetStage || targetStage.pipelineId !== ticket.pipelineId) {
       throw new BadRequestException("Target stage doesn't belong to ticket's pipeline");
@@ -185,6 +193,7 @@ export class TicketsService {
 
     await this.prisma.ticketActivity.create({
       data: {
+        workspaceId,
         ticketId: id,
         kind: targetStage.isTerminal ? (targetStage.isWon ? "won" : "lost") : "stage_changed",
         fromStage: ticket.stage.key,
@@ -197,10 +206,11 @@ export class TicketsService {
     return updated;
   }
 
-  async addNote(id: string, dto: AddNoteDto) {
-    await this.getTicket(id);
+  async addNote(workspaceId: string, id: string, dto: AddNoteDto) {
+    await this.getTicket(workspaceId, id);
     return this.prisma.ticketActivity.create({
       data: {
+        workspaceId,
         ticketId: id,
         kind: "note",
         note: dto.note,
@@ -209,15 +219,16 @@ export class TicketsService {
     });
   }
 
-  async deleteTicket(id: string) {
-    await this.getTicket(id);
+  async deleteTicket(workspaceId: string, id: string) {
+    await this.getTicket(workspaceId, id);
     await this.prisma.ticket.delete({ where: { id } });
     return { ok: true };
   }
 
   // ─── Dashboard summary ─────────────────────────────────────────────────
-  async dashboardSummary() {
+  async dashboardSummary(workspaceId: string) {
     const all = await this.prisma.ticket.findMany({
+      where: { workspaceId },
       include: { stage: true },
     });
 
