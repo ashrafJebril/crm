@@ -30,6 +30,7 @@ model User {
   isSuperAdmin Boolean @default(false)
 
   memberships WorkspaceMember[]
+  uploadedMedia Media[] @relation("UserMediaUploads")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -421,6 +422,7 @@ model Workspace {
   keywords          Keyword[]          @relation("WorkspaceKeywords")
   mentions          Mention[]          @relation("WorkspaceMentions")
   notes             Note[]             @relation("WorkspaceNotes")
+  media             Media[]            @relation("WorkspaceMedia")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -443,4 +445,25 @@ model WorkspaceMember {
   @@unique([userId, workspaceId])
   @@index([workspaceId])
   @@index([userId])
+}
+
+// ─── Media library ────────────────────────────────────────────────────────
+
+model Media {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace @relation("WorkspaceMedia", fields: [workspaceId], references: [id], onDelete: Cascade)
+  fileName      String   // original filename, kept for display
+  mimeType      String   // "image/jpeg" | "image/png" | "image/gif" | "image/webp" | ...
+  sizeBytes     Int
+  storedPath    String   // path on disk, relative to backend/uploads
+  width         Int?     // for images
+  height        Int?     // for images
+  uploadedById  String?  // FK to User.id; nullable for system-generated assets
+  uploadedBy    User?    @relation("UserMediaUploads", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([uploadedById])
 }
