@@ -17,6 +17,7 @@ import { TicketsModule } from "./tickets/tickets.module";
 import { MentionsModule } from "./mentions/mentions.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotesModule } from "./notes/notes.module";
+import { MediaModule } from "./media/media.module";
 import { AdminModule } from "./admin/admin.module";
 
 @Module({
@@ -37,6 +38,7 @@ import { AdminModule } from "./admin/admin.module";
     MentionsModule,
     WorkspacesModule,
     NotesModule,
+    MediaModule,
     AdminModule,
   ],
   providers: [
