@@ -633,10 +633,17 @@ function SocialImpl() {
               const body = isAr && post.bodyAr ? post.bodyAr : post.body;
               const liveComments = getCurrentComments(post);
               return (
-                <button
+                <div
                   key={post.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => selectPost(post.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      selectPost(post.id);
+                    }
+                  }}
                   className="post-card"
                   data-active={isActive ? "true" : "false"}
                   style={{
@@ -822,7 +829,7 @@ function SocialImpl() {
                       </span>
                     )}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
