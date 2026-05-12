@@ -18,7 +18,10 @@ export class GoogleCsePoller implements Poller {
   readonly source = "google";
   private readonly logger = new Logger(GoogleCsePoller.name);
 
-  async fetchFor(keyword: { id: string; value: string; kind: string }): Promise<RawMention[]> {
+  async fetchFor(
+    _workspaceId: string,
+    keyword: { id: string; value: string; kind: string },
+  ): Promise<RawMention[]> {
     const key = process.env.GOOGLE_CSE_KEY;
     const cx = process.env.GOOGLE_CSE_CX;
     if (!key || !cx) {

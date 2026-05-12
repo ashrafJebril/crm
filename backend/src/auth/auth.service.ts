@@ -6,7 +6,8 @@ import {
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
-import { LoginDto, RegisterDto } from "./dto";
+import { WorkspacesService } from "../workspaces/workspaces.service";
+import { LoginDto, RegisterDto, SwitchWorkspaceDto } from "./dto";
 import type { JwtPayload } from "./auth.guard";
 
 @Injectable()
@@ -14,6 +15,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly workspaces: WorkspacesService,
   ) {}
 
   async login(dto: LoginDto) {
@@ -21,7 +23,32 @@ export class AuthService {
     if (!user) throw new UnauthorizedException("Invalid credentials");
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) throw new UnauthorizedException("Invalid credentials");
-    return this.issue(user);
+
+    const memberships = await this.workspaces.listForUser(user.id);
+    if (memberships.length === 0) {
+      // Edge case: user with no workspace memberships. Create one on the fly
+      // so they always land somewhere.
+      const ws = await this.workspaces.create(
+        { name: `${user.name}'s workspace` },
+        user.id,
+      );
+      return this.issue(user, ws.id, [
+        {
+          id: ws.id,
+          name: ws.name,
+          slug: ws.slug,
+          timezone: ws.timezone,
+          lang: ws.lang,
+          plan: ws.plan,
+          role: "owner",
+        },
+      ]);
+    }
+    if (memberships.length === 1) {
+      return this.issue(user, memberships[0].id, memberships);
+    }
+    // Multiple — return list, client picks via /auth/switch-workspace.
+    return this.issue(user, null, memberships);
   }
 
   async register(dto: RegisterDto) {
@@ -43,7 +70,19 @@ export class AuthService {
         initials,
       },
     });
-    return this.issue(user);
+    const ws = await this.workspaces.create(
+      { name: dto.workspaceName ?? `${dto.name}'s workspace` },
+      user.id,
+    );
+    const memberships = await this.workspaces.listForUser(user.id);
+    return this.issue(user, ws.id, memberships);
+  }
+
+  async switchWorkspace(userId: string, dto: SwitchWorkspaceDto) {
+    await this.workspaces.requireMember(userId, dto.workspaceId);
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const memberships = await this.workspaces.listForUser(userId);
+    return this.issue(user, dto.workspaceId, memberships);
   }
 
   async me(userId: string) {
@@ -52,11 +91,29 @@ export class AuthService {
     return this.shape(user);
   }
 
-  private async issue(user: { id: string; email: string; role: string }) {
-    const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
+  async myWorkspaces(userId: string) {
+    return this.workspaces.listForUser(userId);
+  }
+
+  private async issue(
+    user: { id: string; email: string; role: string },
+    workspaceId: string | null,
+    workspaces: Awaited<ReturnType<WorkspacesService["listForUser"]>>,
+  ) {
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      ...(workspaceId ? { workspaceId } : {}),
+    };
     const token = await this.jwt.signAsync(payload);
     const full = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    return { token, user: this.shape(full) };
+    return {
+      token,
+      user: this.shape(full),
+      workspaces,
+      activeWorkspaceId: workspaceId,
+    };
   }
 
   private shape(u: {

@@ -23,6 +23,8 @@ model User {
   status    String   @default("offline") // online | away | offline
   twoFA     Boolean  @default(false)
 
+  memberships WorkspaceMember[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -47,6 +49,9 @@ model Contact {
   externalSource String? // "facebook" | "instagram" | "tiktok"
   externalId     String?
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceContacts", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   conversations Conversation[]
   appointments  Appointment[]
   tickets       Ticket[]
@@ -55,7 +60,8 @@ model Contact {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([externalSource, externalId])
+  @@unique([workspaceId, externalSource, externalId])
+  @@index([workspaceId])
 }
 
 model Conversation {
@@ -74,6 +80,9 @@ model Conversation {
   escalated  Boolean  @default(false)
   suggested  String?
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
 
@@ -81,6 +90,7 @@ model Conversation {
   updatedAt DateTime @updatedAt
 
   @@index([contactId])
+  @@index([workspaceId])
 }
 
 model Message {
@@ -92,11 +102,15 @@ model Message {
   agent          String?
   attach         String?
 
+  workspaceId  String
+  workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
 
   @@index([conversationId])
+  @@index([workspaceId])
 }
 
 model Appointment {
@@ -114,6 +128,9 @@ model Appointment {
   noteAr       String?
   reminderSent Boolean  @default(false)
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
@@ -121,6 +138,7 @@ model Appointment {
 
   @@index([contactId])
   @@index([startAt])
+  @@index([workspaceId])
 }
 
 model Template {
@@ -131,22 +149,33 @@ model Template {
   status   String // approved | pending | rejected
   uses     Int    @default(0)
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTemplates", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
+
+  @@index([workspaceId])
 }
 
 // ─── Sales / ticket pipelines ─────────────────────────────────────────────
 
 model Pipeline {
   id        String  @id @default(cuid())
-  key       String  @unique // "retail" | "bulk" | …
+  key       String  // "retail" | "bulk" | …
   name      String
   nameAr    String
   isDefault Boolean @default(false)
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspacePipelines", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   stages   TicketStage[]
   tickets  Ticket[]
 
   createdAt DateTime @default(now())
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId])
 }
 
 model TicketStage {
@@ -162,11 +191,15 @@ model TicketStage {
   isWon      Boolean @default(false)
   slaMinutes Int?
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTicketStages", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   tickets  Ticket[]
 
   @@unique([pipelineId, key])
   @@index([pipelineId])
+  @@index([workspaceId])
 }
 
 model Ticket {
@@ -190,6 +223,9 @@ model Ticket {
   closedAt       DateTime?
   enteredStageAt DateTime  @default(now())
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTickets", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   pipeline   Pipeline         @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   stage      TicketStage      @relation(fields: [stageId], references: [id])
   contact    Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -200,6 +236,7 @@ model Ticket {
   @@index([contactId])
   @@index([stageId])
   @@index([ownerId])
+  @@index([workspaceId])
 }
 
 model TicketActivity {
@@ -213,14 +250,18 @@ model TicketActivity {
 
   createdAt DateTime @default(now())
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTicketActivities", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId])
+  @@index([workspaceId])
 }
 
 model Integration {
   id           String   @id @default(cuid())
-  platform     String   @unique // "facebook" | "instagram" | "tiktok" — one row per platform
+  platform     String   // "facebook" | "instagram" | "tiktok" — one row per platform per workspace
   pageId       String?  // FB Page id / IG Business Account id / TikTok user id
   pageName     String?  // human-friendly identifier
   accessToken  String   // long-lived token (NOT the App Secret). Plaintext in dev only.
@@ -229,8 +270,14 @@ model Integration {
   lastFetchedAt DateTime?
   raw          String?  // JSON metadata blob from the platform
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceIntegrations", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, platform])
+  @@index([workspaceId])
 }
 
 model Campaign {
@@ -248,8 +295,13 @@ model Campaign {
   schedule    String?
   agent       String
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────
@@ -267,6 +319,9 @@ model Note {
   body           String
   authorUserId   String?  // FK to User.id, nullable for system-generated notes
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceNotes", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
   ticket  Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
 
@@ -276,21 +331,28 @@ model Note {
   @@index([contactId])
   @@index([conversationId])
   @@index([ticketId])
+  @@index([workspaceId])
 }
 
 // ─── Social listening ──────────────────────────────────────────────────────
 
 model Keyword {
   id        String   @id @default(cuid())
-  value     String   @unique
+  value     String
   kind      String   // "brand" | "hashtag" | "handle" | "competitor"
   enabled   Boolean  @default(true)
   notes     String?
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceKeywords", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   mentions  Mention[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, value])
+  @@index([workspaceId])
 }
 
 model Mention {
@@ -312,9 +374,63 @@ model Mention {
   status       String   @default("new") // "new" | "triaged" | "engaged" | "dismissed"
   raw          String?  // JSON blob from source
 
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceMentions", fields: [workspaceId], references: [id], onDelete: Cascade)
+
   keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
 
-  @@unique([source, externalId])
+  @@unique([workspaceId, source, externalId])
   @@index([keywordId])
   @@index([status, ingestedAt])
+  @@index([workspaceId])
+}
+
+// ─── Workspaces (tenants) ─────────────────────────────────────────────────
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  timezone  String   @default("Asia/Riyadh")
+  lang      String   @default("ar") // "en" | "ar"
+  plan      String   @default("free") // "free" | "starter" | "growth" | "pro"
+
+  members WorkspaceMember[]
+
+  contacts          Contact[]          @relation("WorkspaceContacts")
+  conversations     Conversation[]     @relation("WorkspaceConversations")
+  messages          Message[]          @relation("WorkspaceMessages")
+  appointments      Appointment[]      @relation("WorkspaceAppointments")
+  templates         Template[]         @relation("WorkspaceTemplates")
+  campaigns         Campaign[]         @relation("WorkspaceCampaigns")
+  pipelines         Pipeline[]         @relation("WorkspacePipelines")
+  ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")
+  tickets           Ticket[]           @relation("WorkspaceTickets")
+  ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
+  integrations      Integration[]      @relation("WorkspaceIntegrations")
+  keywords          Keyword[]          @relation("WorkspaceKeywords")
+  mentions          Mention[]          @relation("WorkspaceMentions")
+  notes             Note[]             @relation("WorkspaceNotes")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WorkspaceMember {
+  id          String @id @default(cuid())
+  userId      String
+  workspaceId String
+  // Workspace-scoped role, separate from User.role (which is a system-level
+  // legacy field). Values: "owner" | "admin" | "agent" | "viewer".
+  role        String
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@index([userId])
 }

@@ -322,3 +322,17 @@ export interface Mention {
   status: MentionStatus;
   keyword?: Keyword;
 }
+
+// ─── Workspaces ───────────────────────────────────────────────────────────
+
+export type WorkspaceRole = "owner" | "admin" | "agent" | "viewer";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  timezone: string;
+  lang: string;
+  plan: string;
+  role: WorkspaceRole;
+}

@@ -13,27 +13,28 @@ import {
   CreateMessageDto,
   UpdateConversationDto,
 } from "./conversations.dto";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("conversations")
 export class ConversationsController {
   constructor(private readonly svc: ConversationsService) {}
 
-  @Get() list() { return this.svc.list(); }
-  @Get(":id") get(@Param("id") id: string) { return this.svc.get(id); }
-  @Post() create(@Body() dto: CreateConversationDto) { return this.svc.create(dto); }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateConversationDto) {
-    return this.svc.update(id, dto);
+  @Get() list(@CurrentWorkspace() workspaceId: string) { return this.svc.list(workspaceId); }
+  @Get(":id") get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) { return this.svc.get(workspaceId, id); }
+  @Post() create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateConversationDto) { return this.svc.create(workspaceId, dto); }
+  @Patch(":id") update(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Body() dto: UpdateConversationDto) {
+    return this.svc.update(workspaceId, id, dto);
   }
-  @Post(":id/read") markRead(@Param("id") id: string) {
-    return this.svc.markRead(id);
+  @Post(":id/read") markRead(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.markRead(workspaceId, id);
   }
-  @Delete(":id") remove(@Param("id") id: string) { return this.svc.remove(id); }
+  @Delete(":id") remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) { return this.svc.remove(workspaceId, id); }
 
   // Messages
-  @Get(":id/messages") messages(@Param("id") id: string) {
-    return this.svc.listMessages(id);
+  @Get(":id/messages") messages(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.listMessages(workspaceId, id);
   }
-  @Post(":id/messages") send(@Param("id") id: string, @Body() dto: CreateMessageDto) {
-    return this.svc.addMessage(id, dto);
+  @Post(":id/messages") send(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Body() dto: CreateMessageDto) {
+    return this.svc.addMessage(workspaceId, id, dto);
   }
 }

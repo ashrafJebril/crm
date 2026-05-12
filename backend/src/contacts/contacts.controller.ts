@@ -1,24 +1,44 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { ContactsService } from "./contacts.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("contacts")
 export class ContactsController {
-  constructor(private readonly contacts: ContactsService) {}
+  constructor(private readonly svc: ContactsService) {}
 
-  @Get() list() { return this.contacts.list(); }
-  @Get(":id") get(@Param("id") id: string) { return this.contacts.get(id); }
-  @Post() create(@Body() dto: CreateContactDto) { return this.contacts.create(dto); }
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateContactDto) {
-    return this.contacts.update(id, dto);
+  @Get()
+  list(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.list(workspaceId);
   }
-  @Delete(":id") remove(@Param("id") id: string) { return this.contacts.remove(id); }
+
+  @Get(":id")
+  get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.get(workspaceId, id);
+  }
+
+  @Post()
+  create(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: CreateContactDto,
+  ) {
+    return this.svc.create(workspaceId, dto);
+  }
+
+  @Patch(":id")
+  update(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: UpdateContactDto,
+  ) {
+    return this.svc.update(workspaceId, id, dto);
+  }
+
+  @Delete(":id")
+  remove(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+  ) {
+    return this.svc.remove(workspaceId, id);
+  }
 }

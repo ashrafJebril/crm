@@ -17,6 +17,7 @@ import {
   Min,
 } from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 const STATUSES = ["running", "scheduled", "draft", "completed", "paused"] as const;
 
@@ -49,25 +50,45 @@ class UpdateCampaignDto {
 class CampaignsController {
   constructor(private readonly prisma: PrismaService) {}
 
-  @Get() list() {
-    return this.prisma.campaign.findMany({ orderBy: { createdAt: "desc" } });
-  }
-
-  @Get(":id") get(@Param("id") id: string) {
-    return this.prisma.campaign.findUnique({ where: { id } });
-  }
-
-  @Post() create(@Body() dto: CreateCampaignDto) {
-    return this.prisma.campaign.create({
-      data: { ...dto, status: dto.status ?? "draft", recipients: dto.recipients ?? 0 },
+  @Get()
+  list(@CurrentWorkspace() workspaceId: string) {
+    return this.prisma.campaign.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "desc" },
     });
   }
 
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateCampaignDto) {
+  @Get(":id")
+  get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+  }
+
+  @Post()
+  create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto) {
+    return this.prisma.campaign.create({
+      data: {
+        ...dto,
+        workspaceId,
+        status: dto.status ?? "draft",
+        recipients: dto.recipients ?? 0,
+      },
+    });
+  }
+
+  @Patch(":id")
+  async update(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: UpdateCampaignDto,
+  ) {
+    // verify ownership
+    await this.prisma.campaign.findFirstOrThrow({ where: { id, workspaceId } });
     return this.prisma.campaign.update({ where: { id }, data: dto });
   }
 
-  @Delete(":id") remove(@Param("id") id: string) {
+  @Delete(":id")
+  async remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    await this.prisma.campaign.findFirstOrThrow({ where: { id, workspaceId } });
     return this.prisma.campaign.delete({ where: { id } }).then(() => ({ ok: true }));
   }
 }

@@ -32,22 +32,26 @@ const shape = (c: ContactRow) => ({
 export class ContactsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
+  async list(workspaceId: string) {
     const rows = await this.prisma.contact.findMany({
+      where: { workspaceId },
       orderBy: { createdAt: "desc" },
     });
     return rows.map(shape);
   }
 
-  async get(id: string) {
-    const row = await this.prisma.contact.findUnique({ where: { id } });
+  async get(workspaceId: string, id: string) {
+    const row = await this.prisma.contact.findFirst({
+      where: { id, workspaceId },
+    });
     if (!row) throw new NotFoundException("Contact not found");
     return shape(row);
   }
 
-  async create(dto: CreateContactDto) {
+  async create(workspaceId: string, dto: CreateContactDto) {
     const row = await this.prisma.contact.create({
       data: {
+        workspaceId,
         name: dto.name,
         phone: dto.phone ?? null,
         industry: dto.industry,
@@ -62,8 +66,8 @@ export class ContactsService {
     return shape(row);
   }
 
-  async update(id: string, dto: UpdateContactDto) {
-    await this.get(id);
+  async update(workspaceId: string, id: string, dto: UpdateContactDto) {
+    await this.get(workspaceId, id);
     const row = await this.prisma.contact.update({
       where: { id },
       data: {
@@ -74,8 +78,8 @@ export class ContactsService {
     return shape(row);
   }
 
-  async remove(id: string) {
-    await this.get(id);
+  async remove(workspaceId: string, id: string) {
+    await this.get(workspaceId, id);
     await this.prisma.contact.delete({ where: { id } });
     return { ok: true };
   }

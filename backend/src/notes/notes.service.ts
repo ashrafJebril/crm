@@ -6,40 +6,41 @@ import { CreateNoteDto, UpdateNoteDto } from "./notes.dto";
 export class NotesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  listForContact(contactId: string) {
+  listForContact(workspaceId: string, contactId: string) {
     return this.prisma.note.findMany({
-      where: { contactId },
+      where: { workspaceId, contactId },
       orderBy: { createdAt: "desc" },
     });
   }
 
-  listForConversation(conversationId: string) {
+  listForConversation(workspaceId: string, conversationId: string) {
     return this.prisma.note.findMany({
-      where: { conversationId },
+      where: { workspaceId, conversationId },
       orderBy: { createdAt: "desc" },
     });
   }
 
-  listForTicket(ticketId: string) {
+  listForTicket(workspaceId: string, ticketId: string) {
     return this.prisma.note.findMany({
-      where: { ticketId },
+      where: { workspaceId, ticketId },
       orderBy: { createdAt: "desc" },
     });
   }
 
-  async get(id: string) {
-    const row = await this.prisma.note.findUnique({ where: { id } });
+  async get(workspaceId: string, id: string) {
+    const row = await this.prisma.note.findFirst({ where: { id, workspaceId } });
     if (!row) throw new NotFoundException("Note not found");
     return row;
   }
 
-  async create(dto: CreateNoteDto, authorUserId: string | null) {
-    const contact = await this.prisma.contact.findUnique({
-      where: { id: dto.contactId },
+  async create(workspaceId: string, dto: CreateNoteDto, authorUserId: string | null) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: dto.contactId, workspaceId },
     });
     if (!contact) throw new NotFoundException("Contact not found");
     return this.prisma.note.create({
       data: {
+        workspaceId,
         contactId: dto.contactId,
         conversationId: dto.conversationId ?? null,
         ticketId: dto.ticketId ?? null,
@@ -49,16 +50,16 @@ export class NotesService {
     });
   }
 
-  async update(id: string, dto: UpdateNoteDto) {
-    await this.get(id);
+  async update(workspaceId: string, id: string, dto: UpdateNoteDto) {
+    await this.get(workspaceId, id);
     return this.prisma.note.update({
       where: { id },
       data: { body: dto.body },
     });
   }
 
-  async remove(id: string) {
-    await this.get(id);
+  async remove(workspaceId: string, id: string) {
+    await this.get(workspaceId, id);
     await this.prisma.note.delete({ where: { id } });
     return { ok: true };
   }

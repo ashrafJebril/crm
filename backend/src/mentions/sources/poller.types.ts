@@ -13,5 +13,8 @@ export interface RawMention {
 export interface Poller {
   readonly source: string;
   /** Fetch new mentions for one keyword. Returns RawMentions; dedup happens upstream. */
-  fetchFor(keyword: { id: string; value: string; kind: string }): Promise<RawMention[]>;
+  fetchFor(
+    workspaceId: string,
+    keyword: { id: string; value: string; kind: string },
+  ): Promise<RawMention[]>;
 }

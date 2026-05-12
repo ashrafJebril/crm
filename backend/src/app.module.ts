@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
+import { WorkspaceInterceptor } from "./common/workspace.interceptor";
 import { ScheduleModule } from "@nestjs/schedule";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
@@ -13,6 +15,7 @@ import { DashboardModule } from "./dashboard/dashboard.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { TicketsModule } from "./tickets/tickets.module";
 import { MentionsModule } from "./mentions/mentions.module";
+import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotesModule } from "./notes/notes.module";
 
 @Module({
@@ -31,7 +34,11 @@ import { NotesModule } from "./notes/notes.module";
     IntegrationsModule,
     TicketsModule,
     MentionsModule,
+    WorkspacesModule,
     NotesModule,
+  ],
+  providers: [
+    { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },
   ],
 })
 export class AppModule {}
