@@ -2,22 +2,26 @@ import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { tenancyExtension } from "../common/prisma-tenancy";
 
-function makeExtended() {
-  const base = new PrismaClient();
-  return base.$extends(tenancyExtension);
-}
-
-type ExtendedPrismaClient = ReturnType<typeof makeExtended>;
-
 @Injectable()
 export class PrismaService implements OnModuleDestroy {
-  private readonly client: ExtendedPrismaClient = makeExtended();
+  // Underlying base client. NEVER expose this in normal service code — it
+  // bypasses tenancy scoping. Reserved for admin/cross-tenant operations
+  // (super-admin portal, migration scripts hosted in-process).
+  private readonly base = new PrismaClient();
+  private readonly client = this.base.$extends(tenancyExtension);
 
   async onModuleDestroy(): Promise<void> {
-    await (this.client as unknown as PrismaClient).$disconnect();
+    await this.base.$disconnect();
   }
 
-  // ─── Model delegates ──────────────────────────────────────────────────
+  /** Unscoped Prisma client. Use ONLY in code that must read/write across
+   *  tenants (super-admin endpoints). Regular services must use the model
+   *  delegates below, which go through the tenancy extension. */
+  get raw(): PrismaClient {
+    return this.base;
+  }
+
+  // ─── Model delegates (tenant-scoped via extension) ────────────────────
   get user() { return this.client.user; }
   get workspace() { return this.client.workspace; }
   get workspaceMember() { return this.client.workspaceMember; }

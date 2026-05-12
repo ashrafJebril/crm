@@ -14,6 +14,11 @@ export interface JwtPayload {
   email: string;
   role: string;
   workspaceId?: string;
+  // tkana-internal super-admin: when true, the user can access /admin/*.
+  isSuperAdmin?: boolean;
+  // Marks an impersonation session — set when a super-admin entered another
+  // tenant's workspace for support. Used for audit + UI banner.
+  impersonating?: boolean;
 }
 
 @Injectable()

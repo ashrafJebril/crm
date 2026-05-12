@@ -1,7 +1,8 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import type { RouteId } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
-import { NAV, isSection } from "./nav";
+import { useAuth } from "@/auth/context";
+import { NAV, isSection, type NavEntry } from "./nav";
 import { Avatar } from "@/components/Avatar";
 import { IconBell, IconChevDown, IconSearch } from "@/icons";
 
@@ -12,7 +13,26 @@ interface SidebarProps {
 
 function SidebarImpl({ route, setRoute }: SidebarProps) {
   const { t } = useTweaks();
+  const { user } = useAuth();
   const isAr = t.lang === "ar";
+
+  // Filter out super-admin-only entries for normal users, then drop any
+  // section header that ends up with no items beneath it.
+  const visibleNav = useMemo<NavEntry[]>(() => {
+    const filtered = NAV.filter(
+      (n) => isSection(n) || !n.superAdminOnly || user?.isSuperAdmin,
+    );
+    const out: NavEntry[] = [];
+    for (let i = 0; i < filtered.length; i++) {
+      const cur = filtered[i];
+      if (isSection(cur)) {
+        const next = filtered[i + 1];
+        if (!next || isSection(next)) continue; // drop empty section header
+      }
+      out.push(cur);
+    }
+    return out;
+  }, [user?.isSuperAdmin]);
 
   return (
     <aside className="side">
@@ -47,7 +67,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
       )}
 
       <nav className="nav">
-        {NAV.map((n, i) => {
+        {visibleNav.map((n, i) => {
           if (isSection(n)) {
             return (
               <div key={`s${i}`} className="nav-section">

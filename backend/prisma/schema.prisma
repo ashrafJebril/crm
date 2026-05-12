@@ -23,6 +23,12 @@ model User {
   status    String   @default("offline") // online | away | offline
   twoFA     Boolean  @default(false)
 
+  // tkana-internal super-admin flag. When true, the user can access the
+  // /admin/* portal (cross-tenant operations: list workspaces, view stats,
+  // impersonate). This is NOT a workspace role — it's a system-wide capability
+  // held by tkana staff for SaaS operations support.
+  isSuperAdmin Boolean @default(false)
+
   memberships WorkspaceMember[]
 
   createdAt DateTime @default(now())
@@ -394,6 +400,10 @@ model Workspace {
   timezone  String   @default("Asia/Riyadh")
   lang      String   @default("ar") // "en" | "ar"
   plan      String   @default("free") // "free" | "starter" | "growth" | "pro"
+  // When set, the workspace is suspended (e.g., unpaid invoice, policy violation).
+  // Tenant-level enforcement of this flag is a follow-up; for now it's a marker
+  // visible in the admin portal.
+  suspendedAt DateTime?
 
   members WorkspaceMember[]
 

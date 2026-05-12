@@ -7,6 +7,7 @@ import { PlatformTweaks } from "@/tweaks/PlatformTweaks";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
+import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
 
 export default function App() {
   const { t } = useTweaks();
@@ -38,6 +39,7 @@ export default function App() {
 
   return (
     <div className="app" data-collapsed={t.collapsed}>
+      <ImpersonationBanner />
       <Sidebar route={route} setRoute={setRoute} />
       <main className="main">
         <Topbar route={route} />

@@ -62,7 +62,7 @@ async function main() {
   // Users (a.k.a. team)
   const password = await bcrypt.hash("demo1234", 10);
   const yara = await prisma.user.create({
-    data: { email: "yara@samemha.com",  password, name: "Yara Khaled",   role: "Owner",   initials: "YK", color: "150", status: "online" },
+    data: { email: "yara@samemha.com",  password, name: "Yara Khaled",   role: "Owner",   initials: "YK", color: "150", status: "online", isSuperAdmin: true },
   });
   await prisma.workspaceMember.create({ data: { userId: yara.id, workspaceId: wsId, role: "owner" } });
 

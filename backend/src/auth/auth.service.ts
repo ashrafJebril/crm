@@ -100,14 +100,17 @@ export class AuthService {
     workspaceId: string | null,
     workspaces: Awaited<ReturnType<WorkspacesService["listForUser"]>>,
   ) {
+    // Read the latest user row so isSuperAdmin reflects DB state (admins
+    // promoted/demoted between login sessions get the right capability).
+    const full = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       ...(workspaceId ? { workspaceId } : {}),
+      ...(full.isSuperAdmin ? { isSuperAdmin: true } : {}),
     };
     const token = await this.jwt.signAsync(payload);
-    const full = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     return {
       token,
       user: this.shape(full),
@@ -123,6 +126,7 @@ export class AuthService {
     role: string;
     initials: string;
     color: string;
+    isSuperAdmin: boolean;
   }) {
     return {
       id: u.id,
@@ -131,6 +135,7 @@ export class AuthService {
       role: u.role,
       initials: u.initials,
       color: u.color,
+      isSuperAdmin: u.isSuperAdmin,
     };
   }
 }

@@ -19,6 +19,7 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   team: lazy(() => import("@/screens/Team")),
   billing: lazy(() => import("@/screens/Billing")),
   settings: lazy(() => import("@/screens/Settings")),
+  admin: lazy(() => import("@/screens/Admin")),
 };
 
 const VALID = new Set<RouteId>(Object.keys(screens) as RouteId[]);

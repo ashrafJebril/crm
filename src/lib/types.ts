@@ -28,7 +28,8 @@ export type RouteId =
   | "templates"
   | "team"
   | "billing"
-  | "settings";
+  | "settings"
+  | "admin";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
 
@@ -335,4 +336,81 @@ export interface Workspace {
   lang: string;
   plan: string;
   role: WorkspaceRole;
+}
+
+// ─── Admin portal (super-admin views) ─────────────────────────────────────
+
+export interface AdminWorkspaceRow {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  lang: string;
+  timezone: string;
+  suspendedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  owner: { id: string; email: string; name: string } | null;
+  counts: {
+    members: number;
+    contacts: number;
+    conversations: number;
+    mentions: number;
+    tickets: number;
+  };
+}
+
+export interface AdminWorkspaceDetail {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  lang: string;
+  timezone: string;
+  suspendedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  members: Array<{
+    id: string;
+    role: WorkspaceRole;
+    user: {
+      id: string;
+      email: string;
+      name: string;
+      initials: string;
+      color: string;
+      status: string;
+      isSuperAdmin: boolean;
+    };
+  }>;
+  integrations: Array<{
+    id: string;
+    platform: string;
+    pageId: string | null;
+    pageName: string | null;
+    expiresAt: string | null;
+    lastFetchedAt: string | null;
+  }>;
+  _count: {
+    contacts: number;
+    conversations: number;
+    messages: number;
+    mentions: number;
+    tickets: number;
+    campaigns: number;
+    templates: number;
+  };
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  name: string;
+  initials: string;
+  color: string;
+  status: string;
+  role: string;
+  isSuperAdmin: boolean;
+  workspaceCount: number;
+  createdAt: string;
 }

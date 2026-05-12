@@ -17,6 +17,7 @@ export interface AuthUser {
   role: string;
   initials: string;
   color: string;
+  isSuperAdmin?: boolean;
 }
 
 interface LoginResponse {
@@ -31,6 +32,9 @@ interface AuthContextValue {
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
   status: "loading" | "anonymous" | "authenticated";
+  /** True when the current JWT is an impersonation session (super-admin
+   *  entered another tenant's workspace). UI surfaces a banner + offers exit. */
+  impersonating: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (input: {
     email: string;
@@ -43,6 +47,24 @@ interface AuthContextValue {
   createWorkspace: (name: string) => Promise<Workspace>;
 }
 
+/** Reads the `impersonating` claim from the active JWT, no verification.
+ *  We trust the server — the JWT was minted by us and the AuthGuard
+ *  already verified it on every request. The client only reads the flag
+ *  to drive UI state. */
+function readImpersonatingFromToken(): boolean {
+  const tok = tokenStore.get();
+  if (!tok) return false;
+  try {
+    const payload = tok.split(".")[1];
+    if (!payload) return false;
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = JSON.parse(atob(b64)) as { impersonating?: boolean };
+    return !!json.impersonating;
+  } catch {
+    return false;
+  }
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -51,6 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
   const [status, setStatus] = useState<"loading" | "anonymous" | "authenticated">(
     "loading",
+  );
+  const [impersonating, setImpersonating] = useState<boolean>(
+    () => readImpersonatingFromToken(),
   );
 
   // Bootstrap: if we already have a token, validate it and load workspaces.
@@ -85,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setWorkspaces([]);
         setActiveWorkspace(null);
+        setImpersonating(false);
         setStatus("anonymous");
       });
     return () => {
@@ -102,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       res.workspaces[0] ??
       null;
     setActiveWorkspace(active);
+    setImpersonating(readImpersonatingFromToken());
     setStatus("authenticated");
   }, []);
 
@@ -131,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setWorkspaces([]);
     setActiveWorkspace(null);
+    setImpersonating(false);
     setStatus("anonymous");
   }, []);
 
@@ -167,13 +195,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       workspaces,
       activeWorkspace,
       status,
+      impersonating,
       login,
       register,
       logout,
       switchWorkspace,
       createWorkspace,
     }),
-    [user, workspaces, activeWorkspace, status, login, register, logout, switchWorkspace, createWorkspace],
+    [user, workspaces, activeWorkspace, status, impersonating, login, register, logout, switchWorkspace, createWorkspace],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
