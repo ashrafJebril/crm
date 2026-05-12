@@ -19,6 +19,7 @@ export type RouteId =
   | "social"
   | "mentions"
   | "keywords"
+  | "media"
   | "pipeline"
   | "agents"
   | "campaigns"
@@ -412,5 +413,20 @@ export interface AdminUserRow {
   role: string;
   isSuperAdmin: boolean;
   workspaceCount: number;
+  createdAt: string;
+}
+
+// ─── Media library ────────────────────────────────────────────────────────
+
+export interface Media {
+  id: string;
+  workspaceId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storedPath: string;
+  width: number | null;
+  height: number | null;
+  uploadedById: string | null;
   createdAt: string;
 }

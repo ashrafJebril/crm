@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconBot, IconCampaign, IconUsers, IconFlow,
   IconChart, IconTemplate, IconTeam, IconBilling, IconCog, IconCal, IconGlobe,
-  IconLayers, IconRadar, IconTag, IconBolt,
+  IconLayers, IconRadar, IconTag, IconBolt, IconAttach,
 } from "@/icons";
 
 interface NavItem {
@@ -39,6 +39,7 @@ export const NAV: NavEntry[] = [
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
   { section: "Manage" },
   { id: "templates",   label: "Templates",   ar: "القوالب",       Icon: IconTemplate },
+  { id: "media",       label: "Media",       ar: "الوسائط",        Icon: IconAttach },
   { id: "keywords",    label: "Keywords",    ar: "الكلمات المتابَعة", Icon: IconTag },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "billing",     label: "Billing",     ar: "الفواتير",      Icon: IconBilling },
@@ -60,6 +61,7 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   automations: { en: "Automations",     ar: "سير العمل التلقائي" },
   analytics:   { en: "Analytics",       ar: "التحليلات" },
   templates:   { en: "Templates",       ar: "القوالب" },
+  media:       { en: "Media library",   ar: "مكتبة الوسائط" },
   keywords:    { en: "Tracked keywords", ar: "الكلمات المتابَعة" },
   team:        { en: "Team",            ar: "الفريق" },
   billing:     { en: "Billing",         ar: "الفواتير" },
