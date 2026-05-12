@@ -18,6 +18,7 @@ const SCOPED_MODELS = new Set([
   "Mention",
   "Note",
   "Media",
+  "ScheduledPost",
 ]);
 
 const READ_ACTIONS = new Set([

@@ -31,6 +31,7 @@ model User {
 
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
+  scheduledPosts ScheduledPost[] @relation("UserScheduledPosts")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -423,6 +424,7 @@ model Workspace {
   mentions          Mention[]          @relation("WorkspaceMentions")
   notes             Note[]             @relation("WorkspaceNotes")
   media             Media[]            @relation("WorkspaceMedia")
+  scheduledPosts    ScheduledPost[]    @relation("WorkspaceScheduledPosts")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -461,9 +463,41 @@ model Media {
   height        Int?     // for images
   uploadedById  String?  // FK to User.id; nullable for system-generated assets
   uploadedBy    User?    @relation("UserMediaUploads", fields: [uploadedById], references: [id], onDelete: SetNull)
+  publicToken          String?   @unique
+  publicTokenExpiresAt DateTime?
 
   createdAt DateTime @default(now())
 
   @@index([workspaceId])
   @@index([uploadedById])
+}
+
+// ─── Scheduled posts (publish queue) ──────────────────────────────────────
+
+model ScheduledPost {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace @relation("WorkspaceScheduledPosts", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  content       String    // post body / caption — applied to every channel
+  mediaIds      String    @default("[]")  // JSON array of Media ids
+  channels      String    // JSON array, e.g. ["facebook","instagram"]
+
+  scheduledFor  DateTime  // when to publish. For "post now" we set this to NOW().
+  status        String    @default("pending") // pending | publishing | published | failed | canceled
+  attempts      Int       @default(0)
+  lastError     String?
+  // Per-channel results once published. JSON object keyed by channel:
+  //   { "facebook": { ok: true, postId: "..." }, "instagram": { ok: false, error: "..." } }
+  results       String    @default("{}")
+  publishedAt   DateTime?
+
+  createdById   String?
+  createdBy     User?     @relation("UserScheduledPosts", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, status, scheduledFor])
+  @@index([workspaceId])
 }
