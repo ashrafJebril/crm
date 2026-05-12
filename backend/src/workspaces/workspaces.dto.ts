@@ -44,6 +44,15 @@ export class AddMemberDto {
   role!: WorkspaceRole;
 }
 
+export class InviteByEmailDto {
+  @IsString()
+  @MinLength(3)
+  email!: string;
+
+  @IsIn(WORKSPACE_ROLES as unknown as string[])
+  role!: WorkspaceRole;
+}
+
 export class UpdateMemberRoleDto {
   @IsIn(WORKSPACE_ROLES as unknown as string[])
   role!: WorkspaceRole;

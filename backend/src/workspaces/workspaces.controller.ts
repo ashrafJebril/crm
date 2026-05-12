@@ -14,6 +14,7 @@ import { WorkspacesService } from "./workspaces.service";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
+  InviteByEmailDto,
   UpdateMemberRoleDto,
   UpdateWorkspaceDto,
 } from "./workspaces.dto";
@@ -78,6 +79,19 @@ export class WorkspacesController {
       throw new ForbiddenException("Only owner or admin can add members");
     }
     return this.svc.addMember(id, dto);
+  }
+
+  @Post(":id/invite")
+  async invite(
+    @Param("id") id: string,
+    @Body() dto: InviteByEmailDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const role = await this.svc.requireMember(req.user.sub, id);
+    if (role !== "owner" && role !== "admin") {
+      throw new ForbiddenException("Only owner or admin can invite members");
+    }
+    return this.svc.inviteByEmail(id, dto);
   }
 
   @Patch(":id/members/:userId")

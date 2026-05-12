@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
+  InviteByEmailDto,
   UpdateMemberRoleDto,
   UpdateWorkspaceDto,
   WorkspaceRole,
@@ -116,6 +117,27 @@ export class WorkspacesService {
     if (exists) throw new ConflictException("Already a member");
     return this.prisma.workspaceMember.create({
       data: { userId: dto.userId, workspaceId, role: dto.role },
+    });
+  }
+
+  /** Invite by email — only succeeds if the email is already a tkana user.
+   *  Email-based signup invites (with a token) come later when email
+   *  delivery infrastructure is in place. */
+  async inviteByEmail(workspaceId: string, dto: InviteByEmailDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email.toLowerCase().trim() },
+    });
+    if (!user) {
+      throw new NotFoundException(
+        "No tkana user with that email. They must sign up first, then you can invite them.",
+      );
+    }
+    const exists = await this.prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId: user.id, workspaceId } },
+    });
+    if (exists) throw new ConflictException("Already a member");
+    return this.prisma.workspaceMember.create({
+      data: { userId: user.id, workspaceId, role: dto.role },
     });
   }
 

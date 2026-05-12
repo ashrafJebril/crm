@@ -1,7 +1,13 @@
-import { Body, Controller, Get, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Patch, Post, Req } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthService } from "./auth.service";
-import { LoginDto, RegisterDto, SwitchWorkspaceDto } from "./dto";
+import {
+  ChangePasswordDto,
+  LoginDto,
+  RegisterDto,
+  SwitchWorkspaceDto,
+  UpdateProfileDto,
+} from "./dto";
 import { Public } from "./public.decorator";
 import type { JwtPayload } from "./auth.guard";
 
@@ -37,5 +43,21 @@ export class AuthController {
     @Req() req: Request & { user: JwtPayload },
   ) {
     return this.auth.switchWorkspace(req.user.sub, dto);
+  }
+
+  @Patch("me")
+  updateProfile(
+    @Body() dto: UpdateProfileDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    return this.auth.updateProfile(req.user.sub, dto);
+  }
+
+  @Post("change-password")
+  changePassword(
+    @Body() dto: ChangePasswordDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    return this.auth.changePassword(req.user.sub, dto);
   }
 }

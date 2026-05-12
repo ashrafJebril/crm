@@ -41,3 +41,24 @@ export class SwitchWorkspaceDto {
   @MinLength(1)
   workspaceId!: string;
 }
+
+export class UpdateProfileDto {
+  @IsString()
+  @IsNotEmpty()
+  @IsOptional()
+  name?: string;
+
+  @IsString()
+  @IsOptional()
+  color?: string;
+}
+
+export class ChangePasswordDto {
+  @IsString()
+  @MinLength(6)
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(6)
+  newPassword!: string;
+}

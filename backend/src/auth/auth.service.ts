@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -7,7 +8,13 @@ import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkspacesService } from "../workspaces/workspaces.service";
-import { LoginDto, RegisterDto, SwitchWorkspaceDto } from "./dto";
+import {
+  ChangePasswordDto,
+  LoginDto,
+  RegisterDto,
+  SwitchWorkspaceDto,
+  UpdateProfileDto,
+} from "./dto";
 import type { JwtPayload } from "./auth.guard";
 
 @Injectable()
@@ -93,6 +100,36 @@ export class AuthService {
 
   async myWorkspaces(userId: string) {
     return this.workspaces.listForUser(userId);
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException("User no longer exists");
+    const data: { name?: string; color?: string; initials?: string } = {};
+    if (dto.name !== undefined) {
+      data.name = dto.name;
+      data.initials = dto.name
+        .split(" ")
+        .map((s) => s[0] ?? "")
+        .join("")
+        .slice(0, 2)
+        .toUpperCase();
+    }
+    if (dto.color !== undefined) data.color = dto.color;
+    const updated = await this.prisma.user.update({ where: { id: userId }, data });
+    return this.shape(updated);
+  }
+
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException("User no longer exists");
+    const ok = await bcrypt.compare(dto.currentPassword, user.password);
+    if (!ok) throw new BadRequestException("Current password is incorrect");
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: await bcrypt.hash(dto.newPassword, 10) },
+    });
+    return { ok: true };
   }
 
   private async issue(
