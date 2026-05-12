@@ -18,6 +18,7 @@ import { MentionsModule } from "./mentions/mentions.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotesModule } from "./notes/notes.module";
 import { MediaModule } from "./media/media.module";
+import { SocialModule } from "./social/social.module";
 import { AdminModule } from "./admin/admin.module";
 
 @Module({
@@ -39,6 +40,7 @@ import { AdminModule } from "./admin/admin.module";
     WorkspacesModule,
     NotesModule,
     MediaModule,
+    SocialModule,
     AdminModule,
   ],
   providers: [
