@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 
 const UPLOAD_ROOT = path.resolve(process.cwd(), "uploads");
@@ -83,6 +84,45 @@ export class MediaService {
         uploadedById,
       },
     });
+  }
+
+  /** Mint a single-use public token for a media id, valid for `ttlMs`.
+   *  Returns the token string. Overwrites any previous public token on
+   *  that row, so old links become invalid. */
+  async mintPublicToken(
+    workspaceId: string,
+    mediaId: string,
+    ttlMs = 15 * 60 * 1000,
+  ): Promise<string> {
+    const row = await this.get(workspaceId, mediaId);
+    const token = randomBytes(24).toString("base64url");
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await this.prisma.media.update({
+      where: { id: row.id },
+      data: { publicToken: token, publicTokenExpiresAt: expiresAt },
+    });
+    return token;
+  }
+
+  /** Look up a media row by its public token. Returns null if missing or
+   *  expired. Does NOT delete the token — IG publishing fetches the image
+   *  a few times during the container poll, so we just expire by time.
+   *
+   *  Uses the raw unscoped client: this is called from a @Public() route
+   *  with no workspace context, and the token itself is the auth. */
+  async findByPublicToken(token: string) {
+    if (!token) return null;
+    const row = await this.prisma.raw.media.findUnique({
+      where: { publicToken: token },
+    });
+    if (!row) return null;
+    if (
+      !row.publicTokenExpiresAt ||
+      row.publicTokenExpiresAt.getTime() < Date.now()
+    ) {
+      return null;
+    }
+    return row;
   }
 
   async remove(workspaceId: string, id: string) {
