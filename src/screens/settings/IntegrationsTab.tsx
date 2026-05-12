@@ -79,7 +79,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
   const [status, setStatus] = useState<string | null>(null);
 
   const connectMut = useMutation<
-    { token: string },
+    { accessToken: string },
     { connected: boolean; pageId: string; pageName: string; expiresAt: string | null }
   >((input) =>
     api.post("/integrations/facebook/connect", input),
@@ -94,7 +94,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
   const onConnect = async () => {
     const tok = token.trim();
     if (!tok) return;
-    await connectMut.mutate({ token: tok });
+    await connectMut.mutate({ accessToken: tok });
     setToken("");
     setShowInput(false);
     statusQ.refetch();
