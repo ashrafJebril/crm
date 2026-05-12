@@ -21,6 +21,7 @@ import { PLATFORM_LABEL } from "@/lib/types";
 import type { SocialComment, SocialPlatform, SocialPost } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
+import { ComposeModal } from "@/components/ComposeModal";
 
 /* ── Live Facebook API shapes ────────────────────────────────────────────── */
 
@@ -197,6 +198,7 @@ function SocialImpl() {
   const [platform, setPlatform] = useState<SocialPlatform>("facebook");
   const [sortMode, setSortMode] = useState<SortMode>("top");
   const [draft, setDraft] = useState<string>("");
+  const [composeOpen, setComposeOpen] = useState(false);
 
   // Per-post local comment overrides (additions + like toggles).
   const [overrides, setOverrides] = useState<CommentMap>({});
@@ -469,7 +471,7 @@ function SocialImpl() {
               <IconStar w={13} />
               {tx("Saved", "المحفوظات")}
             </button>
-            <button className="btn primary">
+            <button className="btn primary" onClick={() => setComposeOpen(true)}>
               <IconBolt w={13} />
               {tx("Compose", "إنشاء منشور")}
             </button>
@@ -1311,6 +1313,14 @@ function SocialImpl() {
           .insights-panel { display: none; }
         }
       `}</style>
+
+      <ComposeModal
+        open={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        onPosted={() => {
+          if (isFbLive) liveFbQ.refetch();
+        }}
+      />
     </div>
   );
 }
