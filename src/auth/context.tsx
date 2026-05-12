@@ -36,9 +36,11 @@ interface AuthContextValue {
     email: string;
     password: string;
     name: string;
+    workspaceName?: string;
   }) => Promise<void>;
   logout: () => void;
   switchWorkspace: (workspaceId: string) => Promise<void>;
+  createWorkspace: (name: string) => Promise<Workspace>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -104,7 +106,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (input: { email: string; password: string; name: string }) => {
+    async (input: {
+      email: string;
+      password: string;
+      name: string;
+      workspaceName?: string;
+    }) => {
       const res = await api.post<LoginResponse>("/auth/register", input);
       tokenStore.set(res.token);
       setUser(res.user);
@@ -139,6 +146,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const createWorkspace = useCallback(async (name: string): Promise<Workspace> => {
+    const ws = await api.post<{ id: string; name: string; slug: string; timezone: string; lang: string; plan: string }>(
+      "/workspaces",
+      { name },
+    );
+    // Refresh the user's workspace list from the server so the new entry shows
+    // up with the correct role (the create endpoint auto-adds caller as owner).
+    const wss = await api.get<Workspace[]>("/auth/workspaces");
+    setWorkspaces(wss);
+    return wss.find((w) => w.id === ws.id) ?? {
+      ...ws,
+      role: "owner" as const,
+    };
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -149,8 +171,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       switchWorkspace,
+      createWorkspace,
     }),
-    [user, workspaces, activeWorkspace, status, login, register, logout, switchWorkspace],
+    [user, workspaces, activeWorkspace, status, login, register, logout, switchWorkspace, createWorkspace],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

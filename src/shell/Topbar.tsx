@@ -5,6 +5,7 @@ import { useAuth } from "@/auth/context";
 import { TITLES } from "./nav";
 import { IconBell, IconMoon, IconPlus, IconSearch, IconSun, IconHand } from "@/icons";
 import { Avatar } from "@/components/Avatar";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 interface TopbarProps {
   route: RouteId;
@@ -12,7 +13,7 @@ interface TopbarProps {
 
 function TopbarImpl({ route }: TopbarProps) {
   const { t, setTweak } = useTweaks();
-  const { user, logout, activeWorkspace } = useAuth();
+  const { user, logout } = useAuth();
   const isAr = t.lang === "ar";
   const title = TITLES[route][t.lang];
 
@@ -67,21 +68,7 @@ function TopbarImpl({ route }: TopbarProps) {
         <IconPlus w={14} />
         {isAr ? "إنشاء" : "Create"}
       </button>
-      {activeWorkspace && (
-        <span
-          style={{
-            fontSize: 12,
-            color: "var(--ink-2)",
-            padding: "4px 10px",
-            borderRadius: 999,
-            border: "1px solid var(--line-soft)",
-            background: "var(--bg-1)",
-            fontWeight: 500,
-          }}
-        >
-          {activeWorkspace.name}
-        </span>
-      )}
+      <WorkspaceSwitcher />
       {user && (
         <div
           style={{
