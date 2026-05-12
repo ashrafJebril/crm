@@ -174,12 +174,18 @@ export class FacebookService {
       ? await this.prisma.integration.update({ where: { id: existing.id }, data })
       : await this.prisma.integration.create({ data: { ...data, workspaceId } });
 
+    // Best-effort IG discovery — never fails the FB connect even if IG is missing.
+    const ig = await this.maybeDiscoverIg(workspaceId, pageId, finalToken, expiresAt);
+
     return {
       connected: true,
       pageId: row.pageId,
       pageName: row.pageName,
       expiresAt: row.expiresAt,
       candidates: candidates.length > 1 ? candidates.map((c) => ({ id: c.id, name: c.name })) : undefined,
+      instagram: ig
+        ? { connected: true, userId: ig.igUserId, username: ig.igUsername }
+        : { connected: false },
     };
   }
 
@@ -200,6 +206,11 @@ export class FacebookService {
     const integ = await this.find(workspaceId);
     if (!integ) return { ok: true };
     await this.prisma.integration.delete({ where: { id: integ.id } });
+    // IG is derived from the FB Page Access Token, so disconnect it too.
+    const ig = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "instagram" },
+    });
+    if (ig) await this.prisma.integration.delete({ where: { id: ig.id } });
     return { ok: true };
   }
 
@@ -526,6 +537,63 @@ export class FacebookService {
       throw new NotFoundException("Facebook is not connected");
     }
     return { token: integ.accessToken, pageId: integ.pageId };
+  }
+
+  /**
+   * After a Page is connected, look up its linked Instagram Business
+   * account. If one exists, create/update an Integration row with
+   * platform="instagram" using the same Page Access Token.
+   *
+   * Returns the IG user id + username if discovered, else null.
+   */
+  private async maybeDiscoverIg(
+    workspaceId: string,
+    pageId: string,
+    pageToken: string,
+    expiresAt: Date | null,
+  ): Promise<{ igUserId: string; igUsername: string } | null> {
+    let res: { instagram_business_account?: { id: string } } | null = null;
+    try {
+      res = await this.graphGet<{ instagram_business_account?: { id: string } }>(
+        `/${pageId}?fields=instagram_business_account`,
+        pageToken,
+      );
+    } catch (e) {
+      this.log.warn(`IG discovery: graph call failed: ${(e as Error).message}`);
+      return null;
+    }
+    const igId = res?.instagram_business_account?.id;
+    if (!igId) return null;
+
+    let igUsername = "Instagram";
+    try {
+      const me = await this.graphGet<{ id: string; username?: string; name?: string }>(
+        `/${igId}?fields=id,username,name`,
+        pageToken,
+      );
+      igUsername = me.username ?? me.name ?? "Instagram";
+    } catch (e) {
+      this.log.warn(`IG discovery: username fetch failed: ${(e as Error).message}`);
+    }
+
+    const existing = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "instagram" },
+    });
+    const data = {
+      platform: "instagram",
+      pageId: igId,
+      pageName: igUsername,
+      accessToken: pageToken,
+      scopes: null,
+      expiresAt,
+      raw: JSON.stringify({ linkedFbPageId: pageId }),
+    };
+    if (existing) {
+      await this.prisma.integration.update({ where: { id: existing.id }, data });
+    } else {
+      await this.prisma.integration.create({ data: { ...data, workspaceId } });
+    }
+    return { igUserId: igId, igUsername };
   }
 
   private async touchFetched(workspaceId: string) {
