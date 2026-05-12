@@ -5,6 +5,7 @@ import { useAuth } from "@/auth/context";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api, tokenStore } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
+import { SchedulePicker } from "./SchedulePicker";
 import { IconBolt, IconCheck, IconPlus, IconX } from "@/icons";
 import type { Media, PublishChannel, ChannelResult } from "@/lib/types";
 
@@ -43,11 +44,22 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   const [selectedChannels, setSelectedChannels] = useState<PublishChannel[]>(["facebook"]);
   const [previewTab, setPreviewTab] = useState<"all" | PublishChannel>("all");
   const [publishResults, setPublishResults] = useState<Record<string, ChannelResult> | null>(null);
+  const [scheduledFor, setScheduledFor] = useState<Date | null>(null);
 
   const publishMut = useMutation<
     { content: string; mediaIds?: string[]; channels: PublishChannel[] },
     Record<string, ChannelResult>
   >((input) => api.post("/social/publish", input));
+
+  const scheduleMut = useMutation<
+    {
+      content: string;
+      mediaIds?: string[];
+      channels: PublishChannel[];
+      scheduledFor: string;
+    },
+    { id: string; status: string; scheduledFor: string }
+  >((input) => api.post("/scheduled-posts", input));
 
   // Reset state when modal closes (so reopening starts fresh).
   useEffect(() => {
@@ -58,6 +70,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
       setSelectedChannels(["facebook"]);
       setPreviewTab("all");
       setPublishResults(null);
+      setScheduledFor(null);
     }
   }, [open]);
 
@@ -82,10 +95,24 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
     selectedChannels.length > 0 &&
     (fbReady || igReady) &&
     !igRequiresImage &&
-    !publishMut.loading;
+    !publishMut.loading &&
+    !scheduleMut.loading;
 
   const onPost = async () => {
     if (!canPost) return;
+    // Schedule path
+    if (scheduledFor) {
+      await scheduleMut.mutate({
+        content: content.trim(),
+        mediaIds: selectedMediaId ? [selectedMediaId] : undefined,
+        channels: selectedChannels,
+        scheduledFor: scheduledFor.toISOString(),
+      });
+      onPosted?.();
+      onClose();
+      return;
+    }
+    // Immediate path
     const res = await publishMut.mutate({
       content: content.trim(),
       mediaIds: selectedMediaId ? [selectedMediaId] : undefined,
@@ -264,7 +291,23 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               tx={tx}
             />
 
-            {publishMut.error && (
+            <div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color: "var(--ink-3)",
+                  textTransform: "uppercase",
+                  letterSpacing: 0.06,
+                  marginBottom: 6,
+                }}
+              >
+                {tx("Timing", "التوقيت")}
+              </div>
+              <SchedulePicker value={scheduledFor} onChange={setScheduledFor} tx={tx} />
+            </div>
+
+            {(publishMut.error || scheduleMut.error) && (
               <div
                 style={{
                   padding: "10px 12px",
@@ -275,7 +318,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                   border: "1px solid oklch(0.7 0.22 24 / 0.35)",
                 }}
               >
-                {publishMut.error}
+                {publishMut.error ?? scheduleMut.error}
               </div>
             )}
           </div>
@@ -400,12 +443,16 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
             type="button"
             className="btn primary"
             onClick={onPost}
-            disabled={!canPost}
+            disabled={!canPost || scheduleMut.loading}
           >
             <IconBolt w={13} />
-            {publishMut.loading
-              ? tx("Posting…", "جارٍ النشر…")
-              : tx("Post now", "نشر الآن")}
+            {scheduledFor
+              ? scheduleMut.loading
+                ? tx("Scheduling…", "جارٍ الجدولة…")
+                : tx("Schedule post", "جدولة")
+              : publishMut.loading
+                ? tx("Posting…", "جارٍ النشر…")
+                : tx("Post now", "نشر الآن")}
           </button>
         </div>
       </div>
