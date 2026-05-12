@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { MediaService } from "../media/media.service";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -76,7 +77,10 @@ interface FbCommentsResponse {
 @Injectable()
 export class FacebookService {
   private readonly log = new Logger(FacebookService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly media: MediaService,
+  ) {}
 
   // ─── Public API ─────────────────────────────────────────────────────────
   async status(workspaceId: string) {
@@ -296,6 +300,66 @@ export class FacebookService {
     );
     await this.touchFetched(workspaceId);
     return (res.data ?? []).map((p) => this.shapePost(p));
+  }
+
+  async publishToPage(
+    workspaceId: string,
+    dto: { content: string; mediaIds?: string[] },
+  ) {
+    const { token, pageId } = await this.requireToken(workspaceId);
+    const firstMediaId = dto.mediaIds?.[0];
+
+    if (!firstMediaId) {
+      // Text-only post — /feed with form-encoded body.
+      const url = `${GRAPH}/${pageId}/feed`;
+      const params = new URLSearchParams({
+        message: dto.content,
+        access_token: token,
+      });
+      const res = await this.fetchJson<{ id: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      });
+      return { id: res.id, kind: "feed" as const };
+    }
+
+    // Single-photo post — /photos with multipart upload.
+    const mediaRow = await this.media.get(workspaceId, firstMediaId);
+    const absolutePath = await this.media.resolvePath(workspaceId, firstMediaId);
+
+    const fs = await import("node:fs/promises");
+    const buffer = await fs.readFile(absolutePath);
+    const blob = new Blob([buffer], { type: mediaRow.mimeType });
+    const form = new FormData();
+    form.append("source", blob, mediaRow.fileName);
+    form.append("message", dto.content);
+    form.append("access_token", token);
+
+    const url = `${GRAPH}/${pageId}/photos`;
+    // Native fetch handles multipart FormData encoding for us; do NOT set
+    // Content-Type manually — fetch will inject the correct boundary.
+    let response: Response;
+    try {
+      response = await fetch(url, { method: "POST", body: form });
+    } catch (e) {
+      this.log.error(`Graph network error: ${(e as Error).message}`);
+      throw new HttpException("Graph API unreachable", 502);
+    }
+    const text = await response.text();
+    let parsed: unknown = undefined;
+    try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = text; }
+    if (!response.ok) {
+      const errMsg =
+        typeof parsed === "object" && parsed !== null && "error" in parsed
+          // @ts-expect-error - shape from Graph API
+          ? ((parsed.error?.message as string) ?? `Graph error ${response.status}`)
+          : `Graph error ${response.status}`;
+      this.log.warn(`Graph POST ${url} -> ${response.status} ${errMsg}`);
+      throw new HttpException(errMsg, response.status >= 500 ? 502 : 400);
+    }
+    const data = parsed as { id?: string; post_id?: string };
+    return { id: data.post_id ?? data.id ?? "", kind: "photo" as const };
   }
 
   async listComments(workspaceId: string, postId: string, limit = 25) {

@@ -7,7 +7,7 @@ import {
   Post,
 } from "@nestjs/common";
 import { FacebookService } from "./facebook.service";
-import { ConnectFacebookDto, ReplyToCommentDto } from "./facebook.dto";
+import { ConnectFacebookDto, PublishToPageDto, ReplyToCommentDto } from "./facebook.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("integrations/facebook")
@@ -48,6 +48,14 @@ export class FacebookController {
   @Get("posts")
   listPosts(@CurrentWorkspace() workspaceId: string) {
     return this.fb.listPosts(workspaceId);
+  }
+
+  @Post("posts")
+  publishPost(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: PublishToPageDto,
+  ) {
+    return this.fb.publishToPage(workspaceId, dto);
   }
 
   @Get("posts/:postId/comments")
