@@ -373,6 +373,19 @@ export class FacebookService {
     return { id: data.post_id ?? data.id ?? "", kind: "photo" as const };
   }
 
+  async deletePost(workspaceId: string, postId: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${postId}?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ success: boolean }>(url, { method: "DELETE" });
+    return { ok: res.success === true };
+  }
+
+  async editPost(workspaceId: string, postId: string, message: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const res = await this.graphPost<{ success?: boolean; id?: string }>(`/${postId}`, token, { message });
+    return { ok: res.success !== false, id: res.id ?? postId };
+  }
+
   async listComments(workspaceId: string, postId: string, limit = 25) {
     const { token } = await this.requireToken(workspaceId);
     const fields = "id,message,created_time,from,like_count,parent,comment_count";

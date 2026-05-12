@@ -21,6 +21,13 @@ export class ReplyToCommentDto {
   message!: string;
 }
 
+export class EditPostDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(63206)
+  message!: string;
+}
+
 export class PublishToPageDto {
   @IsString()
   @MinLength(1)

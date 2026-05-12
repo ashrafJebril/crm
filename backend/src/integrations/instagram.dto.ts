@@ -1,5 +1,12 @@
 import { ArrayMaxSize, IsArray, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
+export class EditIgCaptionDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(2200)
+  caption!: string;
+}
+
 export class PublishToIgDto {
   @IsString()
   @MinLength(1)

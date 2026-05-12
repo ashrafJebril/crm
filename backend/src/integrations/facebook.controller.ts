@@ -4,10 +4,11 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
 } from "@nestjs/common";
 import { FacebookService } from "./facebook.service";
-import { ConnectFacebookDto, PublishToPageDto, ReplyToCommentDto } from "./facebook.dto";
+import { ConnectFacebookDto, EditPostDto, PublishToPageDto, ReplyToCommentDto } from "./facebook.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("integrations/facebook")
@@ -56,6 +57,23 @@ export class FacebookController {
     @Body() dto: PublishToPageDto,
   ) {
     return this.fb.publishToPage(workspaceId, dto);
+  }
+
+  @Delete("posts/:postId")
+  deletePost(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("postId") postId: string,
+  ) {
+    return this.fb.deletePost(workspaceId, postId);
+  }
+
+  @Patch("posts/:postId")
+  editPost(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("postId") postId: string,
+    @Body() dto: EditPostDto,
+  ) {
+    return this.fb.editPost(workspaceId, postId, dto.message);
   }
 
   @Get("posts/:postId/comments")

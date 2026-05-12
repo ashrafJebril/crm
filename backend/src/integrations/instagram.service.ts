@@ -68,6 +68,22 @@ export class InstagramService {
     return { id: published.id, containerId: container.id };
   }
 
+  async deletePost(workspaceId: string, mediaId: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${mediaId}?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ success: boolean }>(url, { method: "DELETE" });
+    return { ok: res.success === true };
+  }
+
+  async editCaption(workspaceId: string, mediaId: string, caption: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url =
+      `${GRAPH}/${mediaId}?` +
+      new URLSearchParams({ caption, access_token: token }).toString();
+    const res = await this.fetchJson<{ success?: boolean; id?: string }>(url, { method: "POST" });
+    return { ok: res.success !== false, id: res.id ?? mediaId };
+  }
+
   // ─── Internals ──────────────────────────────────────────────────────────
 
   private async waitForContainerReady(containerId: string, token: string): Promise<void> {

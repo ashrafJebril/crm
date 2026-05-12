@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
 import { InstagramService } from "./instagram.service";
-import { PublishToIgDto } from "./instagram.dto";
+import { EditIgCaptionDto, PublishToIgDto } from "./instagram.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("integrations/instagram")
@@ -22,5 +22,22 @@ export class InstagramController {
       process.env.APP_BASE_URL ??
       "http://localhost:3001";
     return this.svc.publish(workspaceId, dto, publicBase);
+  }
+
+  @Delete("posts/:mediaId")
+  deletePost(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("mediaId") mediaId: string,
+  ) {
+    return this.svc.deletePost(workspaceId, mediaId);
+  }
+
+  @Patch("posts/:mediaId")
+  editCaption(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("mediaId") mediaId: string,
+    @Body() dto: EditIgCaptionDto,
+  ) {
+    return this.svc.editCaption(workspaceId, mediaId, dto.caption);
   }
 }
