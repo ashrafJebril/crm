@@ -1063,6 +1063,15 @@ function NewAppointmentModal({
   const [startAtLocal, setStartAtLocal] = useState<string>(defaultStartLocal);
   const [durationMin, setDurationMin] = useState<number>(30);
 
+  // If contacts loaded after the modal mounted (or the previous selection was
+  // removed), default to the first contact so the form is submittable.
+  useEffect(() => {
+    if (contacts.length === 0) return;
+    if (!contactId || !contacts.some((c) => c.id === contactId)) {
+      setContactId(contacts[0].id);
+    }
+  }, [contacts, contactId]);
+
   const canSubmit =
     contactId.length > 0 &&
     service.trim().length > 0 &&

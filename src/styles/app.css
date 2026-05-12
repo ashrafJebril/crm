@@ -257,6 +257,15 @@ input, textarea, select { font-family: inherit; }
 .btn.sm { height: 26px; padding: 0 8px; font-size: 12px; }
 .btn.icon { width: 32px; padding: 0; justify-content: center; position: relative; }
 .btn.icon.sm { width: 26px; }
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: saturate(0.6);
+}
+.btn:disabled:hover,
+.btn[aria-disabled="true"]:hover { background: inherit; }
+.btn.primary:disabled:hover { filter: saturate(0.6); }
 
 /* ─── Cards / surfaces ────────────────────────────────────────────────── */
 .card {
