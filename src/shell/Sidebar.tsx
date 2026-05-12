@@ -13,7 +13,7 @@ interface SidebarProps {
 
 function SidebarImpl({ route, setRoute }: SidebarProps) {
   const { t } = useTweaks();
-  const { user } = useAuth();
+  const { user, activeWorkspace } = useAuth();
   const isAr = t.lang === "ar";
 
   // Filter out super-admin-only entries for normal users, then drop any
@@ -53,12 +53,14 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
         )}
       </div>
 
-      {!t.collapsed && (
+      {!t.collapsed && activeWorkspace && (
         <div className="workspace" title="Switch workspace">
           <div className="ws-mark" />
           <div className="ws-info">
-            <div className="ws-name">Samemha</div>
-            <div className="ws-tier">Pro · 4 agents</div>
+            <div className="ws-name">{activeWorkspace.name}</div>
+            <div className="ws-tier">
+              {activeWorkspace.plan} · {activeWorkspace.role}
+            </div>
           </div>
           <span className="ws-caret">
             <IconChevDown w={14} />
@@ -97,10 +99,13 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
       </nav>
 
       <div className="side-foot">
-        <Avatar name="Yara Khaled" color="150" />
+        <Avatar name={user?.name ?? "?"} color={user?.color ?? "150"} />
         <div className="me">
-          <div className="me-name">Yara Khaled</div>
-          <div className="me-role">Owner · Samemha</div>
+          <div className="me-name">{user?.name ?? "—"}</div>
+          <div className="me-role">
+            {(activeWorkspace?.role ?? user?.role ?? "—")}
+            {activeWorkspace?.name ? ` · ${activeWorkspace.name}` : ""}
+          </div>
         </div>
         <button className="btn ghost icon sm" title="Notifications">
           <IconBell w={14} />
