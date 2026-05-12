@@ -6,12 +6,18 @@ import { useFetch, useMutation } from "@/api/useFetch";
 import { api, tokenStore } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
 import { IconBolt, IconCheck, IconPlus, IconX } from "@/icons";
-import type { Media } from "@/lib/types";
+import type { Media, PublishChannel, ChannelResult } from "@/lib/types";
 
 interface FbStatus {
   connected: boolean;
   pageId?: string;
   pageName?: string;
+}
+
+interface IgStatus {
+  connected: boolean;
+  userId?: string;
+  username?: string;
 }
 
 interface ComposeModalProps {
@@ -28,16 +34,20 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   const { activeWorkspace } = useAuth();
 
   const fbStatusQ = useFetch<FbStatus>(open ? "/integrations/facebook/status" : null);
+  const igStatusQ = useFetch<IgStatus>(open ? "/integrations/instagram/status" : null);
   const mediaQ = useFetch<Media[]>(open ? "/media" : null);
 
   const [content, setContent] = useState("");
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedChannels, setSelectedChannels] = useState<PublishChannel[]>(["facebook"]);
+  const [previewTab, setPreviewTab] = useState<"all" | PublishChannel>("all");
+  const [publishResults, setPublishResults] = useState<Record<string, ChannelResult> | null>(null);
 
   const publishMut = useMutation<
-    { content: string; mediaIds?: string[] },
-    { id: string; kind: "feed" | "photo" }
-  >((input) => api.post("/integrations/facebook/posts", input));
+    { content: string; mediaIds?: string[]; channels: PublishChannel[] },
+    Record<string, ChannelResult>
+  >((input) => api.post("/social/publish", input));
 
   // Reset state when modal closes (so reopening starts fresh).
   useEffect(() => {
@@ -45,6 +55,9 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
       setContent("");
       setSelectedMediaId(null);
       setPickerOpen(false);
+      setSelectedChannels(["facebook"]);
+      setPreviewTab("all");
+      setPublishResults(null);
     }
   }, [open]);
 
@@ -60,18 +73,30 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
 
   if (!open) return null;
 
-  const connected = fbStatusQ.data?.connected === true;
   const selectedMedia = mediaQ.data?.find((m) => m.id === selectedMediaId) ?? null;
-  const canPost = content.trim().length > 0 && connected && !publishMut.loading;
+  const fbReady = fbStatusQ.data?.connected === true && selectedChannels.includes("facebook");
+  const igReady = igStatusQ.data?.connected === true && selectedChannels.includes("instagram");
+  const igRequiresImage = selectedChannels.includes("instagram") && !selectedMediaId;
+  const canPost =
+    content.trim().length > 0 &&
+    selectedChannels.length > 0 &&
+    (fbReady || igReady) &&
+    !igRequiresImage &&
+    !publishMut.loading;
 
   const onPost = async () => {
     if (!canPost) return;
-    await publishMut.mutate({
+    const res = await publishMut.mutate({
       content: content.trim(),
       mediaIds: selectedMediaId ? [selectedMediaId] : undefined,
+      channels: selectedChannels,
     });
+    setPublishResults(res);
+    // Auto-close only if every channel succeeded; otherwise keep the modal
+    // open so the user can see which ones failed.
+    const allOk = Object.values(res).every((r) => r.ok);
     onPosted?.();
-    onClose();
+    if (allOk) onClose();
   };
 
   return (
@@ -154,7 +179,19 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               >
                 {tx("Post to", "نشر إلى")}
               </div>
-              <ChannelChips connected={connected} pageName={fbStatusQ.data?.pageName} />
+              <ChannelChips
+                fbConnected={fbStatusQ.data?.connected === true}
+                fbPageName={fbStatusQ.data?.pageName}
+                igConnected={igStatusQ.data?.connected === true}
+                igUsername={igStatusQ.data?.username}
+                selected={selectedChannels}
+                onToggle={(ch) => {
+                  setSelectedChannels((prev) =>
+                    prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch],
+                  );
+                }}
+                tx={tx}
+              />
             </div>
 
             <div>
@@ -263,13 +300,81 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
             >
               {tx("Post preview", "معاينة المنشور")}
             </div>
-            <FbPreviewCard
-              pageName={fbStatusQ.data?.pageName ?? activeWorkspace?.name ?? "Page"}
-              content={content}
-              media={selectedMedia}
-            />
+            <div style={{ marginBottom: 10, display: "flex", gap: 6 }}>
+              {(["all", "facebook", "instagram"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setPreviewTab(tab)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    border:
+                      previewTab === tab
+                        ? "1px solid var(--accent-ring)"
+                        : "1px solid var(--line-soft)",
+                    background:
+                      previewTab === tab ? "var(--accent-soft)" : "var(--bg-2)",
+                    color: "var(--ink-1)",
+                    fontSize: 11,
+                    cursor: "pointer",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {tab === "all" ? tx("All", "الكل") : tab}
+                </button>
+              ))}
+            </div>
+
+            {(previewTab === "all" || previewTab === "facebook") &&
+              selectedChannels.includes("facebook") && (
+                <div style={{ marginBottom: 14 }}>
+                  <FbPreviewCard
+                    pageName={fbStatusQ.data?.pageName ?? activeWorkspace?.name ?? "Page"}
+                    content={content}
+                    media={selectedMedia}
+                  />
+                </div>
+              )}
+
+            {(previewTab === "all" || previewTab === "instagram") &&
+              selectedChannels.includes("instagram") && (
+                <IgPreviewCard
+                  username={igStatusQ.data?.username ?? activeWorkspace?.name ?? "instagram"}
+                  content={content}
+                  media={selectedMedia}
+                />
+              )}
+
+            {!selectedChannels.length && (
+              <div className="mono muted" style={{ fontSize: 11, padding: 12 }}>
+                {tx("Select at least one channel.", "اختر قناة واحدة على الأقل.")}
+              </div>
+            )}
           </div>
         </div>
+
+        {publishResults && (
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "var(--bg-2)",
+              border: "1px solid var(--line-soft)",
+              fontSize: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              margin: "0 16px 8px",
+            }}
+          >
+            {Object.entries(publishResults).map(([ch, r]) => (
+              <div key={ch} style={{ color: r.ok ? "var(--ok)" : "var(--bad)" }}>
+                {ch}: {r.ok ? `✓ ${r.postId}` : `✗ ${r.error}`}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Footer */}
         <div
@@ -282,10 +387,10 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
           }}
         >
           <span style={{ flex: 1, fontSize: 11, color: "var(--ink-3)" }}>
-            {!connected &&
+            {fbStatusQ.data?.connected !== true && igStatusQ.data?.connected !== true &&
               tx(
-                "Facebook is not connected — connect from Settings → Integrations.",
-                "فيسبوك غير متصل — اربطه من الإعدادات.",
+                "No channels connected — connect from Settings → Integrations.",
+                "لا توجد قنوات متصلة — اربطها من الإعدادات.",
               )}
           </span>
           <button type="button" className="btn ghost" onClick={onClose}>
@@ -308,30 +413,53 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   );
 }
 
-/* ── Channel chips (FB enabled; IG/TikTok placeholders) ───────────────── */
+/* ── Channel chips (multi-select FB + IG) ─────────────────────────────── */
+
+interface ChannelChipsProps {
+  fbConnected: boolean;
+  fbPageName: string | undefined;
+  igConnected: boolean;
+  igUsername: string | undefined;
+  selected: PublishChannel[];
+  onToggle: (ch: PublishChannel) => void;
+  tx: (en: string, ar: string) => string;
+}
 
 function ChannelChips({
-  connected,
-  pageName,
-}: {
-  connected: boolean;
-  pageName: string | undefined;
-}) {
-  const { t } = useTweaks();
-  const tx = makeTx(t.lang);
-  return (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <span
+  fbConnected,
+  fbPageName,
+  igConnected,
+  igUsername,
+  selected,
+  onToggle,
+  tx,
+}: ChannelChipsProps) {
+  const renderChip = (
+    ch: PublishChannel,
+    label: string,
+    connected: boolean,
+    color: string,
+  ) => {
+    const isSelected = selected.includes(ch);
+    const enabled = connected;
+    return (
+      <button
+        type="button"
+        disabled={!enabled}
+        onClick={() => onToggle(ch)}
         style={{
           display: "inline-flex",
           alignItems: "center",
           gap: 6,
           padding: "6px 12px",
           borderRadius: 999,
-          background: connected ? "#1877F2" : "var(--bg-2)",
-          color: connected ? "#fff" : "var(--ink-3)",
+          border: isSelected ? `1px solid ${color}` : "1px solid var(--line-soft)",
+          background: isSelected ? color : "var(--bg-2)",
+          color: isSelected ? "#fff" : enabled ? "var(--ink-1)" : "var(--ink-3)",
           fontSize: 12,
           fontWeight: 500,
+          cursor: enabled ? "pointer" : "not-allowed",
+          opacity: enabled ? 1 : 0.55,
         }}
       >
         <span
@@ -339,22 +467,29 @@ function ChannelChips({
             width: 6,
             height: 6,
             borderRadius: "50%",
-            background: connected ? "#fff" : "var(--ink-3)",
+            background: isSelected ? "#fff" : enabled ? color : "var(--ink-3)",
           }}
         />
-        Facebook {connected && pageName ? `· ${pageName}` : ""}
-      </span>
-      <span
-        style={{
-          padding: "6px 12px",
-          borderRadius: 999,
-          background: "var(--bg-2)",
-          color: "var(--ink-3)",
-          fontSize: 12,
-        }}
-      >
-        Instagram · {tx("coming soon", "قريباً")}
-      </span>
+        {label}
+        {!enabled && ` · ${tx("not connected", "غير متصل")}`}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {renderChip(
+        "facebook",
+        `Facebook${fbConnected && fbPageName ? ` · ${fbPageName}` : ""}`,
+        fbConnected,
+        "#1877F2",
+      )}
+      {renderChip(
+        "instagram",
+        `Instagram${igConnected && igUsername ? ` · @${igUsername}` : ""}`,
+        igConnected,
+        "#E1306C",
+      )}
     </div>
   );
 }
@@ -698,6 +833,71 @@ function FbPreviewCard({
         <span>👍 Like</span>
         <span>💬 Comment</span>
         <span>↗ Share</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── IG-style preview card ─────────────────────────────────────────── */
+
+function IgPreviewCard({
+  username,
+  content,
+  media,
+}: {
+  username: string;
+  content: string;
+  media: Media | null;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--bg-elev)",
+        border: "1px solid var(--line-soft)",
+        borderRadius: 12,
+        overflow: "hidden",
+        maxWidth: 340,
+      }}
+    >
+      <div style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: "50%",
+            background:
+              "linear-gradient(135deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)",
+            display: "grid",
+            placeItems: "center",
+            color: "#fff",
+            fontSize: 11,
+            fontWeight: 700,
+          }}
+        >
+          {username.slice(0, 1).toUpperCase()}
+        </span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{username}</span>
+        <span style={{ marginInlineStart: "auto", color: "var(--ink-3)" }}>···</span>
+      </div>
+      {media ? (
+        <PreviewThumb mediaId={media.id} />
+      ) : (
+        <div
+          className="mono muted"
+          style={{
+            aspectRatio: "1 / 1",
+            display: "grid",
+            placeItems: "center",
+            background: "var(--bg-2)",
+            fontSize: 11,
+          }}
+        >
+          (image required)
+        </div>
+      )}
+      <div style={{ padding: "8px 12px", fontSize: 13, color: "var(--ink-1)" }}>
+        <strong>{username}</strong>{" "}
+        <span style={{ whiteSpace: "pre-wrap" }}>{content}</span>
       </div>
     </div>
   );

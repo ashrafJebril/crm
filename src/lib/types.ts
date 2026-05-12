@@ -430,3 +430,30 @@ export interface Media {
   uploadedById: string | null;
   createdAt: string;
 }
+
+// ─── Social publishing ────────────────────────────────────────────────────
+
+export type PublishChannel = "facebook" | "instagram";
+
+export interface ChannelResult {
+  ok: boolean;
+  postId?: string;
+  error?: string;
+}
+
+export interface ScheduledPost {
+  id: string;
+  workspaceId: string;
+  content: string;
+  mediaIds: string;   // JSON string
+  channels: string;   // JSON string
+  scheduledFor: string;
+  status: "pending" | "publishing" | "published" | "failed" | "canceled";
+  attempts: number;
+  lastError: string | null;
+  results: string;    // JSON string
+  publishedAt: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
