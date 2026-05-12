@@ -20,6 +20,7 @@ export type RouteId =
   | "mentions"
   | "keywords"
   | "media"
+  | "scheduled"
   | "pipeline"
   | "agents"
   | "campaigns"

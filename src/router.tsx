@@ -17,6 +17,7 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   templates: lazy(() => import("@/screens/Templates")),
   keywords: lazy(() => import("@/screens/Keywords")),
   media: lazy(() => import("@/screens/Media")),
+  scheduled: lazy(() => import("@/screens/Scheduled")),
   team: lazy(() => import("@/screens/Team")),
   billing: lazy(() => import("@/screens/Billing")),
   settings: lazy(() => import("@/screens/Settings")),
