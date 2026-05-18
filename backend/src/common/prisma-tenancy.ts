@@ -21,6 +21,7 @@ const SCOPED_MODELS = new Set([
   "ScheduledPost",
   "KnowledgeDocument",
   "KnowledgeChunk",
+  "AiReply",
 ]);
 
 const READ_ACTIONS = new Set([

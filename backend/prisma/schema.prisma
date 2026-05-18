@@ -95,6 +95,7 @@ model Conversation {
 
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
+  aiReplies AiReply[] @relation("ConversationAiReplies")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -116,6 +117,9 @@ model Message {
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  aiReplyAsInbound  AiReply[] @relation("AiReplyInbound")
+  aiReplyAsOutbound AiReply[] @relation("AiReplyOutbound")
 
   createdAt DateTime @default(now())
 
@@ -451,6 +455,7 @@ model Workspace {
 
   knowledgeDocs   KnowledgeDocument[] @relation("WorkspaceKnowledge")
   knowledgeChunks KnowledgeChunk[]    @relation("WorkspaceKnowledgeChunks")
+  aiReplies       AiReply[]           @relation("WorkspaceAiReplies")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -573,4 +578,41 @@ model KnowledgeChunk {
 
   @@index([workspaceId])
   @@index([knowledgeDocumentId])
+}
+
+// ─── AI reply audit log ───────────────────────────────────────────────────
+
+model AiReply {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAiReplies", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  conversationId String
+  conversation   Conversation @relation("ConversationAiReplies", fields: [conversationId], references: [id], onDelete: Cascade)
+
+  inboundMessageId String?
+  inboundMessage   Message? @relation("AiReplyInbound", fields: [inboundMessageId], references: [id], onDelete: SetNull)
+
+  outboundMessageId String?
+  outboundMessage   Message? @relation("AiReplyOutbound", fields: [outboundMessageId], references: [id], onDelete: SetNull)
+
+  action             String   // "reply" | "escalate"
+  replyText          String?
+  confidence         Float
+  needsEscalation    Boolean
+  escalationReason   String?
+  usedKnowledge      Boolean
+  missingInformation String?
+
+  modelName        String
+  promptTokens     Int?
+  completionTokens Int?
+
+  // JSON-encoded array of {chunkId, similarity} for traceability.
+  sources String?
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([conversationId])
 }

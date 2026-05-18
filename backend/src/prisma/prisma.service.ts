@@ -43,6 +43,7 @@ export class PrismaService implements OnModuleDestroy {
   get scheduledPost() { return this.client.scheduledPost; }
   get knowledgeDocument() { return this.client.knowledgeDocument; }
   get knowledgeChunk() { return this.client.knowledgeChunk; }
+  get aiReply() { return this.client.aiReply; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRawUnsafe() { return this.client.$executeRawUnsafe.bind(this.client); }
