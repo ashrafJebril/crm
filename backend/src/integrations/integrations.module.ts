@@ -6,9 +6,10 @@ import { InstagramService } from "./instagram.service";
 import { WhatsAppController } from "./whatsapp.controller";
 import { WhatsAppService } from "./whatsapp.service";
 import { MediaModule } from "../media/media.module";
+import { AiModule } from "../ai/ai.module";
 
 @Module({
-  imports: [MediaModule],
+  imports: [MediaModule, AiModule],
   controllers: [FacebookController, InstagramController, WhatsAppController],
   providers: [FacebookService, InstagramService, WhatsAppService],
   exports: [FacebookService, InstagramService, WhatsAppService],
