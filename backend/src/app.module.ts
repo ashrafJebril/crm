@@ -23,6 +23,7 @@ import { ScheduledPostsModule } from "./scheduled-posts/scheduled-posts.module";
 import { AdminModule } from "./admin/admin.module";
 import { OpenAiModule } from "./openai/openai.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
+import { AiModule } from "./ai/ai.module";
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
     AdminModule,
     OpenAiModule,
     KnowledgeModule,
+    AiModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },
