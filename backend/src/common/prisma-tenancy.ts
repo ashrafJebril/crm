@@ -19,6 +19,8 @@ const SCOPED_MODELS = new Set([
   "Note",
   "Media",
   "ScheduledPost",
+  "KnowledgeDocument",
+  "KnowledgeChunk",
 ]);
 
 const READ_ACTIONS = new Set([
