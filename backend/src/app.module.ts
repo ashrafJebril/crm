@@ -21,6 +21,7 @@ import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
 import { ScheduledPostsModule } from "./scheduled-posts/scheduled-posts.module";
 import { AdminModule } from "./admin/admin.module";
+import { OpenAiModule } from "./openai/openai.module";
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { AdminModule } from "./admin/admin.module";
     SocialModule,
     ScheduledPostsModule,
     AdminModule,
+    OpenAiModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },
