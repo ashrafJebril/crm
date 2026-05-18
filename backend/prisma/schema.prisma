@@ -154,8 +154,22 @@ model Template {
   name     String
   lang     String // en | ar
   category String // TRANSACTIONAL | UTILITY | MARKETING | AUTHENTICATION
-  status   String // approved | pending | rejected
+  status   String // approved | pending | rejected | submitted | failed
   uses     Int    @default(0)
+
+  // Meta WhatsApp Cloud API template content (sent to /{wabaId}/message_templates).
+  // body is the only required component; header/footer/buttons are optional.
+  body          String? // supports {{1}}, {{2}} variable placeholders
+  footer        String? // 60-char max per Meta
+  headerType    String? // "text" | "image" | "video" | "document"
+  headerContent String? // text content, or sample media handle/URL
+  buttons       String? // JSON array: [{ type: "QUICK_REPLY"|"URL"|"PHONE_NUMBER", text, url?, phone_number? }]
+
+  // Meta lifecycle metadata.
+  metaTemplateId      String? // template id returned by Meta on submit
+  metaRejectionReason String? // populated when Meta sets status=REJECTED
+  submittedAt         DateTime?
+  reviewedAt          DateTime?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceTemplates", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -163,6 +177,7 @@ model Template {
   createdAt DateTime @default(now())
 
   @@index([workspaceId])
+  @@index([metaTemplateId])
 }
 
 // ─── Sales / ticket pipelines ─────────────────────────────────────────────
