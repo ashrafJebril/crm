@@ -33,6 +33,7 @@ model User {
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
   scheduledPosts ScheduledPost[] @relation("UserScheduledPosts")
+  knowledgeUploads KnowledgeDocument[] @relation("UserKnowledgeUploads")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -442,6 +443,15 @@ model Workspace {
   media             Media[]            @relation("WorkspaceMedia")
   scheduledPosts    ScheduledPost[]    @relation("WorkspaceScheduledPosts")
 
+  // AI auto-reply toggle (per-workspace). When false, inbound messages are
+  // stored but no AI reply is generated.
+  aiAutoReplyEnabled    Boolean @default(false)
+  // Per-workspace confidence cutoff. Null = use AI_REPLY_CONFIDENCE_THRESHOLD.
+  aiConfidenceThreshold Float?
+
+  knowledgeDocs   KnowledgeDocument[] @relation("WorkspaceKnowledge")
+  knowledgeChunks KnowledgeChunk[]    @relation("WorkspaceKnowledgeChunks")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -516,4 +526,51 @@ model ScheduledPost {
 
   @@index([workspaceId, status, scheduledFor])
   @@index([workspaceId])
+}
+
+// ─── Knowledge base (RAG over uploaded docs) ──────────────────────────────
+
+model KnowledgeDocument {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceKnowledge", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  filename  String
+  mimeType  String
+  sizeBytes Int
+
+  // "pending" | "processing" | "ready" | "failed"
+  status     String  @default("pending")
+  errorText  String?
+  chunkCount Int     @default(0)
+
+  uploadedByUserId String?
+  uploadedBy       User?    @relation("UserKnowledgeUploads", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  chunks KnowledgeChunk[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+model KnowledgeChunk {
+  id                  String @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace         @relation("WorkspaceKnowledgeChunks", fields: [workspaceId], references: [id], onDelete: Cascade)
+  knowledgeDocumentId String
+  knowledgeDocument   KnowledgeDocument @relation(fields: [knowledgeDocumentId], references: [id], onDelete: Cascade)
+
+  chunkIndex Int
+  content    String
+  tokenCount Int
+
+  // pgvector column — read/write via $queryRaw / $executeRawUnsafe.
+  embedding Unsupported("vector(1536)")
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([knowledgeDocumentId])
 }
