@@ -37,11 +37,11 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   return (
     <aside className="side">
       <div className="side-brand">
-        <span className="brand-mark">t</span>
+        <span className="brand-mark">A</span>
         {!t.collapsed && (
           <div style={{ flex: 1, minWidth: 0 }}>
             <div className="brand-name">
-              tkana<span style={{ color: "var(--accent)" }}>.</span>
+              Aram<span style={{ color: "var(--accent)" }}>.</span>
             </div>
             <div className="brand-sub">v2.4 · MENA</div>
           </div>

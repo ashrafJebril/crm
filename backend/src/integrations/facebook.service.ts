@@ -202,6 +202,25 @@ export class FacebookService {
     return this.fetchJson<LongLivedTokenResponse>(url, { method: "GET" });
   }
 
+  /** Exchange an OAuth `code` (from Meta's redirect) for a short-lived user access token. */
+  async exchangeCodeForUserToken(code: string, redirectUri: string): Promise<string> {
+    const appId = process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET;
+    if (!appId || !appSecret) {
+      throw new BadRequestException("META_APP_ID / META_APP_SECRET not configured");
+    }
+    const url =
+      `${GRAPH}/oauth/access_token?client_id=${appId}` +
+      `&client_secret=${appSecret}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&code=${encodeURIComponent(code)}`;
+    const res = await this.fetchJson<LongLivedTokenResponse>(url, { method: "GET" });
+    if (!res.access_token) {
+      throw new BadRequestException("Meta did not return an access token");
+    }
+    return res.access_token;
+  }
+
   async disconnect(workspaceId: string) {
     const integ = await this.find(workspaceId);
     if (!integ) return { ok: true };

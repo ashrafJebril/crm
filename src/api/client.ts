@@ -2,7 +2,7 @@
 // Throws ApiError on non-2xx so hooks can show error states.
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001/api";
-const TOKEN_KEY = "tkana.token.v1";
+const TOKEN_KEY = "aram.token.v1";
 
 export class ApiError extends Error {
   status: number;

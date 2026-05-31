@@ -13,7 +13,7 @@ interface NavItem {
   Icon: ComponentType<{ w?: number }>;
   badge?: number;
   ai?: boolean;
-  // When true, hide from non-super-admin users. Tkana operator-only.
+  // When true, hide from non-super-admin users. Aram operator-only.
   superAdminOnly?: boolean;
 }
 
@@ -45,7 +45,7 @@ export const NAV: NavEntry[] = [
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "billing",     label: "Billing",     ar: "الفواتير",      Icon: IconBilling },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },
-  { section: "tkana ops" },
+  { section: "Aram ops" },
   { id: "admin",       label: "Admin portal", ar: "بوابة الإدارة",  Icon: IconBolt, superAdminOnly: true },
 ];
 
@@ -68,5 +68,5 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   team:        { en: "Team",            ar: "الفريق" },
   billing:     { en: "Billing",         ar: "الفواتير" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
-  admin:       { en: "tkana admin portal", ar: "بوابة إدارة تكانة" },
+  admin:       { en: "Aram admin portal", ar: "بوابة إدارة آرام" },
 };

@@ -229,6 +229,7 @@ interface ConversationPaneProps {
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
+  onToggleAiPaused: (paused: boolean) => Promise<void>;
   messagesLoading: boolean;
   tx: Tx;
 }
@@ -1190,6 +1191,7 @@ function ConversationPane({
   sending,
   sendError,
   onConvertToTicket,
+  onToggleAiPaused,
   messagesLoading,
   tx,
 }: ConversationPaneProps) {
@@ -1316,10 +1318,25 @@ function ConversationPane({
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
           </button>
-          <button className="btn">
-            <IconHand w={14} />
-            {tx("Take over", "تولّى")}
-          </button>
+          {conv.aiPaused ? (
+            <button
+              className="btn primary"
+              onClick={() => onToggleAiPaused(false)}
+              title={tx("Resume AI auto-reply", "استئناف الرد التلقائي")}
+            >
+              <IconSparkles w={13} />
+              {tx("Resume AI", "استئناف الذكاء")}
+            </button>
+          ) : (
+            <button
+              className="btn"
+              onClick={() => onToggleAiPaused(true)}
+              title={tx("Pause AI and handle this thread yourself", "أوقف الذكاء وتولَّ هذه المحادثة")}
+            >
+              <IconHand w={14} />
+              {tx("Take over", "تولّى")}
+            </button>
+          )}
           <button className="btn ghost icon">
             <IconMore w={16} />
           </button>
@@ -1758,7 +1775,9 @@ function InboxImpl() {
   void AGENTS;
 
   // ─── Data ──────────────────────────────────────────────────────────────
-  const convsQ = useFetch<Conversation[]>("/conversations");
+  // Poll the conversation list and active thread so new WhatsApp/AI messages
+  // appear without a manual refresh. Pauses when the tab is hidden.
+  const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 5000 });
   const contactsQ = useFetch<Contact[]>("/contacts");
 
   // Live Facebook Messenger: only fetch when integration is connected.
@@ -1777,7 +1796,7 @@ function InboxImpl() {
   // Internal active query: skip when activeId is a Facebook thread id.
   const activeQ = useFetch<ConversationDetail>(
     activeId && !isFbConvId(activeId) ? `/conversations/${activeId}` : null,
-    { key: `${activeId ?? "none"}:${messageVersion}` },
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
   );
 
   // Conversations: real Facebook DMs only when the integration is connected;
@@ -2060,6 +2079,16 @@ function InboxImpl() {
           sending={sendMessage.loading || sendFbMessage.loading}
           sendError={sendMessage.error ?? sendFbMessage.error}
           onConvertToTicket={() => setShowConvertModal(true)}
+          onToggleAiPaused={async (paused) => {
+            if (!active) return;
+            if (paused) {
+              await api.post(`/conversations/${active.id}/ai/pause`);
+            } else {
+              await api.delete(`/conversations/${active.id}/ai/pause`);
+            }
+            activeQ.refetch();
+            convsQ.refetch();
+          }}
           messagesLoading={activeIsFb ? fbMsgsQ.loading : activeQ.loading}
           tx={tx}
         />

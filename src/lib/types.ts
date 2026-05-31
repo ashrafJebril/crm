@@ -216,6 +216,7 @@ export interface Conversation {
   intent: string;
   confidence: number;
   escalated?: boolean;
+  aiPaused?: boolean;
   messages?: Message[];
   suggested?: string;
 }

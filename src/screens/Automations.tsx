@@ -182,7 +182,7 @@ interface PalNodeProps {
   label: string;
 }
 
-const PALETTE_MIME = "application/x-tkana-node";
+const PALETTE_MIME = "application/x-aram-node";
 
 function PalNode({ kind, label }: PalNodeProps) {
   const colors = paletteFor(kind);

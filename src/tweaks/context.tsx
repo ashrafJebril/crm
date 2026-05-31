@@ -18,7 +18,7 @@ const DEFAULTS: Tweaks = {
   showAIPersonality: true,
 };
 
-const STORAGE_KEY = "tkana.tweaks.v1";
+const STORAGE_KEY = "aram.tweaks.v1";
 
 function load(): Tweaks {
   if (typeof localStorage === "undefined") return DEFAULTS;

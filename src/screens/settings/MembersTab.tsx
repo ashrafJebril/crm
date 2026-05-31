@@ -116,8 +116,8 @@ export function MembersTab() {
         <SettingsCard
           title={tx("Invite a member", "دعوة عضو")}
           description={tx(
-            "Add someone by their tkana email. They must already have an account — invite-by-signup email comes later.",
-            "أضف عضواً عبر بريده الإلكتروني. يجب أن يكون لديه حساب على تكانة مسبقاً.",
+            "Add someone by their Aram email. They must already have an account — invite-by-signup email comes later.",
+            "أضف عضواً عبر بريده الإلكتروني. يجب أن يكون لديه حساب على آرام مسبقاً.",
           )}
           footer={
             <button

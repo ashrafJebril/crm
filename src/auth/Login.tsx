@@ -100,11 +100,11 @@ export function Login() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
           <span className="brand-mark" style={{ width: 36, height: 36, fontSize: 22 }}>
-            t
+            A
           </span>
           <div>
             <div className="display" style={{ fontSize: 26, lineHeight: 1, color: "var(--ink)" }}>
-              tkana<span style={{ color: "var(--accent)" }}>.</span>
+              Aram<span style={{ color: "var(--accent)" }}>.</span>
             </div>
             <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
               {tx("AI WhatsApp agents", "وكلاء واتساب الذكية")}

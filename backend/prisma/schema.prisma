@@ -90,6 +90,11 @@ model Conversation {
   escalated  Boolean  @default(false)
   suggested  String?
 
+  // When true, a human has taken over this conversation — AI auto-reply is
+  // skipped until a teammate explicitly hands it back. Independent of
+  // `escalated`, which is the AI's "I gave up on this turn" signal.
+  aiPaused   Boolean  @default(false)
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
 

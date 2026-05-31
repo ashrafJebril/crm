@@ -64,10 +64,10 @@ function AdminImpl() {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <PageHeader
-        title={tx("tkana admin portal", "بوابة إدارة تكانة")}
+        title={tx("Aram admin portal", "بوابة إدارة آرام")}
         subtitle={tx(
-          "All customer workspaces and users across tkana.",
-          "كل مساحات العمل والمستخدمين على تكانة.",
+          "All customer workspaces and users across Aram.",
+          "كل مساحات العمل والمستخدمين على آرام.",
         )}
       />
 

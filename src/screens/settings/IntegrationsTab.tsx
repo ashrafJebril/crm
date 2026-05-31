@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
@@ -49,18 +49,299 @@ export function IntegrationsTab() {
         comingSoonNote={tx("Coming soon.", "قريباً.")}
       />
 
-      <PlaceholderCard
-        tx={tx}
+      <WhatsAppCard tx={tx} canEdit={canEdit} />
+    </>
+  );
+}
+
+/* ─── WhatsApp (live) ────────────────────────────────────────────── */
+
+interface WaStatus {
+  connected: boolean;
+  phoneNumberId?: string;
+  displayPhoneNumber?: string | null;
+  wabaId?: string;
+  verifyToken?: string;
+  expiresAt?: string | null;
+  lastFetchedAt?: string | null;
+}
+
+interface WhatsAppCardProps {
+  tx: (en: string, ar: string) => string;
+  canEdit: boolean;
+}
+
+function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
+  const statusQ = useFetch<WaStatus>("/integrations/whatsapp/status");
+  const [showForm, setShowForm] = useState(false);
+  const [phoneNumberId, setPhoneNumberId] = useState("");
+  const [wabaId, setWabaId] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [verifyToken, setVerifyToken] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+
+  const connectMut = useMutation<
+    {
+      phoneNumberId: string;
+      wabaId: string;
+      accessToken: string;
+      verifyToken: string;
+    },
+    WaStatus
+  >((input) => api.post("/integrations/whatsapp/connect", input));
+
+  const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
+    api.delete("/integrations/whatsapp/disconnect"),
+  );
+
+  const connected = statusQ.data?.connected === true;
+
+  const onConnect = async () => {
+    await connectMut.mutate({
+      phoneNumberId: phoneNumberId.trim(),
+      wabaId: wabaId.trim(),
+      accessToken: accessToken.trim(),
+      verifyToken: verifyToken.trim(),
+    });
+    setPhoneNumberId("");
+    setWabaId("");
+    setAccessToken("");
+    setVerifyToken("");
+    setShowForm(false);
+    statusQ.refetch();
+    setStatus(tx("WhatsApp connected.", "تم الاتصال بواتساب."));
+    window.setTimeout(() => setStatus(null), 2400);
+  };
+
+  const onDisconnect = async () => {
+    if (
+      !window.confirm(
+        tx(
+          "Disconnect WhatsApp? Inbound messages will stop being received.",
+          "فصل واتساب؟ ستتوقف الرسائل الواردة.",
+        ),
+      )
+    ) {
+      return;
+    }
+    await disconnectMut.mutate({});
+    statusQ.refetch();
+    setStatus(tx("WhatsApp disconnected.", "تم الفصل."));
+    window.setTimeout(() => setStatus(null), 2400);
+  };
+
+  const canSubmit =
+    phoneNumberId.trim().length > 0 &&
+    wabaId.trim().length > 0 &&
+    accessToken.trim().length >= 20 &&
+    verifyToken.trim().length > 0;
+
+  return (
+    <>
+      <SettingsCard
         title={tx("WhatsApp Business", "واتساب الأعمال")}
         description={tx(
           "Connect your WhatsApp Business number via Meta Cloud API to handle customer chats.",
           "اربط رقم واتساب الأعمال عبر Meta Cloud API لإدارة محادثات العملاء.",
         )}
-        comingSoonNote={tx(
-          "Requires Meta Embedded Signup — pending app review.",
-          "يتطلب موافقة ميتا — قيد المراجعة.",
+      >
+        {/* Status row */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 12px",
+            background: "var(--bg-2)",
+            borderRadius: 10,
+          }}
+        >
+          <span
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: "#25D366",
+              display: "grid",
+              placeItems: "center",
+              color: "#fff",
+            }}
+          >
+            <IconGlobe w={16} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, fontSize: 13 }}>WhatsApp</div>
+            <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              {connected
+                ? `${tx("Connected to", "متصل بـ")} ${statusQ.data?.displayPhoneNumber ?? statusQ.data?.phoneNumberId ?? ""}`
+                : tx("Not connected", "غير متصل")}
+            </div>
+          </div>
+          {connected ? (
+            <Badge kind="ok" dot>
+              {tx("Live", "حي")}
+            </Badge>
+          ) : (
+            <Badge kind="">{tx("Off", "غير مفعل")}</Badge>
+          )}
+        </div>
+
+        {/* Connect form */}
+        {!connected && canEdit && (
+          <>
+            {showForm ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <Field
+                  label={tx("Phone Number ID", "معرف رقم الهاتف")}
+                  hint={tx(
+                    "From Meta → WhatsApp → API Setup → Phone number ID.",
+                    "من Meta → واتساب → إعداد API → معرف رقم الهاتف.",
+                  )}
+                >
+                  <input
+                    value={phoneNumberId}
+                    onChange={(e) => setPhoneNumberId(e.target.value)}
+                    placeholder="1065134116690789"
+                    style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+                  />
+                </Field>
+                <Field
+                  label={tx("WhatsApp Business Account ID", "معرف حساب واتساب الأعمال")}
+                  hint={tx(
+                    "Same page — labeled 'WhatsApp Business Account ID'.",
+                    "نفس الصفحة — 'معرف حساب واتساب الأعمال'.",
+                  )}
+                >
+                  <input
+                    value={wabaId}
+                    onChange={(e) => setWabaId(e.target.value)}
+                    placeholder="979108491142803"
+                    style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+                  />
+                </Field>
+                <Field
+                  label={tx("Access Token", "رمز الوصول")}
+                  hint={tx(
+                    "Permanent System User token (preferred) or temporary 24-hour token from API Setup.",
+                    "رمز مستخدم النظام الدائم (مفضل) أو الرمز المؤقت.",
+                  )}
+                >
+                  <textarea
+                    value={accessToken}
+                    onChange={(e) => setAccessToken(e.target.value)}
+                    placeholder="EAAB..."
+                    rows={3}
+                    style={{
+                      ...inputStyle,
+                      height: "auto",
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11,
+                      resize: "vertical",
+                    }}
+                  />
+                </Field>
+                <Field
+                  label={tx("Verify Token", "رمز التحقق")}
+                  hint={tx(
+                    "Any random string. Paste the same value into Meta's webhook setup.",
+                    "أي نص عشوائي. الصق نفس القيمة في إعداد webhook بميتا.",
+                  )}
+                >
+                  <input
+                    value={verifyToken}
+                    onChange={(e) => setVerifyToken(e.target.value)}
+                    placeholder="aram-x9k2m7"
+                    style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+                  />
+                </Field>
+                <ErrorRow message={connectMut.error} />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => {
+                      setShowForm(false);
+                      setPhoneNumberId("");
+                      setWabaId("");
+                      setAccessToken("");
+                      setVerifyToken("");
+                    }}
+                  >
+                    {tx("Cancel", "إلغاء")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={onConnect}
+                    disabled={connectMut.loading || !canSubmit}
+                  >
+                    <IconCheck w={12} />
+                    {connectMut.loading
+                      ? tx("Connecting…", "جارٍ الاتصال…")
+                      : tx("Connect", "اتصال")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => setShowForm(true)}
+                >
+                  {tx("Connect WhatsApp", "اربط واتساب")}
+                </button>
+              </div>
+            )}
+          </>
         )}
-      />
+
+        {connected && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {statusQ.data?.wabaId && (
+              <div className="muted" style={{ fontSize: 11 }}>
+                {tx("WABA ID", "معرف WABA")}:{" "}
+                <span className="mono">{statusQ.data.wabaId}</span>
+              </div>
+            )}
+            {statusQ.data?.lastFetchedAt && (
+              <div className="muted" style={{ fontSize: 11 }}>
+                {tx("Last activity", "آخر نشاط")}:{" "}
+                {new Date(statusQ.data.lastFetchedAt).toLocaleString()}
+              </div>
+            )}
+            {canEdit && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={onDisconnect}
+                  disabled={disconnectMut.loading}
+                  style={{ color: "var(--bad)" }}
+                >
+                  <IconX w={12} />
+                  {disconnectMut.loading
+                    ? tx("Disconnecting…", "جارٍ الفصل…")
+                    : tx("Disconnect", "فصل")}
+                </button>
+              </div>
+            )}
+            <ErrorRow message={disconnectMut.error} />
+          </div>
+        )}
+
+        {!canEdit && !connected && (
+          <div className="muted" style={{ fontSize: 11 }}>
+            {tx(
+              "Only owners and admins can connect integrations.",
+              "المالك والمشرف فقط يمكنهم ربط التكاملات.",
+            )}
+          </div>
+        )}
+      </SettingsCard>
+
+      <StatusToast message={status} />
     </>
   );
 }
@@ -74,16 +355,9 @@ interface FacebookCardProps {
 
 function FacebookCard({ tx, canEdit }: FacebookCardProps) {
   const statusQ = useFetch<FbStatus>("/integrations/facebook/status");
-  const [token, setToken] = useState("");
-  const [showInput, setShowInput] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-
-  const connectMut = useMutation<
-    { accessToken: string },
-    { connected: boolean; pageId: string; pageName: string; expiresAt: string | null }
-  >((input) =>
-    api.post("/integrations/facebook/connect", input),
-  );
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
   const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
     api.delete("/integrations/facebook/disconnect"),
@@ -91,15 +365,38 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
 
   const connected = statusQ.data?.connected === true;
 
+  // Detect OAuth callback redirect (?fb=connected or ?fb=error&msg=...) and show toast.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const fb = sp.get("fb");
+    if (!fb) return;
+    if (fb === "connected") {
+      setStatus(tx("Facebook connected.", "تم الاتصال بفيسبوك."));
+      statusQ.refetch();
+      window.setTimeout(() => setStatus(null), 2400);
+    } else if (fb === "error") {
+      setOauthError(sp.get("msg") ?? tx("Connection failed.", "فشل الاتصال."));
+    }
+    // Clean the URL so a refresh doesn't re-fire the toast.
+    sp.delete("fb");
+    sp.delete("msg");
+    const cleaned = sp.toString();
+    const newUrl = window.location.pathname + (cleaned ? `?${cleaned}` : "");
+    window.history.replaceState({}, "", newUrl);
+    // statusQ omitted on purpose; we only run this once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onConnect = async () => {
-    const tok = token.trim();
-    if (!tok) return;
-    await connectMut.mutate({ accessToken: tok });
-    setToken("");
-    setShowInput(false);
-    statusQ.refetch();
-    setStatus(tx("Facebook connected.", "تم الاتصال بفيسبوك."));
-    window.setTimeout(() => setStatus(null), 2400);
+    setOauthError(null);
+    setStarting(true);
+    try {
+      const { url } = await api.get<{ url: string }>("/integrations/facebook/oauth/start");
+      window.location.href = url;
+    } catch (e) {
+      setOauthError((e as Error).message);
+      setStarting(false);
+    }
   };
 
   const onDisconnect = async () => {
@@ -124,7 +421,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
       <SettingsCard
         title={tx("Facebook Page", "صفحة فيسبوك")}
         description={tx(
-          "Connect your Facebook Page to bring posts, comments, and Messenger threads into tkana.",
+          "Connect your Facebook Page to bring posts, comments, and Messenger threads into Aram.",
           "اربط صفحتك على فيسبوك لجلب المنشورات والتعليقات والرسائل.",
         )}
       >
@@ -169,70 +466,30 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
           )}
         </div>
 
-        {/* Connect form */}
+        {/* Connect — single button that kicks off OAuth */}
         {!connected && canEdit && (
-          <>
-            {showInput ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <Field
-                  label={tx("Facebook Page Access Token", "رمز وصول صفحة فيسبوك")}
-                  hint={tx(
-                    "Generate at developers.facebook.com → Tools → Graph API Explorer → Page Access Token.",
-                    "أنشئه من developers.facebook.com → الأدوات → Graph API Explorer.",
-                  )}
-                >
-                  <textarea
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    placeholder="EAAB..."
-                    rows={3}
-                    style={{
-                      ...inputStyle,
-                      height: "auto",
-                      padding: "10px 12px",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 11,
-                      resize: "vertical",
-                    }}
-                  />
-                </Field>
-                <ErrorRow message={connectMut.error} />
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    onClick={() => {
-                      setShowInput(false);
-                      setToken("");
-                    }}
-                  >
-                    {tx("Cancel", "إلغاء")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn primary"
-                    onClick={onConnect}
-                    disabled={connectMut.loading || token.trim().length === 0}
-                  >
-                    <IconCheck w={12} />
-                    {connectMut.loading
-                      ? tx("Connecting…", "جارٍ الاتصال…")
-                      : tx("Connect", "اتصال")}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={() => setShowInput(true)}
-                >
-                  {tx("Connect Facebook", "اربط فيسبوك")}
-                </button>
-              </div>
-            )}
-          </>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="muted" style={{ fontSize: 11 }}>
+              {tx(
+                "We use Facebook Login to securely access your Page on your behalf. You'll be redirected to facebook.com to approve.",
+                "نستخدم تسجيل الدخول بفيسبوك للوصول الآمن إلى صفحتك. سيتم تحويلك إلى facebook.com للموافقة.",
+              )}
+            </div>
+            <ErrorRow message={oauthError} />
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={onConnect}
+                disabled={starting}
+              >
+                <IconCheck w={12} />
+                {starting
+                  ? tx("Redirecting…", "جارٍ التحويل…")
+                  : tx("Connect Facebook", "اربط فيسبوك")}
+              </button>
+            </div>
+          </div>
         )}
 
         {connected && (

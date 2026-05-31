@@ -640,6 +640,17 @@ export class WhatsAppService {
     });
     if (!ws?.aiAutoReplyEnabled) return;
 
+    // Respect human takeover — if a teammate took over this conversation,
+    // the AI stays out until they hand it back.
+    const convPause = await this.prisma.conversation.findUnique({
+      where: { id: ctx.conversationId },
+      select: { aiPaused: true },
+    });
+    if (convPause?.aiPaused) {
+      this.log.debug(`AI paused for conv=${ctx.conversationId} — skipping reply`);
+      return;
+    }
+
     const outcome = await this.aiReply.generate({
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,
@@ -653,12 +664,45 @@ export class WhatsAppService {
       Number(process.env.AI_REPLY_CONFIDENCE_THRESHOLD ?? 0.75);
     const escalate = this.aiReply.shouldEscalate(outcome, threshold);
 
+    // On escalation we still send a polite acknowledgement so the customer
+    // isn't left hanging — but the conversation flips to "human" so a
+    // teammate picks it up from the Inbox.
+    const FALLBACK_REPLY =
+      "Thanks for your message! Let me check with our team and get back to you shortly. 🙏";
+
     if (escalate) {
+      // Send the fallback message via Meta so the customer sees a reply.
+      const { token, phoneNumberId } = await this.requireToken(ctx.workspaceId);
+      await this.graphPost<{ messages?: Array<{ id: string }> }>(
+        `/${phoneNumberId}/messages`,
+        token,
+        {
+          messaging_product: "whatsapp",
+          to: ctx.waId,
+          type: "text",
+          text: { body: FALLBACK_REPLY },
+        },
+      );
+      const now = new Date();
+      const tOut = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const fallbackRow = await this.prisma.message.create({
+        data: {
+          workspaceId: ctx.workspaceId,
+          conversationId: ctx.conversationId,
+          from: "ai",
+          body: FALLBACK_REPLY,
+          t: tOut,
+          agent: "ai",
+        },
+      });
       await this.prisma.conversation.update({
         where: { id: ctx.conversationId },
         data: {
           escalated: true,
           status: "human",
+          lastAt: "now",
+          lastFrom: "ai",
+          preview: FALLBACK_REPLY.slice(0, 140),
           intent: outcome.escalationReason ?? "ai-escalated",
           confidence: outcome.confidence,
         },
@@ -668,9 +712,9 @@ export class WhatsAppService {
           workspaceId: ctx.workspaceId,
           conversationId: ctx.conversationId,
           inboundMessageId: ctx.inboundMessageId,
-          outboundMessageId: null,
+          outboundMessageId: fallbackRow.id,
           action: "escalate",
-          replyText: null,
+          replyText: FALLBACK_REPLY,
           confidence: outcome.confidence,
           needsEscalation: true,
           escalationReason: outcome.escalationReason,
