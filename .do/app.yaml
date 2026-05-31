@@ -1,0 +1,70 @@
+name: aram
+region: fra1
+
+services:
+  - name: api
+    source_dir: backend
+    github:
+      repo: ashrafJebril/crm
+      branch: feat/whatsapp-ai-mvp
+      deploy_on_push: true
+    build_command: npm install && npx prisma generate && npm run build
+    run_command: npx prisma migrate deploy && node dist/main
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    routes:
+      - path: /api
+    envs:
+      - key: PORT
+        scope: RUN_TIME
+        value: "8080"
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: JWT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: META_APP_ID
+        scope: RUN_TIME
+        value: "2203796510457334"
+      - key: META_APP_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: META_GRAPH_VERSION
+        scope: RUN_TIME
+        value: v21.0
+      - key: OPENAI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: BACKEND_PUBLIC_URL
+        scope: RUN_TIME
+        value: https://aramhub.net
+      - key: FRONTEND_PUBLIC_URL
+        scope: RUN_TIME
+        value: https://aramhub.net
+      - key: CORS_ORIGIN
+        scope: RUN_TIME
+        value: https://aramhub.net
+
+static_sites:
+  - name: web
+    source_dir: /
+    github:
+      repo: ashrafJebril/crm
+      branch: feat/whatsapp-ai-mvp
+      deploy_on_push: true
+    build_command: npm install && npm run build
+    output_dir: dist
+    catchall_document: index.html
+    routes:
+      - path: /
+    envs:
+      - key: VITE_API_URL
+        scope: BUILD_TIME
+        value: https://aramhub.net/api
+
+domains:
+  - domain: aramhub.net
+    type: PRIMARY
+    zone: aramhub.net
