@@ -39,24 +39,47 @@ export class InstagramService {
     const firstMediaId = dto.mediaIds?.[0];
     if (!firstMediaId) {
       throw new BadRequestException(
-        "Instagram requires an image; text-only posts are not supported by the Graph API.",
+        "Instagram requires an image or video; text-only posts are not supported by the Graph API.",
       );
     }
-    // Mint a 15-min public URL for Meta to fetch the image.
+    // Look at the stored mime type so we choose image_url vs video_url (Reels)
+    // accordingly — IG returns 'Only photo or video can be accepted as media
+    // type' when you mismatch these.
+    const mediaRow = await this.media.get(workspaceId, firstMediaId);
+    const mime = (mediaRow.mimeType ?? "").toLowerCase();
+    const isVideo = mime.startsWith("video/");
+    const isImage = mime.startsWith("image/");
+    if (!isImage && !isVideo) {
+      throw new BadRequestException(
+        `Instagram only accepts image/* or video/* — got ${mime || "unknown"}.`,
+      );
+    }
+    if (isImage && (mime.includes("gif") || mime.includes("webp"))) {
+      throw new BadRequestException(
+        "Instagram doesn't accept GIF or WebP via the API — use JPG or PNG.",
+      );
+    }
+    // Mint a 15-min public URL for Meta to fetch the media.
     const pubToken = await this.media.mintPublicToken(workspaceId, firstMediaId);
-    const imageUrl = `${publicBaseUrl.replace(/\/$/, "")}/api/media/${firstMediaId}/public?token=${pubToken}`;
+    const mediaUrl = `${publicBaseUrl.replace(/\/$/, "")}/api/media/${firstMediaId}/public?token=${pubToken}`;
 
-    // Step 1: create container
+    // Step 1: create container — different params for image vs video.
+    const params: Record<string, string> = {
+      caption: dto.content,
+      access_token: token,
+    };
+    if (isImage) {
+      params.image_url = mediaUrl;
+    } else {
+      params.media_type = "REELS";
+      params.video_url = mediaUrl;
+    }
     const containerUrl =
-      `${GRAPH}/${igUserId}/media?` +
-      new URLSearchParams({
-        image_url: imageUrl,
-        caption: dto.content,
-        access_token: token,
-      }).toString();
+      `${GRAPH}/${igUserId}/media?` + new URLSearchParams(params).toString();
     const container = await this.fetchJson<{ id: string }>(containerUrl, { method: "POST" });
 
-    // Step 2: poll container (IG processes the image asynchronously)
+    // Step 2: poll container (IG processes the media asynchronously; videos
+    // take longer to transcode).
     await this.waitForContainerReady(container.id, token);
 
     // Step 3: publish
