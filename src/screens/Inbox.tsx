@@ -22,6 +22,7 @@ import {
 import { AGENTS, findAgent } from "@/data/agents";
 import { api } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { useAuth } from "@/auth/context";
 import {
   CHANNEL_LABEL,
   type Agent,
@@ -1197,6 +1198,7 @@ function ConversationPane({
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
   const agent = findAgent(conv.agent);
+  const { user } = useAuth();
   const [draft, setDraft] = useState<string>("");
 
   const messages: Message[] =
@@ -1534,7 +1536,9 @@ function ConversationPane({
               style={{ fontSize: 11, marginInlineStart: "auto" }}
             >
               {tx("Replying as", "يرد بصفة")}:{" "}
-              <strong style={{ color: "var(--ink-1)" }}>Yara</strong>
+              <strong style={{ color: "var(--ink-1)" }}>
+                {user?.name ?? tx("you", "أنت")}
+              </strong>
             </span>
             <button
               className="btn primary"
@@ -1758,7 +1762,8 @@ interface FbStatus {
 }
 interface FbConv {
   id: string;             // "t_..." — FB conversation thread id
-  contactId?: string;     // FB user id of the OTHER participant
+  contactId?: string;     // local DB Contact id (cuid), for joining with notes/tags
+  contactPsid?: string;   // FB Page-Scoped ID of the OTHER participant — use for /messages sends
   contactName: string;
   snippet: string;
   unread: number;
@@ -2001,7 +2006,8 @@ function InboxImpl() {
     if (!activeId) return;
     if (isFbConvId(activeId)) {
       const fbConv = (fbConvsQ.data ?? []).find((c) => c.id === activeId);
-      const recipientId = fbConv?.contactId;
+      // Meta /messages requires the Page-Scoped ID (numeric), not our DB cuid.
+      const recipientId = fbConv?.contactPsid;
       if (!recipientId) return;
       await sendFbMessage.mutate({ recipientId, body });
       setMessageVersion((n) => n + 1);
