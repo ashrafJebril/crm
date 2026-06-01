@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
@@ -1204,6 +1204,13 @@ function ConversationPane({
   const { user } = useAuth();
   const [draft, setDraft] = useState<string>("");
 
+  // Auto-scroll the thread to the latest message — but only when the user is
+  // already near the bottom. Standard chat UX: if they've scrolled up to
+  // read history, a new inbound shouldn't yank them back down.
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const wasAtBottomRef = useRef<boolean>(true);
+  const prevConvIdRef = useRef<string | null>(null);
+
   const messages: Message[] =
     conv.messages.length > 0
       ? conv.messages
@@ -1229,6 +1236,29 @@ function ConversationPane({
         // error surfaced via sendError
       });
   };
+
+  // Snap to bottom whenever messages change AND the user was at the bottom
+  // before the update. Always snap when the conversation itself changes
+  // (clicking a different thread should land on the latest message).
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const convChanged = prevConvIdRef.current !== conv.id;
+    if (convChanged) {
+      prevConvIdRef.current = conv.id;
+      // Wait a frame so newly-rendered messages have height before we scroll.
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+      wasAtBottomRef.current = true;
+      return;
+    }
+    if (wasAtBottomRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    }
+  }, [conv.id, messages.length]);
 
   return (
     <div
@@ -1385,6 +1415,14 @@ function ConversationPane({
       )}
 
       <div
+        ref={scrollerRef}
+        onScroll={(e) => {
+          const t = e.currentTarget;
+          // Treat anything within 60px of bottom as "at bottom" so the
+          // auto-snap still kicks in if the user is barely above it.
+          wasAtBottomRef.current =
+            t.scrollHeight - t.scrollTop - t.clientHeight < 60;
+        }}
         style={{
           flex: 1,
           overflowY: "auto",
