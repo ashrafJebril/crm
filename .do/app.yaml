@@ -51,7 +51,7 @@ services:
         value: https://aramhub.net
       - key: CORS_ORIGIN
         scope: RUN_TIME
-        value: https://aramhub.net
+        value: https://aramhub.net,https://aram-gwu82.ondigitalocean.app
 
 static_sites:
   - name: web
@@ -68,7 +68,7 @@ static_sites:
     envs:
       - key: VITE_API_URL
         scope: BUILD_TIME
-        value: https://aramhub.net/api
+        value: /api
       - key: VITE_WA_APP_ID
         scope: BUILD_TIME
         value: "1245753357432458"
