@@ -28,11 +28,23 @@ export function useFetch<T>(
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  // Track the last (path, key) we fetched against so we can clear stale data
+  // when those change (e.g., switching conversations / workspaces) without
+  // also flashing the UI on every poll tick.
+  const lastSigRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled || path === null) {
       setLoading(false);
       return;
+    }
+    const sig = `${path}|${opts.key ?? ""}`;
+    if (lastSigRef.current !== sig) {
+      // Path or key changed — drop the previous result so consumers see a
+      // clean loading state instead of stale rows from the previous query.
+      setData(null);
+      setError(null);
+      lastSigRef.current = sig;
     }
     const ctrl = new AbortController();
     abortRef.current?.abort();
