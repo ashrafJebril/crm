@@ -1828,6 +1828,40 @@ function InboxImpl() {
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
   );
 
+  // Instagram: webhook delivery is unreliable while the app is in dev mode,
+  // so the DB only learns about new IG DMs when /sync runs. Auto-trigger
+  // sync every 30s while the Inbox is open so inbound DMs surface without
+  // the operator having to click 'Sync conversations'. Pauses on hidden tab.
+  const igStatusQ = useFetch<{ connected?: boolean }>(
+    "/integrations/instagram/status",
+    { pollMs: 60000 },
+  );
+  const igConnected = igStatusQ.data?.connected === true;
+  useEffect(() => {
+    if (!igConnected) return;
+    let cancelled = false;
+    const runSync = () => {
+      if (document.visibilityState !== "visible") return;
+      api
+        .post("/integrations/instagram/sync")
+        .then(() => {
+          if (!cancelled) convsQ.refetch();
+        })
+        .catch(() => {
+          /* sync errors are non-fatal here */
+        });
+    };
+    // Fire once immediately, then every 30s.
+    runSync();
+    const id = window.setInterval(runSync, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+    // convsQ.refetch identity is stable enough; deps intentionally minimal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [igConnected]);
+
   // Conversations come from two sources:
   //   1. /conversations — DB rows (WhatsApp webhooks + Instagram sync + any future
   //      channel that writes to the DB).
