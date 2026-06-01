@@ -260,22 +260,25 @@ function SocialImpl() {
   }, [liveFbQ.data]);
 
   /* ── Per-platform feed (memoized) ─────────────────────────────────────── */
+  // No mock fallback — when an integration isn't connected (or has no posts),
+  // show an empty state rather than seeded demo content. The seeded
+  // `SOCIAL_POSTS` array is kept only for the IG/TikTok "coming soon" tabs
+  // until we build real feeds for them.
   const feed: SocialPost[] = useMemo(() => {
-    if (platform === "facebook" && fbConnected) return livePosts;
-    return SOCIAL_POSTS.filter((p) => p.platform === platform);
+    if (platform === "facebook") return fbConnected ? livePosts : [];
+    // Other platforms have no live feed yet — empty until we wire one up.
+    return [];
   }, [platform, fbConnected, livePosts]);
 
-  // Stable counts per platform (used in tabs). Use live count for FB when connected.
+  // Counts shown on each platform tab. Same rule as feed — only real data.
   const platformCounts = useMemo<Record<SocialPlatform, number>>(() => {
-    const counts: Record<SocialPlatform, number> = {
-      facebook: 0,
+    return {
+      facebook: fbConnected ? livePosts.length : 0,
       instagram: 0,
       tiktok: 0,
     };
-    for (const p of SOCIAL_POSTS) counts[p.platform] += 1;
-    if (fbConnected) counts.facebook = livePosts.length;
-    return counts;
   }, [fbConnected, livePosts.length]);
+  void SOCIAL_POSTS;
 
   // Fall back to the platform's first post if nothing chosen yet.
   const selectedId = selectedByPlatform[platform] ?? feed[0]?.id ?? null;
@@ -593,8 +596,8 @@ function SocialImpl() {
                     `منشورات حقيقية من ${fbPageName ?? "صفحتك"} على فيسبوك`,
                   )
                 : tx(
-                    "Demo posts — connect Facebook in Settings to see live data",
-                    "منشورات تجريبية — اربط فيسبوك من الإعدادات لعرض بيانات حيّة",
+                    "Facebook isn't connected — connect it in Settings → Integrations",
+                    "فيسبوك غير مرتبط — اربطه من الإعدادات ← التكاملات",
                   )}
               {liveFbQ.loading && (
                 <span className="mono muted" style={{ marginInlineStart: 8 }}>
@@ -628,6 +631,40 @@ function SocialImpl() {
                 ))}
               </div>
             ) : null}
+            {!(isFbLive && liveFbQ.loading) && feed.length === 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "48px 16px",
+                  textAlign: "center",
+                  color: "var(--ink-3)",
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
+                  {platform === "facebook" && !fbConnected
+                    ? tx("Facebook isn't connected yet", "فيسبوك غير مرتبط")
+                    : platform === "facebook"
+                      ? tx("No posts on this page yet", "لا توجد منشورات على هذه الصفحة")
+                      : platform === "instagram"
+                        ? tx("Instagram feed coming soon", "موجز إنستغرام قريبًا")
+                        : tx("TikTok coming soon", "تيك توك قريبًا")}
+                </div>
+                <div className="mono" style={{ fontSize: 11 }}>
+                  {platform === "facebook" && !fbConnected
+                    ? tx(
+                        "Settings → Integrations → Connect Facebook",
+                        "الإعدادات ← التكاملات ← اربط فيسبوك",
+                      )
+                    : platform === "facebook"
+                      ? tx("Publish a post to your Page to see it here.", "انشر على صفحتك لتظهر هنا.")
+                      : tx("We'll add live feeds for this channel.", "سنضيف الموجز الحي قريبًا.")}
+                </div>
+              </div>
+            )}
             {!(isFbLive && liveFbQ.loading && feed.length === 0) && feed.map((post) => {
               const isActive = selected?.id === post.id;
               const body = isAr && post.bodyAr ? post.bodyAr : post.body;
