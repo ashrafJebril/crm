@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   AddMemberDto,
@@ -13,6 +14,11 @@ import {
   UpdateWorkspaceDto,
   WorkspaceRole,
 } from "./workspaces.dto";
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "U";
+}
 
 function toSlug(name: string): string {
   return (
@@ -120,25 +126,58 @@ export class WorkspacesService {
     });
   }
 
-  /** Invite by email — only succeeds if the email is already a tkana user.
-   *  Email-based signup invites (with a token) come later when email
-   *  delivery infrastructure is in place. */
+  /**
+   * Invite by email. If the email matches an existing tkana user, just adds
+   * them as a member (their existing password is unchanged). If the email
+   * is new AND the caller supplied `name` + `password`, creates the user
+   * on the fly and adds them — the caller can then hand the credentials
+   * to the teammate.
+   *
+   * Returns `{ memberId, created, tempPassword? }` so the UI can show the
+   * password once when a new account was provisioned.
+   */
   async inviteByEmail(workspaceId: string, dto: InviteByEmailDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
-    });
+    const email = dto.email.toLowerCase().trim();
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    let provisionedPassword: string | undefined;
+
     if (!user) {
-      throw new NotFoundException(
-        "No tkana user with that email. They must sign up first, then you can invite them.",
-      );
+      // Create new user with the supplied name + password
+      if (!dto.name || !dto.password) {
+        throw new NotFoundException(
+          "No tkana user with that email. Provide `name` and `password` to create them on the fly.",
+        );
+      }
+      const hashed = await bcrypt.hash(dto.password, 10);
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          name: dto.name,
+          password: hashed,
+          role: dto.role === "owner" ? "Owner" : dto.role === "admin" ? "Manager" : "Agent",
+          initials: initialsOf(dto.name),
+          color: "180",
+          status: "offline",
+        },
+      });
+      provisionedPassword = dto.password;
     }
+
     const exists = await this.prisma.workspaceMember.findUnique({
       where: { userId_workspaceId: { userId: user.id, workspaceId } },
     });
     if (exists) throw new ConflictException("Already a member");
-    return this.prisma.workspaceMember.create({
+
+    const member = await this.prisma.workspaceMember.create({
       data: { userId: user.id, workspaceId, role: dto.role },
     });
+
+    return {
+      member,
+      created: provisionedPassword !== undefined,
+      tempPassword: provisionedPassword,
+      user: { id: user.id, email: user.email, name: user.name },
+    };
   }
 
   async updateMemberRole(

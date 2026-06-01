@@ -37,10 +37,16 @@ export function MembersTab() {
 
   const listQ = useFetch<Member[]>(wsId ? `/workspaces/${wsId}/members` : null);
 
+  interface InviteResponse {
+    member: Member;
+    created: boolean;
+    tempPassword?: string;
+    user: { id: string; email: string; name: string };
+  }
   const inviteMut = useMutation<
-    { email: string; role: WorkspaceRole },
-    Member
-  >((input) => api.post<Member>(`/workspaces/${wsId}/invite`, input));
+    { email: string; role: WorkspaceRole; name?: string; password?: string },
+    InviteResponse
+  >((input) => api.post<InviteResponse>(`/workspaces/${wsId}/invite`, input));
 
   const updateRoleMut = useMutation<
     { userId: string; role: WorkspaceRole },
@@ -57,7 +63,14 @@ export function MembersTab() {
 
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>("agent");
+  const [inviteName, setInviteName] = useState("");
+  const [invitePassword, setInvitePassword] = useState(() => friendlyPassword());
   const [status, setStatus] = useState<string | null>(null);
+  const [provisioned, setProvisioned] = useState<{
+    email: string;
+    name: string;
+    password: string;
+  } | null>(null);
 
   const showStatus = (msg: string) => {
     setStatus(msg);
@@ -68,10 +81,25 @@ export function MembersTab() {
     const e = email.trim().toLowerCase();
     if (!e) return;
     try {
-      await inviteMut.mutate({ email: e, role: inviteRole });
-      setEmail("");
+      const resp = await inviteMut.mutate({
+        email: e,
+        role: inviteRole,
+        name: inviteName.trim() || undefined,
+        password: invitePassword.trim() || undefined,
+      });
       listQ.refetch();
-      showStatus(tx(`Added ${e} to this workspace.`, `تمت إضافة ${e}.`));
+      if (resp.created && resp.tempPassword) {
+        setProvisioned({
+          email: resp.user.email,
+          name: resp.user.name,
+          password: resp.tempPassword,
+        });
+      } else {
+        showStatus(tx(`Added ${e} to this workspace.`, `تمت إضافة ${e}.`));
+      }
+      setEmail("");
+      setInviteName("");
+      setInvitePassword(friendlyPassword());
     } catch {
       /* error stays in inviteMut.error */
     }
@@ -116,8 +144,8 @@ export function MembersTab() {
         <SettingsCard
           title={tx("Invite a member", "دعوة عضو")}
           description={tx(
-            "Add someone by their Aram email. They must already have an account — invite-by-signup email comes later.",
-            "أضف عضواً عبر بريده الإلكتروني. يجب أن يكون لديه حساب على آرام مسبقاً.",
+            "If the email already has an Aram account, we add them as a member. If not, we create the account with the name + temporary password you set here, and you share them with the teammate.",
+            "إذا كان البريد لديه حساب على آرام، نضيفه كعضو. إذا لم يكن، ننشئ حساباً جديداً بالاسم وكلمة المرور التي تحددها هنا ثم تشاركها مع الفريق.",
           )}
           footer={
             <button
@@ -142,6 +170,45 @@ export function MembersTab() {
               }}
             />
           </Field>
+          <Field
+            label={tx("Name (for new accounts)", "الاسم (للحسابات الجديدة)")}
+            hint={tx(
+              "Only used when the email doesn't already have an account.",
+              "يُستخدم فقط للحسابات الجديدة.",
+            )}
+          >
+            <input
+              type="text"
+              value={inviteName}
+              onChange={(e) => setInviteName(e.target.value)}
+              placeholder="Yazan Barjawi"
+              style={inputStyle}
+            />
+          </Field>
+          <Field
+            label={tx("Temporary password (for new accounts)", "كلمة المرور المؤقتة")}
+            hint={tx(
+              "Auto-generated. They can change it from Settings → Profile.",
+              "تم توليدها تلقائياً. يمكن تغييرها من الإعدادات.",
+            )}
+          >
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="text"
+                value={invitePassword}
+                onChange={(e) => setInvitePassword(e.target.value)}
+                style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+              />
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => setInvitePassword(friendlyPassword())}
+                title={tx("Regenerate", "توليد جديد")}
+              >
+                🎲
+              </button>
+            </div>
+          </Field>
           <Field label={tx("Role", "الدور")}>
             <select
               value={inviteRole}
@@ -157,6 +224,14 @@ export function MembersTab() {
           </Field>
           <ErrorRow message={inviteMut.error} />
         </SettingsCard>
+      )}
+
+      {provisioned && (
+        <ProvisionedCredentialsModal
+          tx={tx}
+          credentials={provisioned}
+          onClose={() => setProvisioned(null)}
+        />
       )}
 
       <SettingsCard
@@ -236,4 +311,113 @@ export function MembersTab() {
       <StatusToast message={status} />
     </>
   );
+}
+
+/* ─── Provisioned credentials modal ──────────────────────────────────── */
+
+interface ProvisionedCredentialsModalProps {
+  tx: (en: string, ar: string) => string;
+  credentials: { email: string; name: string; password: string };
+  onClose: () => void;
+}
+
+function ProvisionedCredentialsModal({
+  tx,
+  credentials,
+  onClose,
+}: ProvisionedCredentialsModalProps) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1)",
+          border: "1px solid var(--line)",
+          borderRadius: 12,
+          padding: 24,
+          width: 460,
+          maxWidth: "90vw",
+        }}
+      >
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+          ✅ {tx("Account created — share these credentials", "تم إنشاء الحساب — شارك البيانات")}
+        </h3>
+        <p className="muted" style={{ fontSize: 12, marginBottom: 14 }}>
+          {tx(
+            "Won't be shown again. The teammate can change the password later from Settings → Profile.",
+            "لن تظهر مرة أخرى. يمكن للعضو تغيير كلمة المرور لاحقاً من الإعدادات.",
+          )}
+        </p>
+        <div
+          style={{
+            background: "var(--bg-2)",
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+            padding: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            fontFamily: "var(--font-mono)",
+            fontSize: 13,
+          }}
+        >
+          <CopyRow label={tx("Login URL", "رابط الدخول")} value={window.location.origin} />
+          <CopyRow label={tx("Name", "الاسم")} value={credentials.name} />
+          <CopyRow label="Email" value={credentials.email} />
+          <CopyRow label={tx("Password", "كلمة المرور")} value={credentials.password} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+          <button type="button" className="btn primary" onClick={onClose}>
+            {tx("Done", "تم")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ width: 110, color: "var(--ink-3)", fontSize: 11 }}>{label}</span>
+      <span style={{ flex: 1, wordBreak: "break-all" }}>{value}</span>
+      <button
+        type="button"
+        className="btn ghost sm"
+        onClick={onCopy}
+        style={{ fontSize: 11 }}
+      >
+        {copied ? "✓" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+function friendlyPassword(): string {
+  const adjectives = ["sunny", "swift", "calm", "lively", "bright", "noble", "brave", "happy"];
+  const nouns = ["fox", "wave", "moon", "rose", "tiger", "river", "star", "leaf"];
+  const a = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const n = nouns[Math.floor(Math.random() * nouns.length)];
+  const digits = Math.floor(1000 + Math.random() * 9000);
+  return `${a}-${n}-${digits}`;
 }

@@ -51,6 +51,19 @@ export class InviteByEmailDto {
 
   @IsIn(WORKSPACE_ROLES as unknown as string[])
   role!: WorkspaceRole;
+
+  /** Optional — when the email doesn't match an existing user, the backend
+   *  creates a fresh user with this name and password and adds them as a
+   *  workspace member. Lets the inviter hand credentials to the teammate. */
+  @IsString()
+  @IsOptional()
+  @MinLength(2)
+  name?: string;
+
+  @IsString()
+  @IsOptional()
+  @MinLength(6)
+  password?: string;
 }
 
 export class UpdateMemberRoleDto {
