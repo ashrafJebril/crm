@@ -1106,6 +1106,9 @@ function InboxList({
 function Bubble({ m, agent }: BubbleProps) {
   const isOut = m.from === "ai" || m.from === "human";
   const isAI = m.from === "ai";
+  const { user } = useAuth();
+  const humanName = user?.name ?? "You";
+  const humanColor = user?.color ?? "150";
   return (
     <div style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start", gap: 8 }}>
       {!isOut && <div style={{ width: 24 }} />}
@@ -1130,8 +1133,8 @@ function Bubble({ m, agent }: BubbleProps) {
               </>
             ) : (
               <>
-                <Avatar name="Yara" color="150" size="sm" />
-                <span style={{ fontSize: 11, fontWeight: 500 }}>Yara</span>
+                <Avatar name={humanName} color={humanColor} size="sm" />
+                <span style={{ fontSize: 11, fontWeight: 500 }}>{humanName}</span>
                 <Badge kind="human">Human</Badge>
               </>
             )}
@@ -2026,6 +2029,7 @@ function InboxImpl() {
     }
     setMessageVersion((n) => n + 1);
     convsQ.refetch();
+    activeQ.refetch();
   };
 
   // Compute the active conversation: either the internal /conversations/:id
