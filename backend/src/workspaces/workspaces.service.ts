@@ -36,8 +36,11 @@ export class WorkspacesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listForUser(userId: string) {
+    // Hide suspended workspaces from the switcher dropdown — a suspended
+    // tenant isn't usable, and listing them makes the picker noisy. They're
+    // still visible (and unsuspendable) from the super-admin portal.
     const memberships = await this.prisma.workspaceMember.findMany({
-      where: { userId },
+      where: { userId, workspace: { suspendedAt: null } },
       include: { workspace: true },
       orderBy: { createdAt: "asc" },
     });
