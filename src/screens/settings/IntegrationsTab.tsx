@@ -21,12 +21,16 @@ export function IntegrationsTab() {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
   const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  // Force a remount of every integration card whenever the active workspace
+  // changes so each card refetches /integrations/*/status for the new tenant
+  // instead of showing the previous workspace's connected state.
+  const wsKey = activeWorkspace?.id ?? "none";
 
   return (
     <>
-      <FacebookCard tx={tx} canEdit={canEdit} />
+      <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />
 
-      <InstagramCard tx={tx} />
+      <InstagramCard key={`ig-${wsKey}`} tx={tx} />
 
       <PlaceholderCard
         tx={tx}
@@ -38,7 +42,7 @@ export function IntegrationsTab() {
         comingSoonNote={tx("Coming soon.", "قريباً.")}
       />
 
-      <WhatsAppCard tx={tx} canEdit={canEdit} />
+      <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
     </>
   );
 }
