@@ -162,6 +162,25 @@ export class WorkspacesService {
         },
       });
       provisionedPassword = dto.password;
+    } else if (dto.password) {
+      // User row already existed (e.g. previously removed-then-re-added). If
+      // they don't belong to any other workspace, treat this invite as a
+      // re-provision and apply the supplied password so the inviter's modal
+      // matches reality. Cross-tenant guard: if they're in another workspace,
+      // we can't safely reset — refuse to touch the password and just add the
+      // membership (caller can use the Reset password button if needed and
+      // the safety rail allows).
+      const otherMemberships = await this.prisma.workspaceMember.count({
+        where: { userId: user.id, workspaceId: { not: workspaceId } },
+      });
+      if (otherMemberships === 0) {
+        const hashed = await bcrypt.hash(dto.password, 10);
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { password: hashed },
+        });
+        provisionedPassword = dto.password;
+      }
     }
 
     const exists = await this.prisma.workspaceMember.findUnique({
