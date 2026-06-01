@@ -52,11 +52,11 @@ export class AuthService {
         },
       ]);
     }
-    if (memberships.length === 1) {
-      return this.issue(user, memberships[0].id, memberships);
-    }
-    // Multiple — return list, client picks via /auth/switch-workspace.
-    return this.issue(user, null, memberships);
+    // Default into the first workspace so the JWT always carries a workspaceId
+    // (downstream routes use @CurrentWorkspace which 401s if absent). Users
+    // with multiple workspaces can switch from the topbar — that re-mints the
+    // JWT via /auth/switch-workspace.
+    return this.issue(user, memberships[0].id, memberships);
   }
 
   async register(dto: RegisterDto) {
