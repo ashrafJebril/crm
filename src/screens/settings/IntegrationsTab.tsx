@@ -500,6 +500,9 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
   const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
     api.delete("/integrations/facebook/disconnect"),
   );
+  const resubscribeMut = useMutation<Record<string, never>, { ok: boolean; error?: string }>(
+    () => api.post("/integrations/facebook/resubscribe-webhook", {}),
+  );
 
   const connected = statusQ.data?.connected === true;
 
@@ -645,7 +648,31 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
               </div>
             )}
             {canEdit && (
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  onClick={async () => {
+                    const r = await resubscribeMut.mutate({});
+                    if (r.ok) {
+                      setStatus(tx("Webhook subscribed.", "تم تفعيل الويبهوك."));
+                    } else {
+                      setStatus(
+                        tx(`Subscribe failed: ${r.error}`, `فشل: ${r.error}`),
+                      );
+                    }
+                    window.setTimeout(() => setStatus(null), 3500);
+                  }}
+                  disabled={resubscribeMut.loading}
+                  title={tx(
+                    "Re-run the Page webhook subscription. Use this if events stop arriving.",
+                    "إعادة تشغيل اشتراك الويبهوك للصفحة.",
+                  )}
+                >
+                  {resubscribeMut.loading
+                    ? tx("Subscribing…", "جارٍ…")
+                    : tx("Resubscribe webhooks", "إعادة اشتراك الويبهوك")}
+                </button>
                 <button
                   type="button"
                   className="btn ghost"
@@ -660,7 +687,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
                 </button>
               </div>
             )}
-            <ErrorRow message={disconnectMut.error} />
+            <ErrorRow message={disconnectMut.error ?? resubscribeMut.error} />
           </div>
         )}
 

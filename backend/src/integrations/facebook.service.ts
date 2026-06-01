@@ -195,6 +195,43 @@ export class FacebookService {
   }
 
   /**
+   * Re-run the Page webhook subscription for an already-connected workspace.
+   * Useful when an existing connection predates the auto-subscribe code, or
+   * when Meta dropped the subscription (token expiry, app re-permissioning,
+   * etc.). Reports back so the UI can surface success/failure inline.
+   */
+  async resubscribeWebhook(workspaceId: string): Promise<{ ok: boolean; error?: string }> {
+    const integ = await this.find(workspaceId);
+    if (!integ?.accessToken || !integ.pageId) {
+      throw new NotFoundException("Facebook is not connected");
+    }
+    const subscribedFields = [
+      "messages",
+      "messaging_postbacks",
+      "messaging_handovers",
+      "message_deliveries",
+      "message_reads",
+      "feed",
+      "mention",
+    ].join(",");
+    const url =
+      `${GRAPH}/${integ.pageId}/subscribed_apps?` +
+      new URLSearchParams({
+        subscribed_fields: subscribedFields,
+        access_token: integ.accessToken,
+      }).toString();
+    try {
+      const res = await this.fetchJson<{ success?: boolean }>(url, { method: "POST" });
+      if (res.success !== true) {
+        return { ok: false, error: "Subscribe returned success=false" };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  /**
    * Subscribe our Meta app to receive webhooks for this Page. Without this
    * call Meta won't push events even though the app's callback URL is wired
    * up in the dashboard. Best-effort: log and swallow errors so OAuth still

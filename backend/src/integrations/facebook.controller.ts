@@ -144,6 +144,11 @@ export class FacebookController {
     return this.fb.listPages(workspaceId);
   }
 
+  @Post("resubscribe-webhook")
+  resubscribeWebhook(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.resubscribeWebhook(workspaceId);
+  }
+
   @Post("select-page")
   selectPage(
     @CurrentWorkspace() workspaceId: string,
