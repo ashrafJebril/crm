@@ -354,6 +354,12 @@ function SocialImpl() {
       : null,
   );
 
+  // Track which post id we most-recently received a comments payload for.
+  // Used to gate the skeleton: any post switch should show loading until
+  // the new query lands, even if the override cache from a prior visit
+  // would otherwise paper over the transition.
+  const [loadedCommentsFor, setLoadedCommentsFor] = useState<string | null>(null);
+
   // Mirror server-fetched comments into our local override map so that
   // the rest of the screen (sorting, like-toggle, composer) keeps working
   // unchanged.
@@ -381,7 +387,14 @@ function SocialImpl() {
       }
       return { ...prev, [baseSelected.id]: { comments: mapped } };
     });
+    setLoadedCommentsFor(baseSelected.id);
   }, [selectedIsLive, liveCommentsQ.data, baseSelected]);
+
+  // Whether the comments visible in the side panel are fresh for the
+  // selected post. Drives the skeleton during post-to-post navigation.
+  const commentsAreFresh =
+    !selectedIsLive ||
+    (loadedCommentsFor === baseSelected?.id && !liveCommentsQ.loading);
 
   // Apply overrides on top of the base selected post.
   const selected: SocialPost | null = useMemo(() => {
@@ -1081,7 +1094,7 @@ function SocialImpl() {
                   gap: 12,
                 }}
               >
-                {selectedIsLive && liveCommentsQ.loading && sortedComments.length === 0 ? (
+                {selectedIsLive && !commentsAreFresh ? (
                   <div
                     aria-label={tx("Loading comments", "جارٍ تحميل التعليقات")}
                     style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -1091,7 +1104,7 @@ function SocialImpl() {
                     ))}
                   </div>
                 ) : null}
-                {!(selectedIsLive && liveCommentsQ.loading && sortedComments.length === 0) && sortedComments.map((c) => {
+                {!(selectedIsLive && !commentsAreFresh) && sortedComments.map((c) => {
                   const cBody = isAr && c.bodyAr ? c.bodyAr : c.body;
                   return (
                     <div
@@ -1214,7 +1227,7 @@ function SocialImpl() {
                     </div>
                   );
                 })}
-                {sortedComments.length === 0 && !(selectedIsLive && liveCommentsQ.loading) && (
+                {sortedComments.length === 0 && (!selectedIsLive || commentsAreFresh) && (
                   <div
                     className="mono muted"
                     style={{ fontSize: 12, padding: 12 }}
