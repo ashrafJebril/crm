@@ -26,6 +26,19 @@ export class InstagramController {
     return this.svc.sendInConversation(workspaceId, conversationId, dto.message);
   }
 
+  @Get("posts")
+  listPosts(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.listPosts(workspaceId);
+  }
+
+  @Get("posts/:mediaId/comments")
+  listComments(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("mediaId") mediaId: string,
+  ) {
+    return this.svc.listComments(workspaceId, mediaId);
+  }
+
   @Post("posts")
   publish(
     @CurrentWorkspace() workspaceId: string,

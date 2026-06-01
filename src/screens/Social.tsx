@@ -251,13 +251,66 @@ function SocialImpl() {
     }));
   }, [liveFbQ.data, fbPageName]);
 
+  /* ── Live Instagram integration ───────────────────────────────────────── */
+  interface IgStatusResp {
+    connected: boolean;
+    userId?: string;
+    username?: string;
+  }
+  interface LiveIgPost {
+    id: string;
+    body: string;
+    mediaUrl?: string;
+    attachmentType?: string;
+    permalink?: string;
+    createdAt?: string;
+    likes: number;
+    comments: number;
+    shares: number;
+  }
+  const igStatusQ = useFetch<IgStatusResp>("/integrations/instagram/status");
+  const igConnected = igStatusQ.data?.connected === true;
+  const igUsername = igStatusQ.data?.username;
+  const isIgLive = platform === "instagram" && igConnected;
+
+  const liveIgQ = useFetch<LiveIgPost[]>(
+    isIgLive ? "/integrations/instagram/posts" : null,
+  );
+
+  const liveIgPostIds = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const p of liveIgQ.data ?? []) s.add(p.id);
+    return s;
+  }, [liveIgQ.data]);
+
+  const liveIgPosts: SocialPost[] = useMemo(() => {
+    if (!liveIgQ.data) return [];
+    return liveIgQ.data.map<SocialPost>((p) => ({
+      id: p.id,
+      platform: "instagram",
+      author: igUsername ?? "Instagram",
+      authorHandle: makeHandle(igUsername),
+      authorVerified: true,
+      body: p.body,
+      bodyAr: undefined,
+      mediaLabel: p.attachmentType ?? "Post",
+      postedAt: formatCompactDate(p.createdAt ?? ""),
+      likes: p.likes,
+      shares: p.shares,
+      comments: [],
+    }));
+  }, [liveIgQ.data, igUsername]);
+
   const liveMediaMap = useMemo<Record<string, string>>(() => {
     const m: Record<string, string> = {};
     for (const p of liveFbQ.data ?? []) {
       if (p.mediaUrl) m[p.id] = p.mediaUrl;
     }
+    for (const p of liveIgQ.data ?? []) {
+      if (p.mediaUrl) m[p.id] = p.mediaUrl;
+    }
     return m;
-  }, [liveFbQ.data]);
+  }, [liveFbQ.data, liveIgQ.data]);
 
   /* ── Per-platform feed (memoized) ─────────────────────────────────────── */
   // No mock fallback — when an integration isn't connected (or has no posts),
@@ -266,18 +319,17 @@ function SocialImpl() {
   // until we build real feeds for them.
   const feed: SocialPost[] = useMemo(() => {
     if (platform === "facebook") return fbConnected ? livePosts : [];
-    // Other platforms have no live feed yet — empty until we wire one up.
+    if (platform === "instagram") return igConnected ? liveIgPosts : [];
     return [];
-  }, [platform, fbConnected, livePosts]);
+  }, [platform, fbConnected, livePosts, igConnected, liveIgPosts]);
 
-  // Counts shown on each platform tab. Same rule as feed — only real data.
   const platformCounts = useMemo<Record<SocialPlatform, number>>(() => {
     return {
       facebook: fbConnected ? livePosts.length : 0,
-      instagram: 0,
+      instagram: igConnected ? liveIgPosts.length : 0,
       tiktok: 0,
     };
-  }, [fbConnected, livePosts.length]);
+  }, [fbConnected, livePosts.length, igConnected, liveIgPosts.length]);
   void SOCIAL_POSTS;
 
   // Fall back to the platform's first post if nothing chosen yet.
@@ -621,7 +673,8 @@ function SocialImpl() {
               gap: 12,
             }}
           >
-            {isFbLive && liveFbQ.loading && feed.length === 0 ? (
+            {((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+            feed.length === 0 ? (
               <div
                 aria-label={tx("Loading posts", "جارٍ تحميل المنشورات")}
                 style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -631,41 +684,53 @@ function SocialImpl() {
                 ))}
               </div>
             ) : null}
-            {!(isFbLive && liveFbQ.loading) && feed.length === 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  padding: "48px 16px",
-                  textAlign: "center",
-                  color: "var(--ink-3)",
-                }}
-              >
-                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
-                  {platform === "facebook" && !fbConnected
-                    ? tx("Facebook isn't connected yet", "فيسبوك غير مرتبط")
-                    : platform === "facebook"
-                      ? tx("No posts on this page yet", "لا توجد منشورات على هذه الصفحة")
-                      : platform === "instagram"
-                        ? tx("Instagram feed coming soon", "موجز إنستغرام قريبًا")
-                        : tx("TikTok coming soon", "تيك توك قريبًا")}
+            {!((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+              feed.length === 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    padding: "48px 16px",
+                    textAlign: "center",
+                    color: "var(--ink-3)",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
+                    {platform === "facebook" && !fbConnected
+                      ? tx("Facebook isn't connected yet", "فيسبوك غير مرتبط")
+                      : platform === "facebook"
+                        ? tx("No posts on this page yet", "لا توجد منشورات على هذه الصفحة")
+                        : platform === "instagram" && !igConnected
+                          ? tx("Instagram isn't connected yet", "إنستغرام غير مرتبط")
+                          : platform === "instagram"
+                            ? tx("No posts on this account yet", "لا توجد منشورات على هذا الحساب")
+                            : tx("TikTok coming soon", "تيك توك قريبًا")}
+                  </div>
+                  <div className="mono" style={{ fontSize: 11 }}>
+                    {platform === "facebook" && !fbConnected
+                      ? tx(
+                          "Settings → Integrations → Connect Facebook",
+                          "الإعدادات ← التكاملات ← اربط فيسبوك",
+                        )
+                      : platform === "instagram" && !igConnected
+                        ? tx(
+                            "Connect Facebook in Settings — Instagram links automatically.",
+                            "اربط فيسبوك من الإعدادات — يُربط إنستغرام تلقائيًا.",
+                          )
+                        : platform === "tiktok"
+                          ? tx("We'll add live feeds for this channel.", "سنضيف الموجز الحي قريبًا.")
+                          : tx("Publish a post to see it here.", "انشر منشورًا ليظهر هنا.")}
+                  </div>
                 </div>
-                <div className="mono" style={{ fontSize: 11 }}>
-                  {platform === "facebook" && !fbConnected
-                    ? tx(
-                        "Settings → Integrations → Connect Facebook",
-                        "الإعدادات ← التكاملات ← اربط فيسبوك",
-                      )
-                    : platform === "facebook"
-                      ? tx("Publish a post to your Page to see it here.", "انشر على صفحتك لتظهر هنا.")
-                      : tx("We'll add live feeds for this channel.", "سنضيف الموجز الحي قريبًا.")}
-                </div>
-              </div>
-            )}
-            {!(isFbLive && liveFbQ.loading && feed.length === 0) && feed.map((post) => {
+              )}
+            {!(
+              ((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+              feed.length === 0
+            ) &&
+              feed.map((post) => {
               const isActive = selected?.id === post.id;
               const body = isAr && post.bodyAr ? post.bodyAr : post.body;
               const liveComments = getCurrentComments(post);

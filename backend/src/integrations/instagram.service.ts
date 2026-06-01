@@ -68,6 +68,83 @@ export class InstagramService {
     return { id: published.id, containerId: container.id };
   }
 
+  /**
+   * Fetch the connected IG Business account's media (posts/reels/carousels).
+   * Returns the most recent items in our SocialPost-ish shape so the
+   * frontend can render them next to FB posts without per-platform branches.
+   */
+  async listPosts(workspaceId: string, limit = 24) {
+    const { token, igUserId } = await this.requireToken(workspaceId);
+    const fields = [
+      "id",
+      "caption",
+      "media_type",
+      "media_url",
+      "thumbnail_url",
+      "permalink",
+      "timestamp",
+      "like_count",
+      "comments_count",
+    ].join(",");
+    interface IgMedia {
+      id: string;
+      caption?: string;
+      media_type?: string;
+      media_url?: string;
+      thumbnail_url?: string;
+      permalink?: string;
+      timestamp?: string;
+      like_count?: number;
+      comments_count?: number;
+    }
+    const res = await this.fetchJson<{ data: IgMedia[] }>(
+      `${GRAPH}/${igUserId}/media?fields=${encodeURIComponent(fields)}&limit=${limit}&access_token=${encodeURIComponent(token)}`,
+      { method: "GET" },
+    );
+    await this.prisma.integration.updateMany({
+      where: { workspaceId, platform: "instagram" },
+      data: { lastFetchedAt: new Date() },
+    });
+    return (res.data ?? []).map((m) => ({
+      id: m.id,
+      body: m.caption ?? "",
+      mediaUrl:
+        m.media_type === "VIDEO" ? m.thumbnail_url ?? m.media_url : m.media_url,
+      attachmentType: m.media_type?.toLowerCase(),
+      permalink: m.permalink,
+      createdAt: m.timestamp,
+      likes: m.like_count ?? 0,
+      comments: m.comments_count ?? 0,
+      shares: 0,
+    }));
+  }
+
+  /** Fetch comments on a single IG media item. */
+  async listComments(workspaceId: string, mediaId: string, limit = 25) {
+    const { token } = await this.requireToken(workspaceId);
+    interface IgComment {
+      id: string;
+      text?: string;
+      username?: string;
+      timestamp?: string;
+      like_count?: number;
+      replies?: { data: Array<{ id: string }> };
+    }
+    const res = await this.fetchJson<{ data: IgComment[] }>(
+      `${GRAPH}/${mediaId}/comments?fields=id,text,username,timestamp,like_count,replies&limit=${limit}&access_token=${encodeURIComponent(token)}`,
+      { method: "GET" },
+    );
+    return (res.data ?? []).map((c) => ({
+      id: c.id,
+      author: c.username ?? "instagram_user",
+      authorId: undefined as string | undefined,
+      body: c.text ?? "",
+      likes: c.like_count ?? 0,
+      at: c.timestamp ?? "",
+      replyCount: c.replies?.data?.length ?? 0,
+    }));
+  }
+
   async deletePost(workspaceId: string, mediaId: string) {
     const { token } = await this.requireToken(workspaceId);
     const url = `${GRAPH}/${mediaId}?access_token=${encodeURIComponent(token)}`;
