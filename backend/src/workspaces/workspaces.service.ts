@@ -10,6 +10,7 @@ import {
   AddMemberDto,
   CreateWorkspaceDto,
   InviteByEmailDto,
+  ResetMemberPasswordDto,
   UpdateMemberRoleDto,
   UpdateWorkspaceDto,
   WorkspaceRole,
@@ -193,6 +194,39 @@ export class WorkspacesService {
       where: { id: m.id },
       data: { role: dto.role },
     });
+  }
+
+  /**
+   * Reset a workspace member's login password. Owner/admin only (enforced at
+   * controller). Safety rail: refuses if the target user is also a member of
+   * other workspaces — they're not "ours" to reset and could be taken over.
+   */
+  async resetMemberPassword(
+    workspaceId: string,
+    userId: string,
+    dto: ResetMemberPasswordDto,
+  ) {
+    const m = await this.prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+    });
+    if (!m) throw new NotFoundException("Member not found");
+    const otherMemberships = await this.prisma.workspaceMember.count({
+      where: { userId, workspaceId: { not: workspaceId } },
+    });
+    if (otherMemberships > 0) {
+      throw new ForbiddenException(
+        "User belongs to other workspaces — they must change their own password.",
+      );
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    const hashed = await bcrypt.hash(dto.password, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
+    return {
+      ok: true,
+      user: { id: user.id, email: user.email, name: user.name },
+      password: dto.password,
+    };
   }
 
   async removeMember(workspaceId: string, userId: string) {

@@ -61,6 +61,21 @@ export function MembersTab() {
     api.delete<{ ok: true }>(`/workspaces/${wsId}/members/${input.userId}`),
   );
 
+  interface ResetPwdResponse {
+    ok: true;
+    user: { id: string; email: string; name: string };
+    password: string;
+  }
+  const resetPwdMut = useMutation<
+    { userId: string; password: string },
+    ResetPwdResponse
+  >((input) =>
+    api.patch<ResetPwdResponse>(
+      `/workspaces/${wsId}/members/${input.userId}/password`,
+      { password: input.password },
+    ),
+  );
+
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<WorkspaceRole>("agent");
   const [inviteName, setInviteName] = useState("");
@@ -110,6 +125,23 @@ export function MembersTab() {
     await updateRoleMut.mutate({ userId: member.userId, role });
     listQ.refetch();
     showStatus(tx(`Updated ${member.user.name}'s role.`, `تم تحديث الدور.`));
+  };
+
+  const onResetPwd = async (member: Member) => {
+    const next = friendlyPassword();
+    try {
+      const resp = await resetPwdMut.mutate({
+        userId: member.userId,
+        password: next,
+      });
+      setProvisioned({
+        email: resp.user.email,
+        name: resp.user.name,
+        password: resp.password,
+      });
+    } catch {
+      /* error stays in resetPwdMut.error */
+    }
   };
 
   const onRemove = async (member: Member) => {
@@ -291,22 +323,40 @@ export function MembersTab() {
                     <Badge kind="ai">{m.role}</Badge>
                   )}
                   {canEdit && !isMe && (
-                    <button
-                      type="button"
-                      className="btn ghost sm"
-                      onClick={() => onRemove(m)}
-                      disabled={removeMut.loading}
-                      style={{ color: "var(--bad)" }}
-                    >
-                      {tx("Remove", "حذف")}
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        onClick={() => onResetPwd(m)}
+                        disabled={resetPwdMut.loading}
+                        title={tx(
+                          "Generate a new password for this member",
+                          "إنشاء كلمة مرور جديدة لهذا العضو",
+                        )}
+                      >
+                        {tx("Reset password", "إعادة تعيين كلمة المرور")}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        onClick={() => onRemove(m)}
+                        disabled={removeMut.loading}
+                        style={{ color: "var(--bad)" }}
+                      >
+                        {tx("Remove", "حذف")}
+                      </button>
+                    </>
                   )}
                 </div>
               );
             })}
           </div>
         )}
-        <ErrorRow message={listQ.error ?? updateRoleMut.error ?? removeMut.error} />
+        <ErrorRow
+          message={
+            listQ.error ?? updateRoleMut.error ?? removeMut.error ?? resetPwdMut.error
+          }
+        />
       </SettingsCard>
 
       <StatusToast message={status} />

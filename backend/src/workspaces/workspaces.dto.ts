@@ -70,3 +70,9 @@ export class UpdateMemberRoleDto {
   @IsIn(WORKSPACE_ROLES as unknown as string[])
   role!: WorkspaceRole;
 }
+
+export class ResetMemberPasswordDto {
+  @IsString()
+  @MinLength(6)
+  password!: string;
+}

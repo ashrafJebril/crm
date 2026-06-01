@@ -15,6 +15,7 @@ import {
   AddMemberDto,
   CreateWorkspaceDto,
   InviteByEmailDto,
+  ResetMemberPasswordDto,
   UpdateMemberRoleDto,
   UpdateWorkspaceDto,
 } from "./workspaces.dto";
@@ -106,6 +107,20 @@ export class WorkspacesController {
       throw new ForbiddenException("Only owner or admin can change member roles");
     }
     return this.svc.updateMemberRole(id, userId, dto);
+  }
+
+  @Patch(":id/members/:userId/password")
+  async resetMemberPassword(
+    @Param("id") id: string,
+    @Param("userId") userId: string,
+    @Body() dto: ResetMemberPasswordDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    const role = await this.svc.requireMember(req.user.sub, id);
+    if (role !== "owner" && role !== "admin") {
+      throw new ForbiddenException("Only owner or admin can reset passwords");
+    }
+    return this.svc.resetMemberPassword(id, userId, dto);
   }
 
   @Delete(":id/members/:userId")
