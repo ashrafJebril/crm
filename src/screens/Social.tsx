@@ -406,6 +406,17 @@ function SocialImpl() {
     ),
   );
 
+  // IG: POST a top-level comment to the selected media item.
+  const igCommentMutation = useMutation<
+    { mediaId: string; message: string },
+    { id: string; ok: true }
+  >((input) =>
+    api.post<{ id: string; ok: true }>(
+      `/integrations/instagram/posts/${input.mediaId}/comments`,
+      { message: input.message },
+    ),
+  );
+
   /* ── FB post delete + edit mutations ──────────────────────────────────── */
   const deletePostMut = useMutation<{ postId: string }, { ok: boolean }>((input) =>
     api.delete(`/integrations/facebook/posts/${input.postId}`),
@@ -492,27 +503,30 @@ function SocialImpl() {
     writeComments(selected.id, [...current, newComment]);
     setDraft("");
 
-    // If this is a live FB post, attempt to post the comment to Facebook.
+    // If this is a live FB/IG post, post the comment to the right platform.
     // On success, swap in the real ID returned by the backend; on error,
-    // keep the local-only entry so the demo composer still works.
-    const isLive =
-      selected.platform === "facebook" && liveFbPostIds.has(selected.id);
-    if (isLive) {
-      const postId = selected.id;
+    // keep the optimistic local entry so the UI doesn't blink.
+    const postId = selected.id;
+    const swapId = (realId: string) => {
+      setOverrides((prev) => {
+        const list = prev[postId]?.comments ?? [];
+        const next = list.map((c) =>
+          c.id === localId ? { ...c, id: realId } : c,
+        );
+        return { ...prev, [postId]: { comments: next } };
+      });
+    };
+
+    if (selected.platform === "facebook" && liveFbPostIds.has(postId)) {
       replyMutation
         .mutate({ parentId: postId, message: body })
-        .then((res) => {
-          setOverrides((prev) => {
-            const list = prev[postId]?.comments ?? [];
-            const next = list.map((c) =>
-              c.id === localId ? { ...c, id: res.id } : c,
-            );
-            return { ...prev, [postId]: { comments: next } };
-          });
-        })
-        .catch(() => {
-          // Keep optimistic local entry; surface error subtly via mutation.error.
-        });
+        .then((res) => swapId(res.id))
+        .catch(() => {});
+    } else if (selected.platform === "instagram" && liveIgPostIds.has(postId)) {
+      igCommentMutation
+        .mutate({ mediaId: postId, message: body })
+        .then((res) => swapId(res.id))
+        .catch(() => {});
     }
   }
 

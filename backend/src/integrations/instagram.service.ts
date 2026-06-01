@@ -145,6 +145,20 @@ export class InstagramService {
     }));
   }
 
+  /**
+   * Post a top-level comment to an IG media item via Graph. Used by the
+   * Social tab composer. Returns the new comment id so the frontend can
+   * swap in the real id over its optimistic placeholder.
+   */
+  async commentOnMedia(workspaceId: string, mediaId: string, message: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url =
+      `${GRAPH}/${mediaId}/comments?` +
+      new URLSearchParams({ message, access_token: token }).toString();
+    const res = await this.fetchJson<{ id: string }>(url, { method: "POST" });
+    return { id: res.id, ok: true as const };
+  }
+
   async deletePost(workspaceId: string, mediaId: string) {
     const { token } = await this.requireToken(workspaceId);
     const url = `${GRAPH}/${mediaId}?access_token=${encodeURIComponent(token)}`;

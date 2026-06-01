@@ -39,6 +39,15 @@ export class InstagramController {
     return this.svc.listComments(workspaceId, mediaId);
   }
 
+  @Post("posts/:mediaId/comments")
+  commentOnMedia(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("mediaId") mediaId: string,
+    @Body() dto: { message: string },
+  ) {
+    return this.svc.commentOnMedia(workspaceId, mediaId, dto.message);
+  }
+
   @Post("posts")
   publish(
     @CurrentWorkspace() workspaceId: string,
