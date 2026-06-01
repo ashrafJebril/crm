@@ -27,7 +27,7 @@ export const isSection = (n: NavEntry): n is NavSection => "section" in n;
 export const NAV: NavEntry[] = [
   { section: "Workspace" },
   { id: "dashboard",   label: "Dashboard",   ar: "اللوحة",        Icon: IconHome },
-  { id: "inbox",       label: "Inbox",       ar: "الرسائل",       Icon: IconInbox, badge: 12 },
+  { id: "inbox",       label: "Inbox",       ar: "الرسائل",       Icon: IconInbox },
   { id: "calendar",    label: "Calendar",    ar: "التقويم",       Icon: IconCal },
   { id: "social",      label: "Social",      ar: "السوشيال",      Icon: IconGlobe },
   { id: "mentions",    label: "Mentions",    ar: "الإشارات",       Icon: IconRadar, ai: true },
