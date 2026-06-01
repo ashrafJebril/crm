@@ -1813,12 +1813,13 @@ function InboxImpl() {
   const fbConnected = fbStatusQ.data?.connected === true;
   const fbConvsQ = useFetch<FbConv[]>(
     fbConnected ? "/integrations/facebook/conversations" : null,
+    { pollMs: 5000 },
   );
   const fbMsgsQ = useFetch<FbMsg[]>(
     fbConnected && isFbConvId(activeId)
       ? `/integrations/facebook/conversations/${activeId}/messages`
       : null,
-    { key: `${activeId ?? "none"}:${messageVersion}` },
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
   );
 
   // Internal active query: skip when activeId is a Facebook thread id.
