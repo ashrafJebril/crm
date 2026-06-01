@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
 import { makeTx } from "@/lib/tx";
@@ -36,20 +36,31 @@ function planBadgeKind(plan: string): "ok" | "info" | "warn" | "ai" | "" {
 function AdminImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { user } = useAuth();
+  const { user, workspaces: myWorkspaces } = useAuth();
 
   const [tab, setTab] = useState<Tab>("workspaces");
   const [selectedWsId, setSelectedWsId] = useState<string | null>(null);
   const [refetchTick, setRefetchTick] = useState(0);
 
+  // Refetch the admin lists whenever the user's workspace list grows/shrinks
+  // (e.g., right after creating a new workspace via the topbar switcher) or
+  // when the page becomes visible again. Avoids "refresh required" UX.
   const wssQ = useFetch<AdminWorkspaceRow[]>(
     tab === "workspaces" || selectedWsId ? "/admin/workspaces" : null,
-    { key: `wss:${refetchTick}` },
+    { key: `wss:${refetchTick}:${myWorkspaces.length}` },
   );
   const usersQ = useFetch<AdminUserRow[]>(
     tab === "users" ? "/admin/users" : null,
-    { key: `users:${refetchTick}` },
+    { key: `users:${refetchTick}:${myWorkspaces.length}` },
   );
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setRefetchTick((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   if (!user?.isSuperAdmin) {
     return (
