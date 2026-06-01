@@ -120,7 +120,9 @@ export class WorkspacesController {
     if (role !== "owner" && role !== "admin") {
       throw new ForbiddenException("Only owner or admin can reset passwords");
     }
-    return this.svc.resetMemberPassword(id, userId, dto);
+    return this.svc.resetMemberPassword(id, userId, dto, {
+      isSuperAdmin: !!req.user.isSuperAdmin,
+    });
   }
 
   @Delete(":id/members/:userId")

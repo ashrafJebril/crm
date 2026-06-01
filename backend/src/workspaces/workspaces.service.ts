@@ -217,25 +217,31 @@ export class WorkspacesService {
 
   /**
    * Reset a workspace member's login password. Owner/admin only (enforced at
-   * controller). Safety rail: refuses if the target user is also a member of
-   * other workspaces — they're not "ours" to reset and could be taken over.
+   * controller). Cross-tenant safety rail: refuses if the target user is
+   * also a member of other workspaces — they're not "ours" to reset and a
+   * single-tenant owner could take over their access elsewhere. Super-admins
+   * (tkana-internal staff) bypass the rail since they already have a
+   * legitimate cross-tenant role.
    */
   async resetMemberPassword(
     workspaceId: string,
     userId: string,
     dto: ResetMemberPasswordDto,
+    options: { isSuperAdmin?: boolean } = {},
   ) {
     const m = await this.prisma.workspaceMember.findUnique({
       where: { userId_workspaceId: { userId, workspaceId } },
     });
     if (!m) throw new NotFoundException("Member not found");
-    const otherMemberships = await this.prisma.workspaceMember.count({
-      where: { userId, workspaceId: { not: workspaceId } },
-    });
-    if (otherMemberships > 0) {
-      throw new ForbiddenException(
-        "User belongs to other workspaces — they must change their own password.",
-      );
+    if (!options.isSuperAdmin) {
+      const otherMemberships = await this.prisma.workspaceMember.count({
+        where: { userId, workspaceId: { not: workspaceId } },
+      });
+      if (otherMemberships > 0) {
+        throw new ForbiddenException(
+          "User belongs to other workspaces — they must change their own password.",
+        );
+      }
     }
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
