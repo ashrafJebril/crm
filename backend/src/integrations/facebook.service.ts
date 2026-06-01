@@ -505,6 +505,13 @@ export class FacebookService {
     return { id: res.id, ok: true };
   }
 
+  async deleteComment(workspaceId: string, commentId: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${commentId}?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ success: boolean }>(url, { method: "DELETE" });
+    return { ok: res.success === true };
+  }
+
   // ─── Page Messenger conversations (DMs) ─────────────────────────────────
   async listConversations(workspaceId: string, limit = 25) {
     const { token, pageId } = await this.requireToken(workspaceId);

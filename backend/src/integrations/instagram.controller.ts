@@ -48,6 +48,14 @@ export class InstagramController {
     return this.svc.commentOnMedia(workspaceId, mediaId, dto.message);
   }
 
+  @Delete("comments/:commentId")
+  deleteComment(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("commentId") commentId: string,
+  ) {
+    return this.svc.deleteComment(workspaceId, commentId);
+  }
+
   @Post("posts")
   publish(
     @CurrentWorkspace() workspaceId: string,

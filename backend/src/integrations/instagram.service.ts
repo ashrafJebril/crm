@@ -159,6 +159,13 @@ export class InstagramService {
     return { id: res.id, ok: true as const };
   }
 
+  async deleteComment(workspaceId: string, commentId: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${commentId}?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ success: boolean }>(url, { method: "DELETE" });
+    return { ok: res.success === true };
+  }
+
   async deletePost(workspaceId: string, mediaId: string) {
     const { token } = await this.requireToken(workspaceId);
     const url = `${GRAPH}/${mediaId}?access_token=${encodeURIComponent(token)}`;

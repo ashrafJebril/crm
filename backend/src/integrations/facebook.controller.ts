@@ -204,6 +204,14 @@ export class FacebookController {
     return this.fb.replyToComment(workspaceId, commentId, dto.message);
   }
 
+  @Delete("comments/:commentId")
+  deleteComment(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("commentId") commentId: string,
+  ) {
+    return this.fb.deleteComment(workspaceId, commentId);
+  }
+
   // ── Page DMs ────────────────────────────────────────────────────────────
   @Get("conversations")
   listConversations(@CurrentWorkspace() workspaceId: string) {

@@ -417,6 +417,39 @@ function SocialImpl() {
     ),
   );
 
+  // Delete a comment on FB or IG. Graph DELETE /{comment-id}.
+  const deleteCommentMutation = useMutation<
+    { platform: SocialPlatform; commentId: string },
+    { ok: boolean }
+  >((input) =>
+    api.delete<{ ok: boolean }>(
+      `/integrations/${input.platform}/comments/${input.commentId}`,
+    ),
+  );
+
+  function deleteComment(c: SocialComment) {
+    if (!selected) return;
+    const isLocalOnly = c.id.includes("-local-");
+    const postId = selected.id;
+    // Optimistic remove
+    const before = getCurrentComments(selected);
+    const after = before.filter((x) => x.id !== c.id);
+    writeComments(postId, after);
+    if (isLocalOnly) return; // never made it to the platform, nothing to call
+    const isLiveFb = selected.platform === "facebook" && liveFbPostIds.has(postId);
+    const isLiveIg = selected.platform === "instagram" && liveIgPostIds.has(postId);
+    if (!isLiveFb && !isLiveIg) return;
+    deleteCommentMutation
+      .mutate({
+        platform: selected.platform,
+        commentId: c.id,
+      })
+      .catch(() => {
+        // Restore on failure so the operator sees the comment didn't actually delete.
+        writeComments(postId, before);
+      });
+  }
+
   /* ── FB post delete + edit mutations ──────────────────────────────────── */
   const deletePostMut = useMutation<{ postId: string }, { ok: boolean }>((input) =>
     api.delete(`/integrations/facebook/posts/${input.postId}`),
@@ -1132,6 +1165,34 @@ function SocialImpl() {
                           >
                             <span>{c.liked ? "❤" : "❤︎"}</span>
                             <span>{c.likes}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  tx(
+                                    "Delete this comment?",
+                                    "حذف هذا التعليق؟",
+                                  ),
+                                )
+                              ) {
+                                deleteComment(c);
+                              }
+                            }}
+                            className="like-btn"
+                            disabled={deleteCommentMutation.loading}
+                            style={{
+                              background: "transparent",
+                              border: 0,
+                              padding: 0,
+                              cursor: "pointer",
+                              color: "var(--bad)",
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 11,
+                            }}
+                          >
+                            {tx("Delete", "حذف")}
                           </button>
                           <button
                             type="button"
