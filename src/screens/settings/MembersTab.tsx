@@ -142,41 +142,30 @@ export function MembersTab() {
     <>
       {canEdit && (
         <SettingsCard
-          title={tx("Invite a member", "دعوة عضو")}
+          title={tx("Add team member", "إضافة عضو")}
           description={tx(
-            "If the email already has an Aram account, we add them as a member. If not, we create the account with the name + temporary password you set here, and you share them with the teammate.",
-            "إذا كان البريد لديه حساب على آرام، نضيفه كعضو. إذا لم يكن، ننشئ حساباً جديداً بالاسم وكلمة المرور التي تحددها هنا ثم تشاركها مع الفريق.",
+            "Creates a new account and adds them to this workspace. Share the email + password with your teammate so they can log in.",
+            "ينشئ حساباً جديداً ويضيفه إلى هذه المساحة. شارك البريد وكلمة المرور مع العضو ليتمكن من الدخول.",
           )}
           footer={
             <button
               type="button"
               className="btn primary"
               onClick={onInvite}
-              disabled={inviteMut.loading || email.trim().length === 0}
+              disabled={
+                inviteMut.loading ||
+                email.trim().length === 0 ||
+                inviteName.trim().length < 2 ||
+                invitePassword.trim().length < 6
+              }
             >
-              {inviteMut.loading ? tx("Adding…", "جارٍ الإضافة…") : tx("Add member", "إضافة")}
+              {inviteMut.loading
+                ? tx("Creating…", "جارٍ الإنشاء…")
+                : tx("Create & add", "إنشاء وإضافة")}
             </button>
           }
         >
-          <Field label={tx("Email", "البريد الإلكتروني")}>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="teammate@company.com"
-              style={inputStyle}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void onInvite();
-              }}
-            />
-          </Field>
-          <Field
-            label={tx("Name (for new accounts)", "الاسم (للحسابات الجديدة)")}
-            hint={tx(
-              "Only used when the email doesn't already have an account.",
-              "يُستخدم فقط للحسابات الجديدة.",
-            )}
-          >
+          <Field label={tx("Full name", "الاسم الكامل")}>
             <input
               type="text"
               value={inviteName}
@@ -185,11 +174,23 @@ export function MembersTab() {
               style={inputStyle}
             />
           </Field>
+          <Field label={tx("Email", "البريد الإلكتروني")}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="yazan@example.com"
+              style={inputStyle}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void onInvite();
+              }}
+            />
+          </Field>
           <Field
-            label={tx("Temporary password (for new accounts)", "كلمة المرور المؤقتة")}
+            label={tx("Password", "كلمة المرور")}
             hint={tx(
-              "Auto-generated. They can change it from Settings → Profile.",
-              "تم توليدها تلقائياً. يمكن تغييرها من الإعدادات.",
+              "Auto-generated. The teammate can change it from Settings → Profile after logging in.",
+              "تم توليدها تلقائياً. يمكن للعضو تغييرها من الإعدادات بعد الدخول.",
             )}
           >
             <div style={{ display: "flex", gap: 6 }}>
