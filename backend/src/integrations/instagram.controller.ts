@@ -17,6 +17,28 @@ export class InstagramController {
     return this.svc.syncConversations(workspaceId);
   }
 
+  @Get("conversations")
+  listConversations(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.listConversations(workspaceId);
+  }
+
+  @Get("conversations/:conversationId/messages")
+  listMessages(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("conversationId") conversationId: string,
+  ) {
+    return this.svc.listMessagesInConversation(workspaceId, conversationId);
+  }
+
+  @Post("conversations/by-igsid/:igsid/send")
+  sendDirectMessage(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("igsid") igsid: string,
+    @Body() dto: { message: string },
+  ) {
+    return this.svc.sendDirectMessage(workspaceId, igsid, dto.message);
+  }
+
   @Post("conversations/:conversationId/send")
   send(
     @CurrentWorkspace() workspaceId: string,

@@ -1821,6 +1821,30 @@ interface FbMsg {
 }
 const isFbConvId = (id: string | null | undefined): boolean =>
   typeof id === "string" && id.startsWith("t_");
+const isIgConvId = (id: string | null | undefined): boolean =>
+  typeof id === "string" && id.startsWith("ig:");
+// Strip the `ig:` prefix the backend stamps on IG conv ids so we can call
+// /integrations/instagram/conversations/:id with Graph's raw thread id.
+const stripIgPrefix = (id: string): string =>
+  id.startsWith("ig:") ? id.slice(3) : id;
+
+interface IgConv {
+  id: string;                // "ig:t_..." — prefixed by backend
+  contactId?: string;        // local DB Contact id
+  contactIgsid?: string;     // IG-scoped id of the OTHER participant — used for sends
+  contactName: string;
+  snippet: string;
+  unread: number;
+  messageCount: number;
+  updatedAt: string;
+}
+interface IgMsg {
+  id: string;
+  from: "page" | "them";
+  authorName: string;
+  body: string;
+  at: string;
+}
 
 function InboxImpl() {
   const { t } = useTweaks();
@@ -1860,45 +1884,34 @@ function InboxImpl() {
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
   );
 
-  // Internal active query: skip when activeId is a Facebook thread id.
+  // Internal active query: skip when activeId is a Facebook OR Instagram
+  // live thread id (those have their own per-platform messages query).
   const activeQ = useFetch<ConversationDetail>(
-    activeId && !isFbConvId(activeId) ? `/conversations/${activeId}` : null,
+    activeId && !isFbConvId(activeId) && !isIgConvId(activeId)
+      ? `/conversations/${activeId}`
+      : null,
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
   );
 
-  // Instagram: webhook delivery is unreliable while the app is in dev mode,
-  // so the DB only learns about new IG DMs when /sync runs. Auto-trigger
-  // sync every 30s while the Inbox is open so inbound DMs surface without
-  // the operator having to click 'Sync conversations'. Pauses on hidden tab.
+  // Live Instagram (mirrors the FB pattern): pull conversations/messages
+  // straight from Graph each poll so new DMs surface in ~5s instead of
+  // ~35s (the prior DB-sync path). Backend prefixes IG thread ids with
+  // `ig:` so we can tell them apart from FB ids.
   const igStatusQ = useFetch<{ connected?: boolean }>(
     "/integrations/instagram/status",
     { pollMs: 60000 },
   );
   const igConnected = igStatusQ.data?.connected === true;
-  useEffect(() => {
-    if (!igConnected) return;
-    let cancelled = false;
-    const runSync = () => {
-      if (document.visibilityState !== "visible") return;
-      api
-        .post("/integrations/instagram/sync")
-        .then(() => {
-          if (!cancelled) convsQ.refetch();
-        })
-        .catch(() => {
-          /* sync errors are non-fatal here */
-        });
-    };
-    // Fire once immediately, then every 30s.
-    runSync();
-    const id = window.setInterval(runSync, 30000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-    // convsQ.refetch identity is stable enough; deps intentionally minimal.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [igConnected]);
+  const igConvsQ = useFetch<IgConv[]>(
+    igConnected ? "/integrations/instagram/conversations" : null,
+    { pollMs: 5000 },
+  );
+  const igMsgsQ = useFetch<IgMsg[]>(
+    igConnected && isIgConvId(activeId)
+      ? `/integrations/instagram/conversations/${stripIgPrefix(activeId!)}/messages`
+      : null,
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
+  );
 
   // Conversations come from two sources:
   //   1. /conversations — DB rows (WhatsApp webhooks + Instagram sync + any future
@@ -1908,8 +1921,12 @@ function InboxImpl() {
   // We MERGE them so all channels appear in the unified list.
   const conversations: Conversation[] = useMemo(() => {
     const dbRows = convsQ.data ?? [];
-    // Drop any DB rows with channel="facebook" so the live FB list is authoritative.
-    const nonFb = dbRows.filter((c) => c.channel !== "facebook");
+    // Drop DB rows for FB + IG so the live lists are authoritative for those
+    // channels. (Old IG rows from when the inbox used DB sync stay in the DB
+    // but no longer surface in the UI to avoid duplicates.)
+    const nonLive = dbRows.filter(
+      (c) => c.channel !== "facebook" && c.channel !== "instagram",
+    );
 
     const fbRows: Conversation[] = fbConnected
       ? (fbConvsQ.data ?? []).map((c) => ({
@@ -1929,13 +1946,31 @@ function InboxImpl() {
         }))
       : [];
 
-    // DB rows already arrive ordered (pinned desc, then updatedAt desc).
-    // FB rows are merged in raw order. Good enough until we move FB into the DB.
-    return [...nonFb, ...fbRows];
-  }, [fbConnected, convsQ.data, fbConvsQ.data]);
+    const igRows: Conversation[] = igConnected
+      ? (igConvsQ.data ?? []).map((c) => ({
+          id: c.id,
+          contactId: c.contactId ?? c.id,
+          agent: "",
+          unread: c.unread,
+          pinned: false,
+          lastAt: fmtCompact(c.updatedAt),
+          lastFrom: "them",
+          preview: c.snippet || "—",
+          channel: "instagram",
+          status: "human",
+          intent: "—",
+          confidence: 0,
+          escalated: false,
+        }))
+      : [];
 
-  // Augment contactById with synthetic Contact entries for FB participants so
-  // the existing row/header renderers can resolve their names.
+    // DB rows arrive ordered (pinned desc, then updatedAt desc). Live rows
+    // merged in raw order; close-enough until everything lives in one store.
+    return [...nonLive, ...fbRows, ...igRows];
+  }, [fbConnected, convsQ.data, fbConvsQ.data, igConnected, igConvsQ.data]);
+
+  // Augment contactById with synthetic Contact entries for FB + IG
+  // participants so existing row/header renderers can resolve their names.
   const contactById = useMemo(() => {
     const map = new Map<string, Contact>();
     for (const c of contactsQ.data ?? []) map.set(c.id, c);
@@ -1955,8 +1990,24 @@ function InboxImpl() {
         value: "—",
       });
     }
+    for (const ic of igConvsQ.data ?? []) {
+      if (!ic.contactId) continue;
+      if (map.has(ic.contactId)) continue;
+      map.set(ic.contactId, {
+        id: ic.contactId,
+        name: ic.contactName,
+        phone: "—",
+        tags: ["Instagram"],
+        industry: "instagram-dm",
+        lifecycle: "Lead",
+        lastSeen: fmtCompact(ic.updatedAt),
+        source: "Instagram DM",
+        convs: 1,
+        value: "—",
+      });
+    }
     return map;
-  }, [contactsQ.data, fbConvsQ.data]);
+  }, [contactsQ.data, fbConvsQ.data, igConvsQ.data]);
 
   // Auto-select first conversation when list loads.
   useEffect(() => {
@@ -1988,7 +2039,7 @@ function InboxImpl() {
   // threads (no equivalent endpoint, and they aren't tracked in our DB).
   useEffect(() => {
     if (!activeId) return;
-    if (isFbConvId(activeId)) return;
+    if (isFbConvId(activeId) || isIgConvId(activeId)) return;
     let cancelled = false;
     api
       .post<Conversation>(`/conversations/${activeId}/read`, {})
@@ -2069,6 +2120,13 @@ function InboxImpl() {
         message: input.body,
       }),
   );
+  // Live IG DM send — uses IGSID directly so we don't need a DB conversation row.
+  const sendIgLiveMessage = useMutation<{ igsid: string; body: string }, { ok: true; messageId?: string }>(
+    (input) =>
+      api.post(`/integrations/instagram/conversations/by-igsid/${input.igsid}/send`, {
+        message: input.body,
+      }),
+  );
 
   // WhatsApp outbound: posts via Cloud API.
   const sendWaMessage = useMutation<{ conversationId: string; body: string }, { ok: true; messageId?: string }>(
@@ -2088,6 +2146,15 @@ function InboxImpl() {
       await sendFbMessage.mutate({ recipientId, body });
       setMessageVersion((n) => n + 1);
       fbConvsQ.refetch();
+      return;
+    }
+    if (isIgConvId(activeId)) {
+      const igConv = (igConvsQ.data ?? []).find((c) => c.id === activeId);
+      const igsid = igConv?.contactIgsid;
+      if (!igsid) return;
+      await sendIgLiveMessage.mutate({ igsid, body });
+      setMessageVersion((n) => n + 1);
+      igConvsQ.refetch();
       return;
     }
     // Route by channel for DB-stored conversations.
@@ -2136,11 +2203,38 @@ function InboxImpl() {
         messages,
       };
     }
+    if (isIgConvId(activeId)) {
+      const igConv = (igConvsQ.data ?? []).find((c) => c.id === activeId);
+      if (!igConv) return undefined;
+      const messages: Message[] = (igMsgsQ.data ?? []).map((m) => ({
+        from: m.from === "page" ? "human" : "them",
+        t: fmtCompact(m.at),
+        body: m.body || "📎 attachment",
+        agent: undefined,
+      }));
+      return {
+        id: igConv.id,
+        contactId: igConv.contactId ?? igConv.id,
+        agent: "",
+        unread: igConv.unread,
+        pinned: false,
+        lastAt: fmtCompact(igConv.updatedAt),
+        lastFrom: "them",
+        preview: igConv.snippet || "—",
+        channel: "instagram",
+        status: "human",
+        intent: "—",
+        confidence: 0,
+        escalated: false,
+        messages,
+      };
+    }
     return activeQ.data ?? undefined;
-  }, [activeId, fbConvsQ.data, fbMsgsQ.data, activeQ.data]);
+  }, [activeId, fbConvsQ.data, fbMsgsQ.data, igConvsQ.data, igMsgsQ.data, activeQ.data]);
 
   const activeContact = active ? contactById.get(active.contactId) : undefined;
   const activeIsFb = active ? isFbConvId(active.id) : false;
+  const activeIsIg = active ? isIgConvId(active.id) : false;
 
   return (
     <div
@@ -2211,12 +2305,14 @@ function InboxImpl() {
             sendMessage.loading ||
             sendFbMessage.loading ||
             sendIgMessage.loading ||
+            sendIgLiveMessage.loading ||
             sendWaMessage.loading
           }
           sendError={
             sendMessage.error ??
             sendFbMessage.error ??
             sendIgMessage.error ??
+            sendIgLiveMessage.error ??
             sendWaMessage.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
@@ -2230,7 +2326,13 @@ function InboxImpl() {
             activeQ.refetch();
             convsQ.refetch();
           }}
-          messagesLoading={activeIsFb ? fbMsgsQ.loading : activeQ.loading}
+          messagesLoading={
+            activeIsFb
+              ? fbMsgsQ.loading
+              : activeIsIg
+                ? igMsgsQ.loading
+                : activeQ.loading
+          }
           tx={tx}
         />
       ) : activeQ.loading ? (

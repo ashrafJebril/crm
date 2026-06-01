@@ -159,6 +159,171 @@ export class InstagramService {
     return { id: res.id, ok: true as const };
   }
 
+  /**
+   * Live IG conversation list — same shape FB exposes. Pulls straight from
+   * Graph each call so the Inbox doesn't depend on a DB sync to surface
+   * inbound DMs. We prefix the IG thread id with `ig:` so the frontend can
+   * tell it apart from FB Messenger threads (Graph uses the same `t_...`
+   * format for both).
+   */
+  async listConversations(workspaceId: string, limit = 25) {
+    const { token, igUserId } = await this.requireToken(workspaceId);
+    const fb = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "facebook" },
+    });
+    if (!fb?.pageId) {
+      throw new BadRequestException(
+        "Facebook Page is not connected; Instagram DMs flow through the linked Page",
+      );
+    }
+    const pageId = fb.pageId;
+    interface IgConv {
+      id: string;
+      updated_time?: string;
+      snippet?: string;
+      unread_count?: number;
+      message_count?: number;
+      participants?: { data: Array<{ id: string; username?: string; name?: string }> };
+    }
+    const res = await this.fetchJson<{ data: IgConv[] }>(
+      `${GRAPH}/${pageId}/conversations?platform=instagram&fields=id,updated_time,snippet,unread_count,message_count,participants&limit=${limit}&access_token=${encodeURIComponent(token)}`,
+      { method: "GET" },
+    );
+    const rows = res.data ?? [];
+
+    const contactByIgsid = new Map<string, string>();
+    for (const c of rows) {
+      const other = c.participants?.data.find((p) => p.id !== igUserId);
+      if (!other?.id) continue;
+      if (contactByIgsid.has(other.id)) continue;
+      const displayName = other.username ?? other.name ?? `IG ${other.id.slice(-6)}`;
+      const contact = await this.prisma.contact.upsert({
+        where: {
+          workspaceId_externalSource_externalId: {
+            workspaceId,
+            externalSource: "instagram",
+            externalId: other.id,
+          },
+        },
+        create: {
+          workspaceId,
+          name: displayName,
+          industry: "instagram",
+          lifecycle: "lead",
+          source: "instagram",
+          lastSeen: this.fmtCompact(c.updated_time),
+          externalSource: "instagram",
+          externalId: other.id,
+        },
+        update: {
+          name: other.username ? other.username : undefined,
+          lastSeen: this.fmtCompact(c.updated_time),
+        },
+      });
+      contactByIgsid.set(other.id, contact.id);
+    }
+
+    await this.prisma.integration.updateMany({
+      where: { workspaceId, platform: "instagram" },
+      data: { lastFetchedAt: new Date() },
+    });
+
+    return rows.map((c) => {
+      const other = c.participants?.data.find((p) => p.id !== igUserId);
+      const dbContactId = other?.id ? contactByIgsid.get(other.id) : undefined;
+      return {
+        // ig: prefix lets the Inbox distinguish IG live threads from FB ones.
+        id: `ig:${c.id}`,
+        contactId: dbContactId,
+        contactIgsid: other?.id,
+        contactName: other?.username ?? other?.name ?? "Instagram user",
+        snippet: c.snippet ?? "",
+        unread: c.unread_count ?? 0,
+        messageCount: c.message_count ?? 0,
+        updatedAt: c.updated_time ?? new Date().toISOString(),
+      };
+    });
+  }
+
+  private fmtCompact(iso?: string): string {
+    if (!iso) return "—";
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return "—";
+    const diffMin = Math.floor((Date.now() - t) / 60000);
+    if (diffMin < 1) return "now";
+    if (diffMin < 60) return `${diffMin}m`;
+    const h = Math.floor(diffMin / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    if (d < 7) return `${d}d`;
+    return new Date(t).toLocaleDateString();
+  }
+
+  /** Live messages for a single IG thread. The id arrives without the
+   *  `ig:` prefix (controller strips it before calling). */
+  async listMessagesInConversation(
+    workspaceId: string,
+    conversationId: string,
+    limit = 25,
+  ) {
+    const { token, igUserId } = await this.requireToken(workspaceId);
+    interface IgMessageStub { id: string }
+    interface IgMessage {
+      id: string;
+      from?: { id: string; username?: string };
+      message?: string;
+      created_time: string;
+    }
+    // Step 1: list message ids on the thread (Graph returns most-recent first).
+    const stubsRes = await this.fetchJson<{ messages?: { data: IgMessageStub[] } }>(
+      `${GRAPH}/${conversationId}?fields=messages.limit(${limit}){id}&access_token=${encodeURIComponent(token)}`,
+      { method: "GET" },
+    );
+    const stubs = stubsRes.messages?.data ?? [];
+    if (stubs.length === 0) return [];
+    // Step 2: hydrate each message with from + body + timestamp in parallel.
+    const hydrated = await Promise.all(
+      stubs.map((s) =>
+        this.fetchJson<IgMessage>(
+          `${GRAPH}/${s.id}?fields=id,from,message,created_time&access_token=${encodeURIComponent(token)}`,
+          { method: "GET" },
+        ).catch(() => null),
+      ),
+    );
+    // Return oldest-first for thread render order.
+    const ordered = hydrated.filter((m): m is IgMessage => m !== null).reverse();
+    return ordered.map((m) => ({
+      id: m.id,
+      from: m.from?.id === igUserId ? "page" : "them",
+      authorName: m.from?.username ?? m.from?.id ?? "Unknown",
+      body: m.message ?? "",
+      at: m.created_time,
+    }));
+  }
+
+  /** Send an outbound DM to a specific IGSID without needing an existing
+   *  internal Conversation row. Mirrors the FB sendDirectMessage path. */
+  async sendDirectMessage(workspaceId: string, igsid: string, message: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const fb = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "facebook" },
+    });
+    if (!fb?.pageId) {
+      throw new BadRequestException("Facebook Page is not connected");
+    }
+    const url = `${GRAPH}/${fb.pageId}/messages?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ message_id?: string; recipient_id?: string }>(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: igsid },
+        message: { text: message },
+        messaging_type: "RESPONSE",
+      }),
+    });
+    return { ok: true as const, messageId: res.message_id };
+  }
+
   async deleteComment(workspaceId: string, commentId: string) {
     const { token } = await this.requireToken(workspaceId);
     const url = `${GRAPH}/${commentId}?access_token=${encodeURIComponent(token)}`;
