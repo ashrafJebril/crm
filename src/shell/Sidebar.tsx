@@ -18,14 +18,25 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const isAr = t.lang === "ar";
 
   // Live unread-count for the Inbox nav item. Polls so the badge stays fresh
-  // without the user opening the inbox first.
+  // without the user opening the inbox first. Sums DB-backed conversations
+  // (IG/WA/web) and live FB Messenger threads when FB is connected.
   const inboxQ = useFetch<Array<{ unread?: number }>>("/conversations", {
     pollMs: 15000,
   });
-  const inboxUnread = useMemo(
-    () => (inboxQ.data ?? []).reduce((sum, c) => sum + (c.unread ?? 0), 0),
-    [inboxQ.data],
+  const fbStatusQ = useFetch<{ connected?: boolean }>(
+    "/integrations/facebook/status",
+    { pollMs: 60000 },
   );
+  const fbConnected = fbStatusQ.data?.connected === true;
+  const fbConvsQ = useFetch<Array<{ unread?: number }>>(
+    fbConnected ? "/integrations/facebook/conversations" : null,
+    { pollMs: 15000 },
+  );
+  const inboxUnread = useMemo(() => {
+    const db = (inboxQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0);
+    const fb = (fbConvsQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0);
+    return db + fb;
+  }, [inboxQ.data, fbConvsQ.data]);
 
   // Filter out super-admin-only entries for normal users, then drop any
   // section header that ends up with no items beneath it.
