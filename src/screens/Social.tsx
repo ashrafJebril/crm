@@ -339,15 +339,18 @@ function SocialImpl() {
     [feed, selectedId],
   );
 
-  // If the currently-selected post came from the live FB feed, load its
-  // comments from the backend on demand.
+  // If the currently-selected post came from a live feed (FB or IG), load
+  // its comments from the backend on demand. Both endpoints return the same
+  // shape (LiveFbComment).
   const selectedIsLive =
     baseSelected !== null &&
-    baseSelected.platform === "facebook" &&
-    liveFbPostIds.has(baseSelected.id);
+    ((baseSelected.platform === "facebook" && liveFbPostIds.has(baseSelected.id)) ||
+      (baseSelected.platform === "instagram" && liveIgPostIds.has(baseSelected.id)));
   const liveCommentsQ = useFetch<LiveFbComment[]>(
-    selectedIsLive
-      ? `/integrations/facebook/posts/${baseSelected.id}/comments`
+    selectedIsLive && baseSelected
+      ? baseSelected.platform === "instagram"
+        ? `/integrations/instagram/posts/${baseSelected.id}/comments`
+        : `/integrations/facebook/posts/${baseSelected.id}/comments`
       : null,
   );
 
