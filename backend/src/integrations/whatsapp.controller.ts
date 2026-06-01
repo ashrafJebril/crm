@@ -31,6 +31,19 @@ export class WhatsAppController {
     return this.wa.connect(workspaceId, dto);
   }
 
+  @Post("integrations/whatsapp/oauth/exchange")
+  embeddedSignup(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: { code: string; phoneNumberId: string; wabaId: string },
+  ) {
+    return this.wa.embeddedSignupExchange(
+      workspaceId,
+      dto.code,
+      dto.phoneNumberId,
+      dto.wabaId,
+    );
+  }
+
   @Delete("integrations/whatsapp/disconnect")
   disconnect(@CurrentWorkspace() workspaceId: string) {
     return this.wa.disconnect(workspaceId);

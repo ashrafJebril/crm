@@ -115,6 +115,49 @@ export class WhatsAppService {
     };
   }
 
+  /**
+   * Complete WhatsApp Embedded Signup: exchange the `code` returned by Meta's
+   * embedded signup popup for an access token, then store the credentials.
+   * The popup gives us phoneNumberId + wabaId out-of-band via window.message.
+   */
+  async embeddedSignupExchange(
+    workspaceId: string,
+    code: string,
+    phoneNumberId: string,
+    wabaId: string,
+  ) {
+    const appId = process.env.META_APP_ID_WA ?? process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET_WA ?? process.env.META_APP_SECRET;
+    if (!appId || !appSecret) {
+      throw new BadRequestException(
+        "META_APP_ID_WA / META_APP_SECRET_WA not configured for WhatsApp app",
+      );
+    }
+
+    const tokenUrl =
+      `${GRAPH}/oauth/access_token?client_id=${appId}` +
+      `&client_secret=${appSecret}` +
+      `&code=${encodeURIComponent(code)}`;
+    const tokenRes = await this.fetchJson<{
+      access_token: string;
+      token_type?: string;
+      expires_in?: number;
+    }>(tokenUrl, { method: "GET" });
+    if (!tokenRes.access_token) {
+      throw new BadRequestException("Meta did not return an access token");
+    }
+
+    // Generate a verify token now — used when we configure webhooks later.
+    const verifyToken = `aram-wa-${Math.random().toString(36).slice(2, 10)}`;
+
+    return this.connect(workspaceId, {
+      phoneNumberId,
+      wabaId,
+      accessToken: tokenRes.access_token,
+      verifyToken,
+    });
+  }
+
   async connect(workspaceId: string, dto: ConnectWhatsAppDto) {
     // Validate the credentials by fetching the phone-number record from Meta.
     const info = await this.graphGet<WaPhoneInfo>(

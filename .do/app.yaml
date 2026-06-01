@@ -31,6 +31,12 @@ services:
       - key: META_APP_SECRET
         scope: RUN_TIME
         type: SECRET
+      - key: META_APP_ID_WA
+        scope: RUN_TIME
+        value: "1245753357432458"
+      - key: META_APP_SECRET_WA
+        scope: RUN_TIME
+        type: SECRET
       - key: META_GRAPH_VERSION
         scope: RUN_TIME
         value: v21.0
@@ -63,6 +69,12 @@ static_sites:
       - key: VITE_API_URL
         scope: BUILD_TIME
         value: https://aramhub.net/api
+      - key: VITE_WA_APP_ID
+        scope: BUILD_TIME
+        value: "1245753357432458"
+      - key: VITE_WA_CONFIG_ID
+        scope: BUILD_TIME
+        value: "1347373743953549"
 
 domains:
   - domain: aramhub.net

@@ -84,6 +84,221 @@ export class InstagramService {
     return { ok: res.success !== false, id: res.id ?? mediaId };
   }
 
+  /**
+   * Pulls all Instagram DM threads for the connected IG Business account
+   * and mirrors them into the local Conversation / Message tables so the
+   * unified Inbox can display them.  Idempotent: each call wipes IG messages
+   * for this workspace, then re-inserts from Graph.
+   */
+  async syncConversations(workspaceId: string) {
+    const { token, igUserId } = await this.requireToken(workspaceId);
+
+    // The /conversations endpoint for IG DMs is on the FB Page, scoped via
+    // `?platform=instagram`. So we need the Page ID, not the IG User ID.
+    const fb = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "facebook" },
+    });
+    if (!fb?.pageId) {
+      throw new BadRequestException(
+        "Facebook Page is not connected; Instagram DMs flow through the linked Page",
+      );
+    }
+    const pageId = fb.pageId;
+
+    interface IgParticipant { id: string; username?: string }
+    interface IgConversation {
+      id: string;
+      participants?: { data: IgParticipant[] };
+      updated_time?: string;
+    }
+    interface IgMessage {
+      id: string;
+      message?: string;
+      from?: IgParticipant;
+      created_time: string;
+    }
+
+    const convsRes = await this.fetchJson<{ data: IgConversation[] }>(
+      `${GRAPH}/${pageId}/conversations?platform=instagram&fields=id,participants,updated_time&access_token=${encodeURIComponent(token)}`,
+      { method: "GET" },
+    );
+
+    let conversationsTouched = 0;
+    let messagesInserted = 0;
+
+    for (const conv of convsRes.data ?? []) {
+      const other = conv.participants?.data?.find((p) => p.id !== igUserId);
+      if (!other) continue;
+      const displayName = other.username ?? `IG ${other.id.slice(-6)}`;
+
+      // Upsert Contact (per IG participant)
+      const contact = await this.prisma.contact.upsert({
+        where: {
+          workspaceId_externalSource_externalId: {
+            workspaceId,
+            externalSource: "instagram",
+            externalId: other.id,
+          },
+        },
+        create: {
+          workspaceId,
+          name: displayName,
+          industry: "instagram",
+          lifecycle: "lead",
+          source: "instagram",
+          lastSeen: "now",
+          externalSource: "instagram",
+          externalId: other.id,
+        },
+        update: { name: displayName, lastSeen: "now" },
+      });
+
+      // Find or create the local Conversation for this contact + channel.
+      let dbConv = await this.prisma.conversation.findFirst({
+        where: { workspaceId, contactId: contact.id, channel: "instagram" },
+      });
+      if (!dbConv) {
+        dbConv = await this.prisma.conversation.create({
+          data: {
+            workspaceId,
+            contactId: contact.id,
+            agent: "",
+            unread: 0,
+            pinned: false,
+            lastAt: "now",
+            lastFrom: "them",
+            preview: "",
+            channel: "instagram",
+            status: "human",
+            intent: "—",
+            confidence: 0,
+          },
+        });
+      }
+      conversationsTouched++;
+
+      // Fetch this conversation's messages (newest-first per Graph default).
+      const msgsRes = await this.fetchJson<{
+        messages?: { data: IgMessage[] };
+      }>(
+        `${GRAPH}/${conv.id}?fields=messages{id,from,message,created_time}&access_token=${encodeURIComponent(token)}`,
+        { method: "GET" },
+      );
+      const rawMsgs = msgsRes.messages?.data ?? [];
+
+      // Wipe + reinsert IG messages for this conversation (idempotent refresh).
+      await this.prisma.message.deleteMany({
+        where: { workspaceId, conversationId: dbConv.id },
+      });
+
+      // Insert in chronological order (Graph returns newest-first).
+      const ordered = [...rawMsgs].reverse();
+      for (const m of ordered) {
+        const createdAt = new Date(m.created_time);
+        const d = isNaN(createdAt.getTime()) ? new Date() : createdAt;
+        const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        const fromUs = m.from?.id === igUserId;
+        await this.prisma.message.create({
+          data: {
+            workspaceId,
+            conversationId: dbConv.id,
+            from: fromUs ? "human" : "them",
+            body: m.message ?? "[attachment]",
+            t,
+            createdAt: d,
+          },
+        });
+        messagesInserted++;
+      }
+
+      // Update conversation preview/timestamps from the latest message.
+      const latest = ordered[ordered.length - 1];
+      if (latest) {
+        await this.prisma.conversation.update({
+          where: { id: dbConv.id },
+          data: {
+            preview: (latest.message ?? "[attachment]").slice(0, 140),
+            lastAt: "now",
+            lastFrom: latest.from?.id === igUserId ? "human" : "them",
+          },
+        });
+      }
+    }
+
+    // Mark the integration as freshly synced.
+    await this.prisma.integration.updateMany({
+      where: { workspaceId, platform: "instagram" },
+      data: { lastFetchedAt: new Date() },
+    });
+
+    return {
+      ok: true,
+      conversations: conversationsTouched,
+      messages: messagesInserted,
+    };
+  }
+
+  /**
+   * Send an outbound Instagram DM in an existing conversation.  Uses the
+   * FB Page's `/messages` endpoint with platform=instagram routing.  Writes
+   * the message into our own DB so the Inbox reflects it immediately.
+   */
+  async sendInConversation(workspaceId: string, conversationId: string, message: string) {
+    const { token } = await this.requireToken(workspaceId);
+
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId, channel: "instagram" },
+      include: { contact: true },
+    });
+    if (!conv) throw new NotFoundException("Instagram conversation not found");
+    const recipientIgsid = conv.contact.externalId;
+    if (!recipientIgsid) {
+      throw new BadRequestException("Recipient Instagram-scoped ID missing on contact");
+    }
+
+    const fb = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "facebook" },
+    });
+    if (!fb?.pageId) {
+      throw new BadRequestException("Facebook Page is not connected");
+    }
+
+    const url = `${GRAPH}/${fb.pageId}/messages?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ message_id?: string; recipient_id?: string }>(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientIgsid },
+        message: { text: message },
+        messaging_type: "RESPONSE",
+      }),
+    });
+
+    // Mirror into our DB so the UI updates immediately.
+    const now = new Date();
+    const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    await this.prisma.message.create({
+      data: {
+        workspaceId,
+        conversationId,
+        from: "human",
+        body: message,
+        t,
+      },
+    });
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        preview: message.slice(0, 140),
+        lastAt: "now",
+        lastFrom: "human",
+        unread: 0,
+      },
+    });
+
+    return { ok: true, messageId: res.message_id };
+  }
+
   // ─── Internals ──────────────────────────────────────────────────────────
 
   private async waitForContainerReady(containerId: string, token: string): Promise<void> {

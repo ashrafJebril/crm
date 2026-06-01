@@ -12,6 +12,20 @@ export class InstagramController {
     return this.svc.status(workspaceId);
   }
 
+  @Post("sync")
+  sync(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.syncConversations(workspaceId);
+  }
+
+  @Post("conversations/:conversationId/send")
+  send(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("conversationId") conversationId: string,
+    @Body() dto: { message: string },
+  ) {
+    return this.svc.sendInConversation(workspaceId, conversationId, dto.message);
+  }
+
   @Post("posts")
   publish(
     @CurrentWorkspace() workspaceId: string,

@@ -26,18 +26,7 @@ export function IntegrationsTab() {
     <>
       <FacebookCard tx={tx} canEdit={canEdit} />
 
-      <PlaceholderCard
-        tx={tx}
-        title={tx("Instagram", "إنستغرام")}
-        description={tx(
-          "Connect an Instagram Business account to receive DMs and pull hashtag mentions.",
-          "اربط حساب إنستغرام أعمال لاستقبال الرسائل ومتابعة الهاشتاجات.",
-        )}
-        comingSoonNote={tx(
-          "Available once your Meta business is verified.",
-          "متوفر بعد التحقق من حساب ميتا بزنس.",
-        )}
-      />
+      <InstagramCard tx={tx} />
 
       <PlaceholderCard
         tx={tx}
@@ -71,6 +60,20 @@ interface WhatsAppCardProps {
   canEdit: boolean;
 }
 
+// Augment window with the Facebook SDK shape we use for Embedded Signup.
+declare global {
+  interface Window {
+    FB?: {
+      init: (opts: { appId: string; cookie?: boolean; xfbml?: boolean; version: string }) => void;
+      login: (
+        cb: (resp: { authResponse?: { code?: string; accessToken?: string } | null }) => void,
+        opts: { config_id: string; response_type: string; override_default_response_type: boolean; extras?: object },
+      ) => void;
+    };
+    fbAsyncInit?: () => void;
+  }
+}
+
 function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
   const statusQ = useFetch<WaStatus>("/integrations/whatsapp/status");
   const [showForm, setShowForm] = useState(false);
@@ -79,6 +82,8 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
   const [accessToken, setAccessToken] = useState("");
   const [verifyToken, setVerifyToken] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [esStarting, setEsStarting] = useState(false);
+  const [esError, setEsError] = useState<string | null>(null);
 
   const connectMut = useMutation<
     {
@@ -90,11 +95,123 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
     WaStatus
   >((input) => api.post("/integrations/whatsapp/connect", input));
 
+  const exchangeMut = useMutation<
+    { code: string; phoneNumberId: string; wabaId: string },
+    WaStatus
+  >((input) => api.post("/integrations/whatsapp/oauth/exchange", input));
+
   const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
     api.delete("/integrations/whatsapp/disconnect"),
   );
 
   const connected = statusQ.data?.connected === true;
+
+  // Initialize Facebook SDK once (the script tag is in index.html).
+  useEffect(() => {
+    const appId = import.meta.env.VITE_WA_APP_ID as string | undefined;
+    if (!appId) return;
+    const init = () => {
+      if (window.FB) {
+        window.FB.init({
+          appId,
+          cookie: true,
+          xfbml: true,
+          version: "v21.0",
+        });
+      }
+    };
+    if (window.FB) {
+      init();
+    } else {
+      window.fbAsyncInit = init;
+    }
+  }, []);
+
+  // Listen for Embedded Signup window.message events to capture phone_number_id + waba_id.
+  const wasigRef = useState<{ phoneNumberId?: string; wabaId?: string }>({})[0];
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== "https://www.facebook.com" &&
+        event.origin !== "https://web.facebook.com"
+      ) {
+        return;
+      }
+      try {
+        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if (data?.type === "WA_EMBEDDED_SIGNUP") {
+          if (data.event === "FINISH" || data.event === "FINISH_ONLY_WABA") {
+            wasigRef.phoneNumberId = data.data?.phone_number_id;
+            wasigRef.wabaId = data.data?.waba_id;
+          }
+        }
+      } catch {
+        /* not JSON */
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [wasigRef]);
+
+  const onEmbeddedSignup = () => {
+    const configId = import.meta.env.VITE_WA_CONFIG_ID as string | undefined;
+    if (!window.FB || !configId) {
+      setEsError(
+        tx(
+          "Embedded Signup is not configured yet. Set VITE_WA_APP_ID and VITE_WA_CONFIG_ID.",
+          "إعداد Embedded Signup غير مكتمل.",
+        ),
+      );
+      return;
+    }
+    setEsError(null);
+    setEsStarting(true);
+    wasigRef.phoneNumberId = undefined;
+    wasigRef.wabaId = undefined;
+
+    // FB SDK rejects async callbacks — wrap async work in an IIFE.
+    const onFbLogin = (resp: { authResponse?: { code?: string } | null }) => {
+      void (async () => {
+        const code = resp.authResponse?.code;
+        if (!code) {
+          setEsError(tx("Connection cancelled.", "تم الإلغاء."));
+          setEsStarting(false);
+          return;
+        }
+        // The window.message event should have populated phoneNumberId + wabaId.
+        await new Promise((r) => setTimeout(r, 500));
+        const pn = wasigRef.phoneNumberId;
+        const wa = wasigRef.wabaId;
+        if (!pn || !wa) {
+          setEsError(
+            tx(
+              "Setup didn't complete — phone number or WABA id missing.",
+              "لم يكتمل الإعداد — رقم الهاتف أو معرّف WABA مفقود.",
+            ),
+          );
+          setEsStarting(false);
+          return;
+        }
+        try {
+          await exchangeMut.mutate({ code, phoneNumberId: pn, wabaId: wa });
+          statusQ.refetch();
+          setStatus(tx("WhatsApp connected.", "تم الاتصال بواتساب."));
+          window.setTimeout(() => setStatus(null), 2400);
+        } catch (e) {
+          setEsError((e as Error).message);
+        } finally {
+          setEsStarting(false);
+        }
+      })();
+    };
+
+    window.FB.login(onFbLogin, {
+      config_id: configId,
+      response_type: "code",
+      override_default_response_type: true,
+      extras: { sessionInfoVersion: "3" },
+    });
+  };
 
   const onConnect = async () => {
     await connectMut.mutate({
@@ -284,14 +401,35 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
                 </div>
               </div>
             ) : (
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={() => setShowForm(true)}
-                >
-                  {tx("Connect WhatsApp", "اربط واتساب")}
-                </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="muted" style={{ fontSize: 11 }}>
+                  {tx(
+                    "Click Connect to launch Meta's Embedded Signup. Sign in with Facebook, select your WhatsApp Business Account, add your number — Meta handles migration if it's currently on the WhatsApp Business app.",
+                    "اضغط 'اربط' لإطلاق Meta Embedded Signup. سجّل الدخول بفيسبوك، اختر حساب واتساب الأعمال، وأضف رقمك — ستتولى Meta عملية النقل إذا كان الرقم على تطبيق واتساب الأعمال.",
+                  )}
+                </div>
+                <ErrorRow message={esError} />
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    onClick={() => setShowForm(true)}
+                    title={tx("Use manual credentials instead", "استخدام البيانات يدوياً")}
+                  >
+                    {tx("Manual setup", "إعداد يدوي")}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={onEmbeddedSignup}
+                    disabled={esStarting || exchangeMut.loading}
+                  >
+                    <IconCheck w={12} />
+                    {esStarting || exchangeMut.loading
+                      ? tx("Connecting…", "جارٍ الاتصال…")
+                      : tx("Connect WhatsApp", "اربط واتساب")}
+                  </button>
+                </div>
               </div>
             )}
           </>
@@ -538,6 +676,149 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
 
       <StatusToast message={status} />
     </>
+  );
+}
+
+/* ─── Instagram (read-only, linked via Facebook OAuth) ───────────── */
+
+interface IgStatus {
+  connected: boolean;
+  userId?: string;
+  username?: string;
+  expiresAt?: string | null;
+  lastFetchedAt?: string | null;
+}
+
+interface InstagramCardProps {
+  tx: (en: string, ar: string) => string;
+}
+
+function InstagramCard({ tx }: InstagramCardProps) {
+  const statusQ = useFetch<IgStatus>("/integrations/instagram/status");
+  const connected = statusQ.data?.connected === true;
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [syncErr, setSyncErr] = useState<string | null>(null);
+
+  const onSync = async () => {
+    setSyncErr(null);
+    setSyncMsg(null);
+    setSyncing(true);
+    try {
+      const r = await api.post<{ ok: true; conversations: number; messages: number }>(
+        "/integrations/instagram/sync",
+      );
+      setSyncMsg(
+        tx(
+          `Synced ${r.conversations} conversation(s), ${r.messages} message(s).`,
+          `تمت المزامنة: ${r.conversations} محادثة و${r.messages} رسالة.`,
+        ),
+      );
+      statusQ.refetch();
+      window.setTimeout(() => setSyncMsg(null), 3500);
+    } catch (e) {
+      setSyncErr((e as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <SettingsCard
+      title={tx("Instagram", "إنستغرام")}
+      description={tx(
+        "Instagram Business accounts linked to your Facebook Page connect automatically.",
+        "حسابات إنستغرام أعمال المرتبطة بصفحة فيسبوك تتصل تلقائياً.",
+      )}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 12px",
+          background: "var(--bg-2)",
+          borderRadius: 10,
+        }}
+      >
+        <span
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background:
+              "linear-gradient(135deg, #FFDC80 0%, #F77737 25%, #E1306C 50%, #C13584 75%, #5851DB 100%)",
+            display: "grid",
+            placeItems: "center",
+            color: "#fff",
+          }}
+        >
+          <IconGlobe w={16} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 500, fontSize: 13 }}>Instagram</div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+            {connected
+              ? `${tx("Connected to", "متصل بـ")} @${statusQ.data?.username ?? "—"}`
+              : tx("Not connected", "غير متصل")}
+          </div>
+        </div>
+        {connected ? (
+          <Badge kind="ok" dot>
+            {tx("Live", "حي")}
+          </Badge>
+        ) : (
+          <Badge kind="">{tx("Off", "غير مفعل")}</Badge>
+        )}
+      </div>
+
+      {!connected && (
+        <div className="muted" style={{ fontSize: 11 }}>
+          {tx(
+            "To connect: ensure your Facebook Page has a linked Instagram Business account, then reconnect Facebook above.",
+            "لربط إنستغرام: تأكد من ربط حساب إنستغرام أعمال بصفحة فيسبوك، ثم أعد ربط فيسبوك بالأعلى.",
+          )}
+        </div>
+      )}
+
+      {connected && statusQ.data?.userId && (
+        <div className="muted" style={{ fontSize: 11 }}>
+          {tx("Instagram ID", "معرف إنستغرام")}:{" "}
+          <span className="mono">{statusQ.data.userId}</span>
+        </div>
+      )}
+
+      {connected && (
+        <>
+          <ErrorRow message={syncErr} />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <span className="muted" style={{ fontSize: 11 }}>
+              {syncMsg ?? tx(
+                "Pull existing Instagram DMs into the Inbox.",
+                "اسحب رسائل إنستغرام إلى صندوق الوارد.",
+              )}
+            </span>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={onSync}
+              disabled={syncing}
+            >
+              {syncing
+                ? tx("Syncing…", "جارٍ المزامنة…")
+                : tx("Sync conversations", "مزامنة المحادثات")}
+            </button>
+          </div>
+        </>
+      )}
+    </SettingsCard>
   );
 }
 
