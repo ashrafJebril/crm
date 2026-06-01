@@ -174,6 +174,11 @@ export class FacebookService {
       ? await this.prisma.integration.update({ where: { id: existing.id }, data })
       : await this.prisma.integration.create({ data: { ...data, workspaceId } });
 
+    // Subscribe this Page to our app's webhook so events arrive automatically.
+    // Best-effort: log and continue if it fails — the integration is still
+    // usable for outbound + manual sync.
+    await this.subscribePageToApp(pageId, finalToken);
+
     // Best-effort IG discovery — never fails the FB connect even if IG is missing.
     const ig = await this.maybeDiscoverIg(workspaceId, pageId, finalToken, expiresAt);
 
@@ -187,6 +192,40 @@ export class FacebookService {
         ? { connected: true, userId: ig.igUserId, username: ig.igUsername }
         : { connected: false },
     };
+  }
+
+  /**
+   * Subscribe our Meta app to receive webhooks for this Page. Without this
+   * call Meta won't push events even though the app's callback URL is wired
+   * up in the dashboard. Best-effort: log and swallow errors so OAuth still
+   * completes — the operator can re-trigger by reconnecting.
+   */
+  private async subscribePageToApp(pageId: string, pageToken: string): Promise<void> {
+    const subscribedFields = [
+      "messages",
+      "messaging_postbacks",
+      "messaging_handovers",
+      "message_deliveries",
+      "message_reads",
+      "feed",
+      "mention",
+    ].join(",");
+    const url =
+      `${GRAPH}/${pageId}/subscribed_apps?` +
+      new URLSearchParams({
+        subscribed_fields: subscribedFields,
+        access_token: pageToken,
+      }).toString();
+    try {
+      const res = await this.fetchJson<{ success?: boolean }>(url, { method: "POST" });
+      if (res.success !== true) {
+        this.log.warn(`Page subscribe returned success=false for page=${pageId}`);
+      }
+    } catch (e) {
+      this.log.warn(
+        `Page subscribe failed for page=${pageId}: ${(e as Error).message}`,
+      );
+    }
   }
 
   private async exchangeForLongLived(
