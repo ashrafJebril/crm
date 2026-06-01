@@ -19,6 +19,8 @@ export type RouteId =
   | "social"
   | "mentions"
   | "keywords"
+  | "media"
+  | "scheduled"
   | "pipeline"
   | "agents"
   | "campaigns"
@@ -214,6 +216,7 @@ export interface Conversation {
   intent: string;
   confidence: number;
   escalated?: boolean;
+  aiPaused?: boolean;
   messages?: Message[];
   suggested?: string;
 }
@@ -413,4 +416,46 @@ export interface AdminUserRow {
   isSuperAdmin: boolean;
   workspaceCount: number;
   createdAt: string;
+}
+
+// ─── Media library ────────────────────────────────────────────────────────
+
+export interface Media {
+  id: string;
+  workspaceId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storedPath: string;
+  width: number | null;
+  height: number | null;
+  uploadedById: string | null;
+  createdAt: string;
+}
+
+// ─── Social publishing ────────────────────────────────────────────────────
+
+export type PublishChannel = "facebook" | "instagram";
+
+export interface ChannelResult {
+  ok: boolean;
+  postId?: string;
+  error?: string;
+}
+
+export interface ScheduledPost {
+  id: string;
+  workspaceId: string;
+  content: string;
+  mediaIds: string;   // JSON string
+  channels: string;   // JSON string
+  scheduledFor: string;
+  status: "pending" | "publishing" | "published" | "failed" | "canceled";
+  attempts: number;
+  lastError: string | null;
+  results: string;    // JSON string
+  publishedAt: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

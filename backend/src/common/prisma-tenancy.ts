@@ -17,6 +17,11 @@ const SCOPED_MODELS = new Set([
   "Keyword",
   "Mention",
   "Note",
+  "Media",
+  "ScheduledPost",
+  "KnowledgeDocument",
+  "KnowledgeChunk",
+  "AiReply",
 ]);
 
 const READ_ACTIONS = new Set([

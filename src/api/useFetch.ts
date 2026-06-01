@@ -12,6 +12,9 @@ interface FetchOpts {
   enabled?: boolean;
   // Bumping `key` forces re-fetch (use after a mutation invalidates cache).
   key?: string | number;
+  // When set, refetch every N milliseconds. Polling pauses while the document
+  // is hidden (background tab) to avoid burning quota.
+  pollMs?: number;
 }
 
 /** GET hook with abort + manual refetch. Re-runs when path or key changes. */
@@ -51,6 +54,17 @@ export function useFetch<T>(
       });
     return () => ctrl.abort();
   }, [path, enabled, tick, opts.key]);
+
+  // Polling — silently bumps the tick on an interval. Pauses when tab is hidden.
+  useEffect(() => {
+    if (!enabled || !opts.pollMs || opts.pollMs <= 0) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        setTick((n) => n + 1);
+      }
+    }, opts.pollMs);
+    return () => window.clearInterval(id);
+  }, [enabled, opts.pollMs]);
 
   const refetch = useCallback(() => setTick((n) => n + 1), []);
   return { data, loading, error, refetch };

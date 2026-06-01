@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconBot, IconCampaign, IconUsers, IconFlow,
   IconChart, IconTemplate, IconTeam, IconBilling, IconCog, IconCal, IconGlobe,
-  IconLayers, IconRadar, IconTag, IconBolt,
+  IconLayers, IconRadar, IconTag, IconBolt, IconAttach,
 } from "@/icons";
 
 interface NavItem {
@@ -13,7 +13,7 @@ interface NavItem {
   Icon: ComponentType<{ w?: number }>;
   badge?: number;
   ai?: boolean;
-  // When true, hide from non-super-admin users. Tkana operator-only.
+  // When true, hide from non-super-admin users. Aram operator-only.
   superAdminOnly?: boolean;
 }
 
@@ -39,11 +39,13 @@ export const NAV: NavEntry[] = [
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
   { section: "Manage" },
   { id: "templates",   label: "Templates",   ar: "القوالب",       Icon: IconTemplate },
+  { id: "media",       label: "Media",       ar: "الوسائط",        Icon: IconAttach },
+  { id: "scheduled",   label: "Scheduled",   ar: "المجدولة",       Icon: IconCal },
   { id: "keywords",    label: "Keywords",    ar: "الكلمات المتابَعة", Icon: IconTag },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "billing",     label: "Billing",     ar: "الفواتير",      Icon: IconBilling },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },
-  { section: "tkana ops" },
+  { section: "Aram ops" },
   { id: "admin",       label: "Admin portal", ar: "بوابة الإدارة",  Icon: IconBolt, superAdminOnly: true },
 ];
 
@@ -60,9 +62,11 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   automations: { en: "Automations",     ar: "سير العمل التلقائي" },
   analytics:   { en: "Analytics",       ar: "التحليلات" },
   templates:   { en: "Templates",       ar: "القوالب" },
+  media:       { en: "Media library",   ar: "مكتبة الوسائط" },
+  scheduled:   { en: "Scheduled posts", ar: "المنشورات المجدولة" },
   keywords:    { en: "Tracked keywords", ar: "الكلمات المتابَعة" },
   team:        { en: "Team",            ar: "الفريق" },
   billing:     { en: "Billing",         ar: "الفواتير" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
-  admin:       { en: "tkana admin portal", ar: "بوابة إدارة تكانة" },
+  admin:       { en: "Aram admin portal", ar: "بوابة إدارة آرام" },
 };

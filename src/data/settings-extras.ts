@@ -76,7 +76,7 @@ export const WEBHOOKS: Webhook[] = [
     success: 99.8,
   },
   {
-    url: "https://crm.partner.io/v2/tkana",
+    url: "https://crm.partner.io/v2/aram",
     events: 7,
     status: "active",
     lastDelivery: "8m ago",

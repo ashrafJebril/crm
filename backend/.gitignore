@@ -6,3 +6,8 @@ dist
 *.db-journal
 prisma/dev.db
 prisma/migrations/dev_migration.db
+
+# Media uploads — workspace-scoped, served via /api/media/:id/file.
+# Do not commit binary assets; the DB row is the source of truth.
+uploads/*
+!uploads/.gitkeep

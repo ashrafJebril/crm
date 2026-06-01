@@ -10,7 +10,7 @@ import {
 } from "@nestjs/common";
 import type { Request } from "express";
 import { AdminService } from "./admin.service";
-import { SuspendWorkspaceDto, UpdateWorkspaceAdminDto } from "./admin.dto";
+import { ProvisionClientDto, SuspendWorkspaceDto, UpdateWorkspaceAdminDto } from "./admin.dto";
 import { SuperAdminGuard } from "./super-admin.guard";
 import type { JwtPayload } from "../auth/auth.guard";
 
@@ -51,6 +51,11 @@ export class AdminController {
     @Req() req: Request & { user: JwtPayload },
   ) {
     return this.svc.impersonateWorkspace(req.user.sub, id);
+  }
+
+  @Post("provision")
+  provisionClient(@Body() dto: ProvisionClientDto) {
+    return this.svc.provisionClient(dto);
   }
 
   @Get("users")

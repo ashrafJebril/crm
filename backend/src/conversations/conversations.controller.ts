@@ -28,6 +28,12 @@ export class ConversationsController {
   @Post(":id/read") markRead(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     return this.svc.markRead(workspaceId, id);
   }
+  @Post(":id/ai/pause") pauseAi(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.setAiPaused(workspaceId, id, true);
+  }
+  @Delete(":id/ai/pause") resumeAi(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.setAiPaused(workspaceId, id, false);
+  }
   @Delete(":id") remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) { return this.svc.remove(workspaceId, id); }
 
   // Messages

@@ -21,6 +21,7 @@ import { PLATFORM_LABEL } from "@/lib/types";
 import type { SocialComment, SocialPlatform, SocialPost } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
+import { ComposeModal } from "@/components/ComposeModal";
 
 /* ── Live Facebook API shapes ────────────────────────────────────────────── */
 
@@ -197,6 +198,12 @@ function SocialImpl() {
   const [platform, setPlatform] = useState<SocialPlatform>("facebook");
   const [sortMode, setSortMode] = useState<SortMode>("top");
   const [draft, setDraft] = useState<string>("");
+  const [composeOpen, setComposeOpen] = useState(false);
+
+  // Card action menu — open one at a time.
+  const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
+  // Post currently being edited (its existing body is loaded into the modal).
+  const [editingPost, setEditingPost] = useState<{ id: string; body: string } | null>(null);
 
   // Per-post local comment overrides (additions + like toggles).
   const [overrides, setOverrides] = useState<CommentMap>({});
@@ -341,6 +348,17 @@ function SocialImpl() {
     ),
   );
 
+  /* ── FB post delete + edit mutations ──────────────────────────────────── */
+  const deletePostMut = useMutation<{ postId: string }, { ok: boolean }>((input) =>
+    api.delete(`/integrations/facebook/posts/${input.postId}`),
+  );
+  const editPostMut = useMutation<
+    { postId: string; message: string },
+    { ok: boolean; id: string }
+  >((input) =>
+    api.patch(`/integrations/facebook/posts/${input.postId}`, { message: input.message }),
+  );
+
   /* ── Insights for the active platform ─────────────────────────────────── */
   const insights = useMemo(() => {
     const posts = feed;
@@ -469,7 +487,7 @@ function SocialImpl() {
               <IconStar w={13} />
               {tx("Saved", "المحفوظات")}
             </button>
-            <button className="btn primary">
+            <button className="btn primary" onClick={() => setComposeOpen(true)}>
               <IconBolt w={13} />
               {tx("Compose", "إنشاء منشور")}
             </button>
@@ -615,10 +633,17 @@ function SocialImpl() {
               const body = isAr && post.bodyAr ? post.bodyAr : post.body;
               const liveComments = getCurrentComments(post);
               return (
-                <button
+                <div
                   key={post.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => selectPost(post.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      selectPost(post.id);
+                    }
+                  }}
                   className="post-card"
                   data-active={isActive ? "true" : "false"}
                   style={{
@@ -695,16 +720,48 @@ function SocialImpl() {
                         <span>{post.postedAt}</span>
                       </div>
                     </div>
-                    <span
-                      onClick={(e) => e.stopPropagation()}
-                      style={{
-                        color: "var(--ink-3)",
-                        display: "inline-flex",
-                        padding: 4,
-                      }}
-                    >
-                      <IconMore w={14} />
-                    </span>
+                    {isFbLive && liveFbPostIds.has(post.id) ? (
+                      <PostActionMenu
+                        postId={post.id}
+                        open={openMenuPostId === post.id}
+                        onToggle={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuPostId((cur) => (cur === post.id ? null : post.id));
+                        }}
+                        onClose={() => setOpenMenuPostId(null)}
+                        onEdit={() => {
+                          setEditingPost({ id: post.id, body: post.body });
+                          setOpenMenuPostId(null);
+                        }}
+                        onDelete={async () => {
+                          setOpenMenuPostId(null);
+                          if (
+                            !window.confirm(
+                              tx(
+                                "Delete this post from Facebook? This cannot be undone.",
+                                "حذف هذا المنشور من فيسبوك؟ لا يمكن التراجع.",
+                              ),
+                            )
+                          )
+                            return;
+                          await deletePostMut.mutate({ postId: post.id });
+                          liveFbQ.refetch();
+                        }}
+                        deleting={deletePostMut.loading}
+                        tx={tx}
+                      />
+                    ) : (
+                      <span
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          color: "var(--ink-3)",
+                          display: "inline-flex",
+                          padding: 4,
+                        }}
+                      >
+                        <IconMore w={14} />
+                      </span>
+                    )}
                   </div>
 
                   <div
@@ -772,7 +829,7 @@ function SocialImpl() {
                       </span>
                     )}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -1311,7 +1368,250 @@ function SocialImpl() {
           .insights-panel { display: none; }
         }
       `}</style>
+
+      <ComposeModal
+        open={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        onPosted={() => {
+          if (isFbLive) liveFbQ.refetch();
+        }}
+      />
+
+      <EditPostModal
+        post={editingPost}
+        onClose={() => setEditingPost(null)}
+        onSave={async (newBody) => {
+          if (!editingPost) return;
+          await editPostMut.mutate({ postId: editingPost.id, message: newBody });
+          setEditingPost(null);
+          liveFbQ.refetch();
+        }}
+        saving={editPostMut.loading}
+        error={editPostMut.error}
+        tx={tx}
+      />
     </div>
+  );
+}
+
+/* ── Per-card actions popover ─────────────────────────────────────────── */
+interface PostActionMenuProps {
+  postId: string;
+  open: boolean;
+  onToggle: (e: React.MouseEvent) => void;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  deleting: boolean;
+  tx: (en: string, ar: string) => string;
+}
+
+function PostActionMenu({
+  open,
+  onToggle,
+  onClose,
+  onEdit,
+  onDelete,
+  deleting,
+  tx,
+}: PostActionMenuProps) {
+  // Close on outside click while open.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = () => onClose();
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
+  }, [open, onClose]);
+
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={tx("Post actions", "إجراءات المنشور")}
+        style={{
+          background: "transparent",
+          border: 0,
+          padding: 4,
+          color: "var(--ink-3)",
+          cursor: "pointer",
+          display: "inline-flex",
+        }}
+      >
+        <IconMore w={14} />
+      </button>
+      {open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: 26,
+            insetInlineEnd: 0,
+            zIndex: 10,
+            background: "var(--bg-elev)",
+            border: "1px solid var(--line-soft)",
+            borderRadius: 10,
+            boxShadow: "var(--shadow-md, 0 6px 18px rgba(0,0,0,.18))",
+            minWidth: 160,
+            padding: 4,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <button
+            type="button"
+            onClick={onEdit}
+            className="menu-item"
+            style={menuItemStyle()}
+          >
+            {tx("Edit caption", "تعديل النص")}
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting}
+            className="menu-item"
+            style={{ ...menuItemStyle(), color: "var(--bad)" }}
+          >
+            {deleting ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "حذف")}
+          </button>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function menuItemStyle(): React.CSSProperties {
+  return {
+    textAlign: "start",
+    background: "transparent",
+    border: 0,
+    padding: "8px 10px",
+    fontSize: 13,
+    cursor: "pointer",
+    borderRadius: 6,
+    color: "inherit",
+  };
+}
+
+/* ── Edit post (caption-only) modal ───────────────────────────────────── */
+interface EditPostModalProps {
+  post: { id: string; body: string } | null;
+  onClose: () => void;
+  onSave: (newBody: string) => Promise<void>;
+  saving: boolean;
+  error: string | null;
+  tx: (en: string, ar: string) => string;
+}
+
+function EditPostModal({ post, onClose, onSave, saving, error, tx }: EditPostModalProps) {
+  const [body, setBody] = useState("");
+
+  useEffect(() => {
+    if (post) setBody(post.body);
+  }, [post]);
+
+  useEffect(() => {
+    if (!post) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [post, onClose]);
+
+  if (!post) return null;
+
+  const dirty = body.trim() !== post.body.trim();
+
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "var(--scrim, rgba(0,0,0,0.55))",
+          zIndex: 80,
+        }}
+      />
+      <div
+        role="dialog"
+        aria-label={tx("Edit post", "تعديل المنشور")}
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: "min(560px, 96vw)",
+          background: "var(--bg-elev)",
+          border: "1px solid var(--line-soft)",
+          borderRadius: 14,
+          boxShadow: "var(--shadow-lg)",
+          zIndex: 81,
+          display: "flex",
+          flexDirection: "column",
+          padding: 16,
+          gap: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center" }}>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>
+            {tx("Edit post", "تعديل المنشور")}
+          </span>
+          <span style={{ flex: 1 }} />
+          <span className="mono muted" style={{ fontSize: 11 }}>
+            {tx("Text only — the image cannot be changed.", "النص فقط — لا يمكن تغيير الصورة.")}
+          </span>
+        </div>
+        <textarea
+          autoFocus
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={6}
+          style={{
+            width: "100%",
+            resize: "vertical",
+            padding: "10px 12px",
+            background: "var(--bg-2)",
+            border: "1px solid var(--line)",
+            borderRadius: 10,
+            color: "var(--ink)",
+            fontSize: 14,
+            fontFamily: "inherit",
+            lineHeight: 1.5,
+            outline: "none",
+          }}
+        />
+        {error && (
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: "oklch(0.7 0.22 24 / 0.12)",
+              color: "var(--bad)",
+              fontSize: 12,
+              border: "1px solid oklch(0.7 0.22 24 / 0.35)",
+            }}
+          >
+            {error}
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="btn ghost" onClick={onClose}>
+            {tx("Cancel", "إلغاء")}
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => onSave(body.trim())}
+            disabled={!dirty || body.trim().length === 0 || saving}
+          >
+            {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Save", "حفظ")}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 

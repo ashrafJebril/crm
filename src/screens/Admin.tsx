@@ -1,4 +1,5 @@
-import { memo, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
 import { makeTx } from "@/lib/tx";
@@ -36,20 +37,32 @@ function planBadgeKind(plan: string): "ok" | "info" | "warn" | "ai" | "" {
 function AdminImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { user } = useAuth();
+  const { user, workspaces: myWorkspaces } = useAuth();
 
   const [tab, setTab] = useState<Tab>("workspaces");
   const [selectedWsId, setSelectedWsId] = useState<string | null>(null);
   const [refetchTick, setRefetchTick] = useState(0);
+  const [provisionOpen, setProvisionOpen] = useState(false);
 
+  // Refetch the admin lists whenever the user's workspace list grows/shrinks
+  // (e.g., right after creating a new workspace via the topbar switcher) or
+  // when the page becomes visible again. Avoids "refresh required" UX.
   const wssQ = useFetch<AdminWorkspaceRow[]>(
     tab === "workspaces" || selectedWsId ? "/admin/workspaces" : null,
-    { key: `wss:${refetchTick}` },
+    { key: `wss:${refetchTick}:${myWorkspaces.length}` },
   );
   const usersQ = useFetch<AdminUserRow[]>(
     tab === "users" ? "/admin/users" : null,
-    { key: `users:${refetchTick}` },
+    { key: `users:${refetchTick}:${myWorkspaces.length}` },
   );
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setRefetchTick((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
 
   if (!user?.isSuperAdmin) {
     return (
@@ -64,33 +77,51 @@ function AdminImpl() {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <PageHeader
-        title={tx("tkana admin portal", "بوابة إدارة تكانة")}
+        title={tx("Aram admin portal", "بوابة إدارة آرام")}
         subtitle={tx(
-          "All customer workspaces and users across tkana.",
-          "كل مساحات العمل والمستخدمين على تكانة.",
+          "All customer workspaces and users across Aram.",
+          "كل مساحات العمل والمستخدمين على آرام.",
         )}
       />
 
-      <div className="tabs" style={{ padding: "0 24px" }}>
-        {(["workspaces", "users"] as Tab[]).map((id) => (
-          <button
-            key={id}
-            type="button"
-            className={`tab ${tab === id ? "active" : ""}`.trim()}
-            onClick={() => setTab(id)}
-          >
-            <span>
-              {id === "workspaces"
-                ? tx("Workspaces", "مساحات العمل")
-                : tx("Users", "المستخدمون")}
-            </span>
-            <span className="count">
-              {id === "workspaces"
-                ? wssQ.data?.length ?? "·"
-                : usersQ.data?.length ?? "·"}
-            </span>
-          </button>
-        ))}
+      <div
+        className="tabs"
+        style={{
+          padding: "0 24px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div style={{ display: "flex", gap: 0 }}>
+          {(["workspaces", "users"] as Tab[]).map((id) => (
+            <button
+              key={id}
+              type="button"
+              className={`tab ${tab === id ? "active" : ""}`.trim()}
+              onClick={() => setTab(id)}
+            >
+              <span>
+                {id === "workspaces"
+                  ? tx("Workspaces", "مساحات العمل")
+                  : tx("Users", "المستخدمون")}
+              </span>
+              <span className="count">
+                {id === "workspaces"
+                  ? wssQ.data?.length ?? "·"
+                  : usersQ.data?.length ?? "·"}
+              </span>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="btn primary sm"
+          onClick={() => setProvisionOpen(true)}
+        >
+          <IconCheck w={12} />
+          {tx("Create client", "إنشاء عميل")}
+        </button>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
@@ -120,9 +151,320 @@ function AdminImpl() {
           onChanged={() => setRefetchTick((n) => n + 1)}
         />
       )}
+
+      {provisionOpen && (
+        <ProvisionClientModal
+          tx={tx}
+          onClose={() => setProvisionOpen(false)}
+          onCreated={() => {
+            setRefetchTick((n) => n + 1);
+            setProvisionOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
+
+/* ─── Provision client modal ────────────────────────────────────────── */
+
+interface ProvisionClientModalProps {
+  tx: (en: string, ar: string) => string;
+  onClose: () => void;
+  onCreated: () => void;
+}
+
+function ProvisionClientModal({ tx, onClose, onCreated }: ProvisionClientModalProps) {
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerPassword, setOwnerPassword] = useState(() => randomPassword());
+  const [createdSummary, setCreatedSummary] = useState<{
+    workspace: { id: string; name: string; slug: string };
+    user: { id: string; email: string; name: string };
+    password: string;
+  } | null>(null);
+
+  const provisionMut = useMutation<
+    {
+      workspaceName: string;
+      ownerName: string;
+      ownerEmail: string;
+      ownerPassword: string;
+    },
+    {
+      workspace: { id: string; name: string; slug: string };
+      user: { id: string; email: string; name: string };
+    }
+  >((input) => api.post("/admin/provision", input));
+
+  const canSubmit =
+    workspaceName.trim().length >= 2 &&
+    ownerName.trim().length >= 2 &&
+    /\S+@\S+\.\S+/.test(ownerEmail) &&
+    ownerPassword.length >= 6 &&
+    !provisionMut.loading;
+
+  const onSubmit = async () => {
+    if (!canSubmit) return;
+    try {
+      const res = await provisionMut.mutate({
+        workspaceName: workspaceName.trim(),
+        ownerName: ownerName.trim(),
+        ownerEmail: ownerEmail.trim().toLowerCase(),
+        ownerPassword,
+      });
+      setCreatedSummary({ ...res, password: ownerPassword });
+    } catch {
+      // error is held in provisionMut.error
+    }
+  };
+
+  const close = () => {
+    if (createdSummary) onCreated();
+    else onClose();
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 1000,
+      }}
+      onClick={close}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1)",
+          border: "1px solid var(--line)",
+          borderRadius: 12,
+          padding: 24,
+          width: 480,
+          maxWidth: "90vw",
+        }}
+      >
+        {!createdSummary ? (
+          <>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>
+              {tx("Create client workspace", "إنشاء عميل")}
+            </h2>
+            <p
+              className="muted"
+              style={{ fontSize: 12, marginBottom: 16 }}
+            >
+              {tx(
+                "Sets up a new workspace + owner user + password in one step. Share the credentials with the client.",
+                "ينشئ مساحة عمل جديدة + مالكاً + كلمة مرور في خطوة واحدة. شارك البيانات مع العميل.",
+              )}
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {tx("Workspace name", "اسم مساحة العمل")}
+                </span>
+                <input
+                  type="text"
+                  value={workspaceName}
+                  onChange={(e) => setWorkspaceName(e.target.value)}
+                  placeholder="Yazan Stores"
+                  style={inputBox}
+                  autoFocus
+                />
+              </label>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {tx("Owner name", "اسم المالك")}
+                </span>
+                <input
+                  type="text"
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  placeholder="Yazan Barjawi"
+                  style={inputBox}
+                />
+              </label>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {tx("Owner email", "البريد الإلكتروني")}
+                </span>
+                <input
+                  type="email"
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  placeholder="yazan@example.com"
+                  style={inputBox}
+                />
+              </label>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {tx("Temporary password", "كلمة المرور المؤقتة")}
+                </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    type="text"
+                    value={ownerPassword}
+                    onChange={(e) => setOwnerPassword(e.target.value)}
+                    style={{ ...inputBox, fontFamily: "var(--font-mono)" }}
+                  />
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    onClick={() => setOwnerPassword(randomPassword())}
+                    title={tx("Generate new", "توليد جديد")}
+                  >
+                    🎲
+                  </button>
+                </div>
+              </label>
+
+              {provisionMut.error && (
+                <div style={{ color: "var(--bad)", fontSize: 12 }}>
+                  {provisionMut.error}
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "flex-end",
+                  marginTop: 8,
+                }}
+              >
+                <button type="button" className="btn ghost" onClick={onClose}>
+                  {tx("Cancel", "إلغاء")}
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={onSubmit}
+                  disabled={!canSubmit}
+                >
+                  {provisionMut.loading
+                    ? tx("Creating…", "جارٍ الإنشاء…")
+                    : tx("Create client", "إنشاء")}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>
+              ✅ {tx("Client created", "تم إنشاء العميل")}
+            </h2>
+            <p className="muted" style={{ fontSize: 12, marginBottom: 16 }}>
+              {tx(
+                "Share these credentials with the client. They can change the password from Settings → Profile.",
+                "شارك هذه البيانات مع العميل. يمكنه تغيير كلمة المرور من الإعدادات.",
+              )}
+            </p>
+
+            <div
+              style={{
+                background: "var(--bg-2)",
+                border: "1px solid var(--line)",
+                borderRadius: 8,
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                fontFamily: "var(--font-mono)",
+                fontSize: 13,
+              }}
+            >
+              <CopyRow
+                label={tx("Workspace", "مساحة العمل")}
+                value={createdSummary.workspace.name}
+              />
+              <CopyRow
+                label={tx("Login URL", "رابط الدخول")}
+                value={window.location.origin}
+              />
+              <CopyRow label="Email" value={createdSummary.user.email} />
+              <CopyRow
+                label={tx("Password", "كلمة المرور")}
+                value={createdSummary.password}
+              />
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                justifyContent: "flex-end",
+                marginTop: 16,
+              }}
+            >
+              <button type="button" className="btn primary" onClick={close}>
+                {tx("Done", "تم")}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CopyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ width: 110, color: "var(--ink-3)", fontSize: 11 }}>
+        {label}
+      </span>
+      <span style={{ flex: 1, wordBreak: "break-all" }}>{value}</span>
+      <button
+        type="button"
+        className="btn ghost sm"
+        onClick={onCopy}
+        style={{ fontSize: 11 }}
+      >
+        {copied ? "✓" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+function randomPassword(): string {
+  // Friendly random password: short word + 4 digits, easy to type once.
+  const adjectives = ["sunny", "swift", "calm", "lively", "bright", "noble", "brave", "happy"];
+  const nouns = ["fox", "wave", "moon", "rose", "tiger", "river", "star", "leaf"];
+  const a = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const n = nouns[Math.floor(Math.random() * nouns.length)];
+  const digits = Math.floor(1000 + Math.random() * 9000);
+  return `${a}-${n}-${digits}`;
+}
+
+const inputBox: CSSProperties = {
+  height: 36,
+  padding: "0 10px",
+  background: "var(--bg-2)",
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  color: "var(--ink-1)",
+  fontSize: 13,
+  fontFamily: "inherit",
+  outline: "none",
+};
 
 /* ─── Workspaces table ──────────────────────────────────────────────── */
 

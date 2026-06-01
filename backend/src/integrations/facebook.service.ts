@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { MediaService } from "../media/media.service";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -76,7 +77,10 @@ interface FbCommentsResponse {
 @Injectable()
 export class FacebookService {
   private readonly log = new Logger(FacebookService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly media: MediaService,
+  ) {}
 
   // ─── Public API ─────────────────────────────────────────────────────────
   async status(workspaceId: string) {
@@ -170,12 +174,18 @@ export class FacebookService {
       ? await this.prisma.integration.update({ where: { id: existing.id }, data })
       : await this.prisma.integration.create({ data: { ...data, workspaceId } });
 
+    // Best-effort IG discovery — never fails the FB connect even if IG is missing.
+    const ig = await this.maybeDiscoverIg(workspaceId, pageId, finalToken, expiresAt);
+
     return {
       connected: true,
       pageId: row.pageId,
       pageName: row.pageName,
       expiresAt: row.expiresAt,
       candidates: candidates.length > 1 ? candidates.map((c) => ({ id: c.id, name: c.name })) : undefined,
+      instagram: ig
+        ? { connected: true, userId: ig.igUserId, username: ig.igUsername }
+        : { connected: false },
     };
   }
 
@@ -192,10 +202,34 @@ export class FacebookService {
     return this.fetchJson<LongLivedTokenResponse>(url, { method: "GET" });
   }
 
+  /** Exchange an OAuth `code` (from Meta's redirect) for a short-lived user access token. */
+  async exchangeCodeForUserToken(code: string, redirectUri: string): Promise<string> {
+    const appId = process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET;
+    if (!appId || !appSecret) {
+      throw new BadRequestException("META_APP_ID / META_APP_SECRET not configured");
+    }
+    const url =
+      `${GRAPH}/oauth/access_token?client_id=${appId}` +
+      `&client_secret=${appSecret}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&code=${encodeURIComponent(code)}`;
+    const res = await this.fetchJson<LongLivedTokenResponse>(url, { method: "GET" });
+    if (!res.access_token) {
+      throw new BadRequestException("Meta did not return an access token");
+    }
+    return res.access_token;
+  }
+
   async disconnect(workspaceId: string) {
     const integ = await this.find(workspaceId);
     if (!integ) return { ok: true };
     await this.prisma.integration.delete({ where: { id: integ.id } });
+    // IG is derived from the FB Page Access Token, so disconnect it too.
+    const ig = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "instagram" },
+    });
+    if (ig) await this.prisma.integration.delete({ where: { id: ig.id } });
     return { ok: true };
   }
 
@@ -296,6 +330,79 @@ export class FacebookService {
     );
     await this.touchFetched(workspaceId);
     return (res.data ?? []).map((p) => this.shapePost(p));
+  }
+
+  async publishToPage(
+    workspaceId: string,
+    dto: { content: string; mediaIds?: string[] },
+  ) {
+    const { token, pageId } = await this.requireToken(workspaceId);
+    const firstMediaId = dto.mediaIds?.[0];
+
+    if (!firstMediaId) {
+      // Text-only post — /feed with form-encoded body.
+      const url = `${GRAPH}/${pageId}/feed`;
+      const params = new URLSearchParams({
+        message: dto.content,
+        access_token: token,
+      });
+      const res = await this.fetchJson<{ id: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      });
+      return { id: res.id, kind: "feed" as const };
+    }
+
+    // Single-photo post — /photos with multipart upload.
+    const mediaRow = await this.media.get(workspaceId, firstMediaId);
+    const absolutePath = await this.media.resolvePath(workspaceId, firstMediaId);
+
+    const fs = await import("node:fs/promises");
+    const buffer = await fs.readFile(absolutePath);
+    const blob = new Blob([buffer], { type: mediaRow.mimeType });
+    const form = new FormData();
+    form.append("source", blob, mediaRow.fileName);
+    form.append("message", dto.content);
+    form.append("access_token", token);
+
+    const url = `${GRAPH}/${pageId}/photos`;
+    // Native fetch handles multipart FormData encoding for us; do NOT set
+    // Content-Type manually — fetch will inject the correct boundary.
+    let response: Response;
+    try {
+      response = await fetch(url, { method: "POST", body: form });
+    } catch (e) {
+      this.log.error(`Graph network error: ${(e as Error).message}`);
+      throw new HttpException("Graph API unreachable", 502);
+    }
+    const text = await response.text();
+    let parsed: unknown = undefined;
+    try { parsed = text ? JSON.parse(text) : undefined; } catch { parsed = text; }
+    if (!response.ok) {
+      const errMsg =
+        typeof parsed === "object" && parsed !== null && "error" in parsed
+          // @ts-expect-error - shape from Graph API
+          ? ((parsed.error?.message as string) ?? `Graph error ${response.status}`)
+          : `Graph error ${response.status}`;
+      this.log.warn(`Graph POST ${url} -> ${response.status} ${errMsg}`);
+      throw new HttpException(errMsg, response.status >= 500 ? 502 : 400);
+    }
+    const data = parsed as { id?: string; post_id?: string };
+    return { id: data.post_id ?? data.id ?? "", kind: "photo" as const };
+  }
+
+  async deletePost(workspaceId: string, postId: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${postId}?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ success: boolean }>(url, { method: "DELETE" });
+    return { ok: res.success === true };
+  }
+
+  async editPost(workspaceId: string, postId: string, message: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const res = await this.graphPost<{ success?: boolean; id?: string }>(`/${postId}`, token, { message });
+    return { ok: res.success !== false, id: res.id ?? postId };
   }
 
   async listComments(workspaceId: string, postId: string, limit = 25) {
@@ -462,6 +569,63 @@ export class FacebookService {
       throw new NotFoundException("Facebook is not connected");
     }
     return { token: integ.accessToken, pageId: integ.pageId };
+  }
+
+  /**
+   * After a Page is connected, look up its linked Instagram Business
+   * account. If one exists, create/update an Integration row with
+   * platform="instagram" using the same Page Access Token.
+   *
+   * Returns the IG user id + username if discovered, else null.
+   */
+  private async maybeDiscoverIg(
+    workspaceId: string,
+    pageId: string,
+    pageToken: string,
+    expiresAt: Date | null,
+  ): Promise<{ igUserId: string; igUsername: string } | null> {
+    let res: { instagram_business_account?: { id: string } } | null = null;
+    try {
+      res = await this.graphGet<{ instagram_business_account?: { id: string } }>(
+        `/${pageId}?fields=instagram_business_account`,
+        pageToken,
+      );
+    } catch (e) {
+      this.log.warn(`IG discovery: graph call failed: ${(e as Error).message}`);
+      return null;
+    }
+    const igId = res?.instagram_business_account?.id;
+    if (!igId) return null;
+
+    let igUsername = "Instagram";
+    try {
+      const me = await this.graphGet<{ id: string; username?: string; name?: string }>(
+        `/${igId}?fields=id,username,name`,
+        pageToken,
+      );
+      igUsername = me.username ?? me.name ?? "Instagram";
+    } catch (e) {
+      this.log.warn(`IG discovery: username fetch failed: ${(e as Error).message}`);
+    }
+
+    const existing = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "instagram" },
+    });
+    const data = {
+      platform: "instagram",
+      pageId: igId,
+      pageName: igUsername,
+      accessToken: pageToken,
+      scopes: null,
+      expiresAt,
+      raw: JSON.stringify({ linkedFbPageId: pageId }),
+    };
+    if (existing) {
+      await this.prisma.integration.update({ where: { id: existing.id }, data });
+    } else {
+      await this.prisma.integration.create({ data: { ...data, workspaceId } });
+    }
+    return { igUserId: igId, igUsername };
   }
 
   private async touchFetched(workspaceId: string) {

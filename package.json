@@ -1,9 +1,9 @@
 {
-  "name": "tkana",
+  "name": "aram",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "tkana — AI WhatsApp agent platform",
+  "description": "Aram — AI WhatsApp agent platform",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

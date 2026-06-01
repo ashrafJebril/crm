@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
@@ -16,6 +16,12 @@ import {
 import { AGENTS } from "@/data/agents";
 import { INTENTS } from "@/data/analytics";
 import type { Agent, Lang } from "@/lib/types";
+import {
+  deleteKnowledge,
+  listKnowledge,
+  uploadKnowledge,
+  type KnowledgeDocument,
+} from "@/api/knowledge";
 
 type TabId = "persona" | "knowledge" | "tools" | "escalation" | "analytics";
 
@@ -280,85 +286,138 @@ You operate exclusively over WhatsApp Business.
   );
 }
 
-interface KnowledgeSource {
-  type: "PDF" | "URL" | "CSV" | "DOC" | "API";
-  name: string;
-  size: string;
-  chunks: number;
-  status: "indexed" | "indexing" | "live";
-}
-
 function KnowledgeTab({ tx }: { tx: Tx }) {
-  const sources: KnowledgeSource[] = [
-    { type: "PDF", name: "Samemha catalog · Q2 2026.pdf", size: "4.2 MB", chunks: 412, status: "indexed" },
-    { type: "URL", name: "samemha.com/products", size: "—", chunks: 184, status: "indexed" },
-    { type: "CSV", name: "pricing-catalog.csv", size: "112 KB", chunks: 96, status: "indexed" },
-    { type: "DOC", name: "FAQ — viewing process.docx", size: "84 KB", chunks: 28, status: "indexing" },
-    { type: "API", name: "Booking API (live)", size: "—", chunks: 0, status: "live" },
-  ];
+  const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      setDocs(await listKnowledge());
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await uploadKnowledge(f);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+      e.target.value = "";
+    }
+  }
+
+  async function onDelete(id: string) {
+    setBusy(true);
+    try {
+      await deleteKnowledge(id);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const totalChunks = docs.reduce((sum, d) => sum + d.chunkCount, 0);
+
   return (
     <div className="card">
       <div className="card-h">
         <div>
           <h3>{tx("Knowledge sources", "مصادر المعرفة")}</h3>
           <div className="sub">
-            {tx(
-              "720 chunks · 1.4M tokens · refreshed 12m ago",
-              "٧٢٠ مقطعًا · ١٫٤ مليون رمز",
-            )}
+            {tx(`${totalChunks} chunks · ${docs.length} docs`, `${totalChunks} مقطعًا · ${docs.length} مستند`)}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button className="btn">
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy}
+          >
             <IconBook w={13} />
-            {tx("Upload", "رفع")}
+            {busy ? tx("Uploading…", "جارٍ الرفع…") : tx("Upload PDF / DOCX / TXT", "رفع ملف")}
           </button>
-          <button className="btn primary">
-            <IconPlus w={13} />
-            {tx("Add source", "إضافة")}
-          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.txt,.md,.docx,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            hidden
+            onChange={onPickFile}
+          />
         </div>
       </div>
+      {error && (
+        <div className="sub" style={{ color: "var(--danger, #b91c1c)", padding: "8px 12px" }}>
+          {error}
+        </div>
+      )}
       <table className="tbl">
         <thead>
           <tr>
-            <th style={{ width: 60 }}>{tx("Type", "النوع")}</th>
             <th>{tx("Source", "المصدر")}</th>
             <th>{tx("Size", "الحجم")}</th>
             <th>{tx("Chunks", "المقاطع")}</th>
             <th>{tx("Status", "الحالة")}</th>
-            <th style={{ width: 40 }} aria-label="actions" />
+            <th style={{ width: 80 }} aria-label="actions" />
           </tr>
         </thead>
         <tbody>
-          {sources.map((s) => (
-            <tr key={s.name}>
-              <td>
-                <span className="badge mono">{s.type}</span>
+          {docs.length === 0 && (
+            <tr>
+              <td colSpan={5} className="muted" style={{ textAlign: "center", padding: 24 }}>
+                {tx("No documents yet — upload one to start.", "لا توجد مستندات بعد — ارفع ملفًا للبدء.")}
               </td>
-              <td style={{ fontWeight: 500 }}>{s.name}</td>
-              <td className="mono muted">{s.size}</td>
-              <td className="mono">{s.chunks || "—"}</td>
+            </tr>
+          )}
+          {docs.map((d) => (
+            <tr key={d.id}>
+              <td style={{ fontWeight: 500 }} title={d.errorText ?? undefined}>
+                {d.filename}
+              </td>
+              <td className="mono muted">{(d.sizeBytes / 1024).toFixed(0)} KB</td>
+              <td className="mono">{d.chunkCount || "—"}</td>
               <td>
-                {s.status === "indexed" && (
+                {d.status === "ready" && (
                   <Badge kind="ok" dot>
-                    indexed
+                    ready
                   </Badge>
                 )}
-                {s.status === "indexing" && (
+                {(d.status === "pending" || d.status === "processing") && (
                   <Badge kind="warn" dot>
-                    indexing
+                    {d.status}
                   </Badge>
                 )}
-                {s.status === "live" && (
-                  <Badge kind="ai" dot>
-                    live API
+                {d.status === "failed" && (
+                  <Badge kind="bad" dot>
+                    failed
                   </Badge>
                 )}
               </td>
               <td>
-                <button className="btn ghost icon sm">
-                  <IconMore w={14} />
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  onClick={() => onDelete(d.id)}
+                  disabled={busy}
+                >
+                  {tx("Delete", "حذف")}
                 </button>
               </td>
             </tr>

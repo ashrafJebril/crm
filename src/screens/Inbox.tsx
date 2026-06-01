@@ -229,6 +229,7 @@ interface ConversationPaneProps {
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
+  onToggleAiPaused: (paused: boolean) => Promise<void>;
   messagesLoading: boolean;
   tx: Tx;
 }
@@ -1190,6 +1191,7 @@ function ConversationPane({
   sending,
   sendError,
   onConvertToTicket,
+  onToggleAiPaused,
   messagesLoading,
   tx,
 }: ConversationPaneProps) {
@@ -1316,10 +1318,25 @@ function ConversationPane({
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
           </button>
-          <button className="btn">
-            <IconHand w={14} />
-            {tx("Take over", "تولّى")}
-          </button>
+          {conv.aiPaused ? (
+            <button
+              className="btn primary"
+              onClick={() => onToggleAiPaused(false)}
+              title={tx("Resume AI auto-reply", "استئناف الرد التلقائي")}
+            >
+              <IconSparkles w={13} />
+              {tx("Resume AI", "استئناف الذكاء")}
+            </button>
+          ) : (
+            <button
+              className="btn"
+              onClick={() => onToggleAiPaused(true)}
+              title={tx("Pause AI and handle this thread yourself", "أوقف الذكاء وتولَّ هذه المحادثة")}
+            >
+              <IconHand w={14} />
+              {tx("Take over", "تولّى")}
+            </button>
+          )}
           <button className="btn ghost icon">
             <IconMore w={16} />
           </button>
@@ -1758,7 +1775,9 @@ function InboxImpl() {
   void AGENTS;
 
   // ─── Data ──────────────────────────────────────────────────────────────
-  const convsQ = useFetch<Conversation[]>("/conversations");
+  // Poll the conversation list and active thread so new WhatsApp/AI messages
+  // appear without a manual refresh. Pauses when the tab is hidden.
+  const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 5000 });
   const contactsQ = useFetch<Contact[]>("/contacts");
 
   // Live Facebook Messenger: only fetch when integration is connected.
@@ -1777,38 +1796,41 @@ function InboxImpl() {
   // Internal active query: skip when activeId is a Facebook thread id.
   const activeQ = useFetch<ConversationDetail>(
     activeId && !isFbConvId(activeId) ? `/conversations/${activeId}` : null,
-    { key: `${activeId ?? "none"}:${messageVersion}` },
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
   );
 
-  // Conversations: real Facebook DMs only when the integration is connected;
-  // fall back to internal /conversations rows only when FB isn't connected
-  // (so the app still has something to show in that case).
+  // Conversations come from two sources:
+  //   1. /conversations — DB rows (WhatsApp webhooks + Instagram sync + any future
+  //      channel that writes to the DB).
+  //   2. /integrations/facebook/conversations — Facebook DMs fetched LIVE from
+  //      Graph API (not persisted to DB yet).
+  // We MERGE them so all channels appear in the unified list.
   const conversations: Conversation[] = useMemo(() => {
-    if (fbConnected) {
-      const fb = fbConvsQ.data ?? [];
-      const rows: Conversation[] = fb.map((c) => ({
-        id: c.id,
-        contactId: c.contactId ?? c.id,
-        agent: "",
-        unread: c.unread,
-        pinned: false,
-        lastAt: fmtCompact(c.updatedAt),
-        lastFrom: "them",
-        preview: c.snippet || "—",
-        channel: "facebook",
-        status: "human",
-        intent: "—",
-        confidence: 0,
-        escalated: false,
-      }));
-      rows.sort((a, b) => {
-        const av = fb.find((x) => x.id === a.id)?.updatedAt ?? "";
-        const bv = fb.find((x) => x.id === b.id)?.updatedAt ?? "";
-        return bv.localeCompare(av);
-      });
-      return rows;
-    }
-    return convsQ.data ?? [];
+    const dbRows = convsQ.data ?? [];
+    // Drop any DB rows with channel="facebook" so the live FB list is authoritative.
+    const nonFb = dbRows.filter((c) => c.channel !== "facebook");
+
+    const fbRows: Conversation[] = fbConnected
+      ? (fbConvsQ.data ?? []).map((c) => ({
+          id: c.id,
+          contactId: c.contactId ?? c.id,
+          agent: "",
+          unread: c.unread,
+          pinned: false,
+          lastAt: fmtCompact(c.updatedAt),
+          lastFrom: "them",
+          preview: c.snippet || "—",
+          channel: "facebook",
+          status: "human",
+          intent: "—",
+          confidence: 0,
+          escalated: false,
+        }))
+      : [];
+
+    // DB rows already arrive ordered (pinned desc, then updatedAt desc).
+    // FB rows are merged in raw order. Good enough until we move FB into the DB.
+    return [...nonFb, ...fbRows];
   }, [fbConnected, convsQ.data, fbConvsQ.data]);
 
   // Augment contactById with synthetic Contact entries for FB participants so
@@ -1939,6 +1961,22 @@ function InboxImpl() {
       ),
   );
 
+  // Instagram outbound: posts via Graph through the linked FB Page.
+  const sendIgMessage = useMutation<{ conversationId: string; body: string }, { ok: true; messageId?: string }>(
+    (input) =>
+      api.post(`/integrations/instagram/conversations/${input.conversationId}/send`, {
+        message: input.body,
+      }),
+  );
+
+  // WhatsApp outbound: posts via Cloud API.
+  const sendWaMessage = useMutation<{ conversationId: string; body: string }, { ok: true; messageId?: string }>(
+    (input) =>
+      api.post(`/integrations/whatsapp/conversations/${input.conversationId}/send`, {
+        message: input.body,
+      }),
+  );
+
   const handleSend = async (body: string): Promise<void> => {
     if (!activeId) return;
     if (isFbConvId(activeId)) {
@@ -1950,7 +1988,16 @@ function InboxImpl() {
       fbConvsQ.refetch();
       return;
     }
-    await sendMessage.mutate({ conversationId: activeId, body });
+    // Route by channel for DB-stored conversations.
+    const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
+    if (conv?.channel === "instagram") {
+      await sendIgMessage.mutate({ conversationId: activeId, body });
+    } else if (conv?.channel === "whatsapp") {
+      await sendWaMessage.mutate({ conversationId: activeId, body });
+    } else {
+      // Fallback: just write to DB (web chat, etc.)
+      await sendMessage.mutate({ conversationId: activeId, body });
+    }
     setMessageVersion((n) => n + 1);
     convsQ.refetch();
   };
@@ -2060,6 +2107,16 @@ function InboxImpl() {
           sending={sendMessage.loading || sendFbMessage.loading}
           sendError={sendMessage.error ?? sendFbMessage.error}
           onConvertToTicket={() => setShowConvertModal(true)}
+          onToggleAiPaused={async (paused) => {
+            if (!active) return;
+            if (paused) {
+              await api.post(`/conversations/${active.id}/ai/pause`);
+            } else {
+              await api.delete(`/conversations/${active.id}/ai/pause`);
+            }
+            activeQ.refetch();
+            convsQ.refetch();
+          }}
           messagesLoading={activeIsFb ? fbMsgsQ.loading : activeQ.loading}
           tx={tx}
         />
