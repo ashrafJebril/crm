@@ -1486,7 +1486,9 @@ function ConversationPane({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              // Enter sends, Shift+Enter inserts a newline (standard chat UX).
+              // Skip while a send is already in flight or the draft is empty.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 handleSend();
               }
@@ -1538,8 +1540,25 @@ function ConversationPane({
               className="btn primary"
               onClick={handleSend}
               disabled={sending || draft.trim().length === 0}
+              aria-busy={sending}
             >
-              <IconSend w={13} />
+              {sending ? (
+                <span
+                  className="spinner"
+                  aria-hidden="true"
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    border: "2px solid currentColor",
+                    borderRightColor: "transparent",
+                    display: "inline-block",
+                    animation: "aram-spin 0.7s linear infinite",
+                  }}
+                />
+              ) : (
+                <IconSend w={13} />
+              )}
               {sending ? tx("Sending…", "جارٍ الإرسال…") : tx("Send", "إرسال")}
             </button>
           </div>
@@ -1551,6 +1570,7 @@ function ConversationPane({
         .day-divider::before, .day-divider::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
         .day-divider span { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); padding: 2px 10px;
           border: 1px solid var(--line-soft); border-radius: 999px; background: var(--bg-elev); }
+        @keyframes aram-spin { to { transform: rotate(360deg); } }
       `}</style>
     </div>
   );
@@ -2104,8 +2124,18 @@ function InboxImpl() {
           conv={active}
           contactById={contactById}
           onSend={handleSend}
-          sending={sendMessage.loading || sendFbMessage.loading}
-          sendError={sendMessage.error ?? sendFbMessage.error}
+          sending={
+            sendMessage.loading ||
+            sendFbMessage.loading ||
+            sendIgMessage.loading ||
+            sendWaMessage.loading
+          }
+          sendError={
+            sendMessage.error ??
+            sendFbMessage.error ??
+            sendIgMessage.error ??
+            sendWaMessage.error
+          }
           onConvertToTicket={() => setShowConvertModal(true)}
           onToggleAiPaused={async (paused) => {
             if (!active) return;
