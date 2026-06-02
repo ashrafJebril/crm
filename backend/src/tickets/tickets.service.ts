@@ -127,6 +127,8 @@ export class TicketsService {
       },
     });
 
+    this.realtime.emitToWorkspace(workspaceId, "ticket.created", { ticket });
+
     return ticket;
   }
 
