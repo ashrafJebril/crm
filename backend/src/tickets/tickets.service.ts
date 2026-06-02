@@ -43,21 +43,31 @@ export class TicketsService {
 
   // ─── Tickets ───────────────────────────────────────────────────────────
   async listTickets(workspaceId: string, query: ListTicketsQuery) {
-    return this.prisma.ticket.findMany({
+    const take = query.limit ?? 50;
+    const items = await this.prisma.ticket.findMany({
       where: {
         workspaceId,
         pipelineId: query.pipelineId,
         stageId: query.stageId,
         contactId: query.contactId,
+        conversationId: query.conversationId,
         ownerId: query.ownerId,
       },
-      orderBy: [{ stageId: "asc" }, { updatedAt: "desc" }],
-      take: query.limit,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: take + 1,
+      cursor: query.cursor ? { id: query.cursor } : undefined,
+      skip: query.cursor ? 1 : 0,
       include: {
         contact: true,
         stage: true,
       },
     });
+    const hasMore = items.length > take;
+    const page = hasMore ? items.slice(0, take) : items;
+    return {
+      items: page,
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    };
   }
 
   async getTicket(workspaceId: string, id: string) {

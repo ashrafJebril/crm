@@ -41,6 +41,8 @@ export class ListTicketsQuery {
   @IsOptional() @IsString() pipelineId?: string;
   @IsOptional() @IsString() stageId?: string;
   @IsOptional() @IsString() contactId?: string;
+  @IsOptional() @IsString() conversationId?: string;
   @IsOptional() @IsString() ownerId?: string;
   @IsOptional() @IsInt() @Min(1) limit?: number;
+  @IsOptional() @IsString() cursor?: string;
 }

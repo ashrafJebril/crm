@@ -89,6 +89,11 @@ export interface Ticket {
   stage?: TicketStage;
 }
 
+export interface TicketsListPage {
+  items: Ticket[];
+  nextCursor: string | null;
+}
+
 export interface TicketActivity {
   id: string;
   ticketId: string;
