@@ -27,11 +27,8 @@ export function useFetch<T>(
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  // Holds the controller for the currently in-flight request. We only ever
-  // abort this when the (path, key) signature actually changes — polling
-  // ticks do not abort, so a slow Graph call doesn't get stuck in an
-  // abort-and-restart loop.
   const abortRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef<boolean>(false);
   const lastSigRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -42,21 +39,20 @@ export function useFetch<T>(
     const sig = `${path}|${opts.key ?? ""}`;
     const sigChanged = lastSigRef.current !== sig;
     if (sigChanged) {
-      // Path or key changed — abort whatever's running and drop the previous
-      // payload so the UI shows a clean loading state for the new query.
+      // Path/key changed — abort the in-flight call and start fresh.
       abortRef.current?.abort();
+      inFlightRef.current = false;
       setData(null);
       setError(null);
       lastSigRef.current = sig;
-    } else if (abortRef.current && !abortRef.current.signal.aborted) {
-      // Poll tick fired while the previous fetch is still in flight. Let it
-      // finish — don't restart. This is the critical difference from a naive
-      // abort-on-every-tick: a Graph call that takes longer than pollMs would
-      // otherwise be stuck cancelling itself forever.
+    } else if (inFlightRef.current) {
+      // Poll tick while a previous fetch is still resolving. Let it finish —
+      // a slow Graph call must not get stuck in an abort/restart loop.
       return;
     }
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     api
@@ -70,14 +66,15 @@ export function useFetch<T>(
         setError(e instanceof ApiError ? e.message : "Request failed");
       })
       .finally(() => {
-        // Only clear loading if this is still the active controller. Aborts
-        // from sig changes will already have started a fresh in-flight
-        // request — don't toggle that one off.
-        if (ctrl === abortRef.current) setLoading(false);
+        // Always free the in-flight slot so the next poll tick can proceed.
+        // Only clear loading if this is still the active controller — a
+        // request that was aborted because the user switched threads
+        // shouldn't toggle the new request's loading off.
+        if (ctrl === abortRef.current) {
+          inFlightRef.current = false;
+          setLoading(false);
+        }
       });
-    // No effect-cleanup abort here: we want polling tick re-runs to leave the
-    // in-flight request alone. Aborts happen via sigChanged + the unmount
-    // effect below.
   }, [path, enabled, tick, opts.key]);
 
   // Final abort on unmount, so an in-flight call doesn't try to setState on a
