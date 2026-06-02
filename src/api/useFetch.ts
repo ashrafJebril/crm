@@ -28,6 +28,7 @@ export function useFetch<T>(
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef<boolean>(false);
   // Track the last (path, key) we fetched against so we can clear stale data
   // when those change (e.g., switching conversations / workspaces) without
   // also flashing the UI on every poll tick.
@@ -39,16 +40,24 @@ export function useFetch<T>(
       return;
     }
     const sig = `${path}|${opts.key ?? ""}`;
-    if (lastSigRef.current !== sig) {
+    const sigChanged = lastSigRef.current !== sig;
+    if (sigChanged) {
       // Path or key changed — drop the previous result so consumers see a
       // clean loading state instead of stale rows from the previous query.
       setData(null);
       setError(null);
       lastSigRef.current = sig;
+    } else if (inFlightRef.current) {
+      // A poll tick fired while the previous fetch is still in flight.
+      // Skip this tick instead of aborting and restarting — otherwise a slow
+      // backend (Graph calls > pollMs) gets stuck in a permanent
+      // abort-and-restart loop and the request never completes.
+      return;
     }
     const ctrl = new AbortController();
     abortRef.current?.abort();
     abortRef.current = ctrl;
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     api
@@ -62,9 +71,15 @@ export function useFetch<T>(
         setError(e instanceof ApiError ? e.message : "Request failed");
       })
       .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false);
+        if (!ctrl.signal.aborted) {
+          setLoading(false);
+          inFlightRef.current = false;
+        }
       });
-    return () => ctrl.abort();
+    return () => {
+      ctrl.abort();
+      inFlightRef.current = false;
+    };
   }, [path, enabled, tick, opts.key]);
 
   // Polling — silently bumps the tick on an interval. Pauses when tab is hidden.
