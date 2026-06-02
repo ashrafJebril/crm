@@ -283,38 +283,28 @@ export class InstagramService {
   }
 
   /** Live messages for a single IG thread. The id arrives without the
-   *  `ig:` prefix (controller strips it before calling). */
+   *  `ig:` prefix (controller strips it before calling). Single Graph call
+   *  with field expansion — splitting it into N+1 calls per message took
+   *  long enough that the frontend's 3s poll kept aborting in-flight requests. */
   async listMessagesInConversation(
     workspaceId: string,
     conversationId: string,
     limit = 25,
   ) {
     const { token, igUserId } = await this.requireToken(workspaceId);
-    interface IgMessageStub { id: string }
     interface IgMessage {
       id: string;
       from?: { id: string; username?: string };
       message?: string;
       created_time: string;
     }
-    // Step 1: list message ids on the thread (Graph returns most-recent first).
-    const stubsRes = await this.fetchJson<{ messages?: { data: IgMessageStub[] } }>(
-      `${GRAPH}/${conversationId}?fields=messages.limit(${limit}){id}&access_token=${encodeURIComponent(token)}`,
+    const res = await this.fetchJson<{ messages?: { data: IgMessage[] } }>(
+      `${GRAPH}/${conversationId}?fields=messages.limit(${limit}){id,from,message,created_time}&access_token=${encodeURIComponent(token)}`,
       { method: "GET" },
     );
-    const stubs = stubsRes.messages?.data ?? [];
-    if (stubs.length === 0) return [];
-    // Step 2: hydrate each message with from + body + timestamp in parallel.
-    const hydrated = await Promise.all(
-      stubs.map((s) =>
-        this.fetchJson<IgMessage>(
-          `${GRAPH}/${s.id}?fields=id,from,message,created_time&access_token=${encodeURIComponent(token)}`,
-          { method: "GET" },
-        ).catch(() => null),
-      ),
-    );
-    // Return oldest-first for thread render order.
-    const ordered = hydrated.filter((m): m is IgMessage => m !== null).reverse();
+    const raw = res.messages?.data ?? [];
+    // Graph returns most-recent first; reverse so the UI renders oldest-first.
+    const ordered = [...raw].reverse();
     return ordered.map((m) => ({
       id: m.id,
       from: m.from?.id === igUserId ? "page" : "them",
