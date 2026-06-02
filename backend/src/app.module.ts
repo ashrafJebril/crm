@@ -24,6 +24,7 @@ import { AdminModule } from "./admin/admin.module";
 import { OpenAiModule } from "./openai/openai.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
 import { AiModule } from "./ai/ai.module";
+import { RealtimeModule } from "./realtime/realtime.module";
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { AiModule } from "./ai/ai.module";
     OpenAiModule,
     KnowledgeModule,
     AiModule,
+    RealtimeModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },

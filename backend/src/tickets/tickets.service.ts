@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import {
   AddNoteDto,
   CreateTicketDto,
@@ -14,7 +15,10 @@ import {
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   // ─── Pipelines ─────────────────────────────────────────────────────────
   async listPipelines(workspaceId: string) {
@@ -201,6 +205,15 @@ export class TicketsService {
         note: dto.note ?? (isLost ? dto.lostReason : null),
         byUserId: dto.byUserId ?? null,
       },
+    });
+
+    // Broadcast to every other connected client in this workspace so their
+    // pipeline boards reflect the move without a refetch. The author's own
+    // socket also receives this — frontend handler is idempotent.
+    this.realtime.emitToWorkspace(workspaceId, "ticket.moved", {
+      ticket: updated,
+      fromStageId: ticket.stageId,
+      toStageId: targetStage.id,
     });
 
     return updated;

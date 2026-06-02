@@ -4,9 +4,20 @@ import {
   useMemo,
   useState,
   type CSSProperties,
-  type DragEvent,
   type ReactNode,
 } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  KeyboardSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -25,6 +36,7 @@ import {
 import { TEAM } from "@/data/team";
 import { api } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { useRealtime } from "@/api/useRealtime";
 import type {
   Contact,
   Note,
@@ -235,31 +247,29 @@ function Kpi({ label, value, unit, sub, icon, tone = "" }: KpiProps) {
 /* Ticket card                                                              */
 /* ─────────────────────────────────────────────────────────────────────── */
 
-interface TicketCardProps {
+interface TicketCardViewProps {
   ticket: Ticket;
   stage: TicketStage | undefined;
   owner: TeamMember | undefined;
   tx: Tx;
   lang: Lang;
-  onOpen: (id: string) => void;
-  onDragStart: (id: string) => void;
-  onDragEnd: () => void;
-  active: boolean;
-  dragging: boolean;
+  active?: boolean;
+  dragging?: boolean;
+  overlay?: boolean;
 }
 
-function TicketCard({
+/** Pure visuals for a ticket card. Used directly inside a column AND as the
+ *  DragOverlay preview that follows the cursor. */
+function TicketCardView({
   ticket,
   stage,
   owner,
   tx,
   lang,
-  onOpen,
-  onDragStart,
-  onDragEnd,
-  active,
-  dragging,
-}: TicketCardProps) {
+  active = false,
+  dragging = false,
+  overlay = false,
+}: TicketCardViewProps) {
   const sla = slaState(ticket, stage, tx);
   const stageLabel = stage
     ? lang === "ar"
@@ -274,17 +284,8 @@ function TicketCard({
     : null;
 
   return (
-    <button
-      type="button"
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", ticket.id);
-        onDragStart(ticket.id);
-      }}
-      onDragEnd={onDragEnd}
-      onClick={() => onOpen(ticket.id)}
-      className={`pl-card ${active ? "active" : ""} ${dragging ? "dragging" : ""}`.trim()}
+    <div
+      className={`pl-card ${active ? "active" : ""} ${dragging ? "dragging" : ""} ${overlay ? "overlay" : ""}`.trim()}
       title={ticket.title}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -391,7 +392,70 @@ function TicketCard({
           </span>
         )}
       </div>
-    </button>
+    </div>
+  );
+}
+
+interface DraggableTicketCardProps extends TicketCardViewProps {
+  onOpen: (id: string) => void;
+}
+
+/** Wraps a TicketCardView with @dnd-kit's useDraggable. Pointer activation has
+ *  a 5px distance threshold so a stationary click still opens the detail
+ *  panel — drag only kicks in once the cursor has actually moved. */
+function DraggableTicketCard({ onOpen, ...view }: DraggableTicketCardProps) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: view.ticket.id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(view.ticket.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(view.ticket.id);
+        }
+      }}
+      style={{ cursor: isDragging ? "grabbing" : "grab" }}
+    >
+      <TicketCardView {...view} dragging={isDragging} />
+    </div>
+  );
+}
+
+interface DroppableStageProps {
+  stageId: string;
+  showSubHeader: boolean;
+  children: ReactNode;
+}
+
+/** A sub-stage drop target. Highlights when a card is being dragged over it. */
+function DroppableStage({ stageId, showSubHeader, children }: DroppableStageProps) {
+  const { setNodeRef, isOver } = useDroppable({ id: stageId });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        borderRadius: 8,
+        border: isOver
+          ? "1px dashed var(--accent)"
+          : "1px dashed transparent",
+        background: isOver ? "var(--accent-soft)" : "transparent",
+        padding: showSubHeader ? 6 : 4,
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        minHeight: showSubHeader ? 60 : 40,
+        transition: "background 0.1s ease, border-color 0.1s ease",
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -1267,10 +1331,16 @@ function PipelineImpl() {
   const [showNew, setShowNew] = useState<boolean>(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refetchTick, setRefetchTick] = useState<number>(0);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [hoverStageId, setHoverStageId] = useState<string | null>(null);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [pendingLost, setPendingLost] = useState<PendingMove | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+
+  // dnd-kit sensors: pointer with a 5px activation distance (lets clicks
+  // through without triggering a drag) + keyboard for accessibility.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
 
   /* ─── Data ──────────────────────────────────────────────────────────── */
 
@@ -1417,6 +1487,28 @@ function PipelineImpl() {
     setRefetchTick((n) => n + 1);
   }, []);
 
+  // Realtime sync: when *any* client in this workspace moves a ticket the
+  // server emits `ticket.moved`; everyone's cache (including the author's,
+  // idempotently) gets patched so the card slides to the new column without
+  // a refetch.
+  useRealtime<{ ticket: Ticket; fromStageId: string; toStageId: string }>(
+    "ticket.moved",
+    useCallback(
+      (data) => {
+        ticketsQ.setData((prev) =>
+          prev
+            ? prev.map((t) => (t.id === data.ticket.id ? data.ticket : t))
+            : prev,
+        );
+        // KPI summary may have shifted (Win/Lost) — quietly refresh.
+        bumpRefetch();
+      },
+      // setData is stable from useFetch; bumpRefetch is stable from useCallback.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [],
+    ),
+  );
+
   /** Optimistic move helper used by drag/drop, Mark Won, and confirm-Lost.
    *  Moves the card to the target column instantly via setData, fires the
    *  mutation in the background, then either reconciles with the server's
@@ -1457,16 +1549,25 @@ function PipelineImpl() {
     [tickets, ticketsQ, moveTicket, bumpRefetch],
   );
 
-  const handleDrop = useCallback(
-    (stageId: string, ticketId: string): void => {
-      setMoveError(null);
-      setHoverStageId(null);
-      setDraggingId(null);
+  const handleDragStart = useCallback((event: DragStartEvent): void => {
+    setActiveDragId(String(event.active.id));
+    setMoveError(null);
+  }, []);
+
+  const handleDragCancel = useCallback((): void => {
+    setActiveDragId(null);
+  }, []);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent): void => {
+      setActiveDragId(null);
+      const ticketId = String(event.active.id);
+      const stageId = event.over ? String(event.over.id) : null;
+      if (!stageId) return;
       const ticket = tickets.find((tk) => tk.id === ticketId);
       if (!ticket || ticket.stageId === stageId) return;
       const target = stageById.get(stageId);
       if (!target) return;
-      // Lost terminal → require reason via modal
       if (target.isTerminal && !target.isWon) {
         setPendingLost({ ticketId, stageId });
         return;
@@ -1757,6 +1858,12 @@ function PipelineImpl() {
         </div>
 
         {/* Kanban board */}
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
         <div
           style={{
             display: "grid",
@@ -1893,42 +2000,12 @@ function PipelineImpl() {
                     const list = visibleCards.filter(
                       (c) => c.stageId === s.id,
                     );
-                    const isHover = hoverStageId === s.id;
                     const showSubHeader = !singleStage;
                     return (
-                      <div
+                      <DroppableStage
                         key={s.id}
-                        onDragOver={(e: DragEvent<HTMLDivElement>) => {
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = "move";
-                          if (hoverStageId !== s.id) setHoverStageId(s.id);
-                        }}
-                        onDragLeave={() => {
-                          if (hoverStageId === s.id) setHoverStageId(null);
-                        }}
-                        onDrop={(e: DragEvent<HTMLDivElement>) => {
-                          e.preventDefault();
-                          const id =
-                            e.dataTransfer.getData("text/plain") ||
-                            draggingId ||
-                            "";
-                          if (id) handleDrop(s.id, id);
-                        }}
-                        style={{
-                          borderRadius: 8,
-                          border: isHover
-                            ? "1px dashed var(--accent)"
-                            : "1px dashed transparent",
-                          background: isHover
-                            ? "var(--accent-soft)"
-                            : "transparent",
-                          padding: showSubHeader ? 6 : 4,
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 6,
-                          minHeight: showSubHeader ? 60 : 40,
-                          transition: "background 0.1s ease, border-color 0.1s ease",
-                        }}
+                        stageId={s.id}
+                        showSubHeader={showSubHeader}
                       >
                         {showSubHeader && (
                           <div
@@ -1963,7 +2040,7 @@ function PipelineImpl() {
                             ? TEAM.find((m) => m.id === card.ownerId)
                             : undefined;
                           return (
-                            <TicketCard
+                            <DraggableTicketCard
                               key={card.id}
                               ticket={card}
                               stage={stageById.get(card.stageId)}
@@ -1971,13 +2048,7 @@ function PipelineImpl() {
                               tx={tx}
                               lang={t.lang}
                               onOpen={setSelectedId}
-                              onDragStart={setDraggingId}
-                              onDragEnd={() => {
-                                setDraggingId(null);
-                                setHoverStageId(null);
-                              }}
                               active={selectedId === card.id}
-                              dragging={draggingId === card.id}
                             />
                           );
                         })}
@@ -1994,7 +2065,7 @@ function PipelineImpl() {
                             {tx("Drop here", "اسحب هنا")}
                           </div>
                         )}
-                      </div>
+                      </DroppableStage>
                     );
                   })}
                 </div>
@@ -2002,6 +2073,26 @@ function PipelineImpl() {
             );
           })}
         </div>
+        <DragOverlay dropAnimation={null}>
+          {activeDragId ? (() => {
+            const t2 = tickets.find((tk) => tk.id === activeDragId);
+            if (!t2) return null;
+            const owner = t2.ownerId
+              ? TEAM.find((m) => m.id === t2.ownerId)
+              : undefined;
+            return (
+              <TicketCardView
+                ticket={t2}
+                stage={stageById.get(t2.stageId)}
+                owner={owner}
+                tx={tx}
+                lang={t.lang}
+                overlay
+              />
+            );
+          })() : null}
+        </DragOverlay>
+        </DndContext>
       </div>
 
       {detail && (
@@ -2082,7 +2173,12 @@ function PipelineImpl() {
         .pl-card:hover { border-color: var(--line); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
         .pl-card:active { cursor: grabbing; }
         .pl-card.active { box-shadow: 0 0 0 2px var(--accent) inset; border-color: var(--accent-ring); }
-        .pl-card.dragging { opacity: 0.45; transform: scale(0.99); }
+        .pl-card.dragging { opacity: 0.25; }
+        .pl-card.overlay {
+          box-shadow: 0 12px 32px oklch(0 0 0 / 0.35), 0 0 0 1px var(--accent-ring);
+          transform: rotate(-1.5deg);
+          cursor: grabbing;
+        }
 
         .pl-chip {
           display: inline-flex; align-items: center; gap: 4px;

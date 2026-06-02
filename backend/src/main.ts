@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import { IoAdapter } from "@nestjs/platform-socket.io";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
@@ -10,6 +11,7 @@ async function bootstrap() {
     origin: process.env.CORS_ORIGIN?.split(",") ?? "http://localhost:5173",
     credentials: true,
   });
+  app.useWebSocketAdapter(new IoAdapter(app));
   app.setGlobalPrefix("api");
   app.useGlobalPipes(
     new ValidationPipe({
