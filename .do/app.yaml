@@ -41,6 +41,9 @@ services:
       - key: META_GRAPH_VERSION
         scope: RUN_TIME
         value: v21.0
+      - key: META_VERIFY_TOKEN
+        scope: RUN_TIME
+        type: SECRET
       - key: OPENAI_API_KEY
         scope: RUN_TIME
         type: SECRET

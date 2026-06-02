@@ -4,15 +4,22 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
   InviteByEmailDto,
+  ResetMemberPasswordDto,
   UpdateMemberRoleDto,
   UpdateWorkspaceDto,
   WorkspaceRole,
 } from "./workspaces.dto";
+
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "U";
+}
 
 function toSlug(name: string): string {
   return (
@@ -29,8 +36,11 @@ export class WorkspacesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listForUser(userId: string) {
+    // Hide suspended workspaces from the switcher dropdown — a suspended
+    // tenant isn't usable, and listing them makes the picker noisy. They're
+    // still visible (and unsuspendable) from the super-admin portal.
     const memberships = await this.prisma.workspaceMember.findMany({
-      where: { userId },
+      where: { userId, workspace: { suspendedAt: null } },
       include: { workspace: true },
       orderBy: { createdAt: "asc" },
     });
@@ -120,25 +130,77 @@ export class WorkspacesService {
     });
   }
 
-  /** Invite by email — only succeeds if the email is already a tkana user.
-   *  Email-based signup invites (with a token) come later when email
-   *  delivery infrastructure is in place. */
+  /**
+   * Invite by email. If the email matches an existing tkana user, just adds
+   * them as a member (their existing password is unchanged). If the email
+   * is new AND the caller supplied `name` + `password`, creates the user
+   * on the fly and adds them — the caller can then hand the credentials
+   * to the teammate.
+   *
+   * Returns `{ memberId, created, tempPassword? }` so the UI can show the
+   * password once when a new account was provisioned.
+   */
   async inviteByEmail(workspaceId: string, dto: InviteByEmailDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
-    });
+    const email = dto.email.toLowerCase().trim();
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    let provisionedPassword: string | undefined;
+
     if (!user) {
-      throw new NotFoundException(
-        "No tkana user with that email. They must sign up first, then you can invite them.",
-      );
+      // Create new user with the supplied name + password
+      if (!dto.name || !dto.password) {
+        throw new NotFoundException(
+          "No tkana user with that email. Provide `name` and `password` to create them on the fly.",
+        );
+      }
+      const hashed = await bcrypt.hash(dto.password, 10);
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          name: dto.name,
+          password: hashed,
+          role: dto.role === "owner" ? "Owner" : dto.role === "admin" ? "Manager" : "Agent",
+          initials: initialsOf(dto.name),
+          color: "180",
+          status: "offline",
+        },
+      });
+      provisionedPassword = dto.password;
+    } else if (dto.password) {
+      // User row already existed (e.g. previously removed-then-re-added). If
+      // they don't belong to any other workspace, treat this invite as a
+      // re-provision and apply the supplied password so the inviter's modal
+      // matches reality. Cross-tenant guard: if they're in another workspace,
+      // we can't safely reset — refuse to touch the password and just add the
+      // membership (caller can use the Reset password button if needed and
+      // the safety rail allows).
+      const otherMemberships = await this.prisma.workspaceMember.count({
+        where: { userId: user.id, workspaceId: { not: workspaceId } },
+      });
+      if (otherMemberships === 0) {
+        const hashed = await bcrypt.hash(dto.password, 10);
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { password: hashed },
+        });
+        provisionedPassword = dto.password;
+      }
     }
+
     const exists = await this.prisma.workspaceMember.findUnique({
       where: { userId_workspaceId: { userId: user.id, workspaceId } },
     });
     if (exists) throw new ConflictException("Already a member");
-    return this.prisma.workspaceMember.create({
+
+    const member = await this.prisma.workspaceMember.create({
       data: { userId: user.id, workspaceId, role: dto.role },
     });
+
+    return {
+      member,
+      created: provisionedPassword !== undefined,
+      tempPassword: provisionedPassword,
+      user: { id: user.id, email: user.email, name: user.name },
+    };
   }
 
   async updateMemberRole(
@@ -154,6 +216,45 @@ export class WorkspacesService {
       where: { id: m.id },
       data: { role: dto.role },
     });
+  }
+
+  /**
+   * Reset a workspace member's login password. Owner/admin only (enforced at
+   * controller). Cross-tenant safety rail: refuses if the target user is
+   * also a member of other workspaces — they're not "ours" to reset and a
+   * single-tenant owner could take over their access elsewhere. Super-admins
+   * (tkana-internal staff) bypass the rail since they already have a
+   * legitimate cross-tenant role.
+   */
+  async resetMemberPassword(
+    workspaceId: string,
+    userId: string,
+    dto: ResetMemberPasswordDto,
+    options: { isSuperAdmin?: boolean } = {},
+  ) {
+    const m = await this.prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+    });
+    if (!m) throw new NotFoundException("Member not found");
+    if (!options.isSuperAdmin) {
+      const otherMemberships = await this.prisma.workspaceMember.count({
+        where: { userId, workspaceId: { not: workspaceId } },
+      });
+      if (otherMemberships > 0) {
+        throw new ForbiddenException(
+          "User belongs to other workspaces — they must change their own password.",
+        );
+      }
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    const hashed = await bcrypt.hash(dto.password, 10);
+    await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
+    return {
+      ok: true,
+      user: { id: user.id, email: user.email, name: user.name },
+      password: dto.password,
+    };
   }
 
   async removeMember(workspaceId: string, userId: string) {

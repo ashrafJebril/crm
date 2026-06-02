@@ -47,22 +47,29 @@ interface AuthContextValue {
   createWorkspace: (name: string) => Promise<Workspace>;
 }
 
+function readTokenPayload<T>(): T | null {
+  const tok = tokenStore.get();
+  if (!tok) return null;
+  try {
+    const payload = tok.split(".")[1];
+    if (!payload) return null;
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b64)) as T;
+  } catch {
+    return null;
+  }
+}
+
 /** Reads the `impersonating` claim from the active JWT, no verification.
  *  We trust the server — the JWT was minted by us and the AuthGuard
  *  already verified it on every request. The client only reads the flag
  *  to drive UI state. */
 function readImpersonatingFromToken(): boolean {
-  const tok = tokenStore.get();
-  if (!tok) return false;
-  try {
-    const payload = tok.split(".")[1];
-    if (!payload) return false;
-    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(atob(b64)) as { impersonating?: boolean };
-    return !!json.impersonating;
-  } catch {
-    return false;
-  }
+  return !!readTokenPayload<{ impersonating?: boolean }>()?.impersonating;
+}
+
+function readWorkspaceIdFromToken(): string | null {
+  return readTokenPayload<{ workspaceId?: string }>()?.workspaceId ?? null;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -94,7 +101,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setUser(me);
         setWorkspaces(wss);
-        setActiveWorkspace(wss[0] ?? null);
+        const claimedId = readWorkspaceIdFromToken();
+        setActiveWorkspace(
+          (claimedId && wss.find((w) => w.id === claimedId)) || wss[0] || null,
+        );
         if (wss.length === 0) {
           // Inconsistent state — log out to recover.
           tokenStore.clear();

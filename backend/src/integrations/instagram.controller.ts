@@ -17,6 +17,28 @@ export class InstagramController {
     return this.svc.syncConversations(workspaceId);
   }
 
+  @Get("conversations")
+  listConversations(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.listConversations(workspaceId);
+  }
+
+  @Get("conversations/:conversationId/messages")
+  listMessages(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("conversationId") conversationId: string,
+  ) {
+    return this.svc.listMessagesInConversation(workspaceId, conversationId);
+  }
+
+  @Post("conversations/by-igsid/:igsid/send")
+  sendDirectMessage(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("igsid") igsid: string,
+    @Body() dto: { message: string },
+  ) {
+    return this.svc.sendDirectMessage(workspaceId, igsid, dto.message);
+  }
+
   @Post("conversations/:conversationId/send")
   send(
     @CurrentWorkspace() workspaceId: string,
@@ -24,6 +46,36 @@ export class InstagramController {
     @Body() dto: { message: string },
   ) {
     return this.svc.sendInConversation(workspaceId, conversationId, dto.message);
+  }
+
+  @Get("posts")
+  listPosts(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.listPosts(workspaceId);
+  }
+
+  @Get("posts/:mediaId/comments")
+  listComments(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("mediaId") mediaId: string,
+  ) {
+    return this.svc.listComments(workspaceId, mediaId);
+  }
+
+  @Post("posts/:mediaId/comments")
+  commentOnMedia(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("mediaId") mediaId: string,
+    @Body() dto: { message: string },
+  ) {
+    return this.svc.commentOnMedia(workspaceId, mediaId, dto.message);
+  }
+
+  @Delete("comments/:commentId")
+  deleteComment(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("commentId") commentId: string,
+  ) {
+    return this.svc.deleteComment(workspaceId, commentId);
   }
 
   @Post("posts")

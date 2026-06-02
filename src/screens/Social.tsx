@@ -251,31 +251,86 @@ function SocialImpl() {
     }));
   }, [liveFbQ.data, fbPageName]);
 
+  /* ── Live Instagram integration ───────────────────────────────────────── */
+  interface IgStatusResp {
+    connected: boolean;
+    userId?: string;
+    username?: string;
+  }
+  interface LiveIgPost {
+    id: string;
+    body: string;
+    mediaUrl?: string;
+    attachmentType?: string;
+    permalink?: string;
+    createdAt?: string;
+    likes: number;
+    comments: number;
+    shares: number;
+  }
+  const igStatusQ = useFetch<IgStatusResp>("/integrations/instagram/status");
+  const igConnected = igStatusQ.data?.connected === true;
+  const igUsername = igStatusQ.data?.username;
+  const isIgLive = platform === "instagram" && igConnected;
+
+  const liveIgQ = useFetch<LiveIgPost[]>(
+    isIgLive ? "/integrations/instagram/posts" : null,
+  );
+
+  const liveIgPostIds = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    for (const p of liveIgQ.data ?? []) s.add(p.id);
+    return s;
+  }, [liveIgQ.data]);
+
+  const liveIgPosts: SocialPost[] = useMemo(() => {
+    if (!liveIgQ.data) return [];
+    return liveIgQ.data.map<SocialPost>((p) => ({
+      id: p.id,
+      platform: "instagram",
+      author: igUsername ?? "Instagram",
+      authorHandle: makeHandle(igUsername),
+      authorVerified: true,
+      body: p.body,
+      bodyAr: undefined,
+      mediaLabel: p.attachmentType ?? "Post",
+      postedAt: formatCompactDate(p.createdAt ?? ""),
+      likes: p.likes,
+      shares: p.shares,
+      comments: [],
+    }));
+  }, [liveIgQ.data, igUsername]);
+
   const liveMediaMap = useMemo<Record<string, string>>(() => {
     const m: Record<string, string> = {};
     for (const p of liveFbQ.data ?? []) {
       if (p.mediaUrl) m[p.id] = p.mediaUrl;
     }
+    for (const p of liveIgQ.data ?? []) {
+      if (p.mediaUrl) m[p.id] = p.mediaUrl;
+    }
     return m;
-  }, [liveFbQ.data]);
+  }, [liveFbQ.data, liveIgQ.data]);
 
   /* ── Per-platform feed (memoized) ─────────────────────────────────────── */
+  // No mock fallback — when an integration isn't connected (or has no posts),
+  // show an empty state rather than seeded demo content. The seeded
+  // `SOCIAL_POSTS` array is kept only for the IG/TikTok "coming soon" tabs
+  // until we build real feeds for them.
   const feed: SocialPost[] = useMemo(() => {
-    if (platform === "facebook" && fbConnected) return livePosts;
-    return SOCIAL_POSTS.filter((p) => p.platform === platform);
-  }, [platform, fbConnected, livePosts]);
+    if (platform === "facebook") return fbConnected ? livePosts : [];
+    if (platform === "instagram") return igConnected ? liveIgPosts : [];
+    return [];
+  }, [platform, fbConnected, livePosts, igConnected, liveIgPosts]);
 
-  // Stable counts per platform (used in tabs). Use live count for FB when connected.
   const platformCounts = useMemo<Record<SocialPlatform, number>>(() => {
-    const counts: Record<SocialPlatform, number> = {
-      facebook: 0,
-      instagram: 0,
+    return {
+      facebook: fbConnected ? livePosts.length : 0,
+      instagram: igConnected ? liveIgPosts.length : 0,
       tiktok: 0,
     };
-    for (const p of SOCIAL_POSTS) counts[p.platform] += 1;
-    if (fbConnected) counts.facebook = livePosts.length;
-    return counts;
-  }, [fbConnected, livePosts.length]);
+  }, [fbConnected, livePosts.length, igConnected, liveIgPosts.length]);
+  void SOCIAL_POSTS;
 
   // Fall back to the platform's first post if nothing chosen yet.
   const selectedId = selectedByPlatform[platform] ?? feed[0]?.id ?? null;
@@ -284,17 +339,26 @@ function SocialImpl() {
     [feed, selectedId],
   );
 
-  // If the currently-selected post came from the live FB feed, load its
-  // comments from the backend on demand.
+  // If the currently-selected post came from a live feed (FB or IG), load
+  // its comments from the backend on demand. Both endpoints return the same
+  // shape (LiveFbComment).
   const selectedIsLive =
     baseSelected !== null &&
-    baseSelected.platform === "facebook" &&
-    liveFbPostIds.has(baseSelected.id);
+    ((baseSelected.platform === "facebook" && liveFbPostIds.has(baseSelected.id)) ||
+      (baseSelected.platform === "instagram" && liveIgPostIds.has(baseSelected.id)));
   const liveCommentsQ = useFetch<LiveFbComment[]>(
-    selectedIsLive
-      ? `/integrations/facebook/posts/${baseSelected.id}/comments`
+    selectedIsLive && baseSelected
+      ? baseSelected.platform === "instagram"
+        ? `/integrations/instagram/posts/${baseSelected.id}/comments`
+        : `/integrations/facebook/posts/${baseSelected.id}/comments`
       : null,
   );
+
+  // Track which post id we most-recently received a comments payload for.
+  // Used to gate the skeleton: any post switch should show loading until
+  // the new query lands, even if the override cache from a prior visit
+  // would otherwise paper over the transition.
+  const [loadedCommentsFor, setLoadedCommentsFor] = useState<string | null>(null);
 
   // Mirror server-fetched comments into our local override map so that
   // the rest of the screen (sorting, like-toggle, composer) keeps working
@@ -323,7 +387,14 @@ function SocialImpl() {
       }
       return { ...prev, [baseSelected.id]: { comments: mapped } };
     });
+    setLoadedCommentsFor(baseSelected.id);
   }, [selectedIsLive, liveCommentsQ.data, baseSelected]);
+
+  // Whether the comments visible in the side panel are fresh for the
+  // selected post. Drives the skeleton during post-to-post navigation.
+  const commentsAreFresh =
+    !selectedIsLive ||
+    (loadedCommentsFor === baseSelected?.id && !liveCommentsQ.loading);
 
   // Apply overrides on top of the base selected post.
   const selected: SocialPost | null = useMemo(() => {
@@ -347,6 +418,50 @@ function SocialImpl() {
       { message: input.message },
     ),
   );
+
+  // IG: POST a top-level comment to the selected media item.
+  const igCommentMutation = useMutation<
+    { mediaId: string; message: string },
+    { id: string; ok: true }
+  >((input) =>
+    api.post<{ id: string; ok: true }>(
+      `/integrations/instagram/posts/${input.mediaId}/comments`,
+      { message: input.message },
+    ),
+  );
+
+  // Delete a comment on FB or IG. Graph DELETE /{comment-id}.
+  const deleteCommentMutation = useMutation<
+    { platform: SocialPlatform; commentId: string },
+    { ok: boolean }
+  >((input) =>
+    api.delete<{ ok: boolean }>(
+      `/integrations/${input.platform}/comments/${input.commentId}`,
+    ),
+  );
+
+  function deleteComment(c: SocialComment) {
+    if (!selected) return;
+    const isLocalOnly = c.id.includes("-local-");
+    const postId = selected.id;
+    // Optimistic remove
+    const before = getCurrentComments(selected);
+    const after = before.filter((x) => x.id !== c.id);
+    writeComments(postId, after);
+    if (isLocalOnly) return; // never made it to the platform, nothing to call
+    const isLiveFb = selected.platform === "facebook" && liveFbPostIds.has(postId);
+    const isLiveIg = selected.platform === "instagram" && liveIgPostIds.has(postId);
+    if (!isLiveFb && !isLiveIg) return;
+    deleteCommentMutation
+      .mutate({
+        platform: selected.platform,
+        commentId: c.id,
+      })
+      .catch(() => {
+        // Restore on failure so the operator sees the comment didn't actually delete.
+        writeComments(postId, before);
+      });
+  }
 
   /* ── FB post delete + edit mutations ──────────────────────────────────── */
   const deletePostMut = useMutation<{ postId: string }, { ok: boolean }>((input) =>
@@ -434,27 +549,30 @@ function SocialImpl() {
     writeComments(selected.id, [...current, newComment]);
     setDraft("");
 
-    // If this is a live FB post, attempt to post the comment to Facebook.
+    // If this is a live FB/IG post, post the comment to the right platform.
     // On success, swap in the real ID returned by the backend; on error,
-    // keep the local-only entry so the demo composer still works.
-    const isLive =
-      selected.platform === "facebook" && liveFbPostIds.has(selected.id);
-    if (isLive) {
-      const postId = selected.id;
+    // keep the optimistic local entry so the UI doesn't blink.
+    const postId = selected.id;
+    const swapId = (realId: string) => {
+      setOverrides((prev) => {
+        const list = prev[postId]?.comments ?? [];
+        const next = list.map((c) =>
+          c.id === localId ? { ...c, id: realId } : c,
+        );
+        return { ...prev, [postId]: { comments: next } };
+      });
+    };
+
+    if (selected.platform === "facebook" && liveFbPostIds.has(postId)) {
       replyMutation
         .mutate({ parentId: postId, message: body })
-        .then((res) => {
-          setOverrides((prev) => {
-            const list = prev[postId]?.comments ?? [];
-            const next = list.map((c) =>
-              c.id === localId ? { ...c, id: res.id } : c,
-            );
-            return { ...prev, [postId]: { comments: next } };
-          });
-        })
-        .catch(() => {
-          // Keep optimistic local entry; surface error subtly via mutation.error.
-        });
+        .then((res) => swapId(res.id))
+        .catch(() => {});
+    } else if (selected.platform === "instagram" && liveIgPostIds.has(postId)) {
+      igCommentMutation
+        .mutate({ mediaId: postId, message: body })
+        .then((res) => swapId(res.id))
+        .catch(() => {});
     }
   }
 
@@ -593,8 +711,8 @@ function SocialImpl() {
                     `منشورات حقيقية من ${fbPageName ?? "صفحتك"} على فيسبوك`,
                   )
                 : tx(
-                    "Demo posts — connect Facebook in Settings to see live data",
-                    "منشورات تجريبية — اربط فيسبوك من الإعدادات لعرض بيانات حيّة",
+                    "Facebook isn't connected — connect it in Settings → Integrations",
+                    "فيسبوك غير مرتبط — اربطه من الإعدادات ← التكاملات",
                   )}
               {liveFbQ.loading && (
                 <span className="mono muted" style={{ marginInlineStart: 8 }}>
@@ -618,7 +736,8 @@ function SocialImpl() {
               gap: 12,
             }}
           >
-            {isFbLive && liveFbQ.loading && feed.length === 0 ? (
+            {((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+            feed.length === 0 ? (
               <div
                 aria-label={tx("Loading posts", "جارٍ تحميل المنشورات")}
                 style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -628,7 +747,53 @@ function SocialImpl() {
                 ))}
               </div>
             ) : null}
-            {!(isFbLive && liveFbQ.loading && feed.length === 0) && feed.map((post) => {
+            {!((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+              feed.length === 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    padding: "48px 16px",
+                    textAlign: "center",
+                    color: "var(--ink-3)",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
+                    {platform === "facebook" && !fbConnected
+                      ? tx("Facebook isn't connected yet", "فيسبوك غير مرتبط")
+                      : platform === "facebook"
+                        ? tx("No posts on this page yet", "لا توجد منشورات على هذه الصفحة")
+                        : platform === "instagram" && !igConnected
+                          ? tx("Instagram isn't connected yet", "إنستغرام غير مرتبط")
+                          : platform === "instagram"
+                            ? tx("No posts on this account yet", "لا توجد منشورات على هذا الحساب")
+                            : tx("TikTok coming soon", "تيك توك قريبًا")}
+                  </div>
+                  <div className="mono" style={{ fontSize: 11 }}>
+                    {platform === "facebook" && !fbConnected
+                      ? tx(
+                          "Settings → Integrations → Connect Facebook",
+                          "الإعدادات ← التكاملات ← اربط فيسبوك",
+                        )
+                      : platform === "instagram" && !igConnected
+                        ? tx(
+                            "Connect Facebook in Settings — Instagram links automatically.",
+                            "اربط فيسبوك من الإعدادات — يُربط إنستغرام تلقائيًا.",
+                          )
+                        : platform === "tiktok"
+                          ? tx("We'll add live feeds for this channel.", "سنضيف الموجز الحي قريبًا.")
+                          : tx("Publish a post to see it here.", "انشر منشورًا ليظهر هنا.")}
+                  </div>
+                </div>
+              )}
+            {!(
+              ((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+              feed.length === 0
+            ) &&
+              feed.map((post) => {
               const isActive = selected?.id === post.id;
               const body = isAr && post.bodyAr ? post.bodyAr : post.body;
               const liveComments = getCurrentComments(post);
@@ -929,7 +1094,7 @@ function SocialImpl() {
                   gap: 12,
                 }}
               >
-                {selectedIsLive && liveCommentsQ.loading && sortedComments.length === 0 ? (
+                {selectedIsLive && !commentsAreFresh ? (
                   <div
                     aria-label={tx("Loading comments", "جارٍ تحميل التعليقات")}
                     style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -939,7 +1104,7 @@ function SocialImpl() {
                     ))}
                   </div>
                 ) : null}
-                {!(selectedIsLive && liveCommentsQ.loading && sortedComments.length === 0) && sortedComments.map((c) => {
+                {!(selectedIsLive && !commentsAreFresh) && sortedComments.map((c) => {
                   const cBody = isAr && c.bodyAr ? c.bodyAr : c.body;
                   return (
                     <div
@@ -1016,6 +1181,34 @@ function SocialImpl() {
                           </button>
                           <button
                             type="button"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  tx(
+                                    "Delete this comment?",
+                                    "حذف هذا التعليق؟",
+                                  ),
+                                )
+                              ) {
+                                deleteComment(c);
+                              }
+                            }}
+                            className="like-btn"
+                            disabled={deleteCommentMutation.loading}
+                            style={{
+                              background: "transparent",
+                              border: 0,
+                              padding: 0,
+                              cursor: "pointer",
+                              color: "var(--bad)",
+                              fontFamily: "var(--font-mono)",
+                              fontSize: 11,
+                            }}
+                          >
+                            {tx("Delete", "حذف")}
+                          </button>
+                          <button
+                            type="button"
                             className="like-btn"
                             style={{
                               background: "transparent",
@@ -1034,7 +1227,7 @@ function SocialImpl() {
                     </div>
                   );
                 })}
-                {sortedComments.length === 0 && !(selectedIsLive && liveCommentsQ.loading) && (
+                {sortedComments.length === 0 && (!selectedIsLive || commentsAreFresh) && (
                   <div
                     className="mono muted"
                     style={{ fontSize: 12, padding: 12 }}

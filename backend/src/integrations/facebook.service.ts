@@ -174,6 +174,11 @@ export class FacebookService {
       ? await this.prisma.integration.update({ where: { id: existing.id }, data })
       : await this.prisma.integration.create({ data: { ...data, workspaceId } });
 
+    // Subscribe this Page to our app's webhook so events arrive automatically.
+    // Best-effort: log and continue if it fails — the integration is still
+    // usable for outbound + manual sync.
+    await this.subscribePageToApp(pageId, finalToken);
+
     // Best-effort IG discovery — never fails the FB connect even if IG is missing.
     const ig = await this.maybeDiscoverIg(workspaceId, pageId, finalToken, expiresAt);
 
@@ -187,6 +192,77 @@ export class FacebookService {
         ? { connected: true, userId: ig.igUserId, username: ig.igUsername }
         : { connected: false },
     };
+  }
+
+  /**
+   * Re-run the Page webhook subscription for an already-connected workspace.
+   * Useful when an existing connection predates the auto-subscribe code, or
+   * when Meta dropped the subscription (token expiry, app re-permissioning,
+   * etc.). Reports back so the UI can surface success/failure inline.
+   */
+  async resubscribeWebhook(workspaceId: string): Promise<{ ok: boolean; error?: string }> {
+    const integ = await this.find(workspaceId);
+    if (!integ?.accessToken || !integ.pageId) {
+      throw new NotFoundException("Facebook is not connected");
+    }
+    const subscribedFields = [
+      "messages",
+      "messaging_postbacks",
+      "messaging_handovers",
+      "message_deliveries",
+      "message_reads",
+      "feed",
+      "mention",
+    ].join(",");
+    const url =
+      `${GRAPH}/${integ.pageId}/subscribed_apps?` +
+      new URLSearchParams({
+        subscribed_fields: subscribedFields,
+        access_token: integ.accessToken,
+      }).toString();
+    try {
+      const res = await this.fetchJson<{ success?: boolean }>(url, { method: "POST" });
+      if (res.success !== true) {
+        return { ok: false, error: "Subscribe returned success=false" };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  /**
+   * Subscribe our Meta app to receive webhooks for this Page. Without this
+   * call Meta won't push events even though the app's callback URL is wired
+   * up in the dashboard. Best-effort: log and swallow errors so OAuth still
+   * completes — the operator can re-trigger by reconnecting.
+   */
+  private async subscribePageToApp(pageId: string, pageToken: string): Promise<void> {
+    const subscribedFields = [
+      "messages",
+      "messaging_postbacks",
+      "messaging_handovers",
+      "message_deliveries",
+      "message_reads",
+      "feed",
+      "mention",
+    ].join(",");
+    const url =
+      `${GRAPH}/${pageId}/subscribed_apps?` +
+      new URLSearchParams({
+        subscribed_fields: subscribedFields,
+        access_token: pageToken,
+      }).toString();
+    try {
+      const res = await this.fetchJson<{ success?: boolean }>(url, { method: "POST" });
+      if (res.success !== true) {
+        this.log.warn(`Page subscribe returned success=false for page=${pageId}`);
+      }
+    } catch (e) {
+      this.log.warn(
+        `Page subscribe failed for page=${pageId}: ${(e as Error).message}`,
+      );
+    }
   }
 
   private async exchangeForLongLived(
@@ -427,6 +503,13 @@ export class FacebookService {
     const { token } = await this.requireToken(workspaceId);
     const res = await this.graphPost<{ id: string }>(`/${commentId}/comments`, token, { message });
     return { id: res.id, ok: true };
+  }
+
+  async deleteComment(workspaceId: string, commentId: string) {
+    const { token } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${commentId}?access_token=${encodeURIComponent(token)}`;
+    const res = await this.fetchJson<{ success: boolean }>(url, { method: "DELETE" });
+    return { ok: res.success === true };
   }
 
   // ─── Page Messenger conversations (DMs) ─────────────────────────────────

@@ -144,6 +144,11 @@ export class FacebookController {
     return this.fb.listPages(workspaceId);
   }
 
+  @Post("resubscribe-webhook")
+  resubscribeWebhook(@CurrentWorkspace() workspaceId: string) {
+    return this.fb.resubscribeWebhook(workspaceId);
+  }
+
   @Post("select-page")
   selectPage(
     @CurrentWorkspace() workspaceId: string,
@@ -197,6 +202,14 @@ export class FacebookController {
     @Body() dto: ReplyToCommentDto,
   ) {
     return this.fb.replyToComment(workspaceId, commentId, dto.message);
+  }
+
+  @Delete("comments/:commentId")
+  deleteComment(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("commentId") commentId: string,
+  ) {
+    return this.fb.deleteComment(workspaceId, commentId);
   }
 
   // ── Page DMs ────────────────────────────────────────────────────────────

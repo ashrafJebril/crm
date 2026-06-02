@@ -26,7 +26,8 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const email = dto.email.toLowerCase().trim();
+    const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new UnauthorizedException("Invalid credentials");
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) throw new UnauthorizedException("Invalid credentials");
@@ -51,11 +52,11 @@ export class AuthService {
         },
       ]);
     }
-    if (memberships.length === 1) {
-      return this.issue(user, memberships[0].id, memberships);
-    }
-    // Multiple — return list, client picks via /auth/switch-workspace.
-    return this.issue(user, null, memberships);
+    // Default into the first workspace so the JWT always carries a workspaceId
+    // (downstream routes use @CurrentWorkspace which 401s if absent). Users
+    // with multiple workspaces can switch from the topbar — that re-mints the
+    // JWT via /auth/switch-workspace.
+    return this.issue(user, memberships[0].id, memberships);
   }
 
   async register(dto: RegisterDto) {

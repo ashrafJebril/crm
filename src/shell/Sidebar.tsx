@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import type { RouteId } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
+import { useFetch } from "@/api/useFetch";
 import { NAV, isSection, type NavEntry } from "./nav";
 import { Avatar } from "@/components/Avatar";
 import { IconBell, IconChevDown, IconSearch } from "@/icons";
@@ -15,6 +16,27 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const { t } = useTweaks();
   const { user, activeWorkspace } = useAuth();
   const isAr = t.lang === "ar";
+
+  // Live unread-count for the Inbox nav item. Polls so the badge stays fresh
+  // without the user opening the inbox first. Sums DB-backed conversations
+  // (IG/WA/web) and live FB Messenger threads when FB is connected.
+  const inboxQ = useFetch<Array<{ unread?: number }>>("/conversations", {
+    pollMs: 15000,
+  });
+  const fbStatusQ = useFetch<{ connected?: boolean }>(
+    "/integrations/facebook/status",
+    { pollMs: 60000 },
+  );
+  const fbConnected = fbStatusQ.data?.connected === true;
+  const fbConvsQ = useFetch<Array<{ unread?: number }>>(
+    fbConnected ? "/integrations/facebook/conversations" : null,
+    { pollMs: 15000 },
+  );
+  const inboxUnread = useMemo(() => {
+    const db = (inboxQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0);
+    const fb = (fbConvsQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0);
+    return db + fb;
+  }, [inboxQ.data, fbConvsQ.data]);
 
   // Filter out super-admin-only entries for normal users, then drop any
   // section header that ends up with no items beneath it.
@@ -91,8 +113,13 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
                 <n.Icon w={17} />
               </span>
               <span className="nav-label">{label}</span>
-              {n.badge && <span className="badge-count">{n.badge}</span>}
-              {n.ai && !n.badge && <span className="ai-pip" />}
+              {(() => {
+                const liveBadge =
+                  n.id === "inbox" && inboxUnread > 0 ? inboxUnread : undefined;
+                const badge = liveBadge ?? n.badge;
+                return badge ? <span className="badge-count">{badge}</span> : null;
+              })()}
+              {n.ai && !n.badge && n.id !== "inbox" && <span className="ai-pip" />}
             </button>
           );
         })}

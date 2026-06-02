@@ -28,15 +28,37 @@ export function useFetch<T>(
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef<boolean>(false);
+  const lastSigRef = useRef<string | null>(null);
+  const lastPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled || path === null) {
       setLoading(false);
       return;
     }
+    const sig = `${path}|${opts.key ?? ""}`;
+    const sigChanged = lastSigRef.current !== sig;
+    const pathChanged = lastPathRef.current !== path;
+    if (sigChanged) {
+      // Path or key changed — abort the in-flight call and start fresh.
+      abortRef.current?.abort();
+      inFlightRef.current = false;
+      // Only wipe cached data when the path itself changes. A pure key bump
+      // (mutation-driven invalidation) keeps the stale value visible so the UI
+      // doesn't flash blank while the refetch resolves.
+      if (pathChanged) setData(null);
+      setError(null);
+      lastSigRef.current = sig;
+      lastPathRef.current = path;
+    } else if (inFlightRef.current) {
+      // Poll tick while a previous fetch is still resolving. Let it finish —
+      // a slow Graph call must not get stuck in an abort/restart loop.
+      return;
+    }
     const ctrl = new AbortController();
-    abortRef.current?.abort();
     abortRef.current = ctrl;
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
     api
@@ -50,10 +72,22 @@ export function useFetch<T>(
         setError(e instanceof ApiError ? e.message : "Request failed");
       })
       .finally(() => {
-        if (!ctrl.signal.aborted) setLoading(false);
+        // Always free the in-flight slot so the next poll tick can proceed.
+        // Only clear loading if this is still the active controller — a
+        // request that was aborted because the user switched threads
+        // shouldn't toggle the new request's loading off.
+        if (ctrl === abortRef.current) {
+          inFlightRef.current = false;
+          setLoading(false);
+        }
       });
-    return () => ctrl.abort();
   }, [path, enabled, tick, opts.key]);
+
+  // Final abort on unmount, so an in-flight call doesn't try to setState on a
+  // dead component.
+  useEffect(() => () => {
+    abortRef.current?.abort();
+  }, []);
 
   // Polling — silently bumps the tick on an interval. Pauses when tab is hidden.
   useEffect(() => {

@@ -21,12 +21,16 @@ export function IntegrationsTab() {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
   const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  // Force a remount of every integration card whenever the active workspace
+  // changes so each card refetches /integrations/*/status for the new tenant
+  // instead of showing the previous workspace's connected state.
+  const wsKey = activeWorkspace?.id ?? "none";
 
   return (
     <>
-      <FacebookCard tx={tx} canEdit={canEdit} />
+      <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />
 
-      <InstagramCard tx={tx} />
+      <InstagramCard key={`ig-${wsKey}`} tx={tx} />
 
       <PlaceholderCard
         tx={tx}
@@ -38,7 +42,7 @@ export function IntegrationsTab() {
         comingSoonNote={tx("Coming soon.", "قريباً.")}
       />
 
-      <WhatsAppCard tx={tx} canEdit={canEdit} />
+      <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
     </>
   );
 }
@@ -500,6 +504,9 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
   const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
     api.delete("/integrations/facebook/disconnect"),
   );
+  const resubscribeMut = useMutation<Record<string, never>, { ok: boolean; error?: string }>(
+    () => api.post("/integrations/facebook/resubscribe-webhook", {}),
+  );
 
   const connected = statusQ.data?.connected === true;
 
@@ -645,7 +652,31 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
               </div>
             )}
             {canEdit && (
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  onClick={async () => {
+                    const r = await resubscribeMut.mutate({});
+                    if (r.ok) {
+                      setStatus(tx("Webhook subscribed.", "تم تفعيل الويبهوك."));
+                    } else {
+                      setStatus(
+                        tx(`Subscribe failed: ${r.error}`, `فشل: ${r.error}`),
+                      );
+                    }
+                    window.setTimeout(() => setStatus(null), 3500);
+                  }}
+                  disabled={resubscribeMut.loading}
+                  title={tx(
+                    "Re-run the Page webhook subscription. Use this if events stop arriving.",
+                    "إعادة تشغيل اشتراك الويبهوك للصفحة.",
+                  )}
+                >
+                  {resubscribeMut.loading
+                    ? tx("Subscribing…", "جارٍ…")
+                    : tx("Resubscribe webhooks", "إعادة اشتراك الويبهوك")}
+                </button>
                 <button
                   type="button"
                   className="btn ghost"
@@ -660,7 +691,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
                 </button>
               </div>
             )}
-            <ErrorRow message={disconnectMut.error} />
+            <ErrorRow message={disconnectMut.error ?? resubscribeMut.error} />
           </div>
         )}
 

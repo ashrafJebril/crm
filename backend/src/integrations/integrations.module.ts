@@ -5,13 +5,25 @@ import { InstagramController } from "./instagram.controller";
 import { InstagramService } from "./instagram.service";
 import { WhatsAppController } from "./whatsapp.controller";
 import { WhatsAppService } from "./whatsapp.service";
+import { MetaWebhooksController } from "./meta-webhooks.controller";
+import { MetaWebhooksService } from "./meta-webhooks.service";
 import { MediaModule } from "../media/media.module";
 import { AiModule } from "../ai/ai.module";
 
 @Module({
   imports: [MediaModule, AiModule],
-  controllers: [FacebookController, InstagramController, WhatsAppController],
-  providers: [FacebookService, InstagramService, WhatsAppService],
+  controllers: [
+    FacebookController,
+    InstagramController,
+    WhatsAppController,
+    MetaWebhooksController,
+  ],
+  providers: [
+    FacebookService,
+    InstagramService,
+    WhatsAppService,
+    MetaWebhooksService,
+  ],
   exports: [FacebookService, InstagramService, WhatsAppService],
 })
 export class IntegrationsModule {}
