@@ -1417,6 +1417,46 @@ function PipelineImpl() {
     setRefetchTick((n) => n + 1);
   }, []);
 
+  /** Optimistic move helper used by drag/drop, Mark Won, and confirm-Lost.
+   *  Moves the card to the target column instantly via setData, fires the
+   *  mutation in the background, then either reconciles with the server's
+   *  authoritative ticket or rolls back the card to its prior stage. */
+  const performMove = useCallback(
+    (
+      ticketId: string,
+      stageId: string,
+      extra?: { lostReason?: string; note?: string },
+    ): Promise<void> => {
+      const current = tickets.find((tk) => tk.id === ticketId);
+      if (!current || current.stageId === stageId) return Promise.resolve();
+      const oldStageId = current.stageId;
+      const patch = (mapper: (t: Ticket) => Ticket) =>
+        ticketsQ.setData((prev) =>
+          prev ? prev.map((t) => (t.id === ticketId ? mapper(t) : t)) : prev,
+        );
+      // 1. Optimistic: card jumps to new column on this frame.
+      patch((t) => ({ ...t, stageId, enteredStageAt: new Date().toISOString() }));
+      return moveTicket
+        .mutate({ id: ticketId, stageId, ...extra })
+        .then((updated) => {
+          // 2. Reconcile with server's authoritative version (correct
+          //    enteredStageAt, updatedAt, and any server-derived fields).
+          patch(() => updated);
+          // 3. KPI summary and the open detail panel reflect the change —
+          //    refetch them quietly. useFetch preserves stale data on key
+          //    bump so nothing flashes blank.
+          bumpRefetch();
+        })
+        .catch((e: unknown) => {
+          // Rollback so the card snaps back to its prior column.
+          patch((t) => ({ ...t, stageId: oldStageId }));
+          setMoveError(e instanceof Error ? e.message : "Move failed");
+          throw e;
+        });
+    },
+    [tickets, ticketsQ, moveTicket, bumpRefetch],
+  );
+
   const handleDrop = useCallback(
     (stageId: string, ticketId: string): void => {
       setMoveError(null);
@@ -1431,36 +1471,23 @@ function PipelineImpl() {
         setPendingLost({ ticketId, stageId });
         return;
       }
-      moveTicket
-        .mutate({ id: ticketId, stageId })
-        .then(() => bumpRefetch())
-        .catch((e: unknown) => {
-          setMoveError(e instanceof Error ? e.message : "Move failed");
-        });
+      void performMove(ticketId, stageId);
     },
-    [tickets, stageById, moveTicket, bumpRefetch],
+    [tickets, stageById, performMove],
   );
 
   const confirmLost = useCallback(
     (reason: string, note: string | undefined): void => {
       if (!pendingLost) return;
-      moveTicket
-        .mutate({
-          id: pendingLost.ticketId,
-          stageId: pendingLost.stageId,
-          lostReason: reason,
-          ...(note ? { note } : {}),
-        })
-        .then(() => {
-          setPendingLost(null);
-          bumpRefetch();
-        })
-        .catch((e: unknown) => {
-          setMoveError(e instanceof Error ? e.message : "Move failed");
-          setPendingLost(null);
-        });
+      const { ticketId, stageId } = pendingLost;
+      // Close the modal immediately — the card has already moved optimistically.
+      setPendingLost(null);
+      void performMove(ticketId, stageId, {
+        lostReason: reason,
+        ...(note ? { note } : {}),
+      });
     },
-    [pendingLost, moveTicket, bumpRefetch],
+    [pendingLost, performMove],
   );
 
   const handleCreate = useCallback(
@@ -1487,13 +1514,8 @@ function PipelineImpl() {
     const won = activePipeline.stages.find((s) => s.isWon && s.isTerminal);
     if (!won) return;
     setMoveError(null);
-    moveTicket
-      .mutate({ id: selectedId, stageId: won.id })
-      .then(() => bumpRefetch())
-      .catch((e: unknown) => {
-        setMoveError(e instanceof Error ? e.message : "Move failed");
-      });
-  }, [selectedId, activePipeline, moveTicket, bumpRefetch]);
+    void performMove(selectedId, won.id);
+  }, [selectedId, activePipeline, performMove]);
 
   const handleMarkLost = useCallback((): void => {
     if (!selectedId || !activePipeline) return;

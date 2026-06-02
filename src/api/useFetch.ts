@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./client";
 
+type DataUpdater<T> = T | null | ((prev: T | null) => T | null);
+
 interface FetchState<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
   refetch: () => void;
+  /** Patch the cached value without a network round-trip. Use for optimistic
+   *  mutations — e.g. move a card to a new column instantly, then reconcile
+   *  with the server response in the background. */
+  setData: (updater: DataUpdater<T>) => void;
 }
 
 interface FetchOpts {
@@ -101,7 +107,14 @@ export function useFetch<T>(
   }, [enabled, opts.pollMs]);
 
   const refetch = useCallback(() => setTick((n) => n + 1), []);
-  return { data, loading, error, refetch };
+  const setDataExternal = useCallback((updater: DataUpdater<T>) => {
+    setData((prev) =>
+      typeof updater === "function"
+        ? (updater as (p: T | null) => T | null)(prev)
+        : updater,
+    );
+  }, []);
+  return { data, loading, error, refetch, setData: setDataExternal };
 }
 
 interface MutationState<TInput, TOutput> {
