@@ -34,6 +34,7 @@ import {
   type StageColor,
   type Ticket,
   type TicketStage,
+  type TicketsListPage,
 } from "@/lib/types";
 
 type FilterId = "all" | "ai" | "human" | "unread" | "closed" | "spam";
@@ -756,11 +757,11 @@ interface ContactTicketsProps {
 }
 
 function ContactTickets({ contactId, tx }: ContactTicketsProps) {
-  const ticketsQ = useFetch<Ticket[]>(`/tickets?contactId=${contactId}`);
+  const ticketsQ = useFetch<TicketsListPage>(`/tickets?contactId=${contactId}`);
   // Don't render the section on error.
   if (ticketsQ.error) return null;
 
-  const tickets = ticketsQ.data ?? [];
+  const tickets = ticketsQ.data?.items ?? [];
 
   return (
     <div>
