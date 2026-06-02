@@ -47,3 +47,12 @@ export class ListTicketsQuery {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
   @IsOptional() @IsString() cursor?: string;
 }
+
+export class CreateFromConversationDto {
+  @IsString() @IsNotEmpty() pipelineId!: string;
+  @IsString() @IsNotEmpty() stageId!: string;
+  @IsString() @IsNotEmpty() title!: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsNumber() @Min(0) value?: number;
+  @IsOptional() @IsString() ownerId?: string;
+}

@@ -11,6 +11,7 @@ import {
 import { TicketsService } from "./tickets.service";
 import {
   AddNoteDto,
+  CreateFromConversationDto,
   CreateTicketDto,
   ListTicketsQuery,
   MoveTicketDto,
@@ -52,6 +53,15 @@ export class TicketsController {
   @Post("tickets")
   createTicket(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateTicketDto) {
     return this.svc.createTicket(workspaceId, dto);
+  }
+
+  @Post("tickets/from-conversation/:conversationId")
+  createFromConversation(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("conversationId") conversationId: string,
+    @Body() dto: CreateFromConversationDto,
+  ) {
+    return this.svc.createFromConversation(workspaceId, conversationId, dto);
   }
 
   @Patch("tickets/:id")

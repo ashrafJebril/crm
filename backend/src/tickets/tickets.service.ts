@@ -233,6 +233,35 @@ export class TicketsService {
     return updated;
   }
 
+  async createFromConversation(
+    workspaceId: string,
+    conversationId: string,
+    dto: {
+      pipelineId: string;
+      stageId: string;
+      title: string;
+      description?: string;
+      value?: number;
+      ownerId?: string;
+    },
+  ) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+
+    return this.createTicket(workspaceId, {
+      pipelineId: dto.pipelineId,
+      stageId: dto.stageId,
+      contactId: conv.contactId,
+      conversationId,
+      title: dto.title,
+      description: dto.description,
+      value: dto.value,
+      ownerId: dto.ownerId,
+    });
+  }
+
   async addNote(workspaceId: string, id: string, dto: AddNoteDto) {
     await this.getTicket(workspaceId, id);
     return this.prisma.ticketActivity.create({
