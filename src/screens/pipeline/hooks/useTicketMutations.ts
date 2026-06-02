@@ -164,6 +164,7 @@ export function useUpdateTicket() {
           };
         },
       );
+      qc.invalidateQueries({ queryKey: qk.summary(ticket.pipelineId) });
     },
   });
 }
