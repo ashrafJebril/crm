@@ -1,3 +1,4 @@
+import { Type } from "class-transformer";
 import {
   IsInt,
   IsNotEmpty,
@@ -43,6 +44,6 @@ export class ListTicketsQuery {
   @IsOptional() @IsString() contactId?: string;
   @IsOptional() @IsString() conversationId?: string;
   @IsOptional() @IsString() ownerId?: string;
-  @IsOptional() @IsInt() @Min(1) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
   @IsOptional() @IsString() cursor?: string;
 }

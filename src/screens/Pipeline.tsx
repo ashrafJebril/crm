@@ -54,6 +54,7 @@ import type {
   TicketDetail,
   TicketStage,
   TicketsDashboardSummary,
+  TicketsListPage,
   TeamMember,
   Lang,
 } from "@/lib/types";
@@ -1391,9 +1392,9 @@ function PipelineImpl() {
   const ticketsPath = activePipeline
     ? `/tickets?pipelineId=${encodeURIComponent(activePipeline.id)}`
     : null;
-  const ticketsQ = useFetch<Ticket[]>(ticketsPath);
+  const ticketsQ = useFetch<TicketsListPage>(ticketsPath);
   const tickets: Ticket[] = useMemo(
-    () => ticketsQ.data ?? [],
+    () => ticketsQ.data?.items ?? [],
     [ticketsQ.data],
   );
 
