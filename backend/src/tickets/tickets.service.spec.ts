@@ -71,3 +71,37 @@ describe("TicketsService.createTicket", () => {
     );
   });
 });
+
+describe("TicketsService.updateTicket", () => {
+  let svc: TicketsService;
+  let prisma: any;
+  let realtime: { emitToWorkspace: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = {
+      ticket: {
+        findFirst: jest.fn().mockResolvedValue({ id: "tk_1", value: 100, ownerId: "u_1" }),
+        update: jest.fn().mockResolvedValue({ id: "tk_1", value: 200, ownerId: "u_1" }),
+      },
+      ticketActivity: { create: jest.fn().mockResolvedValue({}) },
+    };
+    realtime = { emitToWorkspace: jest.fn() };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        TicketsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RealtimeService, useValue: realtime },
+      ],
+    }).compile();
+    svc = moduleRef.get(TicketsService);
+  });
+
+  it("emits ticket.updated after successful update", async () => {
+    await svc.updateTicket("ws_1", "tk_1", { value: 200 });
+    expect(realtime.emitToWorkspace).toHaveBeenCalledWith(
+      "ws_1",
+      "ticket.updated",
+      expect.objectContaining({ ticket: expect.objectContaining({ id: "tk_1", value: 200 }) }),
+    );
+  });
+});

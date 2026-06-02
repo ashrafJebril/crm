@@ -170,6 +170,8 @@ export class TicketsService {
       });
     }
 
+    this.realtime.emitToWorkspace(workspaceId, "ticket.updated", { ticket: updated });
+
     return updated;
   }
 
