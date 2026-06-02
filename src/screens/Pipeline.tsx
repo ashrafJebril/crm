@@ -11,13 +11,19 @@ import {
   DragOverlay,
   PointerSensor,
   KeyboardSensor,
-  useDraggable,
   useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -401,16 +407,28 @@ interface DraggableTicketCardProps extends TicketCardViewProps {
   onOpen: (id: string) => void;
 }
 
-/** Wraps a TicketCardView with @dnd-kit's useDraggable. Pointer activation has
- *  a 5px distance threshold so a stationary click still opens the detail
- *  panel — drag only kicks in once the cursor has actually moved. */
+/** Sortable wrapper around TicketCardView. useSortable handles smooth CSS
+ *  transitions when other cards rearrange around it, so cross-column moves
+ *  glide instead of teleporting. Click-vs-drag is disambiguated by the
+ *  PointerSensor's 5px activation distance set on the DndContext. */
 function DraggableTicketCard({ onOpen, ...view }: DraggableTicketCardProps) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: view.ticket.id,
-  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: view.ticket.id });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    cursor: isDragging ? "grabbing" : "grab",
+  };
   return (
     <div
       ref={setNodeRef}
+      style={style}
       {...attributes}
       {...listeners}
       role="button"
@@ -422,7 +440,6 @@ function DraggableTicketCard({ onOpen, ...view }: DraggableTicketCardProps) {
           onOpen(view.ticket.id);
         }
       }}
-      style={{ cursor: isDragging ? "grabbing" : "grab" }}
     >
       <TicketCardView {...view} dragging={isDragging} />
     </div>
@@ -431,32 +448,42 @@ function DraggableTicketCard({ onOpen, ...view }: DraggableTicketCardProps) {
 
 interface DroppableStageProps {
   stageId: string;
+  cardIds: string[];
   showSubHeader: boolean;
   children: ReactNode;
 }
 
-/** A sub-stage drop target. Highlights when a card is being dragged over it. */
-function DroppableStage({ stageId, showSubHeader, children }: DroppableStageProps) {
+/** A sub-stage drop target wrapping its cards in a SortableContext. When a
+ *  card is dragged into the column, the others reflow smoothly to make room
+ *  instead of snapping into their new positions. */
+function DroppableStage({
+  stageId,
+  cardIds,
+  showSubHeader,
+  children,
+}: DroppableStageProps) {
   const { setNodeRef, isOver } = useDroppable({ id: stageId });
   return (
-    <div
-      ref={setNodeRef}
-      style={{
-        borderRadius: 8,
-        border: isOver
-          ? "1px dashed var(--accent)"
-          : "1px dashed transparent",
-        background: isOver ? "var(--accent-soft)" : "transparent",
-        padding: showSubHeader ? 6 : 4,
-        display: "flex",
-        flexDirection: "column",
-        gap: 6,
-        minHeight: showSubHeader ? 60 : 40,
-        transition: "background 0.1s ease, border-color 0.1s ease",
-      }}
-    >
-      {children}
-    </div>
+    <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
+      <div
+        ref={setNodeRef}
+        style={{
+          borderRadius: 8,
+          border: isOver
+            ? "1px dashed var(--accent)"
+            : "1px dashed transparent",
+          background: isOver ? "var(--accent-soft)" : "transparent",
+          padding: showSubHeader ? 6 : 4,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          minHeight: showSubHeader ? 60 : 40,
+          transition: "background 0.1s ease, border-color 0.1s ease",
+        }}
+      >
+        {children}
+      </div>
+    </SortableContext>
   );
 }
 
@@ -1337,10 +1364,11 @@ function PipelineImpl() {
   const queryClient = useQueryClient();
 
   // dnd-kit sensors: pointer with a 5px activation distance (lets clicks
-  // through without triggering a drag) + keyboard for accessibility.
+  // through without triggering a drag) + keyboard with sortable-aware
+  // coordinate getter for accessible reordering.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   /* ─── Data ──────────────────────────────────────────────────────────── */
@@ -1598,9 +1626,13 @@ function PipelineImpl() {
   const handleDragEnd = useCallback(
     (event: DragEndEvent): void => {
       setActiveDragId(null);
+      if (!event.over) return;
       const ticketId = String(event.active.id);
-      const stageId = event.over ? String(event.over.id) : null;
-      if (!stageId) return;
+      const overId = String(event.over.id);
+      // over.id may be a ticket id (when dropped onto a card) or a stage id
+      // (when dropped onto empty column space). Resolve both to a stageId.
+      const overTicket = tickets.find((tk) => tk.id === overId);
+      const stageId = overTicket ? overTicket.stageId : overId;
       const ticket = tickets.find((tk) => tk.id === ticketId);
       if (!ticket || ticket.stageId === stageId) return;
       const target = stageById.get(stageId);
@@ -2036,6 +2068,7 @@ function PipelineImpl() {
                       <DroppableStage
                         key={s.id}
                         stageId={s.id}
+                        cardIds={list.map((c) => c.id)}
                         showSubHeader={showSubHeader}
                       >
                         {showSubHeader && (
@@ -2104,7 +2137,7 @@ function PipelineImpl() {
             );
           })}
         </div>
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay>
           {activeDragId ? (() => {
             const t2 = tickets.find((tk) => tk.id === activeDragId);
             if (!t2) return null;
