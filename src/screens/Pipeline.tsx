@@ -11,6 +11,7 @@ import {
   DragOverlay,
   PointerSensor,
   KeyboardSensor,
+  closestCorners,
   useDroppable,
   useSensor,
   useSensors,
@@ -1923,6 +1924,7 @@ function PipelineImpl() {
         {/* Kanban board */}
         <DndContext
           sensors={sensors}
+          collisionDetection={closestCorners}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
           onDragCancel={handleDragCancel}

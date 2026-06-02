@@ -40,12 +40,15 @@ export function useFetch<T>(
   const enabled = opts.enabled !== false && path !== null;
   const queryClient = useQueryClient();
 
-  // The query key includes both the path and the consumer-supplied `key` so
-  // that bumping key creates a fresh entry (matches the old useFetch
-  // invalidation pattern). Disabled hooks all share a sentinel key.
-  const queryKey: QueryKey = enabled
-    ? [path, opts.key ?? null]
-    : ["__disabled__"];
+  // Disabled hooks share a sentinel key. When the caller passes opts.key the
+  // queryKey includes it (so a bump creates a fresh entry — legacy
+  // invalidation pattern). When opts.key is omitted the key is just [path],
+  // letting mutations patch the cache without guessing a suffix.
+  const queryKey: QueryKey = !enabled
+    ? ["__disabled__"]
+    : opts.key !== undefined
+      ? [path, opts.key]
+      : [path];
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
 
