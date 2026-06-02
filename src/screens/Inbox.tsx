@@ -1855,6 +1855,13 @@ function InboxImpl() {
     () => new Set<ConvChannel>(CHANNELS),
   );
   const [messageVersion, setMessageVersion] = useState<number>(0);
+  // Optimistic "pending" bubbles for messages we've just sent on FB/IG live
+  // threads. Lets the new bubble appear instantly without forcing a refetch
+  // of the whole thread. Cleared when the next poll lands a matching body,
+  // or after a short safety TTL if Graph drops it.
+  const [pendingByConv, setPendingByConv] = useState<
+    Record<string, { id: string; body: string; at: number }[]>
+  >({});
   const [showConvertModal, setShowConvertModal] = useState<boolean>(false);
   const [ticketBanner, setTicketBanner] = useState<{ number: number; visible: boolean } | null>(
     null,
@@ -2136,6 +2143,23 @@ function InboxImpl() {
       }),
   );
 
+  const addPending = (convId: string, body: string) => {
+    const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const at = Date.now();
+    setPendingByConv((prev) => ({
+      ...prev,
+      [convId]: [...(prev[convId] ?? []), { id, body, at }],
+    }));
+    // Safety net: clear the pending entry after 15s even if polling never
+    // catches up (e.g. Graph silently drops it). Prevents stuck bubbles.
+    window.setTimeout(() => {
+      setPendingByConv((prev) => {
+        const list = (prev[convId] ?? []).filter((p) => p.id !== id);
+        return { ...prev, [convId]: list };
+      });
+    }, 15000);
+  };
+
   const handleSend = async (body: string): Promise<void> => {
     if (!activeId) return;
     if (isFbConvId(activeId)) {
@@ -2143,18 +2167,18 @@ function InboxImpl() {
       // Meta /messages requires the Page-Scoped ID (numeric), not our DB cuid.
       const recipientId = fbConv?.contactPsid;
       if (!recipientId) return;
+      addPending(activeId, body);
       await sendFbMessage.mutate({ recipientId, body });
-      setMessageVersion((n) => n + 1);
-      fbConvsQ.refetch();
+      // No refetch — the existing 3s poll on fbMsgsQ will pick this up.
       return;
     }
     if (isIgConvId(activeId)) {
       const igConv = (igConvsQ.data ?? []).find((c) => c.id === activeId);
       const igsid = igConv?.contactIgsid;
       if (!igsid) return;
+      addPending(activeId, body);
       await sendIgLiveMessage.mutate({ igsid, body });
-      setMessageVersion((n) => n + 1);
-      igConvsQ.refetch();
+      // No refetch — the existing 3s poll on igMsgsQ will pick this up.
       return;
     }
     // Route by channel for DB-stored conversations.
@@ -2176,10 +2200,34 @@ function InboxImpl() {
   // result, or a synthetic one assembled from live Facebook DMs.
   const active: ConversationDetail | undefined = useMemo(() => {
     if (!activeId) return undefined;
+    // Pending bubbles for live threads — append after server messages so the
+    // operator's just-sent message appears instantly. Drop any pending entry
+    // whose body already shows up in the server payload (polling caught up).
+    const appendPending = (convId: string, baseMsgs: Message[]): Message[] => {
+      const pending = pendingByConv[convId] ?? [];
+      if (pending.length === 0) return baseMsgs;
+      const serverBodies = new Set(
+        baseMsgs.filter((m) => m.from === "human").map((m) => m.body),
+      );
+      const stillPending = pending.filter((p) => !serverBodies.has(p.body));
+      if (stillPending.length === 0) return baseMsgs;
+      return [
+        ...baseMsgs,
+        ...stillPending.map((p) => ({
+          from: "human" as const,
+          t: new Date(p.at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          body: p.body,
+        })),
+      ];
+    };
+
     if (isFbConvId(activeId)) {
       const fbConv = (fbConvsQ.data ?? []).find((c) => c.id === activeId);
       if (!fbConv) return undefined;
-      const messages: Message[] = (fbMsgsQ.data ?? []).map((m) => ({
+      const serverMsgs: Message[] = (fbMsgsQ.data ?? []).map((m) => ({
         from: m.from === "page" ? "human" : "them",
         t: fmtCompact(m.at),
         body: m.body || (m.attachmentUrl ? "📎 attachment" : ""),
@@ -2200,13 +2248,13 @@ function InboxImpl() {
         intent: "—",
         confidence: 0,
         escalated: false,
-        messages,
+        messages: appendPending(activeId, serverMsgs),
       };
     }
     if (isIgConvId(activeId)) {
       const igConv = (igConvsQ.data ?? []).find((c) => c.id === activeId);
       if (!igConv) return undefined;
-      const messages: Message[] = (igMsgsQ.data ?? []).map((m) => ({
+      const serverMsgs: Message[] = (igMsgsQ.data ?? []).map((m) => ({
         from: m.from === "page" ? "human" : "them",
         t: fmtCompact(m.at),
         body: m.body || "📎 attachment",
@@ -2226,11 +2274,19 @@ function InboxImpl() {
         intent: "—",
         confidence: 0,
         escalated: false,
-        messages,
+        messages: appendPending(activeId, serverMsgs),
       };
     }
     return activeQ.data ?? undefined;
-  }, [activeId, fbConvsQ.data, fbMsgsQ.data, igConvsQ.data, igMsgsQ.data, activeQ.data]);
+  }, [
+    activeId,
+    fbConvsQ.data,
+    fbMsgsQ.data,
+    igConvsQ.data,
+    igMsgsQ.data,
+    activeQ.data,
+    pendingByConv,
+  ]);
 
   const activeContact = active ? contactById.get(active.contactId) : undefined;
   const activeIsFb = active ? isFbConvId(active.id) : false;
