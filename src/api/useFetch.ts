@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import {
+  keepPreviousData,
   useQuery,
   useQueryClient,
   type QueryKey,
@@ -58,6 +59,11 @@ export function useFetch<T>(
     refetchInterval:
       opts.pollMs && opts.pollMs > 0 ? opts.pollMs : false,
     refetchIntervalInBackground: false,
+    // When a consumer bumps `opts.key` to invalidate, React Query treats the
+    // new queryKey as a brand-new cache entry with no data. keepPreviousData
+    // shows the last successful result while the new key fetches, so the UI
+    // never flashes blank during a mutation-driven refetch.
+    placeholderData: keepPreviousData,
   });
 
   const refetch = useCallback(() => {
