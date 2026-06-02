@@ -13,8 +13,8 @@ export function Login() {
   const [mode, setMode] = useState<Mode>("login");
 
   // Login state
-  const [loginEmail, setLoginEmail] = useState("yara@samemha.com");
-  const [loginPassword, setLoginPassword] = useState("demo1234");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
 
   // Signup state
   const [signupName, setSignupName] = useState("");
@@ -207,29 +207,6 @@ export function Login() {
               </button>
             </form>
 
-            <div
-              style={{
-                marginTop: 24,
-                padding: 12,
-                borderRadius: "var(--r)",
-                background: "var(--bg-2)",
-                border: "1px dashed var(--line-soft)",
-                fontSize: 12,
-                color: "var(--ink-3)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              <div style={{ marginBottom: 4, color: "var(--ink-2)" }}>
-                {tx("Demo credentials (pre-filled):", "بيانات تجريبية:")}
-              </div>
-              yara@samemha.com / demo1234
-              <div style={{ marginTop: 6, fontSize: 11, color: "var(--ink-4)" }}>
-                {tx(
-                  "Other seeded users: omar@samemha.com, lina@samemha.com, karim@samemha.com",
-                  "حسابات أخرى: omar@samemha.com, lina@samemha.com, karim@samemha.com",
-                )}
-              </div>
-            </div>
           </>
         ) : (
           <>
