@@ -34,8 +34,9 @@ import {
   IconX,
 } from "@/icons";
 import { TEAM } from "@/data/team";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { useFetch, useMutation } from "@/api/useFetch";
+import { useFetch } from "@/api/useFetch";
 import { useRealtime } from "@/api/useRealtime";
 import type {
   Contact,
@@ -1330,10 +1331,10 @@ function PipelineImpl() {
   });
   const [showNew, setShowNew] = useState<boolean>(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [refetchTick, setRefetchTick] = useState<number>(0);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [pendingLost, setPendingLost] = useState<PendingMove | null>(null);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   // dnd-kit sensors: pointer with a 5px activation distance (lets clicks
   // through without triggering a drag) + keyboard for accessibility.
@@ -1361,9 +1362,7 @@ function PipelineImpl() {
   const ticketsPath = activePipeline
     ? `/tickets?pipelineId=${encodeURIComponent(activePipeline.id)}`
     : null;
-  const ticketsQ = useFetch<Ticket[]>(ticketsPath, {
-    key: `${ticketsPath ?? ""}:${refetchTick}`,
-  });
+  const ticketsQ = useFetch<Ticket[]>(ticketsPath);
   const tickets: Ticket[] = useMemo(
     () => ticketsQ.data ?? [],
     [ticketsQ.data],
@@ -1371,7 +1370,6 @@ function PipelineImpl() {
 
   const summaryQ = useFetch<TicketsDashboardSummary>(
     "/tickets/dashboard/summary",
-    { key: `summary:${refetchTick}` },
   );
   const summary = summaryQ.data;
 
@@ -1383,20 +1381,19 @@ function PipelineImpl() {
 
   const detailQ = useFetch<TicketDetail>(
     selectedId ? `/tickets/${selectedId}` : null,
-    { key: `${selectedId ?? ""}:${refetchTick}` },
   );
 
   const _notesContactId = detailQ.data?.contactId ?? null;
   const notesQ = useFetch<Note[]>(
     _notesContactId ? `/notes?contactId=${encodeURIComponent(_notesContactId)}` : null,
-    { key: `${_notesContactId ?? ""}:${refetchTick}` },
   );
 
   /* ─── Mutations ─────────────────────────────────────────────────────── */
 
-  const createTicket = useMutation<NewTicketInput, Ticket>((input) =>
-    api.post<Ticket>("/tickets", input),
-  );
+  // Stable cache keys — useFetch's queryKey is just [path], so we target the
+  // same key for both reads and optimistic writes. No more refetch-tick hack.
+  const ticketsKey = ticketsPath ? [ticketsPath] : null;
+  const summaryKey = ["/tickets/dashboard/summary"];
 
   interface MoveInput {
     id: string;
@@ -1404,27 +1401,108 @@ function PipelineImpl() {
     lostReason?: string;
     note?: string;
   }
-  const moveTicket = useMutation<MoveInput, Ticket>((input) => {
-    const body: Record<string, unknown> = { stageId: input.stageId };
-    if (input.lostReason) body.lostReason = input.lostReason;
-    if (input.note) body.note = input.note;
-    return api.post<Ticket>(`/tickets/${input.id}/move`, body);
+
+  // Textbook React Query optimistic mutation: cancel in-flight, snapshot,
+  // patch cache, run the network call, roll back on error, invalidate KPIs on
+  // success. Same-key invalidation triggers a background refetch with the
+  // existing data staying on screen — no flash.
+  const moveTicket = useMutation<
+    Ticket,
+    Error,
+    MoveInput,
+    { prev: Ticket[] | undefined }
+  >({
+    mutationFn: (input) => {
+      const body: Record<string, unknown> = { stageId: input.stageId };
+      if (input.lostReason) body.lostReason = input.lostReason;
+      if (input.note) body.note = input.note;
+      return api.post<Ticket>(`/tickets/${input.id}/move`, body);
+    },
+    onMutate: async (input) => {
+      setMoveError(null);
+      if (!ticketsKey) return { prev: undefined };
+      // Stop any in-flight tickets refetch — it would clobber our patch.
+      await queryClient.cancelQueries({ queryKey: ticketsKey });
+      const prev = queryClient.getQueryData<Ticket[]>(ticketsKey);
+      queryClient.setQueryData<Ticket[]>(ticketsKey, (curr) =>
+        curr
+          ? curr.map((t) =>
+              t.id === input.id
+                ? { ...t, stageId: input.stageId, enteredStageAt: new Date().toISOString() }
+                : t,
+            )
+          : curr,
+      );
+      return { prev };
+    },
+    onError: (err, _input, ctx) => {
+      if (ctx && ticketsKey && ctx.prev !== undefined) {
+        queryClient.setQueryData(ticketsKey, ctx.prev);
+      }
+      setMoveError(err.message || "Move failed");
+    },
+    onSuccess: (updated) => {
+      if (!ticketsKey) return;
+      // Replace the optimistic stub with the server's authoritative ticket
+      // (correct updatedAt, activities won't be in this payload but the
+      // detail panel pulls its own data).
+      queryClient.setQueryData<Ticket[]>(ticketsKey, (curr) =>
+        curr ? curr.map((t) => (t.id === updated.id ? updated : t)) : curr,
+      );
+    },
+    onSettled: () => {
+      // KPIs (win rate, open value) may have shifted. Same-key invalidate so
+      // the dashboard refetches in place without flashing.
+      void queryClient.invalidateQueries({ queryKey: summaryKey });
+    },
+  });
+
+  const createTicket = useMutation<Ticket, Error, NewTicketInput>({
+    mutationFn: (input) => api.post<Ticket>("/tickets", input),
+    onSuccess: (created) => {
+      if (ticketsKey) {
+        queryClient.setQueryData<Ticket[]>(ticketsKey, (curr) =>
+          curr ? [created, ...curr] : [created],
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: summaryKey });
+    },
+  });
+
+  const deleteTicket = useMutation<void, Error, string>({
+    mutationFn: (id) => api.delete<void>(`/tickets/${id}`),
+    onSuccess: (_void, id) => {
+      if (ticketsKey) {
+        queryClient.setQueryData<Ticket[]>(ticketsKey, (curr) =>
+          curr ? curr.filter((t) => t.id !== id) : curr,
+        );
+      }
+      void queryClient.invalidateQueries({ queryKey: summaryKey });
+    },
   });
 
   const addNote = useMutation<
-    { ticketId: string; contactId: string; body: string },
-    Note
-  >((input) =>
-    api.post<Note>("/notes", {
-      ticketId: input.ticketId,
-      contactId: input.contactId,
-      body: input.body,
-    }),
-  );
-
-  const deleteTicket = useMutation<string, void>((id) =>
-    api.delete<void>(`/tickets/${id}`),
-  );
+    Note,
+    Error,
+    { ticketId: string; contactId: string; body: string }
+  >({
+    mutationFn: (input) =>
+      api.post<Note>("/notes", {
+        ticketId: input.ticketId,
+        contactId: input.contactId,
+        body: input.body,
+      }),
+    onSuccess: (_note, input) => {
+      // The notes query path is contact-scoped; invalidate it so the
+      // timeline picks up the new note. Detail panel also re-renders.
+      void queryClient.invalidateQueries({
+        queryKey: [`/notes?contactId=${encodeURIComponent(input.contactId)}`],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: [`/tickets/${input.ticketId}`],
+      });
+    },
+  });
 
   /* ─── Derived data ──────────────────────────────────────────────────── */
 
@@ -1483,70 +1561,29 @@ function PipelineImpl() {
 
   /* ─── Handlers ──────────────────────────────────────────────────────── */
 
-  const bumpRefetch = useCallback(() => {
-    setRefetchTick((n) => n + 1);
-  }, []);
-
-  // Realtime sync: when *any* client in this workspace moves a ticket the
-  // server emits `ticket.moved`; everyone's cache (including the author's,
-  // idempotently) gets patched so the card slides to the new column without
-  // a refetch.
+  // Realtime sync: when *another* client in this workspace moves a ticket,
+  // patch our local cache so the card slides to the new column. For the
+  // mover's own socket this is a no-op because onMutate already wrote the
+  // same shape — the id-equality check short-circuits redundant work.
   useRealtime<{ ticket: Ticket; fromStageId: string; toStageId: string }>(
     "ticket.moved",
     useCallback(
       (data) => {
-        ticketsQ.setData((prev) =>
-          prev
-            ? prev.map((t) => (t.id === data.ticket.id ? data.ticket : t))
-            : prev,
-        );
-        // KPI summary may have shifted (Win/Lost) — quietly refresh.
-        bumpRefetch();
-      },
-      // setData is stable from useFetch; bumpRefetch is stable from useCallback.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [],
-    ),
-  );
-
-  /** Optimistic move helper used by drag/drop, Mark Won, and confirm-Lost.
-   *  Moves the card to the target column instantly via setData, fires the
-   *  mutation in the background, then either reconciles with the server's
-   *  authoritative ticket or rolls back the card to its prior stage. */
-  const performMove = useCallback(
-    (
-      ticketId: string,
-      stageId: string,
-      extra?: { lostReason?: string; note?: string },
-    ): Promise<void> => {
-      const current = tickets.find((tk) => tk.id === ticketId);
-      if (!current || current.stageId === stageId) return Promise.resolve();
-      const oldStageId = current.stageId;
-      const patch = (mapper: (t: Ticket) => Ticket) =>
-        ticketsQ.setData((prev) =>
-          prev ? prev.map((t) => (t.id === ticketId ? mapper(t) : t)) : prev,
-        );
-      // 1. Optimistic: card jumps to new column on this frame.
-      patch((t) => ({ ...t, stageId, enteredStageAt: new Date().toISOString() }));
-      return moveTicket
-        .mutate({ id: ticketId, stageId, ...extra })
-        .then((updated) => {
-          // 2. Reconcile with server's authoritative version (correct
-          //    enteredStageAt, updatedAt, and any server-derived fields).
-          patch(() => updated);
-          // 3. KPI summary and the open detail panel reflect the change —
-          //    refetch them quietly. useFetch preserves stale data on key
-          //    bump so nothing flashes blank.
-          bumpRefetch();
-        })
-        .catch((e: unknown) => {
-          // Rollback so the card snaps back to its prior column.
-          patch((t) => ({ ...t, stageId: oldStageId }));
-          setMoveError(e instanceof Error ? e.message : "Move failed");
-          throw e;
+        if (!ticketsKey) return;
+        queryClient.setQueryData<Ticket[]>(ticketsKey, (curr) => {
+          if (!curr) return curr;
+          const existing = curr.find((t) => t.id === data.ticket.id);
+          if (existing && existing.stageId === data.ticket.stageId) {
+            // Already in the right stage — nothing to do.
+            return curr;
+          }
+          return curr.map((t) =>
+            t.id === data.ticket.id ? data.ticket : t,
+          );
         });
-    },
-    [tickets, ticketsQ, moveTicket, bumpRefetch],
+      },
+      [queryClient, ticketsKey],
+    ),
   );
 
   const handleDragStart = useCallback((event: DragStartEvent): void => {
@@ -1572,31 +1609,32 @@ function PipelineImpl() {
         setPendingLost({ ticketId, stageId });
         return;
       }
-      void performMove(ticketId, stageId);
+      moveTicket.mutate({ id: ticketId, stageId });
     },
-    [tickets, stageById, performMove],
+    [tickets, stageById, moveTicket],
   );
 
   const confirmLost = useCallback(
     (reason: string, note: string | undefined): void => {
       if (!pendingLost) return;
       const { ticketId, stageId } = pendingLost;
-      // Close the modal immediately — the card has already moved optimistically.
+      // Close the modal immediately — onMutate already moved the card.
       setPendingLost(null);
-      void performMove(ticketId, stageId, {
+      moveTicket.mutate({
+        id: ticketId,
+        stageId,
         lostReason: reason,
         ...(note ? { note } : {}),
       });
     },
-    [pendingLost, performMove],
+    [pendingLost, moveTicket],
   );
 
   const handleCreate = useCallback(
     async (input: NewTicketInput): Promise<void> => {
-      await createTicket.mutate(input);
-      bumpRefetch();
+      await createTicket.mutateAsync(input);
     },
-    [createTicket, bumpRefetch],
+    [createTicket],
   );
 
   const handleAddNote = useCallback(
@@ -1604,19 +1642,17 @@ function PipelineImpl() {
       if (!selectedId) return;
       const contactId = detailQ.data?.contactId;
       if (!contactId) return;
-      await addNote.mutate({ ticketId: selectedId, contactId, body: note });
-      bumpRefetch();
+      await addNote.mutateAsync({ ticketId: selectedId, contactId, body: note });
     },
-    [addNote, selectedId, detailQ.data?.contactId, bumpRefetch],
+    [addNote, selectedId, detailQ.data?.contactId],
   );
 
   const handleMarkWon = useCallback((): void => {
     if (!selectedId || !activePipeline) return;
     const won = activePipeline.stages.find((s) => s.isWon && s.isTerminal);
     if (!won) return;
-    setMoveError(null);
-    void performMove(selectedId, won.id);
-  }, [selectedId, activePipeline, performMove]);
+    moveTicket.mutate({ id: selectedId, stageId: won.id });
+  }, [selectedId, activePipeline, moveTicket]);
 
   const handleMarkLost = useCallback((): void => {
     if (!selectedId || !activePipeline) return;
@@ -1627,16 +1663,11 @@ function PipelineImpl() {
 
   const handleDelete = useCallback((): void => {
     if (!selectedId) return;
-    deleteTicket
-      .mutate(selectedId)
-      .then(() => {
-        setSelectedId(null);
-        bumpRefetch();
-      })
-      .catch((e: unknown) => {
-        setMoveError(e instanceof Error ? e.message : "Delete failed");
-      });
-  }, [deleteTicket, selectedId, bumpRefetch]);
+    deleteTicket.mutate(selectedId, {
+      onSuccess: () => setSelectedId(null),
+      onError: (e) => setMoveError(e.message || "Delete failed"),
+    });
+  }, [deleteTicket, selectedId]);
 
   const resetFilters = useCallback((): void => {
     setOwnerFilter("");
@@ -1657,7 +1688,7 @@ function PipelineImpl() {
       : undefined;
 
   const busy =
-    moveTicket.loading || deleteTicket.loading || createTicket.loading;
+    moveTicket.isPending || deleteTicket.isPending || createTicket.isPending;
 
   return (
     <div style={{ overflowY: "auto", flex: 1, position: "relative" }}>
@@ -2108,7 +2139,7 @@ function PipelineImpl() {
           onMarkLost={handleMarkLost}
           onDelete={handleDelete}
           onAddNote={handleAddNote}
-          noteSaving={addNote.loading}
+          noteSaving={addNote.isPending}
           busy={busy}
         />
       )}
@@ -2139,8 +2170,8 @@ function PipelineImpl() {
         <NewTicketModal
           pipeline={activePipeline}
           contacts={contacts}
-          saving={createTicket.loading}
-          error={createTicket.error}
+          saving={createTicket.isPending}
+          error={createTicket.error?.message ?? null}
           tx={tx}
           lang={t.lang}
           onClose={() => setShowNew(false)}
@@ -2151,7 +2182,7 @@ function PipelineImpl() {
       {pendingLost && (
         <LostModal
           tx={tx}
-          saving={moveTicket.loading}
+          saving={moveTicket.isPending}
           onCancel={() => setPendingLost(null)}
           onConfirm={confirmLost}
         />
