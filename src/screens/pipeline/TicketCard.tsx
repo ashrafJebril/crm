@@ -58,8 +58,9 @@ export const TicketCard = memo(function TicketCard({
     ...cardBase,
     cursor: isDragging ? "grabbing" : "grab",
     transform: CSS.Translate.toString(transform),
-    opacity: isDragging ? 0.4 : 1,
-    boxShadow: isDragging ? "0 8px 24px rgba(0,0,0,0.4)" : undefined,
+    // Hide the source visually but keep its space — no "copy" appearance,
+    // and dnd-kit still has a stable element to clean up against.
+    visibility: isDragging ? "hidden" : "visible",
     touchAction: "none",
   };
 

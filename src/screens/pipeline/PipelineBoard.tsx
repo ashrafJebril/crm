@@ -80,7 +80,11 @@ export function PipelineBoard({
     if (!overId) return;
     const toStage = pipeline.stages.find((s) => s.id === overId);
     if (!toStage) return;
-    doMove(ticket, toStage);
+    // Defer the cache mutation by one frame so dnd-kit can complete its
+    // drag-end cleanup BEFORE React unmounts the source card. Without this
+    // delay, fast drags can leave dnd-kit holding a stale reference to the
+    // unmounted draggable, which freezes the destination card.
+    requestAnimationFrame(() => doMove(ticket, toStage));
   };
 
   const handlePickStage = (ticket: Ticket, toStage: TicketStage) => {
@@ -92,7 +96,7 @@ export function PipelineBoard({
     <DndContext
       sensors={sensors}
       collisionDetection={pointerWithin}
-      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      measuring={{ droppable: { strategy: MeasuringStrategy.BeforeDragging } }}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveTicket(null)}
