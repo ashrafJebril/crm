@@ -1,6 +1,18 @@
 import { useState } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  MeasuringStrategy,
+  PointerSensor,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { StageColumn } from "./StageColumn";
 import { MoveStageMenu } from "./MoveStageMenu";
+import { TicketCardOverlay } from "./TicketCard";
 import { useMoveTicket } from "./hooks/useTicketMutations";
 import { LostReasonModal } from "./LostReasonModal";
 import type { Pipeline, Ticket, TicketStage, Lang } from "@/lib/types";
@@ -22,6 +34,7 @@ export function PipelineBoard({
   onCardClick,
   onOpenConversation,
 }: PipelineBoardProps) {
+  const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
   const [moveTarget, setMoveTarget] = useState<{
     ticket: Ticket;
     anchorRect: DOMRect;
@@ -33,8 +46,13 @@ export function PipelineBoard({
 
   const move = useMoveTicket();
 
-  const handlePickStage = (ticket: Ticket, toStage: TicketStage) => {
-    setMoveTarget(null);
+  // 6px activation distance so a quick click on the card still fires onClick
+  // (drawer) instead of starting a drag.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+
+  const doMove = (ticket: Ticket, toStage: TicketStage) => {
     if (toStage.id === ticket.stageId) return;
     if (toStage.isTerminal && !toStage.isWon) {
       setPendingLost({ ticket, toStage });
@@ -49,23 +67,48 @@ export function PipelineBoard({
     });
   };
 
+  const handleDragStart = (e: DragStartEvent) => {
+    const ticket = e.active.data.current?.ticket as Ticket | undefined;
+    if (ticket) setActiveTicket(ticket);
+  };
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const ticket = activeTicket ?? (e.active.data.current?.ticket as Ticket | undefined);
+    setActiveTicket(null);
+    if (!ticket) return;
+    const overId = e.over?.id as string | undefined;
+    if (!overId) return;
+    const toStage = pipeline.stages.find((s) => s.id === overId);
+    if (!toStage) return;
+    doMove(ticket, toStage);
+  };
+
+  const handlePickStage = (ticket: Ticket, toStage: TicketStage) => {
+    setMoveTarget(null);
+    doMove(ticket, toStage);
+  };
+
   return (
-    <>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveTicket(null)}
+    >
       <div
         style={{
           display: "flex",
           gap: 12,
           padding: 12,
           overflowX: "auto",
+          overflowY: "hidden",
           height: "100%",
-          scrollSnapType: "x mandatory",
         }}
       >
         {pipeline.stages.map((stage) => (
-          <div
-            key={stage.id}
-            style={{ scrollSnapAlign: "start", height: "100%" }}
-          >
+          <div key={stage.id} style={{ height: "100%", flex: "0 0 auto" }}>
             <StageColumn
               stage={stage}
               pipelineId={pipeline.id}
@@ -81,6 +124,12 @@ export function PipelineBoard({
           </div>
         ))}
       </div>
+
+      <DragOverlay dropAnimation={null}>
+        {activeTicket ? (
+          <TicketCardOverlay ticket={activeTicket} lang={lang} />
+        ) : null}
+      </DragOverlay>
 
       {moveTarget ? (
         <MoveStageMenu
@@ -111,6 +160,6 @@ export function PipelineBoard({
           }}
         />
       ) : null}
-    </>
+    </DndContext>
   );
 }

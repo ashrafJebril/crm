@@ -1,5 +1,7 @@
 import { memo, useRef } from "react";
 import type { CSSProperties } from "react";
+import { useDraggable } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import { Avatar } from "@/components/Avatar";
 import { IconInbox } from "@/icons";
 import type { Ticket, Lang } from "@/lib/types";
@@ -9,11 +11,10 @@ interface TicketCardProps {
   lang: Lang;
   onClick?: () => void;
   onOpenConversation?: () => void;
-  /** Opens the stage-move menu. Receives the trigger element's rect for anchoring. */
   onOpenMoveMenu?: (anchorRect: DOMRect) => void;
 }
 
-const cardStyle: CSSProperties = {
+const cardBase: CSSProperties = {
   background: "var(--bg-2)",
   border: "1px solid var(--line)",
   borderRadius: "var(--r)",
@@ -21,7 +22,6 @@ const cardStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 8,
-  cursor: "pointer",
   userSelect: "none",
   transition: "border-color 120ms, background 120ms",
 };
@@ -47,8 +47,33 @@ export const TicketCard = memo(function TicketCard({
 }: TicketCardProps) {
   const t = ticket;
   const moveBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: t.id,
+      data: { ticket: t },
+    });
+
+  const style: CSSProperties = {
+    ...cardBase,
+    cursor: isDragging ? "grabbing" : "grab",
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.4 : 1,
+    boxShadow: isDragging ? "0 8px 24px rgba(0,0,0,0.4)" : undefined,
+    touchAction: "none",
+  };
+
   return (
-    <div style={cardStyle} onClick={onClick}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={() => {
+        if (isDragging) return;
+        onClick?.();
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
         <div
           className="mono"
@@ -61,6 +86,7 @@ export const TicketCard = memo(function TicketCard({
             <button
               type="button"
               title={lang === "ar" ? "افتح المحادثة" : "Open conversation"}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenConversation?.();
@@ -75,6 +101,7 @@ export const TicketCard = memo(function TicketCard({
               ref={moveBtnRef}
               type="button"
               title={lang === "ar" ? "نقل" : "Move"}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 if (moveBtnRef.current) {
@@ -151,3 +178,63 @@ export const TicketCard = memo(function TicketCard({
     </div>
   );
 });
+
+/** Static (non-draggable) version of the card used for the DragOverlay so the
+ *  ghost doesn't fight with the source card's transform. */
+export function TicketCardOverlay({
+  ticket,
+  lang,
+}: {
+  ticket: Ticket;
+  lang: Lang;
+}) {
+  const t = ticket;
+  return (
+    <div
+      style={{
+        ...cardBase,
+        cursor: "grabbing",
+        boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
+        background: "var(--bg-2)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+        <div
+          className="mono"
+          style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: 0.04 }}
+        >
+          #{String(t.number).padStart(3, "0")}
+        </div>
+      </div>
+      <div
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--ink)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {t.title}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Avatar name={t.contact?.name ?? "?"} size="sm" />
+        <span
+          style={{ fontSize: 12, color: "var(--ink-2)" }}
+        >
+          {t.contact?.name ?? "—"}
+        </span>
+      </div>
+      {t.value != null ? (
+        <div
+          className="mono"
+          style={{ fontSize: 11, color: "var(--ink-1)", fontWeight: 600 }}
+        >
+          {t.value.toLocaleString()} {t.currency ?? "SAR"}
+        </div>
+      ) : null}
+      {lang === "ar" ? null : null}
+    </div>
+  );
+}

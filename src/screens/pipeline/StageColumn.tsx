@@ -1,4 +1,5 @@
 import { useRef, useMemo } from "react";
+import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStageTickets } from "./hooks/useStageTickets";
 import { TicketCard } from "./TicketCard";
@@ -43,6 +44,13 @@ export function StageColumn({
     );
   }, [allTickets, searchQuery]);
 
+  // Droppable on the whole column wrapper — stable rect, doesn't shift with
+  // virtualizer scroll or content height changes.
+  const { setNodeRef: setDroppableRef, isOver } = useDroppable({
+    id: stage.id,
+    data: { stageId: stage.id },
+  });
+
   const parentRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,
@@ -56,15 +64,20 @@ export function StageColumn({
 
   return (
     <div
+      ref={setDroppableRef}
       style={{
         display: "flex",
         flexDirection: "column",
         background: "var(--bg-1)",
-        border: "1px solid var(--line)",
+        border: isOver ? "1px solid var(--accent)" : "1px solid var(--line)",
+        boxShadow: isOver
+          ? "0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent)"
+          : undefined,
         borderRadius: "var(--r)",
         minWidth: 280,
         maxWidth: 320,
         height: "100%",
+        transition: "border-color 120ms, box-shadow 120ms",
       }}
     >
       <div
@@ -104,9 +117,12 @@ export function StageColumn({
               color: "var(--ink-3)",
               padding: 24,
               textAlign: "center",
+              border: isOver ? "2px dashed var(--accent)" : "2px dashed transparent",
+              borderRadius: "var(--r)",
+              transition: "border-color 120ms",
             }}
           >
-            {lang === "ar" ? "لا توجد تذاكر" : "No tickets"}
+            {lang === "ar" ? "اسحب التذاكر هنا" : "Drop tickets here"}
           </div>
         ) : (
           <div
