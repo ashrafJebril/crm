@@ -28,6 +28,29 @@ function patchStageCache(
   );
 }
 
+/** Strip a ticket from every stage cache in the given pipeline (used before
+ *  inserting it into its new stage, so duplicates are mathematically
+ *  impossible regardless of which stage previously held it). */
+function removeFromAllStages(
+  qc: ReturnType<typeof useQueryClient>,
+  pipelineId: string,
+  ticketId: string,
+) {
+  qc.setQueriesData<StageTicketsCache>(
+    { queryKey: ["tickets", "stage", pipelineId] },
+    (curr) => {
+      if (!curr) return curr;
+      return {
+        ...curr,
+        pages: curr.pages.map((p) => ({
+          ...p,
+          items: p.items.filter((t) => t.id !== ticketId),
+        })),
+      };
+    },
+  );
+}
+
 // ─── Move ───────────────────────────────────────────────────────────────
 
 interface MoveVars {
@@ -48,35 +71,30 @@ export function useMoveTicket() {
         lostReason: v.lostReason,
       }),
     onMutate: async (v) => {
-      // Snapshot for rollback
-      const fromKey = ["tickets", "stage", v.pipelineId, v.fromStageId];
-      const toKey = ["tickets", "stage", v.pipelineId, v.toStageId];
-      await qc.cancelQueries({ queryKey: fromKey });
-      await qc.cancelQueries({ queryKey: toKey });
-      const fromSnap = qc.getQueriesData<StageTicketsCache>({ queryKey: fromKey });
-      const toSnap = qc.getQueriesData<StageTicketsCache>({ queryKey: toKey });
+      // Snapshot every stage cache in this pipeline so rollback is complete
+      // regardless of where the ticket was actually held.
+      const pipelineKey = ["tickets", "stage", v.pipelineId];
+      await qc.cancelQueries({ queryKey: pipelineKey });
+      const snap = qc.getQueriesData<StageTicketsCache>({
+        queryKey: pipelineKey,
+      });
 
-      // Patch: remove from source, prepend to destination
-      patchStageCache(qc, v.pipelineId, v.fromStageId, (items) =>
-        items.filter((t) => t.id !== v.ticketId),
-      );
+      // Strip the ticket from every stage cache in this pipeline …
+      removeFromAllStages(qc, v.pipelineId, v.ticketId);
+      // … then prepend it to the destination stage. Single source of truth.
       patchStageCache(qc, v.pipelineId, v.toStageId, (items) => [
         { ...v.optimisticTicket, stageId: v.toStageId },
-        ...items.filter((t) => t.id !== v.ticketId),
+        ...items,
       ]);
 
-      return { fromSnap, toSnap };
+      return { snap };
     },
     onError: (_e, _v, ctx) => {
-      ctx?.fromSnap.forEach(([key, val]) => qc.setQueryData(key, val));
-      ctx?.toSnap.forEach(([key, val]) => qc.setQueryData(key, val));
+      ctx?.snap.forEach(([key, val]) => qc.setQueryData(key, val));
     },
     onSettled: (_data, _err, v) => {
       qc.invalidateQueries({
-        queryKey: ["tickets", "stage", v.pipelineId, v.fromStageId],
-      });
-      qc.invalidateQueries({
-        queryKey: ["tickets", "stage", v.pipelineId, v.toStageId],
+        queryKey: ["tickets", "stage", v.pipelineId],
       });
       qc.invalidateQueries({ queryKey: qk.summary(v.pipelineId) });
     },
