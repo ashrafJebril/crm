@@ -263,8 +263,8 @@ export class TicketsService {
   }
 
   async addNote(workspaceId: string, id: string, dto: AddNoteDto) {
-    await this.getTicket(workspaceId, id);
-    return this.prisma.ticketActivity.create({
+    const ticket = await this.getTicket(workspaceId, id);
+    const activity = await this.prisma.ticketActivity.create({
       data: {
         workspaceId,
         ticketId: id,
@@ -273,6 +273,8 @@ export class TicketsService {
         byUserId: dto.byUserId ?? null,
       },
     });
+    this.realtime.emitToWorkspace(workspaceId, "ticket.updated", { ticket });
+    return activity;
   }
 
   async deleteTicket(workspaceId: string, id: string) {
@@ -282,9 +284,9 @@ export class TicketsService {
   }
 
   // ─── Dashboard summary ─────────────────────────────────────────────────
-  async dashboardSummary(workspaceId: string) {
+  async dashboardSummary(workspaceId: string, pipelineId?: string) {
     const all = await this.prisma.ticket.findMany({
-      where: { workspaceId },
+      where: { workspaceId, ...(pipelineId ? { pipelineId } : {}) },
       include: { stage: true },
     });
 

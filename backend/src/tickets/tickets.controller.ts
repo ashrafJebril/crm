@@ -41,8 +41,11 @@ export class TicketsController {
   }
 
   @Get("tickets/dashboard/summary")
-  dashboardSummary(@CurrentWorkspace() workspaceId: string) {
-    return this.svc.dashboardSummary(workspaceId);
+  dashboardSummary(
+    @CurrentWorkspace() workspaceId: string,
+    @Query("pipelineId") pipelineId?: string,
+  ) {
+    return this.svc.dashboardSummary(workspaceId, pipelineId);
   }
 
   @Get("tickets/:id")

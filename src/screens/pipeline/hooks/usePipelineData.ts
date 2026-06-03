@@ -15,7 +15,10 @@ export function usePipelineSummary(pipelineId: string | null) {
   return useQuery<TicketsDashboardSummary>({
     queryKey: pipelineId ? qk.summary(pipelineId) : ["__disabled__"],
     queryFn: ({ signal }) =>
-      api.get<TicketsDashboardSummary>("/tickets/dashboard/summary", signal),
+      api.get<TicketsDashboardSummary>(
+        `/tickets/dashboard/summary?pipelineId=${encodeURIComponent(pipelineId!)}`,
+        signal,
+      ),
     enabled: !!pipelineId,
   });
 }
