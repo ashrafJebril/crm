@@ -29,6 +29,7 @@ import {
   type Contact,
   type ConvChannel,
   type Conversation,
+  type Lang,
   type Message,
   type Pipeline,
   type StageColor,
@@ -36,6 +37,8 @@ import {
   type TicketStage,
   type TicketsListPage,
 } from "@/lib/types";
+import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
+import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 
 type FilterId = "all" | "ai" | "human" | "unread" | "closed" | "spam";
 type ConversationDetail = Conversation & { messages: Message[] };
@@ -233,6 +236,7 @@ interface ConversationPaneProps {
   onConvertToTicket: () => void;
   onToggleAiPaused: (paused: boolean) => Promise<void>;
   messagesLoading: boolean;
+  lang: Lang;
   tx: Tx;
 }
 
@@ -1198,6 +1202,7 @@ function ConversationPane({
   onConvertToTicket,
   onToggleAiPaused,
   messagesLoading,
+  lang,
   tx,
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
@@ -1373,6 +1378,20 @@ function ConversationPane({
               {tx("Take over", "تولّى")}
             </button>
           )}
+          <ConversationTicketsPill
+            conversationId={conv.id}
+            lang={lang}
+            onClick={(t) => {
+              window.location.hash = `#/pipeline?openTicket=${encodeURIComponent(t.id)}`;
+            }}
+          />
+          <AddToPipelineButton
+            conversationId={conv.id}
+            contactName={contactById.get(conv.contactId)?.name ?? ""}
+            intent={conv.intent}
+            preview={conv.preview}
+            lang={lang}
+          />
           <button className="btn ghost icon">
             <IconMore w={16} />
           </button>
@@ -2390,6 +2409,7 @@ function InboxImpl() {
                 ? igMsgsQ.loading
                 : activeQ.loading
           }
+          lang={t.lang}
           tx={tx}
         />
       ) : activeQ.loading ? (
