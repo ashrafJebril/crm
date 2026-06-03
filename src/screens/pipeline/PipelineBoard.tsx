@@ -55,15 +55,21 @@ export function PipelineBoard({
   const handleDragEnd = (e: DragEndEvent) => {
     setActiveTicket(null);
     const ticket = e.active.data.current?.ticket as Ticket | undefined;
-    // `over` is either the column droppable (data: { stageId }) when dropped on
-    // empty space, or a sortable card (data: { ticket }) when dropped on another
-    // card. In the latter case, take the stageId from the card under the cursor.
-    const overData = e.over?.data.current as
-      | { stageId?: string; ticket?: Ticket }
-      | undefined;
-    const toStageId =
-      overData?.stageId ?? overData?.ticket?.stageId ?? null;
-    if (!ticket || !toStageId || toStageId === ticket.stageId) return;
+    if (!ticket) return;
+
+    // `over.id` is either a stage id (when dropped on a column) or a ticket id
+    // (when dropped on another card). Resolve target stage from either case.
+    const overId = e.over?.id as string | undefined;
+    let toStageId: string | null = null;
+    if (overId) {
+      if (pipeline.stages.some((s) => s.id === overId)) {
+        toStageId = overId;
+      } else {
+        const overTicket = e.over?.data.current?.ticket as Ticket | undefined;
+        if (overTicket) toStageId = overTicket.stageId;
+      }
+    }
+    if (!toStageId || toStageId === ticket.stageId) return;
     const toStage = pipeline.stages.find((s) => s.id === toStageId);
     if (!toStage) return;
 
