@@ -13,6 +13,7 @@ import {
 import { StageColumn } from "./StageColumn";
 import { MoveStageMenu } from "./MoveStageMenu";
 import { TicketCardOverlay } from "./TicketCard";
+import { stageColor } from "./stageColors";
 import { useMoveTicket } from "./hooks/useTicketMutations";
 import { LostReasonModal } from "./LostReasonModal";
 import type { Pipeline, Ticket, TicketStage, Lang } from "@/lib/types";
@@ -104,11 +105,15 @@ export function PipelineBoard({
       <div
         style={{
           display: "flex",
-          gap: 12,
-          padding: 12,
+          gap: 14,
+          padding: "16px 18px",
           overflowX: "auto",
           overflowY: "hidden",
           height: "100%",
+          background:
+            "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--bg-1) 95%, var(--bg-2)) 0%, var(--bg-1) 70%)",
+          scrollbarColor: "var(--line) transparent",
+          scrollbarWidth: "thin",
         }}
       >
         {pipeline.stages.map((stage) => (
@@ -131,7 +136,16 @@ export function PipelineBoard({
 
       <DragOverlay dropAnimation={null}>
         {activeTicket ? (
-          <TicketCardOverlay ticket={activeTicket} lang={lang} />
+          <TicketCardOverlay
+            ticket={activeTicket}
+            lang={lang}
+            accent={
+              stageColor[
+                pipeline.stages.find((s) => s.id === activeTicket.stageId)
+                  ?.color ?? "ink"
+              ]
+            }
+          />
         ) : null}
       </DragOverlay>
 

@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -9,6 +9,7 @@ import type { Ticket, Lang } from "@/lib/types";
 interface TicketCardProps {
   ticket: Ticket;
   lang: Lang;
+  accent?: string;
   onClick?: () => void;
   onOpenConversation?: () => void;
   onOpenMoveMenu?: (anchorRect: DOMRect) => void;
@@ -17,13 +18,14 @@ interface TicketCardProps {
 const cardBase: CSSProperties = {
   background: "var(--bg-2)",
   border: "1px solid var(--line)",
-  borderRadius: "var(--r)",
-  padding: 12,
+  borderRadius: 10,
+  padding: "10px 12px 12px",
   display: "flex",
   flexDirection: "column",
   gap: 8,
   userSelect: "none",
-  transition: "border-color 120ms, background 120ms",
+  position: "relative",
+  transition: "border-color 140ms, background 140ms, transform 140ms, box-shadow 140ms",
 };
 
 const iconBtn: CSSProperties = {
@@ -31,22 +33,25 @@ const iconBtn: CSSProperties = {
   border: 0,
   color: "var(--ink-3)",
   cursor: "pointer",
-  padding: 2,
+  padding: 3,
   borderRadius: 4,
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
+  transition: "color 120ms, background 120ms",
 };
 
 export const TicketCard = memo(function TicketCard({
   ticket,
   lang,
+  accent = "var(--accent)",
   onClick,
   onOpenConversation,
   onOpenMoveMenu,
 }: TicketCardProps) {
   const t = ticket;
   const moveBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [hovered, setHovered] = useState(false);
 
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -58,10 +63,14 @@ export const TicketCard = memo(function TicketCard({
     ...cardBase,
     cursor: isDragging ? "grabbing" : "grab",
     transform: CSS.Translate.toString(transform),
-    // Hide the source visually but keep its space — no "copy" appearance,
-    // and dnd-kit still has a stable element to clean up against.
     visibility: isDragging ? "hidden" : "visible",
     touchAction: "none",
+    borderColor: hovered
+      ? `color-mix(in srgb, ${accent} 45%, var(--line))`
+      : "var(--line)",
+    boxShadow: hovered
+      ? `0 2px 8px rgba(0,0,0,0.25), 0 0 0 1px color-mix(in srgb, ${accent} 30%, transparent)`
+      : "0 1px 2px rgba(0,0,0,0.15)",
   };
 
   return (
@@ -70,15 +79,44 @@ export const TicketCard = memo(function TicketCard({
       style={style}
       {...attributes}
       {...listeners}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={() => {
         if (isDragging) return;
         onClick?.();
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+      {/* Left color accent */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 8,
+          bottom: 8,
+          width: 3,
+          background: accent,
+          borderRadius: "0 2px 2px 0",
+          opacity: 0.9,
+        }}
+      />
+
+      {/* Header row: ticket number + actions */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
         <div
           className="mono"
-          style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: 0.04 }}
+          style={{
+            fontSize: 10,
+            color: "var(--ink-3)",
+            letterSpacing: 0.06,
+            fontWeight: 500,
+          }}
         >
           #{String(t.number).padStart(3, "0")}
         </div>
@@ -93,8 +131,16 @@ export const TicketCard = memo(function TicketCard({
                 onOpenConversation?.();
               }}
               style={iconBtn}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--ink)";
+                e.currentTarget.style.background = "var(--bg-1)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--ink-3)";
+                e.currentTarget.style.background = "transparent";
+              }}
             >
-              <IconInbox w={14} />
+              <IconInbox w={13} />
             </button>
           ) : null}
           {onOpenMoveMenu ? (
@@ -111,19 +157,25 @@ export const TicketCard = memo(function TicketCard({
               }}
               style={{
                 ...iconBtn,
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: 600,
                 color: "var(--ink-2)",
-                padding: "2px 6px",
+                padding: "3px 8px",
+                background: "var(--bg-1)",
                 border: "1px solid var(--line)",
                 borderRadius: 999,
+                letterSpacing: 0.04,
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-1)";
+                e.currentTarget.style.background =
+                  `color-mix(in srgb, ${accent} 12%, var(--bg-1))`;
+                e.currentTarget.style.borderColor =
+                  `color-mix(in srgb, ${accent} 40%, var(--line))`;
                 e.currentTarget.style.color = "var(--ink)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.background = "var(--bg-1)";
+                e.currentTarget.style.borderColor = "var(--line)";
                 e.currentTarget.style.color = "var(--ink-2)";
               }}
             >
@@ -133,61 +185,91 @@ export const TicketCard = memo(function TicketCard({
         </div>
       </div>
 
+      {/* Title — gets the most visual weight */}
       <div
         style={{
-          fontSize: 13,
+          fontSize: 13.5,
           fontWeight: 600,
-          lineHeight: 1.3,
+          lineHeight: 1.35,
           color: "var(--ink)",
+          display: "-webkit-box",
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: "vertical",
           overflow: "hidden",
           textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          letterSpacing: -0.1,
         }}
       >
         {t.title}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Avatar name={t.contact?.name ?? "?"} size="sm" />
-        <span
+      {/* Footer: contact + value */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          marginTop: 2,
+        }}
+      >
+        <div
           style={{
-            fontSize: 12,
-            color: "var(--ink-2)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            minWidth: 0,
           }}
         >
-          {t.contact?.name ?? "—"}
-        </span>
+          <Avatar name={t.contact?.name ?? "?"} size="sm" />
+          <span
+            style={{
+              fontSize: 11.5,
+              color: "var(--ink-2)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontWeight: 500,
+            }}
+          >
+            {t.contact?.name ?? "—"}
+          </span>
+        </div>
+        {t.value != null ? (
+          <div
+            className="mono"
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--ink-1)",
+              padding: "2px 6px",
+              background: `color-mix(in srgb, ${accent} 10%, transparent)`,
+              borderRadius: 6,
+              border: `1px solid color-mix(in srgb, ${accent} 22%, transparent)`,
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+          >
+            {t.value >= 1000
+              ? `${(t.value / 1000).toFixed(1)}k`
+              : t.value.toLocaleString()}{" "}
+            {t.currency ?? "SAR"}
+          </div>
+        ) : null}
       </div>
-
-      {t.value != null ? (
-        <div
-          className="mono"
-          style={{ fontSize: 11, color: "var(--ink-1)", fontWeight: 600 }}
-        >
-          {t.value.toLocaleString()} {t.currency ?? "SAR"}
-        </div>
-      ) : null}
-
-      {t.ownerId ? (
-        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
-          {lang === "ar" ? "المالك" : "Owner"}: {t.ownerId}
-        </div>
-      ) : null}
     </div>
   );
 });
 
-/** Static (non-draggable) version of the card used for the DragOverlay so the
- *  ghost doesn't fight with the source card's transform. */
+/** Static overlay version — no draggable wiring, used as the drag ghost. */
 export function TicketCardOverlay({
   ticket,
   lang,
+  accent = "var(--accent)",
 }: {
   ticket: Ticket;
   lang: Lang;
+  accent?: string;
 }) {
   const t = ticket;
   return (
@@ -195,46 +277,72 @@ export function TicketCardOverlay({
       style={{
         ...cardBase,
         cursor: "grabbing",
-        boxShadow: "0 12px 32px rgba(0,0,0,0.5)",
-        background: "var(--bg-2)",
+        boxShadow: `0 16px 40px rgba(0,0,0,0.55), 0 0 0 1px ${accent}`,
+        borderColor: `color-mix(in srgb, ${accent} 60%, var(--line))`,
+        transform: "rotate(-1.5deg)",
       }}
     >
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 8,
+          bottom: 8,
+          width: 3,
+          background: accent,
+          borderRadius: "0 2px 2px 0",
+        }}
+      />
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
         <div
           className="mono"
-          style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: 0.04 }}
+          style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: 0.06 }}
         >
           #{String(t.number).padStart(3, "0")}
         </div>
       </div>
       <div
         style={{
-          fontSize: 13,
+          fontSize: 13.5,
           fontWeight: 600,
           color: "var(--ink)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          lineHeight: 1.35,
         }}
       >
         {t.title}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <Avatar name={t.contact?.name ?? "?"} size="sm" />
-        <span
-          style={{ fontSize: 12, color: "var(--ink-2)" }}
-        >
-          {t.contact?.name ?? "—"}
-        </span>
-      </div>
-      {t.value != null ? (
-        <div
-          className="mono"
-          style={{ fontSize: 11, color: "var(--ink-1)", fontWeight: 600 }}
-        >
-          {t.value.toLocaleString()} {t.currency ?? "SAR"}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Avatar name={t.contact?.name ?? "?"} size="sm" />
+          <span style={{ fontSize: 11.5, color: "var(--ink-2)", fontWeight: 500 }}>
+            {t.contact?.name ?? "—"}
+          </span>
         </div>
-      ) : null}
+        {t.value != null ? (
+          <div
+            className="mono"
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--ink-1)",
+              padding: "2px 6px",
+              background: `color-mix(in srgb, ${accent} 10%, transparent)`,
+              borderRadius: 6,
+              border: `1px solid color-mix(in srgb, ${accent} 22%, transparent)`,
+            }}
+          >
+            {t.value >= 1000 ? `${(t.value / 1000).toFixed(1)}k` : t.value.toLocaleString()}{" "}
+            {t.currency ?? "SAR"}
+          </div>
+        ) : null}
+      </div>
       {lang === "ar" ? null : null}
     </div>
   );

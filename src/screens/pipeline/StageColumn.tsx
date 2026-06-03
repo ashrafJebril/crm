@@ -3,6 +3,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStageTickets } from "./hooks/useStageTickets";
 import { TicketCard } from "./TicketCard";
+import { stageColor } from "./stageColors";
 import type { Ticket, TicketStage, Lang } from "@/lib/types";
 
 interface StageColumnProps {
@@ -44,8 +45,6 @@ export function StageColumn({
     );
   }, [allTickets, searchQuery]);
 
-  // Droppable on the whole column wrapper — stable rect, doesn't shift with
-  // virtualizer scroll or content height changes.
   const { setNodeRef: setDroppableRef, isOver } = useDroppable({
     id: stage.id,
     data: { stageId: stage.id },
@@ -61,6 +60,14 @@ export function StageColumn({
 
   const total = filtered.length;
   const label = lang === "ar" ? stage.labelAr : stage.label;
+  const accent = stageColor[stage.color] ?? "var(--ink-3)";
+
+  // Aggregate value across visible tickets — useful at-a-glance metric.
+  const stageValue = useMemo(
+    () =>
+      filtered.reduce((sum, t) => sum + (typeof t.value === "number" ? t.value : 0), 0),
+    [filtered],
+  );
 
   return (
     <div
@@ -69,33 +76,88 @@ export function StageColumn({
         display: "flex",
         flexDirection: "column",
         background: "var(--bg-1)",
-        border: isOver ? "1px solid var(--accent)" : "1px solid var(--line)",
+        border: `1px solid ${isOver ? accent : "var(--line)"}`,
         boxShadow: isOver
-          ? "0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent)"
-          : undefined,
-        borderRadius: "var(--r)",
-        minWidth: 280,
+          ? `0 0 0 3px color-mix(in srgb, ${accent} 25%, transparent), 0 4px 16px rgba(0,0,0,0.25)`
+          : "0 1px 2px rgba(0,0,0,0.2)",
+        borderRadius: 12,
+        minWidth: 300,
         maxWidth: 320,
         height: "100%",
-        transition: "border-color 120ms, box-shadow 120ms",
+        overflow: "hidden",
+        transition: "border-color 160ms, box-shadow 160ms",
       }}
     >
+      {/* Color accent strip at top */}
+      <div style={{ height: 3, background: accent, opacity: 0.9 }} />
+
+      {/* Header */}
       <div
         style={{
-          padding: "10px 12px",
+          padding: "12px 14px 10px",
           borderBottom: "1px solid var(--line)",
           display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
+          flexDirection: "column",
+          gap: 4,
+          background: "linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%)",
         }}
       >
-        <strong style={{ color: "var(--ink)", fontSize: 13 }}>{label}</strong>
-        <span
-          className="mono"
-          style={{ fontSize: 11, color: "var(--ink-3)" }}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
         >
-          {total}
-        </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 999,
+                background: accent,
+                boxShadow: `0 0 0 3px color-mix(in srgb, ${accent} 18%, transparent)`,
+              }}
+            />
+            <strong
+              style={{
+                color: "var(--ink)",
+                fontSize: 13,
+                letterSpacing: 0.1,
+              }}
+            >
+              {label}
+            </strong>
+          </div>
+          <span
+            style={{
+              minWidth: 22,
+              height: 20,
+              padding: "0 7px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 11,
+              fontWeight: 600,
+              color: total > 0 ? "var(--ink)" : "var(--ink-3)",
+              background: total > 0
+                ? `color-mix(in srgb, ${accent} 16%, transparent)`
+                : "var(--bg-2)",
+              border: `1px solid color-mix(in srgb, ${accent} 30%, var(--line))`,
+              borderRadius: 999,
+            }}
+          >
+            {total}
+          </span>
+        </div>
+        {stageValue > 0 ? (
+          <div
+            className="mono"
+            style={{ fontSize: 10, color: "var(--ink-3)", letterSpacing: 0.04 }}
+          >
+            {stageValue.toLocaleString()} SAR
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -103,26 +165,71 @@ export function StageColumn({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: 8,
+          padding: 10,
+          scrollbarColor: "var(--line) transparent",
+          scrollbarWidth: "thin",
         }}
       >
         {q.isLoading ? (
-          <div style={{ fontSize: 12, color: "var(--ink-3)", padding: 12 }}>
-            {lang === "ar" ? "جارٍ التحميل..." : "Loading..."}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                style={{
+                  height: 92,
+                  background:
+                    "linear-gradient(90deg, var(--bg-2) 0%, var(--bg-1) 50%, var(--bg-2) 100%)",
+                  backgroundSize: "200% 100%",
+                  borderRadius: 10,
+                  animation: "shimmer 1.6s ease-in-out infinite",
+                  opacity: 0.4,
+                }}
+              />
+            ))}
+            <style>{`@keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }`}</style>
           </div>
         ) : total === 0 ? (
           <div
             style={{
-              fontSize: 12,
-              color: "var(--ink-3)",
-              padding: 24,
-              textAlign: "center",
-              border: isOver ? "2px dashed var(--accent)" : "2px dashed transparent",
-              borderRadius: "var(--r)",
-              transition: "border-color 120ms",
+              height: "100%",
+              minHeight: 120,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: 16,
+              borderRadius: 10,
+              border: isOver
+                ? `2px dashed ${accent}`
+                : "2px dashed transparent",
+              transition: "border-color 160ms",
             }}
           >
-            {lang === "ar" ? "اسحب التذاكر هنا" : "Drop tickets here"}
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 999,
+                background: `color-mix(in srgb, ${accent} 12%, transparent)`,
+                display: "grid",
+                placeItems: "center",
+                color: accent,
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              +
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--ink-3)",
+                textAlign: "center",
+              }}
+            >
+              {lang === "ar" ? "اسحب التذاكر هنا" : "Drop tickets here"}
+            </div>
           </div>
         ) : (
           <div
@@ -148,6 +255,7 @@ export function StageColumn({
                   <TicketCard
                     ticket={ticket}
                     lang={lang}
+                    accent={accent}
                     onClick={() => onCardClick(ticket)}
                     onOpenConversation={() =>
                       ticket.conversationId &&
@@ -169,13 +277,14 @@ export function StageColumn({
             style={{
               width: "100%",
               marginTop: 8,
-              padding: 8,
+              padding: "8px 10px",
               background: "var(--bg-2)",
               border: "1px solid var(--line)",
-              borderRadius: "var(--r)",
+              borderRadius: 8,
               fontSize: 12,
               color: "var(--ink-2)",
               cursor: "pointer",
+              fontWeight: 500,
             }}
           >
             {q.isFetchingNextPage
