@@ -1,12 +1,15 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
   DndContext,
   DragOverlay,
   PointerSensor,
   KeyboardSensor,
   closestCorners,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
@@ -45,6 +48,23 @@ export function PipelineBoard({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  // Custom collision: always prefer the stage column the pointer is inside.
+  // Falls back to rectIntersection then closestCorners so edge-overshoots
+  // still resolve to *some* column.
+  const collisionDetection = useCallback<CollisionDetection>(
+    (args) => {
+      const stageIds = new Set(pipeline.stages.map((s) => s.id));
+      const within = pointerWithin(args);
+      const stageHit = within.find((c) => stageIds.has(c.id as string));
+      if (stageHit) return [stageHit];
+      const intersecting = rectIntersection(args);
+      const stageInter = intersecting.find((c) => stageIds.has(c.id as string));
+      if (stageInter) return [stageInter];
+      return closestCorners(args);
+    },
+    [pipeline.stages],
   );
 
   const handleDragStart = (e: DragStartEvent) => {
@@ -92,7 +112,7 @@ export function PipelineBoard({
     <>
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
