@@ -494,7 +494,9 @@ model Media {
   fileName      String   // original filename, kept for display
   mimeType      String   // "image/jpeg" | "image/png" | "image/gif" | "image/webp" | ...
   sizeBytes     Int
-  storedPath    String   // path on disk, relative to backend/uploads
+  storedPath    String   // "local": path relative to backend/uploads.
+                         // "spaces": object key inside the DO Spaces bucket.
+  storageKind   String   @default("local") // "local" | "spaces"
   width         Int?     // for images
   height        Int?     // for images
   uploadedById  String?  // FK to User.id; nullable for system-generated assets

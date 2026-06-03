@@ -1,15 +1,14 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
-  InternalServerErrorException,
   NotFoundException,
 } from "@nestjs/common";
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
-
-const UPLOAD_ROOT = path.resolve(process.cwd(), "uploads");
+import { MEDIA_STORAGE } from "./storage/storage.provider";
+import { LocalStorage } from "./storage/local-storage";
+import type { MediaStorage } from "./storage/storage.types";
 
 const ALLOWED_MIME = new Set([
   "image/jpeg",
@@ -21,7 +20,10 @@ const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 
 @Injectable()
 export class MediaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(MEDIA_STORAGE) private readonly storage: MediaStorage,
+  ) {}
 
   list(workspaceId: string) {
     return this.prisma.media.findMany({
@@ -39,18 +41,74 @@ export class MediaService {
     return row;
   }
 
-  /** Resolve a Media row to its absolute disk path. Used by the streaming
-   *  endpoint and by the publisher to attach the file to the FB upload. */
-  async resolvePath(workspaceId: string, id: string): Promise<string> {
+  /** Resolve a media row to either a streamable absolute path (legacy local
+   *  files) or a signed URL (Spaces, and current-gen local). The controller
+   *  branches on whichever value is returned. */
+  async resolveServe(
+    workspaceId: string,
+    id: string,
+    ttlSeconds = 3600,
+  ): Promise<
+    | { kind: "local-file"; absolutePath: string; mimeType: string }
+    | { kind: "signed-url"; url: string; mimeType: string }
+  > {
     const row = await this.get(workspaceId, id);
-    const absolute = path.resolve(UPLOAD_ROOT, row.storedPath);
-    // Defense against path traversal — the stored path must stay under
-    // UPLOAD_ROOT/<workspaceId>/.
-    const wsRoot = path.resolve(UPLOAD_ROOT, workspaceId);
-    if (!absolute.startsWith(wsRoot + path.sep)) {
-      throw new InternalServerErrorException("Media path is outside workspace root");
+    return this.resolveServeForRow(row, ttlSeconds);
+  }
+
+  async resolveServeForRow(
+    row: { storageKind: string; storedPath: string; mimeType: string; workspaceId: string },
+    ttlSeconds = 3600,
+  ): Promise<
+    | { kind: "local-file"; absolutePath: string; mimeType: string }
+    | { kind: "signed-url"; url: string; mimeType: string }
+  > {
+    if (row.storageKind === "spaces") {
+      const url = await this.storage.getSignedUrl(row.storedPath, ttlSeconds);
+      return { kind: "signed-url", url, mimeType: row.mimeType };
     }
-    return absolute;
+    // Legacy / local: resolve to an absolute path the controller can sendFile.
+    // The storage instance might be SpacesStorage now even though THIS row was
+    // written to local disk earlier — fall back to LocalStorage's resolver in
+    // that case.
+    const local =
+      this.storage.kind === "local"
+        ? (this.storage as LocalStorage)
+        : new LocalStorage();
+    const absolutePath = local.resolveAbsolute(row.storedPath);
+    if (!absolutePath) {
+      throw new NotFoundException("Media path is outside workspace root");
+    }
+    return { kind: "local-file", absolutePath, mimeType: row.mimeType };
+  }
+
+  /** Read the file bytes for a media row, regardless of which backend stored
+   *  it. Used by the social publisher to attach images to Graph/IG/WhatsApp
+   *  multipart uploads. */
+  async readBuffer(workspaceId: string, id: string): Promise<Buffer> {
+    const row = await this.get(workspaceId, id);
+    if (row.storageKind === "spaces") {
+      const url = await this.storage.getSignedUrl(row.storedPath, 300);
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new NotFoundException(
+          `Spaces fetch failed (${resp.status}) for media ${id}`,
+        );
+      }
+      const ab = await resp.arrayBuffer();
+      return Buffer.from(ab);
+    }
+    // Local file
+    const local =
+      this.storage.kind === "local"
+        ? (this.storage as LocalStorage)
+        : new LocalStorage();
+    const absolutePath = local.resolveAbsolute(row.storedPath);
+    if (!absolutePath) {
+      throw new NotFoundException("Media path is outside workspace root");
+    }
+    const fs = await import("node:fs/promises");
+    return fs.readFile(absolutePath);
   }
 
   async finalizeUpload(
@@ -69,26 +127,26 @@ export class MediaService {
         `File too large (${file.size} bytes). Max ${MAX_BYTES} bytes.`,
       );
     }
-    // Multer wrote the file to disk under uploads/<workspaceId>/<basename>.
-    // Store the relative path (relative to UPLOAD_ROOT).
-    const storedPath = path
-      .relative(UPLOAD_ROOT, file.path)
-      .replace(/\\/g, "/");
+    // multer.memoryStorage puts the bytes on file.buffer.
+    const { key } = await this.storage.put({
+      workspaceId,
+      buffer: file.buffer,
+      mimeType: file.mimetype,
+      originalFilename: file.originalname,
+    });
     return this.prisma.media.create({
       data: {
         workspaceId,
         fileName: file.originalname,
         mimeType: file.mimetype,
         sizeBytes: file.size,
-        storedPath,
+        storedPath: key,
+        storageKind: this.storage.kind,
         uploadedById,
       },
     });
   }
 
-  /** Mint a single-use public token for a media id, valid for `ttlMs`.
-   *  Returns the token string. Overwrites any previous public token on
-   *  that row, so old links become invalid. */
   async mintPublicToken(
     workspaceId: string,
     mediaId: string,
@@ -104,12 +162,6 @@ export class MediaService {
     return token;
   }
 
-  /** Look up a media row by its public token. Returns null if missing or
-   *  expired. Does NOT delete the token — IG publishing fetches the image
-   *  a few times during the container poll, so we just expire by time.
-   *
-   *  Uses the raw unscoped client: this is called from a @Public() route
-   *  with no workspace context, and the token itself is the auth. */
   async findByPublicToken(token: string) {
     if (!token) return null;
     const row = await this.prisma.raw.media.findUnique({
@@ -127,15 +179,18 @@ export class MediaService {
 
   async remove(workspaceId: string, id: string) {
     const row = await this.get(workspaceId, id);
-    // Delete the DB row first; if the file unlink fails we still want the
-    // DB to reflect the user's intent. The file will get garbage-collected
-    // in a future cleanup pass.
     await this.prisma.media.delete({ where: { id: row.id } });
-    try {
-      const absolute = path.resolve(UPLOAD_ROOT, row.storedPath);
-      await fs.unlink(absolute);
-    } catch {
-      // Swallow — DB is the source of truth; orphaned bytes are harmless.
+    // Delete from whichever backend originally stored it.
+    if (row.storageKind === "spaces") {
+      await this.storage.delete(row.storedPath);
+    } else {
+      // Always use a LocalStorage delete for legacy local rows, even if the
+      // current backend is Spaces.
+      const local =
+        this.storage.kind === "local"
+          ? (this.storage as LocalStorage)
+          : new LocalStorage();
+      await local.delete(row.storedPath);
     }
     return { ok: true };
   }

@@ -432,11 +432,8 @@ export class FacebookService {
 
     // Single-photo post — /photos with multipart upload.
     const mediaRow = await this.media.get(workspaceId, firstMediaId);
-    const absolutePath = await this.media.resolvePath(workspaceId, firstMediaId);
-
-    const fs = await import("node:fs/promises");
-    const buffer = await fs.readFile(absolutePath);
-    const blob = new Blob([buffer], { type: mediaRow.mimeType });
+    const buffer = await this.media.readBuffer(workspaceId, firstMediaId);
+    const blob = new Blob([new Uint8Array(buffer)], { type: mediaRow.mimeType });
     const form = new FormData();
     form.append("source", blob, mediaRow.fileName);
     form.append("message", dto.content);
