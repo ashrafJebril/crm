@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { CSSProperties } from "react";
 import { Avatar } from "@/components/Avatar";
 import { IconInbox } from "@/icons";
@@ -7,9 +7,10 @@ import type { Ticket, Lang } from "@/lib/types";
 interface TicketCardProps {
   ticket: Ticket;
   lang: Lang;
-  isDragging?: boolean;
   onClick?: () => void;
   onOpenConversation?: () => void;
+  /** Opens the stage-move menu. Receives the trigger element's rect for anchoring. */
+  onOpenMoveMenu?: (anchorRect: DOMRect) => void;
 }
 
 const cardStyle: CSSProperties = {
@@ -20,27 +21,34 @@ const cardStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 8,
-  cursor: "grab",
+  cursor: "pointer",
   userSelect: "none",
+  transition: "border-color 120ms, background 120ms",
+};
+
+const iconBtn: CSSProperties = {
+  background: "transparent",
+  border: 0,
+  color: "var(--ink-3)",
+  cursor: "pointer",
+  padding: 2,
+  borderRadius: 4,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
 
 export const TicketCard = memo(function TicketCard({
   ticket,
   lang,
-  isDragging,
   onClick,
   onOpenConversation,
+  onOpenMoveMenu,
 }: TicketCardProps) {
   const t = ticket;
+  const moveBtnRef = useRef<HTMLButtonElement | null>(null);
   return (
-    <div
-      style={{
-        ...cardStyle,
-        opacity: isDragging ? 0.4 : 1,
-        boxShadow: isDragging ? "var(--shadow-1)" : undefined,
-      }}
-      onClick={onClick}
-    >
+    <div style={cardStyle} onClick={onClick}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
         <div
           className="mono"
@@ -48,25 +56,53 @@ export const TicketCard = memo(function TicketCard({
         >
           #{String(t.number).padStart(3, "0")}
         </div>
-        {t.conversationId ? (
-          <button
-            type="button"
-            title={lang === "ar" ? "افتح المحادثة" : "Open conversation"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenConversation?.();
-            }}
-            style={{
-              background: "transparent",
-              border: 0,
-              color: "var(--ink-3)",
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            <IconInbox w={14} />
-          </button>
-        ) : null}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {t.conversationId ? (
+            <button
+              type="button"
+              title={lang === "ar" ? "افتح المحادثة" : "Open conversation"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenConversation?.();
+              }}
+              style={iconBtn}
+            >
+              <IconInbox w={14} />
+            </button>
+          ) : null}
+          {onOpenMoveMenu ? (
+            <button
+              ref={moveBtnRef}
+              type="button"
+              title={lang === "ar" ? "نقل" : "Move"}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (moveBtnRef.current) {
+                  onOpenMoveMenu(moveBtnRef.current.getBoundingClientRect());
+                }
+              }}
+              style={{
+                ...iconBtn,
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--ink-2)",
+                padding: "2px 6px",
+                border: "1px solid var(--line)",
+                borderRadius: 999,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-1)";
+                e.currentTarget.style.color = "var(--ink)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--ink-2)";
+              }}
+            >
+              {lang === "ar" ? "نقل ▾" : "Move ▾"}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div
