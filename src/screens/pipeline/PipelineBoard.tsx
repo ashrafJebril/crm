@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -44,6 +44,29 @@ export function PipelineBoard({
     ticket: Ticket;
     toStage: TicketStage;
   } | null>(null);
+
+  // ── Board-level initial-load gate ────────────────────────────────────
+  // Each column reports when its first fetch settles. We hold every column
+  // in the skeleton state until ALL of them have reported, so the user sees
+  // one synchronized reveal instead of staggered pop-ins.
+  const [loadedStages, setLoadedStages] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const boardReady = loadedStages.size >= pipeline.stages.length;
+
+  useEffect(() => {
+    // Reset when the pipeline switches so we re-gate on the new set of stages.
+    setLoadedStages(new Set());
+  }, [pipeline.id]);
+
+  const reportStageLoaded = useCallback((stageId: string) => {
+    setLoadedStages((prev) => {
+      if (prev.has(stageId)) return prev;
+      const next = new Set(prev);
+      next.add(stageId);
+      return next;
+    });
+  }, []);
 
   const move = useMoveTicket();
 
@@ -124,6 +147,8 @@ export function PipelineBoard({
               lang={lang}
               ownerFilter={ownerFilter}
               searchQuery={searchQuery}
+              boardReady={boardReady}
+              onInitialLoaded={reportStageLoaded}
               onCardClick={onCardClick}
               onOpenConversation={onOpenConversation}
               onOpenMoveMenu={(ticket, anchorRect) =>

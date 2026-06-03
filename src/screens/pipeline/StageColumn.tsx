@@ -1,4 +1,4 @@
-import { useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStageTickets } from "./hooks/useStageTickets";
@@ -12,6 +12,10 @@ interface StageColumnProps {
   lang: Lang;
   ownerFilter?: string;
   searchQuery: string;
+  /** True once every sibling column has completed its first fetch. */
+  boardReady: boolean;
+  /** Fired exactly once when this column's first fetch settles. */
+  onInitialLoaded: (stageId: string) => void;
   onCardClick: (ticket: Ticket) => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenMoveMenu: (ticket: Ticket, anchorRect: DOMRect) => void;
@@ -23,11 +27,24 @@ export function StageColumn({
   lang,
   ownerFilter,
   searchQuery,
+  boardReady,
+  onInitialLoaded,
   onCardClick,
   onOpenConversation,
   onOpenMoveMenu,
 }: StageColumnProps) {
   const q = useStageTickets(pipelineId, stage.id, { ownerId: ownerFilter });
+
+  // Report up to the board the moment we settle our first fetch (success OR
+  // error — either way the column has "finished loading" from the user's POV).
+  const reportedRef = useRef(false);
+  useEffect(() => {
+    if (reportedRef.current) return;
+    if (!q.isPending) {
+      reportedRef.current = true;
+      onInitialLoaded(stage.id);
+    }
+  }, [q.isPending, stage.id, onInitialLoaded]);
 
   const allTickets = useMemo(
     () => q.data?.pages.flatMap((p) => p.items) ?? [],
@@ -170,7 +187,7 @@ export function StageColumn({
           scrollbarWidth: "thin",
         }}
       >
-        {q.isLoading ? (
+        {q.isPending || !boardReady ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[0, 1, 2].map((i) => (
               <div
