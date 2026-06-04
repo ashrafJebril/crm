@@ -24,6 +24,7 @@ import {
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import type { Contact } from "@/lib/types";
+import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
 
 type View = "table" | "pipeline";
 
@@ -67,6 +68,7 @@ interface ContactsTableProps {
   onBulkDelete: () => void;
   onBulkTag: () => void;
   bulkDeleting: boolean;
+  onOpenContact: (id: string) => void;
 }
 
 function tagKind(tag: string): BadgeKind {
@@ -83,6 +85,7 @@ function ContactsTable({
   onBulkDelete,
   onBulkTag,
   bulkDeleting,
+  onOpenContact,
 }: ContactsTableProps) {
   const toggle = (id: string) => {
     const next = new Set(selected);
@@ -146,8 +149,13 @@ function ContactsTable({
         </thead>
         <tbody>
           {contacts.map((c) => (
-            <tr key={c.id} className={selected.has(c.id) ? "selected" : ""}>
-              <td>
+            <tr
+              key={c.id}
+              className={selected.has(c.id) ? "selected" : ""}
+              onClick={() => onOpenContact(c.id)}
+              style={{ cursor: "pointer" }}
+            >
+              <td onClick={(e) => e.stopPropagation()}>
                 <input
                   type="checkbox"
                   checked={selected.has(c.id)}
@@ -189,7 +197,7 @@ function ContactsTable({
               <td className="mono">{c.convs}</td>
               <td className="mono">{c.value}</td>
               <td className="mono muted">{c.lastSeen}</td>
-              <td>
+              <td onClick={(e) => e.stopPropagation()}>
                 <button className="btn ghost icon sm">
                   <IconMore w={14} />
                 </button>
@@ -660,6 +668,7 @@ function ContactsImpl() {
   const [showNew, setShowNew] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [openContactId, setOpenContactId] = useState<string | null>(null);
 
   const { data, loading, error, refetch } = useFetch<Contact[]>("/contacts");
   const contacts = data ?? [];
@@ -919,6 +928,7 @@ function ContactsImpl() {
             onBulkDelete={onBulkDelete}
             onBulkTag={onBulkTag}
             bulkDeleting={bulkDeleting}
+            onOpenContact={setOpenContactId}
           />
         )}
         {!loading && !error && view === "pipeline" && (
@@ -944,6 +954,13 @@ function ContactsImpl() {
           saving={bulkTagging}
           onClose={() => setShowBulkTag(false)}
           onApply={applyBulkTags}
+        />
+      )}
+
+      {openContactId && (
+        <ContactDetailDrawer
+          contactId={openContactId}
+          onClose={() => setOpenContactId(null)}
         />
       )}
     </div>

@@ -48,6 +48,70 @@ export class ContactsService {
     return shape(row);
   }
 
+  /**
+   * Aggregated contact profile for the contacts drawer — stats + recent
+   * activity in one round-trip so the drawer doesn't fire 4 separate GETs.
+   */
+  async summary(workspaceId: string, id: string) {
+    const contact = await this.get(workspaceId, id);
+
+    const [allConvs, allTicketsCount, recentTickets, totalMessages, totalNotes, totalAppointments] =
+      await Promise.all([
+        this.prisma.conversation.findMany({
+          where: { contactId: id, workspaceId },
+          orderBy: { updatedAt: "desc" },
+        }),
+        this.prisma.ticket.count({ where: { contactId: id, workspaceId } }),
+        this.prisma.ticket.findMany({
+          where: { contactId: id, workspaceId },
+          orderBy: { updatedAt: "desc" },
+          take: 5,
+          include: { stage: true },
+        }),
+        this.prisma.message.count({
+          where: { workspaceId, conversation: { contactId: id } },
+        }),
+        this.prisma.note.count({ where: { contactId: id, workspaceId } }),
+        this.prisma.appointment.count({ where: { contactId: id, workspaceId } }),
+      ]);
+
+    const channels: Record<string, number> = {};
+    for (const c of allConvs) {
+      channels[c.channel] = (channels[c.channel] ?? 0) + 1;
+    }
+
+    return {
+      contact,
+      stats: {
+        conversations: allConvs.length,
+        messages: totalMessages,
+        tickets: allTicketsCount,
+        notes: totalNotes,
+        appointments: totalAppointments,
+        channels,
+      },
+      recentConversations: allConvs.slice(0, 5).map((c) => ({
+        id: c.id,
+        channel: c.channel,
+        preview: c.preview,
+        lastAt: c.lastAt,
+        unread: c.unread,
+        status: c.status,
+      })),
+      recentTickets: recentTickets.map((t) => ({
+        id: t.id,
+        number: t.number,
+        title: t.title,
+        value: t.value,
+        currency: t.currency,
+        closedAt: t.closedAt,
+        stage: t.stage
+          ? { label: t.stage.label, color: t.stage.color }
+          : null,
+      })),
+    };
+  }
+
   async create(workspaceId: string, dto: CreateContactDto) {
     const row = await this.prisma.contact.create({
       data: {

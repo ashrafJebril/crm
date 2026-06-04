@@ -17,6 +17,11 @@ export class ContactsController {
     return this.svc.get(workspaceId, id);
   }
 
+  @Get(":id/summary")
+  summary(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.summary(workspaceId, id);
+  }
+
   @Post()
   create(
     @CurrentWorkspace() workspaceId: string,
