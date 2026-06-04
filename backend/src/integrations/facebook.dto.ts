@@ -21,6 +21,17 @@ export class ReplyToCommentDto {
   message!: string;
 }
 
+export class SendDmDto {
+  @IsString()
+  // Allow empty message when an image attachment is present — Meta accepts
+  // attachment-only DMs.
+  message!: string;
+
+  @IsOptional()
+  @IsString()
+  mediaId?: string;
+}
+
 export class EditPostDto {
   @IsString()
   @MinLength(1)

@@ -162,6 +162,34 @@ export class MediaService {
     return token;
   }
 
+  /**
+   * Resolve a media row to a URL that an external service (Meta, Twilio, etc.)
+   * can fetch directly. Spaces gets a signed S3 URL; local fallback gets a
+   * public-token URL routed through our backend (requires PUBLIC_BASE_URL to
+   * be reachable from the internet, e.g. via a tunnel in dev).
+   */
+  async resolveExternalUrl(
+    workspaceId: string,
+    mediaId: string,
+    ttlSeconds = 60 * 60,
+  ): Promise<string> {
+    const row = await this.get(workspaceId, mediaId);
+    if (row.storageKind === "spaces") {
+      return this.storage.getSignedUrl(row.storedPath, ttlSeconds);
+    }
+    // Local storage: mint a public token and build the backend URL.
+    const token = await this.mintPublicToken(
+      workspaceId,
+      mediaId,
+      ttlSeconds * 1000,
+    );
+    const base =
+      process.env.PUBLIC_BASE_URL ??
+      process.env.APP_BASE_URL ??
+      "http://localhost:3001";
+    return `${base.replace(/\/$/, "")}/api/media/${mediaId}/public?token=${token}`;
+  }
+
   async findByPublicToken(token: string) {
     if (!token) return null;
     const row = await this.prisma.raw.media.findUnique({

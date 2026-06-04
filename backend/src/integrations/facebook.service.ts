@@ -618,22 +618,50 @@ export class FacebookService {
     }));
   }
 
-  async sendDirectMessage(workspaceId: string, recipientId: string, message: string) {
+  async sendDirectMessage(
+    workspaceId: string,
+    recipientId: string,
+    message: string,
+    mediaId?: string,
+  ) {
     const { token, pageId } = await this.requireToken(workspaceId);
-    // Note: Graph requires { recipient: {id}, message: {text} } as JSON.
-    // Our existing graphPost is form-encoded; use a JSON variant inline.
     const url = `${GRAPH}/${pageId}/messages?access_token=${encodeURIComponent(token)}`;
-    const body = JSON.stringify({
-      recipient: { id: recipientId },
-      message: { text: message },
-      messaging_type: "RESPONSE",
-    });
-    const res = await this.fetchJson<{ message_id: string; recipient_id: string }>(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-    return { messageId: res.message_id, recipientId: res.recipient_id, ok: true };
+
+    // If an attachment is included, send image first, then text in a second
+    // call. Meta's /messages accepts EITHER text OR attachment per call —
+    // combining them silently drops the text. Two calls keeps both visible.
+    if (mediaId) {
+      const imageUrl = await this.media.resolveExternalUrl(workspaceId, mediaId, 60 * 60);
+      await this.fetchJson<{ message_id: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: { id: recipientId },
+          message: {
+            attachment: {
+              type: "image",
+              payload: { url: imageUrl, is_reusable: false },
+            },
+          },
+          messaging_type: "RESPONSE",
+        }),
+      });
+    }
+
+    let messageId: string | undefined;
+    if (message && message.trim().length > 0) {
+      const res = await this.fetchJson<{ message_id: string; recipient_id: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: { id: recipientId },
+          message: { text: message },
+          messaging_type: "RESPONSE",
+        }),
+      });
+      messageId = res.message_id;
+    }
+    return { messageId, recipientId, ok: true };
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────

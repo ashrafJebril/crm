@@ -14,7 +14,7 @@ import { JwtService } from "@nestjs/jwt";
 import { randomBytes } from "crypto";
 import type { Response } from "express";
 import { FacebookService } from "./facebook.service";
-import { ConnectFacebookDto, EditPostDto, PublishToPageDto, ReplyToCommentDto } from "./facebook.dto";
+import { ConnectFacebookDto, EditPostDto, PublishToPageDto, ReplyToCommentDto, SendDmDto } from "./facebook.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
 
@@ -230,8 +230,13 @@ export class FacebookController {
   sendDirectMessage(
     @CurrentWorkspace() workspaceId: string,
     @Param("recipientId") recipientId: string,
-    @Body() dto: ReplyToCommentDto,
+    @Body() dto: SendDmDto,
   ) {
-    return this.fb.sendDirectMessage(workspaceId, recipientId, dto.message);
+    return this.fb.sendDirectMessage(
+      workspaceId,
+      recipientId,
+      dto.message,
+      dto.mediaId,
+    );
   }
 }

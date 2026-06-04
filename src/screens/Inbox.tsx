@@ -18,10 +18,12 @@ import {
   IconSend,
   IconSparkles,
   IconTemplate,
+  IconX,
 } from "@/icons";
 import { AGENTS, findAgent } from "@/data/agents";
-import { api } from "@/api/client";
+import { api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
 import {
   CHANNEL_LABEL,
@@ -39,6 +41,8 @@ import {
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
+import { MediaPicker } from "@/components/MediaPicker";
+import type { Media } from "@/lib/types";
 
 type FilterId = "all" | "ai" | "human" | "unread" | "closed" | "spam";
 type ConversationDetail = Conversation & { messages: Message[] };
@@ -230,7 +234,7 @@ interface InboxListProps {
 interface ConversationPaneProps {
   conv: ConversationDetail;
   contactById: Map<string, Contact>;
-  onSend: (body: string) => Promise<void>;
+  onSend: (body: string, mediaId?: string) => Promise<void>;
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
@@ -1158,24 +1162,7 @@ function Bubble({ m, agent }: BubbleProps) {
           }}
         >
           {m.body}
-          {m.attach && (
-            <div
-              style={{
-                marginTop: 6,
-                padding: "8px 10px",
-                border: "1px dashed var(--line)",
-                borderRadius: 8,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-              }}
-            >
-              <IconBook w={12} />
-              {m.attach}
-            </div>
-          )}
+          {m.attach && <MessageAttachment value={m.attach} />}
         </div>
         <div
           className="mono"
@@ -1209,6 +1196,8 @@ function ConversationPane({
   const agent = findAgent(conv.agent);
   const { user } = useAuth();
   const [draft, setDraft] = useState<string>("");
+  const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
 
   // Auto-scroll the thread to the latest message — but only when the user is
   // already near the bottom. Standard chat UX: if they've scrolled up to
@@ -1235,9 +1224,14 @@ function ConversationPane({
 
   const handleSend = () => {
     const body = draft.trim();
-    if (!body || sending) return;
-    onSend(body)
-      .then(() => setDraft(""))
+    // Allow sending if there's text OR an image attachment.
+    if (!body && !attachedMedia) return;
+    if (sending) return;
+    onSend(body, attachedMedia?.id)
+      .then(() => {
+        setDraft("");
+        setAttachedMedia(null);
+      })
       .catch(() => {
         // error surfaced via sendError
       });
@@ -1581,8 +1575,24 @@ function ConversationPane({
               {sendError}
             </div>
           )}
+          {attachedMedia && (
+            <AttachmentPreview
+              media={attachedMedia}
+              onRemove={() => setAttachedMedia(null)}
+              label={tx("Attached", "مرفق")}
+            />
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-            <button className="btn ghost icon sm">
+            <button
+              type="button"
+              className="btn ghost icon sm"
+              onClick={() => setPickerOpen(true)}
+              title={tx("Attach image", "إرفاق صورة")}
+              aria-label={tx("Attach image", "إرفاق صورة")}
+              style={{
+                color: attachedMedia ? "var(--accent)" : undefined,
+              }}
+            >
               <IconAttach w={14} />
             </button>
             <button className="btn ghost icon sm">
@@ -1604,7 +1614,10 @@ function ConversationPane({
             <button
               className="btn primary"
               onClick={handleSend}
-              disabled={sending || draft.trim().length === 0}
+              disabled={
+                sending ||
+                (draft.trim().length === 0 && !attachedMedia)
+              }
               aria-busy={sending}
             >
               {sending ? (
@@ -1637,6 +1650,226 @@ function ConversationPane({
           border: 1px solid var(--line-soft); border-radius: 999px; background: var(--bg-elev); }
         @keyframes aram-spin { to { transform: rotate(360deg); } }
       `}</style>
+
+      <MediaPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={(m) => setAttachedMedia(m)}
+      />
+    </div>
+  );
+}
+
+/**
+ * Renders a message attachment. The `value` field is either:
+ *  - an absolute URL (legacy / inbound media from Graph) → use directly
+ *  - our internal Media id (outbound sends from the composer) → load via
+ *    /api/media/:id/file with the bearer token attached
+ */
+function MessageAttachment({ value }: { value: string }) {
+  const isUrl = /^https?:\/\//i.test(value);
+  if (isUrl) {
+    return (
+      <a
+        href={value}
+        target="_blank"
+        rel="noreferrer"
+        style={{ display: "block", marginTop: 6 }}
+      >
+        <img
+          src={value}
+          alt="attachment"
+          style={{
+            maxWidth: 260,
+            maxHeight: 260,
+            borderRadius: 8,
+            display: "block",
+          }}
+        />
+      </a>
+    );
+  }
+  // Treat as media id.
+  const base =
+    (import.meta.env.VITE_API_URL as string | undefined) ??
+    "http://localhost:3001/api";
+  const token = tokenStore.get();
+  return (
+    <div style={{ marginTop: 6 }}>
+      <InboxMediaImage
+        url={`${base}/media/${value}/file`}
+        token={token}
+        alt="attachment"
+      />
+    </div>
+  );
+}
+
+function InboxMediaImage({
+  url,
+  token,
+  alt,
+}: {
+  url: string;
+  token: string | null;
+  alt: string;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((b) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(b);
+        setSrc(objectUrl);
+      })
+      .catch(() => {
+        /* leave null */
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url, token]);
+  if (!src) {
+    return (
+      <div
+        className="mono muted pulse"
+        style={{
+          width: 160,
+          height: 120,
+          background: "var(--bg-2)",
+          borderRadius: 8,
+          display: "grid",
+          placeItems: "center",
+          fontSize: 10,
+        }}
+      >
+        …
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      style={{
+        maxWidth: 260,
+        maxHeight: 260,
+        borderRadius: 8,
+        display: "block",
+      }}
+    />
+  );
+}
+
+function AttachmentPreview({
+  media,
+  onRemove,
+  label,
+}: {
+  media: Media;
+  onRemove: () => void;
+  label: string;
+}) {
+  const base =
+    (import.meta.env.VITE_API_URL as string | undefined) ??
+    "http://localhost:3001/api";
+  const token = tokenStore.get();
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    fetch(`${base}/media/${media.id}/file`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((b) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(b);
+        setSrc(objectUrl);
+      })
+      .catch(() => {
+        /* leave src null */
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [base, media.id, token]);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginTop: 6,
+        padding: "6px 8px 6px 6px",
+        border: "1px solid var(--accent-ring)",
+        background: "var(--accent-soft)",
+        borderRadius: 8,
+        alignSelf: "flex-start",
+      }}
+    >
+      <div
+        style={{
+          width: 36,
+          height: 36,
+          background: "var(--bg-2)",
+          borderRadius: 6,
+          overflow: "hidden",
+          display: "grid",
+          placeItems: "center",
+          flex: "0 0 auto",
+        }}
+      >
+        {src ? (
+          <img
+            src={src}
+            alt={media.fileName}
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : (
+          <span className="mono muted" style={{ fontSize: 9 }}>…</span>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 11 }}>
+        <div
+          className="mono"
+          style={{
+            color: "var(--accent)",
+            fontSize: 9,
+            textTransform: "uppercase",
+            letterSpacing: 0.06,
+          }}
+        >
+          {label}
+        </div>
+        <div
+          style={{
+            color: "var(--ink-1)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            maxWidth: 200,
+          }}
+          title={media.fileName}
+        >
+          {media.fileName}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="btn ghost icon sm"
+        onClick={onRemove}
+        aria-label="Remove attachment"
+        style={{ color: "var(--ink-2)" }}
+      >
+        <IconX w={11} />
+      </button>
     </div>
   );
 }
@@ -1892,9 +2125,9 @@ function InboxImpl() {
   void AGENTS;
 
   // ─── Data ──────────────────────────────────────────────────────────────
-  // Poll the conversation list and active thread so new WhatsApp/AI messages
-  // appear without a manual refresh. Pauses when the tab is hidden.
-  const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 5000 });
+  // Realtime push (socket.io) keeps the inbox in sync; the polls below are a
+  // slow safety net for missed events (network blip, server restart).
+  const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 30000 });
   const contactsQ = useFetch<Contact[]>("/contacts");
 
   // Live Facebook Messenger: only fetch when integration is connected.
@@ -1902,13 +2135,13 @@ function InboxImpl() {
   const fbConnected = fbStatusQ.data?.connected === true;
   const fbConvsQ = useFetch<FbConv[]>(
     fbConnected ? "/integrations/facebook/conversations" : null,
-    { pollMs: 5000 },
+    { pollMs: 30000 },
   );
   const fbMsgsQ = useFetch<FbMsg[]>(
     fbConnected && isFbConvId(activeId)
       ? `/integrations/facebook/conversations/${activeId}/messages`
       : null,
-    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
 
   // Internal active query: skip when activeId is a Facebook OR Instagram
@@ -1917,13 +2150,11 @@ function InboxImpl() {
     activeId && !isFbConvId(activeId) && !isIgConvId(activeId)
       ? `/conversations/${activeId}`
       : null,
-    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
 
-  // Live Instagram (mirrors the FB pattern): pull conversations/messages
-  // straight from Graph each poll so new DMs surface in ~5s instead of
-  // ~35s (the prior DB-sync path). Backend prefixes IG thread ids with
-  // `ig:` so we can tell them apart from FB ids.
+  // Live Instagram (mirrors the FB pattern). The realtime push handles the
+  // common case; this poll is a safety net.
   const igStatusQ = useFetch<{ connected?: boolean }>(
     "/integrations/instagram/status",
     { pollMs: 60000 },
@@ -1931,13 +2162,32 @@ function InboxImpl() {
   const igConnected = igStatusQ.data?.connected === true;
   const igConvsQ = useFetch<IgConv[]>(
     igConnected ? "/integrations/instagram/conversations" : null,
-    { pollMs: 5000 },
+    { pollMs: 30000 },
   );
   const igMsgsQ = useFetch<IgMsg[]>(
     igConnected && isIgConvId(activeId)
       ? `/integrations/instagram/conversations/${stripIgPrefix(activeId!)}/messages`
       : null,
-    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 3000 },
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
+  );
+
+  // Backend emits `inbox.activity` whenever a message lands or a conversation
+  // changes (WhatsApp webhook, Meta webhook, REST send/update). Each event
+  // refetches the affected list and bumps `messageVersion` so the active
+  // thread re-queries. activeId/conversationId routing keeps refetches scoped.
+  useRealtime<{ channel: string; conversationId?: string }>(
+    "inbox.activity",
+    (evt) => {
+      const ch = evt.channel;
+      const affectsActive =
+        (ch === "whatsapp" && activeId === evt.conversationId) ||
+        (ch === "facebook" && isFbConvId(activeId)) ||
+        (ch === "instagram" && isIgConvId(activeId));
+      if (affectsActive) setMessageVersion((v) => v + 1);
+      if (ch === "facebook") fbConvsQ.refetch();
+      else if (ch === "instagram") igConvsQ.refetch();
+      else convsQ.refetch();
+    },
   );
 
   // Conversations come from two sources:
@@ -2132,27 +2382,35 @@ function InboxImpl() {
 
   // Live Facebook Messenger send: posts via Graph API to the recipient
   // associated with the active thread.
-  const sendFbMessage = useMutation<{ recipientId: string; body: string }, { messageId: string }>(
-    (input) =>
-      api.post<{ messageId: string }>(
-        `/integrations/facebook/conversations/${input.recipientId}/send`,
-        { message: input.body },
-      ),
+  const sendFbMessage = useMutation<
+    { recipientId: string; body: string; mediaId?: string },
+    { messageId: string }
+  >((input) =>
+    api.post<{ messageId: string }>(
+      `/integrations/facebook/conversations/${input.recipientId}/send`,
+      { message: input.body, mediaId: input.mediaId },
+    ),
   );
 
   // Instagram outbound: posts via Graph through the linked FB Page.
-  const sendIgMessage = useMutation<{ conversationId: string; body: string }, { ok: true; messageId?: string }>(
-    (input) =>
-      api.post(`/integrations/instagram/conversations/${input.conversationId}/send`, {
-        message: input.body,
-      }),
+  const sendIgMessage = useMutation<
+    { conversationId: string; body: string; mediaId?: string },
+    { ok: true; messageId?: string }
+  >((input) =>
+    api.post(`/integrations/instagram/conversations/${input.conversationId}/send`, {
+      message: input.body,
+      mediaId: input.mediaId,
+    }),
   );
   // Live IG DM send — uses IGSID directly so we don't need a DB conversation row.
-  const sendIgLiveMessage = useMutation<{ igsid: string; body: string }, { ok: true; messageId?: string }>(
-    (input) =>
-      api.post(`/integrations/instagram/conversations/by-igsid/${input.igsid}/send`, {
-        message: input.body,
-      }),
+  const sendIgLiveMessage = useMutation<
+    { igsid: string; body: string; mediaId?: string },
+    { ok: true; messageId?: string }
+  >((input) =>
+    api.post(`/integrations/instagram/conversations/by-igsid/${input.igsid}/send`, {
+      message: input.body,
+      mediaId: input.mediaId,
+    }),
   );
 
   // WhatsApp outbound: posts via Cloud API.
@@ -2180,32 +2438,31 @@ function InboxImpl() {
     }, 15000);
   };
 
-  const handleSend = async (body: string): Promise<void> => {
+  const handleSend = async (body: string, mediaId?: string): Promise<void> => {
     if (!activeId) return;
     if (isFbConvId(activeId)) {
       const fbConv = (fbConvsQ.data ?? []).find((c) => c.id === activeId);
       // Meta /messages requires the Page-Scoped ID (numeric), not our DB cuid.
       const recipientId = fbConv?.contactPsid;
       if (!recipientId) return;
-      addPending(activeId, body);
-      await sendFbMessage.mutate({ recipientId, body });
-      // No refetch — the existing 3s poll on fbMsgsQ will pick this up.
+      if (body) addPending(activeId, body);
+      await sendFbMessage.mutate({ recipientId, body, mediaId });
       return;
     }
     if (isIgConvId(activeId)) {
       const igConv = (igConvsQ.data ?? []).find((c) => c.id === activeId);
       const igsid = igConv?.contactIgsid;
       if (!igsid) return;
-      addPending(activeId, body);
-      await sendIgLiveMessage.mutate({ igsid, body });
-      // No refetch — the existing 3s poll on igMsgsQ will pick this up.
+      if (body) addPending(activeId, body);
+      await sendIgLiveMessage.mutate({ igsid, body, mediaId });
       return;
     }
     // Route by channel for DB-stored conversations.
     const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
     if (conv?.channel === "instagram") {
-      await sendIgMessage.mutate({ conversationId: activeId, body });
+      await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
     } else if (conv?.channel === "whatsapp") {
+      // WhatsApp outbound image is a follow-up — for now only text is sent.
       await sendWaMessage.mutate({ conversationId: activeId, body });
     } else {
       // Fallback: just write to DB (web chat, etc.)

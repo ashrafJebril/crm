@@ -4,7 +4,7 @@ import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api, tokenStore } from "@/api/client";
-import { IconPlus, IconMore } from "@/icons";
+import { IconPlus, IconTrash } from "@/icons";
 import type { Media } from "@/lib/types";
 
 function formatBytes(n: number): string {
@@ -25,6 +25,11 @@ function MediaImpl() {
   const deleteMut = useMutation<{ id: string }, { ok: true }>((input) =>
     api.delete(`/media/${input.id}`),
   );
+
+  // Asks for confirmation before deleting. Backed by a styled in-app dialog
+  // instead of the native `window.confirm` (which is unstyleable + jarring).
+  const [confirmTarget, setConfirmTarget] = useState<Media | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   const onPickFile = () => fileInputRef.current?.click();
 
@@ -69,19 +74,22 @@ function MediaImpl() {
     }
   };
 
-  const onDelete = async (m: Media) => {
-    if (
-      !window.confirm(
-        tx(
-          `Delete ${m.fileName}? This cannot be undone.`,
-          `حذف ${m.fileName}؟ لا يمكن التراجع.`,
-        ),
-      )
-    ) {
-      return;
+  const requestDelete = (m: Media) => {
+    setConfirmError(null);
+    setConfirmTarget(m);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmTarget) return;
+    try {
+      await deleteMut.mutate({ id: confirmTarget.id });
+      setConfirmTarget(null);
+      listQ.refetch();
+    } catch (err) {
+      setConfirmError(
+        err instanceof Error ? err.message : tx("Delete failed.", "فشل الحذف."),
+      );
     }
-    await deleteMut.mutate({ id: m.id });
-    listQ.refetch();
   };
 
   const items = listQ.data ?? [];
@@ -163,8 +171,174 @@ function MediaImpl() {
           }}
         >
           {items.map((m) => (
-            <MediaTile key={m.id} m={m} onDelete={() => onDelete(m)} />
+            <MediaTile key={m.id} m={m} onDelete={() => requestDelete(m)} />
           ))}
+        </div>
+      </div>
+
+      {confirmTarget && (
+        <DeleteConfirmDialog
+          fileName={confirmTarget.fileName}
+          busy={deleteMut.loading}
+          error={confirmError}
+          onCancel={() => setConfirmTarget(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+interface DeleteConfirmDialogProps {
+  fileName: string;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}
+
+function DeleteConfirmDialog({
+  fileName,
+  busy,
+  error,
+  onCancel,
+  onConfirm,
+}: DeleteConfirmDialogProps) {
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
+
+  // Esc to cancel.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !busy) onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={busy ? undefined : onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        display: "grid",
+        placeItems: "center",
+        background: "oklch(0 0 0 / 0.5)",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(420px, 92vw)",
+          background: "var(--bg-elev)",
+          border: "1px solid var(--line)",
+          borderRadius: 14,
+          boxShadow: "var(--shadow-lg)",
+          padding: 20,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span
+            aria-hidden
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 999,
+              background: "color-mix(in oklch, var(--bad) 16%, transparent)",
+              color: "var(--bad)",
+              display: "grid",
+              placeItems: "center",
+              flex: "0 0 auto",
+            }}
+          >
+            <IconTrash w={18} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>
+              {tx("Delete this file?", "حذف هذا الملف؟")}
+            </h3>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--ink-2)",
+                marginTop: 4,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title={fileName}
+            >
+              {fileName}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--ink-2)",
+            lineHeight: 1.5,
+          }}
+        >
+          {tx(
+            "The file will be permanently removed from storage. This cannot be undone.",
+            "سيتم حذف الملف نهائيًا من التخزين. لا يمكن التراجع عن هذا الإجراء.",
+          )}
+        </div>
+
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--bad)",
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: "color-mix(in oklch, var(--bad) 10%, transparent)",
+              border: "1px solid color-mix(in oklch, var(--bad) 30%, transparent)",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            justifyContent: "flex-end",
+            marginTop: 4,
+          }}
+        >
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={onCancel}
+            disabled={busy}
+          >
+            {tx("Cancel", "إلغاء")}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              background: "var(--bad)",
+              color: "white",
+              borderColor: "transparent",
+            }}
+          >
+            <IconTrash w={13} />
+            {busy ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "حذف")}
+          </button>
         </div>
       </div>
     </div>
@@ -231,11 +405,17 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
             type="button"
             className="btn ghost sm"
             onClick={onDelete}
-            style={{ padding: "0 4px", color: "var(--ink-3)" }}
             aria-label={tx("Delete", "حذف")}
             title={tx("Delete", "حذف")}
+            style={{ padding: "0 6px", color: "var(--ink-3)" }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "var(--bad)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--ink-3)";
+            }}
           >
-            <IconMore w={11} />
+            <IconTrash w={13} />
           </button>
         </div>
       </div>

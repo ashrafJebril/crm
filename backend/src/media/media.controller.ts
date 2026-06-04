@@ -55,8 +55,22 @@ export class MediaController {
   ) {
     const resolved = await this.svc.resolveServe(workspaceId, id);
     if (resolved.kind === "signed-url") {
-      // Cache-friendly redirect — the URL itself carries its own expiry.
-      return res.redirect(302, resolved.url);
+      // Proxy the bytes instead of 302-redirecting. The frontend's fetch()
+      // sends an Authorization header, which triggers a CORS preflight on
+      // the redirect target — and DO Spaces' header allowlist doesn't
+      // include `authorization`. Streaming through the backend keeps the
+      // browser same-origin so CORS never enters the picture. Cost: one
+      // extra hop. For 20 MB-capped images, negligible.
+      const upstream = await fetch(resolved.url);
+      if (!upstream.ok) {
+        throw new NotFoundException(
+          `Upstream fetch failed (${upstream.status})`,
+        );
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", resolved.mimeType);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      return res.send(buf);
     }
     res.setHeader("Content-Type", resolved.mimeType);
     res.setHeader("Cache-Control", "private, max-age=3600");
