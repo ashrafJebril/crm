@@ -115,6 +115,12 @@ model Message {
   agent          String?
   attach         String?
 
+  // Meta's wamid (WhatsApp) / Graph mid (Messenger). Set on outbound so we can
+  // match incoming delivery-status webhooks back to the right Message row.
+  metaMessageId    String?
+  deliveryStatus   String?   // sent | delivered | read | failed
+  deliveryStatusAt DateTime?
+
   workspaceId  String
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -124,6 +130,7 @@ model Message {
 
   @@index([conversationId])
   @@index([workspaceId])
+  @@index([metaMessageId])
 }
 
 model Appointment {

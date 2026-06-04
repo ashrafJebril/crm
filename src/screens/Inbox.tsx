@@ -235,6 +235,11 @@ interface ConversationPaneProps {
   conv: ConversationDetail;
   contactById: Map<string, Contact>;
   onSend: (body: string, mediaId?: string) => Promise<void>;
+  onSendTemplate: (
+    name: string,
+    language: string,
+    variables: string[],
+  ) => Promise<void>;
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
@@ -1173,7 +1178,8 @@ function Bubble({ m, agent }: BubbleProps) {
             textAlign: isOut ? "end" : "start",
           }}
         >
-          {m.t} {isOut && "✓✓"}
+          {m.t}
+          {isOut && <DeliveryTicks status={m.deliveryStatus ?? undefined} />}
         </div>
       </div>
     </div>
@@ -1184,6 +1190,7 @@ function ConversationPane({
   conv,
   contactById,
   onSend,
+  onSendTemplate,
   sending,
   sendError,
   onConvertToTicket,
@@ -1198,6 +1205,15 @@ function ConversationPane({
   const [draft, setDraft] = useState<string>("");
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState<boolean>(false);
+
+  // WhatsApp 24-hour customer-service window. Backend computes `waWindowOpen`
+  // on the conversation payload (true when the last inbound message landed
+  // within 24h). Outside the window, free-form text/image sends are blocked
+  // by Meta — only approved templates work.
+  const isWhatsApp = conv.channel === "whatsapp";
+  const waWindowOpen = conv.waWindowOpen !== false;
+  const waBlocked = isWhatsApp && !waWindowOpen;
 
   // Auto-scroll the thread to the latest message — but only when the user is
   // already near the bottom. Standard chat UX: if they've scrolled up to
@@ -1543,14 +1559,22 @@ function ConversationPane({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
+              if (waBlocked) return;
               // Enter sends, Shift+Enter inserts a newline (standard chat UX).
-              // Skip while a send is already in flight or the draft is empty.
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 handleSend();
               }
             }}
-            placeholder={tx("Type a reply…", "اكتب ردًّا…")}
+            disabled={waBlocked}
+            placeholder={
+              waBlocked
+                ? tx(
+                    "Pick a template above to message outside the 24h window.",
+                    "اختر قالبًا أعلاه للمراسلة خارج نافذة الـ٢٤ ساعة.",
+                  )
+                : tx("Type a reply…", "اكتب ردًّا…")
+            }
             style={{
               width: "100%",
               minHeight: 60,
@@ -1573,6 +1597,45 @@ function ConversationPane({
               }}
             >
               {sendError}
+            </div>
+          )}
+          {waBlocked && (
+            <div
+              style={{
+                marginTop: 6,
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: "color-mix(in oklch, var(--warn) 10%, transparent)",
+                border: "1px solid color-mix(in oklch, var(--warn) 35%, transparent)",
+                color: "var(--ink-1)",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <span style={{ color: "var(--warn)", fontSize: 14 }}>⚠</span>
+              <div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
+                <strong>
+                  {tx(
+                    "Outside the 24-hour window",
+                    "خارج نافذة الـ٢٤ ساعة",
+                  )}
+                </strong>
+                <div style={{ color: "var(--ink-2)", fontSize: 11, marginTop: 2 }}>
+                  {tx(
+                    "WhatsApp only allows pre-approved templates after 24h since the last customer message.",
+                    "واتساب يسمح فقط بالقوالب المعتمدة بعد مرور ٢٤ ساعة على آخر رسالة من العميل.",
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn primary sm"
+                onClick={() => setTemplatePickerOpen(true)}
+              >
+                {tx("Use template", "استخدم قالبًا")}
+              </button>
             </div>
           )}
           {attachedMedia && (
@@ -1616,6 +1679,7 @@ function ConversationPane({
               onClick={handleSend}
               disabled={
                 sending ||
+                waBlocked ||
                 (draft.trim().length === 0 && !attachedMedia)
               }
               aria-busy={sending}
@@ -1656,6 +1720,17 @@ function ConversationPane({
         onClose={() => setPickerOpen(false)}
         onPick={(m) => setAttachedMedia(m)}
       />
+
+      {isWhatsApp && (
+        <WhatsAppTemplatePicker
+          open={templatePickerOpen}
+          onClose={() => setTemplatePickerOpen(false)}
+          onSend={async (name, language, variables) => {
+            await onSendTemplate(name, language, variables);
+            setTemplatePickerOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1666,6 +1741,47 @@ function ConversationPane({
  *  - our internal Media id (outbound sends from the composer) → load via
  *    /api/media/:id/file with the bearer token attached
  */
+function DeliveryTicks({ status }: { status?: string }) {
+  // Render the WhatsApp-style check progression.
+  //   sent      → single grey ✓
+  //   delivered → grey ✓✓
+  //   read      → blue ✓✓
+  //   failed    → red ⚠
+  //   (unknown) → single grey ✓ (assume sent if outbound)
+  if (status === "failed") {
+    return (
+      <span
+        style={{ marginInlineStart: 6, color: "var(--bad)" }}
+        title="Failed"
+      >
+        ⚠
+      </span>
+    );
+  }
+  if (status === "read") {
+    return (
+      <span
+        style={{ marginInlineStart: 6, color: "#34B7F1" }}
+        title="Read"
+      >
+        ✓✓
+      </span>
+    );
+  }
+  if (status === "delivered") {
+    return (
+      <span style={{ marginInlineStart: 6 }} title="Delivered">
+        ✓✓
+      </span>
+    );
+  }
+  return (
+    <span style={{ marginInlineStart: 6 }} title="Sent">
+      ✓
+    </span>
+  );
+}
+
 function MessageAttachment({ value }: { value: string }) {
   const isUrl = /^https?:\/\//i.test(value);
   if (isUrl) {
@@ -1762,6 +1878,378 @@ function InboxMediaImage({
         display: "block",
       }}
     />
+  );
+}
+
+interface ApprovedTemplate {
+  id: string;
+  name: string;
+  lang: string;
+  category: string;
+  status: string;
+  body?: string | null;
+}
+
+/**
+ * Modal that lists APPROVED WhatsApp templates and lets the operator fill the
+ * BODY component's {{1}}, {{2}}, … placeholders before sending. Only templates
+ * with status === "approved" can actually be delivered; we filter the list
+ * accordingly so the user can't pick a pending/rejected one and get a Meta
+ * error at send time.
+ */
+function WhatsAppTemplatePicker({
+  open,
+  onClose,
+  onSend,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSend: (name: string, language: string, variables: string[]) => Promise<void>;
+}) {
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
+  const listQ = useFetch<ApprovedTemplate[]>(open ? "/templates" : null);
+  const items = (listQ.data ?? []).filter((tpl) => tpl.status === "approved");
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [vars, setVars] = useState<string[]>([]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selected = items.find((tpl) => tpl.id === selectedId) ?? null;
+
+  // Parse {{1}}, {{2}}, … placeholders out of the body so we know how many
+  // variable inputs to show. Returns the highest index seen.
+  const variableCount = useMemo(() => {
+    if (!selected?.body) return 0;
+    const matches = selected.body.matchAll(/\{\{(\d+)\}\}/g);
+    let max = 0;
+    for (const m of matches) {
+      const n = parseInt(m[1], 10);
+      if (n > max) max = n;
+    }
+    return max;
+  }, [selected]);
+
+  useEffect(() => {
+    // Reset variable inputs when a different template is picked.
+    setVars(Array.from({ length: variableCount }, () => ""));
+    setError(null);
+  }, [selectedId, variableCount]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !sending) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, sending, onClose]);
+
+  if (!open) return null;
+
+  const canSend =
+    selected !== null &&
+    !sending &&
+    vars.slice(0, variableCount).every((v) => v.trim().length > 0);
+
+  const handleSend = async () => {
+    if (!selected) return;
+    setSending(true);
+    setError(null);
+    try {
+      await onSend(
+        selected.name,
+        selected.lang,
+        vars.slice(0, variableCount).map((v) => v.trim()),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Send failed");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // Live preview of what the customer will see, with variables substituted.
+  const preview = useMemo(() => {
+    if (!selected?.body) return "";
+    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
+      const i = parseInt(idx, 10) - 1;
+      const v = vars[i]?.trim();
+      return v || `{{${idx}}}`;
+    });
+  }, [selected, vars]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={sending ? undefined : onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        display: "grid",
+        placeItems: "center",
+        background: "oklch(0 0 0 / 0.5)",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(640px, 92vw)",
+          maxHeight: "min(640px, 88vh)",
+          background: "var(--bg-elev)",
+          border: "1px solid var(--line)",
+          borderRadius: 14,
+          boxShadow: "var(--shadow-lg)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            padding: "14px 16px",
+            borderBottom: "1px solid var(--line-soft)",
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: 15 }}>
+            {tx("Send a WhatsApp template", "أرسل قالب واتساب")}
+          </h3>
+          <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 4 }}>
+            {tx(
+              "Templates must be APPROVED by Meta. Submit new ones from the Templates screen.",
+              "يجب أن تكون القوالب معتمدة من Meta. أضف قوالب جديدة من شاشة القوالب.",
+            )}
+          </div>
+        </div>
+
+        <div
+          style={{
+            flex: 1,
+            display: "grid",
+            gridTemplateColumns: "minmax(180px, 220px) 1fr",
+            minHeight: 0,
+          }}
+        >
+          {/* Template list */}
+          <div
+            style={{
+              borderInlineEnd: "1px solid var(--line-soft)",
+              overflowY: "auto",
+              padding: 8,
+            }}
+          >
+            {listQ.loading && items.length === 0 ? (
+              <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
+                {tx("loading…", "جارٍ التحميل…")}
+              </div>
+            ) : items.length === 0 ? (
+              <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
+                {tx(
+                  "No approved templates yet.",
+                  "لا توجد قوالب معتمدة بعد.",
+                )}
+              </div>
+            ) : (
+              items.map((tpl) => {
+                const isActive = selectedId === tpl.id;
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => setSelectedId(tpl.id)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "start",
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      background: isActive ? "var(--accent-soft)" : "transparent",
+                      border: isActive
+                        ? "1px solid var(--accent-ring)"
+                        : "1px solid transparent",
+                      cursor: "pointer",
+                      marginBottom: 2,
+                      fontFamily: "inherit",
+                      color: "var(--ink)",
+                    }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>
+                      {tpl.name}
+                    </div>
+                    <div
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: "var(--ink-3)",
+                        marginTop: 2,
+                      }}
+                    >
+                      {tpl.lang.toUpperCase()} · {tpl.category.toLowerCase()}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Preview + variables */}
+          <div style={{ overflowY: "auto", padding: 16 }}>
+            {!selected ? (
+              <div
+                className="mono muted"
+                style={{ fontSize: 12, opacity: 0.7 }}
+              >
+                {tx(
+                  "Pick a template on the left.",
+                  "اختر قالبًا من القائمة.",
+                )}
+              </div>
+            ) : (
+              <>
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: "var(--ink-3)",
+                    textTransform: "uppercase",
+                    letterSpacing: 0.06,
+                  }}
+                >
+                  {tx("Preview", "معاينة")}
+                </div>
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: 10,
+                    background: "var(--bg-2)",
+                    border: "1px solid var(--line-soft)",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {preview || (
+                    <span className="muted">
+                      {tx("(empty body)", "(بدون نص)")}
+                    </span>
+                  )}
+                </div>
+
+                {variableCount > 0 && (
+                  <>
+                    <div
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: "var(--ink-3)",
+                        textTransform: "uppercase",
+                        letterSpacing: 0.06,
+                        marginTop: 16,
+                      }}
+                    >
+                      {tx("Variables", "المتغيرات")}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 6,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
+                    >
+                      {Array.from({ length: variableCount }, (_, i) => (
+                        <label
+                          key={i}
+                          style={{ display: "flex", flexDirection: "column", gap: 2 }}
+                        >
+                          <span
+                            className="mono"
+                            style={{ fontSize: 10, color: "var(--ink-3)" }}
+                          >
+                            {`{{${i + 1}}}`}
+                          </span>
+                          <input
+                            value={vars[i] ?? ""}
+                            onChange={(e) => {
+                              const next = [...vars];
+                              next[i] = e.target.value;
+                              setVars(next);
+                            }}
+                            placeholder={tx(
+                              `Value for {{${i + 1}}}`,
+                              `قيمة {{${i + 1}}}`,
+                            )}
+                            style={{
+                              height: 30,
+                              padding: "0 10px",
+                              background: "var(--bg-1)",
+                              border: "1px solid var(--line)",
+                              borderRadius: 6,
+                              color: "var(--ink)",
+                              fontSize: 13,
+                              outline: "none",
+                              fontFamily: "inherit",
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {error && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      background: "color-mix(in oklch, var(--bad) 10%, transparent)",
+                      color: "var(--bad)",
+                      fontSize: 12,
+                      border: "1px solid color-mix(in oklch, var(--bad) 30%, transparent)",
+                    }}
+                  >
+                    {error}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div
+          style={{
+            padding: "10px 14px",
+            borderTop: "1px solid var(--line-soft)",
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 8,
+          }}
+        >
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={onClose}
+            disabled={sending}
+          >
+            {tx("Cancel", "إلغاء")}
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={handleSend}
+            disabled={!canSend}
+          >
+            {sending ? tx("Sending…", "جارٍ الإرسال…") : tx("Send template", "إرسال القالب")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2413,12 +2901,37 @@ function InboxImpl() {
     }),
   );
 
-  // WhatsApp outbound: posts via Cloud API.
-  const sendWaMessage = useMutation<{ conversationId: string; body: string }, { ok: true; messageId?: string }>(
-    (input) =>
-      api.post(`/integrations/whatsapp/conversations/${input.conversationId}/send`, {
-        message: input.body,
-      }),
+  // WhatsApp outbound: posts via Cloud API. Optional mediaId attaches an image
+  // (or sends caption-only when body is empty).
+  const sendWaMessage = useMutation<
+    { conversationId: string; body: string; mediaId?: string },
+    { ok: true; wamid?: string }
+  >((input) =>
+    api.post(`/integrations/whatsapp/conversations/${input.conversationId}/send`, {
+      message: input.body,
+      mediaId: input.mediaId,
+    }),
+  );
+
+  // WhatsApp template send — required path for messaging outside the 24-hour
+  // customer-service window. Templates must already be APPROVED on the WABA.
+  const sendWaTemplate = useMutation<
+    {
+      conversationId: string;
+      name: string;
+      language: string;
+      variables: string[];
+    },
+    { ok: true; wamid?: string }
+  >((input) =>
+    api.post(
+      `/integrations/whatsapp/conversations/${input.conversationId}/send-template`,
+      {
+        name: input.name,
+        language: input.language,
+        variables: input.variables,
+      },
+    ),
   );
 
   const addPending = (convId: string, body: string) => {
@@ -2462,8 +2975,7 @@ function InboxImpl() {
     if (conv?.channel === "instagram") {
       await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
     } else if (conv?.channel === "whatsapp") {
-      // WhatsApp outbound image is a follow-up — for now only text is sent.
-      await sendWaMessage.mutate({ conversationId: activeId, body });
+      await sendWaMessage.mutate({ conversationId: activeId, body, mediaId });
     } else {
       // Fallback: just write to DB (web chat, etc.)
       await sendMessage.mutate({ conversationId: activeId, body });
@@ -2634,19 +3146,33 @@ function InboxImpl() {
           conv={active}
           contactById={contactById}
           onSend={handleSend}
+          onSendTemplate={async (name, language, variables) => {
+            if (!activeId) return;
+            await sendWaTemplate.mutate({
+              conversationId: activeId,
+              name,
+              language,
+              variables,
+            });
+            setMessageVersion((n) => n + 1);
+            convsQ.refetch();
+            activeQ.refetch();
+          }}
           sending={
             sendMessage.loading ||
             sendFbMessage.loading ||
             sendIgMessage.loading ||
             sendIgLiveMessage.loading ||
-            sendWaMessage.loading
+            sendWaMessage.loading ||
+            sendWaTemplate.loading
           }
           sendError={
             sendMessage.error ??
             sendFbMessage.error ??
             sendIgMessage.error ??
             sendIgLiveMessage.error ??
-            sendWaMessage.error
+            sendWaMessage.error ??
+            sendWaTemplate.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
           onToggleAiPaused={async (paused) => {

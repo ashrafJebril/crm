@@ -25,10 +25,44 @@ export class ConversationsService {
     });
   }
 
-  list(workspaceId: string) {
-    return this.prisma.conversation.findMany({
+  async list(workspaceId: string) {
+    const convs = await this.prisma.conversation.findMany({
       where: { workspaceId },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+    });
+
+    // 24-hour customer-service window state for WhatsApp conversations only.
+    // Inbox uses it to flip the composer to a template picker when the window
+    // closes. Other channels have different (or no) restrictions — skip the
+    // extra query for them.
+    const waConvIds = convs
+      .filter((c) => c.channel === "whatsapp")
+      .map((c) => c.id);
+    const lastInboundByConv = new Map<string, Date>();
+    if (waConvIds.length > 0) {
+      const grouped = await this.prisma.message.groupBy({
+        by: ["conversationId"],
+        where: {
+          workspaceId,
+          conversationId: { in: waConvIds },
+          from: "them",
+        },
+        _max: { createdAt: true },
+      });
+      for (const g of grouped) {
+        if (g._max.createdAt) lastInboundByConv.set(g.conversationId, g._max.createdAt);
+      }
+    }
+
+    const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return convs.map((c) => {
+      if (c.channel !== "whatsapp") return c;
+      const lastInboundAt = lastInboundByConv.get(c.id) ?? null;
+      const waWindowOpen = lastInboundAt
+        ? now - lastInboundAt.getTime() < WA_WINDOW_MS
+        : false;
+      return { ...c, lastInboundAt, waWindowOpen };
     });
   }
 
@@ -38,6 +72,24 @@ export class ConversationsService {
       include: { messages: { orderBy: { createdAt: "asc" } } },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
+
+    if (conv.channel === "whatsapp") {
+      // Walk messages backwards for the most recent inbound. Avoids a second
+      // query since we already have the full thread loaded.
+      let lastInboundAt: Date | null = null;
+      for (let i = conv.messages.length - 1; i >= 0; i--) {
+        if (conv.messages[i].from === "them") {
+          lastInboundAt = conv.messages[i].createdAt;
+          break;
+        }
+      }
+      const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
+      const waWindowOpen = lastInboundAt
+        ? Date.now() - lastInboundAt.getTime() < WA_WINDOW_MS
+        : false;
+      return { ...conv, lastInboundAt, waWindowOpen };
+    }
+
     return conv;
   }
 

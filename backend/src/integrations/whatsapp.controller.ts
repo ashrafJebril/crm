@@ -9,7 +9,13 @@ import {
   Query,
 } from "@nestjs/common";
 import { WhatsAppService } from "./whatsapp.service";
-import { ConnectWhatsAppDto, SendWhatsAppDto, TestSendWhatsAppDto } from "./whatsapp.dto";
+import {
+  ConnectByTokenDto,
+  ConnectWhatsAppDto,
+  SendWhatsAppDto,
+  SendWhatsAppTemplateDto,
+  TestSendWhatsAppDto,
+} from "./whatsapp.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
 
@@ -29,6 +35,14 @@ export class WhatsAppController {
     @Body() dto: ConnectWhatsAppDto,
   ) {
     return this.wa.connect(workspaceId, dto);
+  }
+
+  @Post("integrations/whatsapp/connect-by-token")
+  connectByToken(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: ConnectByTokenDto,
+  ) {
+    return this.wa.connectByToken(workspaceId, dto.accessToken);
   }
 
   @Post("integrations/whatsapp/oauth/exchange")
@@ -63,7 +77,27 @@ export class WhatsAppController {
     @Param("conversationId") conversationId: string,
     @Body() dto: SendWhatsAppDto,
   ) {
-    return this.wa.sendInConversation(workspaceId, conversationId, dto.message);
+    return this.wa.sendInConversation(
+      workspaceId,
+      conversationId,
+      dto.message,
+      dto.mediaId,
+    );
+  }
+
+  @Post("integrations/whatsapp/conversations/:conversationId/send-template")
+  sendTemplateInConversation(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("conversationId") conversationId: string,
+    @Body() dto: SendWhatsAppTemplateDto,
+  ) {
+    return this.wa.sendTemplateInConversation(
+      workspaceId,
+      conversationId,
+      dto.name,
+      dto.language,
+      dto.variables ?? [],
+    );
   }
 
   // ── Public webhook (Meta calls these) ───────────────────────────────────

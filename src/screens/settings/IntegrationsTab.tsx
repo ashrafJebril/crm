@@ -86,8 +86,7 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
   const [accessToken, setAccessToken] = useState("");
   const [verifyToken, setVerifyToken] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  const [esStarting, setEsStarting] = useState(false);
-  const [esError, setEsError] = useState<string | null>(null);
+  const [esError] = useState<string | null>(null);
 
   const connectMut = useMutation<
     {
@@ -99,10 +98,14 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
     WaStatus
   >((input) => api.post("/integrations/whatsapp/connect", input));
 
-  const exchangeMut = useMutation<
-    { code: string; phoneNumberId: string; wabaId: string },
-    WaStatus
-  >((input) => api.post("/integrations/whatsapp/oauth/exchange", input));
+  // One-field connect: customer pastes their access token, backend discovers
+  // the WABA + phone number via Graph and saves. This is the primary path —
+  // Meta's Embedded Signup popup requires Tech Provider status which isn't
+  // available for most direct integrators.
+  const [tokenOnly, setTokenOnly] = useState("");
+  const connectByTokenMut = useMutation<{ accessToken: string }, WaStatus>(
+    (input) => api.post("/integrations/whatsapp/connect-by-token", input),
+  );
 
   const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
     api.delete("/integrations/whatsapp/disconnect"),
@@ -157,66 +160,6 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
     return () => window.removeEventListener("message", onMessage);
   }, [wasigRef]);
 
-  const onEmbeddedSignup = () => {
-    const configId = import.meta.env.VITE_WA_CONFIG_ID as string | undefined;
-    if (!window.FB || !configId) {
-      setEsError(
-        tx(
-          "Embedded Signup is not configured yet. Set VITE_WA_APP_ID and VITE_WA_CONFIG_ID.",
-          "إعداد Embedded Signup غير مكتمل.",
-        ),
-      );
-      return;
-    }
-    setEsError(null);
-    setEsStarting(true);
-    wasigRef.phoneNumberId = undefined;
-    wasigRef.wabaId = undefined;
-
-    // FB SDK rejects async callbacks — wrap async work in an IIFE.
-    const onFbLogin = (resp: { authResponse?: { code?: string } | null }) => {
-      void (async () => {
-        const code = resp.authResponse?.code;
-        if (!code) {
-          setEsError(tx("Connection cancelled.", "تم الإلغاء."));
-          setEsStarting(false);
-          return;
-        }
-        // The window.message event should have populated phoneNumberId + wabaId.
-        await new Promise((r) => setTimeout(r, 500));
-        const pn = wasigRef.phoneNumberId;
-        const wa = wasigRef.wabaId;
-        if (!pn || !wa) {
-          setEsError(
-            tx(
-              "Setup didn't complete — phone number or WABA id missing.",
-              "لم يكتمل الإعداد — رقم الهاتف أو معرّف WABA مفقود.",
-            ),
-          );
-          setEsStarting(false);
-          return;
-        }
-        try {
-          await exchangeMut.mutate({ code, phoneNumberId: pn, wabaId: wa });
-          statusQ.refetch();
-          setStatus(tx("WhatsApp connected.", "تم الاتصال بواتساب."));
-          window.setTimeout(() => setStatus(null), 2400);
-        } catch (e) {
-          setEsError((e as Error).message);
-        } finally {
-          setEsStarting(false);
-        }
-      })();
-    };
-
-    window.FB.login(onFbLogin, {
-      config_id: configId,
-      response_type: "code",
-      override_default_response_type: true,
-      extras: { sessionInfoVersion: "3" },
-    });
-  };
-
   const onConnect = async () => {
     await connectMut.mutate({
       phoneNumberId: phoneNumberId.trim(),
@@ -229,6 +172,16 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
     setAccessToken("");
     setVerifyToken("");
     setShowForm(false);
+    statusQ.refetch();
+    setStatus(tx("WhatsApp connected.", "تم الاتصال بواتساب."));
+    window.setTimeout(() => setStatus(null), 2400);
+  };
+
+  const onConnectByToken = async () => {
+    const token = tokenOnly.trim();
+    if (token.length < 20) return;
+    await connectByTokenMut.mutate({ accessToken: token });
+    setTokenOnly("");
     statusQ.refetch();
     setStatus(tx("WhatsApp connected.", "تم الاتصال بواتساب."));
     window.setTimeout(() => setStatus(null), 2400);
@@ -406,32 +359,101 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="muted" style={{ fontSize: 11 }}>
-                  {tx(
-                    "Click Connect to launch Meta's Embedded Signup. Sign in with Facebook, select your WhatsApp Business Account, add your number — Meta handles migration if it's currently on the WhatsApp Business app.",
-                    "اضغط 'اربط' لإطلاق Meta Embedded Signup. سجّل الدخول بفيسبوك، اختر حساب واتساب الأعمال، وأضف رقمك — ستتولى Meta عملية النقل إذا كان الرقم على تطبيق واتساب الأعمال.",
-                  )}
+                <div style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.5 }}>
+                  <div style={{ fontWeight: 500, color: "var(--ink-1)", marginBottom: 4 }}>
+                    {tx(
+                      "Two-step setup:",
+                      "خطوتان فقط:",
+                    )}
+                  </div>
+                  <ol
+                    style={{
+                      margin: 0,
+                      paddingInlineStart: 18,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                    }}
+                  >
+                    <li>
+                      {tx(
+                        "Open Meta's WhatsApp API Setup, copy the temporary access token.",
+                        "افتح إعداد API لواتساب في Meta وانسخ رمز الوصول المؤقت.",
+                      )}
+                    </li>
+                    <li>
+                      {tx(
+                        "Paste the token below and click Connect. Aram discovers your phone number and WABA automatically.",
+                        "الصق الرمز أدناه واضغط 'اتصال'. سيكتشف Aram رقمك ومعرف WABA تلقائيًا.",
+                      )}
+                    </li>
+                  </ol>
                 </div>
-                <ErrorRow message={esError} />
+
+                <a
+                  href="https://business.facebook.com/wa/manage/home/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn"
+                  style={{
+                    alignSelf: "flex-start",
+                    fontSize: 12,
+                    textDecoration: "none",
+                  }}
+                >
+                  <IconGlobe w={13} />
+                  {tx("Open Meta WhatsApp Manager", "افتح إدارة واتساب في Meta")}
+                </a>
+
+                <Field
+                  label={tx("Paste your access token", "الصق رمز الوصول")}
+                  hint={tx(
+                    "From WhatsApp Manager → API Setup → 'Temporary access token'. Starts with EAA…",
+                    "من إعداد API → 'رمز الوصول المؤقت'. يبدأ بـ EAA…",
+                  )}
+                >
+                  <textarea
+                    value={tokenOnly}
+                    onChange={(e) => setTokenOnly(e.target.value)}
+                    placeholder="EAAR..."
+                    rows={3}
+                    style={{
+                      ...inputStyle,
+                      height: "auto",
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11,
+                      resize: "vertical",
+                    }}
+                  />
+                </Field>
+
+                <ErrorRow message={connectByTokenMut.error ?? esError} />
+
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   <button
                     type="button"
                     className="btn ghost sm"
                     onClick={() => setShowForm(true)}
-                    title={tx("Use manual credentials instead", "استخدام البيانات يدوياً")}
+                    title={tx(
+                      "I have multiple WABAs or want to paste all 3 IDs manually",
+                      "لدي عدة حسابات WABA أو أريد لصق كل المعرفات يدويًا",
+                    )}
                   >
-                    {tx("Manual setup", "إعداد يدوي")}
+                    {tx("Advanced setup", "إعداد متقدم")}
                   </button>
                   <button
                     type="button"
                     className="btn primary"
-                    onClick={onEmbeddedSignup}
-                    disabled={esStarting || exchangeMut.loading}
+                    onClick={onConnectByToken}
+                    disabled={
+                      connectByTokenMut.loading || tokenOnly.trim().length < 20
+                    }
                   >
                     <IconCheck w={12} />
-                    {esStarting || exchangeMut.loading
+                    {connectByTokenMut.loading
                       ? tx("Connecting…", "جارٍ الاتصال…")
-                      : tx("Connect WhatsApp", "اربط واتساب")}
+                      : tx("Connect", "اتصال")}
                   </button>
                 </div>
               </div>
@@ -445,6 +467,53 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
               <div className="muted" style={{ fontSize: 11 }}>
                 {tx("WABA ID", "معرف WABA")}:{" "}
                 <span className="mono">{statusQ.data.wabaId}</span>
+              </div>
+            )}
+            {statusQ.data?.verifyToken && (
+              <div
+                style={{
+                  marginTop: 4,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  background: "var(--bg-2)",
+                  border: "1px solid var(--line-soft)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: "var(--ink-3)",
+                    textTransform: "uppercase",
+                    letterSpacing: 0.06,
+                  }}
+                >
+                  {tx("Webhook setup", "إعداد Webhook")}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--ink-2)", lineHeight: 1.4 }}>
+                  {tx(
+                    "Configure Meta App → WhatsApp → Configuration → Webhook with these values:",
+                    "اضبط Meta App → WhatsApp → Configuration → Webhook بهذه القيم:",
+                  )}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px", fontSize: 11 }}>
+                  <span className="muted">{tx("Callback URL", "عنوان الـ Callback")}:</span>
+                  <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-1)", wordBreak: "break-all" }}>
+                    {`<your-public-url>/api/webhooks/whatsapp`}
+                  </code>
+                  <span className="muted">{tx("Verify Token", "رمز التحقق")}:</span>
+                  <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-1)", wordBreak: "break-all" }}>
+                    {statusQ.data.verifyToken}
+                  </code>
+                  <span className="muted">{tx("Webhook fields", "حقول Webhook")}:</span>
+                  <span style={{ fontSize: 11, color: "var(--ink-2)" }}>
+                    {tx("Subscribe to ", "اشترك في ")}
+                    <code style={{ fontFamily: "var(--font-mono)" }}>messages</code>
+                  </span>
+                </div>
               </div>
             )}
             {statusQ.data?.lastFetchedAt && (

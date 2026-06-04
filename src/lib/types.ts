@@ -193,12 +193,17 @@ export interface Contact {
   value: string;
 }
 
+export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
+
 export interface Message {
   from: "them" | "ai" | "human";
   t: string;
   body: string;
   agent?: string;
   attach?: string;
+  metaMessageId?: string | null;
+  deliveryStatus?: DeliveryStatus | null;
+  deliveryStatusAt?: string | null;
 }
 
 export interface Conversation {
@@ -218,6 +223,9 @@ export interface Conversation {
   aiPaused?: boolean;
   messages?: Message[];
   suggested?: string;
+  // WhatsApp-only: backend populates these when channel === "whatsapp".
+  lastInboundAt?: string | null;
+  waWindowOpen?: boolean;
 }
 
 export type AppointmentStatus =

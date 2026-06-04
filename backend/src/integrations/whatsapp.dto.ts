@@ -29,10 +29,39 @@ export class ConnectWhatsAppDto {
   displayPhoneNumber?: string;
 }
 
+export class ConnectByTokenDto {
+  @IsString()
+  @MinLength(20, { message: "Token looks too short to be a Meta access token" })
+  accessToken!: string;
+}
+
 export class SendWhatsAppDto {
+  // Allow empty when an image attachment is present (caption-only sends).
+  @IsString()
+  message!: string;
+
+  @IsOptional()
+  @IsString()
+  mediaId?: string;
+}
+
+export class SendWhatsAppTemplateDto {
+  // Meta template name (e.g. "order_shipped"). Must already be APPROVED on
+  // the WABA — Meta rejects unknown / pending templates synchronously.
   @IsString()
   @IsNotEmpty()
-  message!: string;
+  name!: string;
+
+  // BCP-47-ish language code Meta expects (e.g. "en_US", "ar"). Must match
+  // exactly what the template was approved under.
+  @IsString()
+  @IsNotEmpty()
+  language!: string;
+
+  // Variables for the BODY component. Pass an empty array for templates
+  // with no `{{1}}, {{2}}, …` placeholders.
+  @IsOptional()
+  variables?: string[];
 }
 
 export class TestSendWhatsAppDto {
