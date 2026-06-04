@@ -36,16 +36,11 @@ export class PrismaService implements OnModuleDestroy {
   get ticket() { return this.client.ticket; }
   get ticketActivity() { return this.client.ticketActivity; }
   get integration() { return this.client.integration; }
-  get keyword() { return this.client.keyword; }
-  get mention() { return this.client.mention; }
   get note() { return this.client.note; }
   get media() { return this.client.media; }
-  get scheduledPost() { return this.client.scheduledPost; }
-  get knowledgeDocument() { return this.client.knowledgeDocument; }
-  get knowledgeChunk() { return this.client.knowledgeChunk; }
-  get aiReply() { return this.client.aiReply; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRawUnsafe() { return this.client.$executeRawUnsafe.bind(this.client); }
   get $queryRawUnsafe() { return this.client.$queryRawUnsafe.bind(this.client); }
+  get $queryRaw() { return this.client.$queryRaw.bind(this.client); }
 }

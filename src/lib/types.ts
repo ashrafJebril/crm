@@ -17,19 +17,13 @@ export type RouteId =
   | "inbox"
   | "calendar"
   | "social"
-  | "mentions"
-  | "keywords"
   | "media"
-  | "scheduled"
   | "pipeline"
-  | "agents"
   | "campaigns"
   | "contacts"
-  | "automations"
   | "analytics"
   | "templates"
   | "team"
-  | "billing"
   | "settings"
   | "admin";
 
@@ -293,45 +287,6 @@ export interface Note {
   updatedAt: string;
 }
 
-// ─── Social listening: keywords & mentions ────────────────────────────────
-
-export type KeywordKind = "brand" | "hashtag" | "handle" | "competitor";
-
-export interface Keyword {
-  id: string;
-  value: string;
-  kind: KeywordKind;
-  enabled: boolean;
-  notes: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type MentionSource = "google" | "ig-hashtag" | "fb-page" | "news";
-export type MentionStatus = "new" | "triaged" | "engaged" | "dismissed";
-export type MentionLang = "en" | "ar" | "mixed";
-export type MentionDialect = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi";
-
-export interface Mention {
-  id: string;
-  keywordId: string;
-  source: MentionSource;
-  sourceUrl: string | null;
-  externalId: string;
-  author: string;
-  authorHandle: string | null;
-  authorReach: number | null;
-  body: string;
-  lang: MentionLang | null;
-  dialect: MentionDialect | null;
-  sentiment: number | null;
-  topic: string | null;
-  postedAt: string | null;
-  ingestedAt: string;
-  status: MentionStatus;
-  keyword?: Keyword;
-}
-
 // ─── Workspaces ───────────────────────────────────────────────────────────
 
 export type WorkspaceRole = "owner" | "admin" | "agent" | "viewer";
@@ -363,7 +318,6 @@ export interface AdminWorkspaceRow {
     members: number;
     contacts: number;
     conversations: number;
-    mentions: number;
     tickets: number;
   };
 }
@@ -403,7 +357,6 @@ export interface AdminWorkspaceDetail {
     contacts: number;
     conversations: number;
     messages: number;
-    mentions: number;
     tickets: number;
     campaigns: number;
     templates: number;
@@ -446,21 +399,4 @@ export interface ChannelResult {
   ok: boolean;
   postId?: string;
   error?: string;
-}
-
-export interface ScheduledPost {
-  id: string;
-  workspaceId: string;
-  content: string;
-  mediaIds: string;   // JSON string
-  channels: string;   // JSON string
-  scheduledFor: string;
-  status: "pending" | "publishing" | "published" | "failed" | "canceled";
-  attempts: number;
-  lastError: string | null;
-  results: string;    // JSON string
-  publishedAt: string | null;
-  createdById: string | null;
-  createdAt: string;
-  updatedAt: string;
 }

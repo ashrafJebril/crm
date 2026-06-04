@@ -8,10 +8,10 @@ import { WhatsAppService } from "./whatsapp.service";
 import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { MediaModule } from "../media/media.module";
-import { AiModule } from "../ai/ai.module";
+import { RealtimeModule } from "../realtime/realtime.module";
 
 @Module({
-  imports: [MediaModule, AiModule],
+  imports: [MediaModule, RealtimeModule],
   controllers: [
     FacebookController,
     InstagramController,

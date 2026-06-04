@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { AiReplyService } from "../ai/ai-reply.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -96,7 +96,7 @@ export class WhatsAppService {
   private readonly log = new Logger(WhatsAppService.name);
   constructor(
     private readonly prisma: PrismaService,
-    private readonly aiReply: AiReplyService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   // ─── Public REST API ───────────────────────────────────────────────────
@@ -331,6 +331,10 @@ export class WhatsAppService {
         lastFrom: "human",
         unread: 0,
       },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      conversationId,
     });
     return sent;
   }
@@ -641,7 +645,7 @@ export class WhatsAppService {
     const ts = Number(msg.timestamp) * 1000;
     const d = Number.isFinite(ts) ? new Date(ts) : new Date();
     const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    const inboundRow = await this.prisma.message.create({
+    await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId: conv.id,
@@ -650,182 +654,9 @@ export class WhatsAppService {
         t,
       },
     });
-
-    if (body) {
-      try {
-        await this.maybeAutoReply({
-          workspaceId,
-          conversationId: conv.id,
-          contactName: contact.name,
-          waId,
-          inboundMessageId: inboundRow.id,
-          inboundText: body,
-        });
-      } catch (e) {
-        this.log.warn(
-          `AI auto-reply failed for conv=${conv.id}: ${(e as Error).message}`,
-        );
-      }
-    }
-  }
-
-  private async maybeAutoReply(ctx: {
-    workspaceId: string;
-    conversationId: string;
-    contactName: string;
-    waId: string;
-    inboundMessageId: string;
-    inboundText: string;
-  }) {
-    const ws = await this.prisma.workspace.findUnique({
-      where: { id: ctx.workspaceId },
-      select: { aiAutoReplyEnabled: true, aiConfidenceThreshold: true },
-    });
-    if (!ws?.aiAutoReplyEnabled) return;
-
-    // Respect human takeover — if a teammate took over this conversation,
-    // the AI stays out until they hand it back.
-    const convPause = await this.prisma.conversation.findUnique({
-      where: { id: ctx.conversationId },
-      select: { aiPaused: true },
-    });
-    if (convPause?.aiPaused) {
-      this.log.debug(`AI paused for conv=${ctx.conversationId} — skipping reply`);
-      return;
-    }
-
-    const outcome = await this.aiReply.generate({
-      workspaceId: ctx.workspaceId,
-      conversationId: ctx.conversationId,
-      inboundMessageId: ctx.inboundMessageId,
-      inboundText: ctx.inboundText,
-      contactName: ctx.contactName,
-    });
-
-    const threshold =
-      ws.aiConfidenceThreshold ??
-      Number(process.env.AI_REPLY_CONFIDENCE_THRESHOLD ?? 0.75);
-    const escalate = this.aiReply.shouldEscalate(outcome, threshold);
-
-    // On escalation we still send a polite acknowledgement so the customer
-    // isn't left hanging — but the conversation flips to "human" so a
-    // teammate picks it up from the Inbox.
-    const FALLBACK_REPLY =
-      "Thanks for your message! Let me check with our team and get back to you shortly. 🙏";
-
-    if (escalate) {
-      // Send the fallback message via Meta so the customer sees a reply.
-      const { token, phoneNumberId } = await this.requireToken(ctx.workspaceId);
-      await this.graphPost<{ messages?: Array<{ id: string }> }>(
-        `/${phoneNumberId}/messages`,
-        token,
-        {
-          messaging_product: "whatsapp",
-          to: ctx.waId,
-          type: "text",
-          text: { body: FALLBACK_REPLY },
-        },
-      );
-      const now = new Date();
-      const tOut = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      const fallbackRow = await this.prisma.message.create({
-        data: {
-          workspaceId: ctx.workspaceId,
-          conversationId: ctx.conversationId,
-          from: "ai",
-          body: FALLBACK_REPLY,
-          t: tOut,
-          agent: "ai",
-        },
-      });
-      await this.prisma.conversation.update({
-        where: { id: ctx.conversationId },
-        data: {
-          escalated: true,
-          status: "human",
-          lastAt: "now",
-          lastFrom: "ai",
-          preview: FALLBACK_REPLY.slice(0, 140),
-          intent: outcome.escalationReason ?? "ai-escalated",
-          confidence: outcome.confidence,
-        },
-      });
-      await this.prisma.aiReply.create({
-        data: {
-          workspaceId: ctx.workspaceId,
-          conversationId: ctx.conversationId,
-          inboundMessageId: ctx.inboundMessageId,
-          outboundMessageId: fallbackRow.id,
-          action: "escalate",
-          replyText: FALLBACK_REPLY,
-          confidence: outcome.confidence,
-          needsEscalation: true,
-          escalationReason: outcome.escalationReason,
-          usedKnowledge: outcome.usedKnowledge,
-          missingInformation: outcome.missingInformation,
-          modelName: outcome.modelName,
-          promptTokens: outcome.promptTokens,
-          completionTokens: outcome.completionTokens,
-          sources: JSON.stringify(outcome.sources),
-        },
-      });
-      return;
-    }
-
-    // Send the AI reply via Meta.
-    const { token, phoneNumberId } = await this.requireToken(ctx.workspaceId);
-    await this.graphPost<{ messages?: Array<{ id: string }> }>(
-      `/${phoneNumberId}/messages`,
-      token,
-      {
-        messaging_product: "whatsapp",
-        to: ctx.waId,
-        type: "text",
-        text: { body: outcome.reply },
-      },
-    );
-
-    const now = new Date();
-    const tOut = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const outboundRow = await this.prisma.message.create({
-      data: {
-        workspaceId: ctx.workspaceId,
-        conversationId: ctx.conversationId,
-        from: "ai",
-        body: outcome.reply!,
-        t: tOut,
-        agent: "ai",
-      },
-    });
-    await this.prisma.conversation.update({
-      where: { id: ctx.conversationId },
-      data: {
-        lastAt: "now",
-        lastFrom: "ai",
-        preview: outcome.reply!.slice(0, 140),
-        status: "ai",
-        intent: "ai-reply",
-        confidence: outcome.confidence,
-      },
-    });
-    await this.prisma.aiReply.create({
-      data: {
-        workspaceId: ctx.workspaceId,
-        conversationId: ctx.conversationId,
-        inboundMessageId: ctx.inboundMessageId,
-        outboundMessageId: outboundRow.id,
-        action: "reply",
-        replyText: outcome.reply,
-        confidence: outcome.confidence,
-        needsEscalation: false,
-        escalationReason: null,
-        usedKnowledge: outcome.usedKnowledge,
-        missingInformation: outcome.missingInformation,
-        modelName: outcome.modelName,
-        promptTokens: outcome.promptTokens,
-        completionTokens: outcome.completionTokens,
-        sources: JSON.stringify(outcome.sources),
-      },
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      conversationId: conv.id,
     });
   }
 

@@ -32,8 +32,6 @@ model User {
 
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
-  scheduledPosts ScheduledPost[] @relation("UserScheduledPosts")
-  knowledgeUploads KnowledgeDocument[] @relation("UserKnowledgeUploads")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -100,7 +98,6 @@ model Conversation {
 
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
-  aiReplies AiReply[] @relation("ConversationAiReplies")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -122,9 +119,6 @@ model Message {
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  aiReplyAsInbound  AiReply[] @relation("AiReplyInbound")
-  aiReplyAsOutbound AiReply[] @relation("AiReplyOutbound")
 
   createdAt DateTime @default(now())
 
@@ -368,57 +362,6 @@ model Note {
   @@index([workspaceId])
 }
 
-// ─── Social listening ──────────────────────────────────────────────────────
-
-model Keyword {
-  id        String   @id @default(cuid())
-  value     String
-  kind      String   // "brand" | "hashtag" | "handle" | "competitor"
-  enabled   Boolean  @default(true)
-  notes     String?
-
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceKeywords", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  mentions  Mention[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([workspaceId, value])
-  @@index([workspaceId])
-}
-
-model Mention {
-  id           String   @id @default(cuid())
-  keywordId    String
-  source       String   // "google" | "ig-hashtag" | "fb-page" | "news"
-  sourceUrl    String?
-  externalId   String   // dedup key within a source
-  author       String
-  authorHandle String?
-  authorReach  Int?
-  body         String
-  lang         String?  // "en" | "ar" | "mixed"
-  dialect      String?  // "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi"
-  sentiment    Float?   // -1..+1
-  topic        String?
-  postedAt     DateTime?
-  ingestedAt   DateTime @default(now())
-  status       String   @default("new") // "new" | "triaged" | "engaged" | "dismissed"
-  raw          String?  // JSON blob from source
-
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceMentions", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
-
-  @@unique([workspaceId, source, externalId])
-  @@index([keywordId])
-  @@index([status, ingestedAt])
-  @@index([workspaceId])
-}
-
 // ─── Workspaces (tenants) ─────────────────────────────────────────────────
 
 model Workspace {
@@ -446,21 +389,8 @@ model Workspace {
   tickets           Ticket[]           @relation("WorkspaceTickets")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
-  keywords          Keyword[]          @relation("WorkspaceKeywords")
-  mentions          Mention[]          @relation("WorkspaceMentions")
   notes             Note[]             @relation("WorkspaceNotes")
   media             Media[]            @relation("WorkspaceMedia")
-  scheduledPosts    ScheduledPost[]    @relation("WorkspaceScheduledPosts")
-
-  // AI auto-reply toggle (per-workspace). When false, inbound messages are
-  // stored but no AI reply is generated.
-  aiAutoReplyEnabled    Boolean @default(false)
-  // Per-workspace confidence cutoff. Null = use AI_REPLY_CONFIDENCE_THRESHOLD.
-  aiConfidenceThreshold Float?
-
-  knowledgeDocs   KnowledgeDocument[] @relation("WorkspaceKnowledge")
-  knowledgeChunks KnowledgeChunk[]    @relation("WorkspaceKnowledgeChunks")
-  aiReplies       AiReply[]           @relation("WorkspaceAiReplies")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -508,118 +438,4 @@ model Media {
 
   @@index([workspaceId])
   @@index([uploadedById])
-}
-
-// ─── Scheduled posts (publish queue) ──────────────────────────────────────
-
-model ScheduledPost {
-  id            String   @id @default(cuid())
-  workspaceId   String
-  workspace     Workspace @relation("WorkspaceScheduledPosts", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  content       String    // post body / caption — applied to every channel
-  mediaIds      String    @default("[]")  // JSON array of Media ids
-  channels      String    // JSON array, e.g. ["facebook","instagram"]
-
-  scheduledFor  DateTime  // when to publish. For "post now" we set this to NOW().
-  status        String    @default("pending") // pending | publishing | published | failed | canceled
-  attempts      Int       @default(0)
-  lastError     String?
-  // Per-channel results once published. JSON object keyed by channel:
-  //   { "facebook": { ok: true, postId: "..." }, "instagram": { ok: false, error: "..." } }
-  results       String    @default("{}")
-  publishedAt   DateTime?
-
-  createdById   String?
-  createdBy     User?     @relation("UserScheduledPosts", fields: [createdById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([workspaceId, status, scheduledFor])
-  @@index([workspaceId])
-}
-
-// ─── Knowledge base (RAG over uploaded docs) ──────────────────────────────
-
-model KnowledgeDocument {
-  id          String   @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceKnowledge", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  filename  String
-  mimeType  String
-  sizeBytes Int
-
-  // "pending" | "processing" | "ready" | "failed"
-  status     String  @default("pending")
-  errorText  String?
-  chunkCount Int     @default(0)
-
-  uploadedByUserId String?
-  uploadedBy       User?    @relation("UserKnowledgeUploads", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
-
-  chunks KnowledgeChunk[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([workspaceId])
-}
-
-model KnowledgeChunk {
-  id                  String @id @default(cuid())
-  workspaceId         String
-  workspace           Workspace         @relation("WorkspaceKnowledgeChunks", fields: [workspaceId], references: [id], onDelete: Cascade)
-  knowledgeDocumentId String
-  knowledgeDocument   KnowledgeDocument @relation(fields: [knowledgeDocumentId], references: [id], onDelete: Cascade)
-
-  chunkIndex Int
-  content    String
-  tokenCount Int
-
-  // pgvector column — read/write via $queryRaw / $executeRawUnsafe.
-  embedding Unsupported("vector(1536)")
-
-  createdAt DateTime @default(now())
-
-  @@index([workspaceId])
-  @@index([knowledgeDocumentId])
-}
-
-// ─── AI reply audit log ───────────────────────────────────────────────────
-
-model AiReply {
-  id          String   @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceAiReplies", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  conversationId String
-  conversation   Conversation @relation("ConversationAiReplies", fields: [conversationId], references: [id], onDelete: Cascade)
-
-  inboundMessageId String?
-  inboundMessage   Message? @relation("AiReplyInbound", fields: [inboundMessageId], references: [id], onDelete: SetNull)
-
-  outboundMessageId String?
-  outboundMessage   Message? @relation("AiReplyOutbound", fields: [outboundMessageId], references: [id], onDelete: SetNull)
-
-  action             String   // "reply" | "escalate"
-  replyText          String?
-  confidence         Float
-  needsEscalation    Boolean
-  escalationReason   String?
-  usedKnowledge      Boolean
-  missingInformation String?
-
-  modelName        String
-  promptTokens     Int?
-  completionTokens Int?
-
-  // JSON-encoded array of {chunkId, similarity} for traceability.
-  sources String?
-
-  createdAt DateTime @default(now())
-
-  @@index([workspaceId])
-  @@index([conversationId])
 }
