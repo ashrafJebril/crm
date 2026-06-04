@@ -20,6 +20,7 @@ import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
 import { AdminModule } from "./admin/admin.module";
 import { RealtimeModule } from "./realtime/realtime.module";
+import { SearchModule } from "./search/search.module";
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
     SocialModule,
     AdminModule,
     RealtimeModule,
+    SearchModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },

@@ -7,6 +7,7 @@ import { IconMoon, IconPlus, IconSearch, IconSun, IconHand } from "@/icons";
 import { Avatar } from "@/components/Avatar";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { NotificationsBell } from "./NotificationsBell";
+import { openPalette } from "@/components/CommandPalette";
 
 interface TopbarProps {
   route: RouteId;
@@ -26,12 +27,26 @@ function TopbarImpl({ route }: TopbarProps) {
         <span className="now">{title}</span>
       </div>
       <div className="grow" />
-      <div className="search">
+      <div
+        className="search"
+        onClick={() => openPalette()}
+        style={{ cursor: "pointer" }}
+      >
         <IconSearch w={14} />
         <input
+          readOnly
           placeholder={
             isAr ? "ابحث في كل شيء…" : "Search conversations, contacts, campaigns…"
           }
+          onFocus={() => openPalette()}
+          onKeyDown={(e) => {
+            // Any printable key opens the palette with that char pre-filled.
+            if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.preventDefault();
+              openPalette(e.key);
+            }
+          }}
+          style={{ cursor: "pointer" }}
         />
         <span className="kbd">⌘K</span>
       </div>
