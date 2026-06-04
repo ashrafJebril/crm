@@ -52,11 +52,11 @@ function TopbarImpl({ route }: TopbarProps) {
       </div>
       <button
         className="btn ghost icon"
-        title="Toggle language"
+        title={t.lang === "en" ? "Switch to Arabic" : "Switch to English"}
         onClick={() => setTweak("lang", t.lang === "en" ? "ar" : "en")}
       >
         <span className="mono" style={{ fontSize: 11, fontWeight: 600 }}>
-          {t.lang === "en" ? "EN" : "ع"}
+          {t.lang === "en" ? "ع" : "EN"}
         </span>
       </button>
       <button
