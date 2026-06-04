@@ -3,9 +3,10 @@ import type { RouteId } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
 import { TITLES } from "./nav";
-import { IconBell, IconMoon, IconPlus, IconSearch, IconSun, IconHand } from "@/icons";
+import { IconMoon, IconPlus, IconSearch, IconSun, IconHand } from "@/icons";
 import { Avatar } from "@/components/Avatar";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { NotificationsBell } from "./NotificationsBell";
 
 interface TopbarProps {
   route: RouteId;
@@ -50,20 +51,7 @@ function TopbarImpl({ route }: TopbarProps) {
       >
         {t.theme === "dark" ? <IconMoon w={16} /> : <IconSun w={16} />}
       </button>
-      <button className="btn ghost icon" title="Notifications">
-        <IconBell w={16} />
-        <span
-          style={{
-            position: "absolute",
-            top: 6,
-            insetInlineEnd: 6,
-            width: 6,
-            height: 6,
-            background: "var(--accent)",
-            borderRadius: "50%",
-          }}
-        />
-      </button>
+      <NotificationsBell />
       <button className="btn primary">
         <IconPlus w={14} />
         {isAr ? "إنشاء" : "Create"}

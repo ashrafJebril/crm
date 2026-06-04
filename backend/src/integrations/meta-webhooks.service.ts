@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 
 /**
  * Meta sends Facebook Page and Instagram Business webhook events to the single
@@ -47,7 +48,10 @@ interface WebhookPayload {
 @Injectable()
 export class MetaWebhooksService {
   private readonly log = new Logger(MetaWebhooksService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   /** Meta's GET handshake. Mode must be "subscribe" and the verify_token must
    *  match what we'll paste into the Meta app dashboard. */
@@ -176,6 +180,9 @@ export class MetaWebhooksService {
       body,
       timestamp: evt.timestamp,
     });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "facebook",
+    });
   }
 
   private async ingestInstagramMessage(
@@ -215,6 +222,9 @@ export class MetaWebhooksService {
       channel: "instagram",
       body,
       timestamp: evt.timestamp,
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "instagram",
     });
   }
 
