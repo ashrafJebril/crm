@@ -62,3 +62,24 @@ export class ChangePasswordDto {
   @MinLength(6)
   newPassword!: string;
 }
+
+/**
+ * Body for POST /auth/sso/exchange. `token` is an hjz-v2 access token signed
+ * with hjz's JWT_ACCESS_SECRET. `email`/`name` are optional profile hints the
+ * hjz web shell forwards so the mirrored tkana user has a friendly identity;
+ * absent, tkana synthesizes a namespaced placeholder keyed off the hjz user id.
+ */
+export class SsoExchangeDto {
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  name?: string;
+}

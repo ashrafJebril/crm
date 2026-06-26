@@ -16,7 +16,9 @@ datasource db {
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  password  String   // bcrypt hash
+  // Nullable so SSO-provisioned users (mirrored from hjz via /auth/sso/exchange)
+  // don't need a local password. Standalone signups still get a bcrypt hash here.
+  password  String?  // bcrypt hash
   name      String
   role      String   @default("Agent") // Owner | Manager | Agent | Viewer
   initials  String
@@ -29,6 +31,11 @@ model User {
   // impersonate). This is NOT a workspace role — it's a system-wide capability
   // held by tkana staff for SaaS operations support.
   isSuperAdmin Boolean @default(false)
+
+  // HJZ SSO bridge — opaque hjz user id (`sub`). Set when this User row is
+  // a mirror of an hjz user provisioned via POST /auth/sso/exchange. Unique
+  // so the same hjz user upserts to the same row across logins.
+  externalId String? @unique
 
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
@@ -190,6 +197,27 @@ model Template {
 
   @@index([workspaceId])
   @@index([metaTemplateId])
+}
+
+// ─── Contact segments ─────────────────────────────────────────────────────
+// A Segment is a named, saved filter spec over the Contact table. Used by the
+// Contacts chip bar (preset views) and the Campaigns audience picker. The
+// filter is stored as a JSON string so we can evolve the shape without
+// migrations; the server-side executor in segments.service.ts is the contract.
+model Segment {
+  id        String  @id @default(cuid())
+  name      String
+  nameAr    String?
+  color     String? // hue string like "150", optional accent
+  filter    String  @default("{}") // JSON: SegmentFilter shape
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceSegments", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
 }
 
 // ─── Sales / ticket pipelines ─────────────────────────────────────────────
@@ -383,6 +411,17 @@ model Workspace {
   // visible in the admin portal.
   suspendedAt DateTime?
 
+  // HJZ SSO bridge — set on Workspaces that mirror an hjz tenant so we can
+  // resolve `hjz tid → tkana workspace` idempotently across SSO exchanges
+  // and client-sync webhooks. Nullable so existing standalone workspaces
+  // are untouched.
+  externalTenantId String? @unique
+
+  // JOTECK admin — module flag list ("inbox", "campaigns", …). NULL = all
+  // modules enabled (backwards compatible). When set, route guards consult
+  // this and 403 modules outside the list.
+  enabledModules Json?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")
@@ -390,6 +429,7 @@ model Workspace {
   messages          Message[]          @relation("WorkspaceMessages")
   appointments      Appointment[]      @relation("WorkspaceAppointments")
   templates         Template[]         @relation("WorkspaceTemplates")
+  segments          Segment[]          @relation("WorkspaceSegments")
   campaigns         Campaign[]         @relation("WorkspaceCampaigns")
   pipelines         Pipeline[]         @relation("WorkspacePipelines")
   ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")

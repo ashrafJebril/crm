@@ -29,6 +29,9 @@ export class AuthService {
     const email = dto.email.toLowerCase().trim();
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new UnauthorizedException("Invalid credentials");
+    // SSO-provisioned users have no local password — they must come in via
+    // POST /auth/sso/exchange, not the password endpoint.
+    if (!user.password) throw new UnauthorizedException("Invalid credentials");
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) throw new UnauthorizedException("Invalid credentials");
 
@@ -124,6 +127,11 @@ export class AuthService {
   async changePassword(userId: string, dto: ChangePasswordDto) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException("User no longer exists");
+    // SSO-provisioned users have no local password — they can't change one via
+    // this endpoint. They authenticate via /auth/sso/exchange on every visit.
+    if (!user.password) {
+      throw new BadRequestException("This account uses SSO and has no password");
+    }
     const ok = await bcrypt.compare(dto.currentPassword, user.password);
     if (!ok) throw new BadRequestException("Current password is incorrect");
     await this.prisma.user.update({

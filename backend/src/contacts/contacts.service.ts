@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
+import { SegmentsService } from "../segments/segments.service";
 
 interface ContactRow {
   id: string;
@@ -30,11 +31,20 @@ const shape = (c: ContactRow) => ({
 
 @Injectable()
 export class ContactsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly segments: SegmentsService,
+  ) {}
 
-  async list(workspaceId: string) {
+  async list(workspaceId: string, opts: { segmentId?: string } = {}) {
+    const where = opts.segmentId
+      ? this.segments.buildWhere(
+          workspaceId,
+          await this.segments.getFilter(workspaceId, opts.segmentId),
+        )
+      : { workspaceId };
     const rows = await this.prisma.contact.findMany({
-      where: { workspaceId },
+      where,
       orderBy: { createdAt: "desc" },
     });
     return rows.map(shape);

@@ -273,13 +273,50 @@ export interface Intent {
   count: number;
 }
 
+export type TemplateButtonType = "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+export interface TemplateButtonDef {
+  type: TemplateButtonType;
+  text: string;
+  url?: string;
+  phone_number?: string;
+}
+
 export interface Template {
   id: string;
   name: string;
   lang: Lang;
-  category: "TRANSACTIONAL" | "UTILITY" | "MARKETING";
-  status: "approved" | "pending" | "rejected";
+  category: "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
+  status: "approved" | "pending" | "rejected" | "submitted" | "failed";
   uses: number;
+  body?: string | null;
+  footer?: string | null;
+  headerType?: string | null;
+  headerContent?: string | null;
+  // Stored as JSON string on the server; the API hands it back unparsed.
+  buttons?: string | null;
+}
+
+// ─── Segments ─────────────────────────────────────────────────────────────
+
+export interface SegmentFilter {
+  lifecycle?: string[];
+  industry?: string[];
+  source?: string[];
+  tagsAll?: string[];
+  tagsAny?: string[];
+  search?: string;
+  hasPhone?: boolean;
+}
+
+export interface Segment {
+  id: string;
+  name: string;
+  nameAr: string | null;
+  color: string | null;
+  filter: SegmentFilter;
+  count: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────

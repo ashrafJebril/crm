@@ -23,8 +23,9 @@ import {
 } from "@/icons";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
-import type { Contact } from "@/lib/types";
+import type { Contact, Segment } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
+import { SegmentManager } from "./contacts/SegmentManager";
 
 type View = "table" | "pipeline";
 
@@ -443,12 +444,6 @@ function Pipeline({ tx, contacts }: PipelineProps) {
   );
 }
 
-interface SegmentChip {
-  l: string;
-  c: number;
-  on?: boolean;
-}
-
 interface NewContactInput {
   name: string;
   phone: string;
@@ -670,8 +665,34 @@ function ContactsImpl() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [openContactId, setOpenContactId] = useState<string | null>(null);
 
-  const { data, loading, error, refetch } = useFetch<Contact[]>("/contacts");
-  const contacts = data ?? [];
+  const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
+  const [showSegmentManager, setShowSegmentManager] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const contactsPath = activeSegmentId
+    ? `/contacts?segmentId=${activeSegmentId}`
+    : "/contacts";
+  const { data, loading, error, refetch } = useFetch<Contact[]>(contactsPath);
+  const allContacts = data ?? [];
+
+  const {
+    data: segmentsData,
+    refetch: refetchSegments,
+  } = useFetch<Segment[]>("/segments");
+  const segments = segmentsData ?? [];
+
+  // Total count for the "All" chip — fetched once without a segment filter so
+  // the badge stays accurate even while a segment is active.
+  const { data: allRowsForCount } = useFetch<Contact[]>("/contacts");
+  const allCount = (allRowsForCount ?? []).length;
+
+  // Local name-search applied on top of whatever the server returned (the
+  // segment filter already narrowed by lifecycle/tags/etc).
+  const contacts = useMemo(() => {
+    if (!search.trim()) return allContacts;
+    const q = search.trim().toLowerCase();
+    return allContacts.filter((c) => c.name.toLowerCase().includes(q));
+  }, [allContacts, search]);
 
   const showStatus = (msg: string) => {
     setStatusMsg(msg);
@@ -756,15 +777,6 @@ function ContactsImpl() {
     void run();
   };
 
-  const segments: SegmentChip[] = [
-    { l: tx("All", "الكل"), c: 12408, on: true },
-    { l: "VIP", c: 184 },
-    { l: tx("Hot leads", "عملاء محتملون ساخنون"), c: 96 },
-    { l: tx("Repeat", "متكرر"), c: 1240 },
-    { l: tx("Trial", "تجربة"), c: 412 },
-    { l: tx("Cold", "بارد"), c: 2104 },
-  ];
-
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
       <PageHeader
@@ -830,41 +842,34 @@ function ContactsImpl() {
         <div
           style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
         >
+          <SegmentChip
+            label={tx("All", "الكل")}
+            count={allCount}
+            active={activeSegmentId === null}
+            onClick={() => setActiveSegmentId(null)}
+          />
           {segments.map((s) => (
-            <span
-              key={s.l}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "5px 11px",
-                borderRadius: 999,
-                fontSize: 12,
-                border: `1px solid ${s.on ? "var(--accent-ring)" : "var(--line-soft)"}`,
-                background: s.on ? "var(--accent-soft)" : "transparent",
-                color: s.on ? "var(--accent)" : "var(--ink-1)",
-                cursor: "pointer",
-              }}
-            >
-              {s.l}
-              <span
-                className="mono muted"
-                style={{
-                  fontSize: 10,
-                  color: s.on ? "var(--accent)" : "var(--ink-3)",
-                }}
-              >
-                {s.c.toLocaleString()}
-              </span>
-            </span>
+            <SegmentChip
+              key={s.id}
+              label={t.lang === "ar" ? s.nameAr || s.name : s.name}
+              count={s.count}
+              active={activeSegmentId === s.id}
+              color={s.color}
+              onClick={() => setActiveSegmentId(s.id)}
+            />
           ))}
           <span style={{ flex: 1 }} />
-          <button className="btn ghost sm">
+          <button
+            className="btn ghost sm"
+            onClick={() => setShowSegmentManager(true)}
+          >
             <IconFilter w={12} />
-            {tx("Filters", "فلاتر")}
+            {tx("Manage segments", "إدارة الشرائح")}
           </button>
           <input
             placeholder={tx("Search contacts…", "ابحث…")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             style={{ ...INPUT_STYLE, width: 220 }}
           />
         </div>
@@ -963,7 +968,76 @@ function ContactsImpl() {
           onClose={() => setOpenContactId(null)}
         />
       )}
+
+      {showSegmentManager && (
+        <SegmentManager
+          lang={t.lang}
+          contacts={allContacts}
+          segments={segments}
+          onClose={() => setShowSegmentManager(false)}
+          onChanged={() => {
+            refetchSegments();
+            // If the active segment was just edited (or deleted), refetch the
+            // contacts too so the table matches the new filter / clears if it
+            // was removed.
+            refetch();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/* ─── Segment chip helper ───────────────────────────────────────────── */
+
+interface SegmentChipProps {
+  label: string;
+  count: number;
+  active: boolean;
+  color?: string | null;
+  onClick: () => void;
+}
+
+function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "5px 11px",
+        borderRadius: 999,
+        fontSize: 12,
+        border: `1px solid ${active ? "var(--accent-ring)" : "var(--line-soft)"}`,
+        background: active ? "var(--accent-soft)" : "transparent",
+        color: active ? "var(--accent)" : "var(--ink-1)",
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      {color && (
+        <span
+          style={{
+            display: "inline-block",
+            width: 6,
+            height: 6,
+            borderRadius: 999,
+            background: `oklch(0.7 0.15 ${color})`,
+          }}
+        />
+      )}
+      {label}
+      <span
+        className="mono muted"
+        style={{
+          fontSize: 10,
+          color: active ? "var(--accent)" : "var(--ink-3)",
+        }}
+      >
+        {count.toLocaleString()}
+      </span>
+    </button>
   );
 }
 

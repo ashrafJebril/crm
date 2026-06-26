@@ -19,8 +19,10 @@ import { NotesModule } from "./notes/notes.module";
 import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
 import { AdminModule } from "./admin/admin.module";
+import { JoteckModule } from "./joteck/joteck.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
+import { SegmentsModule } from "./segments/segments.module";
 
 @Module({
   imports: [
@@ -28,6 +30,7 @@ import { SearchModule } from "./search/search.module";
     PrismaModule,
     AuthModule,
     HealthModule,
+    SegmentsModule,
     ContactsModule,
     ConversationsModule,
     AppointmentsModule,
@@ -42,6 +45,7 @@ import { SearchModule } from "./search/search.module";
     MediaModule,
     SocialModule,
     AdminModule,
+    JoteckModule,
     RealtimeModule,
     SearchModule,
   ],

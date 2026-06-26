@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { ContactsService } from "./contacts.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
@@ -8,8 +8,11 @@ export class ContactsController {
   constructor(private readonly svc: ContactsService) {}
 
   @Get()
-  list(@CurrentWorkspace() workspaceId: string) {
-    return this.svc.list(workspaceId);
+  list(
+    @CurrentWorkspace() workspaceId: string,
+    @Query("segmentId") segmentId?: string,
+  ) {
+    return this.svc.list(workspaceId, { segmentId });
   }
 
   @Get(":id")

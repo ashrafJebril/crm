@@ -38,6 +38,7 @@ export class PrismaService implements OnModuleDestroy {
   get integration() { return this.client.integration; }
   get note() { return this.client.note; }
   get media() { return this.client.media; }
+  get segment() { return this.client.segment; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRawUnsafe() { return this.client.$executeRawUnsafe.bind(this.client); }

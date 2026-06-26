@@ -16,6 +16,7 @@ const SCOPED_MODELS = new Set([
   "Integration",
   "Note",
   "Media",
+  "Segment",
 ]);
 
 const READ_ACTIONS = new Set([
