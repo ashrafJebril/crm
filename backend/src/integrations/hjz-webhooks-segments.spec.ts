@@ -80,7 +80,7 @@ describe("HjzWebhooksService.handleSegment — upsert", () => {
         name: "Loyal",
         rules,
         clientIds: ["c-a", "c-b"],
-      } as any,
+      },
     });
 
     // workspace resolved
@@ -161,7 +161,7 @@ describe("HjzWebhooksService.handleSegment — re-upsert shrinks membership", ()
         name: "Loyal",
         rules: [],
         clientIds: ["c-a"],
-      } as any,
+      },
     });
 
     expect(prisma.segment.update).toHaveBeenCalledWith(
@@ -173,6 +173,64 @@ describe("HjzWebhooksService.handleSegment — re-upsert shrinks membership", ()
       data: [{ segmentId, contactId: "cid-a" }],
       skipDuplicates: true,
     });
+  });
+});
+
+describe("HjzWebhooksService.handleSegment — zero-membership upsert", () => {
+  let svc: HjzWebhooksService;
+  let prisma: any;
+  const segmentId = "seg-empty";
+
+  beforeEach(async () => {
+    process.env.HJZ_WEBHOOK_SECRET = "test-secret-segs";
+    prisma = {
+      workspace: {
+        upsert: jest.fn().mockResolvedValue({ id: "ws-1", externalTenantId: "hjz-tenant-segs" }),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      contact: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      segment: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: segmentId }),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+      segmentMember: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        HjzWebhooksService,
+        { provide: PrismaService, useValue: prisma },
+      ],
+    }).compile();
+    svc = moduleRef.get(HjzWebhooksService);
+  });
+
+  it("calls deleteMany and createMany even when contacts list is empty", async () => {
+    const result = await svc.handleSegment({
+      event: "segment.upserted",
+      segment: {
+        id: "hjz-seg-empty",
+        tenantId: "hjz-tenant-segs",
+        name: "Empty",
+        rules: [],
+        clientIds: [],
+      },
+    });
+
+    // Both membership operations should be called even with zero contacts
+    expect(prisma.segmentMember.deleteMany).toHaveBeenCalledWith({ where: { segmentId } });
+    expect(prisma.segmentMember.createMany).toHaveBeenCalledWith({
+      data: [],
+      skipDuplicates: true,
+    });
+
+    expect(result).toEqual({ ok: true });
   });
 });
 
@@ -209,7 +267,7 @@ describe("HjzWebhooksService.handleSegment — delete", () => {
   it("deletes segment by id on segment.deleted", async () => {
     const result = await svc.handleSegment({
       event: "segment.deleted",
-      segment: { id: "hjz-seg-1", tenantId: "hjz-tenant-segs" } as any,
+      segment: { id: "hjz-seg-1", tenantId: "hjz-tenant-segs" },
     });
 
     expect(prisma.segment.findFirst).toHaveBeenCalledWith(

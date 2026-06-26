@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger } from "@nestjs/common";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import type { HjzClientWebhookDto, HjzSegmentWebhookDto } from "./hjz-webhooks.dto";
@@ -139,6 +139,9 @@ export class HjzWebhooksService {
     }
 
     // event === "segment.upserted"
+    if (!segment.name) {
+      throw new BadRequestException("segment.name is required for segment.upserted");
+    }
     const externalRules =
       segment.rules != null ? JSON.stringify(segment.rules) : null;
 
@@ -180,12 +183,10 @@ export class HjzWebhooksService {
 
     // Replace membership set atomically: delete-all then create-many.
     await this.prisma.segmentMember.deleteMany({ where: { segmentId: seg.id } });
-    if (contacts.length > 0) {
-      await this.prisma.segmentMember.createMany({
-        data: contacts.map((c) => ({ segmentId: seg.id, contactId: c.id })),
-        skipDuplicates: true,
-      });
-    }
+    await this.prisma.segmentMember.createMany({
+      data: contacts.map((c) => ({ segmentId: seg.id, contactId: c.id })),
+      skipDuplicates: true,
+    });
 
     this.logger.debug(
       `hjz segment ${segment.id} → ${existing ? "updated" : "created"} in workspace ${workspace.id}`,
