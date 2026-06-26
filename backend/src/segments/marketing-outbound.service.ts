@@ -24,7 +24,13 @@ export class MarketingOutboundService {
       this.logger.debug(`segment ${segmentId} origin=${seg.origin} — only crm-origin gets emitted`);
       return false;
     }
-    const filter = JSON.parse(seg.filter || "{}");
+    let filter: any = {};
+    try {
+      const parsed = JSON.parse(seg.filter || "{}");
+      if (parsed && typeof parsed === "object") filter = parsed;
+    } catch {
+      /* malformed filter — treat as empty, no rows match */
+    }
     const contacts = await this.prisma.contact.findMany({
       where: {
         workspaceId,

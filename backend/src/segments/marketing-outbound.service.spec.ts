@@ -62,4 +62,17 @@ describe('MarketingOutboundService', () => {
     expect(ok).toBe(false);
     expect(calls).toHaveLength(0);
   });
+
+  it('skips and returns false when segment origin is not crm', async () => {
+    prisma.segment.findFirst.mockResolvedValueOnce({
+      id: 'hjz-mirror-1',
+      name: 'Loyal',
+      filter: '{}',
+      origin: 'hjz',
+      workspaceId: 'ws-1',
+    });
+    const ok = await svc.emitSegmentUpserted('ws-1', 'hjz-mirror-1');
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
 });
