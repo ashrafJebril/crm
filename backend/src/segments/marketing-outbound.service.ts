@@ -64,6 +64,22 @@ export class MarketingOutboundService {
     });
   }
 
+  async resyncAllToHjz(workspaceId: string): Promise<{
+    total: number; sent: number; failed: number; configured: boolean;
+  }> {
+    if (!this.isConfigured()) return { total: 0, sent: 0, failed: 0, configured: false };
+    const segs = await this.prisma.segment.findMany({
+      where: { workspaceId, origin: 'crm' },
+      select: { id: true },
+    });
+    let sent = 0; let failed = 0;
+    for (const s of segs) {
+      const ok = await this.emitSegmentUpserted(workspaceId, s.id);
+      if (ok) sent++; else failed++;
+    }
+    return { total: segs.length, sent, failed, configured: true };
+  }
+
   private async post(payload: unknown): Promise<boolean> {
     const url = process.env.HJZ_OUTBOUND_URL!;
     const secret = process.env.HJZ_WEBHOOK_SECRET!;

@@ -158,6 +158,11 @@ class SegmentsController {
     void this.outbound.emitSegmentDeleted(workspaceId, id);
     return { ok: true };
   }
+
+  @Post('admin/resync-hjz')
+  resyncHjz(@CurrentWorkspace() workspaceId: string) {
+    return this.outbound.resyncAllToHjz(workspaceId);
+  }
 }
 
 @Module({
