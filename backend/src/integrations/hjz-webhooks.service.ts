@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, Logger } from "@nestjs/common";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import type { HjzClientWebhookDto } from "./hjz-webhooks.dto";
+import type { HjzClientWebhookDto, HjzSegmentWebhookDto } from "./hjz-webhooks.dto";
 
 /**
  * Inbound client-sync webhook from hjz-v2.
@@ -104,6 +104,91 @@ export class HjzWebhooksService {
 
     this.logger.debug(
       `hjz client ${client.id} → ${existing ? "updated" : "created"} in workspace ${workspace.id}`,
+    );
+    return { ok: true };
+  }
+
+  /** Handle inbound segment events from hjz-v2 (upsert / delete). */
+  async handleSegment(body: HjzSegmentWebhookDto): Promise<{ ok: true }> {
+    const { event, segment } = body;
+
+    // Resolve (or lazily create) the workspace mirror for this hjz tenant.
+    const workspace = await this.prisma.workspace.upsert({
+      where: { externalTenantId: segment.tenantId },
+      update: {},
+      create: {
+        name: `HJZ ${segment.tenantId.slice(0, 8)}`,
+        slug: await this.allocateSlug(`hjz-${segment.tenantId}`),
+        externalTenantId: segment.tenantId,
+      },
+    });
+
+    if (event === "segment.deleted") {
+      const existing = await this.prisma.segment.findFirst({
+        where: {
+          workspaceId: workspace.id,
+          origin: "hjz",
+          externalId: segment.id,
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        await this.prisma.segment.delete({ where: { id: existing.id } });
+      }
+      return { ok: true };
+    }
+
+    // event === "segment.upserted"
+    const externalRules =
+      segment.rules != null ? JSON.stringify(segment.rules) : null;
+
+    const existing = await this.prisma.segment.findFirst({
+      where: {
+        workspaceId: workspace.id,
+        origin: "hjz",
+        externalId: segment.id,
+      },
+      select: { id: true },
+    });
+
+    const data = {
+      workspaceId: workspace.id,
+      name: segment.name as string,
+      origin: "hjz",
+      externalId: segment.id as string,
+      externalRules,
+      lastSyncedAt: new Date(),
+      filter: "{}",
+    };
+
+    const seg = existing
+      ? await this.prisma.segment.update({ where: { id: existing.id }, data })
+      : await this.prisma.segment.create({ data });
+
+    // Resolve hjz client ids → CRM contacts in this workspace.
+    const clientIds: string[] = Array.isArray(segment.clientIds)
+      ? segment.clientIds
+      : [];
+    const contacts = await this.prisma.contact.findMany({
+      where: {
+        workspaceId: workspace.id,
+        externalSource: HjzWebhooksService.SOURCE,
+        externalId: { in: clientIds },
+      },
+      select: { id: true },
+    });
+
+    // Replace membership set atomically: delete-all then create-many.
+    await this.prisma.segmentMember.deleteMany({ where: { segmentId: seg.id } });
+    if (contacts.length > 0) {
+      await this.prisma.segmentMember.createMany({
+        data: contacts.map((c) => ({ segmentId: seg.id, contactId: c.id })),
+        skipDuplicates: true,
+      });
+    }
+
+    this.logger.debug(
+      `hjz segment ${segment.id} → ${existing ? "updated" : "created"} in workspace ${workspace.id}`,
     );
     return { ok: true };
   }

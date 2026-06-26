@@ -30,3 +30,30 @@ export class HjzClientWebhookDto {
   @Type(() => HjzClientPayloadDto)
   client!: HjzClientPayloadDto;
 }
+
+// ---------------------------------------------------------------------------
+// Segment webhook DTOs
+// ---------------------------------------------------------------------------
+
+export class HjzSegmentUpsertPayloadDto {
+  @IsString() @MinLength(1) id!: string;
+  @IsString() @MinLength(1) tenantId!: string;
+  @IsString() @MinLength(1) name!: string;
+  @IsOptional() rules?: unknown;
+  @IsOptional() @IsBoolean() showOnProfile?: boolean;
+  @IsArray() @IsString({ each: true }) clientIds!: string[];
+}
+
+export class HjzSegmentDeletePayloadDto {
+  @IsString() @MinLength(1) id!: string;
+  @IsString() @MinLength(1) tenantId!: string;
+}
+
+export class HjzSegmentWebhookDto {
+  @IsIn(["segment.upserted", "segment.deleted"])
+  event!: "segment.upserted" | "segment.deleted";
+
+  // We use `any` here because class-validator's @Type cannot discriminate
+  // between upsert vs delete payloads. Validation is done inside handleSegment.
+  segment!: any;
+}
