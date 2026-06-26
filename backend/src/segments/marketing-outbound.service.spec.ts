@@ -75,4 +75,15 @@ describe('MarketingOutboundService', () => {
     expect(ok).toBe(false);
     expect(calls).toHaveLength(0);
   });
+
+  it('emitSegmentDeleted skips when segment origin is hjz', async () => {
+    prisma.segment.findFirst.mockResolvedValueOnce({
+      id: 'hjz-mirror-1',
+      origin: 'hjz',
+      workspaceId: 'ws-1',
+    });
+    const ok = await svc.emitSegmentDeleted('ws-1', 'hjz-mirror-1');
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
 });

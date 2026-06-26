@@ -28,7 +28,7 @@ export class SegmentsSyncScheduler {
       try {
         const r = await this.outbound.resyncAllToHjz(ws.id);
         this.logger.log(
-          `segments resync workspace=${ws.id} tenant=${ws.externalTenantId} total=${r.total} sent=${r.sent} failed=${r.failed}`,
+          `segments resync workspace=${ws.id} tenant=${ws.externalTenantId} total=${r.total} sent=${r.sent} skipped=${r.skipped} failed=${r.failed}`,
         );
       } catch (e: any) {
         this.logger.warn(`segments resync workspace=${ws.id} threw: ${e?.message ?? e}`);

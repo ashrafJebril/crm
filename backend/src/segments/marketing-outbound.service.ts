@@ -56,6 +56,19 @@ export class MarketingOutboundService {
 
   async emitSegmentDeleted(workspaceId: string, segmentId: string): Promise<boolean> {
     if (!this.isConfigured()) return false;
+    // Pre-existing CRM-only contract: never emit a delete for an hjz-origin
+    // segment. The controller already enforces this; this guard mirrors the
+    // upsert path so any future caller (scheduler, admin route) gets the
+    // same protection.
+    const seg = await this.prisma.segment.findFirst({ where: { id: segmentId, workspaceId } });
+    if (seg && seg.origin !== 'crm') {
+      this.logger.debug(`segment ${segmentId} origin=${seg.origin} — only crm-origin deletes are emitted`);
+      return false;
+    }
+    // Note: if seg is null (already hard-deleted by the time we get here),
+    // we still emit the delete event — that's intentional because the
+    // typical call site is SegmentsController.remove, which deletes first
+    // then calls us; HJZ will idempotently no-op a delete for an unknown id.
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
     if (!ws?.externalTenantId) return false;
     return this.post({
@@ -65,19 +78,24 @@ export class MarketingOutboundService {
   }
 
   async resyncAllToHjz(workspaceId: string): Promise<{
-    total: number; sent: number; failed: number; configured: boolean;
+    total: number; sent: number; failed: number; skipped: number; configured: boolean;
   }> {
-    if (!this.isConfigured()) return { total: 0, sent: 0, failed: 0, configured: false };
+    if (!this.isConfigured()) return { total: 0, sent: 0, failed: 0, skipped: 0, configured: false };
     const segs = await this.prisma.segment.findMany({
       where: { workspaceId, origin: 'crm' },
       select: { id: true },
     });
-    let sent = 0; let failed = 0;
+    let sent = 0; let failed = 0; let skipped = 0;
     for (const s of segs) {
-      const ok = await this.emitSegmentUpserted(workspaceId, s.id);
-      if (ok) sent++; else failed++;
+      try {
+        const ok = await this.emitSegmentUpserted(workspaceId, s.id);
+        if (ok) sent++; else skipped++;  // false here = guard skip (no externalTenantId, non-crm origin, etc.) — not a delivery failure
+      } catch (e: any) {
+        this.logger.warn(`resync segment ${s.id} threw: ${e?.message ?? e}`);
+        failed++;
+      }
     }
-    return { total: segs.length, sent, failed, configured: true };
+    return { total: segs.length, sent, failed, skipped, configured: true };
   }
 
   private async post(payload: unknown): Promise<boolean> {
