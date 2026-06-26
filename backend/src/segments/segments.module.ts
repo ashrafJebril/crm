@@ -23,6 +23,7 @@ import { Type } from "class-transformer";
 import { PrismaService } from "../prisma/prisma.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { SegmentsService, type SegmentFilter } from "./segments.service";
+import { MarketingOutboundService } from "./marketing-outbound.service";
 
 class SegmentFilterDto implements SegmentFilter {
   @IsOptional() @IsArray() @IsString({ each: true }) lifecycle?: string[];
@@ -148,7 +149,7 @@ class SegmentsController {
 
 @Module({
   controllers: [SegmentsController],
-  providers: [SegmentsService],
-  exports: [SegmentsService],
+  providers: [SegmentsService, MarketingOutboundService],
+  exports: [SegmentsService, MarketingOutboundService],
 })
 export class SegmentsModule {}
