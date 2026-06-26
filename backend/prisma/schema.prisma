@@ -71,6 +71,7 @@ model Contact {
   appointments  Appointment[]
   tickets       Ticket[]
   notes         Note[]
+  segmentMembers SegmentMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -205,19 +206,44 @@ model Template {
 // filter is stored as a JSON string so we can evolve the shape without
 // migrations; the server-side executor in segments.service.ts is the contract.
 model Segment {
-  id        String  @id @default(cuid())
-  name      String
-  nameAr    String?
-  color     String? // hue string like "150", optional accent
-  filter    String  @default("{}") // JSON: SegmentFilter shape
+  id              String  @id @default(cuid())
+  name            String
+  nameAr          String?
+  color           String? // hue string like "150", optional accent
+  filter          String  @default("{}") // JSON: SegmentFilter shape
+  // ── Sync fields (HJZ-CRM-2026-06-26) ───────────────────────────────
+  origin          String  @default("crm")
+  externalId      String?
+  externalRules   String?
+  lastSyncedAt    DateTime?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceSegments", fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  members SegmentMember[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([workspaceId, origin, externalId])
   @@index([workspaceId])
+}
+
+// Materialized membership for hjz-origin segments. We can't re-evaluate
+// HJZ rules locally (they reference fields like loyalty_tier, sales_count
+// that CRM doesn't have), so HJZ ships the resolved client list and we
+// snapshot it here. For crm-origin segments this table is unused; member
+// counts come from running the filter against Contact.
+model SegmentMember {
+  segmentId String
+  contactId String
+  addedAt   DateTime @default(now())
+
+  segment Segment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([segmentId, contactId])
+  @@index([contactId])
 }
 
 // ─── Sales / ticket pipelines ─────────────────────────────────────────────
