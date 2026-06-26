@@ -24,6 +24,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { SegmentsService, type SegmentFilter } from "./segments.service";
 import { MarketingOutboundService } from "./marketing-outbound.service";
+import { SegmentsSyncScheduler } from "./segments-sync.scheduler";
 
 class SegmentFilterDto implements SegmentFilter {
   @IsOptional() @IsArray() @IsString({ each: true }) lifecycle?: string[];
@@ -167,7 +168,7 @@ class SegmentsController {
 
 @Module({
   controllers: [SegmentsController],
-  providers: [SegmentsService, MarketingOutboundService],
+  providers: [SegmentsService, MarketingOutboundService, SegmentsSyncScheduler],
   exports: [SegmentsService, MarketingOutboundService],
 })
 export class SegmentsModule {}
