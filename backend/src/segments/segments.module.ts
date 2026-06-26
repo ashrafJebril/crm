@@ -58,6 +58,7 @@ class SegmentsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly svc: SegmentsService,
+    private readonly outbound: MarketingOutboundService,
   ) {}
 
   @Get()
@@ -101,15 +102,18 @@ class SegmentsController {
     @CurrentWorkspace() workspaceId: string,
     @Body() dto: CreateSegmentDto,
   ) {
-    return this.prisma.segment.create({
+    const seg = await this.prisma.segment.create({
       data: {
         workspaceId,
         name: dto.name,
         nameAr: dto.nameAr ?? null,
         color: dto.color ?? null,
         filter: JSON.stringify(dto.filter),
+        origin: 'crm',
       },
     });
+    void this.outbound.emitSegmentUpserted(workspaceId, seg.id);
+    return seg;
   }
 
   @Patch(":id")
@@ -122,7 +126,10 @@ class SegmentsController {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException("Segment not found");
-    return this.prisma.segment.update({
+    if (existing.origin === 'hjz') {
+      throw new NotFoundException("Segment is managed by HJZ and read-only here");
+    }
+    const updated = await this.prisma.segment.update({
       where: { id },
       data: {
         name: dto.name ?? undefined,
@@ -131,6 +138,8 @@ class SegmentsController {
         filter: dto.filter === undefined ? undefined : JSON.stringify(dto.filter),
       },
     });
+    void this.outbound.emitSegmentUpserted(workspaceId, updated.id);
+    return updated;
   }
 
   @Delete(":id")
@@ -142,7 +151,11 @@ class SegmentsController {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException("Segment not found");
+    if (existing.origin === 'hjz') {
+      throw new NotFoundException("Segment is managed by HJZ and read-only here");
+    }
     await this.prisma.segment.delete({ where: { id } });
+    void this.outbound.emitSegmentDeleted(workspaceId, id);
     return { ok: true };
   }
 }
