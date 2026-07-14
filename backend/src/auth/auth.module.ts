@@ -7,12 +7,13 @@ import { AuthGuard } from "./auth.guard";
 import { SsoController } from "./sso.controller";
 import { SsoService } from "./sso.service";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
+import { requireJwtSecret } from "../common/jwt-secret";
 
 @Module({
   imports: [
     JwtModule.register({
       global: true,
-      secret: process.env.JWT_SECRET || "tkana-dev-secret-change-in-prod",
+      secret: requireJwtSecret(),
       signOptions: { expiresIn: "7d" },
     }),
     WorkspacesModule,

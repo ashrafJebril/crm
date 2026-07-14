@@ -1,6 +1,15 @@
-import { Body, Controller, Get, HttpCode, Post, Query } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { Public } from "../auth/public.decorator";
+import { MetaWebhookSignatureGuard } from "../common/meta-webhook-signature.guard";
 
 @Controller("webhooks/meta")
 export class MetaWebhooksController {
@@ -17,6 +26,7 @@ export class MetaWebhooksController {
   }
 
   @Public()
+  @UseGuards(MetaWebhookSignatureGuard)
   @Post()
   @HttpCode(200)
   receive(@Body() payload: unknown) {

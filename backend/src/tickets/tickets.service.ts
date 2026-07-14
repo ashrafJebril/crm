@@ -84,6 +84,43 @@ export class TicketsService {
     return t;
   }
 
+  /**
+   * Assert that each supplied foreign-key id belongs to this workspace.
+   * contactId / conversationId are workspace-scoped rows; ownerId must be a
+   * member of the workspace (checked via WorkspaceMember, which is NOT covered
+   * by the tenancy extension). Throws BadRequestException on any mismatch.
+   */
+  private async assertTicketRefs(
+    workspaceId: string,
+    refs: {
+      contactId?: string;
+      conversationId?: string | null;
+      ownerId?: string | null;
+    },
+  ) {
+    if (refs.contactId) {
+      const c = await this.prisma.contact.findFirst({
+        where: { id: refs.contactId, workspaceId },
+        select: { id: true },
+      });
+      if (!c) throw new BadRequestException("contactId does not belong to this workspace");
+    }
+    if (refs.conversationId) {
+      const cv = await this.prisma.conversation.findFirst({
+        where: { id: refs.conversationId, workspaceId },
+        select: { id: true },
+      });
+      if (!cv) throw new BadRequestException("conversationId does not belong to this workspace");
+    }
+    if (refs.ownerId) {
+      const m = await this.prisma.workspaceMember.findFirst({
+        where: { userId: refs.ownerId, workspaceId },
+        select: { id: true },
+      });
+      if (!m) throw new BadRequestException("ownerId is not a member of this workspace");
+    }
+  }
+
   async createTicket(workspaceId: string, dto: CreateTicketDto) {
     // Validate pipeline and stage and that the stage belongs to the pipeline.
     const stage = await this.prisma.ticketStage.findFirst({
@@ -92,6 +129,15 @@ export class TicketsService {
     if (!stage || stage.pipelineId !== dto.pipelineId) {
       throw new BadRequestException("stageId does not belong to pipelineId");
     }
+
+    // Reject foreign-key ids from other tenants — otherwise a ticket created in
+    // your own workspace could point at another workspace's contact and leak
+    // that contact's name/phone back through getTicket's `include: {contact}`.
+    await this.assertTicketRefs(workspaceId, {
+      contactId: dto.contactId,
+      conversationId: dto.conversationId,
+      ownerId: dto.ownerId,
+    });
 
     // Per-pipeline, per-workspace auto-incrementing number
     const lastInPipeline = await this.prisma.ticket.findFirst({
@@ -137,6 +183,9 @@ export class TicketsService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException("Ticket not found");
+
+    // A reassigned owner must be a member of this workspace.
+    await this.assertTicketRefs(workspaceId, { ownerId: dto.ownerId });
 
     const updated = await this.prisma.ticket.update({
       where: { id },
