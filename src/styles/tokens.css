@@ -5,16 +5,20 @@
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
   --font-display: "Instrument Serif", "Geist", serif;
 
-  --accent: oklch(0.78 0.18 150);
-  --accent-ink: oklch(0.18 0.04 150);
-  --accent-soft: oklch(0.78 0.18 150 / 0.14);
-  --accent-ring: oklch(0.78 0.18 150 / 0.35);
+  /* Brand accent — HJZ gold. Identical in light + dark (matches HJZ).
+     Kept here so it survives even when a [data-accent="…"] variant is
+     applied; we override all variants below to land on the same gold. */
+  --accent: #C9A55A;
+  --accent-ink: #0A0A0C;
+  --accent-soft: rgba(201, 165, 90, 0.14);
+  --accent-ring: rgba(201, 165, 90, 0.35);
 
-  --ok: oklch(0.78 0.16 150);
-  --warn: oklch(0.82 0.17 78);
-  --bad: oklch(0.7 0.22 24);
-  --info: oklch(0.74 0.13 240);
-  --human: oklch(0.74 0.13 270);
+  /* Status colors — match HJZ palette exactly. */
+  --ok: #52A882;
+  --warn: #D4884A;
+  --bad: #D05555;
+  --info: #5A8FD4;
+  --human: #5A8FD4;
 
   --r-xs: 4px;
   --r-sm: 6px;
@@ -27,100 +31,93 @@
   --pad: 14px;
 }
 
-/* ─── DARK (default) ──────────────────────────────────────────────────── */
+/* ─── DARK (default) — HJZ-aligned warm-neutral palette ───────────────── */
 :root,
 [data-theme="dark"] {
-  --bg: oklch(0.16 0.01 240);
-  --bg-1: oklch(0.18 0.012 240);
-  --bg-2: oklch(0.21 0.013 240);
-  --bg-3: oklch(0.24 0.014 240);
-  --bg-elev: oklch(0.22 0.013 240);
-  --line: oklch(0.3 0.012 240);
-  --line-soft: oklch(0.26 0.011 240 / 0.6);
+  --bg:         #0A0A0C;
+  --bg-1:       #141418;
+  --bg-2:       #1A1A22;
+  --bg-3:       #1E1E26;
+  --bg-elev:    #1E1E26;
+  --line:       #28282F;
+  --line-soft:  rgba(40, 40, 47, 0.6);
 
-  --ink: oklch(0.97 0.005 240);
-  --ink-1: oklch(0.85 0.008 240);
-  --ink-2: oklch(0.68 0.01 240);
-  --ink-3: oklch(0.52 0.012 240);
-  --ink-4: oklch(0.4 0.012 240);
+  --ink:    #F0EBE1;
+  --ink-1:  #D5C9B7;
+  --ink-2:  #A89E8E;
+  --ink-3:  #807666;
+  --ink-4:  #5A5650;
 
-  --shadow-sm: 0 1px 0 oklch(0 0 0 / 0.4), 0 1px 2px oklch(0 0 0 / 0.3);
-  --shadow: 0 8px 24px -8px oklch(0 0 0 / 0.5), 0 2px 6px oklch(0 0 0 / 0.3);
-  --shadow-lg: 0 24px 48px -16px oklch(0 0 0 / 0.6);
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow:    0 8px 24px -8px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 24px 48px -16px rgba(0, 0, 0, 0.6);
 
-  --bubble-out: oklch(0.78 0.18 150 / 0.18);
-  --bubble-out-line: oklch(0.78 0.18 150 / 0.45);
-  --bubble-in: oklch(0.24 0.014 240);
-  --bubble-in-line: oklch(0.3 0.012 240);
-  --grid: oklch(0.24 0.014 240 / 0.7);
+  --bubble-out:      rgba(201, 165, 90, 0.18);
+  --bubble-out-line: rgba(201, 165, 90, 0.45);
+  --bubble-in:       #1E1E26;
+  --bubble-in-line:  #28282F;
+  --grid:            rgba(40, 40, 47, 0.7);
 }
 
-/* ─── LIGHT ────────────────────────────────────────────────────────────── */
+/* ─── LIGHT — HJZ-aligned warm-neutral palette ───────────────────────── */
 [data-theme="light"] {
-  --bg: oklch(0.985 0.003 240);
-  --bg-1: oklch(0.98 0.003 240);
-  --bg-2: oklch(0.96 0.004 240);
-  --bg-3: oklch(0.93 0.005 240);
-  --bg-elev: #ffffff;
-  --line: oklch(0.88 0.007 240);
-  --line-soft: oklch(0.92 0.006 240);
+  --bg:         #FFFFFF;
+  --bg-1:       #F7F7F8;
+  --bg-2:       #EFEFF1;
+  --bg-3:       #FFFFFF;
+  --bg-elev:    #FFFFFF;
+  --line:       #E4E4E7;
+  --line-soft:  #EDEDF0;
 
-  --ink: oklch(0.18 0.01 240);
-  --ink-1: oklch(0.32 0.012 240);
-  --ink-2: oklch(0.48 0.012 240);
-  --ink-3: oklch(0.62 0.012 240);
-  --ink-4: oklch(0.74 0.012 240);
+  --ink:    #0F0F12;
+  --ink-1:  #3A3A40;
+  --ink-2:  #5F5F66;
+  --ink-3:  #757580;
+  --ink-4:  #8E8E94;
 
-  --accent: oklch(0.62 0.16 150);
-  --accent-ink: white;
-  --accent-soft: oklch(0.62 0.16 150 / 0.12);
-  --accent-ring: oklch(0.62 0.16 150 / 0.3);
+  /* Accent stays gold in light mode — HJZ keeps brand accents fixed
+     across modes. --accent-ink flips to dark text on the gold for
+     contrast with the lighter page background. */
+  --accent:       #C9A55A;
+  --accent-ink:   #0F0F12;
+  --accent-soft:  rgba(201, 165, 90, 0.12);
+  --accent-ring:  rgba(201, 165, 90, 0.3);
 
-  --shadow-sm: 0 1px 0 oklch(0.7 0.01 240 / 0.06), 0 1px 2px oklch(0.5 0.01 240 / 0.06);
-  --shadow: 0 8px 24px -10px oklch(0.4 0.01 240 / 0.18),
-    0 2px 6px oklch(0.5 0.01 240 / 0.06);
-  --shadow-lg: 0 24px 48px -16px oklch(0.4 0.01 240 / 0.2);
+  --shadow-sm: 0 1px 0 rgba(15, 15, 18, 0.04), 0 1px 2px rgba(15, 15, 18, 0.04);
+  --shadow:    0 8px 24px -10px rgba(15, 15, 18, 0.12), 0 2px 6px rgba(15, 15, 18, 0.06);
+  --shadow-lg: 0 24px 48px -16px rgba(15, 15, 18, 0.16);
 
-  --bubble-out: oklch(0.62 0.16 150 / 0.12);
-  --bubble-out-line: oklch(0.62 0.16 150 / 0.3);
-  --bubble-in: white;
-  --bubble-in-line: oklch(0.88 0.007 240);
-  --grid: oklch(0.92 0.006 240);
+  --bubble-out:      rgba(201, 165, 90, 0.12);
+  --bubble-out-line: rgba(201, 165, 90, 0.3);
+  --bubble-in:       #FFFFFF;
+  --bubble-in-line:  #E4E4E7;
+  --grid:            #EDEDF0;
 }
 
 /* ─── ACCENT VARIATIONS ───────────────────────────────────────────────── */
-[data-accent="green"] {
-  --accent: oklch(0.78 0.18 150);
-  --accent-soft: oklch(0.78 0.18 150 / 0.14);
-  --accent-ring: oklch(0.78 0.18 150 / 0.35);
-  --bubble-out: oklch(0.78 0.18 150 / 0.18);
-  --bubble-out-line: oklch(0.78 0.18 150 / 0.45);
-}
-[data-theme="light"][data-accent="green"] {
-  --accent: oklch(0.62 0.16 150);
-  --accent-soft: oklch(0.62 0.16 150 / 0.12);
-  --accent-ring: oklch(0.62 0.16 150 / 0.3);
-}
-[data-accent="indigo"] {
-  --accent: oklch(0.72 0.18 268);
-  --accent-soft: oklch(0.72 0.18 268 / 0.14);
-  --accent-ring: oklch(0.72 0.18 268 / 0.35);
-  --bubble-out: oklch(0.72 0.18 268 / 0.18);
-  --bubble-out-line: oklch(0.72 0.18 268 / 0.45);
-}
-[data-accent="amber"] {
-  --accent: oklch(0.84 0.17 78);
-  --accent-soft: oklch(0.84 0.17 78 / 0.14);
-  --accent-ring: oklch(0.84 0.17 78 / 0.35);
-  --bubble-out: oklch(0.84 0.17 78 / 0.18);
-  --bubble-out-line: oklch(0.84 0.17 78 / 0.45);
-}
+/* All four legacy accent options collapse onto HJZ gold so the brand stays
+   consistent even if someone toggles the Tweaks UI accent picker. The four
+   selectors are kept so existing markup with data-accent="…" attributes
+   continues to resolve without falling back to the root token. */
+[data-accent="green"],
+[data-accent="indigo"],
+[data-accent="amber"],
 [data-accent="magenta"] {
-  --accent: oklch(0.72 0.22 350);
-  --accent-soft: oklch(0.72 0.22 350 / 0.14);
-  --accent-ring: oklch(0.72 0.22 350 / 0.35);
-  --bubble-out: oklch(0.72 0.22 350 / 0.18);
-  --bubble-out-line: oklch(0.72 0.22 350 / 0.45);
+  --accent:          #C9A55A;
+  --accent-soft:     rgba(201, 165, 90, 0.14);
+  --accent-ring:     rgba(201, 165, 90, 0.35);
+  --bubble-out:      rgba(201, 165, 90, 0.18);
+  --bubble-out-line: rgba(201, 165, 90, 0.45);
+}
+[data-theme="light"][data-accent="green"],
+[data-theme="light"][data-accent="indigo"],
+[data-theme="light"][data-accent="amber"],
+[data-theme="light"][data-accent="magenta"] {
+  --accent:          #C9A55A;
+  --accent-soft:     rgba(201, 165, 90, 0.12);
+  --accent-ring:     rgba(201, 165, 90, 0.3);
+  --bubble-out:      rgba(201, 165, 90, 0.12);
+  --bubble-out-line: rgba(201, 165, 90, 0.3);
 }
 
 /* Density */

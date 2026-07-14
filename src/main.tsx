@@ -19,10 +19,27 @@ import "./styles/index.css";
   if (!hash || hash.length < 2) return;
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const token = params.get("token");
+  const theme = params.get("theme");
   // Reject the literal string "undefined" — happens if the upstream forgot to
   // include `accessToken` on the SSO exchange response. Treat as no token.
   if (!token || token === "undefined" || token === "null") return;
   tokenStore.set(token);
+  // Inherit hjz's light/dark choice. TweaksProvider reads localStorage
+  // synchronously in its initializer, so we merge into the stored object
+  // BEFORE React mounts — otherwise the page paints in the saved theme
+  // first and flips on the next tick. The accent picker stays at "green"
+  // (it's overridden in tokens.css to gold anyway, but writing through
+  // would interfere with any future user customization).
+  if (theme === "dark" || theme === "light") {
+    try {
+      const STORAGE_KEY = "aram.tweaks.v1";
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const prev = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...prev, theme }));
+    } catch {
+      /* localStorage may be unavailable in privacy mode — fall through */
+    }
+  }
   // Replace state to scrub the fragment without adding a history entry.
   const { pathname, search } = window.location;
   window.history.replaceState(null, "", `${pathname}${search}`);
