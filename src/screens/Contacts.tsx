@@ -23,6 +23,7 @@ import {
 } from "@/icons";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
+import { Modal } from "@/components/Modal";
 import type { Contact, Segment } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
 import { SegmentManager } from "./contacts/SegmentManager";
@@ -506,24 +507,8 @@ function NewContactModal({ tx, onClose, onCreated }: NewContactModalProps) {
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "oklch(0 0 0 / 0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-        backdropFilter: "blur(2px)",
-      }}
-      onClick={onClose}
-    >
-      <form
-        className="card"
-        style={{ width: 460, padding: 20 }}
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={onSubmit}
-      >
+    <Modal onClose={onClose} width={460} label="New contact">
+      <form onSubmit={onSubmit}>
         <h3 style={{ margin: 0, fontSize: 16 }}>
           {tx("New contact", "جهة جديدة")}
         </h3>
@@ -651,7 +636,7 @@ function NewContactModal({ tx, onClose, onCreated }: NewContactModalProps) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 
@@ -1056,32 +1041,7 @@ function BulkTagModal({ tx, count, saving, onClose, onApply }: BulkTagModalProps
   const canSubmit = value.trim().length > 0 && !saving;
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--scrim, rgba(0,0,0,0.55))",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 50,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg-1)",
-          border: "1px solid var(--line-soft)",
-          borderRadius: 12,
-          width: 420,
-          maxWidth: "92vw",
-          padding: 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
+    <Modal onClose={onClose} width={420} label="Add tags" panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 600 }}>
             {tx("Add tags", "إضافة وسوم")}
@@ -1139,8 +1099,7 @@ function BulkTagModal({ tx, count, saving, onClose, onApply }: BulkTagModalProps
             {saving ? tx("Applying…", "جارٍ التطبيق…") : tx("Apply", "تطبيق")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

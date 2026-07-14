@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
+import { Modal } from "@/components/Modal";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { API_BASE, api, tokenStore } from "@/api/client";
 import { IconPlus, IconTrash } from "@/icons";
@@ -205,44 +206,13 @@ function DeleteConfirmDialog({
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
 
-  // Esc to cancel.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onCancel();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onCancel]);
-
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={busy ? undefined : onCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 100,
-        display: "grid",
-        placeItems: "center",
-        background: "oklch(0 0 0 / 0.5)",
-        backdropFilter: "blur(2px)",
-      }}
+    <Modal
+      onClose={busy ? () => {} : onCancel}
+      width={420}
+      label="Delete media"
+      panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(420px, 92vw)",
-          background: "var(--bg-elev)",
-          border: "1px solid var(--line)",
-          borderRadius: 14,
-          boxShadow: "var(--shadow-lg)",
-          padding: 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-        }}
-      >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span
             aria-hidden
@@ -338,8 +308,7 @@ function DeleteConfirmDialog({
             {busy ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "حذف")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
