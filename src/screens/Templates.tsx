@@ -20,6 +20,7 @@ import {
 } from "@/data/templates-extras";
 import { useFetch } from "@/api/useFetch";
 import { api } from "@/api/client";
+import { useToast } from "@/components/Toast";
 import { TemplateEditor } from "./templates/TemplateEditor";
 import type { Template } from "@/lib/types";
 
@@ -263,6 +264,7 @@ function toTemplateFull(t: Template): TemplateFull {
 
 function TemplatesImpl() {
   const { t } = useTweaks();
+  const { toast } = useToast();
   const tx = makeTx(t.lang);
   const isAr = t.lang === "ar";
 
@@ -339,8 +341,7 @@ function TemplatesImpl() {
       refetch();
       setSelectedId(created.id);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Duplicate failed";
-      alert(msg);
+      toast(err instanceof Error ? err.message : "Duplicate failed", "error");
     } finally {
       setPending(false);
       setMenuFor(null);
@@ -354,8 +355,7 @@ function TemplatesImpl() {
       if (selectedId === tpl.id) setSelectedId(null);
       refetch();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Delete failed";
-      alert(msg);
+      toast(err instanceof Error ? err.message : "Delete failed", "error");
     } finally {
       setPending(false);
       setConfirmDelete(null);

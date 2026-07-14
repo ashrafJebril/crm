@@ -4,6 +4,7 @@ import { Sidebar } from "@/shell/Sidebar";
 import { Topbar } from "@/shell/Topbar";
 import { ScreenSlot } from "@/router";
 import { CommandPalette } from "@/components/CommandPalette";
+import { ToastProvider } from "@/components/Toast";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
@@ -37,14 +38,16 @@ export default function App() {
   }
 
   return (
-    <div className="app" data-collapsed={t.collapsed}>
-      <ImpersonationBanner />
-      <Sidebar route={route} setRoute={setRoute} />
-      <main className="main">
-        <Topbar route={route} />
-        <ScreenSlot route={route} />
-      </main>
-      <CommandPalette />
-    </div>
+    <ToastProvider>
+      <div className="app" data-collapsed={t.collapsed}>
+        <ImpersonationBanner />
+        <Sidebar route={route} setRoute={setRoute} />
+        <main className="main">
+          <Topbar route={route} />
+          <ScreenSlot route={route} />
+        </main>
+        <CommandPalette />
+      </div>
+    </ToastProvider>
   );
 }
