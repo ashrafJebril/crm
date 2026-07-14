@@ -445,10 +445,19 @@ export class FacebookService {
     // Content-Type manually — fetch will inject the correct boundary.
     let response: Response;
     try {
-      response = await fetch(url, { method: "POST", body: form });
+      // 30s here — this path uploads media (FormData), which legitimately takes
+      // longer than a plain Graph JSON call.
+      response = await fetch(url, {
+        method: "POST",
+        body: form,
+        signal: AbortSignal.timeout(30_000),
+      });
     } catch (e) {
-      this.log.error(`Graph network error: ${(e as Error).message}`);
-      throw new HttpException("Graph API unreachable", 502);
+      const timedOut = (e as Error).name === "TimeoutError";
+      this.log.error(
+        timedOut ? "Graph upload timed out" : `Graph network error: ${(e as Error).message}`,
+      );
+      throw new HttpException(timedOut ? "Graph upload timed out" : "Graph API unreachable", timedOut ? 504 : 502);
     }
     const text = await response.text();
     let parsed: unknown = undefined;
@@ -763,10 +772,17 @@ export class FacebookService {
   private async fetchJson<T>(url: string, init: RequestInit): Promise<T> {
     let res: Response;
     try {
-      res = await fetch(url, init);
+      // Cap every Graph call at 15s so a hung socket can't stall a request.
+      res = await fetch(url, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(15_000),
+      });
     } catch (e) {
-      this.log.error(`Graph network error: ${(e as Error).message}`);
-      throw new HttpException("Graph API unreachable", 502);
+      const timedOut = (e as Error).name === "TimeoutError";
+      this.log.error(
+        timedOut ? "Graph API timed out" : `Graph network error: ${(e as Error).message}`,
+      );
+      throw new HttpException(timedOut ? "Graph API timed out" : "Graph API unreachable", timedOut ? 504 : 502);
     }
     const text = await res.text();
     let parsed: unknown = undefined;

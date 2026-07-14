@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import {
@@ -139,30 +140,53 @@ export class TicketsService {
       ownerId: dto.ownerId,
     });
 
-    // Per-pipeline, per-workspace auto-incrementing number
-    const lastInPipeline = await this.prisma.ticket.findFirst({
-      where: { pipelineId: dto.pipelineId, workspaceId },
-      orderBy: { number: "desc" },
-      select: { number: true },
-    });
-    const number = (lastInPipeline?.number ?? 0) + 1;
-
-    const ticket = await this.prisma.ticket.create({
-      data: {
-        workspaceId,
-        number,
-        pipelineId: dto.pipelineId,
-        stageId: dto.stageId,
-        contactId: dto.contactId,
-        conversationId: dto.conversationId ?? null,
-        ownerId: dto.ownerId ?? null,
-        title: dto.title,
-        description: dto.description ?? null,
-        value: dto.value ?? null,
-        currency: "SAR",
-      },
-      include: { contact: true, stage: true },
-    });
+    // Per-pipeline, per-workspace auto-incrementing number. Read-max-then-+1
+    // races under concurrent creates and collides on @@unique([pipelineId,
+    // number]); retry on that specific conflict with a freshly recomputed
+    // number instead of 500-ing / losing the ticket.
+    let ticket: Prisma.PromiseReturnType<typeof this.prisma.ticket.create> | null =
+      null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const lastInPipeline = await this.prisma.ticket.findFirst({
+        where: { pipelineId: dto.pipelineId, workspaceId },
+        orderBy: { number: "desc" },
+        select: { number: true },
+      });
+      const number = (lastInPipeline?.number ?? 0) + 1;
+      try {
+        ticket = await this.prisma.ticket.create({
+          data: {
+            workspaceId,
+            number,
+            pipelineId: dto.pipelineId,
+            stageId: dto.stageId,
+            contactId: dto.contactId,
+            conversationId: dto.conversationId ?? null,
+            ownerId: dto.ownerId ?? null,
+            title: dto.title,
+            description: dto.description ?? null,
+            value: dto.value ?? null,
+            currency: "SAR",
+          },
+          include: { contact: true, stage: true },
+        });
+        break;
+      } catch (e) {
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === "P2002" &&
+          attempt < 4
+        ) {
+          continue; // number taken by a concurrent create — recompute + retry
+        }
+        throw e;
+      }
+    }
+    if (!ticket) {
+      throw new BadRequestException(
+        "Could not allocate a ticket number — too many concurrent creates, please retry",
+      );
+    }
 
     await this.prisma.ticketActivity.create({
       data: {

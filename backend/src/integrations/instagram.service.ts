@@ -492,14 +492,28 @@ export class InstagramService {
       );
       const rawMsgs = msgsRes.messages?.data ?? [];
 
-      // Wipe + reinsert IG messages for this conversation (idempotent refresh).
-      await this.prisma.message.deleteMany({
-        where: { workspaceId, conversationId: dbConv.id },
-      });
+      // Non-destructive refresh: only insert IG messages we haven't stored yet,
+      // keyed by the IG message id. The previous implementation wiped ALL
+      // messages for the conversation and reinserted the (windowed) Graph
+      // result, which permanently deleted older history and any locally
+      // authored replies on every sync.
+      const existingIds = new Set(
+        (
+          await this.prisma.message.findMany({
+            where: {
+              workspaceId,
+              conversationId: dbConv.id,
+              metaMessageId: { not: null },
+            },
+            select: { metaMessageId: true },
+          })
+        ).map((r) => r.metaMessageId),
+      );
 
       // Insert in chronological order (Graph returns newest-first).
       const ordered = [...rawMsgs].reverse();
       for (const m of ordered) {
+        if (m.id && existingIds.has(m.id)) continue;
         const createdAt = new Date(m.created_time);
         const d = isNaN(createdAt.getTime()) ? new Date() : createdAt;
         const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -512,6 +526,7 @@ export class InstagramService {
             body: m.message ?? "[attachment]",
             t,
             createdAt: d,
+            metaMessageId: m.id ?? null,
           },
         });
         messagesInserted++;
@@ -676,10 +691,20 @@ export class InstagramService {
   private async fetchJson<T>(url: string, init: RequestInit): Promise<T> {
     let res: Response;
     try {
-      res = await fetch(url, init);
+      // Cap every Graph call at 15s so a hung socket can't stall a request.
+      res = await fetch(url, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(15_000),
+      });
     } catch (e) {
-      this.log.error(`IG Graph network error: ${(e as Error).message}`);
-      throw new HttpException("Instagram Graph unreachable", 502);
+      const timedOut = (e as Error).name === "TimeoutError";
+      this.log.error(
+        timedOut ? "IG Graph timed out" : `IG Graph network error: ${(e as Error).message}`,
+      );
+      throw new HttpException(
+        timedOut ? "Instagram Graph timed out" : "Instagram Graph unreachable",
+        timedOut ? 504 : 502,
+      );
     }
     const text = await res.text();
     let parsed: unknown = undefined;

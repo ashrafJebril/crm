@@ -16,6 +16,17 @@ interface ContactRow {
   convs: number;
 }
 
+function parseTags(raw: string): string[] {
+  // tags is a JSON-encoded string array. A single malformed row must not throw
+  // and take down the whole contacts list — fall back to empty.
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 const shape = (c: ContactRow) => ({
   id: c.id,
   name: c.name,
@@ -25,7 +36,7 @@ const shape = (c: ContactRow) => ({
   source: c.source,
   value: c.value ?? "—",
   lastSeen: c.lastSeen,
-  tags: JSON.parse(c.tags) as string[],
+  tags: parseTags(c.tags),
   convs: c.convs,
 });
 

@@ -819,7 +819,9 @@ export class WhatsAppService {
         // Meta sets `field: "message_template_status_update"` and a `value` shape
         // unrelated to inbound messages.
         if (change.field === "message_template_status_update") {
-          await this.handleTemplateStatusUpdate(value as TemplateStatusValue);
+          // entry.id is the WABA id — lets us scope name-only status updates to
+          // the owning workspace.
+          await this.handleTemplateStatusUpdate(value as TemplateStatusValue, entry.id);
           processed += 1;
           continue;
         }
@@ -886,7 +888,10 @@ export class WhatsAppService {
    * (name, lang) pair is workspace-unique in practice; if a collision occurs
    * across tenants it's harmless — both rows get the same Meta-driven status.
    */
-  private async handleTemplateStatusUpdate(value: TemplateStatusValue) {
+  private async handleTemplateStatusUpdate(
+    value: TemplateStatusValue,
+    wabaId?: string,
+  ) {
     const event = (value.event ?? "").toUpperCase();
     const status = this.mapTemplateEvent(event);
     if (!status) {
@@ -895,12 +900,29 @@ export class WhatsAppService {
     }
 
     const metaId = value.message_template_id != null ? String(value.message_template_id) : null;
-    const where = metaId
-      ? { metaTemplateId: metaId }
-      : value.message_template_name
-        ? { name: value.message_template_name, lang: this.metaLangToLocal(value.message_template_language) }
-        : null;
-    if (!where) {
+
+    // metaTemplateId is globally unique across Meta, so matching on it hits
+    // exactly the right row regardless of tenant. The name+lang fallback is
+    // NOT unique (two tenants can both have "order_confirmation"/"en"), so we
+    // scope it to the workspace that owns this WABA — otherwise a status flip
+    // for one tenant would clobber another's same-named template.
+    let where: Record<string, unknown> | null;
+    if (metaId) {
+      where = { metaTemplateId: metaId };
+    } else if (value.message_template_name) {
+      const workspaceId = wabaId ? await this.workspaceIdForWaba(wabaId) : null;
+      if (!workspaceId) {
+        this.log.warn(
+          `Template status by name without a resolvable workspace (waba=${wabaId}) — skipping to avoid cross-tenant update`,
+        );
+        return;
+      }
+      where = {
+        workspaceId,
+        name: value.message_template_name,
+        lang: this.metaLangToLocal(value.message_template_language),
+      };
+    } else {
       this.log.warn("Template status update with no id or name — skipping");
       return;
     }
@@ -922,6 +944,15 @@ export class WhatsAppService {
         },
       });
     }
+  }
+
+  /** Resolve the workspace that owns a given WABA id (stored in Integration.raw). */
+  private async workspaceIdForWaba(wabaId: string): Promise<string | null> {
+    const integs = await this.prisma.integration.findMany({
+      where: { platform: "whatsapp" },
+    });
+    const match = integs.find((i) => this.parseRaw(i.raw).wabaId === wabaId);
+    return match?.workspaceId ?? null;
   }
 
   private mapTemplateEvent(event: string): string | null {
@@ -1136,10 +1167,22 @@ export class WhatsAppService {
   private async fetchJson<T>(url: string, init: RequestInit): Promise<T> {
     let res: Response;
     try {
-      res = await fetch(url, init);
+      // Cap every Graph call at 15s so a hung socket can't stall a webhook or
+      // request indefinitely. Respect a caller-supplied signal if present.
+      res = await fetch(url, {
+        ...init,
+        signal: init.signal ?? AbortSignal.timeout(15_000),
+      });
     } catch (e) {
-      this.log.error(`Graph network error: ${(e as Error).message}`);
-      throw new HttpException("Graph API unreachable", 502);
+      const msg =
+        (e as Error).name === "TimeoutError"
+          ? "Graph API timed out"
+          : `Graph network error: ${(e as Error).message}`;
+      this.log.error(msg);
+      throw new HttpException(
+        (e as Error).name === "TimeoutError" ? "Graph API timed out" : "Graph API unreachable",
+        504,
+      );
     }
     const text = await res.text();
     let parsed: unknown = undefined;
