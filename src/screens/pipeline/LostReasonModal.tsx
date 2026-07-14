@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Modal } from "@/components/Modal";
 import type { Ticket, Lang } from "@/lib/types";
 
 const REASONS: Array<{ id: string; en: string; ar: string }> = [
@@ -20,33 +21,8 @@ export function LostReasonModal({ ticket, lang, onCancel, onConfirm }: Props) {
   const [selected, setSelected] = useState<string>(REASONS[0].id);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--r)",
-          padding: 20,
-          minWidth: 360,
-          maxWidth: 420,
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-        }}
-      >
+    <Modal onClose={onCancel} width={420} label="Lost reason">
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
           {lang === "ar" ? `سبب الخسارة لـ #${ticket.number}` : `Lost reason for #${ticket.number}`}
         </h3>
@@ -108,6 +84,6 @@ export function LostReasonModal({ ticket, lang, onCancel, onConfirm }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

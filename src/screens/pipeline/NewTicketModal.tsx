@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useCreateTicket, useCreateTicketFromConversation } from "./hooks/useTicketMutations";
 import { usePipelines } from "./hooks/usePipelineData";
+import { Modal } from "@/components/Modal";
 import type { Lang, Pipeline, TicketStage } from "@/lib/types";
 
 interface BaseProps {
@@ -92,33 +93,10 @@ export function NewTicketModal(props: Props) {
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-      }}
-    >
+    <Modal onClose={onClose} width={440} label="New ticket">
       <form
-        onClick={(e) => e.stopPropagation()}
         onSubmit={onSubmit}
-        style={{
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--r)",
-          padding: 20,
-          minWidth: 380,
-          maxWidth: 440,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
+        style={{ display: "flex", flexDirection: "column", gap: 12 }}
       >
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
           {lang === "ar" ? "تذكرة جديدة" : "New ticket"}
@@ -220,7 +198,7 @@ export function NewTicketModal(props: Props) {
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 

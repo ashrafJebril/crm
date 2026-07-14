@@ -21,6 +21,7 @@ import {
 import { useFetch } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { Modal } from "@/components/Modal";
 import { TemplateEditor } from "./templates/TemplateEditor";
 import type { Template } from "@/lib/types";
 
@@ -834,33 +835,8 @@ function ConfirmDelete({
 }) {
   const ar = lang === "ar";
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onCancel}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 110,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--r)",
-          padding: 20,
-          minWidth: 320,
-          maxWidth: 400,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
+    <Modal onClose={onCancel} width={400} zIndex={110} label="Delete template">
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
           {ar ? "حذف القالب؟" : "Delete template?"}
         </h3>
@@ -900,7 +876,7 @@ function ConfirmDelete({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 

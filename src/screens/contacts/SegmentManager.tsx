@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/api/client";
+import { Modal } from "@/components/Modal";
 import type { Contact, Lang, Segment, SegmentFilter } from "@/lib/types";
 
 interface Props {
@@ -173,34 +174,17 @@ export function SegmentManager({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
+    <Modal
+      onClose={onClose}
+      width={820}
+      label="Segments"
+      panelStyle={{
+        padding: 0,
         display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-        padding: 20,
+        gridTemplateColumns: "220px 1fr",
+        overflow: "hidden",
       }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--r)",
-          padding: 0,
-          width: "min(820px, 100%)",
-          maxHeight: "90vh",
-          display: "grid",
-          gridTemplateColumns: "220px 1fr",
-          overflow: "hidden",
-        }}
-      >
         {/* segment list */}
         <div
           style={{
@@ -501,8 +485,7 @@ export function SegmentManager({
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

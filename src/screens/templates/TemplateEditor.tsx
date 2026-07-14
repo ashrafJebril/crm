@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "@/api/client";
+import { Modal } from "@/components/Modal";
 import type { Lang, Template, TemplateButtonDef, TemplateButtonType } from "@/lib/types";
 
 type Category = "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
@@ -78,36 +79,10 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-        padding: 20,
-      }}
-    >
+    <Modal onClose={onClose} width={520} label={mode === "create" ? "New template" : "Edit template"}>
       <form
-        onClick={(e) => e.stopPropagation()}
         onSubmit={onSubmit}
-        style={{
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--r)",
-          padding: 20,
-          width: "100%",
-          maxWidth: 520,
-          maxHeight: "90vh",
-          overflowY: "auto",
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
+        style={{ display: "flex", flexDirection: "column", gap: 12 }}
       >
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
           {mode === "create"
@@ -317,7 +292,7 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 
 interface ModalProps {
   onClose: () => void;
@@ -7,6 +7,11 @@ interface ModalProps {
   width?: number;
   /** Accessible label for the dialog. */
   label?: string;
+  /** Merged into the panel style — e.g. `{ padding: 0 }` for panels that manage
+   *  their own layout (grids, split panes). Overrides the defaults it names. */
+  panelStyle?: CSSProperties;
+  /** Higher stacking context for modals that open on top of another modal. */
+  zIndex?: number;
 }
 
 /**
@@ -20,7 +25,14 @@ interface ModalProps {
  * Screens can migrate to this incrementally; it doesn't change existing modals
  * until they adopt it.
  */
-export function Modal({ onClose, children, width = 440, label }: ModalProps) {
+export function Modal({
+  onClose,
+  children,
+  width = 440,
+  label,
+  panelStyle,
+  zIndex = 100,
+}: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -51,7 +63,7 @@ export function Modal({ onClose, children, width = 440, label }: ModalProps) {
         background: "rgba(0,0,0,0.5)",
         display: "grid",
         placeItems: "center",
-        zIndex: 100,
+        zIndex,
         padding: 20,
       }}
     >
@@ -72,6 +84,7 @@ export function Modal({ onClose, children, width = 440, label }: ModalProps) {
           maxHeight: "90vh",
           overflowY: "auto",
           outline: "none",
+          ...panelStyle,
         }}
       >
         {children}
