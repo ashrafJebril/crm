@@ -316,7 +316,12 @@ export class InstagramService {
 
   /** Send an outbound DM to a specific IGSID without needing an existing
    *  internal Conversation row. Mirrors the FB sendDirectMessage path. */
-  async sendDirectMessage(workspaceId: string, igsid: string, message: string) {
+  async sendDirectMessage(
+    workspaceId: string,
+    igsid: string,
+    message: string,
+    mediaId?: string,
+  ) {
     const { token } = await this.requireToken(workspaceId);
     const fb = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: "facebook" },
@@ -325,16 +330,40 @@ export class InstagramService {
       throw new BadRequestException("Facebook Page is not connected");
     }
     const url = `${GRAPH}/${fb.pageId}/messages?access_token=${encodeURIComponent(token)}`;
-    const res = await this.fetchJson<{ message_id?: string; recipient_id?: string }>(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: igsid },
-        message: { text: message },
-        messaging_type: "RESPONSE",
-      }),
-    });
-    return { ok: true as const, messageId: res.message_id };
+
+    // Same pattern as the FB send path — image and text go in separate calls.
+    if (mediaId) {
+      const imageUrl = await this.media.resolveExternalUrl(workspaceId, mediaId, 60 * 60);
+      await this.fetchJson<{ message_id?: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: { id: igsid },
+          message: {
+            attachment: {
+              type: "image",
+              payload: { url: imageUrl, is_reusable: false },
+            },
+          },
+          messaging_type: "RESPONSE",
+        }),
+      });
+    }
+
+    let messageId: string | undefined;
+    if (message && message.trim().length > 0) {
+      const res = await this.fetchJson<{ message_id?: string; recipient_id?: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: { id: igsid },
+          message: { text: message },
+          messaging_type: "RESPONSE",
+        }),
+      });
+      messageId = res.message_id;
+    }
+    return { ok: true as const, messageId };
   }
 
   async deleteComment(workspaceId: string, commentId: string) {
@@ -519,7 +548,12 @@ export class InstagramService {
    * FB Page's `/messages` endpoint with platform=instagram routing.  Writes
    * the message into our own DB so the Inbox reflects it immediately.
    */
-  async sendInConversation(workspaceId: string, conversationId: string, message: string) {
+  async sendInConversation(
+    workspaceId: string,
+    conversationId: string,
+    message: string,
+    mediaId?: string,
+  ) {
     const { token } = await this.requireToken(workspaceId);
 
     const conv = await this.prisma.conversation.findFirst({
@@ -540,39 +574,65 @@ export class InstagramService {
     }
 
     const url = `${GRAPH}/${fb.pageId}/messages?access_token=${encodeURIComponent(token)}`;
-    const res = await this.fetchJson<{ message_id?: string; recipient_id?: string }>(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: recipientIgsid },
-        message: { text: message },
-        messaging_type: "RESPONSE",
-      }),
-    });
+
+    if (mediaId) {
+      const imageUrl = await this.media.resolveExternalUrl(workspaceId, mediaId, 60 * 60);
+      await this.fetchJson<{ message_id?: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: { id: recipientIgsid },
+          message: {
+            attachment: {
+              type: "image",
+              payload: { url: imageUrl, is_reusable: false },
+            },
+          },
+          messaging_type: "RESPONSE",
+        }),
+      });
+    }
+
+    let messageId: string | undefined;
+    if (message && message.trim().length > 0) {
+      const res = await this.fetchJson<{ message_id?: string; recipient_id?: string }>(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: { id: recipientIgsid },
+          message: { text: message },
+          messaging_type: "RESPONSE",
+        }),
+      });
+      messageId = res.message_id;
+    }
 
     // Mirror into our DB so the UI updates immediately.
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const previewBody =
+      message && message.trim().length > 0 ? message : "[image]";
     await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId,
         from: "human",
-        body: message,
+        body: previewBody,
         t,
+        attach: mediaId ?? null,
       },
     });
     await this.prisma.conversation.update({
       where: { id: conversationId },
       data: {
-        preview: message.slice(0, 140),
+        preview: previewBody.slice(0, 140),
         lastAt: "now",
         lastFrom: "human",
         unread: 0,
       },
     });
 
-    return { ok: true, messageId: res.message_id };
+    return { ok: true, messageId };
   }
 
   // ─── Internals ──────────────────────────────────────────────────────────

@@ -14,16 +14,15 @@ import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { TicketsModule } from "./tickets/tickets.module";
-import { MentionsModule } from "./mentions/mentions.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotesModule } from "./notes/notes.module";
 import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
-import { ScheduledPostsModule } from "./scheduled-posts/scheduled-posts.module";
 import { AdminModule } from "./admin/admin.module";
-import { OpenAiModule } from "./openai/openai.module";
-import { KnowledgeModule } from "./knowledge/knowledge.module";
-import { AiModule } from "./ai/ai.module";
+import { JoteckModule } from "./joteck/joteck.module";
+import { RealtimeModule } from "./realtime/realtime.module";
+import { SearchModule } from "./search/search.module";
+import { SegmentsModule } from "./segments/segments.module";
 
 @Module({
   imports: [
@@ -31,6 +30,7 @@ import { AiModule } from "./ai/ai.module";
     PrismaModule,
     AuthModule,
     HealthModule,
+    SegmentsModule,
     ContactsModule,
     ConversationsModule,
     AppointmentsModule,
@@ -40,16 +40,14 @@ import { AiModule } from "./ai/ai.module";
     DashboardModule,
     IntegrationsModule,
     TicketsModule,
-    MentionsModule,
     WorkspacesModule,
     NotesModule,
     MediaModule,
     SocialModule,
-    ScheduledPostsModule,
     AdminModule,
-    OpenAiModule,
-    KnowledgeModule,
-    AiModule,
+    JoteckModule,
+    RealtimeModule,
+    SearchModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },

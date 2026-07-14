@@ -4,6 +4,8 @@ import { APP_GUARD } from "@nestjs/core";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
+import { SsoController } from "./sso.controller";
+import { SsoService } from "./sso.service";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
 
 @Module({
@@ -15,9 +17,12 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     }),
     WorkspacesModule,
   ],
-  controllers: [AuthController],
+  // HJZ SSO bridge controller is inert unless AUTH_MODE=sso (the service
+  // rejects calls), so registering it standalone-side is harmless.
+  controllers: [AuthController, SsoController],
   providers: [
     AuthService,
+    SsoService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
   exports: [AuthService],

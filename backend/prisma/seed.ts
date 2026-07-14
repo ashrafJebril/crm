@@ -35,8 +35,6 @@ async function reset() {
   await prisma.template.deleteMany();
   await prisma.campaign.deleteMany();
   await prisma.note.deleteMany();
-  await prisma.mention.deleteMany();
-  await prisma.keyword.deleteMany();
   await prisma.integration.deleteMany();
   await prisma.workspaceMember.deleteMany();
   await prisma.workspace.deleteMany();

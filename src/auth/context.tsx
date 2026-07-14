@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, tokenStore } from "@/api/client";
+import { disconnectSocket } from "@/api/realtime";
 import type { Workspace } from "@/lib/types";
 
 export interface AuthUser {
@@ -164,6 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    disconnectSocket();
     tokenStore.clear();
     setUser(null);
     setWorkspaces([]);

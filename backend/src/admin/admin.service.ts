@@ -45,7 +45,6 @@ export class AdminService {
             members: true,
             contacts: true,
             conversations: true,
-            mentions: true,
             tickets: true,
           },
         },
@@ -66,7 +65,6 @@ export class AdminService {
         members: w._count.members,
         contacts: w._count.contacts,
         conversations: w._count.conversations,
-        mentions: w._count.mentions,
         tickets: w._count.tickets,
       },
     }));
@@ -107,7 +105,6 @@ export class AdminService {
             contacts: true,
             conversations: true,
             messages: true,
-            mentions: true,
             tickets: true,
             campaigns: true,
             templates: true,

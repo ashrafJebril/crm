@@ -25,7 +25,9 @@ function load(): Tweaks {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULTS;
-    return { ...DEFAULTS, ...JSON.parse(raw) };
+    // Always start with the sidebar expanded — the user opted out of the
+    // collapsed layout and the Tweaks UI that toggled it is hidden.
+    return { ...DEFAULTS, ...JSON.parse(raw), collapsed: false };
   } catch {
     return DEFAULTS;
   }

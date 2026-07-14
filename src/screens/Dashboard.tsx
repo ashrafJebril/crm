@@ -9,8 +9,6 @@ import { AreaChart, Spark } from "@/components/charts";
 import {
   IconArrowDown, IconArrowUp, IconBolt, IconCal, IconChev, IconChevDown, IconMore,
 } from "@/icons";
-import { AGENTS, findAgent } from "@/data/agents";
-import { DAILY, INTENTS } from "@/data/analytics";
 import { useFetch } from "@/api/useFetch";
 import { CHANNEL_LABEL } from "@/lib/types";
 import type {
@@ -19,6 +17,28 @@ import type {
   ConvChannel,
   TicketsDashboardSummary,
 } from "@/lib/types";
+
+interface DailyPoint {
+  day: string;
+  total: number;
+  ai: number;
+  human: number;
+}
+interface IntentRow {
+  name: string;
+  count: number;
+  pct: number;
+}
+interface ActivityRow {
+  id: string;
+  conversationId: string;
+  contactId: string;
+  contactName: string;
+  preview: string;
+  channel: string;
+  from: string; // "them" | "ai" | "human"
+  at: string;
+}
 
 const CHANNEL_ORDER: ConvChannel[] = [
   "whatsapp",
@@ -57,7 +77,31 @@ interface DashboardSummary {
   };
   aiResolutionPct: number;
   runningCampaigns: Campaign[];
+  daily: DailyPoint[];
+  topIntents: IntentRow[];
+  recentActivity: ActivityRow[];
+  deltas: {
+    conversationsPct: number;
+    conversationsThis7: number;
+    conversationsPrev7: number;
+  };
 }
+
+function relTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 10) return "just now";
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.round(h / 24);
+  return `${d}d`;
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 interface StatTileProps {
   label: string;
@@ -70,8 +114,9 @@ interface StatTileProps {
 }
 
 function StatTile({ label, value, unit, delta, sub, spark, invert }: StatTileProps) {
-  const isDown = delta.startsWith("-");
-  const tone = isDown ? (invert ? "" : "down") : "";
+  const isEmpty = delta === null || delta === undefined || delta === "";
+  const isDown = !isEmpty && delta.startsWith("-");
+  const tone = isEmpty ? "muted" : isDown ? (invert ? "" : "down") : "";
   return (
     <div className="stat">
       <div className="label">
@@ -86,25 +131,25 @@ function StatTile({ label, value, unit, delta, sub, spark, invert }: StatTilePro
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span className={`delta ${tone}`.trim()}>
-            {isDown ? <IconArrowDown w={11} /> : <IconArrowUp w={11} />}
-            {delta}
-          </span>
+          {!isEmpty && (
+            <span className={`delta ${tone}`.trim()}>
+              {isDown ? <IconArrowDown w={11} /> : <IconArrowUp w={11} />}
+              {delta}
+            </span>
+          )}
           <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{sub}</span>
         </div>
-        {spark && <Spark values={spark} w={80} h={24} />}
+        {spark && spark.length > 0 && <Spark values={spark} w={80} h={24} />}
       </div>
     </div>
   );
 }
 
-const ACTIVITY_KEYS = ["a1", "a2", "a3", "a4", "a5", "a6"] as const;
-
 function DashboardImpl() {
   const { t } = useTweaks();
   const [, setRoute] = useRoute();
   const tx = makeTx(t.lang);
-  const { data: summary, loading: summaryLoading, error: summaryError } =
+  const { data: summary, error: summaryError } =
     useFetch<DashboardSummary>("/dashboard/summary");
   const { data: ticketsSummary } =
     useFetch<TicketsDashboardSummary>("/tickets/dashboard/summary");
@@ -138,23 +183,29 @@ function DashboardImpl() {
 
   const conversationsValue = summary
     ? summary.counts.conversations.toLocaleString()
-    : summaryLoading
-      ? "0"
-      : "0";
-  const aiResolutionValue = summary
-    ? `${summary.aiResolutionPct}`
-    : summaryLoading
-      ? "0"
-      : "0";
+    : "0";
+  const aiResolutionValue = summary ? `${summary.aiResolutionPct}` : "0";
 
-  const activity = [
-    { who: "Luna",  role: "ai" as const,    what: tx("booked viewing for", "حجزت معاينة لـ"),    to: "Reem Al-Qahtani", t: "just now" },
-    { who: "Atlas", role: "ai" as const,    what: tx("answered order status for", "رد على حالة طلب لـ"), to: "Fatima Boutros", t: "1m" },
-    { who: "Lina",  role: "human" as const, what: tx("took over from", "تولّت من"),               to: "Atlas → James W.", t: "3m" },
-    { who: "Nova",  role: "ai" as const,    what: tx("qualified lead", "أهّل عميلاً محتملاً"),    to: "Sven Lindgren",   t: "8m" },
-    { who: "Atlas", role: "ai" as const,    what: tx("escalated reschedule", "صعّد إعادة جدولة"), to: "Aisha Rahman",    t: "14m" },
-    { who: "Luna",  role: "ai" as const,    what: tx("sent floor plan to", "أرسلت مخططًا إلى"),  to: "Hugo Martín",     t: "22m" },
-  ];
+  // Sparklines derived from the same 7-day timeseries.
+  const totalSpark = (summary?.daily ?? []).map((d) => d.total);
+  const aiPctSpark = (summary?.daily ?? []).map((d) =>
+    d.total > 0 ? Math.round((d.ai / d.total) * 100) : 0,
+  );
+
+  // Day-of-week labels lined up with summary.daily for the chart x-axis.
+  const xLabels = (summary?.daily ?? []).map((d) => {
+    const dt = new Date(d.day + "T00:00:00Z");
+    return DAY_LABELS[dt.getUTCDay()] ?? "";
+  });
+  const aSeries = (summary?.daily ?? []).map((d) => d.ai);
+  const bSeries = (summary?.daily ?? []).map((d) => d.human);
+
+  const conversationsDelta = summary
+    ? `${summary.deltas.conversationsPct > 0 ? "+" : ""}${summary.deltas.conversationsPct}%`
+    : "";
+
+  const recentActivity = summary?.recentActivity ?? [];
+  const topIntents = summary?.topIntents ?? [];
 
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
@@ -184,26 +235,23 @@ function DashboardImpl() {
           <StatTile
             label={tx("Conversations", "المحادثات")}
             value={conversationsValue}
-            delta="+12.4%"
+            delta={conversationsDelta}
             sub={tx("vs prev 7d", "مقارنة بالأسبوع السابق")}
-            spark={DAILY.conversations}
+            spark={totalSpark}
           />
           <StatTile
             label={tx("AI resolution", "حل بالذكاء")}
             value={aiResolutionValue}
             unit="%"
-            delta="+4.1pp"
-            sub={tx("Without escalation", "بدون تصعيد")}
-            spark={DAILY.ai_pct.map((v) => v * 100)}
+            delta=""
+            sub={tx("Conversations handled by AI", "المحادثات التي يديرها الذكاء")}
+            spark={aiPctSpark}
           />
           <StatTile
-            label={tx("Avg response", "متوسط الرد")}
-            value="19"
-            unit="s"
-            delta="-23s"
-            sub={tx("First reply", "الرد الأول")}
-            spark={DAILY.responseTime.slice().reverse()}
-            invert
+            label={tx("Unread", "غير مقروء")}
+            value={summary?.counts.unread.toLocaleString() ?? "0"}
+            delta=""
+            sub={tx("Across all channels", "عبر جميع القنوات")}
           />
           <StatTile
             label={tx("Pipeline value", "قيمة المبيعات")}
@@ -212,13 +260,12 @@ function DashboardImpl() {
                 ? `${ticketsSummary.currency} ${ticketsSummary.openValue.toLocaleString()}`
                 : "0"
             }
-            delta="+18.2%"
+            delta=""
             sub={tx("Open tickets", "تذاكر مفتوحة")}
-            spark={[120, 148, 162, 178, 201, 228, 242]}
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.65fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
           <div className="card">
             <div className="card-h">
               <div>
@@ -235,12 +282,7 @@ function DashboardImpl() {
               </div>
             </div>
             <div style={{ padding: "16px 16px 8px" }}>
-              <AreaChart
-                a={DAILY.resolved}
-                b={[42, 34, 37, 36, 37, 41, 45]}
-                w={680}
-                h={180}
-              />
+              <AreaChart a={aSeries} b={bSeries} w={680} h={180} />
               <div
                 style={{
                   display: "flex",
@@ -251,50 +293,13 @@ function DashboardImpl() {
                   color: "var(--ink-3)",
                 }}
               >
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                  <span key={d}>{d}</span>
+                {xLabels.map((d, i) => (
+                  <span key={`${d}-${i}`}>{d}</span>
                 ))}
               </div>
             </div>
           </div>
 
-          <div className="card">
-            <div className="card-h">
-              <h3>{tx("Your AI agents", "وكلاؤك الذكيون")}</h3>
-              <button className="btn ghost sm" onClick={() => setRoute("agents")}>
-                {tx("Manage", "إدارة")}
-                <IconChev w={12} />
-              </button>
-            </div>
-            <div style={{ padding: 8 }}>
-              {AGENTS.filter((a) => a.status === "live").map((a) => (
-                <div
-                  key={a.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 8px",
-                    borderRadius: 8,
-                  }}
-                >
-                  <Avatar agent={a} ai size="lg" />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontWeight: 500 }}>{a.name}</span>
-                      <Badge kind="ok" dot>live</Badge>
-                    </div>
-                    <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                      {a.role} · {a.convs} convos · CSAT {a.csat}
-                    </div>
-                  </div>
-                  <div style={{ width: 64 }}>
-                    <Spark values={[8, 14, 12, 18, 20, 22, 28]} w={64} h={22} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1fr", gap: 16 }}>
@@ -307,11 +312,24 @@ function DashboardImpl() {
               </span>
             </div>
             <div style={{ padding: "4px 6px 12px" }}>
-              {activity.map((row, i) => {
-                const agent = row.role === "ai" ? findAgent(row.who) : undefined;
+              {recentActivity.length === 0 && (
+                <div
+                  className="mono muted"
+                  style={{ padding: "12px 12px", fontSize: 11, opacity: 0.7 }}
+                >
+                  {tx("No recent activity yet.", "لا يوجد نشاط حديث.")}
+                </div>
+              )}
+              {recentActivity.map((row) => {
+                const isInbound = row.from === "them";
+                const verb = isInbound
+                  ? tx("messaged", "راسل")
+                  : row.from === "ai"
+                    ? tx("AI replied to", "ردّ الذكاء على")
+                    : tx("replied to", "ردّ على");
                 return (
                   <div
-                    key={ACTIVITY_KEYS[i]}
+                    key={row.id}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -320,18 +338,32 @@ function DashboardImpl() {
                       borderRadius: 6,
                     }}
                   >
-                    {row.role === "ai" && agent ? (
-                      <Avatar agent={agent} ai size="sm" />
-                    ) : (
-                      <Avatar name={row.who} color="270" size="sm" />
-                    )}
-                    <div style={{ fontSize: 13, flex: 1 }}>
-                      <span style={{ fontWeight: 500 }}>{row.who}</span>
-                      <span style={{ color: "var(--ink-2)" }}> {row.what} </span>
-                      <span style={{ fontWeight: 500 }}>{row.to}</span>
+                    <Avatar name={row.contactName} color="270" size="sm" />
+                    <div style={{ fontSize: 13, flex: 1, minWidth: 0 }}>
+                      <span style={{ fontWeight: 500 }}>{row.contactName}</span>
+                      <span style={{ color: "var(--ink-2)" }}> · {verb} </span>
+                      <span
+                        style={{
+                          color: "var(--ink-3)",
+                          display: "block",
+                          fontSize: 11,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {row.preview}
+                      </span>
                     </div>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                      {row.t}
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 11,
+                        color: "var(--ink-3)",
+                        flex: "0 0 auto",
+                      }}
+                    >
+                      {relTime(row.at)}
                     </span>
                   </div>
                 );
@@ -342,43 +374,52 @@ function DashboardImpl() {
           <div className="card">
             <div className="card-h">
               <h3>{tx("Top intents", "أهم النوايا")}</h3>
-              <span className="sub">{tx("today", "اليوم")}</span>
+              <span className="sub">{tx("all conversations", "كل المحادثات")}</span>
             </div>
             <div style={{ padding: 16 }}>
-              {INTENTS.slice(0, 6).map((it, i) => (
-                <div key={it.name} style={{ marginBottom: 10 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: 12,
-                      marginBottom: 4,
-                    }}
-                  >
-                    <span>{it.name}</span>
-                    <span className="mono muted">
-                      {it.count} · {it.pct}%
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      height: 5,
-                      background: "var(--bg-2)",
-                      borderRadius: 3,
-                      overflow: "hidden",
-                    }}
-                  >
+              {topIntents.length === 0 ? (
+                <div
+                  className="mono muted"
+                  style={{ fontSize: 11, opacity: 0.7 }}
+                >
+                  {tx("No intents tagged yet.", "لم يُصنّف أي نية بعد.")}
+                </div>
+              ) : (
+                topIntents.map((it, i) => (
+                  <div key={it.name} style={{ marginBottom: 10 }}>
                     <div
                       style={{
-                        width: `${it.pct * 3}%`,
-                        height: "100%",
-                        background: "var(--accent)",
-                        opacity: 0.4 + i * 0.1,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 12,
+                        marginBottom: 4,
                       }}
-                    />
+                    >
+                      <span>{it.name}</span>
+                      <span className="mono muted">
+                        {it.count} · {it.pct}%
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: 5,
+                        background: "var(--bg-2)",
+                        borderRadius: 3,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${it.pct}%`,
+                          height: "100%",
+                          background: "var(--accent)",
+                          opacity: 0.4 + i * 0.1,
+                        }}
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 

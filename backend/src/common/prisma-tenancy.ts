@@ -14,14 +14,9 @@ const SCOPED_MODELS = new Set([
   "Ticket",
   "TicketActivity",
   "Integration",
-  "Keyword",
-  "Mention",
   "Note",
   "Media",
-  "ScheduledPost",
-  "KnowledgeDocument",
-  "KnowledgeChunk",
-  "AiReply",
+  "Segment",
 ]);
 
 const READ_ACTIONS = new Set([

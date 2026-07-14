@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import {
   AddNoteDto,
   CreateTicketDto,
@@ -14,7 +15,10 @@ import {
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   // ─── Pipelines ─────────────────────────────────────────────────────────
   async listPipelines(workspaceId: string) {
@@ -39,21 +43,31 @@ export class TicketsService {
 
   // ─── Tickets ───────────────────────────────────────────────────────────
   async listTickets(workspaceId: string, query: ListTicketsQuery) {
-    return this.prisma.ticket.findMany({
+    const take = query.limit ?? 50;
+    const items = await this.prisma.ticket.findMany({
       where: {
         workspaceId,
         pipelineId: query.pipelineId,
         stageId: query.stageId,
         contactId: query.contactId,
+        conversationId: query.conversationId,
         ownerId: query.ownerId,
       },
-      orderBy: [{ stageId: "asc" }, { updatedAt: "desc" }],
-      take: query.limit,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: take + 1,
+      cursor: query.cursor ? { id: query.cursor } : undefined,
+      skip: query.cursor ? 1 : 0,
       include: {
         contact: true,
         stage: true,
       },
     });
+    const hasMore = items.length > take;
+    const page = hasMore ? items.slice(0, take) : items;
+    return {
+      items: page,
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    };
   }
 
   async getTicket(workspaceId: string, id: string) {
@@ -113,6 +127,8 @@ export class TicketsService {
       },
     });
 
+    this.realtime.emitToWorkspace(workspaceId, "ticket.created", { ticket });
+
     return ticket;
   }
 
@@ -153,6 +169,8 @@ export class TicketsService {
         },
       });
     }
+
+    this.realtime.emitToWorkspace(workspaceId, "ticket.updated", { ticket: updated });
 
     return updated;
   }
@@ -203,12 +221,50 @@ export class TicketsService {
       },
     });
 
+    // Broadcast to every other connected client in this workspace so their
+    // pipeline boards reflect the move without a refetch. The author's own
+    // socket also receives this — frontend handler is idempotent.
+    this.realtime.emitToWorkspace(workspaceId, "ticket.moved", {
+      ticket: updated,
+      fromStageId: ticket.stageId,
+      toStageId: targetStage.id,
+    });
+
     return updated;
   }
 
+  async createFromConversation(
+    workspaceId: string,
+    conversationId: string,
+    dto: {
+      pipelineId: string;
+      stageId: string;
+      title: string;
+      description?: string;
+      value?: number;
+      ownerId?: string;
+    },
+  ) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+
+    return this.createTicket(workspaceId, {
+      pipelineId: dto.pipelineId,
+      stageId: dto.stageId,
+      contactId: conv.contactId,
+      conversationId,
+      title: dto.title,
+      description: dto.description,
+      value: dto.value,
+      ownerId: dto.ownerId,
+    });
+  }
+
   async addNote(workspaceId: string, id: string, dto: AddNoteDto) {
-    await this.getTicket(workspaceId, id);
-    return this.prisma.ticketActivity.create({
+    const ticket = await this.getTicket(workspaceId, id);
+    const activity = await this.prisma.ticketActivity.create({
       data: {
         workspaceId,
         ticketId: id,
@@ -217,6 +273,8 @@ export class TicketsService {
         byUserId: dto.byUserId ?? null,
       },
     });
+    this.realtime.emitToWorkspace(workspaceId, "ticket.updated", { ticket });
+    return activity;
   }
 
   async deleteTicket(workspaceId: string, id: string) {
@@ -226,9 +284,9 @@ export class TicketsService {
   }
 
   // ─── Dashboard summary ─────────────────────────────────────────────────
-  async dashboardSummary(workspaceId: string) {
+  async dashboardSummary(workspaceId: string, pipelineId?: string) {
     const all = await this.prisma.ticket.findMany({
-      where: { workspaceId },
+      where: { workspaceId, ...(pipelineId ? { pipelineId } : {}) },
       include: { stage: true },
     });
 

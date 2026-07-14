@@ -34,18 +34,28 @@ export class InstagramController {
   sendDirectMessage(
     @CurrentWorkspace() workspaceId: string,
     @Param("igsid") igsid: string,
-    @Body() dto: { message: string },
+    @Body() dto: { message: string; mediaId?: string },
   ) {
-    return this.svc.sendDirectMessage(workspaceId, igsid, dto.message);
+    return this.svc.sendDirectMessage(
+      workspaceId,
+      igsid,
+      dto.message,
+      dto.mediaId,
+    );
   }
 
   @Post("conversations/:conversationId/send")
   send(
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
-    @Body() dto: { message: string },
+    @Body() dto: { message: string; mediaId?: string },
   ) {
-    return this.svc.sendInConversation(workspaceId, conversationId, dto.message);
+    return this.svc.sendInConversation(
+      workspaceId,
+      conversationId,
+      dto.message,
+      dto.mediaId,
+    );
   }
 
   @Get("posts")

@@ -16,7 +16,9 @@ datasource db {
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  password  String   // bcrypt hash
+  // Nullable so SSO-provisioned users (mirrored from hjz via /auth/sso/exchange)
+  // don't need a local password. Standalone signups still get a bcrypt hash here.
+  password  String?  // bcrypt hash
   name      String
   role      String   @default("Agent") // Owner | Manager | Agent | Viewer
   initials  String
@@ -30,10 +32,13 @@ model User {
   // held by tkana staff for SaaS operations support.
   isSuperAdmin Boolean @default(false)
 
+  // HJZ SSO bridge — opaque hjz user id (`sub`). Set when this User row is
+  // a mirror of an hjz user provisioned via POST /auth/sso/exchange. Unique
+  // so the same hjz user upserts to the same row across logins.
+  externalId String? @unique
+
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
-  scheduledPosts ScheduledPost[] @relation("UserScheduledPosts")
-  knowledgeUploads KnowledgeDocument[] @relation("UserKnowledgeUploads")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -66,6 +71,7 @@ model Contact {
   appointments  Appointment[]
   tickets       Ticket[]
   notes         Note[]
+  segmentMembers SegmentMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -100,7 +106,6 @@ model Conversation {
 
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
-  aiReplies AiReply[] @relation("ConversationAiReplies")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -118,18 +123,22 @@ model Message {
   agent          String?
   attach         String?
 
+  // Meta's wamid (WhatsApp) / Graph mid (Messenger). Set on outbound so we can
+  // match incoming delivery-status webhooks back to the right Message row.
+  metaMessageId    String?
+  deliveryStatus   String?   // sent | delivered | read | failed
+  deliveryStatusAt DateTime?
+
   workspaceId  String
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
-  aiReplyAsInbound  AiReply[] @relation("AiReplyInbound")
-  aiReplyAsOutbound AiReply[] @relation("AiReplyOutbound")
-
   createdAt DateTime @default(now())
 
   @@index([conversationId])
   @@index([workspaceId])
+  @@index([metaMessageId])
 }
 
 model Appointment {
@@ -189,6 +198,52 @@ model Template {
 
   @@index([workspaceId])
   @@index([metaTemplateId])
+}
+
+// ─── Contact segments ─────────────────────────────────────────────────────
+// A Segment is a named, saved filter spec over the Contact table. Used by the
+// Contacts chip bar (preset views) and the Campaigns audience picker. The
+// filter is stored as a JSON string so we can evolve the shape without
+// migrations; the server-side executor in segments.service.ts is the contract.
+model Segment {
+  id              String  @id @default(cuid())
+  name            String
+  nameAr          String?
+  color           String? // hue string like "150", optional accent
+  filter          String  @default("{}") // JSON: SegmentFilter shape
+  // ── Sync fields (HJZ-CRM-2026-06-26) ───────────────────────────────
+  origin          String  @default("crm")
+  externalId      String?
+  externalRules   String?
+  lastSyncedAt    DateTime?
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceSegments", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  members SegmentMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, origin, externalId])
+  @@index([workspaceId])
+}
+
+// Materialized membership for hjz-origin segments. We can't re-evaluate
+// HJZ rules locally (they reference fields like loyalty_tier, sales_count
+// that CRM doesn't have), so HJZ ships the resolved client list and we
+// snapshot it here. For crm-origin segments this table is unused; member
+// counts come from running the filter against Contact.
+model SegmentMember {
+  segmentId String
+  contactId String
+  addedAt   DateTime @default(now())
+
+  segment Segment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([segmentId, contactId])
+  @@index([contactId])
 }
 
 // ─── Sales / ticket pipelines ─────────────────────────────────────────────
@@ -368,57 +423,6 @@ model Note {
   @@index([workspaceId])
 }
 
-// ─── Social listening ──────────────────────────────────────────────────────
-
-model Keyword {
-  id        String   @id @default(cuid())
-  value     String
-  kind      String   // "brand" | "hashtag" | "handle" | "competitor"
-  enabled   Boolean  @default(true)
-  notes     String?
-
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceKeywords", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  mentions  Mention[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([workspaceId, value])
-  @@index([workspaceId])
-}
-
-model Mention {
-  id           String   @id @default(cuid())
-  keywordId    String
-  source       String   // "google" | "ig-hashtag" | "fb-page" | "news"
-  sourceUrl    String?
-  externalId   String   // dedup key within a source
-  author       String
-  authorHandle String?
-  authorReach  Int?
-  body         String
-  lang         String?  // "en" | "ar" | "mixed"
-  dialect      String?  // "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi"
-  sentiment    Float?   // -1..+1
-  topic        String?
-  postedAt     DateTime?
-  ingestedAt   DateTime @default(now())
-  status       String   @default("new") // "new" | "triaged" | "engaged" | "dismissed"
-  raw          String?  // JSON blob from source
-
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceMentions", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  keyword Keyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
-
-  @@unique([workspaceId, source, externalId])
-  @@index([keywordId])
-  @@index([status, ingestedAt])
-  @@index([workspaceId])
-}
-
 // ─── Workspaces (tenants) ─────────────────────────────────────────────────
 
 model Workspace {
@@ -433,6 +437,17 @@ model Workspace {
   // visible in the admin portal.
   suspendedAt DateTime?
 
+  // HJZ SSO bridge — set on Workspaces that mirror an hjz tenant so we can
+  // resolve `hjz tid → tkana workspace` idempotently across SSO exchanges
+  // and client-sync webhooks. Nullable so existing standalone workspaces
+  // are untouched.
+  externalTenantId String? @unique
+
+  // JOTECK admin — module flag list ("inbox", "campaigns", …). NULL = all
+  // modules enabled (backwards compatible). When set, route guards consult
+  // this and 403 modules outside the list.
+  enabledModules Json?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")
@@ -440,27 +455,15 @@ model Workspace {
   messages          Message[]          @relation("WorkspaceMessages")
   appointments      Appointment[]      @relation("WorkspaceAppointments")
   templates         Template[]         @relation("WorkspaceTemplates")
+  segments          Segment[]          @relation("WorkspaceSegments")
   campaigns         Campaign[]         @relation("WorkspaceCampaigns")
   pipelines         Pipeline[]         @relation("WorkspacePipelines")
   ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")
   tickets           Ticket[]           @relation("WorkspaceTickets")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
-  keywords          Keyword[]          @relation("WorkspaceKeywords")
-  mentions          Mention[]          @relation("WorkspaceMentions")
   notes             Note[]             @relation("WorkspaceNotes")
   media             Media[]            @relation("WorkspaceMedia")
-  scheduledPosts    ScheduledPost[]    @relation("WorkspaceScheduledPosts")
-
-  // AI auto-reply toggle (per-workspace). When false, inbound messages are
-  // stored but no AI reply is generated.
-  aiAutoReplyEnabled    Boolean @default(false)
-  // Per-workspace confidence cutoff. Null = use AI_REPLY_CONFIDENCE_THRESHOLD.
-  aiConfidenceThreshold Float?
-
-  knowledgeDocs   KnowledgeDocument[] @relation("WorkspaceKnowledge")
-  knowledgeChunks KnowledgeChunk[]    @relation("WorkspaceKnowledgeChunks")
-  aiReplies       AiReply[]           @relation("WorkspaceAiReplies")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -494,7 +497,9 @@ model Media {
   fileName      String   // original filename, kept for display
   mimeType      String   // "image/jpeg" | "image/png" | "image/gif" | "image/webp" | ...
   sizeBytes     Int
-  storedPath    String   // path on disk, relative to backend/uploads
+  storedPath    String   // "local": path relative to backend/uploads.
+                         // "spaces": object key inside the DO Spaces bucket.
+  storageKind   String   @default("local") // "local" | "spaces"
   width         Int?     // for images
   height        Int?     // for images
   uploadedById  String?  // FK to User.id; nullable for system-generated assets
@@ -506,118 +511,4 @@ model Media {
 
   @@index([workspaceId])
   @@index([uploadedById])
-}
-
-// ─── Scheduled posts (publish queue) ──────────────────────────────────────
-
-model ScheduledPost {
-  id            String   @id @default(cuid())
-  workspaceId   String
-  workspace     Workspace @relation("WorkspaceScheduledPosts", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  content       String    // post body / caption — applied to every channel
-  mediaIds      String    @default("[]")  // JSON array of Media ids
-  channels      String    // JSON array, e.g. ["facebook","instagram"]
-
-  scheduledFor  DateTime  // when to publish. For "post now" we set this to NOW().
-  status        String    @default("pending") // pending | publishing | published | failed | canceled
-  attempts      Int       @default(0)
-  lastError     String?
-  // Per-channel results once published. JSON object keyed by channel:
-  //   { "facebook": { ok: true, postId: "..." }, "instagram": { ok: false, error: "..." } }
-  results       String    @default("{}")
-  publishedAt   DateTime?
-
-  createdById   String?
-  createdBy     User?     @relation("UserScheduledPosts", fields: [createdById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([workspaceId, status, scheduledFor])
-  @@index([workspaceId])
-}
-
-// ─── Knowledge base (RAG over uploaded docs) ──────────────────────────────
-
-model KnowledgeDocument {
-  id          String   @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceKnowledge", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  filename  String
-  mimeType  String
-  sizeBytes Int
-
-  // "pending" | "processing" | "ready" | "failed"
-  status     String  @default("pending")
-  errorText  String?
-  chunkCount Int     @default(0)
-
-  uploadedByUserId String?
-  uploadedBy       User?    @relation("UserKnowledgeUploads", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
-
-  chunks KnowledgeChunk[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([workspaceId])
-}
-
-model KnowledgeChunk {
-  id                  String @id @default(cuid())
-  workspaceId         String
-  workspace           Workspace         @relation("WorkspaceKnowledgeChunks", fields: [workspaceId], references: [id], onDelete: Cascade)
-  knowledgeDocumentId String
-  knowledgeDocument   KnowledgeDocument @relation(fields: [knowledgeDocumentId], references: [id], onDelete: Cascade)
-
-  chunkIndex Int
-  content    String
-  tokenCount Int
-
-  // pgvector column — read/write via $queryRaw / $executeRawUnsafe.
-  embedding Unsupported("vector(1536)")
-
-  createdAt DateTime @default(now())
-
-  @@index([workspaceId])
-  @@index([knowledgeDocumentId])
-}
-
-// ─── AI reply audit log ───────────────────────────────────────────────────
-
-model AiReply {
-  id          String   @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation("WorkspaceAiReplies", fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  conversationId String
-  conversation   Conversation @relation("ConversationAiReplies", fields: [conversationId], references: [id], onDelete: Cascade)
-
-  inboundMessageId String?
-  inboundMessage   Message? @relation("AiReplyInbound", fields: [inboundMessageId], references: [id], onDelete: SetNull)
-
-  outboundMessageId String?
-  outboundMessage   Message? @relation("AiReplyOutbound", fields: [outboundMessageId], references: [id], onDelete: SetNull)
-
-  action             String   // "reply" | "escalate"
-  replyText          String?
-  confidence         Float
-  needsEscalation    Boolean
-  escalationReason   String?
-  usedKnowledge      Boolean
-  missingInformation String?
-
-  modelName        String
-  promptTokens     Int?
-  completionTokens Int?
-
-  // JSON-encoded array of {chunkId, similarity} for traceability.
-  sources String?
-
-  createdAt DateTime @default(now())
-
-  @@index([workspaceId])
-  @@index([conversationId])
 }

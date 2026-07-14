@@ -12,17 +12,16 @@ import { useRoute } from "@/router";
 import { makeTx } from "@/lib/tx";
 import { NAV, isSection, TITLES } from "@/shell/nav";
 import type { Accent, Lang, RouteId, Theme } from "@/lib/types";
-import { CONTACTS, findContact } from "@/data/contacts";
-import { CONVERSATIONS } from "@/data/conversations";
-import { AGENTS } from "@/data/agents";
 import { CAMPAIGNS } from "@/data/campaigns";
 import { TEMPLATES } from "@/data/analytics";
+import { useFetch } from "@/api/useFetch";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import {
   IconBolt,
-  IconBot,
   IconCampaign,
   IconInbox,
   IconLang,
+  IconLayers,
   IconMoon,
   IconSearch,
   IconSparkles,
@@ -30,6 +29,41 @@ import {
   IconTemplate,
   IconUsers,
 } from "@/icons";
+
+interface SearchHitContact {
+  id: string;
+  name: string;
+  phone: string | null;
+  industry: string;
+  lifecycle: string;
+}
+interface SearchHitConversation {
+  id: string;
+  channel: string;
+  preview: string;
+  contactId: string;
+  contactName: string;
+  lastAt: string;
+}
+interface SearchHitTicket {
+  id: string;
+  number: number;
+  title: string;
+  pipelineId: string;
+  stageLabel: string | null;
+}
+interface SearchResults {
+  contacts: SearchHitContact[];
+  conversations: SearchHitConversation[];
+  tickets: SearchHitTicket[];
+}
+
+/** Open the command palette with an optional pre-filled query. */
+export function openPalette(query = ""): void {
+  window.dispatchEvent(
+    new CustomEvent("aram:open-palette", { detail: { query } }),
+  );
+}
 
 const STYLES = `
 .cmdk-back{position:fixed;inset:0;z-index:2147483646;
@@ -156,6 +190,28 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Imperative open from elsewhere (e.g. the topbar search input).
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<{ query?: string }>).detail;
+      setOpen(true);
+      setQuery(detail?.query ?? "");
+      setActive(0);
+    };
+    window.addEventListener("aram:open-palette", onOpen);
+    return () => window.removeEventListener("aram:open-palette", onOpen);
+  }, []);
+
+  // Server-side search (Postgres FTS) — only fires when palette is open and
+  // there's a real query. Debounced so we don't fire on every keystroke.
+  const debouncedQuery = useDebouncedValue(query, 180);
+  const trimmedDebounced = debouncedQuery.trim();
+  const searchPath =
+    open && trimmedDebounced.length >= 2
+      ? `/search?q=${encodeURIComponent(trimmedDebounced)}&limit=6`
+      : null;
+  const searchQ = useFetch<SearchResults>(searchPath);
+
   // Build sections (only when open, to avoid wasted work)
   const sections = useMemo<CmdSection[]>(() => {
     if (!open) return [];
@@ -181,51 +237,32 @@ export function CommandPalette() {
       .filter((x): x is CmdItem => x !== null)
       .filter((it) => matches(query, it.label, it.id));
 
-    // Contacts
-    const contactItems: CmdItem[] = CONTACTS.filter((c) =>
-      matches(query, c.name, c.phone, c.industry, c.lifecycle, ...c.tags),
-    ).map((c) => ({
+    // Server-side hits (Postgres FTS). Empty arrays when query is short or
+    // the request is in flight — UI just shows the other in-memory sections.
+    const hits = searchQ.data ?? { contacts: [], conversations: [], tickets: [] };
+
+    const contactItems: CmdItem[] = hits.contacts.map((c) => ({
       id: `contact-${c.id}`,
       label: c.name,
-      hint: c.phone,
+      hint: c.phone || `${c.industry} · ${c.lifecycle}`,
       Icon: IconUsers,
       run: () => setRoute("contacts"),
     }));
 
-    // Conversations (top 10 by recency = first 10 in source order, which is recency-ordered)
-    const convItems: CmdItem[] = CONVERSATIONS.slice(0, 10)
-      .map((c) => {
-        const contact = findContact(c.contactId);
-        const contactName = contact?.name ?? c.contactId;
-        const label = `${c.intent} · ${contactName}`;
-        return {
-          id: `conv-${c.id}`,
-          label,
-          hint: c.preview,
-          Icon: IconInbox,
-          contactName,
-          intent: c.intent,
-          preview: c.preview,
-        };
-      })
-      .filter((it) => matches(query, it.label, it.contactName, it.intent, it.preview))
-      .map<CmdItem>((it) => ({
-        id: it.id,
-        label: it.label,
-        hint: it.hint,
-        Icon: it.Icon,
-        run: () => setRoute("inbox"),
-      }));
+    const convItems: CmdItem[] = hits.conversations.map((c) => ({
+      id: `conv-${c.id}`,
+      label: `${c.contactName} · ${c.channel}`,
+      hint: c.preview,
+      Icon: IconInbox,
+      run: () => setRoute("inbox"),
+    }));
 
-    // Agents
-    const agentItems: CmdItem[] = AGENTS.filter((a) =>
-      matches(query, a.name, a.role, a.id),
-    ).map((a) => ({
-      id: `agent-${a.id}`,
-      label: a.name,
-      hint: a.role,
-      Icon: IconBot,
-      run: () => setRoute("agents"),
+    const ticketItems: CmdItem[] = hits.tickets.map((t) => ({
+      id: `tkt-${t.id}`,
+      label: `#${String(t.number).padStart(3, "0")} · ${t.title}`,
+      hint: t.stageLabel ?? "",
+      Icon: IconLayers,
+      run: () => setRoute("pipeline"),
     }));
 
     // Campaigns
@@ -303,7 +340,7 @@ export function CommandPalette() {
       { id: "nav", label: tx("Navigation", "التنقل"), items: navItems },
       { id: "contacts", label: tx("Contacts", "جهات الاتصال"), items: contactItems },
       { id: "conv", label: tx("Conversations", "المحادثات"), items: convItems },
-      { id: "agents", label: tx("Agents", "الوكلاء"), items: agentItems },
+      { id: "tkt", label: tx("Tickets", "التذاكر"), items: ticketItems },
       { id: "camp", label: tx("Campaigns", "الحملات"), items: campaignItems },
       { id: "tpl", label: tx("Templates", "القوالب"), items: templateItems },
       { id: "qa", label: tx("Quick actions", "إجراءات سريعة"), items: quickActions },
@@ -311,7 +348,7 @@ export function CommandPalette() {
 
     return all.filter((s) => s.items.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, query, t.lang, t.theme, t.accent, t.collapsed]);
+  }, [open, query, searchQ.data, t.lang, t.theme, t.accent, t.collapsed]);
 
   // Flat list of items for keyboard nav
   const flat = useMemo<CmdItem[]>(

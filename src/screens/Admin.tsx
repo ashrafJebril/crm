@@ -515,7 +515,6 @@ function WorkspacesTable({ tx, rows, loading, error, onSelect }: WorkspacesTable
           <Th>{tx("Members", "الأعضاء")}</Th>
           <Th>{tx("Contacts", "جهات")}</Th>
           <Th>{tx("Convos", "محادثات")}</Th>
-          <Th>{tx("Mentions", "إشارات")}</Th>
           <Th>{tx("Status", "الحالة")}</Th>
           <Th>{tx("Created", "أُنشئت")}</Th>
           <Th />
@@ -556,7 +555,6 @@ function WorkspacesTable({ tx, rows, loading, error, onSelect }: WorkspacesTable
             <Td>{w.counts.members}</Td>
             <Td>{w.counts.contacts}</Td>
             <Td>{w.counts.conversations}</Td>
-            <Td>{w.counts.mentions}</Td>
             <Td>
               {w.suspendedAt ? (
                 <Badge kind="bad">{tx("Suspended", "موقوفة")}</Badge>
@@ -829,7 +827,6 @@ function WorkspaceDetailPanel({
                   <Stat label={tx("Contacts", "جهات")} value={ws._count.contacts} />
                   <Stat label={tx("Conversations", "محادثات")} value={ws._count.conversations} />
                   <Stat label={tx("Messages", "رسائل")} value={ws._count.messages} />
-                  <Stat label={tx("Mentions", "إشارات")} value={ws._count.mentions} />
                   <Stat label={tx("Tickets", "تذاكر")} value={ws._count.tickets} />
                   <Stat label={tx("Campaigns", "حملات")} value={ws._count.campaigns} />
                 </div>

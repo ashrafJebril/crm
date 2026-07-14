@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -6,12 +6,10 @@ import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import { PhotoSlot } from "@/components/PhotoSlot";
 import {
-  IconBolt,
   IconFilter,
   IconMore,
   IconPlus,
   IconSearch,
-  IconSparkles,
 } from "@/icons";
 import {
   MEDIA_ASSETS,
@@ -19,9 +17,10 @@ import {
   TPL_LIBRARY,
   type TemplateCategory,
   type TemplateFull,
-  type TemplateStatus,
 } from "@/data/templates-extras";
 import { useFetch } from "@/api/useFetch";
+import { api } from "@/api/client";
+import { TemplateEditor } from "./templates/TemplateEditor";
 import type { Template } from "@/lib/types";
 
 type Tab = "library" | "quick" | "media";
@@ -42,18 +41,31 @@ const CATEGORY_BADGE: Record<TemplateCategory, BadgeKind> = {
   AUTHENTICATION: "warn",
 };
 
-const STATUS_BADGE: Record<TemplateStatus, BadgeKind> = {
+// Server states include "submitted" / "failed" from Meta submission flow; map
+// them to the existing badge palette so old rows still render.
+const STATUS_BADGE: Record<string, BadgeKind> = {
   approved: "ok",
   pending: "warn",
   rejected: "bad",
+  submitted: "warn",
+  failed: "bad",
 };
 
 interface TemplatePreviewProps {
   selected: TemplateFull;
   isAr: boolean;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  busy: boolean;
 }
 
-function TemplatePreview({ selected, isAr }: TemplatePreviewProps) {
+function TemplatePreview({
+  selected,
+  isAr,
+  onEdit,
+  onDuplicate,
+  busy,
+}: TemplatePreviewProps) {
   const parts = selected.body.split(/(\{\{\d+\}\})/g);
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -66,7 +78,7 @@ function TemplatePreview({ selected, isAr }: TemplatePreviewProps) {
             {selected.category} · {selected.lang.toUpperCase()}
           </div>
         </div>
-        <Badge kind={STATUS_BADGE[selected.status]} dot>
+        <Badge kind={STATUS_BADGE[selected.status] ?? ""} dot>
           {selected.status}
         </Badge>
       </div>
@@ -184,14 +196,15 @@ function TemplatePreview({ selected, isAr }: TemplatePreviewProps) {
           gap: 6,
         }}
       >
-        <button className="btn sm" style={{ flex: 1 }}>
-          <IconBolt w={12} />
-          {isAr ? "اختبار" : "Test send"}
-        </button>
-        <button className="btn sm" style={{ flex: 1 }}>
+        <button className="btn sm" style={{ flex: 1 }} onClick={onDuplicate} disabled={busy}>
           {isAr ? "نسخ" : "Duplicate"}
         </button>
-        <button className="btn sm primary" style={{ flex: 1 }}>
+        <button
+          className="btn sm primary"
+          style={{ flex: 1 }}
+          onClick={onEdit}
+          disabled={busy}
+        >
           {isAr ? "تعديل" : "Edit"}
         </button>
       </div>
@@ -199,9 +212,9 @@ function TemplatePreview({ selected, isAr }: TemplatePreviewProps) {
   );
 }
 
-// Merge an API Template with the richer TPL_LIBRARY entry (matched by name) so
-// the preview pane still has body/buttons/updated. If no library match exists
-// we fall back to sensible defaults.
+// Server hands templates back with body/buttons populated (after CRUD wiring).
+// Seed/library rows from before that change may still have empty body — fall
+// back to the static TPL_LIBRARY by name so legacy rows still preview.
 function toTemplateFull(t: Template): TemplateFull {
   const match = TPL_LIBRARY.find((x) => x.name === t.name);
   const category: TemplateCategory =
@@ -211,16 +224,40 @@ function toTemplateFull(t: Template): TemplateFull {
     t.category === "AUTHENTICATION"
       ? t.category
       : "UTILITY";
+
+  // API stores buttons as a JSON string of objects. Extract the visible labels
+  // for the preview; the editor parses the same string back into full objects.
+  let apiButtonLabels: string[] = [];
+  if (t.buttons) {
+    try {
+      const parsed = JSON.parse(t.buttons);
+      if (Array.isArray(parsed)) {
+        apiButtonLabels = parsed
+          .map((b) => (b && typeof b.text === "string" ? b.text : null))
+          .filter((x): x is string => x !== null);
+      }
+    } catch {
+      apiButtonLabels = [];
+    }
+  }
+
+  const status: TemplateFull["status"] =
+    t.status === "approved" || t.status === "pending" || t.status === "rejected"
+      ? t.status
+      : t.status === "failed"
+        ? "rejected"
+        : "pending";
+
   return {
     id: t.id,
     name: t.name,
     lang: t.lang,
     category,
-    status: t.status,
+    status,
     uses: t.uses,
     updated: match?.updated ?? "—",
-    body: match?.body ?? "",
-    buttons: match?.buttons ?? [],
+    body: t.body || match?.body || "",
+    buttons: apiButtonLabels.length > 0 ? apiButtonLabels : (match?.buttons ?? []),
   };
 }
 
@@ -233,6 +270,16 @@ function TemplatesImpl() {
   const [filter, setFilter] = useState<CategoryFilter>("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState<string>("");
+  const [editor, setEditor] = useState<
+    | null
+    | { mode: "create" }
+    | { mode: "edit"; template: Template }
+    | { mode: "create"; initial: Template }
+  >(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Template | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const {
     data: templates,
@@ -241,8 +288,6 @@ function TemplatesImpl() {
     refetch,
   } = useFetch<Template[]>("/templates");
 
-  // Use the API list as the source of truth; pipe each row through
-  // toTemplateFull to upgrade to the richer shape used by the rest of the UI.
   const allFull: TemplateFull[] = useMemo(
     () => (templates ?? []).map(toTemplateFull),
     [templates],
@@ -260,6 +305,8 @@ function TemplatesImpl() {
 
   const selected: TemplateFull | null =
     allFull.find((x) => x.id === selectedId) ?? allFull[0] ?? null;
+  const selectedRaw =
+    (templates ?? []).find((x) => x.id === selected?.id) ?? null;
 
   const counts = useMemo(() => {
     let approved = 0;
@@ -272,6 +319,49 @@ function TemplatesImpl() {
     }
     return { approved, pending, rejected };
   }, [allFull]);
+
+  // Close the row context menu on outside click.
+  useEffect(() => {
+    if (!menuFor) return;
+    const onDoc = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuFor(null);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuFor]);
+
+  const handleDuplicate = async (tpl: Template) => {
+    setPending(true);
+    try {
+      const created = await api.post<Template>(`/templates/${tpl.id}/duplicate`);
+      refetch();
+      setSelectedId(created.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Duplicate failed";
+      alert(msg);
+    } finally {
+      setPending(false);
+      setMenuFor(null);
+    }
+  };
+
+  const handleDelete = async (tpl: Template) => {
+    setPending(true);
+    try {
+      await api.delete(`/templates/${tpl.id}`);
+      if (selectedId === tpl.id) setSelectedId(null);
+      refetch();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Delete failed";
+      alert(msg);
+    } finally {
+      setPending(false);
+      setConfirmDelete(null);
+      setMenuFor(null);
+    }
+  };
 
   return (
     <div
@@ -290,11 +380,10 @@ function TemplatesImpl() {
               <IconFilter w={14} />
               {tx("Filter", "تصفية")}
             </button>
-            <button className="btn">
-              <IconSparkles w={14} />
-              {tx("Draft with AI", "اقترح بالذكاء")}
-            </button>
-            <button className="btn primary">
+            <button
+              className="btn primary"
+              onClick={() => setEditor({ mode: "create" })}
+            >
               <IconPlus w={14} />
               {tx("New template", "قالب جديد")}
             </button>
@@ -433,46 +522,107 @@ function TemplatesImpl() {
                     </tr>
                   </thead>
                   <tbody>
-                    {list.map((tpl) => (
-                      <tr
-                        key={tpl.id}
-                        className={selected?.id === tpl.id ? "selected" : ""}
-                        onClick={() => setSelectedId(tpl.id)}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <td className="mono" style={{ fontWeight: 500, fontSize: 12 }}>
-                          {tpl.name}
-                        </td>
-                        <td>
-                          <Badge kind={CATEGORY_BADGE[tpl.category]}>
-                            {tpl.category}
-                          </Badge>
-                        </td>
-                        <td
-                          className="mono"
-                          style={{ fontSize: 11, color: "var(--ink-2)" }}
+                    {list.map((tpl) => {
+                      const raw =
+                        (templates ?? []).find((x) => x.id === tpl.id) ?? null;
+                      return (
+                        <tr
+                          key={tpl.id}
+                          className={selected?.id === tpl.id ? "selected" : ""}
+                          onClick={() => setSelectedId(tpl.id)}
+                          style={{ cursor: "pointer" }}
                         >
-                          {tpl.lang}
-                        </td>
-                        <td>
-                          <Badge kind={STATUS_BADGE[tpl.status]} dot>
-                            {tpl.status}
-                          </Badge>
-                        </td>
-                        <td className="mono" style={{ textAlign: "end", fontSize: 12 }}>
-                          {tpl.uses.toLocaleString()}
-                        </td>
-                        <td
-                          className="mono"
-                          style={{ fontSize: 11, color: "var(--ink-3)" }}
-                        >
-                          {tpl.updated}
-                        </td>
-                        <td>
-                          <IconMore w={14} />
-                        </td>
-                      </tr>
-                    ))}
+                          <td className="mono" style={{ fontWeight: 500, fontSize: 12 }}>
+                            {tpl.name}
+                          </td>
+                          <td>
+                            <Badge kind={CATEGORY_BADGE[tpl.category]}>
+                              {tpl.category}
+                            </Badge>
+                          </td>
+                          <td
+                            className="mono"
+                            style={{ fontSize: 11, color: "var(--ink-2)" }}
+                          >
+                            {tpl.lang}
+                          </td>
+                          <td>
+                            <Badge kind={STATUS_BADGE[tpl.status] ?? ""} dot>
+                              {tpl.status}
+                            </Badge>
+                          </td>
+                          <td className="mono" style={{ textAlign: "end", fontSize: 12 }}>
+                            {tpl.uses.toLocaleString()}
+                          </td>
+                          <td
+                            className="mono"
+                            style={{ fontSize: 11, color: "var(--ink-3)" }}
+                          >
+                            {tpl.updated}
+                          </td>
+                          <td style={{ position: "relative" }}>
+                            <button
+                              aria-label="Row menu"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMenuFor(menuFor === tpl.id ? null : tpl.id);
+                              }}
+                              style={{
+                                background: "transparent",
+                                border: 0,
+                                cursor: "pointer",
+                                color: "var(--ink-2)",
+                                padding: 4,
+                                display: "grid",
+                                placeItems: "center",
+                              }}
+                            >
+                              <IconMore w={14} />
+                            </button>
+                            {menuFor === tpl.id && raw && (
+                              <div
+                                ref={menuRef}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  position: "absolute",
+                                  right: 8,
+                                  top: "100%",
+                                  marginTop: 4,
+                                  background: "var(--bg-1)",
+                                  border: "1px solid var(--line)",
+                                  borderRadius: "var(--r)",
+                                  boxShadow: "0 6px 24px rgba(0,0,0,0.25)",
+                                  minWidth: 140,
+                                  zIndex: 50,
+                                  overflow: "hidden",
+                                }}
+                              >
+                                <RowMenuItem
+                                  label={tx("Edit", "تعديل")}
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    setEditor({ mode: "edit", template: raw });
+                                  }}
+                                />
+                                <RowMenuItem
+                                  label={tx("Duplicate", "نسخ")}
+                                  disabled={pending}
+                                  onClick={() => void handleDuplicate(raw)}
+                                />
+                                <RowMenuItem
+                                  label={tx("Delete", "حذف")}
+                                  destructive
+                                  onClick={() => {
+                                    setMenuFor(null);
+                                    setConfirmDelete(raw);
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -500,8 +650,14 @@ function TemplatesImpl() {
             </div>
           </div>
 
-          {selected ? (
-            <TemplatePreview selected={selected} isAr={isAr} />
+          {selected && selectedRaw ? (
+            <TemplatePreview
+              selected={selected}
+              isAr={isAr}
+              busy={pending}
+              onEdit={() => setEditor({ mode: "edit", template: selectedRaw })}
+              onDuplicate={() => void handleDuplicate(selectedRaw)}
+            />
           ) : (
             <div
               className="card"
@@ -597,6 +753,153 @@ function TemplatesImpl() {
           ))}
         </div>
       )}
+
+      {editor && (
+        <TemplateEditor
+          lang={t.lang}
+          mode={editor.mode}
+          initial={
+            editor.mode === "edit"
+              ? editor.template
+              : "initial" in editor
+                ? editor.initial
+                : null
+          }
+          onClose={() => setEditor(null)}
+          onSaved={(saved) => {
+            refetch();
+            setSelectedId(saved.id);
+          }}
+        />
+      )}
+
+      {confirmDelete && (
+        <ConfirmDelete
+          name={confirmDelete.name}
+          lang={t.lang}
+          busy={pending}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => void handleDelete(confirmDelete)}
+        />
+      )}
+    </div>
+  );
+}
+
+function RowMenuItem({
+  label,
+  onClick,
+  destructive,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  destructive?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        display: "block",
+        width: "100%",
+        padding: "8px 12px",
+        background: "transparent",
+        border: 0,
+        textAlign: "start",
+        fontSize: 12,
+        color: destructive ? "var(--bad)" : "var(--ink-1)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ConfirmDelete({
+  name,
+  lang,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  lang: "en" | "ar";
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const ar = lang === "ar";
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 110,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1)",
+          border: "1px solid var(--line)",
+          borderRadius: "var(--r)",
+          padding: 20,
+          minWidth: 320,
+          maxWidth: 400,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
+        <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
+          {ar ? "حذف القالب؟" : "Delete template?"}
+        </h3>
+        <p style={{ margin: 0, fontSize: 13, color: "var(--ink-2)" }}>
+          {ar
+            ? `سيتم حذف "${name}" بشكل دائم.`
+            : `"${name}" will be permanently deleted.`}
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            style={{
+              padding: "8px 14px",
+              background: "transparent",
+              border: "1px solid var(--line)",
+              borderRadius: "var(--r)",
+              color: "var(--ink-2)",
+              cursor: "pointer",
+            }}
+          >
+            {ar ? "إلغاء" : "Cancel"}
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            style={{
+              padding: "8px 14px",
+              background: "var(--bad)",
+              border: 0,
+              borderRadius: "var(--r)",
+              color: "white",
+              cursor: "pointer",
+            }}
+          >
+            {busy ? (ar ? "جارٍ الحذف…" : "Deleting…") : ar ? "حذف" : "Delete"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { RealtimeService } from "../realtime/realtime.service";
 import {
   CreateConversationDto,
   CreateMessageDto,
@@ -8,12 +9,60 @@ import {
 
 @Injectable()
 export class ConversationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
-  list(workspaceId: string) {
-    return this.prisma.conversation.findMany({
+  private emitActivity(
+    workspaceId: string,
+    channel: string,
+    conversationId?: string,
+  ): void {
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel,
+      conversationId,
+    });
+  }
+
+  async list(workspaceId: string) {
+    const convs = await this.prisma.conversation.findMany({
       where: { workspaceId },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+    });
+
+    // 24-hour customer-service window state for WhatsApp conversations only.
+    // Inbox uses it to flip the composer to a template picker when the window
+    // closes. Other channels have different (or no) restrictions — skip the
+    // extra query for them.
+    const waConvIds = convs
+      .filter((c) => c.channel === "whatsapp")
+      .map((c) => c.id);
+    const lastInboundByConv = new Map<string, Date>();
+    if (waConvIds.length > 0) {
+      const grouped = await this.prisma.message.groupBy({
+        by: ["conversationId"],
+        where: {
+          workspaceId,
+          conversationId: { in: waConvIds },
+          from: "them",
+        },
+        _max: { createdAt: true },
+      });
+      for (const g of grouped) {
+        if (g._max.createdAt) lastInboundByConv.set(g.conversationId, g._max.createdAt);
+      }
+    }
+
+    const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    return convs.map((c) => {
+      if (c.channel !== "whatsapp") return c;
+      const lastInboundAt = lastInboundByConv.get(c.id) ?? null;
+      const waWindowOpen = lastInboundAt
+        ? now - lastInboundAt.getTime() < WA_WINDOW_MS
+        : false;
+      return { ...c, lastInboundAt, waWindowOpen };
     });
   }
 
@@ -23,11 +72,29 @@ export class ConversationsService {
       include: { messages: { orderBy: { createdAt: "asc" } } },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
+
+    if (conv.channel === "whatsapp") {
+      // Walk messages backwards for the most recent inbound. Avoids a second
+      // query since we already have the full thread loaded.
+      let lastInboundAt: Date | null = null;
+      for (let i = conv.messages.length - 1; i >= 0; i--) {
+        if (conv.messages[i].from === "them") {
+          lastInboundAt = conv.messages[i].createdAt;
+          break;
+        }
+      }
+      const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
+      const waWindowOpen = lastInboundAt
+        ? Date.now() - lastInboundAt.getTime() < WA_WINDOW_MS
+        : false;
+      return { ...conv, lastInboundAt, waWindowOpen };
+    }
+
     return conv;
   }
 
-  create(workspaceId: string, dto: CreateConversationDto) {
-    return this.prisma.conversation.create({
+  async create(workspaceId: string, dto: CreateConversationDto) {
+    const conv = await this.prisma.conversation.create({
       data: {
         ...dto,
         workspaceId,
@@ -36,25 +103,31 @@ export class ConversationsService {
         escalated: dto.escalated ?? false,
       },
     });
+    this.emitActivity(workspaceId, conv.channel, conv.id);
+    return conv;
   }
 
   async update(workspaceId: string, id: string, dto: UpdateConversationDto) {
     await this.get(workspaceId, id);
-    return this.prisma.conversation.update({ where: { id }, data: dto });
+    const conv = await this.prisma.conversation.update({ where: { id }, data: dto });
+    this.emitActivity(workspaceId, conv.channel, conv.id);
+    return conv;
   }
 
   async markRead(workspaceId: string, id: string) {
     await this.get(workspaceId, id);
-    return this.prisma.conversation.update({
+    const conv = await this.prisma.conversation.update({
       where: { id },
       data: { unread: 0 },
     });
+    this.emitActivity(workspaceId, conv.channel, conv.id);
+    return conv;
   }
 
   /** Human takeover: when paused=true, AI auto-reply skips this conversation. */
   async setAiPaused(workspaceId: string, id: string, paused: boolean) {
     await this.get(workspaceId, id);
-    return this.prisma.conversation.update({
+    const conv = await this.prisma.conversation.update({
       where: { id },
       data: {
         aiPaused: paused,
@@ -64,11 +137,14 @@ export class ConversationsService {
         ...(paused ? {} : { escalated: false }),
       },
     });
+    this.emitActivity(workspaceId, conv.channel, conv.id);
+    return conv;
   }
 
   async remove(workspaceId: string, id: string) {
-    await this.get(workspaceId, id);
+    const existing = await this.get(workspaceId, id);
     await this.prisma.conversation.delete({ where: { id } });
+    this.emitActivity(workspaceId, existing.channel, id);
     return { ok: true };
   }
 
@@ -85,7 +161,7 @@ export class ConversationsService {
     conversationId: string,
     dto: CreateMessageDto,
   ) {
-    await this.get(workspaceId, conversationId);
+    const conv = await this.get(workspaceId, conversationId);
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const message = await this.prisma.message.create({
@@ -100,6 +176,7 @@ export class ConversationsService {
         unread: dto.from === "them" ? { increment: 1 } : 0,
       },
     });
+    this.emitActivity(workspaceId, conv.channel, conversationId);
     return message;
   }
 }

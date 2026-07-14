@@ -3,7 +3,6 @@ import { useRoute } from "@/router";
 import { Sidebar } from "@/shell/Sidebar";
 import { Topbar } from "@/shell/Topbar";
 import { ScreenSlot } from "@/router";
-import { PlatformTweaks } from "@/tweaks/PlatformTweaks";
 import { CommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
@@ -45,7 +44,6 @@ export default function App() {
         <Topbar route={route} />
         <ScreenSlot route={route} />
       </main>
-      <PlatformTweaks />
       <CommandPalette />
     </div>
   );

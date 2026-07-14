@@ -1,3 +1,4 @@
+import { Type } from "class-transformer";
 import {
   IsInt,
   IsNotEmpty,
@@ -41,6 +42,17 @@ export class ListTicketsQuery {
   @IsOptional() @IsString() pipelineId?: string;
   @IsOptional() @IsString() stageId?: string;
   @IsOptional() @IsString() contactId?: string;
+  @IsOptional() @IsString() conversationId?: string;
   @IsOptional() @IsString() ownerId?: string;
-  @IsOptional() @IsInt() @Min(1) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
+  @IsOptional() @IsString() cursor?: string;
+}
+
+export class CreateFromConversationDto {
+  @IsString() @IsNotEmpty() pipelineId!: string;
+  @IsString() @IsNotEmpty() stageId!: string;
+  @IsString() @IsNotEmpty() title!: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsNumber() @Min(0) value?: number;
+  @IsOptional() @IsString() ownerId?: string;
 }

@@ -219,8 +219,10 @@ function SocialImpl() {
   const fbPageName = fbStatusQ.data?.pageName;
   const isFbLive = platform === "facebook" && fbConnected;
 
+  // Fetch whenever the integration is connected (not just when the tab is
+  // active) so the tab badge count reflects reality on first paint.
   const liveFbQ = useFetch<LiveFbPost[]>(
-    isFbLive ? "/integrations/facebook/posts" : null,
+    fbConnected ? "/integrations/facebook/posts" : null,
   );
 
   // Set of post IDs that came from the live feed (for source-of-truth checks).
@@ -274,7 +276,7 @@ function SocialImpl() {
   const isIgLive = platform === "instagram" && igConnected;
 
   const liveIgQ = useFetch<LiveIgPost[]>(
-    isIgLive ? "/integrations/instagram/posts" : null,
+    igConnected ? "/integrations/instagram/posts" : null,
   );
 
   const liveIgPostIds = useMemo<Set<string>>(() => {

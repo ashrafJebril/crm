@@ -6,7 +6,8 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { AiReplyService } from "../ai/ai-reply.service";
+import { RealtimeService } from "../realtime/realtime.service";
+import { MediaService } from "../media/media.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -96,7 +97,8 @@ export class WhatsAppService {
   private readonly log = new Logger(WhatsAppService.name);
   constructor(
     private readonly prisma: PrismaService,
-    private readonly aiReply: AiReplyService,
+    private readonly realtime: RealtimeService,
+    private readonly media: MediaService,
   ) {}
 
   // ─── Public REST API ───────────────────────────────────────────────────
@@ -156,6 +158,205 @@ export class WhatsAppService {
       accessToken: tokenRes.access_token,
       verifyToken,
     });
+  }
+
+  /**
+   * Single-field connect: customer pastes ONE WhatsApp access token and we
+   * discover their WABA + phone number ourselves via the Graph API. Works
+   * for any token that carries `whatsapp_business_management` (Meta API
+   * Setup page tokens already do).
+   *
+   * Strategy:
+   *   1. Validate the token resolves to something (`/me`)
+   *   2. List WhatsApp Business Accounts the user owns via /me/businesses
+   *   3. If at least one WABA with at least one phone number → save the
+   *      first pair. Multi-WABA / multi-number is rare in practice; we
+   *      return the full list in the response so a future UI step can
+   *      surface a picker, but the immediate save uses the first match.
+   *   4. If nothing found → clear error pointing the customer to API Setup.
+   */
+  async connectByToken(workspaceId: string, accessToken: string) {
+    const token = accessToken.trim();
+    if (!token || token.length < 20) {
+      throw new BadRequestException("Token looks too short to be a Meta access token");
+    }
+
+    // Step 1: prove the token is valid by hitting /me. We use the debug_token
+    // endpoint instead to get the scopes back too — helps generate a useful
+    // error if the token lacks the right permissions.
+    let me: { id: string; name?: string } | null = null;
+    try {
+      me = await this.graphGet<{ id: string; name?: string }>(
+        "/me?fields=id,name",
+        token,
+      );
+    } catch (e) {
+      throw new BadRequestException(
+        `Token rejected by Meta: ${(e as Error).message}. Make sure you copied the WhatsApp temporary access token from WhatsApp Manager → API Setup, not a Facebook user token.`,
+      );
+    }
+    if (!me?.id) {
+      throw new BadRequestException("Token did not resolve to a Meta account");
+    }
+
+    interface DiscoveredPhone {
+      id: string;
+      display_phone_number?: string;
+      verified_name?: string;
+    }
+    interface DiscoveredWaba {
+      id: string;
+      name?: string;
+      phone_numbers?: { data: DiscoveredPhone[] };
+    }
+    interface DiscoveredBusiness {
+      id: string;
+      name?: string;
+      owned_whatsapp_business_accounts?: { data: DiscoveredWaba[] };
+    }
+
+    const wabaIds = new Set<string>();
+
+    // Strategy A: ask Meta's debug_token endpoint to decode the token. The
+    // temporary access token on Meta's API Setup screen is a system-user
+    // token scoped to a specific WABA — `/me/businesses` returns empty for
+    // it. debug_token's granular_scopes carries the WABA id under
+    // `whatsapp_business_management` / `whatsapp_business_messaging`'s
+    // target_ids array.
+    const appId = process.env.META_APP_ID_WA ?? process.env.META_APP_ID;
+    const appSecret = process.env.META_APP_SECRET_WA ?? process.env.META_APP_SECRET;
+    if (appId && appSecret) {
+      interface GranularScope {
+        scope: string;
+        target_ids?: string[];
+      }
+      interface DebugTokenResp {
+        data?: {
+          app_id?: string;
+          is_valid?: boolean;
+          granular_scopes?: GranularScope[];
+        };
+      }
+      try {
+        const appToken = `${appId}|${appSecret}`;
+        const debugRes = await this.fetchJson<DebugTokenResp>(
+          `${GRAPH}/debug_token?input_token=${encodeURIComponent(token)}&access_token=${encodeURIComponent(appToken)}`,
+          { method: "GET" },
+        );
+        if (debugRes.data?.is_valid === false) {
+          throw new BadRequestException(
+            "Meta rejected this token (debug_token reports it as invalid). Make sure you copied the freshly generated temporary access token.",
+          );
+        }
+        for (const scope of debugRes.data?.granular_scopes ?? []) {
+          if (
+            scope.scope === "whatsapp_business_management" ||
+            scope.scope === "whatsapp_business_messaging"
+          ) {
+            for (const id of scope.target_ids ?? []) wabaIds.add(id);
+          }
+        }
+      } catch (e) {
+        this.log.warn(
+          `debug_token failed (continuing to /me/businesses fallback): ${(e as Error).message}`,
+        );
+      }
+    }
+
+    // Strategy B fallback: User Access Tokens won't have granular_scopes;
+    // discover via /me/businesses → owned_whatsapp_business_accounts. Only
+    // tried if A didn't find anything.
+    let businessFallback: { data: DiscoveredBusiness[] } = { data: [] };
+    if (wabaIds.size === 0) {
+      const fields =
+        "id,name,owned_whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}";
+      try {
+        businessFallback = await this.graphGet<{ data: DiscoveredBusiness[] }>(
+          `/me/businesses?fields=${encodeURIComponent(fields)}`,
+          token,
+        );
+      } catch (e) {
+        this.log.warn(`/me/businesses failed: ${(e as Error).message}`);
+      }
+      for (const biz of businessFallback.data ?? []) {
+        for (const waba of biz.owned_whatsapp_business_accounts?.data ?? []) {
+          wabaIds.add(waba.id);
+        }
+      }
+    }
+
+    if (wabaIds.size === 0) {
+      throw new BadRequestException(
+        "No WhatsApp Business Account found on this token. Open Meta's WhatsApp Manager, go to API Setup, and copy the temporary access token shown there.",
+      );
+    }
+
+    // For each discovered WABA, fetch its phone numbers from Graph.
+    const wabas: DiscoveredWaba[] = [];
+    for (const wabaId of wabaIds) {
+      try {
+        const meta = await this.graphGet<{ id: string; name?: string }>(
+          `/${wabaId}?fields=id,name`,
+          token,
+        );
+        const phones = await this.graphGet<{ data: DiscoveredPhone[] }>(
+          `/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name`,
+          token,
+        );
+        wabas.push({
+          id: meta.id,
+          name: meta.name,
+          phone_numbers: { data: phones.data ?? [] },
+        });
+      } catch (e) {
+        this.log.warn(
+          `Failed to load WABA ${wabaId}: ${(e as Error).message}`,
+        );
+      }
+    }
+    if (wabas.length === 0) {
+      throw new BadRequestException(
+        "Found WhatsApp Business Account ids on the token but couldn't fetch details. Token may be missing the required permissions.",
+      );
+    }
+    const waba = wabas[0];
+    const phone = waba.phone_numbers?.data?.[0];
+    if (!phone?.id) {
+      throw new BadRequestException(
+        `WhatsApp Business Account "${waba.name ?? waba.id}" has no registered phone number. Register a phone in Meta's WhatsApp Manager before connecting.`,
+      );
+    }
+
+    // Generate a fresh verify token so webhooks can be wired later.
+    const verifyToken = `aram-wa-${Math.random().toString(36).slice(2, 10)}`;
+
+    // Step 3: reuse the existing connect() path so token validation,
+    // webhook subscription, and Integration upsert all happen exactly the
+    // same way as the manual-paste flow.
+    const result = await this.connect(workspaceId, {
+      phoneNumberId: phone.id,
+      wabaId: waba.id,
+      accessToken: token,
+      verifyToken,
+      displayPhoneNumber: phone.display_phone_number,
+    });
+
+    return {
+      ...result,
+      discovered: {
+        wabas: wabas.map((w) => ({
+          id: w.id,
+          name: w.name,
+          phones:
+            w.phone_numbers?.data?.map((p) => ({
+              id: p.id,
+              displayPhoneNumber: p.display_phone_number,
+              verifiedName: p.verified_name,
+            })) ?? [],
+        })),
+        picked: { wabaId: waba.id, phoneNumberId: phone.id },
+      },
+    };
   }
 
   async connect(workspaceId: string, dto: ConnectWhatsAppDto) {
@@ -285,15 +486,51 @@ export class WhatsAppService {
     return { wamid: res.messages?.[0]?.id ?? "", ok: true };
   }
 
+  async sendImage(
+    workspaceId: string,
+    toWaId: string,
+    imageUrl: string,
+    caption?: string,
+  ) {
+    const { token, phoneNumberId } = await this.requireToken(workspaceId);
+    const url = `${GRAPH}/${phoneNumberId}/messages`;
+    // WA Cloud API accepts a public `link` here exactly like FB Messenger.
+    // Caption is optional and goes inside the image object (NOT a separate
+    // text message).
+    const image: { link: string; caption?: string } = { link: imageUrl };
+    if (caption && caption.trim().length > 0) image.caption = caption.trim();
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: toWaId,
+      type: "image",
+      image,
+    };
+    const res = await this.fetchJson<{ messages?: Array<{ id: string }> }>(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    return { wamid: res.messages?.[0]?.id ?? "", ok: true };
+  }
+
   /**
    * Send via an existing internal Conversation (channel=whatsapp). Resolves the
    * recipient wa_id from the linked Contact's externalId, sends to Meta, then
    * appends a Message(from=human) so the thread updates immediately.
+   *
+   * Image attachments: when mediaId is provided, we resolve it to a public URL
+   * (signed Spaces URL if media is in Spaces) and use the image endpoint.
+   * The text body becomes the image caption (a single Graph call covers both).
    */
   async sendInConversation(
     workspaceId: string,
     conversationId: string,
     body: string,
+    mediaId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -309,28 +546,48 @@ export class WhatsAppService {
         "Contact has no WhatsApp id (externalId/phone) — cannot deliver",
       );
     }
+    if (!body && !mediaId) {
+      throw new BadRequestException("Message body or mediaId required");
+    }
 
-    const sent = await this.sendText(workspaceId, this.normalizeWaId(waId), body);
+    const recipient = this.normalizeWaId(waId);
+    const sent = mediaId
+      ? await this.sendImage(
+          workspaceId,
+          recipient,
+          await this.media.resolveExternalUrl(workspaceId, mediaId, 60 * 60),
+          body,
+        )
+      : await this.sendText(workspaceId, recipient, body);
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const previewBody = body && body.trim().length > 0 ? body : "[image]";
     await this.prisma.message.create({
       data: {
         conversationId,
         workspaceId,
         from: "human",
-        body,
+        body: previewBody,
         t,
+        attach: mediaId ?? null,
+        metaMessageId: sent.wamid || null,
+        deliveryStatus: sent.wamid ? "sent" : null,
+        deliveryStatusAt: sent.wamid ? new Date() : null,
       },
     });
     await this.prisma.conversation.update({
       where: { id: conversationId },
       data: {
-        preview: body.slice(0, 140),
+        preview: previewBody.slice(0, 140),
         lastAt: "now",
         lastFrom: "human",
         unread: 0,
       },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      conversationId,
     });
     return sent;
   }
@@ -343,6 +600,109 @@ export class WhatsAppService {
    * Returns the created Template row. Throws if WhatsApp isn't connected or if
    * Meta rejects the request synchronously (validation errors).
    */
+  /**
+   * Send an approved template into an existing WA conversation. This is the
+   * only path that works *outside* the 24-hour customer-service window.
+   * `name` + `language` must match an APPROVED template on the connected
+   * WABA; `variables` is an ordered list filling the BODY component's
+   * `{{1}}, {{2}}, …` placeholders (pass [] for templates without
+   * variables).
+   */
+  async sendTemplateInConversation(
+    workspaceId: string,
+    conversationId: string,
+    name: string,
+    language: string,
+    variables: string[],
+  ) {
+    const { token, phoneNumberId } = await this.requireToken(workspaceId);
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      include: { contact: true },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+    if (conv.channel !== "whatsapp") {
+      throw new BadRequestException("Conversation is not a WhatsApp thread");
+    }
+    const waId = conv.contact.externalId ?? conv.contact.phone ?? null;
+    if (!waId) {
+      throw new BadRequestException(
+        "Contact has no WhatsApp id (externalId/phone) — cannot deliver",
+      );
+    }
+
+    interface Component {
+      type: "body";
+      parameters: Array<{ type: "text"; text: string }>;
+    }
+    const components: Component[] = [];
+    if (variables.length > 0) {
+      components.push({
+        type: "body",
+        parameters: variables.map((v) => ({ type: "text", text: v })),
+      });
+    }
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to: this.normalizeWaId(waId),
+      type: "template",
+      template: {
+        name,
+        language: { code: language },
+        ...(components.length > 0 ? { components } : {}),
+      },
+    };
+    const url = `${GRAPH}/${phoneNumberId}/messages`;
+    const res = await this.fetchJson<{ messages?: Array<{ id: string }> }>(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    const wamid = res.messages?.[0]?.id ?? "";
+
+    // Render a thread-friendly preview from the body variables; Meta itself
+    // shows the recipient a formatted message but our local view only has
+    // the raw body. Falls back to "[template: name]" when there's nothing
+    // to interpolate.
+    const previewBody =
+      variables.length > 0
+        ? `[template: ${name}] ${variables.join(" · ")}`
+        : `[template: ${name}]`;
+
+    const now = new Date();
+    const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    await this.prisma.message.create({
+      data: {
+        conversationId,
+        workspaceId,
+        from: "human",
+        body: previewBody,
+        t,
+        metaMessageId: wamid || null,
+        deliveryStatus: wamid ? "sent" : null,
+        deliveryStatusAt: wamid ? new Date() : null,
+      },
+    });
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        preview: previewBody.slice(0, 140),
+        lastAt: "now",
+        lastFrom: "human",
+        unread: 0,
+      },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      conversationId,
+    });
+    return { wamid, ok: true };
+  }
+
   async submitTemplate(workspaceId: string, dto: SubmitTemplateInput) {
     const { token, wabaId } = await this.requireWaba(workspaceId);
 
@@ -486,13 +846,28 @@ export class WhatsAppService {
           processed += 1;
         }
         if (v.statuses?.length) {
-          // Statuses (sent/delivered/read/failed) — no Message.status field in
-          // schema today; log only. Wire to a Message.deliveryStatus follow-up.
-          this.log.debug(
-            `WA statuses for workspace=${integ.workspaceId}: ${v.statuses
-              .map((s) => `${s.id}:${s.status}`)
-              .join(",")}`,
-          );
+          // Match each status update to the Message row by Meta's wamid
+          // (stored in metaMessageId on outbound send). Statuses can arrive
+          // out of order — we always overwrite since later events are
+          // authoritative (Meta only sends each status once per message).
+          for (const s of v.statuses) {
+            const at = new Date(Number(s.timestamp) * 1000);
+            const updated = await this.prisma.message.updateMany({
+              where: { workspaceId: integ.workspaceId, metaMessageId: s.id },
+              data: {
+                deliveryStatus: s.status,
+                deliveryStatusAt: Number.isFinite(at.getTime()) ? at : new Date(),
+              },
+            });
+            if (updated.count > 0) {
+              // Nudge the Inbox so the new ✓/✓✓/blue ✓✓ shows up without a
+              // manual refresh. Conversation lookup avoided to keep this
+              // cheap on burst-status updates.
+              this.realtime.emitToWorkspace(integ.workspaceId, "inbox.activity", {
+                channel: "whatsapp",
+              });
+            }
+          }
         }
         await this.prisma.integration.update({
           where: { id: integ.id },
@@ -641,7 +1016,7 @@ export class WhatsAppService {
     const ts = Number(msg.timestamp) * 1000;
     const d = Number.isFinite(ts) ? new Date(ts) : new Date();
     const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    const inboundRow = await this.prisma.message.create({
+    await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId: conv.id,
@@ -650,182 +1025,9 @@ export class WhatsAppService {
         t,
       },
     });
-
-    if (body) {
-      try {
-        await this.maybeAutoReply({
-          workspaceId,
-          conversationId: conv.id,
-          contactName: contact.name,
-          waId,
-          inboundMessageId: inboundRow.id,
-          inboundText: body,
-        });
-      } catch (e) {
-        this.log.warn(
-          `AI auto-reply failed for conv=${conv.id}: ${(e as Error).message}`,
-        );
-      }
-    }
-  }
-
-  private async maybeAutoReply(ctx: {
-    workspaceId: string;
-    conversationId: string;
-    contactName: string;
-    waId: string;
-    inboundMessageId: string;
-    inboundText: string;
-  }) {
-    const ws = await this.prisma.workspace.findUnique({
-      where: { id: ctx.workspaceId },
-      select: { aiAutoReplyEnabled: true, aiConfidenceThreshold: true },
-    });
-    if (!ws?.aiAutoReplyEnabled) return;
-
-    // Respect human takeover — if a teammate took over this conversation,
-    // the AI stays out until they hand it back.
-    const convPause = await this.prisma.conversation.findUnique({
-      where: { id: ctx.conversationId },
-      select: { aiPaused: true },
-    });
-    if (convPause?.aiPaused) {
-      this.log.debug(`AI paused for conv=${ctx.conversationId} — skipping reply`);
-      return;
-    }
-
-    const outcome = await this.aiReply.generate({
-      workspaceId: ctx.workspaceId,
-      conversationId: ctx.conversationId,
-      inboundMessageId: ctx.inboundMessageId,
-      inboundText: ctx.inboundText,
-      contactName: ctx.contactName,
-    });
-
-    const threshold =
-      ws.aiConfidenceThreshold ??
-      Number(process.env.AI_REPLY_CONFIDENCE_THRESHOLD ?? 0.75);
-    const escalate = this.aiReply.shouldEscalate(outcome, threshold);
-
-    // On escalation we still send a polite acknowledgement so the customer
-    // isn't left hanging — but the conversation flips to "human" so a
-    // teammate picks it up from the Inbox.
-    const FALLBACK_REPLY =
-      "Thanks for your message! Let me check with our team and get back to you shortly. 🙏";
-
-    if (escalate) {
-      // Send the fallback message via Meta so the customer sees a reply.
-      const { token, phoneNumberId } = await this.requireToken(ctx.workspaceId);
-      await this.graphPost<{ messages?: Array<{ id: string }> }>(
-        `/${phoneNumberId}/messages`,
-        token,
-        {
-          messaging_product: "whatsapp",
-          to: ctx.waId,
-          type: "text",
-          text: { body: FALLBACK_REPLY },
-        },
-      );
-      const now = new Date();
-      const tOut = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-      const fallbackRow = await this.prisma.message.create({
-        data: {
-          workspaceId: ctx.workspaceId,
-          conversationId: ctx.conversationId,
-          from: "ai",
-          body: FALLBACK_REPLY,
-          t: tOut,
-          agent: "ai",
-        },
-      });
-      await this.prisma.conversation.update({
-        where: { id: ctx.conversationId },
-        data: {
-          escalated: true,
-          status: "human",
-          lastAt: "now",
-          lastFrom: "ai",
-          preview: FALLBACK_REPLY.slice(0, 140),
-          intent: outcome.escalationReason ?? "ai-escalated",
-          confidence: outcome.confidence,
-        },
-      });
-      await this.prisma.aiReply.create({
-        data: {
-          workspaceId: ctx.workspaceId,
-          conversationId: ctx.conversationId,
-          inboundMessageId: ctx.inboundMessageId,
-          outboundMessageId: fallbackRow.id,
-          action: "escalate",
-          replyText: FALLBACK_REPLY,
-          confidence: outcome.confidence,
-          needsEscalation: true,
-          escalationReason: outcome.escalationReason,
-          usedKnowledge: outcome.usedKnowledge,
-          missingInformation: outcome.missingInformation,
-          modelName: outcome.modelName,
-          promptTokens: outcome.promptTokens,
-          completionTokens: outcome.completionTokens,
-          sources: JSON.stringify(outcome.sources),
-        },
-      });
-      return;
-    }
-
-    // Send the AI reply via Meta.
-    const { token, phoneNumberId } = await this.requireToken(ctx.workspaceId);
-    await this.graphPost<{ messages?: Array<{ id: string }> }>(
-      `/${phoneNumberId}/messages`,
-      token,
-      {
-        messaging_product: "whatsapp",
-        to: ctx.waId,
-        type: "text",
-        text: { body: outcome.reply },
-      },
-    );
-
-    const now = new Date();
-    const tOut = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const outboundRow = await this.prisma.message.create({
-      data: {
-        workspaceId: ctx.workspaceId,
-        conversationId: ctx.conversationId,
-        from: "ai",
-        body: outcome.reply!,
-        t: tOut,
-        agent: "ai",
-      },
-    });
-    await this.prisma.conversation.update({
-      where: { id: ctx.conversationId },
-      data: {
-        lastAt: "now",
-        lastFrom: "ai",
-        preview: outcome.reply!.slice(0, 140),
-        status: "ai",
-        intent: "ai-reply",
-        confidence: outcome.confidence,
-      },
-    });
-    await this.prisma.aiReply.create({
-      data: {
-        workspaceId: ctx.workspaceId,
-        conversationId: ctx.conversationId,
-        inboundMessageId: ctx.inboundMessageId,
-        outboundMessageId: outboundRow.id,
-        action: "reply",
-        replyText: outcome.reply,
-        confidence: outcome.confidence,
-        needsEscalation: false,
-        escalationReason: null,
-        usedKnowledge: outcome.usedKnowledge,
-        missingInformation: outcome.missingInformation,
-        modelName: outcome.modelName,
-        promptTokens: outcome.promptTokens,
-        completionTokens: outcome.completionTokens,
-        sources: JSON.stringify(outcome.sources),
-      },
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      conversationId: conv.id,
     });
   }
 

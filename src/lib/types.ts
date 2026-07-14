@@ -17,19 +17,13 @@ export type RouteId =
   | "inbox"
   | "calendar"
   | "social"
-  | "mentions"
-  | "keywords"
   | "media"
-  | "scheduled"
   | "pipeline"
-  | "agents"
   | "campaigns"
   | "contacts"
-  | "automations"
   | "analytics"
   | "templates"
   | "team"
-  | "billing"
   | "settings"
   | "admin";
 
@@ -87,6 +81,11 @@ export interface Ticket {
   enteredStageAt: string;
   contact?: TicketContact;
   stage?: TicketStage;
+}
+
+export interface TicketsListPage {
+  items: Ticket[];
+  nextCursor: string | null;
 }
 
 export interface TicketActivity {
@@ -194,12 +193,17 @@ export interface Contact {
   value: string;
 }
 
+export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
+
 export interface Message {
   from: "them" | "ai" | "human";
   t: string;
   body: string;
   agent?: string;
   attach?: string;
+  metaMessageId?: string | null;
+  deliveryStatus?: DeliveryStatus | null;
+  deliveryStatusAt?: string | null;
 }
 
 export interface Conversation {
@@ -219,6 +223,9 @@ export interface Conversation {
   aiPaused?: boolean;
   messages?: Message[];
   suggested?: string;
+  // WhatsApp-only: backend populates these when channel === "whatsapp".
+  lastInboundAt?: string | null;
+  waWindowOpen?: boolean;
 }
 
 export type AppointmentStatus =
@@ -266,13 +273,50 @@ export interface Intent {
   count: number;
 }
 
+export type TemplateButtonType = "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
+export interface TemplateButtonDef {
+  type: TemplateButtonType;
+  text: string;
+  url?: string;
+  phone_number?: string;
+}
+
 export interface Template {
   id: string;
   name: string;
   lang: Lang;
-  category: "TRANSACTIONAL" | "UTILITY" | "MARKETING";
-  status: "approved" | "pending" | "rejected";
+  category: "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
+  status: "approved" | "pending" | "rejected" | "submitted" | "failed";
   uses: number;
+  body?: string | null;
+  footer?: string | null;
+  headerType?: string | null;
+  headerContent?: string | null;
+  // Stored as JSON string on the server; the API hands it back unparsed.
+  buttons?: string | null;
+}
+
+// ─── Segments ─────────────────────────────────────────────────────────────
+
+export interface SegmentFilter {
+  lifecycle?: string[];
+  industry?: string[];
+  source?: string[];
+  tagsAll?: string[];
+  tagsAny?: string[];
+  search?: string;
+  hasPhone?: boolean;
+}
+
+export interface Segment {
+  id: string;
+  name: string;
+  nameAr: string | null;
+  color: string | null;
+  filter: SegmentFilter;
+  count: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────
@@ -286,45 +330,6 @@ export interface Note {
   authorUserId: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-// ─── Social listening: keywords & mentions ────────────────────────────────
-
-export type KeywordKind = "brand" | "hashtag" | "handle" | "competitor";
-
-export interface Keyword {
-  id: string;
-  value: string;
-  kind: KeywordKind;
-  enabled: boolean;
-  notes: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type MentionSource = "google" | "ig-hashtag" | "fb-page" | "news";
-export type MentionStatus = "new" | "triaged" | "engaged" | "dismissed";
-export type MentionLang = "en" | "ar" | "mixed";
-export type MentionDialect = "msa" | "gulf" | "egyptian" | "levantine" | "maghrebi";
-
-export interface Mention {
-  id: string;
-  keywordId: string;
-  source: MentionSource;
-  sourceUrl: string | null;
-  externalId: string;
-  author: string;
-  authorHandle: string | null;
-  authorReach: number | null;
-  body: string;
-  lang: MentionLang | null;
-  dialect: MentionDialect | null;
-  sentiment: number | null;
-  topic: string | null;
-  postedAt: string | null;
-  ingestedAt: string;
-  status: MentionStatus;
-  keyword?: Keyword;
 }
 
 // ─── Workspaces ───────────────────────────────────────────────────────────
@@ -358,7 +363,6 @@ export interface AdminWorkspaceRow {
     members: number;
     contacts: number;
     conversations: number;
-    mentions: number;
     tickets: number;
   };
 }
@@ -398,7 +402,6 @@ export interface AdminWorkspaceDetail {
     contacts: number;
     conversations: number;
     messages: number;
-    mentions: number;
     tickets: number;
     campaigns: number;
     templates: number;
@@ -441,21 +444,4 @@ export interface ChannelResult {
   ok: boolean;
   postId?: string;
   error?: string;
-}
-
-export interface ScheduledPost {
-  id: string;
-  workspaceId: string;
-  content: string;
-  mediaIds: string;   // JSON string
-  channels: string;   // JSON string
-  scheduledFor: string;
-  status: "pending" | "publishing" | "published" | "failed" | "canceled";
-  attempts: number;
-  lastError: string | null;
-  results: string;    // JSON string
-  publishedAt: string | null;
-  createdById: string | null;
-  createdAt: string;
-  updatedAt: string;
 }

@@ -138,6 +138,14 @@ export const IconGlobe = (p: IconProps) => (
   </I>
 );
 export const IconStar = (p: IconProps) => <I {...p}><path d="M12 3l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z" /></I>;
+export const IconTrash = (p: IconProps) => (
+  <I {...p}>
+    <path d="M4 7h16" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M5 7l1 13a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-13" />
+    <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+  </I>
+);
 export const IconArchive = (p: IconProps) => (
   <I {...p}>
     <rect x="3" y="4" width="18" height="4" rx="1" />
