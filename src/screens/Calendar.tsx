@@ -11,6 +11,7 @@ import { makeTx, type Tx } from "@/lib/tx";
 import { useRoute } from "@/router";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
+import { Modal } from "@/components/Modal";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
   IconAlert,
@@ -1098,23 +1099,7 @@ function NewAppointmentModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "oklch(0 0 0 / 0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-        backdropFilter: "blur(2px)",
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="card"
-        style={{ width: 480, padding: 20 }}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} width={480} label="New appointment">
         <h3 style={{ margin: 0, fontSize: 16 }}>
           {tx("New appointment", "موعد جديد")}
         </h3>
@@ -1229,8 +1214,7 @@ function NewAppointmentModal({
             {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Create", "إنشاء")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

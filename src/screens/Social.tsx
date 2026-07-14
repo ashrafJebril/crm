@@ -4,6 +4,7 @@ import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
+import { Modal } from "@/components/Modal";
 import { Badge } from "@/components/Badge";
 import { PhotoSlot } from "@/components/PhotoSlot";
 import { CommentSkeleton, PostCardSkeleton } from "@/components/Skeleton";
@@ -1706,50 +1707,17 @@ function EditPostModal({ post, onClose, onSave, saving, error, tx }: EditPostMod
     if (post) setBody(post.body);
   }, [post]);
 
-  useEffect(() => {
-    if (!post) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [post, onClose]);
-
   if (!post) return null;
 
   const dirty = body.trim() !== post.body.trim();
 
   return (
-    <>
-      <div
-        onClick={onClose}
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "var(--scrim, rgba(0,0,0,0.55))",
-          zIndex: 80,
-        }}
-      />
-      <div
-        role="dialog"
-        aria-label={tx("Edit post", "تعديل المنشور")}
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          width: "min(560px, 96vw)",
-          background: "var(--bg-elev)",
-          border: "1px solid var(--line-soft)",
-          borderRadius: 14,
-          boxShadow: "var(--shadow-lg)",
-          zIndex: 81,
-          display: "flex",
-          flexDirection: "column",
-          padding: 16,
-          gap: 12,
-        }}
-      >
+    <Modal
+      onClose={onClose}
+      width={560}
+      label={tx("Edit post", "تعديل المنشور")}
+      panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
+    >
         <div style={{ display: "flex", alignItems: "center" }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>
             {tx("Edit post", "تعديل المنشور")}
@@ -1805,8 +1773,7 @@ function EditPostModal({ post, onClose, onSave, saving, error, tx }: EditPostMod
             {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Save", "حفظ")}
           </button>
         </div>
-      </div>
-    </>
+    </Modal>
   );
 }
 

@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
+import { Modal } from "@/components/Modal";
 import { ConvRowSkeleton, MessageSkeleton } from "@/components/Skeleton";
 import { NotesPanel } from "@/components/NotesPanel";
 import {
@@ -605,23 +606,7 @@ function ConvertTicketModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "oklch(0 0 0 / 0.5)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-        backdropFilter: "blur(2px)",
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="card"
-        style={{ width: 480, padding: 20 }}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} width={480} label="Convert to ticket">
         <h3 style={{ margin: 0, fontSize: 16 }}>
           {tx("Convert to ticket", "تحويل إلى تذكرة")}
         </h3>
@@ -759,8 +744,7 @@ function ConvertTicketModal({
               : tx("Create", "أنشئ")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1994,34 +1978,18 @@ function WhatsAppTemplatePicker({
   }, [selected, vars]);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      onClick={sending ? undefined : onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 100,
-        display: "grid",
-        placeItems: "center",
-        background: "oklch(0 0 0 / 0.5)",
-        backdropFilter: "blur(2px)",
+    <Modal
+      onClose={sending ? () => {} : onClose}
+      width={640}
+      label={tx("Send a WhatsApp template", "أرسل قالب واتساب")}
+      panelStyle={{
+        padding: 0,
+        maxHeight: "min(640px, 88vh)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
       }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(640px, 92vw)",
-          maxHeight: "min(640px, 88vh)",
-          background: "var(--bg-elev)",
-          border: "1px solid var(--line)",
-          borderRadius: 14,
-          boxShadow: "var(--shadow-lg)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
         <div
           style={{
             padding: "14px 16px",
@@ -2261,8 +2229,7 @@ function WhatsAppTemplatePicker({
             {sending ? tx("Sending…", "جارٍ الإرسال…") : tx("Send template", "إرسال القالب")}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
