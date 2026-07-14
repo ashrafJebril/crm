@@ -179,6 +179,7 @@ export class MetaWebhooksService {
       channel: "facebook",
       body,
       timestamp: evt.timestamp,
+      mid: evt.message.mid,
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "facebook",
@@ -222,6 +223,7 @@ export class MetaWebhooksService {
       channel: "instagram",
       body,
       timestamp: evt.timestamp,
+      mid: evt.message.mid,
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "instagram",
@@ -234,7 +236,19 @@ export class MetaWebhooksService {
     channel: string;
     body: string;
     timestamp?: number;
+    mid?: string;
   }) {
+    // Idempotency: Meta redelivers webhooks on any non-200/timeout, so the same
+    // `mid` can arrive repeatedly. Skip if we've already stored it — otherwise
+    // the unread counter double-counts and the thread shows duplicates.
+    if (input.mid) {
+      const seen = await this.prisma.message.findFirst({
+        where: { workspaceId: input.workspaceId, metaMessageId: input.mid },
+        select: { id: true },
+      });
+      if (seen) return;
+    }
+
     let conv = await this.prisma.conversation.findFirst({
       where: {
         workspaceId: input.workspaceId,
@@ -281,6 +295,7 @@ export class MetaWebhooksService {
         body: input.body,
         t,
         createdAt: d,
+        metaMessageId: input.mid ?? null,
       },
     });
   }

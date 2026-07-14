@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useFetch } from "@/api/useFetch";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
-import { api, tokenStore } from "@/api/client";
+import { API_BASE, api, tokenStore } from "@/api/client";
 import { IconPlus, IconX } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -46,9 +46,7 @@ export function MediaPicker({ open, onClose, onPick }: Props) {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const base =
-        (import.meta.env.VITE_API_URL as string | undefined) ??
-        "http://localhost:3001/api";
+      const base = API_BASE;
       const token = tokenStore.get();
       const resp = await fetch(`${base}/media/upload`, {
         method: "POST",
@@ -219,9 +217,7 @@ export function MediaPicker({ open, onClose, onPick }: Props) {
 }
 
 function PickerTile({ m, onPick }: { m: Media; onPick: () => void }) {
-  const base =
-    (import.meta.env.VITE_API_URL as string | undefined) ??
-    "http://localhost:3001/api";
+  const base = API_BASE;
   const token = tokenStore.get();
   const url = `${base}/media/${m.id}/file`;
   return (

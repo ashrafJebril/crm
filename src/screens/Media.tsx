@@ -3,7 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
 import { useFetch, useMutation } from "@/api/useFetch";
-import { api, tokenStore } from "@/api/client";
+import { API_BASE, api, tokenStore } from "@/api/client";
 import { IconPlus, IconTrash } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -44,9 +44,7 @@ function MediaImpl() {
       const form = new FormData();
       form.append("file", file);
       // We need a raw fetch here because the `api` helper sends JSON only.
-      const base =
-        (import.meta.env.VITE_API_URL as string | undefined) ??
-        "http://localhost:3001/api";
+      const base = API_BASE;
       const tok = tokenStore.get();
       const resp = await fetch(`${base}/media/upload`, {
         method: "POST",
@@ -349,9 +347,7 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
 
-  const base =
-    (import.meta.env.VITE_API_URL as string | undefined) ??
-    "http://localhost:3001/api";
+  const base = API_BASE;
   const tok = tokenStore.get();
   const previewUrl = `${base}/media/${m.id}/file`;
 

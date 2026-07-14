@@ -21,7 +21,7 @@ import {
   IconX,
 } from "@/icons";
 import { AGENTS, findAgent } from "@/data/agents";
-import { api, tokenStore } from "@/api/client";
+import { API_BASE, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
@@ -1806,9 +1806,7 @@ function MessageAttachment({ value }: { value: string }) {
     );
   }
   // Treat as media id.
-  const base =
-    (import.meta.env.VITE_API_URL as string | undefined) ??
-    "http://localhost:3001/api";
+  const base = API_BASE;
   const token = tokenStore.get();
   return (
     <div style={{ marginTop: 6 }}>
@@ -2262,9 +2260,7 @@ function AttachmentPreview({
   onRemove: () => void;
   label: string;
 }) {
-  const base =
-    (import.meta.env.VITE_API_URL as string | undefined) ??
-    "http://localhost:3001/api";
+  const base = API_BASE;
   const token = tokenStore.get();
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {

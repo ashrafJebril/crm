@@ -1,7 +1,14 @@
 // Tiny typed fetch wrapper. Reads JWT from localStorage and attaches it.
 // Throws ApiError on non-2xx so hooks can show error states.
 
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001/api";
+// Single source of truth for the API origin. Everything that talks to the
+// backend (this client, the socket, MediaPicker/ComposeModal/Inbox/Media
+// direct fetches) must import this — no local re-definitions, which used to
+// drift and defaulted to the wrong port (3001 instead of the dev backend's
+// 4100). Set VITE_API_URL to override in any non-dev build.
+export const API_BASE =
+  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:4100/api";
+const BASE = API_BASE;
 const TOKEN_KEY = "aram.token.v1";
 
 export class ApiError extends Error {
@@ -24,6 +31,16 @@ export const tokenStore = {
   },
 };
 
+// Global "session expired" hook. AuthProvider registers its logout() here so
+// that ANY request returning 401 while a token was attached (i.e. the token
+// was rejected as expired/invalid — not a login attempt) tears the session
+// down and drops back to the login screen, instead of leaving every screen
+// stuck in a per-request error state.
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorized = fn;
+}
+
 interface RequestOpts {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
@@ -41,6 +58,13 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     signal: opts.signal,
   });
+
+  // A 401 on a request that DID carry a token means the session token was
+  // rejected (expired/invalid). Fire the global logout hook. Login/register
+  // send no token, so their "invalid credentials" 401s never reach here.
+  if (res.status === 401 && tok) {
+    onUnauthorized?.();
+  }
 
   if (res.status === 204) return undefined as T;
 

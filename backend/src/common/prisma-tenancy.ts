@@ -30,16 +30,27 @@ const READ_ACTIONS = new Set([
 
 const CREATE_ACTIONS = new Set(["create", "createMany"]);
 
-const WHERE_ACTIONS = new Set(["updateMany", "deleteMany"]);
+// Every action whose `where` should be workspace-scoped. Prisma 5 allows extra
+// (non-unique) filter fields in the where of single-record update/delete/upsert
+// as long as a unique field is present, so injecting workspaceId here makes a
+// cross-tenant single update/delete fail closed (P2025 RecordNotFound) instead
+// of silently mutating another tenant's row.
+const WHERE_ACTIONS = new Set([
+  "updateMany",
+  "deleteMany",
+  "update",
+  "delete",
+]);
 
 /**
  * Prisma client extension that auto-injects the active workspaceId on:
  *  - read filters (findMany, findFirst, count, aggregate, groupBy)
  *  - create payloads (single + createMany)
- *  - bulk update/delete filters
+ *  - update/delete filters (bulk AND single-record)
+ *  - upsert (where + create payload)
  * Acts as a safety net behind the explicit scoping in service methods.
  * Skipped entirely when no workspace context is set (migration scripts,
- * test setup, etc.).
+ * webhook ingestion, test setup, etc.).
  */
 export const tenancyExtension = Prisma.defineExtension({
   name: "workspace-tenancy",
@@ -71,6 +82,16 @@ export const tenancyExtension = Prisma.defineExtension({
         if (WHERE_ACTIONS.has(operation)) {
           const a = (args ?? {}) as { where?: Record<string, unknown> };
           a.where = { ...(a.where ?? {}), workspaceId: wsId };
+          return query(a as typeof args);
+        }
+
+        if (operation === "upsert") {
+          const a = (args ?? {}) as {
+            where?: Record<string, unknown>;
+            create?: Record<string, unknown>;
+          };
+          a.where = { ...(a.where ?? {}), workspaceId: wsId };
+          a.create = { workspaceId: wsId, ...(a.create ?? {}) };
           return query(a as typeof args);
         }
 

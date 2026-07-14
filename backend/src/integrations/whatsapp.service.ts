@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { redactUrl } from "../common/redact-url";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
@@ -954,6 +955,22 @@ export class WhatsAppService {
     const waId = msg.from;
     const contactName = profileName?.trim() || `WhatsApp ${this.maskPhone(waId)}`;
 
+    // Idempotency: Meta redelivers a webhook on any non-200 / timeout, so the
+    // same wamid can arrive several times. If we've already stored this message
+    // id, bail out before touching the contact/conversation — otherwise the
+    // unread counter increments once per redelivery and the thread shows dupes.
+    const wamid = msg.id;
+    if (wamid) {
+      const seen = await this.prisma.message.findFirst({
+        where: { workspaceId, metaMessageId: wamid },
+        select: { id: true },
+      });
+      if (seen) {
+        this.log.debug(`Duplicate inbound wamid=${wamid} — skipping`);
+        return;
+      }
+    }
+
     const contact = await this.prisma.contact.upsert({
       where: {
         workspaceId_externalSource_externalId: {
@@ -1023,6 +1040,7 @@ export class WhatsAppService {
         from: "them",
         body: body || `[${msg.type} message]`,
         t,
+        metaMessageId: wamid ?? null,
       },
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
@@ -1136,7 +1154,7 @@ export class WhatsAppService {
           ? // @ts-expect-error - shape from Graph API
             (parsed.error?.message as string) || `Graph error ${res.status}`
           : `Graph error ${res.status}`;
-      this.log.warn(`Graph ${init.method ?? "GET"} ${url} -> ${res.status} ${errMsg}`);
+      this.log.warn(`Graph ${init.method ?? "GET"} ${redactUrl(url)} -> ${res.status} ${errMsg}`);
       throw new HttpException(errMsg, res.status >= 500 ? 502 : 400);
     }
     return parsed as T;

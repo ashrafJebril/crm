@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { redactUrl } from "../common/redact-url";
 import { MediaService } from "../media/media.service";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -693,7 +694,7 @@ export class InstagramService {
           // @ts-expect-error - Graph shape
           ? (parsed.error?.message as string) ?? `IG error ${res.status}`
           : `IG error ${res.status}`;
-      this.log.warn(`IG ${init.method} ${url} -> ${res.status} ${errMsg}`);
+      this.log.warn(`IG ${init.method} ${redactUrl(url)} -> ${res.status} ${errMsg}`);
       throw new HttpException(errMsg, res.status >= 500 ? 502 : 400);
     }
     return parsed as T;

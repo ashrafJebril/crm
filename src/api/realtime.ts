@@ -1,5 +1,5 @@
 import { io, type Socket } from "socket.io-client";
-import { tokenStore } from "./client";
+import { API_BASE, tokenStore } from "./client";
 
 let socket: Socket | null = null;
 
@@ -12,9 +12,7 @@ export function ensureSocket(): Socket {
     socket.connect();
     return socket;
   }
-  const apiUrl =
-    (import.meta.env.VITE_API_URL as string | undefined) ??
-    "http://localhost:3001/api";
+  const apiUrl = API_BASE;
   // io() wants the origin; the socket.io endpoint sits at /api/socket.io,
   // which matches the gateway's path option on the server.
   const origin = apiUrl.replace(/\/api\/?$/, "");

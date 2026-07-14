@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { redactUrl } from "../common/redact-url";
 import { MediaService } from "../media/media.service";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -458,7 +459,7 @@ export class FacebookService {
           // @ts-expect-error - shape from Graph API
           ? ((parsed.error?.message as string) ?? `Graph error ${response.status}`)
           : `Graph error ${response.status}`;
-      this.log.warn(`Graph POST ${url} -> ${response.status} ${errMsg}`);
+      this.log.warn(`Graph POST ${redactUrl(url)} -> ${response.status} ${errMsg}`);
       throw new HttpException(errMsg, response.status >= 500 ? 502 : 400);
     }
     const data = parsed as { id?: string; post_id?: string };
@@ -780,7 +781,7 @@ export class FacebookService {
           ? // @ts-expect-error - shape from Graph API
             (parsed.error?.message as string) || `Graph error ${res.status}`
           : `Graph error ${res.status}`;
-      this.log.warn(`Graph ${init.method} ${url} -> ${res.status} ${errMsg}`);
+      this.log.warn(`Graph ${init.method} ${redactUrl(url)} -> ${res.status} ${errMsg}`);
       throw new HttpException(errMsg, res.status >= 500 ? 502 : 400);
     }
     return parsed as T;

@@ -3,7 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
 import { useFetch, useMutation } from "@/api/useFetch";
-import { api, tokenStore } from "@/api/client";
+import { API_BASE, api, tokenStore } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
 import { SchedulePicker } from "./SchedulePicker";
 import { IconBolt, IconCheck, IconPlus, IconX } from "@/icons";
@@ -580,9 +580,7 @@ function MediaPicker({
     try {
       const form = new FormData();
       form.append("file", file);
-      const base =
-        (import.meta.env.VITE_API_URL as string | undefined) ??
-        "http://localhost:3001/api";
+      const base = API_BASE;
       const tok = tokenStore.get();
       const resp = await fetch(`${base}/media/upload`, {
         method: "POST",
@@ -769,9 +767,7 @@ function PreviewThumb({ mediaId }: { mediaId: string }) {
   useEffect(() => {
     let cancelled = false;
     const tok = tokenStore.get();
-    const base =
-      (import.meta.env.VITE_API_URL as string | undefined) ??
-      "http://localhost:3001/api";
+    const base = API_BASE;
     fetch(`${base}/media/${mediaId}/file`, {
       headers: tok ? { Authorization: `Bearer ${tok}` } : {},
     })

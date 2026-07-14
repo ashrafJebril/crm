@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, tokenStore } from "@/api/client";
+import { api, setUnauthorizedHandler, tokenStore } from "@/api/client";
 import { disconnectSocket } from "@/api/realtime";
 import type { Workspace } from "@/lib/types";
 
@@ -173,6 +173,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setImpersonating(false);
     setStatus("anonymous");
   }, []);
+
+  // Any authenticated request that comes back 401 (expired/invalid token)
+  // tears the session down via this hook — see client.ts. Registered once;
+  // logout is stable.
+  useEffect(() => {
+    setUnauthorizedHandler(() => logout());
+    return () => setUnauthorizedHandler(null);
+  }, [logout]);
 
   const switchWorkspace = useCallback(async (workspaceId: string) => {
     const resp = await api.post<LoginResponse>("/auth/switch-workspace", {

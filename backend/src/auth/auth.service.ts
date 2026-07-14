@@ -8,6 +8,7 @@ import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkspacesService } from "../workspaces/workspaces.service";
+import { WorkspaceRole } from "../workspaces/workspaces.dto";
 import {
   ChangePasswordDto,
   LoginDto,
@@ -27,15 +28,37 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const email = dto.email.toLowerCase().trim();
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new UnauthorizedException("Invalid credentials");
-    // SSO-provisioned users have no local password — they must come in via
-    // POST /auth/sso/exchange, not the password endpoint.
-    if (!user.password) throw new UnauthorizedException("Invalid credentials");
+    // Fetch the user AND their (non-suspended) memberships in a single query.
+    // Login previously made three sequential round-trips to the remote Postgres
+    // (user → memberships → re-fetch user); this collapses the first two into
+    // one join, and issue() no longer re-fetches — so it's one DB round-trip
+    // plus the bcrypt compare.
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+      include: {
+        memberships: {
+          where: { workspace: { suspendedAt: null } },
+          include: { workspace: true },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+    // SSO-provisioned users have no local password — they come in via
+    // POST /auth/sso/exchange, not this endpoint.
+    if (!user || !user.password) throw new UnauthorizedException("Invalid credentials");
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) throw new UnauthorizedException("Invalid credentials");
 
-    const memberships = await this.workspaces.listForUser(user.id);
+    const memberships = user.memberships.map((m) => ({
+      id: m.workspace.id,
+      name: m.workspace.name,
+      slug: m.workspace.slug,
+      timezone: m.workspace.timezone,
+      lang: m.workspace.lang,
+      plan: m.workspace.plan,
+      role: m.role as WorkspaceRole,
+    }));
+
     if (memberships.length === 0) {
       // Edge case: user with no workspace memberships. Create one on the fly
       // so they always land somewhere.
@@ -142,24 +165,33 @@ export class AuthService {
   }
 
   private async issue(
-    user: { id: string; email: string; role: string },
+    // Full user row — every caller (login/register/switch) already loaded it,
+    // so we sign directly from it instead of re-querying the DB (one fewer
+    // round-trip to the remote Postgres on every auth call). isSuperAdmin is a
+    // scalar on the row, so it reflects current DB state as of that read.
+    user: {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+      initials: string;
+      color: string;
+      isSuperAdmin: boolean;
+    },
     workspaceId: string | null,
     workspaces: Awaited<ReturnType<WorkspacesService["listForUser"]>>,
   ) {
-    // Read the latest user row so isSuperAdmin reflects DB state (admins
-    // promoted/demoted between login sessions get the right capability).
-    const full = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
       role: user.role,
       ...(workspaceId ? { workspaceId } : {}),
-      ...(full.isSuperAdmin ? { isSuperAdmin: true } : {}),
+      ...(user.isSuperAdmin ? { isSuperAdmin: true } : {}),
     };
     const token = await this.jwt.signAsync(payload);
     return {
       token,
-      user: this.shape(full),
+      user: this.shape(user),
       workspaces,
       activeWorkspaceId: workspaceId,
     };

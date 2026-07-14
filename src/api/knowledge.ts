@@ -1,6 +1,6 @@
-import { ApiError, api, tokenStore } from "./client";
+import { API_BASE, ApiError, api, tokenStore } from "./client";
 
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001/api";
+const BASE = API_BASE;
 
 export interface KnowledgeDocument {
   id: string;

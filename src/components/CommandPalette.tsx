@@ -12,13 +12,10 @@ import { useRoute } from "@/router";
 import { makeTx } from "@/lib/tx";
 import { NAV, isSection, TITLES } from "@/shell/nav";
 import type { Accent, Lang, RouteId, Theme } from "@/lib/types";
-import { CAMPAIGNS } from "@/data/campaigns";
-import { TEMPLATES } from "@/data/analytics";
 import { useFetch } from "@/api/useFetch";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import {
   IconBolt,
-  IconCampaign,
   IconInbox,
   IconLang,
   IconLayers,
@@ -26,7 +23,6 @@ import {
   IconSearch,
   IconSparkles,
   IconSun,
-  IconTemplate,
   IconUsers,
 } from "@/icons";
 
@@ -265,28 +261,6 @@ export function CommandPalette() {
       run: () => setRoute("pipeline"),
     }));
 
-    // Campaigns
-    const campaignItems: CmdItem[] = CAMPAIGNS.filter((c) =>
-      matches(query, c.name, c.audience, c.status, c.channel),
-    ).map((c) => ({
-      id: `camp-${c.id}`,
-      label: c.name,
-      hint: `${c.status} · ${c.audience}`,
-      Icon: IconCampaign,
-      run: () => setRoute("campaigns"),
-    }));
-
-    // Templates
-    const templateItems: CmdItem[] = TEMPLATES.filter((tpl) =>
-      matches(query, tpl.name, tpl.category, tpl.status),
-    ).map((tpl) => ({
-      id: `tpl-${tpl.id}`,
-      label: tpl.name,
-      hint: `${tpl.category.toLowerCase()} · ${tpl.lang.toUpperCase()}`,
-      Icon: IconTemplate,
-      run: () => setRoute("templates"),
-    }));
-
     // Quick actions
     const nextTheme: Theme = t.theme === "dark" ? "light" : "dark";
     const nextLang: Lang = t.lang === "en" ? "ar" : "en";
@@ -341,8 +315,6 @@ export function CommandPalette() {
       { id: "contacts", label: tx("Contacts", "جهات الاتصال"), items: contactItems },
       { id: "conv", label: tx("Conversations", "المحادثات"), items: convItems },
       { id: "tkt", label: tx("Tickets", "التذاكر"), items: ticketItems },
-      { id: "camp", label: tx("Campaigns", "الحملات"), items: campaignItems },
-      { id: "tpl", label: tx("Templates", "القوالب"), items: templateItems },
       { id: "qa", label: tx("Quick actions", "إجراءات سريعة"), items: quickActions },
     ];
 
