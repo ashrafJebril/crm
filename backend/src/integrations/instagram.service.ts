@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
+import { decryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -675,9 +676,12 @@ export class InstagramService {
   }
 
   private async find(workspaceId: string) {
-    return this.prisma.integration.findFirst({
+    const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: "instagram" },
     });
+    // Single decrypt point — every reader of integ.accessToken goes through find().
+    if (integ?.accessToken) integ.accessToken = decryptSecret(integ.accessToken);
+    return integ;
   }
 
   private async requireToken(workspaceId: string): Promise<{ token: string; igUserId: string }> {

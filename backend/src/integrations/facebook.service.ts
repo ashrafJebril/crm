@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
+import { decryptSecret, encryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -164,7 +165,7 @@ export class FacebookService {
       platform: "facebook",
       pageId,
       pageName,
-      accessToken: finalToken,
+      accessToken: encryptSecret(finalToken),
       scopes: null,
       expiresAt,
       raw: JSON.stringify({ me, candidates: candidates.map((c) => ({ id: c.id, name: c.name })) }),
@@ -378,7 +379,7 @@ export class FacebookService {
     }
     const updated = await this.prisma.integration.update({
       where: { id: integ.id },
-      data: { pageId, pageName, accessToken: finalToken, expiresAt },
+      data: { pageId, pageName, accessToken: encryptSecret(finalToken), expiresAt },
     });
     return {
       connected: true,
@@ -676,9 +677,12 @@ export class FacebookService {
 
   // ─── Internals ──────────────────────────────────────────────────────────
   private async find(workspaceId: string) {
-    return this.prisma.integration.findFirst({
+    const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: "facebook" },
     });
+    // Single decrypt point — every reader of integ.accessToken goes through find().
+    if (integ?.accessToken) integ.accessToken = decryptSecret(integ.accessToken);
+    return integ;
   }
 
   private async requireToken(workspaceId: string): Promise<{ token: string; pageId: string }> {
@@ -733,7 +737,7 @@ export class FacebookService {
       platform: "instagram",
       pageId: igId,
       pageName: igUsername,
-      accessToken: pageToken,
+      accessToken: encryptSecret(pageToken),
       scopes: null,
       expiresAt,
       raw: JSON.stringify({ linkedFbPageId: pageId }),

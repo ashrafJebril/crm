@@ -880,13 +880,28 @@ function InboxList({
   onRetry,
   tx,
 }: InboxListProps) {
+  // Count all six buckets in a single pass, memoized on the conversation list.
+  // Previously this ran six full allConvs.filter() scans on every render — and
+  // InboxList re-renders on every 30s poll and realtime bump.
+  const counts = useMemo(() => {
+    let ai = 0, human = 0, unread = 0, closed = 0, spam = 0;
+    for (const c of allConvs) {
+      if (c.status === "ai") ai++;
+      else if (c.status === "human") human++;
+      else if (c.status === "closed") closed++;
+      else if (c.status === "spam") spam++;
+      if (c.unread > 0) unread++;
+    }
+    return { all: allConvs.length, ai, human, unread, closed, spam };
+  }, [allConvs]);
+
   const filters: FilterDef[] = [
-    { id: "all", label: tx("All", "الكل"), count: allConvs.length },
-    { id: "ai", label: tx("AI handled", "ذكاء"), count: allConvs.filter((c) => c.status === "ai").length, kind: "ai" },
-    { id: "human", label: tx("Assigned", "معيّنة"), count: allConvs.filter((c) => c.status === "human").length, kind: "human" },
-    { id: "unread", label: tx("Unread", "غير مقروءة"), count: allConvs.filter((c) => c.unread > 0).length },
-    { id: "closed", label: tx("Closed", "مغلقة"), count: allConvs.filter((c) => c.status === "closed").length },
-    { id: "spam", label: tx("Spam", "مزعجة"), count: allConvs.filter((c) => c.status === "spam").length },
+    { id: "all", label: tx("All", "الكل"), count: counts.all },
+    { id: "ai", label: tx("AI handled", "ذكاء"), count: counts.ai, kind: "ai" },
+    { id: "human", label: tx("Assigned", "معيّنة"), count: counts.human, kind: "human" },
+    { id: "unread", label: tx("Unread", "غير مقروءة"), count: counts.unread },
+    { id: "closed", label: tx("Closed", "مغلقة"), count: counts.closed },
+    { id: "spam", label: tx("Spam", "مزعجة"), count: counts.spam },
   ];
 
   return (

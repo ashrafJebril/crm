@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
+import { decryptSecret, encryptSecret } from "../common/token-crypto";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
@@ -379,7 +380,7 @@ export class WhatsAppService {
       platform: "whatsapp",
       pageId: dto.phoneNumberId,
       pageName: displayName,
-      accessToken: dto.accessToken,
+      accessToken: encryptSecret(dto.accessToken),
       scopes: null,
       expiresAt: null,
       raw: JSON.stringify({
@@ -1098,9 +1099,13 @@ export class WhatsAppService {
 
   // ─── Internals ─────────────────────────────────────────────────────────
   private async find(workspaceId: string) {
-    return this.prisma.integration.findFirst({
+    const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: "whatsapp" },
     });
+    // Single decrypt point — every reader of integ.accessToken goes through
+    // find(), so downstream code sees the plaintext token transparently.
+    if (integ?.accessToken) integ.accessToken = decryptSecret(integ.accessToken);
+    return integ;
   }
 
   private async requireToken(
