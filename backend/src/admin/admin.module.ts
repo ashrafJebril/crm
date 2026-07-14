@@ -3,12 +3,13 @@ import { JwtModule } from "@nestjs/jwt";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
 import { SuperAdminGuard } from "./super-admin.guard";
+import { requireJwtSecret } from "../common/jwt-secret";
 
 @Module({
   imports: [
     JwtModule.registerAsync({
       useFactory: () => ({
-        secret: process.env.JWT_SECRET || "tkana-dev-secret-change-in-prod",
+        secret: requireJwtSecret(),
       }),
     }),
   ],

@@ -7,8 +7,10 @@ import {
   Param,
   Post,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import { WhatsAppService } from "./whatsapp.service";
+import { MetaWebhookSignatureGuard } from "../common/meta-webhook-signature.guard";
 import {
   ConnectByTokenDto,
   ConnectWhatsAppDto,
@@ -112,6 +114,7 @@ export class WhatsAppController {
   }
 
   @Public()
+  @UseGuards(MetaWebhookSignatureGuard)
   @Post("webhooks/whatsapp")
   @HttpCode(200)
   receive(@Body() payload: unknown) {
