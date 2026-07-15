@@ -66,7 +66,10 @@ export class KapsoService {
    * phone_number_id via the success redirect and the
    * `whatsapp.phone_number.created` webhook.
    */
-  async createSetupLink(workspaceId: string): Promise<{ url: string }> {
+  async createSetupLink(
+    workspaceId: string,
+    opts: { provision?: boolean } = {},
+  ): Promise<{ url: string }> {
     this.requireKey();
     const customerId = await this.ensureCustomer(workspaceId);
 
@@ -78,6 +81,10 @@ export class KapsoService {
       setup_link: {
         success_redirect_url: `${appUrl}/#/settings?kapso=connected`,
         failure_redirect_url: `${appUrl}/#/settings?kapso=failed`,
+        // When true, Kapso provisions a pre-verified number (free plan gets one
+        // lifetime free) instead of the customer bringing their own — ideal for
+        // testing without touching a personal SIM.
+        ...(opts.provision ? { provision_phone_number: true } : {}),
       },
     };
     const res = await this.platformFetch<{ url?: string; data?: { url?: string } }>(

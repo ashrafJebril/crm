@@ -8,7 +8,7 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import { IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsOptional, IsString } from "class-validator";
 import { KapsoService } from "./kapso.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
@@ -18,6 +18,12 @@ class RecordConnectionDto {
   @IsString() phoneNumberId!: string;
   @IsOptional() @IsString() wabaId?: string;
   @IsOptional() @IsString() displayPhoneNumber?: string;
+}
+
+class SetupLinkDto {
+  // When true, Kapso provisions a pre-verified test number instead of the
+  // customer bringing their own.
+  @IsOptional() @IsBoolean() provision?: boolean;
 }
 
 @Controller()
@@ -30,10 +36,14 @@ export class KapsoController {
     return this.kapso.status(workspaceId);
   }
 
-  /** Mint an embedded-signup setup link for the customer to connect their WABA. */
+  /** Mint an embedded-signup setup link for the customer to connect their WABA.
+   *  Pass { provision: true } to have Kapso hand out a pre-verified test number. */
   @Post("integrations/kapso/setup-link")
-  setupLink(@CurrentWorkspace() workspaceId: string) {
-    return this.kapso.createSetupLink(workspaceId);
+  setupLink(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: SetupLinkDto,
+  ) {
+    return this.kapso.createSetupLink(workspaceId, { provision: !!dto?.provision });
   }
 
   /**

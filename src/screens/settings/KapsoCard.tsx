@@ -31,8 +31,8 @@ export function KapsoCard({ tx, canEdit }: KapsoCardProps) {
   const [waiting, setWaiting] = useState(false);
   const pollRef = useRef<number | null>(null);
 
-  const setupMut = useMutation<void, { url: string }>(() =>
-    api.post("/integrations/kapso/setup-link"),
+  const setupMut = useMutation<{ provision: boolean }, { url: string }>((input) =>
+    api.post("/integrations/kapso/setup-link", input),
   );
   const disconnectMut = useMutation<void, { ok: boolean; released: boolean }>(() =>
     api.delete("/integrations/kapso/disconnect"),
@@ -72,10 +72,10 @@ export function KapsoCard({ tx, canEdit }: KapsoCardProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onConnect = async () => {
+  const onConnect = async (provision: boolean) => {
     setError(null);
     try {
-      const { url } = await setupMut.mutate();
+      const { url } = await setupMut.mutate({ provision });
       window.open(url, "_blank", "noopener");
       startPolling();
       flash(tx("Opened Kapso signup — finish it in the new tab.", "افتح تسجيل Kapso في التبويب الجديد."));
@@ -118,11 +118,24 @@ export function KapsoCard({ tx, canEdit }: KapsoCardProps) {
               {disconnectMut.loading ? tx("Disconnecting…", "جارٍ القطع…") : tx("Disconnect", "قطع الاتصال")}
             </button>
           ) : (
-            <button className="btn primary" onClick={onConnect} disabled={setupMut.loading}>
-              {setupMut.loading
-                ? tx("Preparing…", "جارٍ التحضير…")
-                : tx("Connect via Kapso", "اربط عبر Kapso")}
-            </button>
+            <>
+              <button
+                className="btn ghost"
+                onClick={() => onConnect(false)}
+                disabled={setupMut.loading}
+              >
+                {tx("Connect existing number", "اربط رقمًا موجودًا")}
+              </button>
+              <button
+                className="btn primary"
+                onClick={() => onConnect(true)}
+                disabled={setupMut.loading}
+              >
+                {setupMut.loading
+                  ? tx("Preparing…", "جارٍ التحضير…")
+                  : tx("Get a free test number", "احصل على رقم تجريبي مجاني")}
+              </button>
+            </>
           )
         ) : null
       }
