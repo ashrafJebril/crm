@@ -5,6 +5,7 @@ import { Topbar } from "@/shell/Topbar";
 import { ScreenSlot } from "@/router";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ToastProvider } from "@/components/Toast";
+import { KapsoRedirectCapture } from "@/components/KapsoRedirectCapture";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
@@ -39,6 +40,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+      <KapsoRedirectCapture />
       <div className="app" data-collapsed={t.collapsed}>
         <ImpersonationBanner />
         <Sidebar route={route} setRoute={setRoute} />
