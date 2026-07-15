@@ -105,7 +105,7 @@ export class KapsoService {
     }>("/customers", {
       method: "POST",
       body: JSON.stringify({
-        customer: { name: ws.name, external_id: ws.id },
+        customer: { name: ws.name, external_customer_id: ws.id },
       }),
     });
     const customerId = created.id ?? created.data?.id;
