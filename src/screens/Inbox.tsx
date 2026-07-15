@@ -879,6 +879,10 @@ function InboxList({
     return { all: allConvs.length, ai, human, unread, closed, spam };
   }, [allConvs]);
 
+  // During the unified initial load the skeleton stands in for the rows —
+  // rendering partial rows underneath would reintroduce per-channel pop-in.
+  const visibleConvs = loading ? [] : convs;
+
   const filters: FilterDef[] = [
     { id: "all", label: tx("All", "الكل"), count: counts.all },
     { id: "ai", label: tx("AI handled", "ذكاء"), count: counts.ai, kind: "ai" },
@@ -954,7 +958,7 @@ function InboxList({
         </div>
       </div>
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {loading && allConvs.length === 0 && (
+        {loading && (
           <div aria-label={tx("Loading conversations", "جارٍ تحميل المحادثات")}>
             {Array.from({ length: 6 }).map((_, i) => (
               <ConvRowSkeleton key={i} />
@@ -978,7 +982,7 @@ function InboxList({
             </button>
           </div>
         )}
-        {convs.map((c) => {
+        {visibleConvs.map((c) => {
           const contact = contactById.get(c.contactId);
           const agent = findAgent(c.agent);
           return (
@@ -2637,6 +2641,19 @@ function InboxImpl() {
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
 
+  // Hold the list behind one skeleton until every connected channel's FIRST
+  // load settles, so WhatsApp/Facebook/Instagram rows appear together instead
+  // of popping in one channel at a time. "Settled" = has data or failed —
+  // `data` stays non-null across background polls, so polls never re-trip it.
+  const settled = (q: { data: unknown; error: string | null }) =>
+    q.data !== null || q.error !== null;
+  const initialLoading =
+    !settled(convsQ) ||
+    !settled(fbStatusQ) ||
+    (fbConnected && !settled(fbConvsQ)) ||
+    !settled(igStatusQ) ||
+    (igConnected && !settled(igConvsQ));
+
   // Backend emits `inbox.activity` whenever a message lands or a conversation
   // changes (WhatsApp webhook, Meta webhook, REST send/update). Each event
   // refetches the affected list and bumps `messageVersion` so the active
@@ -3113,9 +3130,15 @@ function InboxImpl() {
           activeId={activeId}
           setActiveId={setActiveId}
           contactById={contactById}
-          loading={fbConnected ? fbConvsQ.loading : convsQ.loading}
-          error={fbConnected ? fbConvsQ.error : convsQ.error}
-          onRetry={fbConnected ? fbConvsQ.refetch : convsQ.refetch}
+          loading={initialLoading}
+          error={convsQ.error ?? fbConvsQ.error ?? igConvsQ.error}
+          onRetry={
+            convsQ.error
+              ? convsQ.refetch
+              : fbConvsQ.error
+                ? fbConvsQ.refetch
+                : igConvsQ.refetch
+          }
           tx={tx}
         />
       </div>
