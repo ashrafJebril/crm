@@ -7,6 +7,7 @@ import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
 import { IconGlobe, IconCheck, IconX } from "@/icons";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
+import { KapsoCard } from "./KapsoCard";
 
 interface FbStatus {
   connected: boolean;
@@ -43,6 +44,8 @@ export function IntegrationsTab() {
       />
 
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
+
+      <KapsoCard key={`kapso-${wsKey}`} tx={tx} canEdit={canEdit} />
     </>
   );
 }

@@ -5,6 +5,8 @@ import { InstagramController } from "./instagram.controller";
 import { InstagramService } from "./instagram.service";
 import { WhatsAppController } from "./whatsapp.controller";
 import { WhatsAppService } from "./whatsapp.service";
+import { KapsoController } from "./kapso.controller";
+import { KapsoService } from "./kapso.service";
 import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { HjzWebhooksController } from "./hjz-webhooks.controller";
@@ -20,6 +22,7 @@ import { RealtimeModule } from "../realtime/realtime.module";
     FacebookController,
     InstagramController,
     WhatsAppController,
+    KapsoController,
     MetaWebhooksController,
     HjzWebhooksController,
   ],
@@ -27,9 +30,10 @@ import { RealtimeModule } from "../realtime/realtime.module";
     FacebookService,
     InstagramService,
     WhatsAppService,
+    KapsoService,
     MetaWebhooksService,
     HjzWebhooksService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService],
+  exports: [FacebookService, InstagramService, WhatsAppService, KapsoService],
 })
 export class IntegrationsModule {}

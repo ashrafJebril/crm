@@ -350,10 +350,14 @@ model TicketActivity {
 
 model Integration {
   id           String   @id @default(cuid())
-  platform     String   // "facebook" | "instagram" | "tiktok" — one row per platform per workspace
-  pageId       String?  // FB Page id / IG Business Account id / TikTok user id
+  platform     String   // "facebook" | "instagram" | "tiktok" | "whatsapp" — one row per platform per workspace
+  // Transport for WhatsApp: "meta" = direct Cloud API (per-integration token),
+  // "kapso" = via Kapso BSP (auth is the global project API key, so accessToken
+  // is null). Ignored for FB/IG. Defaults to "meta" for existing rows.
+  provider     String   @default("meta")
+  pageId       String?  // FB Page id / IG Business Account id / WhatsApp phone_number_id
   pageName     String?  // human-friendly identifier
-  accessToken  String   // long-lived token (NOT the App Secret). Plaintext in dev only.
+  accessToken  String?  // long-lived token (NOT the App Secret). Null for kapso-provider WhatsApp.
   scopes       String?  // CSV of granted scopes
   expiresAt    DateTime?
   lastFetchedAt DateTime?
@@ -447,6 +451,11 @@ model Workspace {
   // modules enabled (backwards compatible). When set, route guards consult
   // this and 403 modules outside the list.
   enabledModules Json?
+
+  // Kapso BSP — the Kapso "customer" id this workspace maps to. Created the
+  // first time we generate a WhatsApp embedded-signup setup link for the
+  // workspace; reused on subsequent links. Null until then.
+  kapsoCustomerId String?
 
   members WorkspaceMember[]
 
