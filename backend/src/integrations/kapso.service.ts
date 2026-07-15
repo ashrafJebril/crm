@@ -184,9 +184,32 @@ export class KapsoService {
     const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: "whatsapp", provider: "kapso" },
     });
-    if (!integ) return { ok: true };
+    if (!integ) return { ok: true, released: false };
+
+    // Best-effort release at Kapso (deregisters the number so a coexistence
+    // number stays clean and a dedicated one can be reclaimed). Never block the
+    // local disconnect on it — the key may be rotated, the number already gone,
+    // etc. We still remove our record so the CRM reflects "disconnected".
+    let released = false;
+    if (integ.pageId && this.isConfigured()) {
+      try {
+        await this.deletePhoneNumber(integ.pageId);
+        released = true;
+      } catch (e) {
+        this.log.warn(
+          `Kapso phone-number delete failed for ${integ.pageId} (removing local record anyway): ${(e as Error).message}`,
+        );
+      }
+    }
     await this.prisma.integration.delete({ where: { id: integ.id } });
-    return { ok: true };
+    return { ok: true, released };
+  }
+
+  /** Release/deregister a number at Kapso (DELETE, 204 no body). */
+  private async deletePhoneNumber(phoneNumberId: string): Promise<void> {
+    await this.platformFetch(`/whatsapp/phone_numbers/${phoneNumberId}`, {
+      method: "DELETE",
+    });
   }
 
   // ─── Sending ──────────────────────────────────────────────────────────────

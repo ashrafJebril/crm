@@ -34,7 +34,7 @@ export function KapsoCard({ tx, canEdit }: KapsoCardProps) {
   const setupMut = useMutation<void, { url: string }>(() =>
     api.post("/integrations/kapso/setup-link"),
   );
-  const disconnectMut = useMutation<void, { ok: boolean }>(() =>
+  const disconnectMut = useMutation<void, { ok: boolean; released: boolean }>(() =>
     api.delete("/integrations/kapso/disconnect"),
   );
 
@@ -87,9 +87,16 @@ export function KapsoCard({ tx, canEdit }: KapsoCardProps) {
   const onDisconnect = async () => {
     setError(null);
     try {
-      await disconnectMut.mutate();
+      const res = await disconnectMut.mutate();
       void statusQ.refetch();
-      flash(tx("Disconnected.", "تم قطع الاتصال."));
+      flash(
+        res.released
+          ? tx("Disconnected and released the number.", "تم قطع الاتصال وتحرير الرقم.")
+          : tx(
+              "Removed here. Release the number in the Kapso dashboard if needed.",
+              "تمت الإزالة هنا. حرّر الرقم من لوحة Kapso إذا لزم.",
+            ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to disconnect");
     }
