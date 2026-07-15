@@ -5,6 +5,12 @@ import { makeTx } from "@/lib/tx";
 
 type Mode = "login" | "signup";
 
+// We persist only the email (never the password) so "Remember me" pre-fills
+// the address next time. The password is left to the browser's own password
+// manager (OS-encrypted) — storing it in localStorage would be an XSS-theft
+// risk. Keep this key stable.
+const REMEMBER_KEY = "aram.remember.email";
+
 export function Login() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
@@ -12,9 +18,12 @@ export function Login() {
 
   const [mode, setMode] = useState<Mode>("login");
 
-  // Login state
-  const [loginEmail, setLoginEmail] = useState("");
+  // Login state — pre-fill the remembered email if present.
+  const remembered =
+    typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_KEY) : null;
+  const [loginEmail, setLoginEmail] = useState(remembered ?? "");
   const [loginPassword, setLoginPassword] = useState("");
+  const [remember, setRemember] = useState<boolean>(remembered !== null);
 
   // Signup state
   const [signupName, setSignupName] = useState("");
@@ -31,6 +40,13 @@ export function Login() {
     setError(null);
     try {
       await login(loginEmail.trim(), loginPassword);
+      // Persist (or clear) the remembered email based on the checkbox.
+      try {
+        if (remember) localStorage.setItem(REMEMBER_KEY, loginEmail.trim());
+        else localStorage.removeItem(REMEMBER_KEY);
+      } catch {
+        /* localStorage unavailable (privacy mode) — ignore */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -172,6 +188,7 @@ export function Login() {
                 </span>
                 <input
                   type="email"
+                  name="email"
                   required
                   autoFocus
                   autoComplete="email"
@@ -187,12 +204,33 @@ export function Login() {
                 </span>
                 <input
                   type="password"
+                  name="password"
                   required
                   autoComplete="current-password"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                   style={fieldStyle}
                 />
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 13,
+                  color: "var(--ink-2)",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  style={{ width: 15, height: 15, accentColor: "var(--accent)", cursor: "pointer" }}
+                />
+                {tx("Remember my email", "تذكّر بريدي")}
               </label>
 
               {error && <ErrorBanner message={error} />}
