@@ -111,9 +111,22 @@ async function cmdConnect(platform, profileId) {
 async function cmdAccounts(profileId) {
   requireKey();
   if (!profileId) return help('accounts <profileId>');
-  // Path per docs; if this 404s, check the live API reference for the accounts-list route.
-  const r = await api('GET', '/accounts/list-accounts', { query: { profileId } });
-  console.log(JSON.stringify(r, null, 2));
+  const r = await api('GET', '/accounts', { query: { profileId } });
+  const accounts = r.accounts || r.data || [];
+  console.log(`\n${accounts.length} connected account(s):`);
+  for (const a of accounts) {
+    const status = a.platformStatus || (a.isActive ? 'active' : 'inactive');
+    console.log(`  • ${String(a.platform).padEnd(10)} ${a.displayName || a.username || a.name || ''}  [accountId ${a._id}]  status=${status}`);
+  }
+}
+
+async function cmdWa(profileId) {
+  requireKey();
+  if (!profileId) return help('wa <profileId>');
+  const r = await api('GET', '/whatsapp/phone-numbers', { query: { profileId } });
+  console.log('  provisioned numbers:', JSON.stringify(r.numbers || []));
+  console.log('  connected WABAs:', JSON.stringify(r.connected || []));
+  if (r.sandbox) console.log('  sandbox:', r.sandbox.phoneNumber, '(message this to test WhatsApp without provisioning; start template:', r.sandbox.template?.name + ')');
 }
 
 async function cmdConversations(profileId, platform) {
@@ -230,6 +243,7 @@ function help(usage) {
     console.log('  profile [name]');
     console.log('  connect <platform> <profileId>');
     console.log('  accounts <profileId>');
+    console.log('  wa <profileId>');
     console.log('  conversations <profileId> [platform]');
     console.log('  send <conversationId> <accountId> <message...>');
     console.log('  post <platform> <accountId> <content...>');
@@ -244,6 +258,7 @@ try {
     case 'profile': await cmdProfile(...args); break;
     case 'connect': await cmdConnect(...args); break;
     case 'accounts': await cmdAccounts(...args); break;
+    case 'wa': await cmdWa(...args); break;
     case 'conversations': await cmdConversations(...args); break;
     case 'send': await cmdSend(...args); break;
     case 'post': await cmdPost(...args); break;
