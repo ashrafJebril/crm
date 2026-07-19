@@ -1,0 +1,12 @@
+{
+  "name": "zernio-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway harness to validate Zernio before migrating the integration stack. Zero dependencies.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "listen": "node spike.mjs listen",
+    "profile": "node spike.mjs profile"
+  }
+}
