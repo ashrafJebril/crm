@@ -457,6 +457,12 @@ model Workspace {
   // workspace; reused on subsequent links. Null until then.
   kapsoCustomerId String?
 
+  // Zernio — the Zernio "profile" id this workspace maps to. A Zernio profile
+  // groups a customer's connected social accounts; we create one per workspace
+  // the first time we generate a Zernio connect link, and reuse it thereafter.
+  // Per-workspace isolation rides on this id (auth is a single global API key).
+  zernioProfileId String?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")
