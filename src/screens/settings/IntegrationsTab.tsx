@@ -8,6 +8,12 @@ import { Badge } from "@/components/Badge";
 import { IconGlobe, IconCheck, IconX } from "@/icons";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 import { KapsoCard } from "./KapsoCard";
+import { ZernioCard } from "./ZernioCard";
+
+// Facebook/Instagram now connect through Zernio (ZernioCard) instead of our own
+// Meta app — no App Review, no Tester enrollment. The legacy Meta-app cards are
+// kept in this file behind this flag so we can roll back instantly if needed.
+const SHOW_META_LEGACY = false;
 
 interface FbStatus {
   connected: boolean;
@@ -29,19 +35,11 @@ export function IntegrationsTab() {
 
   return (
     <>
-      <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />
+      <ZernioCard key={`zernio-${wsKey}`} tx={tx} canEdit={canEdit} />
 
-      <InstagramCard key={`ig-${wsKey}`} tx={tx} />
-
-      <PlaceholderCard
-        tx={tx}
-        title={tx("TikTok", "تيك توك")}
-        description={tx(
-          "Read comments on your TikTok posts and respond from the Inbox.",
-          "اقرأ التعليقات على منشورات تيك توك ورد من صندوق الرسائل.",
-        )}
-        comingSoonNote={tx("Coming soon.", "قريباً.")}
-      />
+      {/* Legacy Meta-app FB/IG cards — dormant, kept for rollback (see flag). */}
+      {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />}
+      {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
 
@@ -925,51 +923,3 @@ function InstagramCard({ tx }: InstagramCardProps) {
   );
 }
 
-/* ─── "Coming soon" placeholder ──────────────────────────────────── */
-
-interface PlaceholderCardProps {
-  tx: (en: string, ar: string) => string;
-  title: string;
-  description: string;
-  comingSoonNote: string;
-}
-
-function PlaceholderCard({ tx, title, description, comingSoonNote }: PlaceholderCardProps) {
-  return (
-    <SettingsCard title={title} description={description}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "10px 12px",
-          background: "var(--bg-2)",
-          borderRadius: 10,
-        }}
-      >
-        <span
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            background: "var(--line-soft)",
-            display: "grid",
-            placeItems: "center",
-          }}
-        >
-          <IconGlobe w={16} />
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 500, fontSize: 13 }}>{title}</div>
-          <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-            {tx("Not connected", "غير متصل")}
-          </div>
-        </div>
-        <Badge kind="">{tx("Coming soon", "قريباً")}</Badge>
-      </div>
-      <div className="muted" style={{ fontSize: 11 }}>
-        {comingSoonNote}
-      </div>
-    </SettingsCard>
-  );
-}
