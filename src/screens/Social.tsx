@@ -26,14 +26,6 @@ import { ComposeModal } from "@/components/ComposeModal";
 
 /* ── Live Facebook API shapes ────────────────────────────────────────────── */
 
-interface FbStatus {
-  connected: boolean;
-  pageId?: string;
-  pageName?: string;
-  expiresAt?: string;
-  lastFetchedAt?: string;
-}
-
 interface LiveFbPost {
   id: string;
   body: string;
@@ -214,16 +206,22 @@ function SocialImpl() {
     Record<SocialPlatform, string | null>
   >({ facebook: null, instagram: null, tiktok: null });
 
-  /* ── Live Facebook integration ────────────────────────────────────────── */
-  const fbStatusQ = useFetch<FbStatus>("/integrations/facebook/status");
-  const fbConnected = fbStatusQ.data?.connected === true;
-  const fbPageName = fbStatusQ.data?.pageName;
+  /* ── Zernio integrations (FB/IG connect + feeds) ──────────────────────── */
+  // FB/IG connect through Zernio now. Connection state comes from the Zernio
+  // account list; the feed comes from Zernio's /posts (a page's existing posts
+  // backfill via Zernio's ~90-min external sync, so it can be sparse at first).
+  const zernioStatusQ = useFetch<{ accounts?: { platform: string; name?: string | null }[] }>(
+    "/integrations/zernio/status",
+  );
+  const zernioAccount = (p: string) =>
+    zernioStatusQ.data?.accounts?.find((a) => a.platform === p);
+
+  const fbConnected = !!zernioAccount("facebook");
+  const fbPageName = zernioAccount("facebook")?.name ?? undefined;
   const isFbLive = platform === "facebook" && fbConnected;
 
-  // Fetch whenever the integration is connected (not just when the tab is
-  // active) so the tab badge count reflects reality on first paint.
   const liveFbQ = useFetch<LiveFbPost[]>(
-    fbConnected ? "/integrations/facebook/posts" : null,
+    fbConnected ? "/integrations/zernio/posts?platform=facebook" : null,
   );
 
   // Set of post IDs that came from the live feed (for source-of-truth checks).
@@ -255,11 +253,6 @@ function SocialImpl() {
   }, [liveFbQ.data, fbPageName]);
 
   /* ── Live Instagram integration ───────────────────────────────────────── */
-  interface IgStatusResp {
-    connected: boolean;
-    userId?: string;
-    username?: string;
-  }
   interface LiveIgPost {
     id: string;
     body: string;
@@ -271,13 +264,12 @@ function SocialImpl() {
     comments: number;
     shares: number;
   }
-  const igStatusQ = useFetch<IgStatusResp>("/integrations/instagram/status");
-  const igConnected = igStatusQ.data?.connected === true;
-  const igUsername = igStatusQ.data?.username;
+  const igConnected = !!zernioAccount("instagram");
+  const igUsername = zernioAccount("instagram")?.name ?? undefined;
   const isIgLive = platform === "instagram" && igConnected;
 
   const liveIgQ = useFetch<LiveIgPost[]>(
-    igConnected ? "/integrations/instagram/posts" : null,
+    igConnected ? "/integrations/zernio/posts?platform=instagram" : null,
   );
 
   const liveIgPostIds = useMemo<Set<string>>(() => {
@@ -351,9 +343,7 @@ function SocialImpl() {
       (baseSelected.platform === "instagram" && liveIgPostIds.has(baseSelected.id)));
   const liveCommentsQ = useFetch<LiveFbComment[]>(
     selectedIsLive && baseSelected
-      ? baseSelected.platform === "instagram"
-        ? `/integrations/instagram/posts/${baseSelected.id}/comments`
-        : `/integrations/facebook/posts/${baseSelected.id}/comments`
+      ? `/integrations/zernio/comments?platform=${baseSelected.platform}`
       : null,
   );
 

@@ -126,6 +126,35 @@ export class ZernioClient {
     return { id: res.post?._id ?? null, status: res.post?.status ?? null };
   }
 
+  // ─── Reading published posts (feed) ──────────────────────────────────────
+
+  /** List a profile's posts. Zernio backfills a page's EXISTING posts via a
+   *  background sync (~90 min); triggerExternalSync() nudges it. */
+  async listPosts(profileId: string, platform?: string): Promise<ZernioPost[]> {
+    const res = await this.request<{ posts?: ZernioPost[]; data?: ZernioPost[] }>(
+      "GET",
+      "/posts",
+      { query: { profileId, platform, limit: "50" } },
+    );
+    return res.posts ?? res.data ?? [];
+  }
+
+  /** Hitting /analytics triggers Zernio's on-demand external-post sync. Best-effort. */
+  async triggerExternalSync(profileId: string): Promise<void> {
+    try {
+      await this.request("GET", "/analytics", { query: { profileId, limit: "1" } });
+    } catch {
+      /* best-effort — ignore */
+    }
+  }
+
+  async listComments(profileId: string, platform?: string): Promise<ZernioComment[]> {
+    const res = await this.request<{ data?: ZernioComment[] }>("GET", "/inbox/comments", {
+      query: { profileId, platform },
+    });
+    return res.data ?? [];
+  }
+
   // ─── WhatsApp ────────────────────────────────────────────────────────────
 
   async whatsappNumbers(profileId: string): Promise<ZernioWhatsAppNumbers> {
@@ -230,6 +259,43 @@ export interface ZernioMessage {
   timestamp?: string | number;
   createdAt?: string;
   senderName?: string;
+}
+
+export interface ZernioPost {
+  _id?: string;
+  id?: string;
+  platform?: string;
+  platforms?: Array<{ platform?: string; accountId?: string } | string>;
+  content?: string;
+  caption?: string;
+  text?: string;
+  mediaUrls?: string[];
+  title?: string;
+  status?: string;
+  permalink?: string;
+  url?: string;
+  publishedAt?: string;
+  createdAt?: string;
+  analytics?: { likes?: number; comments?: number; shares?: number };
+  likeCount?: number;
+  commentCount?: number;
+  shareCount?: number;
+}
+
+export interface ZernioComment {
+  id?: string;
+  _id?: string;
+  accountId?: string;
+  platform?: string;
+  postId?: string;
+  content?: string;
+  text?: string;
+  author?: string;
+  authorName?: string;
+  from?: { name?: string };
+  createdTime?: string;
+  createdAt?: string;
+  likeCount?: number;
 }
 
 export interface ZernioWhatsAppNumbers {

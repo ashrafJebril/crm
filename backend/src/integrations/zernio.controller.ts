@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { IsArray, IsOptional, IsString } from "class-validator";
+import { IsString } from "class-validator";
 import { ZernioService } from "./zernio.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
@@ -18,12 +18,6 @@ import { ZernioWebhookSignatureGuard } from "../common/zernio-webhook-signature.
 class ZernioSendDto {
   @IsString() accountId!: string;
   @IsString() message!: string;
-}
-
-class ZernioPublishDto {
-  @IsString() content!: string;
-  @IsArray() @IsString({ each: true }) platforms!: string[];
-  @IsOptional() @IsArray() @IsString({ each: true }) mediaUrls?: string[];
 }
 
 @Controller()
@@ -53,6 +47,16 @@ export class ZernioController {
     return this.zernio.whatsappNumbers(workspaceId);
   }
 
+  @Get("integrations/zernio/posts")
+  posts(@CurrentWorkspace() workspaceId: string, @Query("platform") platform?: string) {
+    return this.zernio.listPosts(workspaceId, platform);
+  }
+
+  @Get("integrations/zernio/comments")
+  comments(@CurrentWorkspace() workspaceId: string, @Query("platform") platform?: string) {
+    return this.zernio.listComments(workspaceId, platform);
+  }
+
   @Get("integrations/zernio/conversations")
   conversations(
     @CurrentWorkspace() workspaceId: string,
@@ -73,15 +77,6 @@ export class ZernioController {
     @Body() dto: ZernioSendDto,
   ) {
     return this.zernio.sendInConversation(workspaceId, id, dto.accountId, dto.message);
-  }
-
-  @Post("integrations/zernio/publish")
-  publish(@CurrentWorkspace() workspaceId: string, @Body() dto: ZernioPublishDto) {
-    return this.zernio.publish(workspaceId, {
-      content: dto.content,
-      platforms: dto.platforms,
-      mediaUrls: dto.mediaUrls,
-    });
   }
 
   @Delete("integrations/zernio/:platform")

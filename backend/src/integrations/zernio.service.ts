@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount } from "./zernio.client";
 
 /**
@@ -29,6 +30,7 @@ export class ZernioService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly media: MediaService,
     private readonly client: ZernioClient,
   ) {}
 
@@ -172,6 +174,56 @@ export class ZernioService {
     return this.client.whatsappNumbers(profileId);
   }
 
+  // ─── Reading posts + comments (Social feed) ──────────────────────────────
+
+  async listPosts(workspaceId: string, platform?: string) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) return [];
+    // Nudge Zernio's external-post backfill (a page's existing posts sync in
+    // the background, ~90 min); safe to fire on every load.
+    void this.client.triggerExternalSync(profileId);
+    const p = platform?.toLowerCase();
+    const posts = await this.client.listPosts(profileId, p);
+    return posts
+      .filter((post) => {
+        if (!p) return true;
+        if (post.platform) return post.platform.toLowerCase() === p;
+        if (Array.isArray(post.platforms)) {
+          return post.platforms.some(
+            (pl) => (typeof pl === "string" ? pl : pl.platform ?? "").toLowerCase() === p,
+          );
+        }
+        return true;
+      })
+      .map((post) => ({
+        id: post._id ?? post.id ?? "",
+        platform: p ?? post.platform ?? "",
+        body: post.content ?? post.caption ?? post.text ?? "",
+        mediaUrl: post.mediaUrls?.[0] ?? null,
+        attachmentTitle: post.title ?? null,
+        createdAt: post.publishedAt ?? post.createdAt ?? null,
+        likes: post.analytics?.likes ?? post.likeCount ?? 0,
+        comments: post.analytics?.comments ?? post.commentCount ?? 0,
+        shares: post.analytics?.shares ?? post.shareCount ?? 0,
+        permalink: post.permalink ?? post.url ?? null,
+      }));
+  }
+
+  async listComments(workspaceId: string, platform?: string) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) return [];
+    const comments = await this.client.listComments(profileId, platform?.toLowerCase());
+    return comments.map((c) => ({
+      id: c.id ?? c._id ?? "",
+      postId: c.postId ?? null,
+      platform: c.platform ?? null,
+      author: c.author ?? c.authorName ?? c.from?.name ?? "User",
+      body: c.content ?? c.text ?? "",
+      likes: c.likeCount ?? 0,
+      at: c.createdTime ?? c.createdAt ?? null,
+    }));
+  }
+
   async disconnect(workspaceId: string, platform: string) {
     const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: platform.toLowerCase(), provider: "zernio" },
@@ -233,7 +285,8 @@ export class ZernioService {
 
   async publish(
     workspaceId: string,
-    input: { content: string; platforms: string[]; mediaUrls?: string[] },
+    input: { content: string; platforms: string[]; mediaIds?: string[] },
+    publicBaseUrl: string,
   ): Promise<{ id: string | null; status: string | null }> {
     const wanted = input.platforms.map((p) => p.toLowerCase());
     const rows = await this.prisma.integration.findMany({
@@ -245,10 +298,19 @@ export class ZernioService {
     if (platforms.length === 0) {
       throw new BadRequestException("No connected Zernio accounts for the requested platforms");
     }
+    // Zernio fetches media by URL — mint short-lived public URLs per asset,
+    // the same mechanism Instagram publishing uses.
+    const mediaUrls: string[] = [];
+    for (const mediaId of input.mediaIds ?? []) {
+      const token = await this.media.mintPublicToken(workspaceId, mediaId);
+      mediaUrls.push(
+        `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`,
+      );
+    }
     return this.client.createPost({
       content: input.content,
       platforms,
-      mediaUrls: input.mediaUrls,
+      mediaUrls: mediaUrls.length ? mediaUrls : undefined,
       publishNow: true,
     });
   }
