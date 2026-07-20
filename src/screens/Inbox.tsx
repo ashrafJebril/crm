@@ -2569,6 +2569,32 @@ interface IgMsg {
   at: string;
 }
 
+// ─── Live Zernio (Facebook/Instagram/TikTok via the Zernio aggregator) ────
+// Zernio conversation ids are plain platform ids; we prefix them with "z:" in
+// the UI to route message-fetch/send the same way FB ("t_") and IG ("ig:") do.
+interface ZernioConv {
+  id: string; // raw Zernio conversation id (no prefix)
+  channel: string; // facebook | instagram | tiktok | whatsapp
+  accountId: string; // Zernio account id — required for sends
+  participantId: string;
+  name: string;
+  avatar: string | null;
+  preview: string;
+  lastAt: string | null;
+  url: string | null;
+  status: string;
+}
+interface ZernioMsg {
+  id: string | null;
+  from: "them" | "human";
+  body: string;
+  at: string | null;
+}
+const isZernioConvId = (id: string | null | undefined): boolean =>
+  typeof id === "string" && id.startsWith("z:");
+const stripZernioPrefix = (id: string): string =>
+  id.startsWith("z:") ? id.slice(2) : id;
+
 function InboxImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
@@ -2617,7 +2643,7 @@ function InboxImpl() {
   // Internal active query: skip when activeId is a Facebook OR Instagram
   // live thread id (those have their own per-platform messages query).
   const activeQ = useFetch<ConversationDetail>(
-    activeId && !isFbConvId(activeId) && !isIgConvId(activeId)
+    activeId && !isFbConvId(activeId) && !isIgConvId(activeId) && !isZernioConvId(activeId)
       ? `/conversations/${activeId}`
       : null,
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
@@ -2641,6 +2667,25 @@ function InboxImpl() {
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
 
+  // Live Zernio (Facebook/Instagram connected via Zernio — the replacement for
+  // our own Meta apps). Mirrors the FB/IG live pattern; "z:"-prefixed ids route
+  // here. WhatsApp stays on Kapso/DB, so it's excluded from the Zernio list.
+  const zernioStatusQ = useFetch<{ accounts?: { platform: string }[] }>(
+    "/integrations/zernio/status",
+    { pollMs: 60000 },
+  );
+  const zernioConnected = (zernioStatusQ.data?.accounts?.length ?? 0) > 0;
+  const zernioConvsQ = useFetch<ZernioConv[]>(
+    zernioConnected ? "/integrations/zernio/conversations" : null,
+    { pollMs: 30000 },
+  );
+  const zernioMsgsQ = useFetch<ZernioMsg[]>(
+    isZernioConvId(activeId)
+      ? `/integrations/zernio/conversations/${stripZernioPrefix(activeId!)}/messages`
+      : null,
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
+  );
+
   // Hold the list behind one skeleton until every connected channel's FIRST
   // load settles, so WhatsApp/Facebook/Instagram rows appear together instead
   // of popping in one channel at a time. "Settled" = has data or failed —
@@ -2652,7 +2697,8 @@ function InboxImpl() {
     !settled(fbStatusQ) ||
     (fbConnected && !settled(fbConvsQ)) ||
     !settled(igStatusQ) ||
-    (igConnected && !settled(igConvsQ));
+    (igConnected && !settled(igConvsQ)) ||
+    (zernioConnected && !settled(zernioConvsQ));
 
   // Backend emits `inbox.activity` whenever a message lands or a conversation
   // changes (WhatsApp webhook, Meta webhook, REST send/update). Each event
@@ -2665,11 +2711,17 @@ function InboxImpl() {
       const affectsActive =
         (ch === "whatsapp" && activeId === evt.conversationId) ||
         (ch === "facebook" && isFbConvId(activeId)) ||
-        (ch === "instagram" && isIgConvId(activeId));
+        (ch === "instagram" && isIgConvId(activeId)) ||
+        (isZernioConvId(activeId) &&
+          (ch === "facebook" ||
+            ch === "instagram" ||
+            ch === "tiktok" ||
+            ch === "whatsapp"));
       if (affectsActive) setMessageVersion((v) => v + 1);
       if (ch === "facebook") fbConvsQ.refetch();
       else if (ch === "instagram") igConvsQ.refetch();
       else convsQ.refetch();
+      if (zernioConnected) zernioConvsQ.refetch();
     },
   );
 
@@ -2724,10 +2776,40 @@ function InboxImpl() {
         }))
       : [];
 
+    // Zernio live rows (FB/IG/TikTok via the aggregator). WhatsApp is excluded
+    // so Kapso/DB stays authoritative for it. Ids are "z:"-prefixed for routing.
+    const zernioRows: Conversation[] = zernioConnected
+      ? (zernioConvsQ.data ?? [])
+          .filter((c) => c.channel !== "whatsapp")
+          .map((c) => ({
+            id: `z:${c.id}`,
+            contactId: `z:${c.id}`,
+            agent: "",
+            unread: 0,
+            pinned: false,
+            lastAt: c.lastAt ? fmtCompact(c.lastAt) : "",
+            lastFrom: "them",
+            preview: c.preview || "—",
+            channel: c.channel as Conversation["channel"],
+            status: "human",
+            intent: "—",
+            confidence: 0,
+            escalated: false,
+          }))
+      : [];
+
     // DB rows arrive ordered (pinned desc, then updatedAt desc). Live rows
     // merged in raw order; close-enough until everything lives in one store.
-    return [...nonLive, ...fbRows, ...igRows];
-  }, [fbConnected, convsQ.data, fbConvsQ.data, igConnected, igConvsQ.data]);
+    return [...nonLive, ...fbRows, ...igRows, ...zernioRows];
+  }, [
+    fbConnected,
+    convsQ.data,
+    fbConvsQ.data,
+    igConnected,
+    igConvsQ.data,
+    zernioConnected,
+    zernioConvsQ.data,
+  ]);
 
   // Augment contactById with synthetic Contact entries for FB + IG
   // participants so existing row/header renderers can resolve their names.
@@ -2766,8 +2848,24 @@ function InboxImpl() {
         value: "—",
       });
     }
+    for (const zc of zernioConvsQ.data ?? []) {
+      const cid = `z:${zc.id}`;
+      if (map.has(cid)) continue;
+      map.set(cid, {
+        id: cid,
+        name: zc.name,
+        phone: "—",
+        tags: [zc.channel],
+        industry: `${zc.channel}-dm`,
+        lifecycle: "Lead",
+        lastSeen: zc.lastAt ? fmtCompact(zc.lastAt) : "—",
+        source: `${zc.channel} (Zernio)`,
+        convs: 1,
+        value: "—",
+      });
+    }
     return map;
-  }, [contactsQ.data, fbConvsQ.data, igConvsQ.data]);
+  }, [contactsQ.data, fbConvsQ.data, igConvsQ.data, zernioConvsQ.data]);
 
   // Auto-select first conversation when list loads.
   useEffect(() => {
@@ -2896,6 +2994,18 @@ function InboxImpl() {
     }),
   );
 
+  // Live Zernio DM send (FB/IG via the aggregator). Routes on the "z:" id;
+  // needs the Zernio accountId from the conversation row.
+  const sendZernioMessage = useMutation<
+    { conversationId: string; accountId: string; body: string },
+    { ok: true; id?: string | null }
+  >((input) =>
+    api.post(`/integrations/zernio/conversations/${input.conversationId}/send`, {
+      accountId: input.accountId,
+      message: input.body,
+    }),
+  );
+
   // WhatsApp outbound: posts via Cloud API. Optional mediaId attaches an image
   // (or sends caption-only when body is empty).
   const sendWaMessage = useMutation<
@@ -2963,6 +3073,17 @@ function InboxImpl() {
       if (!igsid) return;
       if (body) addPending(activeId, body);
       await sendIgLiveMessage.mutate({ igsid, body, mediaId });
+      return;
+    }
+    if (isZernioConvId(activeId)) {
+      const zc = (zernioConvsQ.data ?? []).find((c) => `z:${c.id}` === activeId);
+      if (!zc?.accountId) return;
+      if (body) addPending(activeId, body);
+      await sendZernioMessage.mutate({
+        conversationId: stripZernioPrefix(activeId),
+        accountId: zc.accountId,
+        body,
+      });
       return;
     }
     // Route by channel for DB-stored conversations.
@@ -3061,6 +3182,32 @@ function InboxImpl() {
         messages: appendPending(activeId, serverMsgs),
       };
     }
+    if (isZernioConvId(activeId)) {
+      const zc = (zernioConvsQ.data ?? []).find((c) => `z:${c.id}` === activeId);
+      if (!zc) return undefined;
+      const serverMsgs: Message[] = (zernioMsgsQ.data ?? []).map((m) => ({
+        from: m.from === "human" ? "human" : "them",
+        t: m.at ? fmtCompact(m.at) : "",
+        body: m.body || "📎 attachment",
+        agent: undefined,
+      }));
+      return {
+        id: `z:${zc.id}`,
+        contactId: `z:${zc.id}`,
+        agent: "",
+        unread: 0,
+        pinned: false,
+        lastAt: zc.lastAt ? fmtCompact(zc.lastAt) : "",
+        lastFrom: "them",
+        preview: zc.preview || "—",
+        channel: zc.channel as ConversationDetail["channel"],
+        status: "human",
+        intent: "—",
+        confidence: 0,
+        escalated: false,
+        messages: appendPending(activeId, serverMsgs),
+      };
+    }
     return activeQ.data ?? undefined;
   }, [
     activeId,
@@ -3068,6 +3215,8 @@ function InboxImpl() {
     fbMsgsQ.data,
     igConvsQ.data,
     igMsgsQ.data,
+    zernioConvsQ.data,
+    zernioMsgsQ.data,
     activeQ.data,
     pendingByConv,
   ]);
@@ -3075,6 +3224,7 @@ function InboxImpl() {
   const activeContact = active ? contactById.get(active.contactId) : undefined;
   const activeIsFb = active ? isFbConvId(active.id) : false;
   const activeIsIg = active ? isIgConvId(active.id) : false;
+  const activeIsZernio = active ? isZernioConvId(active.id) : false;
 
   return (
     <div
@@ -3164,6 +3314,7 @@ function InboxImpl() {
             sendFbMessage.loading ||
             sendIgMessage.loading ||
             sendIgLiveMessage.loading ||
+            sendZernioMessage.loading ||
             sendWaMessage.loading ||
             sendWaTemplate.loading
           }
@@ -3172,6 +3323,7 @@ function InboxImpl() {
             sendFbMessage.error ??
             sendIgMessage.error ??
             sendIgLiveMessage.error ??
+            sendZernioMessage.error ??
             sendWaMessage.error ??
             sendWaTemplate.error
           }
@@ -3191,7 +3343,9 @@ function InboxImpl() {
               ? fbMsgsQ.loading
               : activeIsIg
                 ? igMsgsQ.loading
-                : activeQ.loading
+                : activeIsZernio
+                  ? zernioMsgsQ.loading
+                  : activeQ.loading
           }
           lang={t.lang}
           tx={tx}
