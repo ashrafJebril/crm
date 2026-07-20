@@ -23,13 +23,15 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const inboxQ = useFetch<Array<{ unread?: number }>>("/conversations", {
     pollMs: 15000,
   });
-  const fbStatusQ = useFetch<{ connected?: boolean }>(
-    "/integrations/facebook/status",
+  // FB/IG DMs come through Zernio now — use the unified Zernio conversation
+  // list for the unread badge instead of the retired Meta endpoints.
+  const zStatusQ = useFetch<{ accounts?: unknown[] }>(
+    "/integrations/zernio/status",
     { pollMs: 60000 },
   );
-  const fbConnected = fbStatusQ.data?.connected === true;
+  const zConnected = (zStatusQ.data?.accounts?.length ?? 0) > 0;
   const fbConvsQ = useFetch<Array<{ unread?: number }>>(
-    fbConnected ? "/integrations/facebook/conversations" : null,
+    zConnected ? "/integrations/zernio/conversations" : null,
     { pollMs: 15000 },
   );
   const inboxUnread = useMemo(() => {

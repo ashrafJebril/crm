@@ -128,24 +128,14 @@ export class ZernioClient {
 
   // ─── Reading published posts (feed) ──────────────────────────────────────
 
-  /** List a profile's posts. Zernio backfills a page's EXISTING posts via a
-   *  background sync (~90 min); triggerExternalSync() nudges it. */
+  /** List a profile's posts. Zernio serves a page's OWN (synced/external) posts
+   *  under /analytics — the /posts endpoint only returns posts CREATED through
+   *  Zernio. Hitting /analytics also triggers Zernio's external-post sync. */
   async listPosts(profileId: string, platform?: string): Promise<ZernioPost[]> {
-    const res = await this.request<{ posts?: ZernioPost[]; data?: ZernioPost[] }>(
-      "GET",
-      "/posts",
-      { query: { profileId, platform, limit: "50" } },
-    );
-    return res.posts ?? res.data ?? [];
-  }
-
-  /** Hitting /analytics triggers Zernio's on-demand external-post sync. Best-effort. */
-  async triggerExternalSync(profileId: string): Promise<void> {
-    try {
-      await this.request("GET", "/analytics", { query: { profileId, limit: "1" } });
-    } catch {
-      /* best-effort — ignore */
-    }
+    const res = await this.request<{ posts?: ZernioPost[] }>("GET", "/analytics", {
+      query: { profileId, platform, limit: "50" },
+    });
+    return res.posts ?? [];
   }
 
   async listComments(profileId: string, platform?: string): Promise<ZernioComment[]> {
@@ -270,11 +260,17 @@ export interface ZernioPost {
   caption?: string;
   text?: string;
   mediaUrls?: string[];
+  thumbnailUrl?: string;
+  mediaItems?: Array<{ url?: string }>;
+  mediaType?: string;
   title?: string;
   status?: string;
+  isExternal?: boolean;
   permalink?: string;
+  platformPostUrl?: string;
   url?: string;
   publishedAt?: string;
+  scheduledFor?: string;
   createdAt?: string;
   analytics?: { likes?: number; comments?: number; shares?: number };
   likeCount?: number;

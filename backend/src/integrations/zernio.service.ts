@@ -179,9 +179,6 @@ export class ZernioService {
   async listPosts(workspaceId: string, platform?: string) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) return [];
-    // Nudge Zernio's external-post backfill (a page's existing posts sync in
-    // the background, ~90 min); safe to fire on every load.
-    void this.client.triggerExternalSync(profileId);
     const p = platform?.toLowerCase();
     const posts = await this.client.listPosts(profileId, p);
     return posts
@@ -199,13 +196,14 @@ export class ZernioService {
         id: post._id ?? post.id ?? "",
         platform: p ?? post.platform ?? "",
         body: post.content ?? post.caption ?? post.text ?? "",
-        mediaUrl: post.mediaUrls?.[0] ?? null,
-        attachmentTitle: post.title ?? null,
-        createdAt: post.publishedAt ?? post.createdAt ?? null,
+        mediaUrl:
+          post.thumbnailUrl ?? post.mediaItems?.[0]?.url ?? post.mediaUrls?.[0] ?? null,
+        attachmentTitle: post.mediaType ?? post.title ?? null,
+        createdAt: post.publishedAt ?? post.scheduledFor ?? post.createdAt ?? null,
         likes: post.analytics?.likes ?? post.likeCount ?? 0,
         comments: post.analytics?.comments ?? post.commentCount ?? 0,
         shares: post.analytics?.shares ?? post.shareCount ?? 0,
-        permalink: post.permalink ?? post.url ?? null,
+        permalink: post.platformPostUrl ?? post.permalink ?? post.url ?? null,
       }));
   }
 

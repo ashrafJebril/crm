@@ -28,7 +28,6 @@ interface UnreadConvRich {
   snippet?: string;
   contactId?: string;
 }
-interface ChannelStatus { connected?: boolean }
 
 interface ToastEntry {
   id: string;
@@ -176,18 +175,15 @@ export function NotificationsBell(): React.ReactElement {
   // webhooks).
   const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 30000 });
   const contactsQ = useFetch<Contact[]>("/contacts");
-  const fbStatusQ = useFetch<ChannelStatus>("/integrations/facebook/status");
-  const igStatusQ = useFetch<ChannelStatus>("/integrations/instagram/status");
-  const fbConnected = fbStatusQ.data?.connected === true;
-  const igConnected = igStatusQ.data?.connected === true;
+  // FB/IG DMs come through Zernio now — one unified conversation list drives
+  // the bell (the Meta per-platform endpoints are retired).
+  const zStatusQ = useFetch<{ accounts?: unknown[] }>("/integrations/zernio/status");
+  const zConnected = (zStatusQ.data?.accounts?.length ?? 0) > 0;
   const fbConvsQ = useFetch<UnreadConvRich[]>(
-    fbConnected ? "/integrations/facebook/conversations" : null,
+    zConnected ? "/integrations/zernio/conversations" : null,
     { pollMs: 30000 },
   );
-  const igConvsQ = useFetch<UnreadConvRich[]>(
-    igConnected ? "/integrations/instagram/conversations" : null,
-    { pollMs: 30000 },
-  );
+  const igConvsQ = useFetch<UnreadConvRich[]>(null, { pollMs: 30000 });
 
   // Toast queue (slide-in from bottom-right, visible-tab only).
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
