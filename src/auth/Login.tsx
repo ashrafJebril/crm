@@ -5,11 +5,13 @@ import { makeTx } from "@/lib/tx";
 
 type Mode = "login" | "signup";
 
-// We persist only the email (never the password) so "Remember me" pre-fills
-// the address next time. The password is left to the browser's own password
-// manager (OS-encrypted) — storing it in localStorage would be an XSS-theft
-// risk. Keep this key stable.
+// When "Remember me" is checked we pre-fill the email AND password next time.
+// NOTE: the password is stored in PLAINTEXT in localStorage — convenient for a
+// demo/dev login, but readable by any script or person with access to this
+// browser (an XSS-theft risk). Do not enable this for real customer accounts.
+// Keep these keys stable.
 const REMEMBER_KEY = "aram.remember.email";
+const REMEMBER_PW_KEY = "aram.remember.password";
 
 export function Login() {
   const { t } = useTweaks();
@@ -18,11 +20,13 @@ export function Login() {
 
   const [mode, setMode] = useState<Mode>("login");
 
-  // Login state — pre-fill the remembered email if present.
+  // Login state — pre-fill the remembered email + password if present.
   const remembered =
     typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_KEY) : null;
+  const rememberedPw =
+    typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_PW_KEY) : null;
   const [loginEmail, setLoginEmail] = useState(remembered ?? "");
-  const [loginPassword, setLoginPassword] = useState("");
+  const [loginPassword, setLoginPassword] = useState(rememberedPw ?? "");
   const [remember, setRemember] = useState<boolean>(remembered !== null);
 
   // Signup state
@@ -40,10 +44,15 @@ export function Login() {
     setError(null);
     try {
       await login(loginEmail.trim(), loginPassword);
-      // Persist (or clear) the remembered email based on the checkbox.
+      // Persist (or clear) the remembered email + password based on the checkbox.
       try {
-        if (remember) localStorage.setItem(REMEMBER_KEY, loginEmail.trim());
-        else localStorage.removeItem(REMEMBER_KEY);
+        if (remember) {
+          localStorage.setItem(REMEMBER_KEY, loginEmail.trim());
+          localStorage.setItem(REMEMBER_PW_KEY, loginPassword);
+        } else {
+          localStorage.removeItem(REMEMBER_KEY);
+          localStorage.removeItem(REMEMBER_PW_KEY);
+        }
       } catch {
         /* localStorage unavailable (privacy mode) — ignore */
       }
@@ -230,7 +239,7 @@ export function Login() {
                   onChange={(e) => setRemember(e.target.checked)}
                   style={{ width: 15, height: 15, accentColor: "var(--accent)", cursor: "pointer" }}
                 />
-                {tx("Remember my email", "تذكّر بريدي")}
+                {tx("Remember me", "تذكّرني")}
               </label>
 
               {error && <ErrorBanner message={error} />}
