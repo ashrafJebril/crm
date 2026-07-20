@@ -1,6 +1,6 @@
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
-const ALL_CHANNELS = ["facebook", "instagram"] as const;
+const ALL_CHANNELS = ["facebook", "instagram", "tiktok"] as const;
 export type PublishChannel = (typeof ALL_CHANNELS)[number];
 
 export class PublishDto {

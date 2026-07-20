@@ -9,16 +9,8 @@ import { SchedulePicker } from "./SchedulePicker";
 import { IconBolt, IconCheck, IconPlus, IconX } from "@/icons";
 import type { Media, PublishChannel, ChannelResult } from "@/lib/types";
 
-interface FbStatus {
-  connected: boolean;
-  pageId?: string;
-  pageName?: string;
-}
-
-interface IgStatus {
-  connected: boolean;
-  userId?: string;
-  username?: string;
+interface ZernioStatus {
+  accounts?: { platform: string; name?: string | null }[];
 }
 
 interface ComposeModalProps {
@@ -34,8 +26,9 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
 
-  const fbStatusQ = useFetch<FbStatus>(open ? "/integrations/facebook/status" : null);
-  const igStatusQ = useFetch<IgStatus>(open ? "/integrations/instagram/status" : null);
+  // FB/IG/TikTok all connect through Zernio now, so readiness comes from the
+  // Zernio account list rather than the per-platform Meta status endpoints.
+  const zernioStatusQ = useFetch<ZernioStatus>(open ? "/integrations/zernio/status" : null);
   const mediaQ = useFetch<Media[]>(open ? "/media" : null);
 
   const [content, setContent] = useState("");
@@ -87,14 +80,23 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   if (!open) return null;
 
   const selectedMedia = mediaQ.data?.find((m) => m.id === selectedMediaId) ?? null;
-  const fbReady = fbStatusQ.data?.connected === true && selectedChannels.includes("facebook");
-  const igReady = igStatusQ.data?.connected === true && selectedChannels.includes("instagram");
+  const accountFor = (p: string) =>
+    zernioStatusQ.data?.accounts?.find((a) => a.platform === p);
+  const fbConnected = !!accountFor("facebook");
+  const igConnected = !!accountFor("instagram");
+  const tiktokConnected = !!accountFor("tiktok");
+  const fbReady = fbConnected && selectedChannels.includes("facebook");
+  const igReady = igConnected && selectedChannels.includes("instagram");
+  const tiktokReady = tiktokConnected && selectedChannels.includes("tiktok");
+  // Instagram and TikTok require media; text-only posts aren't accepted there.
   const igRequiresImage = selectedChannels.includes("instagram") && !selectedMediaId;
+  const tiktokRequiresMedia = selectedChannels.includes("tiktok") && !selectedMediaId;
   const canPost =
     content.trim().length > 0 &&
     selectedChannels.length > 0 &&
-    (fbReady || igReady) &&
+    (fbReady || igReady || tiktokReady) &&
     !igRequiresImage &&
+    !tiktokRequiresMedia &&
     !publishMut.loading &&
     !scheduleMut.loading;
 
@@ -207,10 +209,12 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                 {tx("Post to", "نشر إلى")}
               </div>
               <ChannelChips
-                fbConnected={fbStatusQ.data?.connected === true}
-                fbPageName={fbStatusQ.data?.pageName}
-                igConnected={igStatusQ.data?.connected === true}
-                igUsername={igStatusQ.data?.username}
+                fbConnected={fbConnected}
+                fbPageName={accountFor("facebook")?.name ?? undefined}
+                igConnected={igConnected}
+                igUsername={accountFor("instagram")?.name ?? undefined}
+                tiktokConnected={tiktokConnected}
+                tiktokName={accountFor("tiktok")?.name ?? undefined}
                 selected={selectedChannels}
                 onToggle={(ch) => {
                   setSelectedChannels((prev) =>
@@ -344,7 +348,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               {tx("Post preview", "معاينة المنشور")}
             </div>
             <div style={{ marginBottom: 10, display: "flex", gap: 6 }}>
-              {(["all", "facebook", "instagram"] as const).map((tab) => (
+              {(["all", "facebook", "instagram", "tiktok"] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -373,7 +377,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               selectedChannels.includes("facebook") && (
                 <div style={{ marginBottom: 14 }}>
                   <FbPreviewCard
-                    pageName={fbStatusQ.data?.pageName ?? activeWorkspace?.name ?? "Page"}
+                    pageName={accountFor("facebook")?.name ?? activeWorkspace?.name ?? "Page"}
                     content={content}
                     media={selectedMedia}
                   />
@@ -383,10 +387,21 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
             {(previewTab === "all" || previewTab === "instagram") &&
               selectedChannels.includes("instagram") && (
                 <IgPreviewCard
-                  username={igStatusQ.data?.username ?? activeWorkspace?.name ?? "instagram"}
+                  username={accountFor("instagram")?.name ?? activeWorkspace?.name ?? "instagram"}
                   content={content}
                   media={selectedMedia}
                 />
+              )}
+
+            {(previewTab === "all" || previewTab === "tiktok") &&
+              selectedChannels.includes("tiktok") && (
+                <div style={{ marginTop: 14 }}>
+                  <FbPreviewCard
+                    pageName={accountFor("tiktok")?.name ?? activeWorkspace?.name ?? "TikTok"}
+                    content={content}
+                    media={selectedMedia}
+                  />
+                </div>
               )}
 
             {!selectedChannels.length && (
@@ -430,7 +445,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
           }}
         >
           <span style={{ flex: 1, fontSize: 11, color: "var(--ink-3)" }}>
-            {fbStatusQ.data?.connected !== true && igStatusQ.data?.connected !== true &&
+            {!fbConnected && !igConnected && !tiktokConnected &&
               tx(
                 "No channels connected — connect from Settings → Integrations.",
                 "لا توجد قنوات متصلة — اربطها من الإعدادات.",
@@ -467,6 +482,8 @@ interface ChannelChipsProps {
   fbPageName: string | undefined;
   igConnected: boolean;
   igUsername: string | undefined;
+  tiktokConnected: boolean;
+  tiktokName: string | undefined;
   selected: PublishChannel[];
   onToggle: (ch: PublishChannel) => void;
   tx: (en: string, ar: string) => string;
@@ -477,6 +494,8 @@ function ChannelChips({
   fbPageName,
   igConnected,
   igUsername,
+  tiktokConnected,
+  tiktokName,
   selected,
   onToggle,
   tx,
@@ -536,6 +555,12 @@ function ChannelChips({
         `Instagram${igConnected && igUsername ? ` · @${igUsername}` : ""}`,
         igConnected,
         "#E1306C",
+      )}
+      {renderChip(
+        "tiktok",
+        `TikTok${tiktokConnected && tiktokName ? ` · ${tiktokName}` : ""}`,
+        tiktokConnected,
+        "#010101",
       )}
     </div>
   );

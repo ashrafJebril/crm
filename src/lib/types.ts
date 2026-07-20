@@ -438,7 +438,7 @@ export interface Media {
 
 // ─── Social publishing ────────────────────────────────────────────────────
 
-export type PublishChannel = "facebook" | "instagram";
+export type PublishChannel = "facebook" | "instagram" | "tiktok";
 
 export interface ChannelResult {
   ok: boolean;
