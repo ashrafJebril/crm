@@ -15,5 +15,7 @@ import { requireJwtSecret } from "../common/jwt-secret";
   ],
   controllers: [AdminController],
   providers: [AdminService, SuperAdminGuard],
+  // JoteckModule reuses provisionClient so there is one provisioning routine.
+  exports: [AdminService],
 })
 export class AdminModule {}

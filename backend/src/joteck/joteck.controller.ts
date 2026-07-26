@@ -4,12 +4,14 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
 import { JoteckGuard } from "./joteck.guard";
 import { Public } from "../auth/public.decorator";
 import { JoteckService } from "./joteck.service";
+import { ProvisionClientDto } from "../admin/admin.dto";
 
 interface JoteckWorkspacePatch {
   active?: boolean;
@@ -30,6 +32,11 @@ export class JoteckController {
   @Get("workspaces")
   list(@Query("q") q?: string) {
     return this.svc.listWorkspaces(q);
+  }
+
+  @Post("workspaces")
+  provision(@Body() dto: ProvisionClientDto) {
+    return this.svc.provisionWorkspace(dto);
   }
 
   @Get("workspaces/:id")

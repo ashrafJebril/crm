@@ -1,9 +1,24 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { AdminService } from "../admin/admin.service";
+import type { ProvisionClientDto } from "../admin/admin.dto";
 
 @Injectable()
 export class JoteckService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly admin: AdminService,
+  ) {}
+
+  /**
+   * Create a workspace + owner for the Kewy admin console. Delegates to the
+   * same routine the super-admin portal uses, then returns the workspace in
+   * the same shape as list/get so callers can parse one format.
+   */
+  async provisionWorkspace(dto: ProvisionClientDto) {
+    const { workspace } = await this.admin.provisionClient(dto);
+    return this.getWorkspace(workspace.id);
+  }
 
   async listWorkspaces(q?: string) {
     const where: Record<string, unknown> = {};

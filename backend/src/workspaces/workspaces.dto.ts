@@ -30,9 +30,9 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   lang?: string;
 
-  @IsString()
-  @IsOptional()
-  plan?: string;
+  // `plan` is deliberately absent: this endpoint is reachable by a workspace
+  // owner, and an unvalidated plan field let them self-upgrade. Plan changes
+  // belong to super-admins (/api/admin) or the Kewy admin console (/api/joteck).
 }
 
 export class AddMemberDto {
