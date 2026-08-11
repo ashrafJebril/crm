@@ -27,10 +27,10 @@ function fmtDate(iso: string | null): string {
   });
 }
 
-function planBadgeKind(plan: string): "ok" | "info" | "warn" | "ai" | "" {
+function planBadgeKind(plan: string): "ok" | "info" | "warn" | "accent" | "" {
   if (plan === "pro") return "ok";
   if (plan === "growth") return "info";
-  if (plan === "starter") return "ai";
+  if (plan === "starter") return "accent";
   return "";
 }
 
@@ -856,7 +856,7 @@ function WorkspaceDetailPanel({
                           {m.user.email}
                         </div>
                       </div>
-                      <Badge kind="ai">{m.role}</Badge>
+                      <Badge kind="accent">{m.role}</Badge>
                     </div>
                   ))}
                 </div>

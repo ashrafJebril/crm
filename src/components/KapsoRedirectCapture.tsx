@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useToast } from "./Toast";
 
@@ -17,6 +18,7 @@ import { useToast } from "./Toast";
  */
 export function KapsoRedirectCapture() {
   const { toast } = useToast();
+  const qc = useQueryClient();
   const done = useRef(false);
 
   useEffect(() => {
@@ -31,7 +33,16 @@ export function KapsoRedirectCapture() {
 
     api
       .post("/integrations/kapso/connected", { phoneNumberId, wabaId, displayPhoneNumber })
-      .then(() => toast("WhatsApp connected via Kapso ✓", "success"))
+      .then(() => {
+        // Integration statuses are cached with a 30s staleTime, so without this
+        // the Settings card keeps showing "Not connected" until a manual reload.
+        void qc.invalidateQueries({
+          predicate: (q) =>
+            typeof q.queryKey[0] === "string" &&
+            (q.queryKey[0] as string).startsWith("/integrations"),
+        });
+        toast("WhatsApp connected via Kapso ✓", "success");
+      })
       .catch((e) =>
         toast(
           e instanceof Error ? e.message : "Couldn't record the WhatsApp connection",
@@ -43,7 +54,7 @@ export function KapsoRedirectCapture() {
         const clean = window.location.pathname + (window.location.hash || "");
         window.history.replaceState(null, "", clean || "/");
       });
-  }, [toast]);
+  }, [toast, qc]);
 
   return null;
 }

@@ -252,8 +252,23 @@ export class ZernioService {
     }));
   }
 
-  async getMessages(_workspaceId: string, conversationId: string) {
-    const msgs = await this.client.getMessages(conversationId);
+  /**
+   * Zernio's messages endpoint requires the owning `accountId` alongside the
+   * conversation id. The Inbox already holds it (the conversation list carries
+   * it for sends) and passes it through; when it's absent we resolve it by
+   * looking the conversation up in the live list, so the endpoint still works
+   * on its own.
+   */
+  async getMessages(workspaceId: string, conversationId: string, accountId?: string) {
+    let resolved = accountId;
+    if (!resolved) {
+      const convs = await this.listConversations(workspaceId);
+      resolved = convs.find((c) => c.id === conversationId)?.accountId;
+    }
+    if (!resolved) {
+      throw new NotFoundException("Zernio conversation not found for this workspace");
+    }
+    const msgs = await this.client.getMessages(conversationId, resolved);
     return msgs.map((m) => ({
       id: m.id ?? m._id ?? null,
       from: m.direction === "incoming" || m.from === "them" ? "them" : "human",
@@ -276,6 +291,74 @@ export class ZernioService {
     }
     const { id } = await this.client.sendMessage(conversationId, accountId, message);
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: integ.platform });
+    return { ok: true, id };
+  }
+
+  /**
+   * Send into one of our own DB conversations via Zernio.
+   *
+   * Inbound webhooks create DB-backed Conversation rows (that's how WhatsApp,
+   * FB and IG threads appear in the Inbox), but the transport is Zernio — so
+   * replying can't go through the legacy Meta services, whose tokens Zernio's
+   * sync replaced. We resolve the Zernio conversation from the contact's
+   * platform id rather than storing it, which means this also works for
+   * threads created before Zernio existed.
+   */
+  async sendInDbConversation(workspaceId: string, conversationId: string, message: string) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      include: { contact: true },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+
+    const channel = conv.channel.toLowerCase();
+    const integ = await this.prisma.integration.findFirst({
+      where: { workspaceId, provider: "zernio", platform: channel },
+    });
+    if (!integ?.pageId) {
+      throw new NotFoundException(`${channel} is not connected via Zernio`);
+    }
+
+    const participantId = conv.contact?.externalId;
+    if (!participantId) {
+      throw new BadRequestException("This contact has no platform id to reply to");
+    }
+
+    const convs = await this.listConversations(workspaceId, channel);
+    const match = convs.find((c) => c.participantId === participantId);
+    if (!match) {
+      throw new NotFoundException(
+        "No Zernio conversation for this contact yet — they need to message you first",
+      );
+    }
+
+    const { id } = await this.client.sendMessage(match.id, integ.pageId, message);
+
+    const now = new Date();
+    const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    await this.prisma.message.create({
+      data: {
+        workspaceId,
+        conversationId: conv.id,
+        from: "human",
+        body: message,
+        t,
+        metaMessageId: id,
+      },
+    });
+    await this.prisma.conversation.update({
+      where: { id: conv.id },
+      data: {
+        preview: message.slice(0, 140),
+        lastAt: "now",
+        lastFrom: "human",
+        unread: 0,
+      },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel,
+      conversationId: conv.id,
+    });
     return { ok: true, id };
   }
 
@@ -322,7 +405,7 @@ export class ZernioService {
       return { ok: true };
     }
     if (type === "account.connected" || type === "account.disconnected") {
-      const profileId = payload.data?.profileId;
+      const profileId = payload.data?.profileId ?? payload.account?.profileId;
       if (profileId) {
         const ws = await this.prisma.workspace.findFirst({
           where: { zernioProfileId: profileId },
@@ -343,7 +426,7 @@ export class ZernioService {
     if (type.startsWith("whatsapp.number.")) {
       // Provisioning/KYC lifecycle — surface for observability; a real number
       // becomes usable once `account.connected` / activation arrives.
-      this.log.log(`Zernio WhatsApp number event: ${type} ${JSON.stringify(payload.data ?? {})}`);
+      this.log.log(`Zernio WhatsApp number event: ${type} ${JSON.stringify(payload).slice(0, 400)}`);
       return { ok: true };
     }
     this.log.debug(`Unhandled Zernio event: ${type}`);
@@ -352,14 +435,20 @@ export class ZernioService {
 
   /**
    * Persist an inbound message into Contact/Conversation/Message + emit
-   * realtime. Payload field names are best-effort (Zernio didn't publish the
-   * exact inbox-webhook schema); the parser falls back across likely keys and
-   * should be tightened against the first real payload captured via the tunnel.
+   * realtime. Field names match the real webhook payload captured off the
+   * tunnel — see ZernioWebhookEvent.
    */
   private async ingestInbound(evt: ZernioWebhookEvent) {
-    const d = evt.data ?? {};
-    const accountId = d.accountId ?? d.account?._id;
-    if (!accountId) return;
+    const accountId = evt.account?.accountId ?? evt.account?.id;
+    if (!accountId) {
+      this.log.warn(`Zernio inbound with no account id: ${JSON.stringify(evt).slice(0, 300)}`);
+      return;
+    }
+
+    // Only ingest customer messages. Zernio also emits message.received for
+    // outgoing sends on some platforms; those arrive via message.sent and are
+    // already in our DB from the send call.
+    if (evt.message?.direction === "outgoing") return;
 
     const integ = await this.prisma.integration.findFirst({
       where: { provider: "zernio", pageId: accountId },
@@ -369,11 +458,27 @@ export class ZernioService {
       return;
     }
     const workspaceId = integ.workspaceId;
-    const channel = (d.platform ?? integ.platform).toLowerCase();
-    const externalMsgId = d.messageId ?? d.id ?? d._id ?? null;
-    const text = d.text ?? d.message ?? d.body ?? d.content ?? `[${channel} message]`;
-    const participantId = String(d.participantId ?? d.sender?.id ?? d.from ?? "");
-    const participantName = d.participantName ?? d.sender?.name ?? d.sender?.username;
+    const channel = (evt.message?.platform ?? evt.account?.platform ?? integ.platform).toLowerCase();
+    const externalMsgId = evt.message?.id ?? evt.message?.platformMessageId ?? null;
+    const attachment = evt.message?.attachments?.[0];
+    // Media-only messages arrive with text: null. Label by attachment type
+    // rather than the old catch-all "[whatsapp message]" placeholder.
+    const text =
+      evt.message?.text?.trim() ||
+      (attachment ? `[${attachment.type ?? "attachment"}]` : `[${channel} message]`);
+    const participantId = String(
+      evt.conversation?.participantId ?? evt.message?.sender?.id ?? "",
+    );
+    const participantName =
+      evt.conversation?.participantName ??
+      evt.conversation?.participantUsername ??
+      evt.message?.sender?.name ??
+      evt.message?.sender?.username;
+
+    if (!participantId) {
+      this.log.warn(`Zernio inbound with no participant id (conv=${evt.conversation?.id})`);
+      return;
+    }
 
     // Idempotency — Zernio delivers at-least-once; dedupe by external message id.
     if (externalMsgId) {
@@ -382,6 +487,29 @@ export class ZernioService {
         select: { id: true },
       });
       if (seen) return;
+    }
+
+    // Re-host the attachment. Zernio's media URL needs their bearer token, so
+    // the browser can't render it directly — we pull the bytes here and store
+    // a Media row, then hand the Inbox our own id. Deliberately after the
+    // dedupe check so at-least-once redeliveries don't re-download.
+    // A failure here must not lose the message: fall through with attach=null.
+    let attachMediaId: string | null = null;
+    if (attachment?.url) {
+      try {
+        const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
+        const media = await this.media.ingestBuffer({
+          workspaceId,
+          buffer,
+          mimeType: attachment.payload?.mimeType || mimeType || "image/jpeg",
+          fileName: `${channel}-${attachment.payload?.id ?? Date.now()}`,
+        });
+        attachMediaId = media.id;
+      } catch (e) {
+        this.log.warn(
+          `Zernio attachment download failed (${attachment.type}): ${(e as Error).message}`,
+        );
+      }
     }
 
     const contact = await this.prisma.contact.upsert({
@@ -413,7 +541,6 @@ export class ZernioService {
         data: {
           workspaceId,
           contactId: contact.id,
-          agent: "",
           unread: 1,
           pinned: false,
           lastAt: "now",
@@ -446,6 +573,7 @@ export class ZernioService {
         from: "them",
         body: text,
         t,
+        attach: attachMediaId,
         metaMessageId: externalMsgId,
       },
     });
@@ -456,9 +584,10 @@ export class ZernioService {
   }
 
   private async applyStatus(type: string, payload: ZernioWebhookEvent) {
-    const d = payload.data ?? {};
-    const msgId = d.messageId ?? d.id ?? d._id;
-    const accountId = d.accountId ?? d.account?._id;
+    // Status events carry the same top-level shape as message.received; the
+    // message id here is Zernio's, matching what ingestInbound stores.
+    const msgId = payload.message?.id ?? payload.message?.platformMessageId;
+    const accountId = payload.account?.accountId ?? payload.account?.id;
     if (!msgId || !accountId) return;
     const status = type.split(".").pop(); // sent | delivered | read | failed
     const integ = await this.prisma.integration.findFirst({
@@ -478,26 +607,46 @@ export class ZernioService {
 }
 
 // ─── Webhook payload (partial — the fields we read) ──────────────────────────
+//
+// Captured from real deliveries via the tunnel (message.received / .sent /
+// .read / reaction.received). Everything sits at the TOP LEVEL — there is no
+// `data` envelope, which is what the original best-effort parser assumed and
+// why every inbound message was silently dropped.
 export interface ZernioWebhookEvent {
   type?: string;
   event?: string;
-  data?: {
-    profileId?: string;
-    accountId?: string;
-    account?: { _id?: string };
-    platform?: string;
+  message?: {
+    id?: string;                 // Zernio's message id — what status events reference
     conversationId?: string;
-    messageId?: string;
+    platform?: string;
+    platformMessageId?: string;  // Meta's id
+    direction?: "incoming" | "outgoing" | string;
+    text?: string | null;        // null on media-only messages
+    attachments?: Array<{
+      type?: string;             // image | video | audio | document
+      url?: string;              // absolute, behind Zernio's bearer auth
+      payload?: { id?: string; mimeType?: string; sha256?: string };
+    }>;
+    sender?: { id?: string; name?: string; username?: string; contactId?: string };
+    sentAt?: string;
+    isRead?: boolean;
+  };
+  conversation?: {
     id?: string;
-    _id?: string;
+    platformConversationId?: string;
     participantId?: string;
     participantName?: string;
-    sender?: { id?: string; name?: string; username?: string };
-    from?: string;
-    text?: string;
-    message?: string;
-    body?: string;
-    content?: string;
-    direction?: string;
+    participantUsername?: string;
+    status?: string;
   };
+  account?: {
+    id?: string;
+    accountId?: string;
+    platform?: string;
+    username?: string;
+    displayName?: string;
+    profileId?: string;
+  };
+  // account.connected / account.disconnected still carry a `data` envelope.
+  data?: { profileId?: string };
 }

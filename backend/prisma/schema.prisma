@@ -83,23 +83,16 @@ model Contact {
 model Conversation {
   id         String   @id @default(cuid())
   contactId  String
-  agent      String   // agent name id, e.g. "luna" — agents are static seeded data
   unread     Int      @default(0)
   pinned     Boolean  @default(false)
   lastAt     String
-  lastFrom   String   // them | ai | human
+  lastFrom   String   // them | human
   preview    String
   channel    String   // whatsapp | instagram | facebook | webchat
-  status     String   // ai | human | closed | spam
+  status     String   // human | closed | spam
   intent     String
   confidence Float
   escalated  Boolean  @default(false)
-  suggested  String?
-
-  // When true, a human has taken over this conversation — AI auto-reply is
-  // skipped until a teammate explicitly hands it back. Independent of
-  // `escalated`, which is the AI's "I gave up on this turn" signal.
-  aiPaused   Boolean  @default(false)
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -144,14 +137,13 @@ model Message {
 model Appointment {
   id           String   @id @default(cuid())
   contactId    String
-  agentId      String?
   staffId      String?  // FK to User.id
   service      String
   serviceAr    String
   startAt      DateTime
   durationMin  Int
   status       String   // confirmed | pending | completed | cancelled | no-show
-  source       String   // ai | human | self-booking
+  source       String   // human | self-booking
   note         String?
   noteAr       String?
   reminderSent Boolean  @default(false)
@@ -386,7 +378,6 @@ model Campaign {
   conversions Int      @default(0)
   channel     String   // Broadcast | Drip | Trigger
   schedule    String?
-  agent       String
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)

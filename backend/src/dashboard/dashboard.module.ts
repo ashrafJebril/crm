@@ -28,7 +28,6 @@ function startOfDayUtc(daysAgo: number): Date {
 interface DailyRow {
   day: string;       // ISO date (YYYY-MM-DD)
   total: number;
-  ai: number;
   human: number;
 }
 
@@ -45,7 +44,7 @@ interface ActivityRow {
   contactName: string;
   preview: string;
   channel: string;
-  from: string;       // "them" | "ai" | "human"
+  from: string;       // "them" | "human"
   at: string;         // ISO timestamp
 }
 
@@ -64,7 +63,6 @@ class DashboardController {
       appointments,
       campaigns,
       templates,
-      aiHandled,
       escalated,
       unreadAgg,
       runningCampaigns,
@@ -83,7 +81,6 @@ class DashboardController {
       this.prisma.appointment.count({ where: { workspaceId } }),
       this.prisma.campaign.count({ where: { workspaceId } }),
       this.prisma.template.count({ where: { workspaceId } }),
-      this.prisma.conversation.count({ where: { workspaceId, status: "ai" } }),
       this.prisma.conversation.count({ where: { workspaceId, escalated: true } }),
       this.prisma.conversation.aggregate({
         where: { workspaceId },
@@ -103,13 +100,12 @@ class DashboardController {
         },
       }),
       this.prisma.$queryRaw<
-        Array<{ day: string; total: bigint; ai: bigint; human: bigint }>
+        Array<{ day: string; total: bigint; human: bigint }>
       >`
         SELECT
           to_char(date_trunc('day', m."createdAt") AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
           COUNT(*)::bigint                                            AS total,
-          COUNT(*) FILTER (WHERE m."from" = 'ai')::bigint             AS ai,
-          COUNT(*) FILTER (WHERE m."from" <> 'ai')::bigint            AS human
+          COUNT(*) FILTER (WHERE m."from" = 'human')::bigint          AS human
         FROM "Message" m
         WHERE m."workspaceId" = ${workspaceId}
           AND m."createdAt" >= ${since7}
@@ -144,13 +140,11 @@ class DashboardController {
       dailyMap.set(r.day, {
         day: r.day,
         total: Number(r.total),
-        ai: Number(r.ai),
         human: Number(r.human),
       });
     }
     const daily: DailyRow[] = lastNDays(7).map(
-      (day) =>
-        dailyMap.get(day) ?? { day, total: 0, ai: 0, human: 0 },
+      (day) => dailyMap.get(day) ?? { day, total: 0, human: 0 },
     );
 
     // Intents: convert counts → percentages of the labelled set.
@@ -193,12 +187,9 @@ class DashboardController {
         appointments,
         campaigns,
         templates,
-        aiHandled,
         escalated,
         unread: unreadAgg._sum.unread ?? 0,
       },
-      aiResolutionPct:
-        conversations > 0 ? Math.round((aiHandled / conversations) * 100) : 0,
       runningCampaigns,
       daily,
       topIntents,

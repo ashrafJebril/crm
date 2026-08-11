@@ -303,9 +303,11 @@ export class FacebookService {
     const integ = await this.find(workspaceId);
     if (!integ) return { ok: true };
     await this.prisma.integration.delete({ where: { id: integ.id } });
-    // IG is derived from the FB Page Access Token, so disconnect it too.
+    // IG is derived from the FB Page Access Token, so disconnect it too — but
+    // only our own Meta row. A Zernio-owned IG connection is independent of
+    // this Page token and must survive a Meta disconnect.
     const ig = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "instagram" },
+      where: { workspaceId, platform: "instagram", provider: "meta" },
     });
     if (ig) await this.prisma.integration.delete({ where: { id: ig.id } });
     return { ok: true };
@@ -681,7 +683,12 @@ export class FacebookService {
   // ─── Internals ──────────────────────────────────────────────────────────
   private async find(workspaceId: string) {
     const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "facebook" },
+      // Scope to our own Meta app. The Zernio sync writes the same
+      // platform="facebook" row with provider="zernio" and accessToken=null
+      // (it owns the token, not us) — reading that row as ours made status()
+      // report "connected" while every Graph call 404'd with
+      // "Facebook is not connected".
+      where: { workspaceId, platform: "facebook", provider: "meta" },
     });
     // Single decrypt point — every reader of integ.accessToken goes through find().
     if (integ?.accessToken) integ.accessToken = decryptSecret(integ.accessToken);

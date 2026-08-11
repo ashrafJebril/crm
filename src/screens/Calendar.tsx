@@ -17,7 +17,6 @@ import {
   IconAlert,
   IconArrow,
   IconBolt,
-  IconBot,
   IconCal,
   IconCheck,
   IconCheckCircle,
@@ -30,7 +29,6 @@ import {
   IconUsers,
   IconX,
 } from "@/icons";
-import { findAgent } from "@/data/agents";
 import { api } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import type {
@@ -67,7 +65,6 @@ const STATUS_TO_BADGE: Record<AppointmentStatus, BadgeKind> = {
 };
 
 const SOURCE_KIND: Record<Appointment["source"], BadgeKind> = {
-  ai: "ai",
   human: "human",
   "self-booking": "info",
 };
@@ -264,7 +261,7 @@ function statusVisual(s: AppointmentStatus): {
   }
 }
 
-function ApptCard({ appt, contactById, tx, lang, onOpen, active }: ApptCardProps) {
+function ApptCard({ appt, contactById, lang, onOpen, active }: ApptCardProps) {
   const v = statusVisual(appt.status);
   const contact = contactById.get(appt.contactId);
   const start = new Date(appt.startAt);
@@ -340,22 +337,6 @@ function ApptCard({ appt, contactById, tx, lang, onOpen, active }: ApptCardProps
         >
           {contact.name}
         </div>
-      )}
-      {height > 64 && appt.source === "ai" && (
-        <span
-          style={{
-            marginTop: 2,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 3,
-            fontSize: 10,
-            color: "var(--accent)",
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          <IconBot w={10} />
-          {tx("AI booked", "بحجز ذكي")}
-        </span>
       )}
     </button>
   );
@@ -842,7 +823,7 @@ function ListView({
                 </div>
               </div>
               {sameDay(day, now) && (
-                <Badge kind="ai" dot>
+                <Badge kind="accent" dot>
                   {tx("today", "اليوم")}
                 </Badge>
               )}
@@ -864,7 +845,6 @@ function ListView({
                 {list.map((a) => {
                   const start = new Date(a.startAt);
                   const contact = contactById.get(a.contactId);
-                  const agent = a.agentId ? findAgent(a.agentId) : undefined;
                   const staff = a.staffId
                     ? team.find((m) => m.id === a.staffId)
                     : undefined;
@@ -937,12 +917,7 @@ function ListView({
                             alignItems: "center",
                           }}
                         >
-                          {agent ? (
-                            <>
-                              <Avatar agent={agent} ai size="sm" />
-                              <span style={{ fontSize: 12 }}>{agent.name}</span>
-                            </>
-                          ) : staff ? (
+                          {staff ? (
                             <>
                               <Avatar
                                 name={staff.name}
@@ -953,17 +928,6 @@ function ListView({
                             </>
                           ) : (
                             <span className="muted">—</span>
-                          )}
-                          {agent && staff && (
-                            <span
-                              className="mono"
-                              style={{
-                                fontSize: 10,
-                                color: "var(--ink-3)",
-                              }}
-                            >
-                              · {staff.initials}
-                            </span>
                           )}
                         </div>
                       </td>
@@ -1006,8 +970,6 @@ function statusLabel(s: AppointmentStatus, tx: Tx): string {
 
 function sourceLabel(s: Appointment["source"], tx: Tx): string {
   switch (s) {
-    case "ai":
-      return tx("AI", "ذكاء");
     case "human":
       return tx("Human", "بشري");
     case "self-booking":
@@ -1250,7 +1212,6 @@ function SidePanel({
   const start = new Date(appt.startAt);
   const end = new Date(start.getTime() + appt.durationMin * 60_000);
   const contact = contactById.get(appt.contactId);
-  const agent = appt.agentId ? findAgent(appt.agentId) : undefined;
   const staff = appt.staffId
     ? team.find((m) => m.id === appt.staffId)
     : undefined;
@@ -1400,7 +1361,7 @@ function SidePanel({
           </div>
         )}
 
-        {(agent || staff) && (
+        {staff && (
           <div>
             <SectionLabel>{tx("Owners", "المسؤولون")}</SectionLabel>
             <div
@@ -1411,33 +1372,6 @@ function SidePanel({
                 gap: 8,
               }}
             >
-              {agent && (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
-                    padding: 10,
-                    borderRadius: 10,
-                    border: "1px solid var(--accent-ring)",
-                    background: "var(--accent-soft)",
-                  }}
-                >
-                  <Avatar agent={agent} ai size="lg" />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500 }}>{agent.name}</div>
-                    <div
-                      style={{ fontSize: 11, color: "var(--ink-3)" }}
-                      className="mono"
-                    >
-                      {agent.role}
-                    </div>
-                  </div>
-                  <Badge kind="ai">
-                    <IconBot w={10} /> AI
-                  </Badge>
-                </div>
-              )}
               {staff && (
                 <div
                   style={{
@@ -1720,22 +1654,18 @@ function CalendarImpl() {
     const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
     let todayCount = 0;
     let weekCount = 0;
-    let aiCount = 0;
     let completed = 0;
     let noShow = 0;
     for (const a of appointments) {
       const d = new Date(a.startAt);
       if (sameDay(d, today)) todayCount++;
       if (weekDays.some((wd) => sameDay(wd, d))) weekCount++;
-      if (a.source === "ai") aiCount++;
       if (a.status === "completed") completed++;
       if (a.status === "no-show") noShow++;
     }
-    const total = appointments.length || 1;
-    const aiPct = Math.round((aiCount / total) * 100);
     const finished = completed + noShow || 1;
     const noShowPct = Math.round((noShow / finished) * 100);
-    return { todayCount, weekCount, aiPct, noShowPct };
+    return { todayCount, weekCount, noShowPct };
   }, [weekStart, appointments]);
 
   const filtered = useMemo(() => {
@@ -1944,14 +1874,6 @@ function CalendarImpl() {
             value={String(stats.weekCount)}
             sub={fmtRange(weekStart, weekEnd, t.lang)}
             icon={<IconCal w={12} />}
-          />
-          <MiniStat
-            label={tx("AI-booked", "حجز ذكي")}
-            value={String(stats.aiPct)}
-            unit="%"
-            sub={tx("Of all appointments", "من إجمالي المواعيد")}
-            icon={<IconBot w={12} />}
-            tone="ok"
           />
           <MiniStat
             label={tx("No-show rate", "نسبة عدم الحضور")}

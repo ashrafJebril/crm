@@ -12,7 +12,6 @@ interface NavItem {
   ar: string;
   Icon: ComponentType<{ w?: number }>;
   badge?: number;
-  ai?: boolean;
   // When true, hide from non-super-admin users. Aram operator-only.
   superAdminOnly?: boolean;
 }

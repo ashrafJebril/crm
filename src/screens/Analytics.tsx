@@ -13,7 +13,6 @@ import {
   IconChevDown,
   IconPlus,
 } from "@/icons";
-import { AGENTS } from "@/data/agents";
 import { TEAM } from "@/data/team";
 import { DAILY, INTENTS } from "@/data/analytics";
 import {
@@ -99,34 +98,23 @@ interface LeaderEntry {
   id: string;
   name: string;
   color: string;
-  isHuman: boolean;
-  agent?: (typeof AGENTS)[number];
   resolved: number;
   csat: number;
 }
 
 function buildLeaderboard(): LeaderEntry[] {
-  const ai: LeaderEntry[] = AGENTS.map((a) => ({
-    id: a.id,
-    name: a.name,
-    color: a.color,
-    isHuman: false,
-    agent: a,
-    resolved: a.convs,
-    csat: a.csat,
-  }));
-  const humans: LeaderEntry[] = TEAM.slice(2, 4).map((m) => {
-    const extras = HUMAN_LEADERBOARD.find((x) => x.id === m.id);
-    return {
-      id: m.id,
-      name: m.name,
-      color: m.color,
-      isHuman: true,
-      resolved: extras?.resolved ?? 60,
-      csat: extras?.csat ?? 90,
-    };
-  });
-  return [...ai, ...humans].sort((a, b) => b.resolved - a.resolved);
+  return TEAM.slice(2, 4)
+    .map((m) => {
+      const extras = HUMAN_LEADERBOARD.find((x) => x.id === m.id);
+      return {
+        id: m.id,
+        name: m.name,
+        color: m.color,
+        resolved: extras?.resolved ?? 60,
+        csat: extras?.csat ?? 90,
+      };
+    })
+    .sort((a, b) => b.resolved - a.resolved);
 }
 
 const LEGEND_OPACITIES = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
@@ -379,11 +367,7 @@ function AnalyticsImpl() {
                   >
                     #{i + 1}
                   </span>
-                  {p.isHuman || !p.agent ? (
-                    <Avatar name={p.name} color={p.color} size="sm" />
-                  ) : (
-                    <Avatar agent={p.agent} ai size="sm" />
-                  )}
+                  <Avatar name={p.name} color={p.color} size="sm" />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
@@ -395,11 +379,7 @@ function AnalyticsImpl() {
                       }}
                     >
                       {p.name}
-                      {p.isHuman ? (
-                        <Badge kind="human">human</Badge>
-                      ) : (
-                        <Badge kind="ai">AI</Badge>
-                      )}
+                      <Badge kind="human">human</Badge>
                     </div>
                     <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
                       CSAT {p.csat || "—"}

@@ -1,0 +1,123 @@
+- generic [ref=f4e4]:
+  - complementary [ref=f4e5]:
+    - generic [ref=f4e6]:
+      - generic [ref=f4e7]: A
+      - generic [ref=f4e8]:
+        - generic [ref=f4e9]: Aram.
+        - generic [ref=f4e10]: v2.4 · MENA
+      - button "Search" [ref=f4e11] [cursor=pointer]
+    - generic "Switch workspace" [ref=f4e15] [cursor=pointer]:
+      - generic [ref=f4e17]:
+        - generic [ref=f4e18]: Default Workspace
+        - generic [ref=f4e19]: free · owner
+    - navigation [ref=f4e23]:
+      - generic [ref=f4e24]: Workspace
+      - button "Dashboard" [ref=f4e25] [cursor=pointer]
+      - button "Inbox 5" [ref=f4e30] [cursor=pointer]:
+        - generic [ref=f4e35]: Inbox
+        - generic [ref=f4e36]: "5"
+      - button "Calendar" [ref=f4e37] [cursor=pointer]
+      - button "Social" [ref=f4e43] [cursor=pointer]
+      - button "Campaigns" [ref=f4e49] [cursor=pointer]
+      - button "Pipeline" [ref=f4e56] [cursor=pointer]
+      - button "Contacts" [ref=f4e63] [cursor=pointer]
+      - button "Analytics" [ref=f4e71] [cursor=pointer]
+      - generic [ref=f4e77]: Manage
+      - button "Templates" [ref=f4e78] [cursor=pointer]
+      - button "Media" [ref=f4e83] [cursor=pointer]
+      - button "Team" [ref=f4e88] [cursor=pointer]
+      - button "Settings" [ref=f4e94] [cursor=pointer]
+      - generic [ref=f4e100]: Aram ops
+      - button "Admin portal" [ref=f4e101] [cursor=pointer]
+    - generic [ref=f4e106]:
+      - generic [ref=f4e107]: YK
+      - generic [ref=f4e108]:
+        - generic [ref=f4e109]: Yara Khaled
+        - generic [ref=f4e110]: owner · Default Workspace
+      - button "Notifications" [ref=f4e111] [cursor=pointer]
+  - main [ref=f4e115]:
+    - generic [ref=f4e116]:
+      - generic [ref=f4e117]:
+        - generic [ref=f4e118]: Samemha
+        - generic [ref=f4e119]: /
+        - generic [ref=f4e120]: Settings
+      - generic [ref=f4e121] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f4e125]
+        - generic [ref=f4e126]: ⌘K
+      - button "ع" [ref=f4e127] [cursor=pointer]
+      - button "Toggle theme" [ref=f4e129] [cursor=pointer]
+      - button "Notifications" [ref=f4e133] [cursor=pointer]
+      - button "Create" [ref=f4e137] [cursor=pointer]
+      - button "Default Workspace" [ref=f4e141] [cursor=pointer]
+      - generic [ref=f4e145]:
+        - generic [ref=f4e146]: YK
+        - generic [ref=f4e147]:
+          - generic [ref=f4e148]: Yara Khaled
+          - generic [ref=f4e149]: Owner
+        - button "Sign out" [ref=f4e150] [cursor=pointer]
+    - generic [ref=f4e155]:
+      - generic [ref=f4e158]:
+        - heading "Settings" [level=1] [ref=f4e159]
+        - paragraph [ref=f4e160]: Manage Default Workspace, your team, integrations, and your account.
+      - generic [ref=f4e161]:
+        - button "Workspace" [ref=f4e162] [cursor=pointer]
+        - button "Members" [ref=f4e164] [cursor=pointer]
+        - button "Integrations" [active] [ref=f4e166] [cursor=pointer]
+        - button "Profile" [ref=f4e168] [cursor=pointer]
+      - generic [ref=f4e171]:
+        - generic [ref=f4e172]:
+          - generic [ref=f4e173]:
+            - generic [ref=f4e174]: Social accounts via Zernio
+            - generic [ref=f4e175]: Connect Facebook, Instagram, TikTok and WhatsApp with one click — the customer just authenticates, no Meta App Review or token needed.
+          - generic [ref=f4e177]:
+            - generic [ref=f4e178]:
+              - generic [ref=f4e183]:
+                - generic [ref=f4e184]: Facebook
+                - generic [ref=f4e185]: Connected · Samemha
+              - generic [ref=f4e186]: Live
+              - button "Disconnect" [ref=f4e189] [cursor=pointer]
+            - generic [ref=f4e192]:
+              - generic [ref=f4e197]:
+                - generic [ref=f4e198]: Instagram
+                - generic [ref=f4e199]: Connected · Samemha - صممها
+              - generic [ref=f4e200]: Live
+              - button "Disconnect" [ref=f4e203] [cursor=pointer]
+            - generic [ref=f4e206]:
+              - generic [ref=f4e211]:
+                - generic [ref=f4e212]: TikTok
+                - generic [ref=f4e213]: Publishing only (no DMs/comments via Zernio).
+              - generic [ref=f4e214]: "Off"
+              - button "Connect" [ref=f4e216] [cursor=pointer]
+            - generic [ref=f4e217]:
+              - generic [ref=f4e222]:
+                - generic [ref=f4e223]: WhatsApp
+                - generic [ref=f4e224]: Connected · samemha_jo
+              - generic [ref=f4e225]: Live
+              - button "Disconnect" [ref=f4e228] [cursor=pointer]
+            - generic [ref=f4e231]:
+              - generic [ref=f4e236]:
+                - generic [ref=f4e237]: Snapchat
+                - generic [ref=f4e238]: In beta at Zernio — not yet available.
+              - generic [ref=f4e239]: Beta
+              - button "Connect" [disabled] [ref=f4e241]
+        - generic [ref=f4e242]:
+          - generic [ref=f4e243]:
+            - generic [ref=f4e244]: WhatsApp Business
+            - generic [ref=f4e245]: Connect your WhatsApp Business number via Meta Cloud API to handle customer chats.
+          - generic [ref=f4e246]:
+            - generic [ref=f4e247]:
+              - generic [ref=f4e252]:
+                - generic [ref=f4e253]: WhatsApp
+                - generic [ref=f4e254]: Connected to samemha_jo
+              - generic [ref=f4e255]: Live
+            - generic [ref=f4e257]:
+              - generic [ref=f4e258]: "Last activity: 8/10/2026, 4:38:44 PM"
+              - button "Disconnect" [ref=f4e260] [cursor=pointer]
+        - generic [ref=f4e263]:
+          - generic [ref=f4e264]:
+            - generic [ref=f4e265]: WhatsApp via Kapso
+            - generic [ref=f4e266]: Connect a customer's WhatsApp Business number through Kapso's hosted signup — no Meta App Review or token needed.
+          - generic [ref=f4e267]: Not connected.
+          - generic [ref=f4e269]:
+            - button "Connect existing number" [ref=f4e270] [cursor=pointer]
+            - button "Get a free test number" [ref=f4e271] [cursor=pointer]

@@ -299,7 +299,7 @@ export function MembersTab() {
                     <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
                       {m.user.name}
                       {isMe && (
-                        <Badge kind="ai">{tx("you", "أنت")}</Badge>
+                        <Badge kind="accent">{tx("you", "أنت")}</Badge>
                       )}
                     </div>
                     <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
@@ -320,7 +320,7 @@ export function MembersTab() {
                       ))}
                     </select>
                   ) : (
-                    <Badge kind="ai">{m.role}</Badge>
+                    <Badge kind="accent">{m.role}</Badge>
                   )}
                   {canEdit && !isMe && (
                     <>

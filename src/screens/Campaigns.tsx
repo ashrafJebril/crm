@@ -2,7 +2,6 @@ import { Fragment, memo, useState, type CSSProperties, type ReactNode } from "re
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
-import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import {
   IconAlert,
@@ -13,11 +12,9 @@ import {
   IconMore,
   IconPhone,
   IconPlus,
-  IconSparkles,
   IconTemplate,
   IconX,
 } from "@/icons";
-import { AGENTS } from "@/data/agents";
 import type { Campaign } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
@@ -294,10 +291,6 @@ function MessageStep({ tx, body, setBody }: MessageStepProps) {
               </button>
             ))}
             <span style={{ flex: 1 }} />
-            <button className="btn ghost sm">
-              <IconSparkles w={11} />
-              {tx("Improve with AI", "حسّن بالذكاء")}
-            </button>
           </div>
         </div>
       </div>
@@ -466,7 +459,6 @@ interface PhonePreviewProps {
 }
 
 function PhonePreview({ body, tx }: PhonePreviewProps) {
-  const agent = AGENTS[0];
   return (
     <div style={{ position: "sticky", top: 12, alignSelf: "start" }}>
       <div
@@ -500,7 +492,6 @@ function PhonePreview({ body, tx }: PhonePreviewProps) {
             borderBottom: "1px solid var(--line-soft)",
           }}
         >
-          {agent && <Avatar agent={agent} ai size="sm" />}
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, fontWeight: 600 }}>Samemha</div>
             <div style={{ fontSize: 10, color: "var(--ok)" }}>● online</div>
@@ -1007,7 +998,6 @@ function CampaignsImpl() {
                 </tr>
               )}
               {filtered.map((c) => {
-                const agent = AGENTS.find((a) => a.id === c.agent);
                 const readPct = c.recipients
                   ? Math.round((c.read / c.recipients) * 100)
                   : 0;
@@ -1028,12 +1018,6 @@ function CampaignsImpl() {
                           marginTop: 2,
                         }}
                       >
-                        {agent && (
-                          <>
-                            <Avatar agent={agent} ai size="sm" />
-                            <span>{agent.name}</span>
-                          </>
-                        )}
                       </div>
                     </td>
                     <td className="muted">{c.audience}</td>

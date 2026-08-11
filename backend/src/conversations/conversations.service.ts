@@ -124,23 +124,6 @@ export class ConversationsService {
     return conv;
   }
 
-  /** Human takeover: when paused=true, AI auto-reply skips this conversation. */
-  async setAiPaused(workspaceId: string, id: string, paused: boolean) {
-    await this.get(workspaceId, id);
-    const conv = await this.prisma.conversation.update({
-      where: { id },
-      data: {
-        aiPaused: paused,
-        // Also flip status so the Inbox filter reflects who's handling it.
-        status: paused ? "human" : "ai",
-        // Clear the escalated flag when AI is resumed — fresh start.
-        ...(paused ? {} : { escalated: false }),
-      },
-    });
-    this.emitActivity(workspaceId, conv.channel, conv.id);
-    return conv;
-  }
-
   async remove(workspaceId: string, id: string) {
     const existing = await this.get(workspaceId, id);
     await this.prisma.conversation.delete({ where: { id } });

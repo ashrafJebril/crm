@@ -261,7 +261,6 @@ export class MetaWebhooksService {
         data: {
           workspaceId: input.workspaceId,
           contactId: input.contactId,
-          agent: "",
           unread: 1,
           pinned: false,
           lastAt: "now",

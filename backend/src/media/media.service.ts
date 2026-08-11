@@ -147,6 +147,43 @@ export class MediaService {
     });
   }
 
+  /**
+   * Store bytes we fetched ourselves — inbound webhook attachments, where the
+   * provider's own media URL sits behind their auth and can't be loaded by the
+   * browser. Re-hosting also means the image survives the provider expiring
+   * its link. No uploader: `uploadedById` is nullable for system assets.
+   */
+  async ingestBuffer(input: {
+    workspaceId: string;
+    buffer: Buffer;
+    mimeType: string;
+    fileName: string;
+  }) {
+    if (!ALLOWED_MIME.has(input.mimeType)) {
+      throw new BadRequestException(`Unsupported file type: ${input.mimeType}`);
+    }
+    if (input.buffer.length > MAX_BYTES) {
+      throw new BadRequestException(`File too large (${input.buffer.length} bytes)`);
+    }
+    const { key } = await this.storage.put({
+      workspaceId: input.workspaceId,
+      buffer: input.buffer,
+      mimeType: input.mimeType,
+      originalFilename: input.fileName,
+    });
+    return this.prisma.media.create({
+      data: {
+        workspaceId: input.workspaceId,
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        sizeBytes: input.buffer.length,
+        storedPath: key,
+        storageKind: this.storage.kind,
+        uploadedById: null,
+      },
+    });
+  }
+
   async mintPublicToken(
     workspaceId: string,
     mediaId: string,

@@ -1,6 +1,25 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { makeTx } from "@/lib/tx";
+import { useTweaks } from "@/tweaks/context";
 import { useToast } from "./Toast";
+
+interface SyncResult {
+  connected: Array<{ platform: string; accountId: string; name: string | null }>;
+}
+
+/** Zernio's platform slugs → the names customers actually recognise. */
+const PLATFORM_LABELS: Record<string, string> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  whatsapp: "WhatsApp",
+  snapchat: "Snapchat",
+};
+
+const labelFor = (platform: string) =>
+  PLATFORM_LABELS[platform.toLowerCase()] ?? platform;
 
 /**
  * Captures Zernio's hosted-connect success redirect.
@@ -17,6 +36,8 @@ import { useToast } from "./Toast";
  */
 export function ZernioRedirectCapture() {
   const { toast } = useToast();
+  const { t } = useTweaks();
+  const qc = useQueryClient();
   const done = useRef(false);
 
   useEffect(() => {
@@ -30,14 +51,58 @@ export function ZernioRedirectCapture() {
     if (params.get("zernio") !== "connected") return;
     done.current = true;
 
-    const platform = params.get("platform") ?? "account";
+    const tx = makeTx(t.lang);
+    const platform = (params.get("platform") ?? "").toLowerCase();
 
     api
-      .post("/integrations/zernio/sync")
-      .then(() => toast(`${platform} connected via Zernio ✓`, "success"))
+      .post<SyncResult>("/integrations/zernio/sync")
+      .then((res) => {
+        // Integration status queries carry a 30s staleTime, and the Dashboard
+        // pre-warms them — so by now the cache may already hold a pre-connect
+        // "not connected" answer that React Query won't refetch on its own.
+        // Dropping those entries is what makes the Settings cards flip to Live
+        // on their own, instead of only after a manual page reload.
+        void qc.invalidateQueries({
+          predicate: (q) =>
+            typeof q.queryKey[0] === "string" &&
+            (q.queryKey[0] as string).startsWith("/integrations"),
+        });
+
+        // Zernio redirects back with `zernio=connected` even when the customer
+        // abandoned the flow part-way (Instagram's professional-account wall is
+        // the common one), so believe the reconciled list, not the redirect.
+        const accounts = res?.connected ?? [];
+        const hit = platform
+          ? accounts.find((a) => a.platform?.toLowerCase() === platform)
+          : accounts[0];
+
+        if (!hit) {
+          const name = platform ? labelFor(platform) : tx("The account", "الحساب");
+          toast(
+            tx(
+              `${name} wasn't connected — the authorisation didn't finish.`,
+              `لم يتم ربط ${name} — لم تكتمل عملية التفويض.`,
+            ),
+            "error",
+          );
+          return;
+        }
+
+        const name = labelFor(hit.platform);
+        const suffix = hit.name ? ` · ${hit.name}` : "";
+        toast(
+          tx(`${name} connected${suffix} ✓`, `تم ربط ${name}${suffix} ✓`),
+          "success",
+        );
+      })
       .catch((e) =>
         toast(
-          e instanceof Error ? e.message : "Couldn't record the Zernio connection",
+          e instanceof Error
+            ? e.message
+            : tx(
+                "Couldn't record the Zernio connection",
+                "تعذّر تسجيل الاتصال عبر Zernio",
+              ),
           "error",
         ),
       )
@@ -46,7 +111,7 @@ export function ZernioRedirectCapture() {
         const cleanHash = qIndex >= 0 ? hash.slice(0, qIndex) : hash;
         window.history.replaceState(null, "", window.location.pathname + (cleanHash || ""));
       });
-  }, [toast]);
+  }, [toast, qc, t.lang]);
 
   return null;
 }

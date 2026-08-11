@@ -194,7 +194,7 @@ export class InstagramService {
   async listConversations(workspaceId: string, limit = 25) {
     const { token, igUserId } = await this.requireToken(workspaceId);
     const fb = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "facebook" },
+      where: { workspaceId, platform: "facebook", provider: "meta" },
     });
     if (!fb?.pageId) {
       throw new BadRequestException(
@@ -326,7 +326,7 @@ export class InstagramService {
   ) {
     const { token } = await this.requireToken(workspaceId);
     const fb = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "facebook" },
+      where: { workspaceId, platform: "facebook", provider: "meta" },
     });
     if (!fb?.pageId) {
       throw new BadRequestException("Facebook Page is not connected");
@@ -403,7 +403,7 @@ export class InstagramService {
     // The /conversations endpoint for IG DMs is on the FB Page, scoped via
     // `?platform=instagram`. So we need the Page ID, not the IG User ID.
     const fb = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "facebook" },
+      where: { workspaceId, platform: "facebook", provider: "meta" },
     });
     if (!fb?.pageId) {
       throw new BadRequestException(
@@ -469,7 +469,6 @@ export class InstagramService {
           data: {
             workspaceId,
             contactId: contact.id,
-            agent: "",
             unread: 0,
             pinned: false,
             lastAt: "now",
@@ -584,7 +583,7 @@ export class InstagramService {
     }
 
     const fb = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "facebook" },
+      where: { workspaceId, platform: "facebook", provider: "meta" },
     });
     if (!fb?.pageId) {
       throw new BadRequestException("Facebook Page is not connected");
@@ -677,7 +676,9 @@ export class InstagramService {
 
   private async find(workspaceId: string) {
     const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "instagram" },
+      // Meta-app rows only — the Zernio sync owns a provider="zernio" row for
+      // this same platform with no accessToken. See FacebookService.find().
+      where: { workspaceId, platform: "instagram", provider: "meta" },
     });
     // Single decrypt point — every reader of integ.accessToken goes through find().
     if (integ?.accessToken) integ.accessToken = decryptSecret(integ.accessToken);

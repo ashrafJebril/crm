@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useFetch } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
@@ -79,16 +79,10 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
     window.setTimeout(() => setStatus(null), 2600);
   };
 
-  // Returning from the hosted connect flow — refetch once the sync has a moment
-  // to reconcile accounts on the backend.
-  useEffect(() => {
-    if (window.location.hash.includes("zernio=connected")) {
-      void statusQ.refetch();
-      const id = window.setTimeout(() => void statusQ.refetch(), 1500);
-      return () => window.clearTimeout(id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Returning from the hosted connect flow needs no special handling here:
+  // ZernioRedirectCapture invalidates every /integrations query once the sync
+  // has actually reconciled, which repaints this card on its own. (It used to
+  // guess with a refetch + a 1.5s timer, which raced the sync and lost.)
 
   const accountFor = (platform: string) =>
     statusQ.data?.accounts?.find((a) => a.platform === platform);

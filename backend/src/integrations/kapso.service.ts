@@ -385,7 +385,6 @@ export class KapsoService {
         data: {
           workspaceId,
           contactId: contact.id,
-          agent: "",
           unread: 1,
           pinned: false,
           lastAt: "now",

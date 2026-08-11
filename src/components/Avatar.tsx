@@ -1,12 +1,9 @@
 import { memo } from "react";
-import type { Agent } from "@/lib/types";
 
 interface AvatarProps {
   name?: string;
-  agent?: Agent;
   size?: "" | "sm" | "lg" | "xl";
   color?: string;
-  ai?: boolean;
 }
 
 function hash(s: string) {
@@ -15,28 +12,14 @@ function hash(s: string) {
   return h;
 }
 
-function AvatarImpl({ name = "?", agent, size = "", color, ai = false }: AvatarProps) {
-  if (ai && agent) {
-    const next = (parseInt(agent.color, 10) + 80) % 360;
-    return (
-      <span
-        className={`avatar ai ${size}`.trim()}
-        style={{
-          background: `linear-gradient(135deg, oklch(0.78 0.18 ${agent.color}), oklch(0.62 0.18 ${next}))`,
-        }}
-      >
-        {agent.emoji}
-      </span>
-    );
-  }
-
+function AvatarImpl({ name = "?", size = "", color }: AvatarProps) {
   const initials = name
     .split(" ")
     .map((s) => s[0] ?? "")
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const hue = color ?? agent?.color ?? String(Math.abs(hash(name)) % 360);
+  const hue = color ?? String(Math.abs(hash(name)) % 360);
 
   return (
     <span

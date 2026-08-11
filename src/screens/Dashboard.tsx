@@ -21,7 +21,6 @@ import type {
 interface DailyPoint {
   day: string;
   total: number;
-  ai: number;
   human: number;
 }
 interface IntentRow {
@@ -36,7 +35,7 @@ interface ActivityRow {
   contactName: string;
   preview: string;
   channel: string;
-  from: string; // "them" | "ai" | "human"
+  from: string; // "them" | "human"
   at: string;
 }
 
@@ -71,11 +70,9 @@ interface DashboardSummary {
     appointments: number;
     campaigns: number;
     templates: number;
-    aiHandled: number;
     escalated: number;
     unread: number;
   };
-  aiResolutionPct: number;
   runningCampaigns: Campaign[];
   daily: DailyPoint[];
   topIntents: IntentRow[];
@@ -184,20 +181,15 @@ function DashboardImpl() {
   const conversationsValue = summary
     ? summary.counts.conversations.toLocaleString()
     : "0";
-  const aiResolutionValue = summary ? `${summary.aiResolutionPct}` : "0";
-
   // Sparklines derived from the same 7-day timeseries.
   const totalSpark = (summary?.daily ?? []).map((d) => d.total);
-  const aiPctSpark = (summary?.daily ?? []).map((d) =>
-    d.total > 0 ? Math.round((d.ai / d.total) * 100) : 0,
-  );
 
   // Day-of-week labels lined up with summary.daily for the chart x-axis.
   const xLabels = (summary?.daily ?? []).map((d) => {
     const dt = new Date(d.day + "T00:00:00Z");
     return DAY_LABELS[dt.getUTCDay()] ?? "";
   });
-  const aSeries = (summary?.daily ?? []).map((d) => d.ai);
+  const aSeries = (summary?.daily ?? []).map((d) => d.total);
   const bSeries = (summary?.daily ?? []).map((d) => d.human);
 
   const conversationsDelta = summary
@@ -240,14 +232,6 @@ function DashboardImpl() {
             spark={totalSpark}
           />
           <StatTile
-            label={tx("AI resolution", "حل بالذكاء")}
-            value={aiResolutionValue}
-            unit="%"
-            delta=""
-            sub={tx("Conversations handled by AI", "المحادثات التي يديرها الذكاء")}
-            spark={aiPctSpark}
-          />
-          <StatTile
             label={tx("Unread", "غير مقروء")}
             value={summary?.counts.unread.toLocaleString() ?? "0"}
             delta=""
@@ -270,14 +254,14 @@ function DashboardImpl() {
             <div className="card-h">
               <div>
                 <h3>{tx("Conversations · last 7 days", "المحادثات · آخر ٧ أيام")}</h3>
-                <div className="sub">{tx("AI handled vs human-assisted", "تم بالذكاء مقابل بمساعدة بشرية")}</div>
+                <div className="sub">{tx("Total vs assigned", "الإجمالي مقابل المعيّنة")}</div>
               </div>
               <div style={{ display: "flex", gap: 14, fontSize: 12 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ width: 10, height: 2, background: "var(--accent)" }} /> {tx("AI", "ذكاء")}
+                  <span style={{ width: 10, height: 2, background: "var(--accent)" }} /> {tx("Total", "الإجمالي")}
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ width: 10, height: 2, background: "var(--ink-3)" }} /> {tx("Human", "بشري")}
+                  <span style={{ width: 10, height: 2, background: "var(--ink-3)" }} /> {tx("Assigned", "معيّنة")}
                 </span>
               </div>
             </div>
@@ -306,7 +290,7 @@ function DashboardImpl() {
           <div className="card">
             <div className="card-h">
               <h3>{tx("Live activity", "النشاط المباشر")}</h3>
-              <span className="badge ai">
+              <span className="badge accent">
                 <span className="dot pulse" />
                 {tx("streaming", "مباشر")}
               </span>
@@ -324,9 +308,7 @@ function DashboardImpl() {
                 const isInbound = row.from === "them";
                 const verb = isInbound
                   ? tx("messaged", "راسل")
-                  : row.from === "ai"
-                    ? tx("AI replied to", "ردّ الذكاء على")
-                    : tx("replied to", "ردّ على");
+                  : tx("replied to", "ردّ على");
                 return (
                   <div
                     key={row.id}

@@ -25,7 +25,6 @@ class CreateCampaignDto {
   @IsString() @IsNotEmpty() name!: string;
   @IsString() @IsNotEmpty() audience!: string;
   @IsString() @IsNotEmpty() channel!: string;
-  @IsString() @IsNotEmpty() agent!: string;
   @IsOptional() @IsIn([...STATUSES]) status?: (typeof STATUSES)[number];
   @IsOptional() @IsString() schedule?: string;
   @IsOptional() @IsInt() @Min(0) recipients?: number;
@@ -35,7 +34,6 @@ class UpdateCampaignDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() audience?: string;
   @IsOptional() @IsString() channel?: string;
-  @IsOptional() @IsString() agent?: string;
   @IsOptional() @IsIn([...STATUSES]) status?: (typeof STATUSES)[number];
   @IsOptional() @IsString() schedule?: string;
   @IsOptional() @IsInt() @Min(0) recipients?: number;

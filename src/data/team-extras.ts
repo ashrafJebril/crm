@@ -53,7 +53,7 @@ export interface RoleDef {
 }
 
 export const ROLES: RoleDef[] = [
-  { name: "Owner",   color: "ai",   descEn: "Full access, billing, delete workspace",          descAr: "صلاحيات كاملة، الفوترة، حذف مساحة العمل" },
+  { name: "Owner",   color: "accent", descEn: "Full access, billing, delete workspace",        descAr: "صلاحيات كاملة، الفوترة، حذف مساحة العمل" },
   { name: "Admin",   color: "info", descEn: "Manage everything except billing & destruction", descAr: "يدير كل شيء عدا الفوترة والحذف" },
   { name: "Agent",   color: "ok",   descEn: "Reply, assign, manage own conversations",          descAr: "يرد ويوزع ويدير محادثاته" },
   { name: "Analyst", color: "warn", descEn: "Read-only across analytics & reports",             descAr: "قراءة فقط للتحليلات والتقارير" },

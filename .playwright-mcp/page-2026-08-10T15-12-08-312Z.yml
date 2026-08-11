@@ -1,0 +1,248 @@
+- generic [ref=f58e3]:
+  - complementary [ref=f58e4]:
+    - generic [ref=f58e5]:
+      - generic [ref=f58e6]: A
+      - generic [ref=f58e7]:
+        - generic [ref=f58e8]: Aram.
+        - generic [ref=f58e9]: v2.4 · MENA
+      - button "Search" [ref=f58e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f58e14] [cursor=pointer]:
+      - generic [ref=f58e16]:
+        - generic [ref=f58e17]: Default Workspace
+        - generic [ref=f58e18]: free · owner
+    - navigation [ref=f58e22]:
+      - generic [ref=f58e23]: Workspace
+      - button "Dashboard" [ref=f58e24] [cursor=pointer]
+      - button "Inbox 5" [ref=f58e29] [cursor=pointer]:
+        - generic [ref=f58e34]: Inbox
+        - generic [ref=f58e35]: "5"
+      - button "Calendar" [ref=f58e36] [cursor=pointer]
+      - button "Social" [ref=f58e42] [cursor=pointer]
+      - button "Campaigns" [ref=f58e48] [cursor=pointer]
+      - button "Pipeline" [ref=f58e55] [cursor=pointer]
+      - button "Contacts" [ref=f58e62] [cursor=pointer]
+      - button "Analytics" [ref=f58e70] [cursor=pointer]
+      - generic [ref=f58e76]: Manage
+      - button "Templates" [ref=f58e77] [cursor=pointer]
+      - button "Media" [ref=f58e82] [cursor=pointer]
+      - button "Team" [ref=f58e87] [cursor=pointer]
+      - button "Settings" [ref=f58e93] [cursor=pointer]
+      - generic [ref=f58e99]: Aram ops
+      - button "Admin portal" [ref=f58e100] [cursor=pointer]
+    - generic [ref=f58e105]:
+      - generic [ref=f58e106]: YK
+      - generic [ref=f58e107]:
+        - generic [ref=f58e108]: Yara Khaled
+        - generic [ref=f58e109]: owner · Default Workspace
+      - button "Notifications" [ref=f58e110] [cursor=pointer]
+  - main [ref=f58e114]:
+    - generic [ref=f58e115]:
+      - generic [ref=f58e116]:
+        - generic [ref=f58e117]: Samemha
+        - generic [ref=f58e118]: /
+        - generic [ref=f58e119]: Dashboard
+      - generic [ref=f58e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f58e124]
+        - generic [ref=f58e125]: ⌘K
+      - button "ع" [ref=f58e126] [cursor=pointer]
+      - button "Toggle theme" [ref=f58e128] [cursor=pointer]
+      - button "Notifications" [ref=f58e132] [cursor=pointer]
+      - button "Create" [ref=f58e136] [cursor=pointer]
+      - button "Default Workspace" [ref=f58e140] [cursor=pointer]
+      - generic [ref=f58e144]:
+        - generic [ref=f58e145]: YK
+        - generic [ref=f58e146]:
+          - generic [ref=f58e147]: Yara Khaled
+          - generic [ref=f58e148]: Owner
+        - button "Sign out" [ref=f58e149] [cursor=pointer]
+    - generic [ref=f58e154]:
+      - generic [ref=f58e156]:
+        - generic [ref=f58e157]:
+          - heading "Welcome back, Yara" [level=1] [ref=f58e158]
+          - paragraph [ref=f58e159]: Here's how Samemha's WhatsApp ran today
+        - generic [ref=f58e160]:
+          - button "Last 7 days" [ref=f58e161] [cursor=pointer]
+          - button "New campaign" [ref=f58e167] [cursor=pointer]
+      - generic [ref=f58e170]:
+        - generic [ref=f58e171]:
+          - generic [ref=f58e172]:
+            - generic [ref=f58e173]: Conversations
+            - generic [ref=f58e179]: "3"
+            - generic [ref=f58e181]:
+              - generic [ref=f58e182]: 0%
+              - generic [ref=f58e185]: vs prev 7d
+          - generic [ref=f58e187]:
+            - generic [ref=f58e188]: Unread
+            - generic [ref=f58e194]: "5"
+            - generic [ref=f58e195]: Across all channels
+          - generic [ref=f58e198]:
+            - generic [ref=f58e199]: Pipeline value
+            - generic [ref=f58e205]: SAR 0
+            - generic [ref=f58e206]: Open tickets
+        - generic [ref=f58e210]:
+          - generic [ref=f58e211]:
+            - generic [ref=f58e212]:
+              - heading "Conversations · last 7 days" [level=3] [ref=f58e213]
+              - generic [ref=f58e214]: Total vs assigned
+            - generic [ref=f58e215]:
+              - generic [ref=f58e216]: Total
+              - generic [ref=f58e218]: Assigned
+          - generic [ref=f58e223]:
+            - generic [ref=f58e224]: Tue
+            - generic [ref=f58e225]: Wed
+            - generic [ref=f58e226]: Thu
+            - generic [ref=f58e227]: Fri
+            - generic [ref=f58e228]: Sat
+            - generic [ref=f58e229]: Sun
+            - generic [ref=f58e230]: Mon
+        - generic [ref=f58e231]:
+          - generic [ref=f58e232]:
+            - generic [ref=f58e233]:
+              - heading "Live activity" [level=3] [ref=f58e234]
+              - generic [ref=f58e235]: streaming
+            - generic [ref=f58e237]:
+              - generic [ref=f58e238]:
+                - generic [ref=f58e239]: A
+                - generic [ref=f58e240]:
+                  - text: Ashraf
+                  - generic [ref=f58e241]: · messaged
+                  - generic [ref=f58e242]: Hello
+                - generic [ref=f58e243]: 26d
+              - generic [ref=f58e244]:
+                - generic [ref=f58e245]: A
+                - generic [ref=f58e246]:
+                  - text: Ashraf
+                  - generic [ref=f58e247]: · messaged
+                  - generic [ref=f58e248]: Ahlan
+                - generic [ref=f58e249]: 67d
+              - generic [ref=f58e250]:
+                - generic [ref=f58e251]: A
+                - generic [ref=f58e252]:
+                  - text: Ashraf
+                  - generic [ref=f58e253]: · messaged
+                  - generic [ref=f58e254]: Hi
+                - generic [ref=f58e255]: 67d
+              - generic [ref=f58e256]:
+                - generic [ref=f58e257]: AJ
+                - generic [ref=f58e258]:
+                  - text: Ashraf Jibreel
+                  - generic [ref=f58e259]: · messaged
+                  - generic [ref=f58e260]: اهلا
+                - generic [ref=f58e261]: 67d
+              - generic [ref=f58e262]:
+                - generic [ref=f58e263]: AJ
+                - generic [ref=f58e264]:
+                  - text: Ashraf Jibreel
+                  - generic [ref=f58e265]: · messaged
+                  - generic [ref=f58e266]: شو
+                - generic [ref=f58e267]: 67d
+              - generic [ref=f58e268]:
+                - generic [ref=f58e269]: AJ
+                - generic [ref=f58e270]:
+                  - text: Ashraf Jibreel
+                  - generic [ref=f58e271]: · messaged
+                  - generic [ref=f58e272]: الحمدالله
+                - generic [ref=f58e273]: 67d
+              - generic [ref=f58e274]:
+                - generic [ref=f58e275]: AJ
+                - generic [ref=f58e276]:
+                  - text: Ashraf Jibreel
+                  - generic [ref=f58e277]: · messaged
+                  - generic [ref=f58e278]: مرحبا
+                - generic [ref=f58e279]: 67d
+              - generic [ref=f58e280]:
+                - generic [ref=f58e281]: AJ
+                - generic [ref=f58e282]:
+                  - text: Ashraf Jibreel
+                  - generic [ref=f58e283]: · messaged
+                  - generic [ref=f58e284]: هلا حبيبي
+                - generic [ref=f58e285]: 69d
+              - generic [ref=f58e286]:
+                - generic [ref=f58e287]: A
+                - generic [ref=f58e288]:
+                  - text: ashrafjib
+                  - generic [ref=f58e289]: · replied to
+                  - generic [ref=f58e290]: Hi
+                - generic [ref=f58e291]: 71d
+              - generic [ref=f58e292]:
+                - generic [ref=f58e293]: A
+                - generic [ref=f58e294]:
+                  - text: ashrafjib
+                  - generic [ref=f58e295]: · replied to
+                  - generic [ref=f58e296]: Hi
+                - generic [ref=f58e297]: 71d
+          - generic [ref=f58e298]:
+            - generic [ref=f58e299]:
+              - heading "Top intents" [level=3] [ref=f58e300]
+              - generic [ref=f58e301]: all conversations
+            - generic [ref=f58e304]:
+              - generic [ref=f58e305]: ai-reply
+              - generic [ref=f58e306]: 1 · 100%
+          - generic [ref=f58e309]:
+            - generic [ref=f58e310]:
+              - heading "Pipeline performance" [level=3] [ref=f58e311]
+              - generic [ref=f58e312]: all time
+            - generic [ref=f58e313]:
+              - generic [ref=f58e314]: 10000%
+              - generic [ref=f58e315]: 1 won · 0 lost
+              - generic "Won · 1" [ref=f58e317]
+              - generic [ref=f58e318]:
+                - generic [ref=f58e319]:
+                  - generic [ref=f58e320]: Avg close
+                  - generic [ref=f58e321]: 0h
+                - generic [ref=f58e322]:
+                  - generic [ref=f58e323]: Open
+                  - generic [ref=f58e324]: SAR 0
+              - button "Open pipeline" [ref=f58e325] [cursor=pointer]
+          - generic [ref=f58e328]:
+            - generic [ref=f58e329]:
+              - heading "Active campaigns" [level=3] [ref=f58e330]
+              - button "All" [ref=f58e331] [cursor=pointer]
+            - generic [ref=f58e334]:
+              - generic [ref=f58e335]:
+                - generic [ref=f58e336]:
+                  - generic [ref=f58e337]: Eid Pre-orders 2026
+                  - generic [ref=f58e338]: running
+                - generic [ref=f58e340]: 1,842 · 73% read · 487 replies
+              - generic [ref=f58e344]:
+                - generic [ref=f58e345]:
+                  - generic [ref=f58e346]: Clinic reminders
+                  - generic [ref=f58e347]: running
+                - generic [ref=f58e349]: 156 · 91% read · 38 replies
+              - generic [ref=f58e353]:
+                - generic [ref=f58e354]:
+                  - generic [ref=f58e355]: Abandoned cart recovery
+                  - generic [ref=f58e356]: running
+                - generic [ref=f58e358]: 412 · 76% read · 81 replies
+          - generic [ref=f58e362]:
+            - generic [ref=f58e364]:
+              - heading "Messages by channel" [level=3] [ref=f58e365]
+              - generic [ref=f58e366]: Inbound volume across platforms
+            - generic [ref=f58e367]:
+              - generic [ref=f58e368]: "3"
+              - generic [ref=f58e369]: Total messages
+              - generic [ref=f58e370]:
+                - generic "WhatsApp · 1" [ref=f58e371]
+                - generic "Instagram · 1" [ref=f58e372]
+                - generic "Facebook · 1" [ref=f58e373]
+              - generic [ref=f58e374]:
+                - generic [ref=f58e375]:
+                  - generic [ref=f58e377]: WhatsApp
+                  - generic [ref=f58e378]: "1"
+                  - generic [ref=f58e379]: 33.3%
+                - generic [ref=f58e380]:
+                  - generic [ref=f58e382]: Instagram
+                  - generic [ref=f58e383]: "1"
+                  - generic [ref=f58e384]: 33.3%
+                - generic [ref=f58e385]:
+                  - generic [ref=f58e387]: Facebook
+                  - generic [ref=f58e388]: "1"
+                  - generic [ref=f58e389]: 33.3%
+                - generic [ref=f58e390]:
+                  - generic [ref=f58e392]: TikTok
+                  - generic [ref=f58e393]: "0"
+                  - generic [ref=f58e394]: 0.0%
+                - generic [ref=f58e395]:
+                  - generic [ref=f58e397]: Web chat
+                  - generic [ref=f58e398]: "0"
+                  - generic [ref=f58e399]: 0.0%

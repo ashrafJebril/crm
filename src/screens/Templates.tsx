@@ -39,7 +39,7 @@ const CATEGORY_FILTERS: CategoryFilter[] = [
 const CATEGORY_BADGE: Record<TemplateCategory, BadgeKind> = {
   TRANSACTIONAL: "info",
   UTILITY: "",
-  MARKETING: "ai",
+  MARKETING: "accent",
   AUTHENTICATION: "warn",
 };
 

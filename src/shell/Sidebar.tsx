@@ -121,7 +121,6 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
                 const badge = liveBadge ?? n.badge;
                 return badge ? <span className="badge-count">{badge}</span> : null;
               })()}
-              {n.ai && !n.badge && n.id !== "inbox" && <span className="ai-pip" />}
             </button>
           );
         })}

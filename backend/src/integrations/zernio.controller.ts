@@ -20,6 +20,12 @@ class ZernioSendDto {
   @IsString() message!: string;
 }
 
+/** Reply into one of our own DB conversations — the accountId is resolved
+ *  server-side from the conversation's channel, so the client needn't know it. */
+class ZernioDbSendDto {
+  @IsString() message!: string;
+}
+
 @Controller()
 export class ZernioController {
   constructor(private readonly zernio: ZernioService) {}
@@ -66,8 +72,12 @@ export class ZernioController {
   }
 
   @Get("integrations/zernio/conversations/:id/messages")
-  messages(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.zernio.getMessages(workspaceId, id);
+  messages(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Query("accountId") accountId?: string,
+  ) {
+    return this.zernio.getMessages(workspaceId, id, accountId);
   }
 
   @Post("integrations/zernio/conversations/:id/send")
@@ -77,6 +87,15 @@ export class ZernioController {
     @Body() dto: ZernioSendDto,
   ) {
     return this.zernio.sendInConversation(workspaceId, id, dto.accountId, dto.message);
+  }
+
+  @Post("integrations/zernio/db-conversations/:id/send")
+  sendInDbConversation(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: ZernioDbSendDto,
+  ) {
+    return this.zernio.sendInDbConversation(workspaceId, id, dto.message);
   }
 
   @Delete("integrations/zernio/:platform")

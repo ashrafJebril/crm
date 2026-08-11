@@ -159,19 +159,6 @@ export interface SocialPost {
   comments: SocialComment[];
 }
 
-export interface Agent {
-  id: string;
-  name: string;
-  role: string;
-  color: string;
-  emoji: string;
-  status: "live" | "draft" | "paused";
-  convs: number;
-  csat: number;
-  model: string;
-  lang: Lang[];
-}
-
 export interface TeamMember {
   id: string;
   name: string;
@@ -196,10 +183,9 @@ export interface Contact {
 export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
 
 export interface Message {
-  from: "them" | "ai" | "human";
+  from: "them" | "human";
   t: string;
   body: string;
-  agent?: string;
   attach?: string;
   metaMessageId?: string | null;
   deliveryStatus?: DeliveryStatus | null;
@@ -209,20 +195,17 @@ export interface Message {
 export interface Conversation {
   id: string;
   contactId: string;
-  agent: string;
   unread: number;
   pinned: boolean;
   lastAt: string;
-  lastFrom: "them" | "ai" | "human";
+  lastFrom: "them" | "human";
   preview: string;
   channel: ConvChannel;
-  status: "ai" | "human" | "closed" | "spam";
+  status: "human" | "closed" | "spam";
   intent: string;
   confidence: number;
   escalated?: boolean;
-  aiPaused?: boolean;
   messages?: Message[];
-  suggested?: string;
   // WhatsApp-only: backend populates these when channel === "whatsapp".
   lastInboundAt?: string | null;
   waWindowOpen?: boolean;
@@ -238,14 +221,13 @@ export type AppointmentStatus =
 export interface Appointment {
   id: string;
   contactId: string;
-  agentId?: string;
   staffId?: string;
   service: string;
   serviceAr: string;
   startAt: string;          // ISO 8601
   durationMin: number;
   status: AppointmentStatus;
-  source: "ai" | "human" | "self-booking";
+  source: "human" | "self-booking";
   note?: string;
   noteAr?: string;
   reminderSent?: boolean;

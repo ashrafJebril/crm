@@ -1,0 +1,147 @@
+- generic [ref=e25]:
+  - complementary [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e28]: A
+      - generic [ref=e29]:
+        - generic [ref=e30]: Aram.
+        - generic [ref=e31]: v2.4 · MENA
+      - button "Search" [ref=e32] [cursor=pointer]
+    - generic "Switch workspace" [ref=e36] [cursor=pointer]:
+      - generic [ref=e38]:
+        - generic [ref=e39]: Default Workspace
+        - generic [ref=e40]: free · owner
+    - navigation [ref=e44]:
+      - generic [ref=e45]: Workspace
+      - button "Dashboard" [ref=e46] [cursor=pointer]
+      - button "Inbox" [ref=e51] [cursor=pointer]
+      - button "Calendar" [ref=e57] [cursor=pointer]
+      - button "Social" [ref=e63] [cursor=pointer]
+      - button "Campaigns" [ref=e69] [cursor=pointer]
+      - button "Pipeline" [ref=e76] [cursor=pointer]
+      - button "Contacts" [ref=e83] [cursor=pointer]
+      - button "Analytics" [ref=e91] [cursor=pointer]
+      - generic [ref=e97]: Manage
+      - button "Templates" [ref=e98] [cursor=pointer]
+      - button "Media" [ref=e103] [cursor=pointer]
+      - button "Team" [ref=e108] [cursor=pointer]
+      - button "Settings" [ref=e114] [cursor=pointer]
+      - generic [ref=e120]: Aram ops
+      - button "Admin portal" [ref=e121] [cursor=pointer]
+    - generic [ref=e126]:
+      - generic [ref=e127]: YK
+      - generic [ref=e128]:
+        - generic [ref=e129]: Yara Khaled
+        - generic [ref=e130]: owner · Default Workspace
+      - button "Notifications" [ref=e131] [cursor=pointer]
+  - main [ref=e135]:
+    - generic [ref=e136]:
+      - generic [ref=e137]:
+        - generic [ref=e138]: Samemha
+        - generic [ref=e139]: /
+        - generic [ref=e140]: Dashboard
+      - generic [ref=e141] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=e145]
+        - generic [ref=e146]: ⌘K
+      - button "ع" [ref=e147] [cursor=pointer]
+      - button "Toggle theme" [ref=e149] [cursor=pointer]
+      - button "Notifications" [ref=e153] [cursor=pointer]
+      - button "Create" [ref=e157] [cursor=pointer]
+      - button "Default Workspace" [ref=e161] [cursor=pointer]
+      - generic [ref=e165]:
+        - generic [ref=e166]: YK
+        - generic [ref=e167]:
+          - generic [ref=e168]: Yara Khaled
+          - generic [ref=e169]: Owner
+        - button "Sign out" [ref=e170] [cursor=pointer]
+    - generic [ref=e175]:
+      - generic [ref=e177]:
+        - generic [ref=e178]:
+          - heading "Welcome back, Yara" [level=1] [ref=e179]
+          - paragraph [ref=e180]: Here's how Samemha's WhatsApp ran today
+        - generic [ref=e181]:
+          - button "Last 7 days" [ref=e182] [cursor=pointer]
+          - button "New campaign" [ref=e188] [cursor=pointer]
+      - generic [ref=e191]:
+        - generic [ref=e192]:
+          - generic [ref=e193]:
+            - generic [ref=e194]: Conversations
+            - generic [ref=e200]: "0"
+            - generic [ref=e201]: vs prev 7d
+          - generic [ref=e204]:
+            - generic [ref=e205]: AI resolution
+            - generic [ref=e211]:
+              - text: "0"
+              - generic [ref=e212]: "%"
+            - generic [ref=e213]: Conversations handled by AI
+          - generic [ref=e216]:
+            - generic [ref=e217]: Unread
+            - generic [ref=e223]: "0"
+            - generic [ref=e224]: Across all channels
+          - generic [ref=e227]:
+            - generic [ref=e228]: Pipeline value
+            - generic [ref=e234]: "0"
+            - generic [ref=e235]: Open tickets
+        - generic [ref=e240]:
+          - generic [ref=e241]:
+            - heading "Conversations · last 7 days" [level=3] [ref=e242]
+            - generic [ref=e243]: AI handled vs human-assisted
+          - generic [ref=e244]:
+            - generic [ref=e245]: AI
+            - generic [ref=e247]: Human
+        - generic [ref=e251]:
+          - generic [ref=e252]:
+            - generic [ref=e253]:
+              - heading "Live activity" [level=3] [ref=e254]
+              - generic [ref=e255]: streaming
+            - generic [ref=e257]: No recent activity yet.
+          - generic [ref=e259]:
+            - generic [ref=e260]:
+              - heading "Top intents" [level=3] [ref=e261]
+              - generic [ref=e262]: all conversations
+            - generic [ref=e263]: No intents tagged yet.
+          - generic [ref=e265]:
+            - generic [ref=e266]:
+              - heading "Pipeline performance" [level=3] [ref=e267]
+              - generic [ref=e268]: all time
+            - generic [ref=e269]:
+              - generic [ref=e270]: 0%
+              - generic [ref=e271]: 0 won · 0 lost
+              - generic [ref=e273]:
+                - generic [ref=e274]:
+                  - generic [ref=e275]: Avg close
+                  - generic [ref=e276]: 0h
+                - generic [ref=e277]:
+                  - generic [ref=e278]: Open
+                  - generic [ref=e279]: —
+              - button "Open pipeline" [ref=e280] [cursor=pointer]
+          - generic [ref=e284]:
+            - heading "Active campaigns" [level=3] [ref=e285]
+            - button "All" [ref=e286] [cursor=pointer]
+          - generic [ref=e290]:
+            - generic [ref=e292]:
+              - heading "Messages by channel" [level=3] [ref=e293]
+              - generic [ref=e294]: Inbound volume across platforms
+            - generic [ref=e295]:
+              - generic [ref=e296]: "0"
+              - generic [ref=e297]: Total messages
+              - generic [ref=e299]:
+                - generic [ref=e300]:
+                  - generic [ref=e302]: WhatsApp
+                  - generic [ref=e303]: "0"
+                  - generic [ref=e304]: 0.0%
+                - generic [ref=e305]:
+                  - generic [ref=e307]: Instagram
+                  - generic [ref=e308]: "0"
+                  - generic [ref=e309]: 0.0%
+                - generic [ref=e310]:
+                  - generic [ref=e312]: Facebook
+                  - generic [ref=e313]: "0"
+                  - generic [ref=e314]: 0.0%
+                - generic [ref=e315]:
+                  - generic [ref=e317]: TikTok
+                  - generic [ref=e318]: "0"
+                  - generic [ref=e319]: 0.0%
+                - generic [ref=e320]:
+                  - generic [ref=e322]: Web chat
+                  - generic [ref=e323]: "0"
+                  - generic [ref=e324]: 0.0%

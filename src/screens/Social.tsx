@@ -5,7 +5,6 @@ import { useAuth } from "@/auth/context";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
 import { Modal } from "@/components/Modal";
-import { Badge } from "@/components/Badge";
 import { PhotoSlot } from "@/components/PhotoSlot";
 import { CommentSkeleton, PostCardSkeleton } from "@/components/Skeleton";
 import {
@@ -1025,11 +1024,6 @@ function SocialImpl() {
                   )}
                   <span className="mono muted" style={{ fontSize: 11 }}>
                     {selected.authorHandle} · {selected.postedAt}
-                  </span>
-                  <span style={{ marginInlineStart: "auto", display: "flex", gap: 6 }}>
-                    <Badge kind="ai" dot>
-                      {tx("AI moderating", "ذكاء يشرف")}
-                    </Badge>
                   </span>
                 </div>
                 <div

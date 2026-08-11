@@ -88,13 +88,46 @@ export class ZernioClient {
     return res.data ?? [];
   }
 
-  async getMessages(conversationId: string): Promise<ZernioMessage[]> {
+  /** Zernio requires `accountId` on this endpoint — without it the call 400s
+   *  with "accountId query parameter is required" and the thread reads empty. */
+  async getMessages(conversationId: string, accountId: string): Promise<ZernioMessage[]> {
     const res = await this.request<{ data?: ZernioMessage[]; messages?: ZernioMessage[] }>(
       "GET",
       `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
-      {},
+      { query: { accountId } },
     );
     return res.data ?? res.messages ?? [];
+  }
+
+  /**
+   * Fetch an inbound attachment. Zernio hands us an absolute media URL on the
+   * webhook payload, but it's behind the same bearer auth as the rest of the
+   * API — a browser can't load it directly, so we pull the bytes server-side
+   * and re-host them through our own /media route.
+   */
+  async downloadMedia(url: string): Promise<{ buffer: Buffer; mimeType: string }> {
+    const key = this.requireKey();
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (e) {
+      const timedOut = (e as Error).name === "TimeoutError";
+      throw new HttpException(
+        timedOut ? "Zernio media download timed out" : "Zernio media unreachable",
+        timedOut ? 504 : 502,
+      );
+    }
+    if (!res.ok) {
+      this.log.warn(`Zernio media GET ${redactUrl(url)} -> ${res.status}`);
+      throw new HttpException(`Zernio media download failed (${res.status})`, 502);
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || "";
+    return { buffer, mimeType };
   }
 
   async sendMessage(

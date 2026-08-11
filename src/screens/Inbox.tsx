@@ -10,25 +10,19 @@ import {
   IconAttach,
   IconBook,
   IconCheck,
-  IconChevDown,
   IconFilter,
-  IconHand,
   IconMore,
-  IconPause,
   IconPhone,
   IconSend,
-  IconSparkles,
   IconTemplate,
   IconX,
 } from "@/icons";
-import { AGENTS, findAgent } from "@/data/agents";
 import { API_BASE, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
 import {
   CHANNEL_LABEL,
-  type Agent,
   type Contact,
   type ConvChannel,
   type Conversation,
@@ -45,7 +39,7 @@ import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
 
-type FilterId = "all" | "ai" | "human" | "unread" | "closed" | "spam";
+type FilterId = "all" | "human" | "unread" | "closed" | "spam";
 type ConversationDetail = Conversation & { messages: Message[] };
 
 const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat"];
@@ -213,7 +207,7 @@ interface FilterDef {
   id: FilterId;
   label: string;
   count: number;
-  kind?: "ai" | "human";
+  kind?: "human";
 }
 
 interface InboxListProps {
@@ -244,7 +238,6 @@ interface ConversationPaneProps {
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
-  onToggleAiPaused: (paused: boolean) => Promise<void>;
   messagesLoading: boolean;
   lang: Lang;
   tx: Tx;
@@ -270,12 +263,12 @@ const TAG_PRESETS: TagPreset[] = [
   { id: "New",       ar: "جديد",        kind: "info"   },
   { id: "Hot",       ar: "حار",          kind: "bad"    },
   { id: "Repeat",    ar: "عميل دائم",    kind: "ok"     },
-  { id: "Bulk",      ar: "بالجملة",      kind: "ai"     },
+  { id: "Bulk",      ar: "بالجملة",      kind: "accent" },
   { id: "B2B",       ar: "شركات",        kind: "human"  },
   { id: "Wholesale", ar: "موزّع",        kind: ""       },
   { id: "Designer",  ar: "بتصميمه",      kind: ""       },
   { id: "At-risk",   ar: "في خطر",       kind: "warn"   },
-  { id: "Promoter",  ar: "مروّج",        kind: "ai"     },
+  { id: "Promoter",  ar: "مروّج",        kind: "accent" },
 ];
 
 function tagKindFor(tag: string): BadgeKind {
@@ -483,7 +476,7 @@ const STAGE_BADGE_KIND: Record<StageColor, BadgeKind> = {
   ok: "ok",
   warn: "warn",
   bad: "bad",
-  accent: "ai",
+  accent: "accent",
   human: "human",
 };
 
@@ -846,7 +839,6 @@ function ContactTickets({ contactId, tx }: ContactTicketsProps) {
 
 interface BubbleProps {
   m: Message;
-  agent: Agent | undefined;
 }
 
 function InboxList({
@@ -868,15 +860,14 @@ function InboxList({
   // Previously this ran six full allConvs.filter() scans on every render — and
   // InboxList re-renders on every 30s poll and realtime bump.
   const counts = useMemo(() => {
-    let ai = 0, human = 0, unread = 0, closed = 0, spam = 0;
+    let human = 0, unread = 0, closed = 0, spam = 0;
     for (const c of allConvs) {
-      if (c.status === "ai") ai++;
-      else if (c.status === "human") human++;
+      if (c.status === "human") human++;
       else if (c.status === "closed") closed++;
       else if (c.status === "spam") spam++;
       if (c.unread > 0) unread++;
     }
-    return { all: allConvs.length, ai, human, unread, closed, spam };
+    return { all: allConvs.length, human, unread, closed, spam };
   }, [allConvs]);
 
   // During the unified initial load the skeleton stands in for the rows —
@@ -885,7 +876,6 @@ function InboxList({
 
   const filters: FilterDef[] = [
     { id: "all", label: tx("All", "الكل"), count: counts.all },
-    { id: "ai", label: tx("AI handled", "ذكاء"), count: counts.ai, kind: "ai" },
     { id: "human", label: tx("Assigned", "معيّنة"), count: counts.human, kind: "human" },
     { id: "unread", label: tx("Unread", "غير مقروءة"), count: counts.unread },
     { id: "closed", label: tx("Closed", "مغلقة"), count: counts.closed },
@@ -984,7 +974,6 @@ function InboxList({
         )}
         {visibleConvs.map((c) => {
           const contact = contactById.get(c.contactId);
-          const agent = findAgent(c.agent);
           return (
             <div
               key={c.id}
@@ -1039,16 +1028,10 @@ function InboxList({
                     marginTop: 2,
                   }}
                 >
-                  {c.lastFrom === "ai" && <span style={{ color: "var(--accent)" }}>↳ </span>}
                   {c.lastFrom === "human" && <span style={{ color: "var(--human)" }}>↳ </span>}
                   {c.preview}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-                  {c.status === "ai" && agent && (
-                    <Badge kind="ai" dot>
-                      {agent.name}
-                    </Badge>
-                  )}
                   {c.status === "human" && (
                     <Badge kind="human" dot>
                       Human
@@ -1120,9 +1103,8 @@ function InboxList({
   );
 }
 
-function Bubble({ m, agent }: BubbleProps) {
-  const isOut = m.from === "ai" || m.from === "human";
-  const isAI = m.from === "ai";
+function Bubble({ m }: BubbleProps) {
+  const isOut = m.from === "human";
   const { user } = useAuth();
   const humanName = user?.name ?? "You";
   const humanColor = user?.color ?? "150";
@@ -1140,21 +1122,9 @@ function Bubble({ m, agent }: BubbleProps) {
               justifyContent: "flex-end",
             }}
           >
-            {isAI ? (
-              <>
-                {agent && <Avatar agent={agent} ai size="sm" />}
-                <span style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500 }}>
-                  {agent?.name}
-                </span>
-                <Badge kind="ai">AI</Badge>
-              </>
-            ) : (
-              <>
-                <Avatar name={humanName} color={humanColor} size="sm" />
-                <span style={{ fontSize: 11, fontWeight: 500 }}>{humanName}</span>
-                <Badge kind="human">Human</Badge>
-              </>
-            )}
+            <Avatar name={humanName} color={humanColor} size="sm" />
+            <span style={{ fontSize: 11, fontWeight: 500 }}>{humanName}</span>
+            <Badge kind="human">Human</Badge>
           </div>
         )}
         <div
@@ -1197,13 +1167,11 @@ function ConversationPane({
   sending,
   sendError,
   onConvertToTicket,
-  onToggleAiPaused,
   messagesLoading,
   lang,
   tx,
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
-  const agent = findAgent(conv.agent);
   const { user } = useAuth();
   const [draft, setDraft] = useState<string>("");
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
@@ -1225,21 +1193,11 @@ function ConversationPane({
   const wasAtBottomRef = useRef<boolean>(true);
   const prevConvIdRef = useRef<string | null>(null);
 
-  const messages: Message[] =
-    conv.messages.length > 0
-      ? conv.messages
-      : messagesLoading
-      ? []
-      : [
-          { from: "them", t: "10:42", body: conv.preview },
-          {
-            from: "ai",
-            t: "10:43",
-            body: tx("On it — let me check the latest for you.", "حسنًا، دعيني أتحقق."),
-            agent: conv.agent,
-          },
-          { from: "them", t: "10:44", body: tx("Thanks!", "شكراً!") },
-        ];
+  // Only ever render real messages. This used to fall back to a fabricated
+  // three-message thread (customer line, an "ai" reply, then "Thanks!") when
+  // the real ones came back empty — demo scaffolding that rendered on top of
+  // live customer conversations and read as though the AI had answered them.
+  const messages: Message[] = conv.messages;
 
   const handleSend = () => {
     const body = draft.trim();
@@ -1350,47 +1308,10 @@ function ConversationPane({
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          {agent && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "4px 10px 4px 4px",
-                border: "1px solid var(--accent-ring)",
-                background: "var(--accent-soft)",
-                borderRadius: 999,
-              }}
-            >
-              <Avatar agent={agent} ai size="sm" />
-              <span style={{ fontSize: 12, color: "var(--accent)", fontWeight: 500 }}>
-                {agent.name} {tx("is replying", "يردّ")}
-              </span>
-            </div>
-          )}
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
           </button>
-          {conv.aiPaused ? (
-            <button
-              className="btn primary"
-              onClick={() => onToggleAiPaused(false)}
-              title={tx("Resume AI auto-reply", "استئناف الرد التلقائي")}
-            >
-              <IconSparkles w={13} />
-              {tx("Resume AI", "استئناف الذكاء")}
-            </button>
-          ) : (
-            <button
-              className="btn"
-              onClick={() => onToggleAiPaused(true)}
-              title={tx("Pause AI and handle this thread yourself", "أوقف الذكاء وتولَّ هذه المحادثة")}
-            >
-              <IconHand w={14} />
-              {tx("Take over", "تولّى")}
-            </button>
-          )}
           <ConversationTicketsPill
             conversationId={conv.id}
             lang={lang}
@@ -1410,42 +1331,6 @@ function ConversationPane({
           </button>
         </div>
       </div>
-
-      {conv.status === "ai" && agent && (
-        <div
-          style={{
-            padding: "8px 18px",
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-            borderBottom: "1px solid var(--line-soft)",
-            fontSize: 12,
-            color: "var(--ink-2)",
-            background: "var(--bg-1)",
-          }}
-        >
-          <IconSparkles w={14} stroke={1.5} />
-          <span>
-            <strong style={{ color: "var(--accent)" }}>{agent.name}</strong>{" "}
-            {tx("is handling this conversation", "تتولى هذه المحادثة")}.
-          </span>
-          <span className="muted" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-            {tx("intent", "نية")}: <span style={{ color: "var(--ink-1)" }}>{conv.intent}</span>
-          </span>
-          <span className="muted" style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-            {tx("confidence", "ثقة")}:{" "}
-            <span style={{ color: "var(--ok)" }}>
-              {Math.round((conv.confidence || 0.9) * 100)}%
-            </span>
-          </span>
-          <span style={{ marginInlineStart: "auto", display: "flex", gap: 6 }}>
-            <button className="btn sm ghost">
-              <IconPause w={11} />
-              {tx("Pause AI", "إيقاف الذكاء")}
-            </button>
-          </span>
-        </div>
-      )}
 
       <div
         ref={scrollerRef}
@@ -1482,9 +1367,16 @@ function ConversationPane({
             <MessageSkeleton side="right" />
             <MessageSkeleton side="left" />
           </div>
+        ) : messages.length === 0 ? (
+          <div
+            className="muted"
+            style={{ textAlign: "center", fontSize: 12, padding: "24px 0" }}
+          >
+            {tx("No messages in this thread yet.", "لا توجد رسائل في هذه المحادثة بعد.")}
+          </div>
         ) : (
           messages.map((m, i) => (
-            <Bubble key={`${conv.id}-${i}`} m={m} agent={agent} />
+            <Bubble key={`${conv.id}-${i}`} m={m} />
           ))
         )}
       </div>
@@ -1513,41 +1405,6 @@ function ConversationPane({
           />
         </div>
       </details>
-
-      {conv.suggested && (
-        <div
-          style={{
-            padding: "10px 18px",
-            borderTop: "1px solid var(--line-soft)",
-            background: "var(--bg-1)",
-            display: "flex",
-            gap: 12,
-            alignItems: "flex-start",
-          }}
-        >
-          <IconSparkles w={14} />
-          <div style={{ flex: 1, fontSize: 13 }}>
-            <div
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 10,
-                color: "var(--accent)",
-                marginBottom: 2,
-                textTransform: "uppercase",
-                letterSpacing: 0.06,
-              }}
-            >
-              {tx("AI suggestion", "اقتراح ذكي")}
-            </div>
-            <div style={{ color: "var(--ink-1)" }}>{conv.suggested}</div>
-          </div>
-          <button className="btn sm primary">
-            <IconCheck w={11} />
-            {tx("Use", "استخدم")}
-          </button>
-          <button className="btn sm ghost">{tx("Edit", "تعديل")}</button>
-        </div>
-      )}
 
       <div style={{ padding: 14, borderTop: "1px solid var(--line-soft)" }}>
         <div
@@ -1663,10 +1520,6 @@ function ConversationPane({
             </button>
             <button className="btn ghost icon sm">
               <IconTemplate w={14} />
-            </button>
-            <button className="btn ghost sm">
-              <IconSparkles w={12} />
-              {tx("Improve", "حسّن")}
             </button>
             <span
               className="muted mono"
@@ -1785,27 +1638,87 @@ function DeliveryTicks({ status }: { status?: string }) {
   );
 }
 
+/**
+ * Full-screen viewer for an attachment. Click the backdrop or press Escape to
+ * close; the image itself is click-through-safe so tapping it doesn't dismiss.
+ */
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    // Don't let the thread scroll behind the overlay.
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Attachment preview"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "oklch(0 0 0 / 0.82)",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 2147483646,
+        padding: 32,
+        cursor: "zoom-out",
+      }}
+    >
+      <img
+        src={src}
+        alt="attachment"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: "100%",
+          maxHeight: "100%",
+          objectFit: "contain",
+          borderRadius: 8,
+          cursor: "default",
+        }}
+      />
+      <button
+        type="button"
+        className="btn ghost icon"
+        onClick={onClose}
+        aria-label="Close"
+        style={{ position: "fixed", top: 16, insetInlineEnd: 16, color: "#fff" }}
+      >
+        <IconX w={18} />
+      </button>
+    </div>
+  );
+}
+
 function MessageAttachment({ value }: { value: string }) {
+  const [zoomed, setZoomed] = useState<boolean>(false);
   const isUrl = /^https?:\/\//i.test(value);
   if (isUrl) {
     return (
-      <a
-        href={value}
-        target="_blank"
-        rel="noreferrer"
-        style={{ display: "block", marginTop: 6 }}
-      >
+      <div style={{ marginTop: 6 }}>
         <img
           src={value}
           alt="attachment"
+          onClick={() => setZoomed(true)}
           style={{
             maxWidth: 260,
             maxHeight: 260,
             borderRadius: 8,
             display: "block",
+            cursor: "zoom-in",
           }}
         />
-      </a>
+        {zoomed && <Lightbox src={value} onClose={() => setZoomed(false)} />}
+      </div>
     );
   }
   // Treat as media id.
@@ -1832,6 +1745,7 @@ function InboxMediaImage({
   alt: string;
 }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [zoomed, setZoomed] = useState<boolean>(false);
   useEffect(() => {
     let cancelled = false;
     let objectUrl: string | null = null;
@@ -1869,16 +1783,21 @@ function InboxMediaImage({
     );
   }
   return (
-    <img
-      src={src}
-      alt={alt}
-      style={{
-        maxWidth: 260,
-        maxHeight: 260,
-        borderRadius: 8,
-        display: "block",
-      }}
-    />
+    <>
+      <img
+        src={src}
+        alt={alt}
+        onClick={() => setZoomed(true)}
+        style={{
+          maxWidth: 260,
+          maxHeight: 260,
+          borderRadius: 8,
+          display: "block",
+          cursor: "zoom-in",
+        }}
+      />
+      {zoomed && <Lightbox src={src} onClose={() => setZoomed(false)} />}
+    </>
   );
 }
 
@@ -2360,7 +2279,6 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
 
 function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactRightRailProps) {
   const contact = contactById.get(conv.contactId);
-  const agent = findAgent(conv.agent);
 
   const lifecycleStages: string[] = [
     tx("Lead", "عميل محتمل"),
@@ -2448,32 +2366,6 @@ function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactR
           ))}
         </div>
       </div>
-
-      {agent && (
-        <div>
-          <SectionLabel>{tx("AI assignment", "الوكيل المخصص")}</SectionLabel>
-          <div
-            style={{
-              marginTop: 8,
-              padding: 10,
-              borderRadius: 10,
-              border: "1px solid var(--line-soft)",
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-            }}
-          >
-            <Avatar agent={agent} ai size="lg" />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 500 }}>{agent.name}</div>
-              <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{agent.role}</div>
-            </div>
-            <button className="btn ghost sm">
-              <IconChevDown w={12} />
-            </button>
-          </div>
-        </div>
-      )}
 
       {contact && contact.industry !== "facebook-dm" && (
         <ContactTickets contactId={contact.id} tx={tx} />
@@ -2616,10 +2508,6 @@ function InboxImpl() {
     null,
   );
 
-  // Reference AGENTS so the import isn't unused (keeps the relationship between
-  // inbox conversations and seeded agent list explicit).
-  void AGENTS;
-
   // ─── Data ──────────────────────────────────────────────────────────────
   // Realtime push (socket.io) keeps the inbox in sync; the polls below are a
   // slow safety net for missed events (network blip, server restart).
@@ -2679,9 +2567,18 @@ function InboxImpl() {
     zernioConnected ? "/integrations/zernio/conversations" : null,
     { pollMs: 30000 },
   );
+  // Zernio's messages endpoint needs the owning accountId as well as the
+  // conversation id — the list already carries it, so pass it straight through
+  // rather than making the backend re-fetch the whole conversation list.
+  const activeZernioAccountId = isZernioConvId(activeId)
+    ? zernioConvsQ.data?.find((c) => c.id === stripZernioPrefix(activeId!))?.accountId
+    : undefined;
   const zernioMsgsQ = useFetch<ZernioMsg[]>(
     isZernioConvId(activeId)
-      ? `/integrations/zernio/conversations/${stripZernioPrefix(activeId!)}/messages`
+      ? `/integrations/zernio/conversations/${stripZernioPrefix(activeId!)}/messages` +
+        (activeZernioAccountId
+          ? `?accountId=${encodeURIComponent(activeZernioAccountId)}`
+          : "")
       : null,
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
@@ -2893,11 +2790,12 @@ function InboxImpl() {
     return () => window.clearTimeout(removeTimer);
   }, [ticketBanner]);
 
-  // Mark-as-read whenever the active conversation changes.  Skip for FB
-  // threads (no equivalent endpoint, and they aren't tracked in our DB).
+  // Mark-as-read whenever the active conversation changes. Skip every live
+  // thread (FB, IG, Zernio) — those have no DB row to mark, so the call just
+  // 404s.
   useEffect(() => {
     if (!activeId) return;
-    if (isFbConvId(activeId) || isIgConvId(activeId)) return;
+    if (isFbConvId(activeId) || isIgConvId(activeId) || isZernioConvId(activeId)) return;
     let cancelled = false;
     api
       .post<Conversation>(`/conversations/${activeId}/read`, {})
@@ -2925,9 +2823,6 @@ function InboxImpl() {
   const filtered = useMemo<Conversation[]>(() => {
     let list: Conversation[];
     switch (filter) {
-      case "ai":
-        list = conversations.filter((c) => c.status === "ai");
-        break;
       case "human":
         list = conversations.filter((c) => c.status === "human");
         break;
@@ -3002,6 +2897,18 @@ function InboxImpl() {
   >((input) =>
     api.post(`/integrations/zernio/conversations/${input.conversationId}/send`, {
       accountId: input.accountId,
+      message: input.body,
+    }),
+  );
+
+  // Reply into a DB-backed conversation whose transport is Zernio (WhatsApp,
+  // and FB/IG threads persisted by the inbound webhook). The backend resolves
+  // the Zernio conversation + accountId from the contact, so we only send text.
+  const sendZernioDbMessage = useMutation<
+    { conversationId: string; body: string },
+    { ok: true; id?: string | null }
+  >((input) =>
+    api.post(`/integrations/zernio/db-conversations/${input.conversationId}/send`, {
       message: input.body,
     }),
   );
@@ -3086,9 +2993,16 @@ function InboxImpl() {
       });
       return;
     }
-    // Route by channel for DB-stored conversations.
+    // Route by channel for DB-stored conversations. Channels Zernio owns go
+    // through Zernio — the legacy Meta services no longer hold a usable token
+    // for them, since Zernio's sync replaced those Integration rows.
     const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
-    if (conv?.channel === "instagram") {
+    const zernioOwnsChannel = (zernioStatusQ.data?.accounts ?? []).some(
+      (a) => a.platform === conv?.channel,
+    );
+    if (conv && zernioOwnsChannel) {
+      await sendZernioDbMessage.mutate({ conversationId: activeId, body });
+    } else if (conv?.channel === "instagram") {
       await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
     } else if (conv?.channel === "whatsapp") {
       await sendWaMessage.mutate({ conversationId: activeId, body, mediaId });
@@ -3315,6 +3229,7 @@ function InboxImpl() {
             sendIgMessage.loading ||
             sendIgLiveMessage.loading ||
             sendZernioMessage.loading ||
+            sendZernioDbMessage.loading ||
             sendWaMessage.loading ||
             sendWaTemplate.loading
           }
@@ -3324,20 +3239,11 @@ function InboxImpl() {
             sendIgMessage.error ??
             sendIgLiveMessage.error ??
             sendZernioMessage.error ??
+            sendZernioDbMessage.error ??
             sendWaMessage.error ??
             sendWaTemplate.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
-          onToggleAiPaused={async (paused) => {
-            if (!active) return;
-            if (paused) {
-              await api.post(`/conversations/${active.id}/ai/pause`);
-            } else {
-              await api.delete(`/conversations/${active.id}/ai/pause`);
-            }
-            activeQ.refetch();
-            convsQ.refetch();
-          }}
           messagesLoading={
             activeIsFb
               ? fbMsgsQ.loading

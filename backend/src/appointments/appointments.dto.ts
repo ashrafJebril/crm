@@ -10,7 +10,7 @@ import {
 } from "class-validator";
 
 const STATUSES = ["confirmed", "pending", "completed", "cancelled", "no-show"] as const;
-const SOURCES = ["ai", "human", "self-booking"] as const;
+const SOURCES = ["human", "self-booking"] as const;
 
 export class CreateAppointmentDto {
   @IsString() @IsNotEmpty() contactId!: string;
@@ -20,7 +20,6 @@ export class CreateAppointmentDto {
   @IsInt() @Min(1) durationMin!: number;
   @IsIn([...STATUSES]) status!: (typeof STATUSES)[number];
   @IsIn([...SOURCES]) source!: (typeof SOURCES)[number];
-  @IsOptional() @IsString() agentId?: string;
   @IsOptional() @IsString() staffId?: string;
   @IsOptional() @IsString() note?: string;
   @IsOptional() @IsString() noteAr?: string;
@@ -34,7 +33,6 @@ export class UpdateAppointmentDto {
   @IsOptional() @IsInt() @Min(1) durationMin?: number;
   @IsOptional() @IsIn([...STATUSES]) status?: (typeof STATUSES)[number];
   @IsOptional() @IsIn([...SOURCES]) source?: (typeof SOURCES)[number];
-  @IsOptional() @IsString() agentId?: string;
   @IsOptional() @IsString() staffId?: string;
   @IsOptional() @IsString() note?: string;
   @IsOptional() @IsString() noteAr?: string;
