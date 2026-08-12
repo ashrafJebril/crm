@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { IsString } from "class-validator";
+import { IsOptional, IsString } from "class-validator";
 import { ZernioService } from "./zernio.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
@@ -24,6 +24,11 @@ class ZernioSendDto {
  *  server-side from the conversation's channel, so the client needn't know it. */
 class ZernioDbSendDto {
   @IsString() message!: string;
+}
+
+class ZernioCommentReplyDto {
+  @IsString() message!: string;
+  @IsOptional() @IsString() accountId?: string;
 }
 
 @Controller()
@@ -61,6 +66,24 @@ export class ZernioController {
   @Get("integrations/zernio/comments")
   comments(@CurrentWorkspace() workspaceId: string, @Query("platform") platform?: string) {
     return this.zernio.listComments(workspaceId, platform);
+  }
+
+  @Post("integrations/zernio/comments/:id/reply")
+  replyToComment(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: ZernioCommentReplyDto,
+  ) {
+    return this.zernio.replyToComment(workspaceId, id, dto.message, dto.accountId);
+  }
+
+  @Delete("integrations/zernio/comments/:id")
+  deleteComment(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Query("accountId") accountId?: string,
+  ) {
+    return this.zernio.deleteComment(workspaceId, id, accountId);
   }
 
   @Get("integrations/zernio/conversations")

@@ -200,6 +200,27 @@ export class ZernioClient {
     return res.data ?? [];
   }
 
+  async replyToComment(
+    commentId: string,
+    message: string,
+    accountId?: string,
+  ): Promise<{ id: string | null }> {
+    const res = await this.request<{ id?: string; _id?: string; comment?: { _id?: string } }>(
+      "POST",
+      `/inbox/comments/${encodeURIComponent(commentId)}/reply`,
+      { body: { message, accountId } },
+    );
+    return { id: res.id ?? res._id ?? res.comment?._id ?? null };
+  }
+
+  async deleteComment(commentId: string, accountId?: string): Promise<void> {
+    await this.request<unknown>(
+      "DELETE",
+      `/inbox/comments/${encodeURIComponent(commentId)}`,
+      { query: { accountId } },
+    );
+  }
+
   // ─── WhatsApp ────────────────────────────────────────────────────────────
 
   async whatsappNumbers(profileId: string): Promise<ZernioWhatsAppNumbers> {

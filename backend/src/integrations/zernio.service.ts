@@ -219,7 +219,38 @@ export class ZernioService {
       body: c.content ?? c.text ?? "",
       likes: c.likeCount ?? 0,
       at: c.createdTime ?? c.createdAt ?? null,
+      accountId: c.accountId ?? null,
     }));
+  }
+
+  /** Guard: an accountId sent by the client must be one of this workspace's
+   *  own Zernio-connected accounts. */
+  private async assertOwnAccount(workspaceId: string, accountId?: string) {
+    if (!accountId) return;
+    const row = await this.prisma.integration.findFirst({
+      where: { workspaceId, provider: "zernio", pageId: accountId },
+    });
+    if (!row) throw new NotFoundException("Account not found in this workspace");
+  }
+
+  async replyToComment(
+    workspaceId: string,
+    commentId: string,
+    message: string,
+    accountId?: string,
+  ) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) throw new BadRequestException("Zernio is not connected");
+    await this.assertOwnAccount(workspaceId, accountId);
+    return this.client.replyToComment(commentId, message, accountId);
+  }
+
+  async deleteComment(workspaceId: string, commentId: string, accountId?: string) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) throw new BadRequestException("Zernio is not connected");
+    await this.assertOwnAccount(workspaceId, accountId);
+    await this.client.deleteComment(commentId, accountId);
+    return { ok: true as const };
   }
 
   // ─── Scheduled posts (created through Zernio) ─────────────────────────────
