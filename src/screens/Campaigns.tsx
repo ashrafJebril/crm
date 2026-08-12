@@ -9,7 +9,6 @@ import {
   IconMore,
   IconPhone,
   IconPlus,
-  IconTemplate,
 } from "@/icons";
 import type { Campaign, Segment, Template } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
@@ -628,9 +627,20 @@ function CampaignsImpl() {
   const tx = makeTx(t.lang);
   const [view, setView] = useState<View>("list");
   const [tab, setTab] = useState<TabId>("all");
+  const [query, setQuery] = useState("");
 
   const { data, loading, error, refetch } = useFetch<Campaign[]>("/campaigns");
   const campaigns: Campaign[] = data ?? [];
+  const totals = campaigns.reduce(
+    (a, c) => ({
+      sent: a.sent + c.sent,
+      delivered: a.delivered + c.delivered,
+      read: a.read + c.read,
+      replied: a.replied + c.replied,
+    }),
+    { sent: 0, delivered: 0, read: 0, replied: 0 },
+  );
+  const rate = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 1000) / 10}%` : "—");
 
   const createCampaign = useMutation<CreateCampaignBody, Campaign>((body) =>
     api.post<Campaign>("/campaigns", body),
@@ -695,7 +705,9 @@ function CampaignsImpl() {
       count: campaigns.filter((c) => c.status === "completed").length,
     },
   ];
-  const filtered = tab === "all" ? campaigns : campaigns.filter((c) => c.status === tab);
+  const filtered = (tab === "all" ? campaigns : campaigns.filter((c) => c.status === tab)).filter(
+    (c) => c.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
 
   if (view === "builder") {
     return (
@@ -718,10 +730,6 @@ function CampaignsImpl() {
         )}
         actions={
           <>
-            <button className="btn">
-              <IconTemplate w={13} />
-              {tx("Templates", "قوالب")}
-            </button>
             <button className="btn primary" onClick={() => setView("builder")}>
               <IconPlus w={13} />
               {tx("New campaign", "حملة جديدة")}
@@ -735,24 +743,24 @@ function CampaignsImpl() {
           style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}
         >
           <MiniStat
-            label={tx("Sent (30d)", "المرسلة (٣٠ي)")}
-            value="48,212"
-            sub="+8.4% vs last"
+            label={tx("Sent", "المرسلة")}
+            value={totals.sent.toLocaleString()}
+            sub={tx("across all campaigns", "عبر كل الحملات")}
+          />
+          <MiniStat
+            label={tx("Delivered rate", "معدل التسليم")}
+            value={rate(totals.delivered, totals.sent)}
+            sub={`${totals.delivered.toLocaleString()} ${tx("delivered", "مسلّمة")}`}
           />
           <MiniStat
             label={tx("Read rate", "معدل القراءة")}
-            value="73.2%"
-            sub="industry: 68%"
+            value={rate(totals.read, totals.delivered)}
+            sub={`${totals.read.toLocaleString()} ${tx("read", "مقروءة")}`}
           />
           <MiniStat
             label={tx("Reply rate", "معدل الرد")}
-            value="22.6%"
-            sub="2,184 replies"
-          />
-          <MiniStat
-            label={tx("Conversions", "التحويلات")}
-            value="1,142"
-            sub="SAR 92,400 attributed"
+            value={rate(totals.replied, totals.read)}
+            sub={`${totals.replied.toLocaleString()} ${tx("replies", "رد")}`}
           />
         </div>
 
@@ -797,6 +805,8 @@ function CampaignsImpl() {
           <span style={{ flex: 1 }} />
           <input
             placeholder={tx("Search campaigns…", "ابحث في الحملات…")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             style={{ ...INPUT_STYLE, width: 220 }}
           />
         </div>
