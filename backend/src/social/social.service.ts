@@ -13,7 +13,7 @@ export class SocialService {
   private readonly log = new Logger(SocialService.name);
   constructor(private readonly zernio: ZernioService) {}
 
-  async publishNow(
+  async publish(
     workspaceId: string,
     dto: PublishDto,
     publicBaseUrl: string,
@@ -27,7 +27,13 @@ export class SocialService {
     try {
       const r = await this.zernio.publish(
         workspaceId,
-        { content: dto.content, platforms: dto.channels, mediaIds: dto.mediaIds },
+        {
+          content: dto.content,
+          platforms: dto.channels,
+          mediaIds: dto.mediaIds,
+          scheduledFor: dto.scheduledFor,
+          timezone: dto.timezone,
+        },
         publicBaseUrl,
       );
       for (const ch of dto.channels) {
@@ -35,11 +41,19 @@ export class SocialService {
       }
     } catch (e) {
       const msg = (e as { message?: string }).message ?? String(e);
-      this.log.warn(`publishNow for ws=${workspaceId} failed: ${msg}`);
+      this.log.warn(`publish for ws=${workspaceId} failed: ${msg}`);
       for (const ch of dto.channels) {
         results[ch] = { ok: false, error: msg };
       }
     }
     return results;
+  }
+
+  listScheduled(workspaceId: string) {
+    return this.zernio.listScheduledPosts(workspaceId);
+  }
+
+  cancelScheduled(workspaceId: string, postId: string) {
+    return this.zernio.cancelScheduledPost(workspaceId, postId);
   }
 }

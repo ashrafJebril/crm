@@ -222,6 +222,37 @@ export class ZernioService {
     }));
   }
 
+  // ─── Scheduled posts (created through Zernio) ─────────────────────────────
+
+  async listScheduledPosts(workspaceId: string) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) return [];
+    const posts = await this.client.listCreatedPosts(profileId);
+    return posts
+      .filter((p) => (p.status ?? "").toLowerCase() === "scheduled")
+      .map((p) => ({
+        id: p._id ?? p.id ?? "",
+        content: p.content ?? p.caption ?? p.text ?? "",
+        platforms: Array.isArray(p.platforms)
+          ? p.platforms.map((pl) => (typeof pl === "string" ? pl : pl.platform ?? "")).filter(Boolean)
+          : p.platform
+            ? [p.platform]
+            : [],
+        mediaUrl: p.thumbnailUrl ?? p.mediaItems?.[0]?.url ?? p.mediaUrls?.[0] ?? null,
+        scheduledFor: p.scheduledFor ?? null,
+      }));
+  }
+
+  async cancelScheduledPost(workspaceId: string, postId: string) {
+    // Ownership check: the id must be in this workspace's own queue.
+    const mine = await this.listScheduledPosts(workspaceId);
+    if (!mine.some((p) => p.id === postId)) {
+      throw new NotFoundException("Scheduled post not found");
+    }
+    await this.client.cancelPost(postId);
+    return { ok: true as const };
+  }
+
   async disconnect(workspaceId: string, platform: string) {
     const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: platform.toLowerCase(), provider: "zernio" },
@@ -568,7 +599,13 @@ export class ZernioService {
 
   async publish(
     workspaceId: string,
-    input: { content: string; platforms: string[]; mediaIds?: string[] },
+    input: {
+      content: string;
+      platforms: string[];
+      mediaIds?: string[];
+      scheduledFor?: string;
+      timezone?: string;
+    },
     publicBaseUrl: string,
   ): Promise<{ id: string | null; status: string | null }> {
     const wanted = input.platforms.map((p) => p.toLowerCase());
@@ -594,7 +631,8 @@ export class ZernioService {
       content: input.content,
       platforms,
       mediaUrls: mediaUrls.length ? mediaUrls : undefined,
-      publishNow: true,
+      scheduledFor: input.scheduledFor,
+      timezone: input.timezone,
     });
   }
 

@@ -1,4 +1,4 @@
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsISO8601, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 const ALL_CHANNELS = ["facebook", "instagram", "tiktok"] as const;
 export type PublishChannel = (typeof ALL_CHANNELS)[number];
@@ -20,4 +20,14 @@ export class PublishDto {
   @ArrayMaxSize(ALL_CHANNELS.length)
   @IsIn(ALL_CHANNELS, { each: true })
   channels!: PublishChannel[];
+
+  /** ISO 8601 instant. Present = schedule instead of publish immediately. */
+  @IsOptional()
+  @IsISO8601()
+  scheduledFor?: string;
+
+  /** IANA timezone the user scheduled in (e.g. "Asia/Riyadh"). */
+  @IsOptional()
+  @IsString()
+  timezone?: string;
 }
