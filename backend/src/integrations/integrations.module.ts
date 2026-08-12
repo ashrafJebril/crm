@@ -5,8 +5,6 @@ import { InstagramController } from "./instagram.controller";
 import { InstagramService } from "./instagram.service";
 import { WhatsAppController } from "./whatsapp.controller";
 import { WhatsAppService } from "./whatsapp.service";
-import { KapsoController } from "./kapso.controller";
-import { KapsoService } from "./kapso.service";
 import { ZernioController } from "./zernio.controller";
 import { ZernioService } from "./zernio.service";
 import { ZernioClient } from "./zernio.client";
@@ -25,7 +23,6 @@ import { RealtimeModule } from "../realtime/realtime.module";
     FacebookController,
     InstagramController,
     WhatsAppController,
-    KapsoController,
     ZernioController,
     MetaWebhooksController,
     HjzWebhooksController,
@@ -34,12 +31,11 @@ import { RealtimeModule } from "../realtime/realtime.module";
     FacebookService,
     InstagramService,
     WhatsAppService,
-    KapsoService,
     ZernioService,
     ZernioClient,
     MetaWebhooksService,
     HjzWebhooksService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService, KapsoService, ZernioService],
+  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService],
 })
 export class IntegrationsModule {}

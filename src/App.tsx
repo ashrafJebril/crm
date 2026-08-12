@@ -5,7 +5,6 @@ import { Topbar } from "@/shell/Topbar";
 import { ScreenSlot } from "@/router";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ToastProvider } from "@/components/Toast";
-import { KapsoRedirectCapture } from "@/components/KapsoRedirectCapture";
 import { ZernioRedirectCapture } from "@/components/ZernioRedirectCapture";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
@@ -41,7 +40,6 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <KapsoRedirectCapture />
       <ZernioRedirectCapture />
       <div className="app" data-collapsed={t.collapsed}>
         <ImpersonationBanner />

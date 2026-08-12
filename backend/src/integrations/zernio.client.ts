@@ -271,7 +271,7 @@ export interface ZernioConversation {
 }
 
 export interface ZernioMessage {
-  id?: string;
+  id?: string;               // platform message id (Meta's), NOT Zernio's internal id
   _id?: string;
   direction?: string; // "incoming" | "outgoing"
   from?: string;
@@ -281,7 +281,15 @@ export interface ZernioMessage {
   content?: string;
   timestamp?: string | number;
   createdAt?: string;
+  sentAt?: string;
   senderName?: string;
+  deliveryStatus?: string;
+  isDeleted?: boolean;
+  attachments?: Array<{
+    type?: string;
+    url?: string;
+    payload?: { id?: string; mimeType?: string };
+  }>;
 }
 
 export interface ZernioPost {

@@ -437,3 +437,168 @@ input, textarea, select { font-family: inherit; }
 
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }
 .pulse { animation: pulse 1.5s infinite; }
+
+/* ─── Inbox v2 — "Samemha Inbox v2" design ──────────────────────────────────
+   The mock is a warm-paper light surface with a deep-green accent, Instrument
+   Sans body and Bricolage Grotesque display. Rather than restyling every
+   element, we remap the app's own token layer inside this scope so existing
+   components (buttons, badges, bubbles) adopt the palette automatically.
+   Base values are the DARK variant (the app's default theme); the light block
+   below carries the mock's actual palette. */
+.inbox-v2 {
+  /* dark-warm translation of the mock */
+  --bg:        #141311;
+  --bg-1:      #1a1917;
+  --bg-2:      #26241f;
+  --bg-3:      #201f1b;
+  --bg-elev:   #201f1b;
+  --line:      #2e2c27;
+  --line-soft: #2a2823;
+  --ink:   #f0efe9;
+  --ink-1: #d8d5cb;
+  --ink-2: #b0ac9f;
+  --ink-3: #8b887f;
+  --ink-4: #6f6d64;
+  --accent:      #2aa183;
+  --accent-ink:  #08110d;
+  --accent-soft: rgba(42, 161, 131, 0.16);
+  --accent-ring: rgba(42, 161, 131, 0.38);
+  --ix-green-strong: #35b997;
+  --bubble-out:      #1d7a63;
+  --bubble-out-line: rgba(42, 161, 131, 0.25);
+  --bubble-out-ink:  #eafaf3;
+  --bubble-in:       #23221d;
+  --bubble-in-line:  rgba(240, 239, 233, 0.06);
+  --ix-shadow:      0 1px 3px rgba(0, 0, 0, 0.35);
+  --ix-card-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  font-family: "Instrument Sans", "IBM Plex Sans Arabic", var(--font-sans);
+  background: var(--bg);
+  color: var(--ink);
+}
+[data-theme="light"] .inbox-v2 {
+  /* the mock's palette, verbatim */
+  --bg:        #f6f5f2;
+  --bg-1:      #fbfaf8;
+  --bg-2:      #ecebe6;
+  --bg-3:      #ffffff;
+  --bg-elev:   #ffffff;
+  --line:      #e8e6e0;
+  --line-soft: #e8e6e0;
+  --ink:   #1c1b19;
+  --ink-1: #3a3934;
+  --ink-2: #55534d;
+  --ink-3: #8b887f;
+  --ink-4: #a3a099;
+  --accent:      #0f7a63;
+  --accent-ink:  #ffffff;
+  --accent-soft: #e4f2ec;
+  --accent-ring: rgba(15, 122, 99, 0.3);
+  --ix-green-strong: #0a5c4a;
+  --bubble-out:      #0f7a63;
+  --bubble-out-line: rgba(15, 122, 99, 0.2);
+  --bubble-out-ink:  #ffffff;
+  --bubble-in:       #ffffff;
+  --bubble-in-line:  rgba(28, 27, 25, 0.05);
+  --ix-shadow:      0 1px 3px rgba(28, 27, 25, 0.07);
+  --ix-card-shadow: 0 2px 10px rgba(28, 27, 25, 0.08);
+}
+
+.inbox-v2 .ix-display {
+  font-family: "Bricolage Grotesque", "Instrument Sans", var(--font-sans);
+  letter-spacing: -0.01em;
+}
+.inbox-v2 .btn { border-radius: 10px; font-family: inherit; }
+.inbox-v2 .btn.primary:hover { background: var(--ix-green-strong); filter: none; }
+
+/* Search box */
+.ix-search {
+  width: 100%; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg-3); padding: 10px 13px; font-size: 13px;
+  font-family: inherit; color: var(--ink); outline: none;
+}
+.ix-search::placeholder { color: var(--ink-4); }
+.ix-search:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* Status filter pills — active goes solid ink, like the mock */
+.ix-pill {
+  cursor: pointer; border: 0; border-radius: 999px; padding: 6px 12px;
+  font-weight: 600; font-size: 11.5px; font-family: inherit;
+  background: var(--bg-2); color: var(--ink-2);
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.ix-pill:hover { color: var(--ink); }
+.ix-pill.active { background: var(--ink); color: var(--bg-1); }
+.ix-pill .ct { opacity: 0.65; font-weight: 500; }
+
+/* Channel pills — dot + label + count, outlined when active */
+.ix-ch {
+  cursor: pointer; border-radius: 999px; padding: 5px 11px;
+  font-weight: 600; font-size: 11px; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  background: transparent; border: 1px solid var(--line); color: var(--ink-3);
+}
+.ix-ch .dot { width: 7px; height: 7px; border-radius: 999px; }
+.ix-ch.active { background: var(--bg-3); border-color: var(--ink); color: var(--ink); }
+
+/* Conversation rows — rounded cards; active gets a white card + green bar */
+.ix-row {
+  display: flex; gap: 12px; align-items: center; cursor: pointer;
+  border-radius: 14px; padding: 12px; margin: 0 10px 2px;
+  border-bottom: 0;
+}
+.ix-row:hover { background: var(--bg-2); }
+.ix-row.active {
+  background: var(--bg-3);
+  box-shadow: var(--ix-card-shadow), inset 3px 0 0 var(--accent);
+}
+[dir="rtl"] .ix-row.active {
+  box-shadow: var(--ix-card-shadow), inset -3px 0 0 var(--accent);
+}
+.ix-row .ix-unread-dot {
+  width: 9px; height: 9px; border-radius: 999px; background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Thread header chips */
+.ix-chpill {
+  display: inline-flex; align-items: center; border-radius: 999px;
+  padding: 3px 10px; font-weight: 700; font-size: 10.5px; color: #ffffff;
+  text-transform: capitalize; letter-spacing: 0.01em;
+}
+.ix-online {
+  display: inline-flex; align-items: center; gap: 5px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent);
+  padding: 3px 10px; font-weight: 600; font-size: 11px;
+}
+.ix-online .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
+
+/* Day divider — centered uppercase pill, no rule lines (mock style) */
+.inbox-v2 .day-divider { justify-content: center; }
+.inbox-v2 .day-divider::before, .inbox-v2 .day-divider::after { display: none; }
+.inbox-v2 .day-divider span {
+  font-family: inherit; font-weight: 600; font-size: 10.5px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--ink-2); background: var(--bg-2);
+  border: 0; padding: 5px 14px;
+}
+
+/* Message bubbles */
+@keyframes ix-rise { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ix-msg { animation: ix-rise 0.2s ease-out; }
+
+/* Quick replies */
+.ix-quick {
+  cursor: pointer; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg-3); padding: 6px 13px; font-weight: 500; font-size: 12px;
+  font-family: inherit; color: var(--ink-2);
+}
+.ix-quick:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Composer card */
+.ix-composer {
+  border: 1px solid var(--line); border-radius: 18px; background: var(--bg-3);
+  box-shadow: 0 2px 8px rgba(28, 27, 25, 0.05); padding: 10px 12px;
+}
+
+/* Lifecycle segmented bar */
+.ix-stage-seg { flex: 1; height: 8px; border-radius: 8px; background: var(--bg-2); }
+.ix-stage-seg.on { background: var(--accent); }

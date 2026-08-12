@@ -45,7 +45,6 @@ const PLATFORMS: PlatformDef[] = [
     key: "whatsapp",
     label: "WhatsApp",
     color: "#25D366",
-    note: (tx) => tx("Optional — Kapso stays the default for WhatsApp.", "اختياري — يبقى Kapso الافتراضي لواتساب."),
   },
   {
     key: "snapchat",

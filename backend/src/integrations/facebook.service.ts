@@ -345,8 +345,8 @@ export class FacebookService {
   async selectPage(workspaceId: string, pageId: string) {
     const integ = await this.find(workspaceId);
     if (!integ) throw new NotFoundException("Facebook is not connected");
-    // Facebook integrations always store a token (provider is always Meta here);
-    // accessToken is only nullable for kapso-provider WhatsApp rows.
+    // Meta-provider Facebook integrations always store a token; accessToken is
+    // only nullable on zernio-provider rows (Zernio holds the credential).
     if (!integ.accessToken) throw new NotFoundException("Facebook token missing — reconnect");
     // Try to get the page's access_token from the stored user-level token.
     let pageToken = integ.accessToken;

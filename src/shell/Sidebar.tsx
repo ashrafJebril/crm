@@ -17,28 +17,17 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const { user, activeWorkspace } = useAuth();
   const isAr = t.lang === "ar";
 
-  // Live unread-count for the Inbox nav item. Polls so the badge stays fresh
-  // without the user opening the inbox first. Sums DB-backed conversations
-  // (IG/WA/web) and live FB Messenger threads when FB is connected.
+  // Live unread-count for the Inbox nav item. All channels are DB-backed now
+  // (the Zernio webhook persists FB/IG/WA inbound), so one cheap DB query
+  // covers the badge — the old per-15s live Zernio poll returned items with
+  // no `unread` field and always contributed zero anyway.
   const inboxQ = useFetch<Array<{ unread?: number }>>("/conversations", {
-    pollMs: 15000,
+    pollMs: 30000,
   });
-  // FB/IG DMs come through Zernio now — use the unified Zernio conversation
-  // list for the unread badge instead of the retired Meta endpoints.
-  const zStatusQ = useFetch<{ accounts?: unknown[] }>(
-    "/integrations/zernio/status",
-    { pollMs: 60000 },
+  const inboxUnread = useMemo(
+    () => (inboxQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0),
+    [inboxQ.data],
   );
-  const zConnected = (zStatusQ.data?.accounts?.length ?? 0) > 0;
-  const fbConvsQ = useFetch<Array<{ unread?: number }>>(
-    zConnected ? "/integrations/zernio/conversations" : null,
-    { pollMs: 15000 },
-  );
-  const inboxUnread = useMemo(() => {
-    const db = (inboxQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0);
-    const fb = (fbConvsQ.data ?? []).reduce((s, c) => s + (c.unread ?? 0), 0);
-    return db + fb;
-  }, [inboxQ.data, fbConvsQ.data]);
 
   // Filter out super-admin-only entries for normal users, then drop any
   // section header that ends up with no items beneath it.

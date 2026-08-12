@@ -93,6 +93,9 @@ model Conversation {
   intent     String
   confidence Float
   escalated  Boolean  @default(false)
+  // Provider-side conversation id (currently Zernio's). Lets replies address
+  // the provider conversation directly instead of re-listing every send.
+  externalId String?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -343,13 +346,13 @@ model TicketActivity {
 model Integration {
   id           String   @id @default(cuid())
   platform     String   // "facebook" | "instagram" | "tiktok" | "whatsapp" — one row per platform per workspace
-  // Transport for WhatsApp: "meta" = direct Cloud API (per-integration token),
-  // "kapso" = via Kapso BSP (auth is the global project API key, so accessToken
-  // is null). Ignored for FB/IG. Defaults to "meta" for existing rows.
+  // Transport: "meta" = our own Meta app (per-integration token), "zernio" =
+  // via the Zernio aggregator (auth is the global API key, so accessToken is
+  // null). Defaults to "meta" for legacy rows.
   provider     String   @default("meta")
   pageId       String?  // FB Page id / IG Business Account id / WhatsApp phone_number_id
   pageName     String?  // human-friendly identifier
-  accessToken  String?  // long-lived token (NOT the App Secret). Null for kapso-provider WhatsApp.
+  accessToken  String?  // long-lived token (NOT the App Secret). Null for zernio-provider rows.
   scopes       String?  // CSV of granted scopes
   expiresAt    DateTime?
   lastFetchedAt DateTime?
@@ -442,11 +445,6 @@ model Workspace {
   // modules enabled (backwards compatible). When set, route guards consult
   // this and 403 modules outside the list.
   enabledModules Json?
-
-  // Kapso BSP — the Kapso "customer" id this workspace maps to. Created the
-  // first time we generate a WhatsApp embedded-signup setup link for the
-  // workspace; reused on subsequent links. Null until then.
-  kapsoCustomerId String?
 
   // Zernio — the Zernio "profile" id this workspace maps to. A Zernio profile
   // groups a customer's connected social accounts; we create one per workspace

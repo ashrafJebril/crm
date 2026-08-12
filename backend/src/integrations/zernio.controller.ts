@@ -89,6 +89,12 @@ export class ZernioController {
     return this.zernio.sendInConversation(workspaceId, id, dto.accountId, dto.message);
   }
 
+  /** One-time import of Zernio conversation history into our DB (idempotent). */
+  @Post("integrations/zernio/backfill")
+  backfill(@CurrentWorkspace() workspaceId: string) {
+    return this.zernio.backfillHistory(workspaceId);
+  }
+
   @Post("integrations/zernio/db-conversations/:id/send")
   sendInDbConversation(
     @CurrentWorkspace() workspaceId: string,

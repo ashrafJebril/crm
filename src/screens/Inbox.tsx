@@ -44,6 +44,16 @@ type ConversationDetail = Conversation & { messages: Message[] };
 
 const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat"];
 
+/** Channel brand colors — used for the filter-pill dots and the solid channel
+ *  tag in the thread header (per the Samemha Inbox v2 mock). */
+const CHANNEL_DOT: Record<ConvChannel, string> = {
+  whatsapp: "#22b573",
+  instagram: "#d64d7a",
+  facebook: "#4267b2",
+  tiktok: "#7a7a7a",
+  webchat: "#5A8FD4",
+};
+
 /* ── Inline channel glyphs ───────────────────────────────────────────────── */
 
 interface GlyphProps {
@@ -872,7 +882,20 @@ function InboxList({
 
   // During the unified initial load the skeleton stands in for the rows —
   // rendering partial rows underneath would reintroduce per-channel pop-in.
-  const visibleConvs = loading ? [] : convs;
+  const [search, setSearch] = useState<string>("");
+  const q = search.trim().toLowerCase();
+  const visibleConvs = (loading ? [] : convs).filter((c) => {
+    if (!q) return true;
+    const name = contactById.get(c.contactId)?.name ?? "";
+    return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
+  });
+
+  // Per-channel totals for the channel filter pills.
+  const channelCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of allConvs) m.set(c.channel, (m.get(c.channel) ?? 0) + 1);
+    return m;
+  }, [allConvs]);
 
   const filters: FilterDef[] = [
     { id: "all", label: tx("All", "الكل"), count: counts.all },
@@ -888,19 +911,27 @@ function InboxList({
         display: "flex",
         flexDirection: "column",
         borderInlineEnd: "1px solid var(--line-soft)",
+        background: "var(--bg-1)",
         minHeight: 0,
       }}
     >
-      <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--line-soft)" }}>
+      <div style={{ padding: "18px 16px 12px", borderBottom: "1px solid var(--line-soft)" }}>
         <div
           style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            marginBottom: 10,
+            marginBottom: 12,
           }}
         >
-          <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>{tx("Inbox", "الرسائل")}</h2>
+          <div>
+            <h2 className="ix-display" style={{ margin: 0, fontSize: 18, fontWeight: 800, lineHeight: 1 }}>
+              {tx("Inbox", "الرسائل")}
+            </h2>
+            <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 }}>
+              {counts.all} {tx("conversations", "محادثة")}
+            </div>
+          </div>
           <div style={{ display: "flex", gap: 4 }}>
             <button className="btn ghost icon sm" title={tx("Filter", "فلتر")}>
               <IconFilter w={14} />
@@ -910,35 +941,18 @@ function InboxList({
             </button>
           </div>
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 8,
-          }}
-        >
-          {CHANNELS.map((ch) => {
-            const active = channels.has(ch);
-            return (
-              <button
-                key={ch}
-                type="button"
-                className={`ch-toggle ${active ? "active" : ""}`.trim()}
-                onClick={() => toggleChannel(ch)}
-                title={CHANNEL_LABEL[ch]}
-                aria-pressed={active}
-              >
-                <ChannelMark channel={ch} size={16} />
-              </button>
-            );
-          })}
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <input
+          className="ix-search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={tx("Search conversations…", "ابحث في المحادثات…")}
+          aria-label={tx("Search conversations", "ابحث في المحادثات")}
+        />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
           {filters.map((f) => (
             <button
               key={f.id}
-              className={`chip ${filter === f.id ? "active" : ""}`.trim()}
+              className={`ix-pill ${filter === f.id ? "active" : ""}`.trim()}
               onClick={() => setFilter(f.id)}
             >
               {f.label}
@@ -946,8 +960,26 @@ function InboxList({
             </button>
           ))}
         </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+          {CHANNELS.map((ch) => {
+            const active = channels.has(ch);
+            return (
+              <button
+                key={ch}
+                type="button"
+                className={`ix-ch ${active ? "active" : ""}`.trim()}
+                onClick={() => toggleChannel(ch)}
+                aria-pressed={active}
+              >
+                <span className="dot" style={{ background: CHANNEL_DOT[ch] }} />
+                {CHANNEL_LABEL[ch]}
+                <span style={{ opacity: 0.6 }}>{channelCounts.get(ch) ?? 0}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ flex: 1, overflowY: "auto", paddingBlock: "6px 16px" }}>
         {loading && (
           <div aria-label={tx("Loading conversations", "جارٍ تحميل المحادثات")}>
             {Array.from({ length: 6 }).map((_, i) => (
@@ -972,12 +1004,17 @@ function InboxList({
             </button>
           </div>
         )}
+        {!loading && visibleConvs.length === 0 && q && (
+          <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
+            {tx("No conversations match your search.", "لا توجد محادثات مطابقة لبحثك.")}
+          </div>
+        )}
         {visibleConvs.map((c) => {
           const contact = contactById.get(c.contactId);
           return (
             <div
               key={c.id}
-              className={`conv-row ${activeId === c.id ? "active" : ""}`.trim()}
+              className={`conv-row ix-row ${activeId === c.id ? "active" : ""}`.trim()}
               onClick={() => setActiveId(c.id)}
             >
               <div style={{ position: "relative", flex: "0 0 auto" }}>
@@ -985,20 +1022,20 @@ function InboxList({
                 <span
                   style={{
                     position: "absolute",
-                    insetInlineEnd: -2,
-                    bottom: -2,
+                    insetInlineEnd: -3,
+                    bottom: -3,
                     display: "inline-flex",
                   }}
                 >
-                  <ChannelMark channel={c.channel} size={14} />
+                  <ChannelMark channel={c.channel} size={15} />
                 </span>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                   <span
                     style={{
-                      fontWeight: c.unread ? 600 : 500,
-                      fontSize: 13,
+                      fontWeight: c.unread ? 700 : 600,
+                      fontSize: 13.5,
                       flex: 1,
                       minWidth: 0,
                       textOverflow: "ellipsis",
@@ -1008,97 +1045,38 @@ function InboxList({
                   >
                     {contact?.name}
                   </span>
-                  <span
-                    className="mono"
-                    style={{
-                      fontSize: 10,
-                      color: c.unread ? "var(--accent)" : "var(--ink-3)",
-                    }}
-                  >
+                  <span style={{ fontSize: 10.5, color: "var(--ink-4)", flexShrink: 0 }}>
                     {c.lastAt}
                   </span>
                 </div>
                 <div
+                  dir="auto"
                   style={{
-                    fontSize: 12,
-                    color: c.unread ? "var(--ink-1)" : "var(--ink-3)",
+                    fontSize: 12.5,
+                    color: c.unread ? "var(--ink)" : "var(--ink-3)",
+                    fontWeight: c.unread ? 600 : 400,
                     whiteSpace: "nowrap",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
-                    marginTop: 2,
+                    marginTop: 3,
+                    textAlign: "start",
                   }}
                 >
-                  {c.lastFrom === "human" && <span style={{ color: "var(--human)" }}>↳ </span>}
+                  {c.lastFrom === "human" && <span style={{ color: "var(--accent)" }}>↳ </span>}
                   {c.preview}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-                  {c.status === "human" && (
-                    <Badge kind="human" dot>
-                      Human
-                    </Badge>
-                  )}
-                  {c.status === "closed" && (
-                    <Badge kind="ok" dot>
-                      closed
-                    </Badge>
-                  )}
-                  {c.status === "spam" && (
-                    <Badge kind="bad" dot>
-                      spam
-                    </Badge>
-                  )}
-                  {c.escalated && (
-                    <Badge kind="warn" dot>
-                      escalated
-                    </Badge>
-                  )}
-                  {c.unread > 0 && (
-                    <span
-                      style={{
-                        marginInlineStart: "auto",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 10,
-                        background: "var(--accent)",
-                        color: "var(--accent-ink)",
-                        padding: "1px 6px",
-                        borderRadius: 999,
-                      }}
-                    >
-                      {c.unread}
-                    </span>
-                  )}
-                </div>
               </div>
+              {(c.unread > 0 || c.escalated) && (
+                <span
+                  className="ix-unread-dot"
+                  style={c.escalated ? { background: "var(--warn)" } : undefined}
+                  title={c.escalated ? tx("Escalated", "مُصعَّدة") : tx("Unread", "غير مقروءة")}
+                />
+              )}
             </div>
           );
         })}
       </div>
-      <style>{`
-        .chip { display: inline-flex; align-items: center; gap: 5px;
-          padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line-soft);
-          background: transparent; color: var(--ink-2); font-size: 11px;
-          font-family: var(--font-mono); cursor: pointer; }
-        .chip:hover { color: var(--ink); border-color: var(--line); }
-        .chip.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-ring); }
-        .chip .ct { color: var(--ink-3); font-size: 10px; }
-        .chip.active .ct { color: var(--accent); }
-
-        .ch-toggle { display: inline-flex; align-items: center; justify-content: center;
-          width: 26px; height: 26px; padding: 0; border-radius: 8px;
-          border: 1px solid var(--line-soft); background: transparent;
-          cursor: pointer; opacity: 0.55; transition: opacity .15s, border-color .15s; }
-        .ch-toggle:hover { opacity: 0.85; }
-        .ch-toggle.active { opacity: 1; border-color: var(--accent-ring);
-          background: var(--accent-soft); }
-
-        .conv-row { display: flex; gap: 10px; padding: 12px 14px;
-          border-bottom: 1px solid var(--line-soft); cursor: pointer; }
-        .conv-row:hover { background: var(--bg-1); }
-        .conv-row.active { background: var(--bg-2); border-inline-start: 2px solid var(--accent); padding-inline-start: 12px; }
-
-        .pulse { animation: pulse 1.2s ease-in-out infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
-      `}</style>
     </div>
   );
 }
@@ -1109,45 +1087,49 @@ function Bubble({ m }: BubbleProps) {
   const humanName = user?.name ?? "You";
   const humanColor = user?.color ?? "150";
   return (
-    <div style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start", gap: 8 }}>
+    <div
+      className="ix-msg"
+      style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start", gap: 8 }}
+    >
       {!isOut && <div style={{ width: 24 }} />}
-      <div style={{ maxWidth: "62%" }}>
+      <div style={{ maxWidth: "58%" }}>
         {isOut && (
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: 6,
-              marginBottom: 4,
+              marginBottom: 5,
               justifyContent: "flex-end",
             }}
           >
             <Avatar name={humanName} color={humanColor} size="sm" />
-            <span style={{ fontSize: 11, fontWeight: 500 }}>{humanName}</span>
-            <Badge kind="human">Human</Badge>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-2)" }}>{humanName}</span>
           </div>
         )}
         <div
+          dir="auto"
           style={{
-            padding: "8px 12px",
-            borderRadius: isOut ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+            padding: "11px 15px",
+            borderRadius: isOut ? "18px 18px 6px 18px" : "18px 18px 18px 6px",
             background: isOut ? "var(--bubble-out)" : "var(--bubble-in)",
             border: `1px solid ${isOut ? "var(--bubble-out-line)" : "var(--bubble-in-line)"}`,
-            color: "var(--ink)",
+            boxShadow: "var(--ix-shadow)",
+            color: isOut ? "var(--bubble-out-ink)" : "var(--ink)",
             fontSize: 13.5,
-            lineHeight: 1.5,
+            lineHeight: 1.55,
             whiteSpace: "pre-wrap",
+            textAlign: "start",
           }}
         >
           {m.body}
           {m.attach && <MessageAttachment value={m.attach} />}
         </div>
         <div
-          className="mono"
           style={{
-            fontSize: 10,
-            color: "var(--ink-3)",
-            marginTop: 3,
+            fontSize: 10.5,
+            color: "var(--ink-4)",
+            marginTop: 5,
             textAlign: isOut ? "end" : "start",
           }}
         >
@@ -1248,12 +1230,13 @@ function ConversationPane({
     >
       <div
         style={{
-          height: 56,
-          padding: "0 18px",
+          minHeight: 64,
+          padding: "10px 20px",
           borderBottom: "1px solid var(--line-soft)",
+          background: "var(--bg-1)",
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: 13,
         }}
       >
         <div style={{ position: "relative", flex: "0 0 auto" }}>
@@ -1269,28 +1252,20 @@ function ConversationPane({
             <ChannelMark channel={conv.channel} size={14} />
           </span>
         </div>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontWeight: 600 }}>{contact?.name}</span>
-            <Badge kind="ok" dot>
-              online
-            </Badge>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+            <span className="ix-display" style={{ fontWeight: 700, fontSize: 16.5 }}>
+              {contact?.name}
+            </span>
             <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "2px 8px 2px 4px",
-                borderRadius: 999,
-                border: "1px solid var(--line-soft)",
-                background: "var(--bg-1)",
-                fontSize: 11,
-                color: "var(--ink-2)",
-                fontFamily: "var(--font-mono)",
-              }}
+              className="ix-chpill"
+              style={{ background: CHANNEL_DOT[conv.channel] }}
             >
-              <ChannelMark channel={conv.channel} size={14} />
-              {tx("via", "عبر")} {CHANNEL_LABEL[conv.channel]}
+              {CHANNEL_LABEL[conv.channel]}
+            </span>
+            <span className="ix-online">
+              <span className="dot" />
+              {tx("Online", "متصل")}
             </span>
           </div>
           <div
@@ -1299,7 +1274,7 @@ function ConversationPane({
               color: "var(--ink-3)",
               display: "flex",
               gap: 6,
-              fontFamily: "var(--font-mono)",
+              marginTop: 3,
             }}
           >
             <span>{contact?.phone}</span>
@@ -1344,12 +1319,12 @@ function ConversationPane({
         style={{
           flex: 1,
           overflowY: "auto",
-          padding: "20px 24px",
+          padding: "26px 30px",
           display: "flex",
           flexDirection: "column",
-          gap: 12,
+          gap: 14,
           backgroundImage: "radial-gradient(circle, var(--line-soft) 1px, transparent 1px)",
-          backgroundSize: "24px 24px",
+          backgroundSize: "22px 22px",
           backgroundPosition: "0 0",
         }}
       >
@@ -1406,15 +1381,27 @@ function ConversationPane({
         </div>
       </details>
 
-      <div style={{ padding: 14, borderTop: "1px solid var(--line-soft)" }}>
-        <div
-          style={{
-            border: "1px solid var(--line)",
-            borderRadius: 12,
-            background: "var(--bg-1)",
-            padding: 10,
-          }}
-        >
+      <div style={{ padding: "12px 18px 16px", borderTop: "1px solid var(--line-soft)" }}>
+        {!waBlocked && (
+          <div style={{ display: "flex", gap: 7, marginBottom: 10, flexWrap: "wrap" }}>
+            {[
+              tx("Ahlan! How can we help?", "أهلاً وسهلاً"),
+              tx("Your order is on its way", "الطلب بطريقه اليك"),
+              tx("Thanks for reaching out", "شكراً لتواصلك معنا"),
+            ].map((qr) => (
+              <button
+                key={qr}
+                type="button"
+                className="ix-quick"
+                dir="auto"
+                onClick={() => setDraft((d) => (d ? d : qr))}
+              >
+                {qr}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="ix-composer">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -2309,7 +2296,9 @@ function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactR
         }}
       >
         <Avatar name={contact?.name} color="200" size="xl" />
-        <div style={{ fontSize: 16, fontWeight: 600 }}>{contact?.name}</div>
+        <div className="ix-display" style={{ fontSize: 18, fontWeight: 700 }}>
+          {contact?.name}
+        </div>
         <div
           style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}
         >
@@ -2341,29 +2330,19 @@ function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactR
 
       <div>
         <SectionLabel>{tx("Lifecycle", "المرحلة")}</SectionLabel>
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
+        <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
           {lifecycleStages.map((s, i) => (
-            <div key={s} style={{ flex: 1, textAlign: "center" }}>
-              <div
-                style={{
-                  height: 4,
-                  background: i <= 2 ? "var(--accent)" : "var(--bg-2)",
-                  marginInline: 1,
-                  opacity: i <= 2 ? 0.4 + i * 0.2 : 1,
-                }}
-              />
-              <div
-                style={{
-                  fontSize: 10,
-                  marginTop: 6,
-                  color: i === 2 ? "var(--accent)" : "var(--ink-3)",
-                  fontWeight: i === 2 ? 600 : 400,
-                }}
-              >
-                {s}
-              </div>
-            </div>
+            <div key={s} className={`ix-stage-seg ${i <= 2 ? "on" : ""}`.trim()} title={s} />
           ))}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7 }}>
+          <span style={{ fontSize: 10.5, color: "var(--ink-4)" }}>{lifecycleStages[0]}</span>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--accent)" }}>
+            {lifecycleStages[2]}
+          </span>
+          <span style={{ fontSize: 10.5, color: "var(--ink-4)" }}>
+            {lifecycleStages[lifecycleStages.length - 1]}
+          </span>
         </div>
       </div>
 
@@ -2461,32 +2440,6 @@ interface IgMsg {
   at: string;
 }
 
-// ─── Live Zernio (Facebook/Instagram/TikTok via the Zernio aggregator) ────
-// Zernio conversation ids are plain platform ids; we prefix them with "z:" in
-// the UI to route message-fetch/send the same way FB ("t_") and IG ("ig:") do.
-interface ZernioConv {
-  id: string; // raw Zernio conversation id (no prefix)
-  channel: string; // facebook | instagram | tiktok | whatsapp
-  accountId: string; // Zernio account id — required for sends
-  participantId: string;
-  name: string;
-  avatar: string | null;
-  preview: string;
-  lastAt: string | null;
-  url: string | null;
-  status: string;
-}
-interface ZernioMsg {
-  id: string | null;
-  from: "them" | "human";
-  body: string;
-  at: string | null;
-}
-const isZernioConvId = (id: string | null | undefined): boolean =>
-  typeof id === "string" && id.startsWith("z:");
-const stripZernioPrefix = (id: string): string =>
-  id.startsWith("z:") ? id.slice(2) : id;
-
 function InboxImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
@@ -2531,7 +2484,7 @@ function InboxImpl() {
   // Internal active query: skip when activeId is a Facebook OR Instagram
   // live thread id (those have their own per-platform messages query).
   const activeQ = useFetch<ConversationDetail>(
-    activeId && !isFbConvId(activeId) && !isIgConvId(activeId) && !isZernioConvId(activeId)
+    activeId && !isFbConvId(activeId) && !isIgConvId(activeId)
       ? `/conversations/${activeId}`
       : null,
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
@@ -2555,32 +2508,13 @@ function InboxImpl() {
     { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
 
-  // Live Zernio (Facebook/Instagram connected via Zernio — the replacement for
-  // our own Meta apps). Mirrors the FB/IG live pattern; "z:"-prefixed ids route
-  // here. WhatsApp stays on Kapso/DB, so it's excluded from the Zernio list.
+  // FB/IG/WhatsApp threads are all DB-backed now: the Zernio webhook persists
+  // every inbound and a one-time backfill imported the pre-webhook history, so
+  // the Inbox no longer proxies Zernio's API live per thread. This status
+  // query only tells handleSend which channels reply via Zernio.
   const zernioStatusQ = useFetch<{ accounts?: { platform: string }[] }>(
     "/integrations/zernio/status",
     { pollMs: 60000 },
-  );
-  const zernioConnected = (zernioStatusQ.data?.accounts?.length ?? 0) > 0;
-  const zernioConvsQ = useFetch<ZernioConv[]>(
-    zernioConnected ? "/integrations/zernio/conversations" : null,
-    { pollMs: 30000 },
-  );
-  // Zernio's messages endpoint needs the owning accountId as well as the
-  // conversation id — the list already carries it, so pass it straight through
-  // rather than making the backend re-fetch the whole conversation list.
-  const activeZernioAccountId = isZernioConvId(activeId)
-    ? zernioConvsQ.data?.find((c) => c.id === stripZernioPrefix(activeId!))?.accountId
-    : undefined;
-  const zernioMsgsQ = useFetch<ZernioMsg[]>(
-    isZernioConvId(activeId)
-      ? `/integrations/zernio/conversations/${stripZernioPrefix(activeId!)}/messages` +
-        (activeZernioAccountId
-          ? `?accountId=${encodeURIComponent(activeZernioAccountId)}`
-          : "")
-      : null,
-    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
   );
 
   // Hold the list behind one skeleton until every connected channel's FIRST
@@ -2594,8 +2528,7 @@ function InboxImpl() {
     !settled(fbStatusQ) ||
     (fbConnected && !settled(fbConvsQ)) ||
     !settled(igStatusQ) ||
-    (igConnected && !settled(igConvsQ)) ||
-    (zernioConnected && !settled(zernioConvsQ));
+    (igConnected && !settled(igConvsQ));
 
   // Backend emits `inbox.activity` whenever a message lands or a conversation
   // changes (WhatsApp webhook, Meta webhook, REST send/update). Each event
@@ -2604,21 +2537,16 @@ function InboxImpl() {
   useRealtime<{ channel: string; conversationId?: string }>(
     "inbox.activity",
     (evt) => {
-      const ch = evt.channel;
+      // All channels are DB-backed, so the event's conversationId is our own
+      // row id — bump the thread query when it's the one on screen.
       const affectsActive =
-        (ch === "whatsapp" && activeId === evt.conversationId) ||
-        (ch === "facebook" && isFbConvId(activeId)) ||
-        (ch === "instagram" && isIgConvId(activeId)) ||
-        (isZernioConvId(activeId) &&
-          (ch === "facebook" ||
-            ch === "instagram" ||
-            ch === "tiktok" ||
-            ch === "whatsapp"));
+        (!!evt.conversationId && activeId === evt.conversationId) ||
+        (evt.channel === "facebook" && isFbConvId(activeId)) ||
+        (evt.channel === "instagram" && isIgConvId(activeId));
       if (affectsActive) setMessageVersion((v) => v + 1);
-      if (ch === "facebook") fbConvsQ.refetch();
-      else if (ch === "instagram") igConvsQ.refetch();
-      else convsQ.refetch();
-      if (zernioConnected) zernioConvsQ.refetch();
+      if (evt.channel === "facebook" && fbConnected) fbConvsQ.refetch();
+      if (evt.channel === "instagram" && igConnected) igConvsQ.refetch();
+      convsQ.refetch();
     },
   );
 
@@ -2629,12 +2557,14 @@ function InboxImpl() {
   //      Graph API (not persisted to DB yet).
   // We MERGE them so all channels appear in the unified list.
   const conversations: Conversation[] = useMemo(() => {
-    const dbRows = convsQ.data ?? [];
-    // Drop DB rows for FB + IG so the live lists are authoritative for those
-    // channels. (Old IG rows from when the inbox used DB sync stay in the DB
-    // but no longer surface in the UI to avoid duplicates.)
-    const nonLive = dbRows.filter(
-      (c) => c.channel !== "facebook" && c.channel !== "instagram",
+    // DB rows are authoritative for every channel: the Zernio webhook persists
+    // all inbound and the backfill imported prior history. Drop FB/IG DB rows
+    // only while the LEGACY Meta live paths are connected (rollback mode), so
+    // the same thread can't appear twice.
+    const dbRows = (convsQ.data ?? []).filter(
+      (c) =>
+        !(fbConnected && c.channel === "facebook") &&
+        !(igConnected && c.channel === "instagram"),
     );
 
     const fbRows: Conversation[] = fbConnected
@@ -2673,39 +2603,15 @@ function InboxImpl() {
         }))
       : [];
 
-    // Zernio live rows (FB/IG/TikTok via the aggregator). WhatsApp is excluded
-    // so Kapso/DB stays authoritative for it. Ids are "z:"-prefixed for routing.
-    const zernioRows: Conversation[] = zernioConnected
-      ? (zernioConvsQ.data ?? [])
-          .filter((c) => c.channel !== "whatsapp")
-          .map((c) => ({
-            id: `z:${c.id}`,
-            contactId: `z:${c.id}`,
-            agent: "",
-            unread: 0,
-            pinned: false,
-            lastAt: c.lastAt ? fmtCompact(c.lastAt) : "",
-            lastFrom: "them",
-            preview: c.preview || "—",
-            channel: c.channel as Conversation["channel"],
-            status: "human",
-            intent: "—",
-            confidence: 0,
-            escalated: false,
-          }))
-      : [];
-
-    // DB rows arrive ordered (pinned desc, then updatedAt desc). Live rows
-    // merged in raw order; close-enough until everything lives in one store.
-    return [...nonLive, ...fbRows, ...igRows, ...zernioRows];
+    // DB rows arrive ordered (pinned desc, then updatedAt desc). Legacy live
+    // rows merged in raw order; they're empty unless rollback mode is active.
+    return [...dbRows, ...fbRows, ...igRows];
   }, [
     fbConnected,
     convsQ.data,
     fbConvsQ.data,
     igConnected,
     igConvsQ.data,
-    zernioConnected,
-    zernioConvsQ.data,
   ]);
 
   // Augment contactById with synthetic Contact entries for FB + IG
@@ -2745,24 +2651,8 @@ function InboxImpl() {
         value: "—",
       });
     }
-    for (const zc of zernioConvsQ.data ?? []) {
-      const cid = `z:${zc.id}`;
-      if (map.has(cid)) continue;
-      map.set(cid, {
-        id: cid,
-        name: zc.name,
-        phone: "—",
-        tags: [zc.channel],
-        industry: `${zc.channel}-dm`,
-        lifecycle: "Lead",
-        lastSeen: zc.lastAt ? fmtCompact(zc.lastAt) : "—",
-        source: `${zc.channel} (Zernio)`,
-        convs: 1,
-        value: "—",
-      });
-    }
     return map;
-  }, [contactsQ.data, fbConvsQ.data, igConvsQ.data, zernioConvsQ.data]);
+  }, [contactsQ.data, fbConvsQ.data, igConvsQ.data]);
 
   // Auto-select first conversation when list loads.
   useEffect(() => {
@@ -2790,12 +2680,11 @@ function InboxImpl() {
     return () => window.clearTimeout(removeTimer);
   }, [ticketBanner]);
 
-  // Mark-as-read whenever the active conversation changes. Skip every live
-  // thread (FB, IG, Zernio) — those have no DB row to mark, so the call just
-  // 404s.
+  // Mark-as-read whenever the active conversation changes. Skip the legacy
+  // live threads (FB "t_", IG "ig:") — those have no DB row to mark.
   useEffect(() => {
     if (!activeId) return;
-    if (isFbConvId(activeId) || isIgConvId(activeId) || isZernioConvId(activeId)) return;
+    if (isFbConvId(activeId) || isIgConvId(activeId)) return;
     let cancelled = false;
     api
       .post<Conversation>(`/conversations/${activeId}/read`, {})
@@ -2889,18 +2778,6 @@ function InboxImpl() {
     }),
   );
 
-  // Live Zernio DM send (FB/IG via the aggregator). Routes on the "z:" id;
-  // needs the Zernio accountId from the conversation row.
-  const sendZernioMessage = useMutation<
-    { conversationId: string; accountId: string; body: string },
-    { ok: true; id?: string | null }
-  >((input) =>
-    api.post(`/integrations/zernio/conversations/${input.conversationId}/send`, {
-      accountId: input.accountId,
-      message: input.body,
-    }),
-  );
-
   // Reply into a DB-backed conversation whose transport is Zernio (WhatsApp,
   // and FB/IG threads persisted by the inbound webhook). The backend resolves
   // the Zernio conversation + accountId from the contact, so we only send text.
@@ -2982,17 +2859,6 @@ function InboxImpl() {
       await sendIgLiveMessage.mutate({ igsid, body, mediaId });
       return;
     }
-    if (isZernioConvId(activeId)) {
-      const zc = (zernioConvsQ.data ?? []).find((c) => `z:${c.id}` === activeId);
-      if (!zc?.accountId) return;
-      if (body) addPending(activeId, body);
-      await sendZernioMessage.mutate({
-        conversationId: stripZernioPrefix(activeId),
-        accountId: zc.accountId,
-        body,
-      });
-      return;
-    }
     // Route by channel for DB-stored conversations. Channels Zernio owns go
     // through Zernio — the legacy Meta services no longer hold a usable token
     // for them, since Zernio's sync replaced those Integration rows.
@@ -3000,6 +2866,9 @@ function InboxImpl() {
     const zernioOwnsChannel = (zernioStatusQ.data?.accounts ?? []).some(
       (a) => a.platform === conv?.channel,
     );
+    // DB-backed sends round-trip Zernio + the remote DB (~2s) — show the
+    // bubble immediately, same as the live-thread paths above.
+    if (conv && body) addPending(activeId, body);
     if (conv && zernioOwnsChannel) {
       await sendZernioDbMessage.mutate({ conversationId: activeId, body });
     } else if (conv?.channel === "instagram") {
@@ -3010,9 +2879,11 @@ function InboxImpl() {
       // Fallback: just write to DB (web chat, etc.)
       await sendMessage.mutate({ conversationId: activeId, body });
     }
+    // Bumping messageVersion changes activeQ's queryKey, which already fetches
+    // the fresh thread — calling activeQ.refetch() as well re-fetched the OLD
+    // key entry, a wasted ~0.5s DB round trip per send.
     setMessageVersion((n) => n + 1);
     convsQ.refetch();
-    activeQ.refetch();
   };
 
   // Compute the active conversation: either the internal /conversations/:id
@@ -3096,41 +2967,19 @@ function InboxImpl() {
         messages: appendPending(activeId, serverMsgs),
       };
     }
-    if (isZernioConvId(activeId)) {
-      const zc = (zernioConvsQ.data ?? []).find((c) => `z:${c.id}` === activeId);
-      if (!zc) return undefined;
-      const serverMsgs: Message[] = (zernioMsgsQ.data ?? []).map((m) => ({
-        from: m.from === "human" ? "human" : "them",
-        t: m.at ? fmtCompact(m.at) : "",
-        body: m.body || "📎 attachment",
-        agent: undefined,
-      }));
-      return {
-        id: `z:${zc.id}`,
-        contactId: `z:${zc.id}`,
-        agent: "",
-        unread: 0,
-        pinned: false,
-        lastAt: zc.lastAt ? fmtCompact(zc.lastAt) : "",
-        lastFrom: "them",
-        preview: zc.preview || "—",
-        channel: zc.channel as ConversationDetail["channel"],
-        status: "human",
-        intent: "—",
-        confidence: 0,
-        escalated: false,
-        messages: appendPending(activeId, serverMsgs),
-      };
-    }
-    return activeQ.data ?? undefined;
+    // DB-backed conversation: same optimistic-append as the live paths, so a
+    // just-sent reply shows instantly instead of after the ~2s send round trip.
+    if (!activeQ.data) return undefined;
+    return {
+      ...activeQ.data,
+      messages: appendPending(activeId, activeQ.data.messages ?? []),
+    };
   }, [
     activeId,
     fbConvsQ.data,
     fbMsgsQ.data,
     igConvsQ.data,
     igMsgsQ.data,
-    zernioConvsQ.data,
-    zernioMsgsQ.data,
     activeQ.data,
     pendingByConv,
   ]);
@@ -3138,13 +2987,13 @@ function InboxImpl() {
   const activeContact = active ? contactById.get(active.contactId) : undefined;
   const activeIsFb = active ? isFbConvId(active.id) : false;
   const activeIsIg = active ? isIgConvId(active.id) : false;
-  const activeIsZernio = active ? isZernioConvId(active.id) : false;
 
   return (
     <div
+      className="inbox-v2"
       style={{
         display: "grid",
-        gridTemplateColumns: "320px 1fr 340px",
+        gridTemplateColumns: "minmax(300px, 348px) minmax(0, 1fr) minmax(300px, 336px)",
         flex: 1,
         minHeight: 0,
         position: "relative",
@@ -3154,6 +3003,11 @@ function InboxImpl() {
         style={{
           display: "grid",
           gridTemplateRows: "auto 1fr",
+          // Single-column grids size their auto track to max-content, which
+          // let the pill rows push this column to ~760px and bleed under the
+          // thread pane. Pin the track to the grid area's own width.
+          gridTemplateColumns: "minmax(0, 1fr)",
+          minWidth: 0,
           minHeight: 0,
         }}
       >
@@ -3219,16 +3073,15 @@ function InboxImpl() {
               language,
               variables,
             });
+            // messageVersion bump refetches the thread via the new queryKey.
             setMessageVersion((n) => n + 1);
             convsQ.refetch();
-            activeQ.refetch();
           }}
           sending={
             sendMessage.loading ||
             sendFbMessage.loading ||
             sendIgMessage.loading ||
             sendIgLiveMessage.loading ||
-            sendZernioMessage.loading ||
             sendZernioDbMessage.loading ||
             sendWaMessage.loading ||
             sendWaTemplate.loading
@@ -3238,7 +3091,6 @@ function InboxImpl() {
             sendFbMessage.error ??
             sendIgMessage.error ??
             sendIgLiveMessage.error ??
-            sendZernioMessage.error ??
             sendZernioDbMessage.error ??
             sendWaMessage.error ??
             sendWaTemplate.error
@@ -3249,9 +3101,7 @@ function InboxImpl() {
               ? fbMsgsQ.loading
               : activeIsIg
                 ? igMsgsQ.loading
-                : activeIsZernio
-                  ? zernioMsgsQ.loading
-                  : activeQ.loading
+                : activeQ.loading
           }
           lang={t.lang}
           tx={tx}

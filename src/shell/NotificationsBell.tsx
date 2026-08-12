@@ -175,14 +175,10 @@ export function NotificationsBell(): React.ReactElement {
   // webhooks).
   const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 30000 });
   const contactsQ = useFetch<Contact[]>("/contacts");
-  // FB/IG DMs come through Zernio now — one unified conversation list drives
-  // the bell (the Meta per-platform endpoints are retired).
-  const zStatusQ = useFetch<{ accounts?: unknown[] }>("/integrations/zernio/status");
-  const zConnected = (zStatusQ.data?.accounts?.length ?? 0) > 0;
-  const fbConvsQ = useFetch<UnreadConvRich[]>(
-    zConnected ? "/integrations/zernio/conversations" : null,
-    { pollMs: 30000 },
-  );
+  // All channels are DB-backed now (Zernio webhook persists FB/IG/WA inbound),
+  // so the DB conversation list alone drives the bell. The old live-Zernio
+  // poll returned rows without unread/contactName and never fired anything.
+  const fbConvsQ = useFetch<UnreadConvRich[]>(null, { pollMs: 30000 });
   const igConvsQ = useFetch<UnreadConvRich[]>(null, { pollMs: 30000 });
 
   // Toast queue (slide-in from bottom-right, visible-tab only).
@@ -199,10 +195,8 @@ export function NotificationsBell(): React.ReactElement {
   // Realtime hint: jump on activity so the diff lands quickly when the
   // backend can reach us. Falls back gracefully to the 30s polls above
   // when it can't (e.g. localhost without a webhook tunnel).
-  useRealtime<InboxActivity>("inbox.activity", (evt) => {
-    if (evt.channel === "facebook") fbConvsQ.refetch();
-    else if (evt.channel === "instagram") igConvsQ.refetch();
-    else convsQ.refetch();
+  useRealtime<InboxActivity>("inbox.activity", () => {
+    convsQ.refetch();
   });
 
   // First sight of any conversation is silent (baseline) so we don't flood the
@@ -217,10 +211,6 @@ export function NotificationsBell(): React.ReactElement {
     for (const c of contactsQ.data ?? []) contactsById.set(c.id, c);
 
     for (const c of convsQ.data ?? []) {
-      // FB/IG conversations are also returned live by the Graph endpoints
-      // below — skipping the DB copy here prevents duplicate notifications
-      // for the same inbound message (matches the Inbox merge logic).
-      if (c.channel === "facebook" || c.channel === "instagram") continue;
       const contact = contactsById.get(c.contactId);
       cur.set(`${c.channel}:${c.id}`, {
         unread: c.unread ?? 0,

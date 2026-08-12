@@ -319,20 +319,31 @@ export class ZernioService {
       throw new NotFoundException(`${channel} is not connected via Zernio`);
     }
 
-    const participantId = conv.contact?.externalId;
-    if (!participantId) {
-      throw new BadRequestException("This contact has no platform id to reply to");
+    // Fast path: the inbound webhook stores Zernio's conversation id on the
+    // row, letting us send directly. Rows that predate the column fall back to
+    // resolving via the live conversation list — and get backfilled so they
+    // only ever pay that ~0.5s once.
+    let zernioConvId = conv.externalId;
+    if (!zernioConvId) {
+      const participantId = conv.contact?.externalId;
+      if (!participantId) {
+        throw new BadRequestException("This contact has no platform id to reply to");
+      }
+      const convs = await this.listConversations(workspaceId, channel);
+      const match = convs.find((c) => c.participantId === participantId);
+      if (!match) {
+        throw new NotFoundException(
+          "No Zernio conversation for this contact yet — they need to message you first",
+        );
+      }
+      zernioConvId = match.id;
+      await this.prisma.conversation.update({
+        where: { id: conv.id },
+        data: { externalId: zernioConvId },
+      });
     }
 
-    const convs = await this.listConversations(workspaceId, channel);
-    const match = convs.find((c) => c.participantId === participantId);
-    if (!match) {
-      throw new NotFoundException(
-        "No Zernio conversation for this contact yet — they need to message you first",
-      );
-    }
-
-    const { id } = await this.client.sendMessage(match.id, integ.pageId, message);
+    const { id } = await this.client.sendMessage(zernioConvId, integ.pageId, message);
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -360,6 +371,197 @@ export class ZernioService {
       conversationId: conv.id,
     });
     return { ok: true, id };
+  }
+
+  /**
+   * One-time import of Zernio's conversation history into our DB.
+   *
+   * The inbound webhook only persists messages from the moment it was set up;
+   * everything older lives solely in Zernio. This walks every Zernio
+   * conversation, upserts the contact + conversation (with externalId), and
+   * inserts any message we don't already hold — after which the Inbox can be
+   * served entirely from our own DB. Idempotent: re-running skips existing
+   * rows via metaMessageId, with a body+timestamp fuzzy match covering the
+   * webhook-era rows that were stored under Zernio's internal id scheme.
+   */
+  async backfillHistory(workspaceId: string) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) throw new NotFoundException("Zernio profile is not connected");
+
+    const zConvs = await this.client.listConversations(profileId);
+    const counts = {
+      conversations: zConvs.length,
+      conversationsCreated: 0,
+      messagesInserted: 0,
+      messagesSkipped: 0,
+      attachmentsSaved: 0,
+      errors: [] as string[],
+    };
+
+    for (const zc of zConvs) {
+      try {
+        const channel = (zc.platform ?? "").toLowerCase();
+        const participantId = String(zc.participantId ?? "");
+        if (!channel || !participantId) continue;
+
+        const contact = await this.prisma.contact.upsert({
+          where: {
+            workspaceId_externalSource_externalId: {
+              workspaceId,
+              externalSource: channel,
+              externalId: participantId,
+            },
+          },
+          create: {
+            workspaceId,
+            name: zc.participantName ?? `${channel} user`,
+            industry: channel,
+            lifecycle: "lead",
+            source: channel,
+            lastSeen: "—",
+            externalSource: channel,
+            externalId: participantId,
+          },
+          update: {},
+        });
+
+        let conv = await this.prisma.conversation.findFirst({
+          where: { workspaceId, contactId: contact.id, channel },
+        });
+        if (!conv) {
+          conv = await this.prisma.conversation.create({
+            data: {
+              workspaceId,
+              contactId: contact.id,
+              unread: 0,
+              pinned: false,
+              lastAt: "—",
+              lastFrom: "them",
+              preview: zc.lastMessage ?? "—",
+              channel,
+              status: "human",
+              intent: "—",
+              confidence: 0,
+              externalId: zc.id,
+            },
+          });
+          counts.conversationsCreated++;
+        } else if (conv.externalId !== zc.id) {
+          await this.prisma.conversation.update({
+            where: { id: conv.id },
+            data: { externalId: zc.id },
+          });
+        }
+
+        const zMsgs = await this.client.getMessages(zc.id, zc.accountId);
+        const existing = await this.prisma.message.findMany({
+          where: { workspaceId, conversationId: conv.id },
+          select: { metaMessageId: true, body: true, from: true, createdAt: true },
+        });
+        const byMeta = new Set(existing.map((m) => m.metaMessageId).filter(Boolean));
+
+        // Split into plain rows (batched in one createMany) and rows with an
+        // attachment to download (created individually).
+        const plain: Array<{
+          workspaceId: string; conversationId: string; from: string; body: string;
+          t: string; metaMessageId: string | null; createdAt: Date;
+          deliveryStatus: string | null;
+        }> = [];
+
+        for (const m of zMsgs) {
+          if (m.isDeleted) { counts.messagesSkipped++; continue; }
+          const mid = m.id ?? m._id ?? null;
+          if (mid && byMeta.has(mid)) { counts.messagesSkipped++; continue; }
+          const from = m.direction === "incoming" ? "them" : "human";
+          const attachment = m.attachments?.[0];
+          const body =
+            (m.message ?? m.text ?? m.body ?? "").trim() ||
+            (attachment ? `[${attachment.type ?? "attachment"}]` : "");
+          if (!body) { counts.messagesSkipped++; continue; }
+          const at = new Date(m.sentAt ?? m.createdAt ?? Date.now());
+          // Webhook-era rows carry Zernio-internal ids, so the id check above
+          // misses them — same author + same text within 2 minutes is a dupe.
+          const fuzzyDup = existing.some(
+            (e) =>
+              e.from === from &&
+              e.body === body &&
+              Math.abs(e.createdAt.getTime() - at.getTime()) < 120_000,
+          );
+          if (fuzzyDup) { counts.messagesSkipped++; continue; }
+
+          const t = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+          const row = {
+            workspaceId,
+            conversationId: conv.id,
+            from,
+            body,
+            t,
+            metaMessageId: mid,
+            createdAt: at,
+            deliveryStatus: m.deliveryStatus ?? null,
+          };
+
+          if (attachment?.url) {
+            let attach: string | null = null;
+            try {
+              const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
+              const media = await this.media.ingestBuffer({
+                workspaceId,
+                buffer,
+                mimeType: attachment.payload?.mimeType || mimeType || "image/jpeg",
+                fileName: `${channel}-${attachment.payload?.id ?? mid ?? "media"}`,
+              });
+              attach = media.id;
+              counts.attachmentsSaved++;
+            } catch (e) {
+              this.log.warn(`Backfill attachment failed: ${(e as Error).message}`);
+            }
+            await this.prisma.message.create({ data: { ...row, attach } });
+            counts.messagesInserted++;
+          } else {
+            plain.push(row);
+          }
+        }
+
+        if (plain.length > 0) {
+          await this.prisma.message.createMany({ data: plain });
+          counts.messagesInserted += plain.length;
+        }
+
+        // Refresh the thread summary from the newest message we now hold.
+        const latest = await this.prisma.message.findFirst({
+          where: { conversationId: conv.id },
+          orderBy: { createdAt: "desc" },
+        });
+        if (latest) {
+          await this.prisma.conversation.update({
+            where: { id: conv.id },
+            data: {
+              preview: latest.body.slice(0, 140),
+              lastFrom: latest.from,
+              lastAt: compactAge(latest.createdAt),
+              // Pin updatedAt to the real last-message time — the Inbox sorts
+              // on it, and letting @updatedAt auto-bump here would order the
+              // list by backfill-walk order instead of actual recency.
+              updatedAt: latest.createdAt,
+            },
+          });
+        } else {
+          // Nothing storable in this thread (e.g. a story mention with no
+          // text) — sink it to the bottom of the list instead of letting the
+          // backfill's own write time float it to the top.
+          await this.prisma.conversation.update({
+            where: { id: conv.id },
+            data: { updatedAt: new Date("2020-01-01T00:00:00Z") },
+          });
+        }
+      } catch (e) {
+        counts.errors.push(`${zc.platform}/${zc.id}: ${(e as Error).message}`);
+      }
+    }
+
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
+    return counts;
   }
 
   // ─── Publishing ──────────────────────────────────────────────────────────
@@ -420,7 +622,13 @@ export class ZernioService {
       type === "message.read" ||
       type === "message.failed"
     ) {
-      await this.applyStatus(type, payload);
+      const updated = await this.applyStatus(type, payload);
+      // message.sent with no matching row = an outbound composed OUTSIDE the
+      // platform (the business replying from the Instagram/WhatsApp app on
+      // their phone). Persist it, or the thread shows a hole on our side.
+      if (type === "message.sent" && updated === 0) {
+        await this.ingestInbound(payload);
+      }
       return { ok: true };
     }
     if (type.startsWith("whatsapp.number.")) {
@@ -445,10 +653,12 @@ export class ZernioService {
       return;
     }
 
-    // Only ingest customer messages. Zernio also emits message.received for
-    // outgoing sends on some platforms; those arrive via message.sent and are
-    // already in our DB from the send call.
-    if (evt.message?.direction === "outgoing") return;
+    // Outbound messages reach us too — either echoed on message.received or,
+    // for replies the business types in the Instagram/WhatsApp APP directly,
+    // via message.sent with no matching DB row. Both must be persisted, or the
+    // thread shows only the customer's half.
+    const isOutbound = evt.message?.direction === "outgoing";
+    const from = isOutbound ? "human" : "them";
 
     const integ = await this.prisma.integration.findFirst({
       where: { provider: "zernio", pageId: accountId },
@@ -466,14 +676,16 @@ export class ZernioService {
     const text =
       evt.message?.text?.trim() ||
       (attachment ? `[${attachment.type ?? "attachment"}]` : `[${channel} message]`);
+    // On outbound messages `sender` is the BUSINESS account — the customer is
+    // only identified by the conversation's participant fields.
     const participantId = String(
-      evt.conversation?.participantId ?? evt.message?.sender?.id ?? "",
+      evt.conversation?.participantId ??
+        (isOutbound ? "" : evt.message?.sender?.id ?? ""),
     );
     const participantName =
       evt.conversation?.participantName ??
       evt.conversation?.participantUsername ??
-      evt.message?.sender?.name ??
-      evt.message?.sender?.username;
+      (isOutbound ? undefined : evt.message?.sender?.name ?? evt.message?.sender?.username);
 
     if (!participantId) {
       this.log.warn(`Zernio inbound with no participant id (conv=${evt.conversation?.id})`);
@@ -526,12 +738,17 @@ export class ZernioService {
         industry: channel,
         lifecycle: "lead",
         source: channel,
-        lastSeen: "now",
+        lastSeen: isOutbound ? "—" : "now",
         externalSource: channel,
         externalId: participantId,
       },
-      update: { lastSeen: "now" },
+      // lastSeen tracks the CUSTOMER's activity — our own replies don't move it.
+      update: isOutbound ? {} : { lastSeen: "now" },
     });
+
+    // Zernio's conversation id — persisted so replies can address the provider
+    // conversation directly instead of re-listing on every send.
+    const zernioConvId = evt.conversation?.id ?? evt.message?.conversationId ?? null;
 
     let conv = await this.prisma.conversation.findFirst({
       where: { workspaceId, contactId: contact.id, channel },
@@ -541,15 +758,16 @@ export class ZernioService {
         data: {
           workspaceId,
           contactId: contact.id,
-          unread: 1,
+          unread: isOutbound ? 0 : 1,
           pinned: false,
           lastAt: "now",
-          lastFrom: "them",
+          lastFrom: from,
           preview: text.slice(0, 140),
           channel,
           status: "human",
           intent: "—",
           confidence: 0,
+          externalId: zernioConvId,
         },
       });
     } else {
@@ -558,8 +776,13 @@ export class ZernioService {
         data: {
           preview: text.slice(0, 140),
           lastAt: "now",
-          lastFrom: "them",
-          unread: { increment: 1 },
+          lastFrom: from,
+          // Our own replies don't add to the unread pile.
+          ...(isOutbound ? {} : { unread: { increment: 1 } }),
+          // Backfill rows that predate externalId (or repair a stale one).
+          ...(zernioConvId && conv.externalId !== zernioConvId
+            ? { externalId: zernioConvId }
+            : {}),
         },
       });
     }
@@ -570,11 +793,13 @@ export class ZernioService {
       data: {
         workspaceId,
         conversationId: conv.id,
-        from: "them",
+        from,
         body: text,
         t,
         attach: attachMediaId,
         metaMessageId: externalMsgId,
+        // App-composed outbound arrives via message.sent, so it's sent by definition.
+        ...(isOutbound ? { deliveryStatus: "sent", deliveryStatusAt: new Date() } : {}),
       },
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
@@ -583,19 +808,24 @@ export class ZernioService {
     });
   }
 
-  private async applyStatus(type: string, payload: ZernioWebhookEvent) {
-    // Status events carry the same top-level shape as message.received; the
-    // message id here is Zernio's, matching what ingestInbound stores.
-    const msgId = payload.message?.id ?? payload.message?.platformMessageId;
+  /** Returns how many rows matched — 0 tells the caller this message isn't
+   *  ours (e.g. a reply typed in the platform's own mobile app). */
+  private async applyStatus(type: string, payload: ZernioWebhookEvent): Promise<number> {
+    // Status events carry the same top-level shape as message.received. Match
+    // either id scheme: sends store Zernio's internal id, backfilled rows the
+    // platform's.
+    const ids = [payload.message?.id, payload.message?.platformMessageId].filter(
+      (v): v is string => !!v,
+    );
     const accountId = payload.account?.accountId ?? payload.account?.id;
-    if (!msgId || !accountId) return;
+    if (ids.length === 0 || !accountId) return 0;
     const status = type.split(".").pop(); // sent | delivered | read | failed
     const integ = await this.prisma.integration.findFirst({
       where: { provider: "zernio", pageId: accountId },
     });
-    if (!integ) return;
+    if (!integ) return 0;
     const updated = await this.prisma.message.updateMany({
-      where: { workspaceId: integ.workspaceId, metaMessageId: msgId },
+      where: { workspaceId: integ.workspaceId, metaMessageId: { in: ids } },
       data: { deliveryStatus: status, deliveryStatusAt: new Date() },
     });
     if (updated.count > 0) {
@@ -603,7 +833,18 @@ export class ZernioService {
         channel: integ.platform,
       });
     }
+    return updated.count;
   }
+}
+
+/** "now" / "5m" / "3h" / "26d" — matches the strings the Inbox list renders. */
+function compactAge(d: Date): string {
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60_000);
+  if (diffMin < 1) return "now";
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h`;
+  return `${Math.floor(diffH / 24)}d`;
 }
 
 // ─── Webhook payload (partial — the fields we read) ──────────────────────────

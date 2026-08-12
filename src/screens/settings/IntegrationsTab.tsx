@@ -7,7 +7,6 @@ import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
 import { IconGlobe, IconCheck, IconX } from "@/icons";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
-import { KapsoCard } from "./KapsoCard";
 import { ZernioCard } from "./ZernioCard";
 
 // Facebook/Instagram now connect through Zernio (ZernioCard) instead of our own
@@ -42,8 +41,6 @@ export function IntegrationsTab() {
       {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
-
-      <KapsoCard key={`kapso-${wsKey}`} tx={tx} canEdit={canEdit} />
     </>
   );
 }
