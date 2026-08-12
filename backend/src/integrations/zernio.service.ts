@@ -233,6 +233,18 @@ export class ZernioService {
     if (!row) throw new NotFoundException("Account not found in this workspace");
   }
 
+  /**
+   * Guard for the accountId-omitted path: the Zernio API key is global across
+   * every tenant workspace, so without this check a caller who knows a
+   * commentId from ANOTHER workspace could reply to / delete it. Confirm the
+   * comment actually appears in THIS workspace's own live comment feed first.
+   */
+  private async assertCommentInWorkspace(profileId: string, commentId: string) {
+    const comments = await this.client.listComments(profileId);
+    const found = comments.some((c) => (c.id ?? c._id) === commentId);
+    if (!found) throw new NotFoundException("Comment not found");
+  }
+
   async replyToComment(
     workspaceId: string,
     commentId: string,
@@ -241,14 +253,22 @@ export class ZernioService {
   ) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) throw new BadRequestException("Zernio is not connected");
-    await this.assertOwnAccount(workspaceId, accountId);
+    if (accountId) {
+      await this.assertOwnAccount(workspaceId, accountId);
+    } else {
+      await this.assertCommentInWorkspace(profileId, commentId);
+    }
     return this.client.replyToComment(commentId, message, accountId);
   }
 
   async deleteComment(workspaceId: string, commentId: string, accountId?: string) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) throw new BadRequestException("Zernio is not connected");
-    await this.assertOwnAccount(workspaceId, accountId);
+    if (accountId) {
+      await this.assertOwnAccount(workspaceId, accountId);
+    } else {
+      await this.assertCommentInWorkspace(profileId, commentId);
+    }
     await this.client.deleteComment(commentId, accountId);
     return { ok: true as const };
   }
