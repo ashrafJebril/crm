@@ -40,19 +40,15 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   const [scheduledFor, setScheduledFor] = useState<Date | null>(null);
 
   const publishMut = useMutation<
-    { content: string; mediaIds?: string[]; channels: PublishChannel[] },
-    Record<string, ChannelResult>
-  >((input) => api.post("/social/publish", input));
-
-  const scheduleMut = useMutation<
     {
       content: string;
       mediaIds?: string[];
       channels: PublishChannel[];
-      scheduledFor: string;
+      scheduledFor?: string;
+      timezone?: string;
     },
-    { id: string; status: string; scheduledFor: string }
-  >((input) => api.post("/scheduled-posts", input));
+    Record<string, ChannelResult>
+  >((input) => api.post("/social/publish", input));
 
   // Reset state when modal closes (so reopening starts fresh).
   useEffect(() => {
@@ -97,28 +93,18 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
     (fbReady || igReady || tiktokReady) &&
     !igRequiresImage &&
     !tiktokRequiresMedia &&
-    !publishMut.loading &&
-    !scheduleMut.loading;
+    !publishMut.loading;
 
   const onPost = async () => {
     if (!canPost) return;
-    // Schedule path
-    if (scheduledFor) {
-      await scheduleMut.mutate({
-        content: content.trim(),
-        mediaIds: selectedMediaId ? [selectedMediaId] : undefined,
-        channels: selectedChannels,
-        scheduledFor: scheduledFor.toISOString(),
-      });
-      onPosted?.();
-      onClose();
-      return;
-    }
-    // Immediate path
     const res = await publishMut.mutate({
       content: content.trim(),
       mediaIds: selectedMediaId ? [selectedMediaId] : undefined,
       channels: selectedChannels,
+      scheduledFor: scheduledFor ? scheduledFor.toISOString() : undefined,
+      timezone: scheduledFor
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : undefined,
     });
     setPublishResults(res);
     // Auto-close only if every channel succeeded; otherwise keep the modal
@@ -311,7 +297,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               <SchedulePicker value={scheduledFor} onChange={setScheduledFor} tx={tx} />
             </div>
 
-            {(publishMut.error || scheduleMut.error) && (
+            {publishMut.error && (
               <div
                 style={{
                   padding: "10px 12px",
@@ -322,7 +308,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                   border: "1px solid oklch(0.7 0.22 24 / 0.35)",
                 }}
               >
-                {publishMut.error ?? scheduleMut.error}
+                {publishMut.error}
               </div>
             )}
           </div>
@@ -458,11 +444,11 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
             type="button"
             className="btn primary"
             onClick={onPost}
-            disabled={!canPost || scheduleMut.loading}
+            disabled={!canPost}
           >
             <IconBolt w={13} />
             {scheduledFor
-              ? scheduleMut.loading
+              ? publishMut.loading
                 ? tx("Scheduling…", "جارٍ الجدولة…")
                 : tx("Schedule post", "جدولة")
               : publishMut.loading

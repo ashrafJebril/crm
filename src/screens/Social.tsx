@@ -22,6 +22,7 @@ import type { SocialComment, SocialPlatform, SocialPost } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { ComposeModal } from "@/components/ComposeModal";
+import { ScheduledPanel } from "@/components/ScheduledPanel";
 
 /* ── Live Facebook API shapes ────────────────────────────────────────────── */
 
@@ -191,6 +192,7 @@ function SocialImpl() {
   const [sortMode, setSortMode] = useState<SortMode>("top");
   const [draft, setDraft] = useState<string>("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [scheduledRefresh, setScheduledRefresh] = useState(0);
 
   // Card action menu — open one at a time.
   const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
@@ -619,6 +621,8 @@ function SocialImpl() {
           </button>
         ))}
       </div>
+
+      <ScheduledPanel refreshKey={scheduledRefresh} />
 
       <div
         className="social-grid"
@@ -1554,6 +1558,7 @@ function SocialImpl() {
         onClose={() => setComposeOpen(false)}
         onPosted={() => {
           if (isFbLive) liveFbQ.refetch();
+          setScheduledRefresh((n) => n + 1);
         }}
       />
 
