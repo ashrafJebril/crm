@@ -4,18 +4,14 @@ import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/Badge";
 import {
-  IconAlert,
   IconCheck,
-  IconCheckCircle,
   IconChev,
-  IconLang,
   IconMore,
   IconPhone,
   IconPlus,
   IconTemplate,
-  IconX,
 } from "@/icons";
-import type { Campaign } from "@/lib/types";
+import type { Campaign, Segment, Template } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 
@@ -23,10 +19,11 @@ interface CreateCampaignBody {
   name: string;
   audience: string;
   channel: string;
-  agent: string;
   status?: Campaign["status"];
   schedule?: string;
   recipients?: number;
+  segmentId?: string;
+  templateId?: string;
 }
 
 type View = "list" | "builder";
@@ -113,101 +110,61 @@ function InlineBar({ pct, label, color = "var(--accent)" }: InlineBarProps) {
   );
 }
 
-interface FilterRowProps {
-  field: string;
-  op: string;
-  value: string;
-}
-
-function FilterRow({ field, op, value }: FilterRowProps) {
-  return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-      <span
-        style={{
-          padding: "6px 10px",
-          background: "var(--bg-2)",
-          border: "1px solid var(--line-soft)",
-          borderRadius: 6,
-          fontSize: 12,
-          fontWeight: 500,
-        }}
-      >
-        {field}
-      </span>
-      <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-        {op}
-      </span>
-      <span
-        style={{
-          padding: "6px 10px",
-          background: "var(--accent-soft)",
-          color: "var(--accent)",
-          border: "1px solid var(--accent-ring)",
-          borderRadius: 6,
-          fontSize: 12,
-          fontWeight: 500,
-        }}
-      >
-        {value}
-      </span>
-      <button className="btn ghost icon sm" style={{ marginInlineStart: "auto" }}>
-        <IconX w={12} />
-      </button>
-    </div>
-  );
-}
-
 interface AudienceStepProps {
   tx: Tx;
+  segments: Segment[];
+  segmentId: string | null;
+  onSelect: (id: string | null) => void;
+  count: number;
 }
 
-function AudienceStep({ tx }: AudienceStepProps) {
+function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStepProps) {
+  const options: { id: string | null; label: string; count: number }[] = [
+    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: -1 },
+    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count })),
+  ];
   return (
     <div className="card">
       <div className="card-h">
         <h3>{tx("Audience", "الجمهور")}</h3>
-        <span className="sub mono">624 {tx("contacts match", "جهة اتصال")}</span>
+        <span className="sub mono">
+          {count.toLocaleString()} {tx("contacts match", "جهة اتصال")}
+        </span>
       </div>
-      <div style={{ padding: 18, display: "grid", gap: 14 }}>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div
-            className="mono"
-            style={{
-              fontSize: 11,
-              color: "var(--ink-3)",
-              textTransform: "uppercase",
-            }}
-          >
-            {tx("Filters", "الفلاتر")}
-          </div>
-          <FilterRow field={tx("Tags", "وسوم")} op="includes" value="Trial · Hot" />
-          <FilterRow field={tx("Lifecycle", "المرحلة")} op="is" value="Lead" />
-          <FilterRow field={tx("Last seen", "آخر ظهور")} op="<" value="14 days" />
-          <FilterRow field={tx("Country", "البلد")} op="in" value="SA, AE, EG, MA" />
-          <button className="btn ghost sm" style={{ alignSelf: "start" }}>
-            <IconPlus w={11} />
-            {tx("Add filter", "إضافة فلتر")}
-          </button>
-        </div>
-        <hr className="divider" />
-        <div
-          style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-        >
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>
-              {tx("Estimated audience", "الحجم المتوقع")}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
-              {tx(
-                "Excludes opted-out, blocked, and 24h-window expired",
-                "يستثني المُلغين والمحظورين",
+      <div style={{ padding: 18, display: "grid", gap: 8 }}>
+        {options.map((opt) => {
+          const active = segmentId === opt.id;
+          return (
+            <label
+              key={opt.id ?? "__all"}
+              style={{
+                display: "flex", gap: 12, padding: 12, alignItems: "center", cursor: "pointer",
+                background: active ? "var(--accent-soft)" : "var(--bg-1)",
+                border: `1px solid ${active ? "var(--accent-ring)" : "var(--line-soft)"}`,
+                borderRadius: 10,
+              }}
+            >
+              <input
+                type="radio"
+                name="audience"
+                checked={active}
+                onChange={() => onSelect(opt.id)}
+                style={{ accentColor: "var(--accent)" }}
+              />
+              <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{opt.label}</span>
+              {opt.count >= 0 && (
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                  {opt.count.toLocaleString()}
+                </span>
               )}
-            </div>
+            </label>
+          );
+        })}
+        {segments.length === 0 && (
+          <div className="mono muted" style={{ fontSize: 11 }}>
+            {tx("No segments yet — create them in Contacts.", "لا توجد شرائح بعد — أنشئها من جهات الاتصال.")}
           </div>
-          <div className="display" style={{ fontSize: 32, color: "var(--accent)" }}>
-            624
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -215,200 +172,115 @@ function AudienceStep({ tx }: AudienceStepProps) {
 
 interface MessageStepProps {
   tx: Tx;
-  body: string;
-  setBody: (s: string) => void;
+  templates: Template[];
+  templateId: string | null;
+  onSelect: (id: string | null) => void;
 }
 
-function MessageStep({ tx, body, setBody }: MessageStepProps) {
+function MessageStep({ tx, templates, templateId, onSelect }: MessageStepProps) {
+  const selected = templates.find((t) => t.id === templateId) ?? null;
+  const vars = selected?.body?.match(/\{\{[^}]+\}\}/g) ?? [];
   return (
-    <>
-      <div className="card">
-        <div className="card-h">
-          <div>
-            <h3>{tx("Message", "الرسالة")}</h3>
-            <div className="sub">
-              {tx("WhatsApp template · MARKETING", "قالب واتساب · تسويقي")}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button className="btn sm">
-              <IconLang w={12} />
-              EN
-            </button>
-            <button className="btn sm ghost">AR</button>
-          </div>
+    <div className="card">
+      <div className="card-h">
+        <div>
+          <h3>{tx("Message", "الرسالة")}</h3>
+          <div className="sub">{tx("WhatsApp template", "قالب واتساب")}</div>
         </div>
-        <div style={{ padding: 18 }}>
-          <Field label={tx("Template", "القالب")}>
-            <select style={INPUT_STYLE}>
-              <option>spring_waitlist_v2 · approved</option>
-              <option>spring_drop_image · pending</option>
-            </select>
-          </Field>
-          <div style={{ marginTop: 14 }}>
-            <div
-              className="mono"
-              style={{
-                fontSize: 11,
-                color: "var(--ink-3)",
-                textTransform: "uppercase",
-                marginBottom: 6,
-              }}
-            >
-              {tx("Body", "المحتوى")}
-            </div>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              style={{
-                width: "100%",
-                minHeight: 160,
-                padding: 12,
-                borderRadius: 10,
-                background: "var(--bg-2)",
-                border: "1px solid var(--line-soft)",
-                color: "var(--ink)",
-                fontFamily: "inherit",
-                fontSize: 14,
-                lineHeight: 1.5,
-                outline: 0,
-                resize: "vertical",
-              }}
-            />
-          </div>
+      </div>
+      <div style={{ padding: 18, display: "grid", gap: 14 }}>
+        <Field label={tx("Template", "القالب")}>
+          <select
+            style={INPUT_STYLE}
+            value={templateId ?? ""}
+            onChange={(e) => onSelect(e.target.value || null)}
+          >
+            <option value="">{tx("Select a template…", "اختر قالبًا…")}</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} · {t.status} · {t.lang.toUpperCase()}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {selected?.body && (
           <div
             style={{
-              display: "flex",
-              gap: 6,
-              marginTop: 10,
-              flexWrap: "wrap",
-              alignItems: "center",
+              padding: 12, borderRadius: 10, background: "var(--bg-2)",
+              border: "1px solid var(--line-soft)", fontSize: 13, lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
             }}
           >
-            {["{{first_name}}", "{{order_id}}", "{{city}}", "{{discount_code}}"].map((v) => (
-              <button key={v} className="btn ghost sm mono" style={{ fontSize: 11 }}>
-                {v}
-              </button>
-            ))}
-            <span style={{ flex: 1 }} />
+            {selected.body}
           </div>
-        </div>
-      </div>
-      <div className="card">
-        <div className="card-h">
-          <h3>{tx("Quick reply buttons", "أزرار الرد السريع")}</h3>
-          <span className="sub">{tx("Up to 3", "حتى ٣")}</span>
-        </div>
-        <div style={{ padding: 18, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[tx("Add me", "أضفني"), tx("Tell me more", "المزيد"), tx("Not now", "ليس الآن")].map(
-            (b) => (
-              <span
-                key={b}
-                style={{
-                  padding: "6px 14px",
-                  borderRadius: 999,
-                  background: "var(--bg-2)",
-                  border: "1px solid var(--line)",
-                  fontSize: 12,
-                }}
-              >
-                {b}
+        )}
+        {selected && selected.status !== "approved" && (
+          <div style={{ fontSize: 12, color: "var(--warn, #b58a00)" }}>
+            {tx(
+              "This template isn't approved by Meta yet — the campaign can be drafted but not sent.",
+              "هذا القالب غير معتمد من ميتا بعد — يمكن حفظ الحملة كمسودة فقط.",
+            )}
+          </div>
+        )}
+        {vars.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {vars.map((v) => (
+              <span key={v} className="mono" style={{ fontSize: 11, padding: "3px 8px", background: "var(--bg-2)", border: "1px solid var(--line-soft)", borderRadius: 6 }}>
+                {v}
               </span>
-            ),
-          )}
-          <button className="btn ghost sm">
-            <IconPlus w={12} />
-          </button>
-        </div>
+            ))}
+          </div>
+        )}
+        {templates.length === 0 && (
+          <div className="mono muted" style={{ fontSize: 11 }}>
+            {tx("No templates with a body yet — create one in Templates.", "لا توجد قوالب بعد — أنشئ واحدًا من القوالب.")}
+          </div>
+        )}
       </div>
-    </>
+    </div>
   );
 }
 
 interface ScheduleStepProps {
   tx: Tx;
+  choice: "now" | "later" | "drip" | "trigger";
+  onChoose: (c: "now" | "later" | "drip" | "trigger") => void;
 }
 
-function ScheduleStep({ tx }: ScheduleStepProps) {
+function ScheduleStep({ tx, choice, onChoose }: ScheduleStepProps) {
   const options = [
-    {
-      label: tx("Send now", "إرسال الآن"),
-      sub: tx("Begins immediately", "يبدأ فورًا"),
-      on: false,
-    },
-    {
-      label: tx("Schedule for later", "جدولة لاحقاً"),
-      sub: "May 12, 2026 · 10:00 AM (Asia/Riyadh)",
-      on: true,
-    },
-    {
-      label: tx("Drip over time", "تنقيط عبر الوقت"),
-      sub: tx(
-        "Stagger across 4 hours · respect quiet hours",
-        "موزّع على ٤ ساعات",
-      ),
-      on: false,
-    },
-    {
-      label: tx("Trigger-based", "مبني على مشغل"),
-      sub: tx("Send when a contact joins audience", "عند الانضمام للجمهور"),
-      on: false,
-    },
+    { id: "now" as const, label: tx("Send now", "إرسال الآن"), sub: tx("Begins as soon as sending ships", "يبدأ فور توفر الإرسال") },
+    { id: "later" as const, label: tx("Schedule for later", "جدولة لاحقاً"), sub: tx("Pick a date when sending ships", "اختر التاريخ عند توفر الإرسال") },
+    { id: "drip" as const, label: tx("Drip over time", "تنقيط عبر الوقت"), sub: tx("Staggered delivery", "تسليم موزّع") },
+    { id: "trigger" as const, label: tx("Trigger-based", "مبني على مشغل"), sub: tx("Send when a contact joins the audience", "عند الانضمام للجمهور") },
   ];
   return (
     <div className="card">
-      <div className="card-h">
-        <h3>{tx("Schedule", "الموعد")}</h3>
-      </div>
+      <div className="card-h"><h3>{tx("Schedule", "الموعد")}</h3></div>
       <div style={{ padding: 18, display: "grid", gap: 14 }}>
-        {options.map((opt) => (
-          <label
-            key={opt.label}
-            style={{
-              display: "flex",
-              gap: 12,
-              padding: 14,
-              background: opt.on ? "var(--accent-soft)" : "var(--bg-1)",
-              border: `1px solid ${opt.on ? "var(--accent-ring)" : "var(--line-soft)"}`,
-              borderRadius: 10,
-              cursor: "pointer",
-              alignItems: "center",
-            }}
-          >
-            <span
+        {options.map((opt) => {
+          const on = choice === opt.id;
+          return (
+            <label
+              key={opt.id}
+              onClick={() => onChoose(opt.id)}
               style={{
-                width: 16,
-                height: 16,
-                borderRadius: "50%",
-                border: `2px solid ${opt.on ? "var(--accent)" : "var(--line)"}`,
-                display: "grid",
-                placeItems: "center",
+                display: "flex", gap: 12, padding: 14, alignItems: "center", cursor: "pointer",
+                background: on ? "var(--accent-soft)" : "var(--bg-1)",
+                border: `1px solid ${on ? "var(--accent-ring)" : "var(--line-soft)"}`,
+                borderRadius: 10,
               }}
             >
-              {opt.on && (
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: "var(--accent)",
-                  }}
-                />
-              )}
-            </span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 500 }}>{opt.label}</div>
-              <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{opt.sub}</div>
-            </div>
-          </label>
-        ))}
-        <hr className="divider" />
-        <Field label={tx("Quiet hours", "ساعات الهدوء")}>
-          <span style={{ fontSize: 13 }}>22:00 — 08:00 Asia/Riyadh</span>
-        </Field>
-        <Field label={tx("Rate limit", "حد الإرسال")}>
-          <span style={{ fontSize: 13 }}>250 / minute · gradual ramp</span>
-        </Field>
+              <span style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${on ? "var(--accent)" : "var(--line)"}`, display: "grid", placeItems: "center" }}>
+                {on && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)" }} />}
+              </span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 500 }}>{opt.label}</div>
+                <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{opt.sub}</div>
+              </div>
+            </label>
+          );
+        })}
       </div>
     </div>
   );
@@ -416,38 +288,35 @@ function ScheduleStep({ tx }: ScheduleStepProps) {
 
 interface ReviewStepProps {
   tx: Tx;
+  audienceLabel: string;
+  audienceCount: number;
+  template: Template | null;
+  scheduleLabel: string;
 }
 
-function ReviewStep({ tx }: ReviewStepProps) {
-  const checks: [string, "ok" | "warn"][] = [
-    [tx("Template approved by Meta", "قالب معتمد"), "ok"],
-    [tx("Audience size 624 — within plan limits", "الحجم ضمن الحد"), "ok"],
-    [
-      tx("Variable {{first_name}} populated for 622 / 624", "المتغير ممتلئ"),
-      "warn",
-    ],
-    [tx("No opted-out contacts in audience", "لا توجد إلغاءات"), "ok"],
-    [tx("Quiet hours respected", "يحترم ساعات الهدوء"), "ok"],
+function ReviewStep({ tx, audienceLabel, audienceCount, template, scheduleLabel }: ReviewStepProps) {
+  const rows: [string, string][] = [
+    [tx("Audience", "الجمهور"), `${audienceLabel} · ${audienceCount.toLocaleString()} ${tx("contacts", "جهة")}`],
+    [tx("Template", "القالب"), template ? `${template.name} · ${template.status}` : tx("None selected", "لم يُختر")],
+    [tx("Schedule", "الموعد"), scheduleLabel],
+    [tx("Channel", "القناة"), "WhatsApp"],
   ];
   return (
     <div className="card">
-      <div className="card-h">
-        <h3>{tx("Pre-flight checks", "الفحوصات النهائية")}</h3>
-      </div>
-      <div style={{ padding: 18, display: "grid", gap: 8 }}>
-        {checks.map(([line, k]) => (
-          <div
-            key={line}
-            style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}
-          >
-            {k === "ok" ? (
-              <IconCheckCircle w={14} stroke={1.7} style={{ color: "var(--ok)" }} />
-            ) : (
-              <IconAlert w={14} stroke={1.7} style={{ color: "var(--warn)" }} />
-            )}
-            {line}
+      <div className="card-h"><h3>{tx("Review", "مراجعة")}</h3></div>
+      <div style={{ padding: 18, display: "grid", gap: 10 }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--ink-3)" }}>{k}</span>
+            <span style={{ fontWeight: 500 }}>{v}</span>
           </div>
         ))}
+        <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 4 }}>
+          {tx(
+            "Saved as a draft — sending arrives with the campaign engine.",
+            "تُحفظ كمسودة — الإرسال يتوفر مع محرك الحملات.",
+          )}
+        </div>
       </div>
     </div>
   );
@@ -455,10 +324,11 @@ function ReviewStep({ tx }: ReviewStepProps) {
 
 interface PhonePreviewProps {
   body: string;
+  buttons: string[];
   tx: Tx;
 }
 
-function PhonePreview({ body, tx }: PhonePreviewProps) {
+function PhonePreview({ body, buttons, tx }: PhonePreviewProps) {
   return (
     <div style={{ position: "sticky", top: 12, alignSelf: "start" }}>
       <div
@@ -524,26 +394,24 @@ function PhonePreview({ body, tx }: PhonePreviewProps) {
             }}
           >
             {body}
-            <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
-              {[
-                tx("Add me", "أضفني"),
-                tx("Tell me more", "المزيد"),
-                tx("Not now", "ليس الآن"),
-              ].map((b) => (
-                <span
-                  key={b}
-                  style={{
-                    padding: "3px 10px",
-                    borderRadius: 999,
-                    background: "var(--bg)",
-                    border: "1px solid var(--line)",
-                    fontSize: 11,
-                  }}
-                >
-                  {b}
-                </span>
-              ))}
-            </div>
+            {buttons.length > 0 && (
+              <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
+                {buttons.map((b) => (
+                  <span
+                    key={b}
+                    style={{
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      background: "var(--bg)",
+                      border: "1px solid var(--line)",
+                      fontSize: 11,
+                    }}
+                  >
+                    {b}
+                  </span>
+                ))}
+              </div>
+            )}
             <div
               className="mono"
               style={{
@@ -556,45 +424,6 @@ function PhonePreview({ body, tx }: PhonePreviewProps) {
               10:00 ✓
             </div>
           </div>
-        </div>
-      </div>
-      <div
-        style={{
-          marginTop: 12,
-          padding: 12,
-          background: "var(--bg-1)",
-          border: "1px solid var(--line-soft)",
-          borderRadius: 10,
-          fontSize: 12,
-        }}
-      >
-        <div
-          className="mono"
-          style={{
-            fontSize: 10,
-            color: "var(--ink-3)",
-            textTransform: "uppercase",
-            marginBottom: 6,
-          }}
-        >
-          {tx("Estimated cost", "التكلفة المتوقعة")}
-        </div>
-        <div
-          style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}
-        >
-          <span className="muted">624 × $0.0386</span>
-          <span className="mono">$24.09</span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            color: "var(--accent)",
-            fontWeight: 500,
-          }}
-        >
-          <span>{tx("Total", "المجموع")}</span>
-          <span className="mono">$24.09</span>
         </div>
       </div>
     </div>
@@ -615,21 +444,37 @@ function CampaignBuilder({ tx, onBack, onLaunch, launching }: CampaignBuilderPro
     { id: 3, label: tx("Schedule", "الموعد") },
     { id: 4, label: tx("Review", "مراجعة") },
   ];
-  const [step, setStep] = useState(2);
-  const [body, setBody] = useState(
-    tx(
-      `Hi {{first_name}} 👋
+  const [step, setStep] = useState(1);
 
-We've just opened the waitlist for our spring drop — early access starts Friday at 10:00 AM Riyadh time.
+  const segmentsQ = useFetch<Segment[]>("/segments");
+  const templatesQ = useFetch<Template[]>("/templates");
+  const summaryQ = useFetch<{ counts: { contacts: number } }>("/dashboard/summary");
 
-Want me to add you?`,
-      `أهلاً {{first_name}} 👋
+  const [name, setName] = useState("");
+  const [segmentId, setSegmentId] = useState<string | null>(null); // null = all contacts
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [scheduleChoice, setScheduleChoice] = useState<"now" | "later" | "drip" | "trigger">("later");
 
-افتتحنا قائمة انتظار تشكيلة الربيع — الوصول المبكر يبدأ الجمعة الساعة ١٠ صباحًا بتوقيت الرياض.
+  const segments = segmentsQ.data ?? [];
+  const templates = (templatesQ.data ?? []).filter((t) => !!t.body);
+  const selectedSegment = segments.find((s) => s.id === segmentId) ?? null;
+  const audienceCount = selectedSegment ? selectedSegment.count : summaryQ.data?.counts.contacts ?? 0;
+  const audienceLabel = selectedSegment ? selectedSegment.name : tx("All contacts", "كل جهات الاتصال");
+  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
 
-هل أضيفك؟`,
-    ),
-  );
+  const previewBody = selectedTemplate?.body ?? tx("Select a template to preview it.", "اختر قالبًا للمعاينة.");
+  let previewButtons: string[] = [];
+  try {
+    const parsed = selectedTemplate?.buttons ? JSON.parse(selectedTemplate.buttons) as { text?: string }[] : [];
+    previewButtons = parsed.map((b) => b.text ?? "").filter(Boolean);
+  } catch { previewButtons = []; }
+
+  const scheduleLabel = {
+    now: tx("Send now", "إرسال الآن"),
+    later: tx("Scheduled", "مجدولة"),
+    drip: tx("Drip", "تنقيط"),
+    trigger: tx("Trigger-based", "مشغل"),
+  }[scheduleChoice];
 
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
@@ -645,31 +490,25 @@ Want me to add you?`,
           <IconChev w={14} className="flip-rtl" style={{ transform: "rotate(180deg)" }} />
         </button>
         <div style={{ flex: 1 }}>
-          <h1
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={tx("Campaign name", "اسم الحملة")}
             style={{
+              width: "100%",
+              border: 0,
+              outline: 0,
+              background: "transparent",
+              padding: 0,
               margin: 0,
               fontSize: 20,
               fontWeight: 600,
               letterSpacing: "-0.02em",
+              color: "var(--ink)",
+              fontFamily: "inherit",
             }}
-          >
-            {tx("Spring drop · waitlist", "تشكيلة الربيع · قائمة الانتظار")}
-          </h1>
-          <div
-            style={{
-              color: "var(--ink-3)",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {tx("Draft · auto-saved 12s ago", "مسودة · حفظ آخر منذ ١٢ث")}
-          </div>
+          />
         </div>
-        <button className="btn">{tx("Save draft", "حفظ مسودة")}</button>
-        <button className="btn primary">
-          <IconCheck w={13} />
-          {tx("Schedule", "جدولة")}
-        </button>
       </div>
 
       <div style={{ padding: "20px 24px 0", display: "flex", gap: 8 }}>
@@ -725,10 +564,16 @@ Want me to add you?`,
         }}
       >
         <div style={{ display: "grid", gap: 16 }}>
-          {step === 1 && <AudienceStep tx={tx} />}
-          {step === 2 && <MessageStep tx={tx} body={body} setBody={setBody} />}
-          {step === 3 && <ScheduleStep tx={tx} />}
-          {step === 4 && <ReviewStep tx={tx} />}
+          {step === 1 && (
+            <AudienceStep tx={tx} segments={segments} segmentId={segmentId} onSelect={setSegmentId} count={audienceCount} />
+          )}
+          {step === 2 && (
+            <MessageStep tx={tx} templates={templates} templateId={templateId} onSelect={setTemplateId} />
+          )}
+          {step === 3 && <ScheduleStep tx={tx} choice={scheduleChoice} onChoose={setScheduleChoice} />}
+          {step === 4 && (
+            <ReviewStep tx={tx} audienceLabel={audienceLabel} audienceCount={audienceCount} template={selectedTemplate} scheduleLabel={scheduleLabel} />
+          )}
 
           <div
             style={{
@@ -744,30 +589,35 @@ Want me to add you?`,
             >
               {tx("Back", "رجوع")}
             </button>
-            <button
-              className="btn primary"
-              disabled={launching}
-              onClick={() => {
-                if (step === 4) {
+            {step === 4 ? (
+              <button
+                className="btn primary"
+                disabled={!name.trim() || !templateId || launching}
+                onClick={() => {
                   void onLaunch({
-                    name: tx("Spring drop · waitlist", "تشكيلة الربيع · قائمة الانتظار"),
-                    audience: "All customers",
+                    name: name.trim(),
+                    audience: audienceLabel,
                     channel: "Broadcast",
-                    agent: "atlas",
                     status: "draft",
+                    recipients: audienceCount,
+                    schedule: scheduleLabel,
+                    segmentId: segmentId ?? undefined,
+                    templateId: templateId ?? undefined,
                   });
-                } else {
-                  setStep((s) => Math.min(4, s + 1));
-                }
-              }}
-            >
-              {step === 4 ? tx("Schedule send", "جدولة الإرسال") : tx("Continue", "متابعة")}
-              <IconChev w={12} />
-            </button>
+                }}
+              >
+                {tx("Save draft", "حفظ مسودة")}
+              </button>
+            ) : (
+              <button className="btn primary" onClick={() => setStep((s) => Math.min(4, s + 1))}>
+                {tx("Continue", "متابعة")}
+                <IconChev w={12} />
+              </button>
+            )}
           </div>
         </div>
 
-        <PhonePreview body={body} tx={tx} />
+        <PhonePreview body={previewBody} buttons={previewButtons} tx={tx} />
       </div>
     </div>
   );
