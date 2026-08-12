@@ -150,11 +150,17 @@ export class ZernioClient {
     platforms: Array<{ platform: string; accountId: string; platformSpecificData?: unknown }>;
     mediaUrls?: string[];
     publishNow?: boolean;
+    scheduledFor?: string; // ISO 8601 — when set, wins over publishNow
+    timezone?: string;     // IANA name, e.g. "Asia/Riyadh"
   }): Promise<{ id: string | null; status: string | null }> {
+    const { scheduledFor, timezone, ...rest } = body;
+    const payload = scheduledFor
+      ? { ...rest, publishNow: false, scheduledFor, timezone }
+      : { publishNow: true, ...rest };
     const res = await this.request<{ post?: { _id?: string; status?: string } }>(
       "POST",
       "/posts",
-      { body: { publishNow: true, ...body } },
+      { body: payload },
     );
     return { id: res.post?._id ?? null, status: res.post?.status ?? null };
   }
@@ -169,6 +175,22 @@ export class ZernioClient {
       query: { profileId, platform, limit: "50" },
     });
     return res.posts ?? [];
+  }
+
+  /** Posts CREATED through Zernio (drafts/scheduled/published) — unlike the
+   *  /analytics feed, this is where the scheduled queue lives. */
+  async listCreatedPosts(profileId: string): Promise<ZernioPost[]> {
+    const res = await this.request<{ posts?: ZernioPost[]; data?: ZernioPost[] }>(
+      "GET",
+      "/posts",
+      { query: { profileId, limit: "50" } },
+    );
+    return res.posts ?? res.data ?? [];
+  }
+
+  /** Cancels a scheduled post (deletes the Zernio post). */
+  async cancelPost(postId: string): Promise<void> {
+    await this.request<unknown>("DELETE", `/posts/${encodeURIComponent(postId)}`, {});
   }
 
   async listComments(profileId: string, platform?: string): Promise<ZernioComment[]> {
