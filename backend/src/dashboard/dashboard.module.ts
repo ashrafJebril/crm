@@ -1,12 +1,17 @@
-import { Controller, Get, Module } from "@nestjs/common";
+import { Controller, Get, Module, Query } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
+/** Only 7 and 30 are supported; anything else falls back to 7. */
+export function resolveDays(q?: string): 7 | 30 {
+  return q === "30" ? 30 : 7;
+}
+
 /**
  * Inclusive bounds for a "last N days ending today" window (UTC).
- * Returns 7 buckets keyed by ISO date (YYYY-MM-DD).
+ * Returns n buckets keyed by ISO date (YYYY-MM-DD).
  */
-function lastNDays(n: number): string[] {
+export function lastNDays(n: number): string[] {
   const out: string[] = [];
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
@@ -53,9 +58,11 @@ class DashboardController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get("summary")
-  async summary(@CurrentWorkspace() workspaceId: string) {
-    const since7 = startOfDayUtc(6);   // start of the 7-day window
-    const since14 = startOfDayUtc(13); // for week-over-week deltas
+  async summary(@CurrentWorkspace() workspaceId: string, @Query("days") daysQ?: string) {
+    const n = resolveDays(daysQ);
+    const sinceN = startOfDayUtc(n - 1); // start of the chart window
+    const since7 = startOfDayUtc(6);     // start of the 7-day window (deltas)
+    const since14 = startOfDayUtc(13);   // for week-over-week deltas
 
     const [
       contacts,
@@ -69,12 +76,14 @@ class DashboardController {
       // ── Time-windowed counts (for deltas)
       convThis7,
       convPrev7,
-      // ── Daily timeseries (last 7 days)
+      // ── Daily timeseries (last n days)
       dailyRaw,
       // ── Intent breakdown
       intentRaw,
       // ── Recent activity (last 10 inbound/outbound messages)
       recentMessages,
+      // ── Per-channel conversation mix
+      channelsRaw,
     ] = await Promise.all([
       this.prisma.contact.count({ where: { workspaceId } }),
       this.prisma.conversation.count({ where: { workspaceId } }),
@@ -108,7 +117,7 @@ class DashboardController {
           COUNT(*) FILTER (WHERE m."from" = 'human')::bigint          AS human
         FROM "Message" m
         WHERE m."workspaceId" = ${workspaceId}
-          AND m."createdAt" >= ${since7}
+          AND m."createdAt" >= ${sinceN}
         GROUP BY 1
         ORDER BY 1
       `,
@@ -131,9 +140,14 @@ class DashboardController {
           conversation: { include: { contact: true } },
         },
       }),
+      this.prisma.conversation.groupBy({
+        by: ["channel"],
+        where: { workspaceId },
+        _count: { _all: true },
+      }),
     ]);
 
-    // Pad daily timeseries to a full 7-day window even when some days have
+    // Pad daily timeseries to a full n-day window even when some days have
     // zero activity, so the chart doesn't shift around as data appears.
     const dailyMap = new Map<string, DailyRow>();
     for (const r of dailyRaw) {
@@ -143,7 +157,7 @@ class DashboardController {
         human: Number(r.human),
       });
     }
-    const daily: DailyRow[] = lastNDays(7).map(
+    const daily: DailyRow[] = lastNDays(n).map(
       (day) => dailyMap.get(day) ?? { day, total: 0, human: 0 },
     );
 
@@ -191,9 +205,11 @@ class DashboardController {
         unread: unreadAgg._sum.unread ?? 0,
       },
       runningCampaigns,
+      windowDays: n,
       daily,
       topIntents,
       recentActivity,
+      channels: channelsRaw.map((c) => ({ channel: c.channel, count: c._count._all })),
       deltas: {
         conversationsPct: convDeltaPct,
         conversationsThis7: convThis7,
