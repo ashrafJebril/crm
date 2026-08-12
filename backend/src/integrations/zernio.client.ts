@@ -193,31 +193,69 @@ export class ZernioClient {
     await this.request<unknown>("DELETE", `/posts/${encodeURIComponent(postId)}`, {});
   }
 
-  async listComments(profileId: string, platform?: string): Promise<ZernioComment[]> {
-    const res = await this.request<{ data?: ZernioComment[] }>("GET", "/inbox/comments", {
+  /**
+   * Returns POSTS with comment counts aggregated across every connected
+   * account — NOT individual comments (confirmed against
+   * https://docs.zernio.com/comments/list-inbox-comments and a live probe:
+   * rows carry `content`/`picture`/`permalink` — the POST's own caption/media —
+   * plus a `commentCount`, no per-comment author or body). Fetch a post's
+   * actual comments with `getPostComments`.
+   */
+  async listComments(profileId: string, platform?: string): Promise<ZernioCommentedPost[]> {
+    const res = await this.request<{ data?: ZernioCommentedPost[] }>("GET", "/inbox/comments", {
       query: { profileId, platform },
     });
     return res.data ?? [];
   }
 
-  async replyToComment(
-    commentId: string,
-    message: string,
-    accountId?: string,
-  ): Promise<{ id: string | null }> {
-    const res = await this.request<{ id?: string; _id?: string; comment?: { _id?: string } }>(
-      "POST",
-      `/inbox/comments/${encodeURIComponent(commentId)}/reply`,
-      { body: { message, accountId } },
+  /** The real per-post comment list (confirmed live: `GET /inbox/comments/{postId}`
+   *  returns `{ status, comments: [...], pagination, meta }`). `accountId` is
+   *  required — the endpoint 400s ("expected string, received undefined") without it. */
+  async getPostComments(postId: string, accountId: string): Promise<ZernioPostComment[]> {
+    const res = await this.request<{ comments?: ZernioPostComment[] }>(
+      "GET",
+      `/inbox/comments/${encodeURIComponent(postId)}`,
+      { query: { accountId } },
     );
-    return { id: res.id ?? res._id ?? res.comment?._id ?? null };
+    return res.comments ?? [];
   }
 
-  async deleteComment(commentId: string, accountId?: string): Promise<void> {
+  /**
+   * Reply to a post, or thread a reply under one of its comments. Confirmed
+   * against https://docs.zernio.com/comments/reply-to-inbox-post and a live
+   * 400-validation probe: the path parameter is the PARENT POST id, not a
+   * comment id — `POST /inbox/comments/{commentId}/reply` (the round-1
+   * assumption) 405s. `accountId` is required in the body; `commentId` is
+   * optional — omit it to comment on the post itself, pass it to reply to
+   * that specific comment.
+   */
+  async replyToComment(
+    postId: string,
+    accountId: string,
+    message: string,
+    commentId?: string,
+  ): Promise<{ id: string | null }> {
+    const res = await this.request<{ data?: { commentId?: string }; commentId?: string }>(
+      "POST",
+      `/inbox/comments/${encodeURIComponent(postId)}`,
+      { body: { accountId, message, commentId } },
+    );
+    return { id: res.data?.commentId ?? res.commentId ?? null };
+  }
+
+  /**
+   * Delete a comment. Confirmed against
+   * https://docs.zernio.com/comments/delete-inbox-comment and a live
+   * 400-validation probe: `DELETE /inbox/comments/{postId}` (parent post id
+   * in the path) with BOTH `accountId` and `commentId` as required query
+   * params — the round-1 assumption (`DELETE /inbox/comments/{commentId}`
+   * with only `accountId`) 400s with "commentId" reported missing.
+   */
+  async deleteComment(postId: string, accountId: string, commentId: string): Promise<void> {
     await this.request<unknown>(
       "DELETE",
-      `/inbox/comments/${encodeURIComponent(commentId)}`,
-      { query: { accountId } },
+      `/inbox/comments/${encodeURIComponent(postId)}`,
+      { query: { accountId, commentId } },
     );
   }
 
@@ -362,20 +400,42 @@ export interface ZernioPost {
   shareCount?: number;
 }
 
-export interface ZernioComment {
+/** A POST, with its aggregate comment count — the actual shape returned by
+ *  `GET /inbox/comments` (see `ZernioClient.listComments`'s doc comment). */
+export interface ZernioCommentedPost {
   id?: string;
   _id?: string;
   accountId?: string;
+  accountUsername?: string;
   platform?: string;
-  postId?: string;
   content?: string;
-  text?: string;
-  author?: string;
-  authorName?: string;
-  from?: { name?: string };
+  picture?: string;
+  permalink?: string;
   createdTime?: string;
-  createdAt?: string;
+  commentCount?: number;
   likeCount?: number;
+  cid?: string;
+  subreddit?: string;
+  isAd?: boolean;
+  adId?: string;
+  placement?: string;
+}
+
+/** A genuine comment, as returned nested under a post by `getPostComments`. */
+export interface ZernioPostComment {
+  id?: string;
+  message?: string;
+  createdTime?: string;
+  from?: { id?: string; name?: string; username?: string; isOwner?: boolean };
+  likeCount?: number;
+  replyCount?: number;
+  platform?: string;
+  url?: string | null;
+  parentId?: string;
+  canReply?: boolean;
+  canDelete?: boolean;
+  canHide?: boolean;
+  isHidden?: boolean;
 }
 
 export interface ZernioWhatsAppNumbers {

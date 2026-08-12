@@ -60,6 +60,16 @@ describe("ZernioClient publishing", () => {
   });
 });
 
+/**
+ * Fix round 2 (2026-08-12): the paths assumed in Task 4 round 1
+ * (`POST /inbox/comments/{commentId}/reply`, `DELETE /inbox/comments/{commentId}`)
+ * were wrong — live probing against the real Zernio API returned 405 / 400.
+ * The real endpoints (confirmed via https://docs.zernio.com/comments/reply-to-inbox-post
+ * and https://docs.zernio.com/comments/delete-inbox-comment, and cross-checked with
+ * live 400-validation probes) address the PARENT POST id in the path; `commentId`
+ * is a separate body/query param. See task-4-report.md "Fix round 2" for the full
+ * probe transcript.
+ */
 describe("ZernioClient comments", () => {
   let client: ZernioClient;
   let fetchMock: jest.Mock;
@@ -70,25 +80,65 @@ describe("ZernioClient comments", () => {
     fetchMock = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: () => Promise.resolve(JSON.stringify({ id: "c2" })),
+      text: () => Promise.resolve(JSON.stringify({ success: true, data: { commentId: "c2" } })),
     });
     global.fetch = fetchMock as unknown as typeof fetch;
   });
 
-  it("replies to a comment", async () => {
-    const res = await client.replyToComment("c1", "thanks!", "acc1");
+  it("replies to a post/comment via POST /inbox/comments/:postId", async () => {
+    const res = await client.replyToComment("p1", "acc1", "thanks!", "c1");
     expect(res).toEqual({ id: "c2" });
-    expect(String(fetchMock.mock.calls[0][0])).toContain("/inbox/comments/c1/reply");
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("/inbox/comments/p1");
+    expect(url).not.toContain("/reply");
+    expect(fetchMock.mock.calls[0][1].method).toBe("POST");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body).toEqual({ message: "thanks!", accountId: "acc1" });
+    expect(body).toEqual({ accountId: "acc1", message: "thanks!", commentId: "c1" });
   });
 
-  it("deletes a comment", async () => {
+  it("deletes a comment via DELETE /inbox/comments/:postId?accountId=&commentId=", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve("{}") });
-    await client.deleteComment("c1", "acc1");
+    await client.deleteComment("p1", "acc1", "c1");
     const url = String(fetchMock.mock.calls[0][0]);
-    expect(url).toContain("/inbox/comments/c1");
+    expect(url).toContain("/inbox/comments/p1");
     expect(url).toContain("accountId=acc1");
+    expect(url).toContain("commentId=c1");
     expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+  });
+
+  it("fetches a post's real comments via GET /inbox/comments/:postId?accountId=", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            status: "success",
+            comments: [
+              {
+                id: "cmt1",
+                message: "hi",
+                from: { name: "Jane" },
+                likeCount: 2,
+                createdTime: "2026-01-01T00:00:00Z",
+              },
+            ],
+          }),
+        ),
+    });
+    const comments = await client.getPostComments("p1", "acc1");
+    expect(comments).toEqual([
+      {
+        id: "cmt1",
+        message: "hi",
+        from: { name: "Jane" },
+        likeCount: 2,
+        createdTime: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("/inbox/comments/p1");
+    expect(url).toContain("accountId=acc1");
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
   });
 });

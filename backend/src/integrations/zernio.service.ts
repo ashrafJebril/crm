@@ -207,26 +207,51 @@ export class ZernioService {
       }));
   }
 
+  /**
+   * `GET /inbox/comments` returns POSTS with comment counts, not individual
+   * comments (confirmed against https://docs.zernio.com/comments/list-inbox-comments
+   * and a live probe — see task-4-report.md "Fix round 2"). Genuine comment
+   * rows only exist per-post, so for every post that has any, fetch its real
+   * comments and flatten. Posts with zero comments are skipped, saving the
+   * extra round trip for the common case.
+   */
   async listComments(workspaceId: string, platform?: string) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) return [];
-    const comments = await this.client.listComments(profileId, platform?.toLowerCase());
-    return comments.map((c) => ({
-      id: c.id ?? c._id ?? "",
-      postId: c.postId ?? null,
-      platform: c.platform ?? null,
-      author: c.author ?? c.authorName ?? c.from?.name ?? "User",
-      body: c.content ?? c.text ?? "",
-      likes: c.likeCount ?? 0,
-      at: c.createdTime ?? c.createdAt ?? null,
-      accountId: c.accountId ?? null,
-    }));
+    const posts = await this.client.listComments(profileId, platform?.toLowerCase());
+    const withComments = posts.filter(
+      (p) => (p.commentCount ?? 0) > 0 && (p.id ?? p._id) && p.accountId,
+    );
+    const rows = await Promise.all(
+      withComments.map(async (post) => {
+        const postId = (post.id ?? post._id)!;
+        const accountId = post.accountId!;
+        try {
+          const comments = await this.client.getPostComments(postId, accountId);
+          return comments
+            .filter((c) => !!c.id)
+            .map((c) => ({
+              id: c.id!,
+              postId,
+              platform: post.platform ?? c.platform ?? null,
+              author: c.from?.name ?? c.from?.username ?? "User",
+              body: c.message ?? "",
+              likes: c.likeCount ?? 0,
+              at: c.createdTime ?? null,
+              accountId,
+            }));
+        } catch (e) {
+          this.log.warn(`Zernio getPostComments failed for post ${postId}: ${(e as Error).message}`);
+          return [];
+        }
+      }),
+    );
+    return rows.flat();
   }
 
   /** Guard: an accountId sent by the client must be one of this workspace's
    *  own Zernio-connected accounts. */
-  private async assertOwnAccount(workspaceId: string, accountId?: string) {
-    if (!accountId) return;
+  private async assertOwnAccount(workspaceId: string, accountId: string) {
     const row = await this.prisma.integration.findFirst({
       where: { workspaceId, provider: "zernio", pageId: accountId },
     });
@@ -234,15 +259,20 @@ export class ZernioService {
   }
 
   /**
-   * Guard for the accountId-omitted path: the Zernio API key is global across
-   * every tenant workspace, so without this check a caller who knows a
-   * commentId from ANOTHER workspace could reply to / delete it. Confirm the
-   * comment actually appears in THIS workspace's own live comment feed first.
+   * Resolve a comment (by its own id) to the underlying post + owning
+   * account it lives on. Required because Zernio's reply/delete endpoints
+   * address the PARENT POST id in the path, not the comment id — our own
+   * `/integrations/zernio/comments/:id/reply|delete` routes only carry the
+   * comment id (see Task 5's frontend), so the post id has to be resolved
+   * server-side. Scoping the lookup to this workspace's own live comment
+   * feed doubles as the tenancy guard: a commentId from another workspace
+   * simply won't be found here.
    */
-  private async assertCommentInWorkspace(profileId: string, commentId: string) {
-    const comments = await this.client.listComments(profileId);
-    const found = comments.some((c) => (c.id ?? c._id) === commentId);
+  private async findCommentInWorkspace(workspaceId: string, commentId: string) {
+    const comments = await this.listComments(workspaceId);
+    const found = comments.find((c) => c.id === commentId);
     if (!found) throw new NotFoundException("Comment not found");
+    return found;
   }
 
   async replyToComment(
@@ -253,23 +283,22 @@ export class ZernioService {
   ) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) throw new BadRequestException("Zernio is not connected");
-    if (accountId) {
-      await this.assertOwnAccount(workspaceId, accountId);
-    } else {
-      await this.assertCommentInWorkspace(profileId, commentId);
-    }
-    return this.client.replyToComment(commentId, message, accountId);
+    if (accountId) await this.assertOwnAccount(workspaceId, accountId);
+    const comment = await this.findCommentInWorkspace(workspaceId, commentId);
+    return this.client.replyToComment(
+      comment.postId,
+      accountId ?? comment.accountId,
+      message,
+      commentId,
+    );
   }
 
   async deleteComment(workspaceId: string, commentId: string, accountId?: string) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) throw new BadRequestException("Zernio is not connected");
-    if (accountId) {
-      await this.assertOwnAccount(workspaceId, accountId);
-    } else {
-      await this.assertCommentInWorkspace(profileId, commentId);
-    }
-    await this.client.deleteComment(commentId, accountId);
+    if (accountId) await this.assertOwnAccount(workspaceId, accountId);
+    const comment = await this.findCommentInWorkspace(workspaceId, commentId);
+    await this.client.deleteComment(comment.postId, accountId ?? comment.accountId, commentId);
     return { ok: true as const };
   }
 
