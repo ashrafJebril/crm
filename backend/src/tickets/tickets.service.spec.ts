@@ -39,6 +39,7 @@ describe("TicketsService.createTicket", () => {
 
   beforeEach(async () => {
     prisma = {
+      contact: { findFirst: jest.fn().mockResolvedValue({ id: "ct_1" }) },
       ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st_1", pipelineId: "pl_1", key: "new" }) },
       ticket: {
         findFirst: jest.fn().mockResolvedValue({ number: 4 }),
@@ -148,6 +149,7 @@ describe("TicketsService.createFromConversation", () => {
 
   beforeEach(async () => {
     prisma = {
+      contact: { findFirst: jest.fn().mockResolvedValue({ id: "ct_99" }) },
       conversation: {
         findFirst: jest.fn().mockResolvedValue({ id: "conv_1", contactId: "ct_99", workspaceId: "ws_1" }),
       },
