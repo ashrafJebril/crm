@@ -14,7 +14,6 @@ import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
   IconArchive,
-  IconBook,
   IconCampaign,
   IconFilter,
   IconMore,
@@ -811,10 +810,6 @@ function ContactsImpl() {
                 {tx("Pipeline", "المسار")}
               </button>
             </div>
-            <button className="btn">
-              <IconBook w={13} />
-              {tx("Import", "استيراد")}
-            </button>
             <button className="btn primary" onClick={() => setShowNew(true)}>
               <IconPlus w={13} />
               {tx("New contact", "جهة جديدة")}

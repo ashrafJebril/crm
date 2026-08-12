@@ -1750,8 +1750,8 @@ function CalendarImpl() {
           </span>
         }
         subtitle={tx(
-          "Bookings, reschedules, no-shows — with AI booking everything end-to-end.",
-          "الحجوزات والتعديلات وعدم الحضور — مع الحجز الذكي من البداية للنهاية.",
+          "Bookings, reschedules, and no-shows across your team.",
+          "الحجوزات والتعديلات وعدم الحضور عبر فريقك.",
         )}
         actions={
           <>

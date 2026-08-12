@@ -1,4 +1,4 @@
-# tkana — full-stack AI WhatsApp agent platform
+# tkana — WhatsApp & social engagement CRM for SMBs
 
 React + Vite + Tailwind v4 frontend, NestJS + Prisma + SQLite backend, JWT-authenticated.
 

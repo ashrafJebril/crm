@@ -1,14 +1,6 @@
 // Reference data for the Settings screen — API keys, webhooks, notification matrix,
 // WhatsApp numbers, sessions.
 
-export interface ApiKey {
-  name: string;
-  key: string;
-  created: string;
-  lastUsed: string;
-  perms: "Read+Write" | "Read only";
-}
-
 export type WebhookStatus = "active" | "paused" | "failing";
 
 export interface Webhook {
@@ -42,30 +34,6 @@ export interface Session {
   current: boolean;
   last: string;
 }
-
-export const API_KEYS: ApiKey[] = [
-  {
-    name: "Production",
-    key: "tk_live_82a4...c91d",
-    created: "Jan 14, 2026",
-    lastUsed: "2m ago",
-    perms: "Read+Write",
-  },
-  {
-    name: "Staging",
-    key: "tk_test_4f12...a7e8",
-    created: "Mar 03, 2026",
-    lastUsed: "4h ago",
-    perms: "Read+Write",
-  },
-  {
-    name: "BI ingest",
-    key: "tk_live_91bd...0f44",
-    created: "Apr 21, 2026",
-    lastUsed: "yesterday",
-    perms: "Read only",
-  },
-];
 
 export const WEBHOOKS: Webhook[] = [
   {
