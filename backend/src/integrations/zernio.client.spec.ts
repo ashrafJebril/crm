@@ -141,4 +141,56 @@ describe("ZernioClient comments", () => {
     expect(url).toContain("accountId=acc1");
     expect(fetchMock.mock.calls[0][1].method).toBe("GET");
   });
+
+  /**
+   * Found live in Tier 0 verification (task-12): Zernio nests a comment's
+   * replies under its own `replies` array — never as separate top-level rows.
+   * The un-flattened version of `getPostComments` returned only top-level
+   * comments, so `ZernioService.findCommentInWorkspace` (which searches this
+   * method's output for a matching id) could never resolve a reply's own id —
+   * a live reply-then-delete-that-reply round trip 404'd with "Comment not
+   * found" even though the reply existed and was visible on Facebook.
+   */
+  it("flattens nested replies into individually-addressable rows", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            status: "success",
+            comments: [
+              {
+                id: "top1",
+                message: "hi",
+                from: { name: "Jane" },
+                replies: [
+                  {
+                    id: "reply1",
+                    message: "🙏",
+                    from: { name: "Page" },
+                    replies: [{ id: "reply1-1", message: "nested twice", from: { name: "X" } }],
+                  },
+                ],
+              },
+              { id: "top2", message: "no replies here", from: { name: "Bob" } },
+            ],
+          }),
+        ),
+    });
+    const comments = await client.getPostComments("p1", "acc1");
+    expect(comments.map((c) => c.id)).toEqual(["top1", "reply1", "reply1-1", "top2"]);
+    expect(comments.find((c) => c.id === "reply1")).toMatchObject({
+      message: "🙏",
+      parentId: "top1",
+    });
+    expect(comments.find((c) => c.id === "reply1-1")).toMatchObject({
+      message: "nested twice",
+      parentId: "reply1",
+    });
+    // Top-level rows keep parentId undefined rather than inheriting one.
+    expect(comments.find((c) => c.id === "top2")?.parentId).toBeUndefined();
+    // The nested `replies` key itself must not leak through onto flattened rows.
+    expect(comments.every((c) => !("replies" in c))).toBe(true);
+  });
 });

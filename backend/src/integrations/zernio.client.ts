@@ -210,14 +210,24 @@ export class ZernioClient {
 
   /** The real per-post comment list (confirmed live: `GET /inbox/comments/{postId}`
    *  returns `{ status, comments: [...], pagination, meta }`). `accountId` is
-   *  required — the endpoint 400s ("expected string, received undefined") without it. */
+   *  required — the endpoint 400s ("expected string, received undefined") without it.
+   *
+   *  Zernio nests replies under their parent comment's `replies` array — they are
+   *  NEVER included as separate top-level rows. Confirmed live in Tier 0
+   *  verification: replying via `replyToComment` succeeds and the new reply is
+   *  visible nested under its parent here, but a follow-up `deleteComment` on
+   *  that reply's own id 404s ("Comment not found") because the caller
+   *  (`ZernioService.findCommentInWorkspace`) searches the flattened output of
+   *  this method for a matching id — so an un-flattened reply is simply never
+   *  found. Flatten every level so replies are individually addressable, same
+   *  as top-level comments. */
   async getPostComments(postId: string, accountId: string): Promise<ZernioPostComment[]> {
     const res = await this.request<{ comments?: ZernioPostComment[] }>(
       "GET",
       `/inbox/comments/${encodeURIComponent(postId)}`,
       { query: { accountId } },
     );
-    return res.comments ?? [];
+    return flattenComments(res.comments ?? []);
   }
 
   /**
@@ -436,6 +446,23 @@ export interface ZernioPostComment {
   canDelete?: boolean;
   canHide?: boolean;
   isHidden?: boolean;
+  /** Nested replies, as Zernio returns them — flattened by `getPostComments`. */
+  replies?: ZernioPostComment[];
+}
+
+/** Recursively flatten Zernio's nested comment/reply tree into one list, each
+ *  row tagging its own `parentId` — see `getPostComments`'s doc comment. */
+function flattenComments(
+  comments: ZernioPostComment[],
+  parentId?: string,
+): ZernioPostComment[] {
+  const out: ZernioPostComment[] = [];
+  for (const c of comments) {
+    const { replies, ...rest } = c;
+    out.push({ ...rest, parentId: c.parentId ?? parentId });
+    if (replies?.length) out.push(...flattenComments(replies, c.id));
+  }
+  return out;
 }
 
 export interface ZernioWhatsAppNumbers {
