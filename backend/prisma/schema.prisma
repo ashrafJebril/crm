@@ -382,6 +382,11 @@ model Campaign {
   channel     String   // Broadcast | Drip | Trigger
   schedule    String?
 
+  // Honest-draft bindings: the real segment + WhatsApp template the draft
+  // will use. Plain ids (no FK) — the send engine arrives in Tier 2.
+  segmentId  String?
+  templateId String?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
 

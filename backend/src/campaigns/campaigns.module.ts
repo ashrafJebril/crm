@@ -28,6 +28,8 @@ class CreateCampaignDto {
   @IsOptional() @IsIn([...STATUSES]) status?: (typeof STATUSES)[number];
   @IsOptional() @IsString() schedule?: string;
   @IsOptional() @IsInt() @Min(0) recipients?: number;
+  @IsOptional() @IsString() segmentId?: string;
+  @IsOptional() @IsString() templateId?: string;
 }
 
 class UpdateCampaignDto {

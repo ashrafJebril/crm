@@ -247,7 +247,8 @@ export interface Campaign {
   conversions: number;
   channel: string;
   schedule: string;
-  agent: string;
+  segmentId: string | null;
+  templateId: string | null;
 }
 
 export interface Intent {
