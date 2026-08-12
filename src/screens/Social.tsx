@@ -4,7 +4,6 @@ import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
-import { Modal } from "@/components/Modal";
 import { PhotoSlot } from "@/components/PhotoSlot";
 import { CommentSkeleton, PostCardSkeleton } from "@/components/Skeleton";
 import {
@@ -47,6 +46,7 @@ interface LiveFbComment {
   likes: number;
   at: string;
   replyCount: number;
+  accountId?: string | null;
 }
 
 /* ── Inline platform glyphs ──────────────────────────────────────────────── */
@@ -194,10 +194,9 @@ function SocialImpl() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [scheduledRefresh, setScheduledRefresh] = useState(0);
 
-  // Card action menu — open one at a time.
-  const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
-  // Post currently being edited (its existing body is loaded into the modal).
-  const [editingPost, setEditingPost] = useState<{ id: string; body: string } | null>(null);
+  // Comment the composer is currently replying to (Zernio only supports
+  // replies, not top-level comments, so the composer is reply-only).
+  const [replyTo, setReplyTo] = useState<SocialComment | null>(null);
 
   // Per-post local comment overrides (additions + like toggles).
   const [overrides, setOverrides] = useState<CommentMap>({});
@@ -368,6 +367,7 @@ function SocialImpl() {
       body: c.body,
       likes: c.likes,
       at: formatCompactDate(c.at),
+      accountId: c.accountId,
     }));
     setOverrides((prev) => {
       const existing = prev[baseSelected.id]?.comments;
@@ -398,39 +398,27 @@ function SocialImpl() {
     return { ...baseSelected, comments: override.comments };
   }, [baseSelected, overrides]);
 
-  /* ── Reply mutation for live posts ────────────────────────────────────── */
-  // NOTE: Backend exposes POST /integrations/facebook/comments/:commentId/reply.
-  // The Graph API treats post IDs and comment IDs interchangeably for /comments
-  // endpoints, so we use the same /reply endpoint for top-level composer too.
-  // If the backend rejects, we fall back silently to local-only state below.
-  const replyMutation = useMutation<
-    { parentId: string; message: string },
-    { id: string; ok: true }
+  /* ── Zernio comment mutations (reply + delete) ────────────────────────── */
+  // Comments on externally-published posts flow through Zernio: replying to
+  // a comment is the only write Zernio supports (no top-level comment create,
+  // no post edit/delete on posts published outside our composer).
+  const zernioReplyMut = useMutation<
+    { commentId: string; message: string; accountId?: string },
+    { id: string | null }
   >((input) =>
-    api.post<{ id: string; ok: true }>(
-      `/integrations/facebook/comments/${input.parentId}/reply`,
-      { message: input.message },
-    ),
+    api.post(`/integrations/zernio/comments/${input.commentId}/reply`, {
+      message: input.message,
+      accountId: input.accountId,
+    }),
   );
 
-  // IG: POST a top-level comment to the selected media item.
-  const igCommentMutation = useMutation<
-    { mediaId: string; message: string },
-    { id: string; ok: true }
-  >((input) =>
-    api.post<{ id: string; ok: true }>(
-      `/integrations/instagram/posts/${input.mediaId}/comments`,
-      { message: input.message },
-    ),
-  );
-
-  // Delete a comment on FB or IG. Graph DELETE /{comment-id}.
-  const deleteCommentMutation = useMutation<
-    { platform: SocialPlatform; commentId: string },
+  const zernioDeleteMut = useMutation<
+    { commentId: string; accountId?: string },
     { ok: boolean }
   >((input) =>
-    api.delete<{ ok: boolean }>(
-      `/integrations/${input.platform}/comments/${input.commentId}`,
+    api.delete(
+      `/integrations/zernio/comments/${input.commentId}` +
+        (input.accountId ? `?accountId=${encodeURIComponent(input.accountId)}` : ""),
     ),
   );
 
@@ -443,30 +431,14 @@ function SocialImpl() {
     const after = before.filter((x) => x.id !== c.id);
     writeComments(postId, after);
     if (isLocalOnly) return; // never made it to the platform, nothing to call
-    const isLiveFb = selected.platform === "facebook" && liveFbPostIds.has(postId);
-    const isLiveIg = selected.platform === "instagram" && liveIgPostIds.has(postId);
-    if (!isLiveFb && !isLiveIg) return;
-    deleteCommentMutation
-      .mutate({
-        platform: selected.platform,
-        commentId: c.id,
-      })
+    if (!liveFbPostIds.has(postId) && !liveIgPostIds.has(postId)) return;
+    zernioDeleteMut
+      .mutate({ commentId: c.id, accountId: c.accountId ?? undefined })
       .catch(() => {
         // Restore on failure so the operator sees the comment didn't actually delete.
         writeComments(postId, before);
       });
   }
-
-  /* ── FB post delete + edit mutations ──────────────────────────────────── */
-  const deletePostMut = useMutation<{ postId: string }, { ok: boolean }>((input) =>
-    api.delete(`/integrations/facebook/posts/${input.postId}`),
-  );
-  const editPostMut = useMutation<
-    { postId: string; message: string },
-    { ok: boolean; id: string }
-  >((input) =>
-    api.patch(`/integrations/facebook/posts/${input.postId}`, { message: input.message }),
-  );
 
   /* ── Insights for the active platform ─────────────────────────────────── */
   const insights = useMemo(() => {
@@ -527,7 +499,7 @@ function SocialImpl() {
   }
 
   function submitComment() {
-    if (!selected || !user) return;
+    if (!selected || !user || !replyTo) return;
     const body = draft.trim();
     if (!body) return;
     const localId = `${selected.id}-local-${Date.now()}`;
@@ -539,43 +511,40 @@ function SocialImpl() {
       likes: 0,
       at: tx("now", "الآن"),
     };
-    const current = getCurrentComments(selected);
-    writeComments(selected.id, [...current, newComment]);
-    setDraft("");
-
-    // If this is a live FB/IG post, post the comment to the right platform.
-    // On success, swap in the real ID returned by the backend; on error,
-    // keep the optimistic local entry so the UI doesn't blink.
     const postId = selected.id;
-    const swapId = (realId: string) => {
-      setOverrides((prev) => {
-        const list = prev[postId]?.comments ?? [];
-        const next = list.map((c) =>
-          c.id === localId ? { ...c, id: realId } : c,
-        );
-        return { ...prev, [postId]: { comments: next } };
+    writeComments(postId, [...getCurrentComments(selected), newComment]);
+    setDraft("");
+    zernioReplyMut
+      .mutate({ commentId: replyTo.id, message: body, accountId: replyTo.accountId ?? undefined })
+      .then((res) => {
+        if (res.id) {
+          setOverrides((prev) => {
+            const list = prev[postId]?.comments ?? [];
+            return {
+              ...prev,
+              [postId]: { comments: list.map((c) => (c.id === localId ? { ...c, id: res.id! } : c)) },
+            };
+          });
+        }
+        setReplyTo(null);
+      })
+      .catch(() => {
+        // Roll back the optimistic row so a failed reply isn't shown as posted.
+        setOverrides((prev) => {
+          const list = prev[postId]?.comments ?? [];
+          return { ...prev, [postId]: { comments: list.filter((c) => c.id !== localId) } };
+        });
       });
-    };
-
-    if (selected.platform === "facebook" && liveFbPostIds.has(postId)) {
-      replyMutation
-        .mutate({ parentId: postId, message: body })
-        .then((res) => swapId(res.id))
-        .catch(() => {});
-    } else if (selected.platform === "instagram" && liveIgPostIds.has(postId)) {
-      igCommentMutation
-        .mutate({ mediaId: postId, message: body })
-        .then((res) => swapId(res.id))
-        .catch(() => {});
-    }
   }
 
   function selectPlatform(p: SocialPlatform) {
     setPlatform(p);
+    setReplyTo(null);
   }
 
   function selectPost(id: string) {
     setSelectedByPlatform((prev) => ({ ...prev, [platform]: id }));
+    setReplyTo(null);
   }
 
   return (
@@ -595,10 +564,6 @@ function SocialImpl() {
         )}
         actions={
           <>
-            <button className="btn">
-              <IconStar w={13} />
-              {tx("Saved", "المحفوظات")}
-            </button>
             <button className="btn primary" onClick={() => setComposeOpen(true)}>
               <IconBolt w={13} />
               {tx("Compose", "إنشاء منشور")}
@@ -881,48 +846,18 @@ function SocialImpl() {
                         <span>{post.postedAt}</span>
                       </div>
                     </div>
-                    {isFbLive && liveFbPostIds.has(post.id) ? (
-                      <PostActionMenu
-                        postId={post.id}
-                        open={openMenuPostId === post.id}
-                        onToggle={(e) => {
-                          e.stopPropagation();
-                          setOpenMenuPostId((cur) => (cur === post.id ? null : post.id));
-                        }}
-                        onClose={() => setOpenMenuPostId(null)}
-                        onEdit={() => {
-                          setEditingPost({ id: post.id, body: post.body });
-                          setOpenMenuPostId(null);
-                        }}
-                        onDelete={async () => {
-                          setOpenMenuPostId(null);
-                          if (
-                            !window.confirm(
-                              tx(
-                                "Delete this post from Facebook? This cannot be undone.",
-                                "حذف هذا المنشور من فيسبوك؟ لا يمكن التراجع.",
-                              ),
-                            )
-                          )
-                            return;
-                          await deletePostMut.mutate({ postId: post.id });
-                          liveFbQ.refetch();
-                        }}
-                        deleting={deletePostMut.loading}
-                        tx={tx}
-                      />
-                    ) : (
-                      <span
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          color: "var(--ink-3)",
-                          display: "inline-flex",
-                          padding: 4,
-                        }}
-                      >
-                        <IconMore w={14} />
-                      </span>
-                    )}
+                    {/* Zernio can't edit/delete externally-published posts, so
+                        this is decorative — no action menu. */}
+                    <span
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        color: "var(--ink-3)",
+                        display: "inline-flex",
+                        padding: 4,
+                      }}
+                    >
+                      <IconMore w={14} />
+                    </span>
                   </div>
 
                   <div
@@ -1185,7 +1120,7 @@ function SocialImpl() {
                               }
                             }}
                             className="like-btn"
-                            disabled={deleteCommentMutation.loading}
+                            disabled={zernioDeleteMut.loading}
                             style={{
                               background: "transparent",
                               border: 0,
@@ -1200,15 +1135,17 @@ function SocialImpl() {
                           </button>
                           <button
                             type="button"
+                            onClick={() => setReplyTo(c)}
                             className="like-btn"
                             style={{
                               background: "transparent",
                               border: 0,
                               padding: 0,
                               cursor: "pointer",
-                              color: "var(--ink-3)",
+                              color: replyTo?.id === c.id ? "var(--accent)" : "var(--ink-3)",
                               fontFamily: "var(--font-mono)",
                               fontSize: 11,
+                              fontWeight: replyTo?.id === c.id ? 600 : 400,
                             }}
                           >
                             {tx("Reply", "رد")}
@@ -1246,6 +1183,41 @@ function SocialImpl() {
                     gap: 8,
                   }}
                 >
+                  {replyTo && (
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        alignSelf: "flex-start",
+                        padding: "3px 8px",
+                        borderRadius: 999,
+                        background: "var(--accent-soft)",
+                        border: "1px solid var(--accent-ring)",
+                      }}
+                    >
+                      <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
+                        {tx("Replying to", "الرد على")}{" "}
+                        <strong style={{ color: "var(--ink-1)" }}>{replyTo.author}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setReplyTo(null)}
+                        aria-label={tx("Cancel reply", "إلغاء الرد")}
+                        style={{
+                          background: "transparent",
+                          border: 0,
+                          padding: 0,
+                          cursor: "pointer",
+                          color: "var(--ink-3)",
+                          fontSize: 13,
+                          lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                   <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                     <Avatar
                       name={user?.name ?? "You"}
@@ -1261,10 +1233,12 @@ function SocialImpl() {
                           submitComment();
                         }
                       }}
-                      placeholder={tx(
-                        `Reply as ${user?.name ?? "you"}…`,
-                        `رد بصفتك ${user?.name ?? "أنت"}…`,
-                      )}
+                      disabled={!replyTo}
+                      placeholder={
+                        replyTo
+                          ? tx(`Reply as ${user?.name ?? "you"}…`, `رد بصفتك ${user?.name ?? "أنت"}…`)
+                          : tx("Select a comment to reply", "اختر تعليقًا للرد عليه")
+                      }
                       style={{
                         flex: 1,
                         minHeight: 44,
@@ -1308,7 +1282,7 @@ function SocialImpl() {
                         type="button"
                         className="btn primary"
                         onClick={submitComment}
-                        disabled={draft.trim().length === 0}
+                        disabled={!replyTo || draft.trim().length === 0}
                       >
                         <IconSend w={13} />
                         {tx("Post comment", "نشر التعليق")}
@@ -1561,208 +1535,7 @@ function SocialImpl() {
           setScheduledRefresh((n) => n + 1);
         }}
       />
-
-      <EditPostModal
-        post={editingPost}
-        onClose={() => setEditingPost(null)}
-        onSave={async (newBody) => {
-          if (!editingPost) return;
-          await editPostMut.mutate({ postId: editingPost.id, message: newBody });
-          setEditingPost(null);
-          liveFbQ.refetch();
-        }}
-        saving={editPostMut.loading}
-        error={editPostMut.error}
-        tx={tx}
-      />
     </div>
-  );
-}
-
-/* ── Per-card actions popover ─────────────────────────────────────────── */
-interface PostActionMenuProps {
-  postId: string;
-  open: boolean;
-  onToggle: (e: React.MouseEvent) => void;
-  onClose: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  deleting: boolean;
-  tx: (en: string, ar: string) => string;
-}
-
-function PostActionMenu({
-  open,
-  onToggle,
-  onClose,
-  onEdit,
-  onDelete,
-  deleting,
-  tx,
-}: PostActionMenuProps) {
-  // Close on outside click while open.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = () => onClose();
-    document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
-  }, [open, onClose]);
-
-  return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-label={tx("Post actions", "إجراءات المنشور")}
-        style={{
-          background: "transparent",
-          border: 0,
-          padding: 4,
-          color: "var(--ink-3)",
-          cursor: "pointer",
-          display: "inline-flex",
-        }}
-      >
-        <IconMore w={14} />
-      </button>
-      {open && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: "absolute",
-            top: 26,
-            insetInlineEnd: 0,
-            zIndex: 10,
-            background: "var(--bg-elev)",
-            border: "1px solid var(--line-soft)",
-            borderRadius: 10,
-            boxShadow: "var(--shadow-md, 0 6px 18px rgba(0,0,0,.18))",
-            minWidth: 160,
-            padding: 4,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <button
-            type="button"
-            onClick={onEdit}
-            className="menu-item"
-            style={menuItemStyle()}
-          >
-            {tx("Edit caption", "تعديل النص")}
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={deleting}
-            className="menu-item"
-            style={{ ...menuItemStyle(), color: "var(--bad)" }}
-          >
-            {deleting ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "حذف")}
-          </button>
-        </div>
-      )}
-    </span>
-  );
-}
-
-function menuItemStyle(): React.CSSProperties {
-  return {
-    textAlign: "start",
-    background: "transparent",
-    border: 0,
-    padding: "8px 10px",
-    fontSize: 13,
-    cursor: "pointer",
-    borderRadius: 6,
-    color: "inherit",
-  };
-}
-
-/* ── Edit post (caption-only) modal ───────────────────────────────────── */
-interface EditPostModalProps {
-  post: { id: string; body: string } | null;
-  onClose: () => void;
-  onSave: (newBody: string) => Promise<void>;
-  saving: boolean;
-  error: string | null;
-  tx: (en: string, ar: string) => string;
-}
-
-function EditPostModal({ post, onClose, onSave, saving, error, tx }: EditPostModalProps) {
-  const [body, setBody] = useState("");
-
-  useEffect(() => {
-    if (post) setBody(post.body);
-  }, [post]);
-
-  if (!post) return null;
-
-  const dirty = body.trim() !== post.body.trim();
-
-  return (
-    <Modal
-      onClose={onClose}
-      width={560}
-      label={tx("Edit post", "تعديل المنشور")}
-      panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
-    >
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>
-            {tx("Edit post", "تعديل المنشور")}
-          </span>
-          <span style={{ flex: 1 }} />
-          <span className="mono muted" style={{ fontSize: 11 }}>
-            {tx("Text only — the image cannot be changed.", "النص فقط — لا يمكن تغيير الصورة.")}
-          </span>
-        </div>
-        <textarea
-          autoFocus
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={6}
-          style={{
-            width: "100%",
-            resize: "vertical",
-            padding: "10px 12px",
-            background: "var(--bg-2)",
-            border: "1px solid var(--line)",
-            borderRadius: 10,
-            color: "var(--ink)",
-            fontSize: 14,
-            fontFamily: "inherit",
-            lineHeight: 1.5,
-            outline: "none",
-          }}
-        />
-        {error && (
-          <div
-            style={{
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: "oklch(0.7 0.22 24 / 0.12)",
-              color: "var(--bad)",
-              fontSize: 12,
-              border: "1px solid oklch(0.7 0.22 24 / 0.35)",
-            }}
-          >
-            {error}
-          </div>
-        )}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button type="button" className="btn ghost" onClick={onClose}>
-            {tx("Cancel", "إلغاء")}
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={() => onSave(body.trim())}
-            disabled={!dirty || body.trim().length === 0 || saving}
-          >
-            {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Save", "حفظ")}
-          </button>
-        </div>
-    </Modal>
   );
 }
 

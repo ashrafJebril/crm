@@ -141,6 +141,7 @@ export interface SocialComment {
   likes: number;
   at: string;     // human-readable like "2h"
   liked?: boolean;
+  accountId?: string | null;
 }
 
 export interface SocialPost {
