@@ -60,4 +60,8 @@ export class SocialService {
   reschedule(workspaceId: string, postId: string, dto: RescheduleDto) {
     return this.zernio.reschedulePost(workspaceId, postId, dto.scheduledFor, dto.timezone);
   }
+
+  analyticsOverview(workspaceId: string, days: 7 | 30) {
+    return this.zernio.analyticsOverview(workspaceId, days);
+  }
 }

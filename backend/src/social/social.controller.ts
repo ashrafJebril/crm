@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { SocialService } from "./social.service";
 import { PublishDto, RescheduleDto } from "./social.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
@@ -17,6 +17,14 @@ export class SocialController {
   @Get("scheduled")
   scheduled(@CurrentWorkspace() workspaceId: string) {
     return this.svc.listScheduled(workspaceId);
+  }
+
+  @Get("analytics/overview")
+  analyticsOverview(
+    @CurrentWorkspace() workspaceId: string,
+    @Query("days") daysQ?: string,
+  ) {
+    return this.svc.analyticsOverview(workspaceId, daysQ === "30" ? 30 : 7);
   }
 
   @Delete("scheduled/:id")

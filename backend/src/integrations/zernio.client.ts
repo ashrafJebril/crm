@@ -207,6 +207,48 @@ export class ZernioClient {
   }
 
   /**
+   * Per-post analytics rows for a date window (spike-verified 2026-08-13:
+   * docs/superpowers/plans/2026-08-13-analytics-spike-findings.md). The
+   * response key is `posts` (the page-level `overview` object next to it is
+   * post-COUNT aggregates only — no summed engagement anywhere, so totals
+   * must be summed client-side from these rows). Each row carries a
+   * rolled-up `analytics` object AND a `platforms[]` per-account breakdown
+   * with its own `analytics` — prefer the breakdown when attributing metrics
+   * to a platform, since a cross-posted post's rolled-up object doesn't say
+   * which platform contributed what.
+   */
+  async getAnalytics(
+    profileId: string,
+    opts: { fromDate: string; toDate: string },
+  ): Promise<ZernioAnalyticsRow[]> {
+    const res = await this.request<{ posts?: ZernioAnalyticsRow[] }>("GET", "/analytics", {
+      query: { profileId, fromDate: opts.fromDate, toDate: opts.toDate, limit: "100" },
+    });
+    return res.posts ?? [];
+  }
+
+  /**
+   * Follower history per connected account (spike-verified 2026-08-13).
+   * Reports per-ACCOUNT, not per-platform — `accounts[]` is the join back to
+   * a platform name for `stats[accountId]`. Always pass an explicit
+   * `fromDate`/`toDate`: the doc's claimed "defaults to 30 days ago" is
+   * wrong — the live default is `2025-01-01`, effectively unbounded history.
+   */
+  async getFollowerStats(
+    profileId: string,
+    opts: { fromDate: string; toDate: string; granularity?: "daily" | "weekly" | "monthly" },
+  ): Promise<ZernioFollowerStatsResponse> {
+    return this.request<ZernioFollowerStatsResponse>("GET", "/accounts/follower-stats", {
+      query: {
+        profileId,
+        fromDate: opts.fromDate,
+        toDate: opts.toDate,
+        granularity: opts.granularity ?? "daily",
+      },
+    });
+  }
+
+  /**
    * Returns POSTS with comment counts aggregated across every connected
    * account — NOT individual comments (confirmed against
    * https://docs.zernio.com/comments/list-inbox-comments and a live probe:
@@ -421,6 +463,56 @@ export interface ZernioPost {
   likeCount?: number;
   commentCount?: number;
   shareCount?: number;
+}
+
+/** Metric set shared by a post's rolled-up `analytics` and every entry in
+ *  its `platforms[]` breakdown (spike-verified 2026-08-13, identical schema
+ *  on facebook and instagram rows). `engagementRate` is already a rate/%,
+ *  not a count — it has no meaningful "sum", unlike the others. */
+export interface ZernioAnalyticsMetrics {
+  impressions?: number;
+  reach?: number;
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  saves?: number;
+  clicks?: number;
+  views?: number;
+  follows?: number;
+  engagementRate?: number;
+}
+
+/** A row from `GET /analytics` (see `ZernioClient.getAnalytics`). Field
+ *  names are the LIVE ones: `_id` (not the docs' `postId`) and `platforms`
+ *  (not the docs' `platformAnalytics`). */
+export interface ZernioAnalyticsRow {
+  _id?: string;
+  platform?: string;
+  analytics?: ZernioAnalyticsMetrics;
+  platforms?: Array<{
+    platform?: string;
+    accountId?: string;
+    analytics?: ZernioAnalyticsMetrics;
+  }>;
+}
+
+/** One row of `GET /accounts/follower-stats`'s `accounts[]` — the join
+ *  table from an accountId (as used in `stats{}`) back to its platform. */
+export interface ZernioFollowerStatsAccount {
+  _id?: string;
+  platform?: string;
+  currentFollowers?: number | null;
+  growth?: number;
+}
+
+/** `GET /accounts/follower-stats` response (spike-verified 2026-08-13):
+ *  `stats[accountId]` is a list of `{date, followers}` points — the field is
+ *  `followers`, not `count`. */
+export interface ZernioFollowerStatsResponse {
+  accounts?: ZernioFollowerStatsAccount[];
+  stats?: Record<string, Array<{ date?: string; followers?: number }>>;
+  dateRange?: { from?: string; to?: string };
+  granularity?: string;
 }
 
 /** A POST, with its aggregate comment count — the actual shape returned by

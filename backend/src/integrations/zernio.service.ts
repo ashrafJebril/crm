@@ -7,7 +7,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
-import { ZernioClient, ZernioAccount } from "./zernio.client";
+import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -364,6 +364,144 @@ export class ZernioService {
     this.assertFutureSchedule(scheduledFor);
     const res = await this.client.updatePost(postId, { scheduledFor, timezone });
     return { ok: true as const, id: res.id ?? postId };
+  }
+
+  // ─── Analytics overview ──────────────────────────────────────────────────
+
+  /**
+   * Per-platform analytics + follower stats for the social overview card,
+   * with graceful degradation instead of ever throwing.
+   *
+   * `GET /analytics` only aggregates post COUNTS at the page level (spike,
+   * 2026-08-13: docs/superpowers/plans/2026-08-13-analytics-spike-findings.md)
+   * — there is no "total impressions this window" anywhere in the response,
+   * so totals are summed here from `posts[]`. Each post's `platforms[]`
+   * breakdown (the LIVE field name — docs wrongly call it
+   * `platformAnalytics`) is preferred over the post's rolled-up `analytics`
+   * object, because it's the only way to attribute metrics to the right
+   * platform for a post that was cross-posted to more than one. A metric key
+   * that never appears on any row for a platform stays `null` (the platform
+   * genuinely doesn't report it — e.g. WhatsApp has no post-analytics
+   * concept, and this account's Instagram rows never carry `impressions`);
+   * it must never be reported as `0`. `engagementRate` is already a rate, so
+   * it's averaged across the posts that report it rather than summed like
+   * the count metrics.
+   *
+   * Follower history comes from a separate endpoint
+   * (`GET /accounts/follower-stats`) which reports per-ACCOUNT, not
+   * per-platform — its `accounts[]` array is the join back to a platform
+   * name for `stats[accountId]`.
+   */
+  async analyticsOverview(workspaceId: string, days: 7 | 30) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) return { available: false as const, reason: "not_connected" as const };
+
+    const to = new Date();
+    const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const fromDate = iso(from);
+    const toDate = iso(to);
+
+    try {
+      const [rows, followerStats] = await Promise.all([
+        this.client.getAnalytics(profileId, { fromDate, toDate }),
+        this.client.getFollowerStats(profileId, { fromDate, toDate, granularity: "daily" }),
+      ]);
+
+      const SUM_METRICS = ["impressions", "reach", "likes", "comments", "shares"] as const;
+      type SumMetric = (typeof SUM_METRICS)[number];
+      const sums = new Map<string, Record<SumMetric, number | null>>();
+      const engagement = new Map<string, { total: number; count: number }>();
+
+      const addEntry = (platform: string, analytics?: ZernioAnalyticsRow["analytics"]) => {
+        if (!analytics) return;
+        const acc =
+          sums.get(platform) ??
+          (Object.fromEntries(SUM_METRICS.map((m) => [m, null])) as Record<
+            SumMetric,
+            number | null
+          >);
+        for (const m of SUM_METRICS) {
+          const v = analytics[m];
+          if (typeof v === "number") acc[m] = (acc[m] ?? 0) + v;
+        }
+        sums.set(platform, acc);
+        if (typeof analytics.engagementRate === "number") {
+          const e = engagement.get(platform) ?? { total: 0, count: 0 };
+          e.total += analytics.engagementRate;
+          e.count += 1;
+          engagement.set(platform, e);
+        }
+      };
+
+      for (const row of rows) {
+        if (Array.isArray(row.platforms) && row.platforms.length > 0) {
+          for (const p of row.platforms) {
+            if (p.platform) addEntry(p.platform, p.analytics);
+          }
+        } else if (row.platform) {
+          addEntry(row.platform, row.analytics);
+        }
+      }
+
+      const accountPlatform = new Map<string, string>();
+      for (const a of followerStats.accounts ?? []) {
+        if (a._id && a.platform) accountPlatform.set(a._id, a.platform);
+      }
+      const followers = new Map<
+        string,
+        { current: number; delta: number; series: { date: string; count: number }[] }
+      >();
+      for (const [accountId, points] of Object.entries(followerStats.stats ?? {})) {
+        const platform = accountPlatform.get(accountId);
+        if (!platform) continue;
+        const series = (points ?? [])
+          .filter(
+            (p): p is { date: string; followers: number } =>
+              !!p?.date && typeof p.followers === "number" && p.date >= fromDate,
+          )
+          .map((p) => ({ date: p.date, count: p.followers }))
+          .sort((a, b) => (a.date < b.date ? -1 : 1));
+        if (!series.length) continue;
+        followers.set(platform, {
+          current: series[series.length - 1].count,
+          delta: series[series.length - 1].count - series[0].count,
+          series,
+        });
+      }
+
+      // Only surface a platform card when it has posts, followers, or both —
+      // never a hollow all-null/all-zero card for a platform we heard
+      // nothing about this window.
+      const names = new Set([...sums.keys(), ...followers.keys()]);
+      const platforms = [...names].map((platform) => {
+        const m = sums.get(platform);
+        const e = engagement.get(platform);
+        return {
+          platform,
+          followers: followers.get(platform) ?? { current: 0, delta: 0, series: [] },
+          impressions: m?.impressions ?? null,
+          reach: m?.reach ?? null,
+          engagement: e ? e.total / e.count : null,
+          likes: m?.likes ?? null,
+          comments: m?.comments ?? null,
+          shares: m?.shares ?? null,
+        };
+      });
+
+      return { available: true as const, windowDays: days, platforms };
+    } catch (e) {
+      const status = (e as { getStatus?: () => number }).getStatus?.() ?? 0;
+      const message = (e as Error).message ?? "";
+      // The docs' gate shape is HTTP 403 with an "add-on" message; this
+      // workspace itself is never gated (spike, 2026-08-13), so that shape
+      // is unconfirmed live — matched defensively anyway. A 402 or a 403
+      // that isn't about the add-on is treated as an ordinary upstream error.
+      const reason: "plan" | "upstream" =
+        status === 402 || (status === 403 && /add-on/i.test(message)) ? "plan" : "upstream";
+      this.log.warn(`analyticsOverview ws=${workspaceId} unavailable (${reason}): ${message}`);
+      return { available: false as const, reason };
+    }
   }
 
   async disconnect(workspaceId: string, platform: string) {
