@@ -2,6 +2,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -23,6 +24,8 @@ import { Public } from "../auth/public.decorator";
 
 @Controller("media")
 export class MediaController {
+  private readonly log = new Logger(MediaController.name);
+
   constructor(private readonly svc: MediaService) {}
 
   @Get()
@@ -75,7 +78,20 @@ export class MediaController {
       const contentLength = upstream.headers.get("content-length");
       if (contentLength) res.setHeader("Content-Length", contentLength);
       const { Readable } = await import("node:stream");
-      Readable.fromWeb(upstream.body as never).pipe(res);
+      const { pipeline } = await import("node:stream/promises");
+      try {
+        await pipeline(Readable.fromWeb(upstream.body as never), res);
+      } catch (e) {
+        // Upstream (DO Spaces) can die mid-transfer on a large video — a
+        // plain .pipe() leaves that as an unhandled stream error that kills
+        // the whole process. pipeline() surfaces it here instead; headers
+        // are already sent, so just destroy the response (client sees a
+        // truncated/failed download) rather than trying to respond again.
+        this.log.warn(
+          `Media stream from Spaces failed for ${id}: ${(e as Error).message}`,
+        );
+        res.destroy();
+      }
       return;
     }
     res.setHeader("Content-Type", resolved.mimeType);
