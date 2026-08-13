@@ -38,6 +38,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
   const [previewTab, setPreviewTab] = useState<"all" | PublishChannel>("all");
   const [publishResults, setPublishResults] = useState<Record<string, ChannelResult> | null>(null);
   const [scheduledFor, setScheduledFor] = useState<Date | null>(null);
+  const [selectedPreview, setSelectedPreview] = useState<{ objectUrl: string; mimeType: string } | null>(null);
 
   const publishMut = useMutation<
     {
@@ -49,6 +50,9 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
     },
     Record<string, ChannelResult>
   >((input) => api.post("/social/publish", input));
+
+  const selectedMedia = mediaQ.data?.find((m) => m.id === selectedMediaId) ?? null;
+  const selectedMimeType = selectedMedia?.mimeType;
 
   // Reset state when modal closes (so reopening starts fresh).
   useEffect(() => {
@@ -73,9 +77,39 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Fetch the selected media's bytes exactly ONCE and share the resulting
+  // object URL across every surface that renders it (the selected-media row,
+  // FB/IG/TikTok preview cards) instead of each one blob-fetching the full
+  // file independently — a video selected for all 3 channels was previously
+  // fetched up to 4× in parallel.
+  useEffect(() => {
+    if (!open || !selectedMediaId) {
+      setSelectedPreview(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    const tok = tokenStore.get();
+    fetch(`${API_BASE}/media/${selectedMediaId}/file`, {
+      headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+    })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (cancelled || !b) return;
+        objectUrl = URL.createObjectURL(b);
+        setSelectedPreview({ objectUrl, mimeType: selectedMimeType ?? b.type });
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedPreview(null);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [open, selectedMediaId, selectedMimeType]);
+
   if (!open) return null;
 
-  const selectedMedia = mediaQ.data?.find((m) => m.id === selectedMediaId) ?? null;
   const accountFor = (p: string) =>
     zernioStatusQ.data?.accounts?.find((a) => a.platform === p);
   const fbConnected = !!accountFor("facebook");
@@ -274,6 +308,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               media={mediaQ.data ?? []}
               loading={mediaQ.loading}
               selectedId={selectedMediaId}
+              selectedPreview={selectedPreview}
               onSelect={setSelectedMediaId}
               pickerOpen={pickerOpen}
               setPickerOpen={setPickerOpen}
@@ -365,7 +400,8 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                   <FbPreviewCard
                     pageName={accountFor("facebook")?.name ?? activeWorkspace?.name ?? "Page"}
                     content={content}
-                    media={selectedMedia}
+                    hasMedia={!!selectedMediaId}
+                    mediaPreview={selectedPreview}
                   />
                 </div>
               )}
@@ -375,7 +411,8 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                 <IgPreviewCard
                   username={accountFor("instagram")?.name ?? activeWorkspace?.name ?? "instagram"}
                   content={content}
-                  media={selectedMedia}
+                  hasMedia={!!selectedMediaId}
+                  mediaPreview={selectedPreview}
                   tx={tx}
                 />
               )}
@@ -386,7 +423,8 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                   <FbPreviewCard
                     pageName={accountFor("tiktok")?.name ?? activeWorkspace?.name ?? "TikTok"}
                     content={content}
-                    media={selectedMedia}
+                    hasMedia={!!selectedMediaId}
+                    mediaPreview={selectedPreview}
                   />
                 </div>
               )}
@@ -559,6 +597,7 @@ interface MediaPickerProps {
   media: Media[];
   loading: boolean;
   selectedId: string | null;
+  selectedPreview: { objectUrl: string; mimeType: string } | null;
   onSelect: (id: string | null) => void;
   pickerOpen: boolean;
   setPickerOpen: (v: boolean) => void;
@@ -570,6 +609,7 @@ function MediaPicker({
   media,
   loading,
   selectedId,
+  selectedPreview,
   onSelect,
   pickerOpen,
   setPickerOpen,
@@ -656,9 +696,9 @@ function MediaPicker({
             background: "var(--bg-2)",
           }}
         >
-          <PreviewThumb
-            mediaId={selectedId}
-            mimeType={media.find((m) => m.id === selectedId)?.mimeType}
+          <MediaPreviewFrame
+            src={selectedPreview?.objectUrl ?? null}
+            mimeType={selectedPreview?.mimeType}
           />
           <span style={{ flex: 1, fontSize: 12, color: "var(--ink-2)" }}>
             {media.find((m) => m.id === selectedId)?.fileName ?? "selected"}
@@ -791,6 +831,11 @@ function MediaPicker({
 }
 
 /* ── Thumbnail (fetches binary with bearer, renders as blob URL) ────── */
+//
+// Used only for the media-picker grid, where fetching each visible IMAGE
+// thumbnail independently is cheap. The selected-media row and the FB/IG/
+// TikTok preview cards all share ONE fetch instead (see ComposeModal's
+// `selectedPreview` state) and render via MediaPreviewFrame directly.
 
 function PreviewThumb({ mediaId, mimeType }: { mediaId: string; mimeType?: string }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -821,6 +866,12 @@ function PreviewThumb({ mediaId, mimeType }: { mediaId: string; mimeType?: strin
     };
   }, [src]);
 
+  return <MediaPreviewFrame src={src} mimeType={mimeType} />;
+}
+
+/** Renders an already-fetched object URL as an image or video — no
+ *  fetching of its own. `src === null` renders the "loading" placeholder. */
+function MediaPreviewFrame({ src, mimeType }: { src: string | null; mimeType?: string }) {
   if (!src) {
     return (
       <div
@@ -867,11 +918,13 @@ function PreviewThumb({ mediaId, mimeType }: { mediaId: string; mimeType?: strin
 function FbPreviewCard({
   pageName,
   content,
-  media,
+  hasMedia,
+  mediaPreview,
 }: {
   pageName: string;
   content: string;
-  media: Media | null;
+  hasMedia: boolean;
+  mediaPreview: { objectUrl: string; mimeType: string } | null;
 }) {
   return (
     <div
@@ -904,7 +957,9 @@ function FbPreviewCard({
           {content}
         </div>
       )}
-      {media && <PreviewThumb mediaId={media.id} mimeType={media.mimeType} />}
+      {hasMedia && (
+        <MediaPreviewFrame src={mediaPreview?.objectUrl ?? null} mimeType={mediaPreview?.mimeType} />
+      )}
       <div
         style={{
           padding: "10px 12px",
@@ -928,12 +983,14 @@ function FbPreviewCard({
 function IgPreviewCard({
   username,
   content,
-  media,
+  hasMedia,
+  mediaPreview,
   tx,
 }: {
   username: string;
   content: string;
-  media: Media | null;
+  hasMedia: boolean;
+  mediaPreview: { objectUrl: string; mimeType: string } | null;
   tx: (en: string, ar: string) => string;
 }) {
   return (
@@ -966,8 +1023,8 @@ function IgPreviewCard({
         <span style={{ fontWeight: 600, fontSize: 13 }}>{username}</span>
         <span style={{ marginInlineStart: "auto", color: "var(--ink-3)" }}>···</span>
       </div>
-      {media ? (
-        <PreviewThumb mediaId={media.id} mimeType={media.mimeType} />
+      {hasMedia ? (
+        <MediaPreviewFrame src={mediaPreview?.objectUrl ?? null} mimeType={mediaPreview?.mimeType} />
       ) : (
         <div
           className="mono muted"
