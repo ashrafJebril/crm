@@ -22,6 +22,7 @@ import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { ComposeModal } from "@/components/ComposeModal";
 import { ScheduledPanel } from "@/components/ScheduledPanel";
+import { ContentCalendar } from "@/screens/social/ContentCalendar";
 
 /* ── Live Facebook API shapes ────────────────────────────────────────────── */
 
@@ -193,6 +194,7 @@ function SocialImpl() {
   const [draft, setDraft] = useState<string>("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [scheduledRefresh, setScheduledRefresh] = useState(0);
+  const [view, setView] = useState<"feed" | "calendar">("feed");
 
   // Comment the composer is currently replying to (Zernio only supports
   // replies, not top-level comments, so the composer is reply-only).
@@ -587,8 +589,24 @@ function SocialImpl() {
         ))}
       </div>
 
-      <ScheduledPanel refreshKey={scheduledRefresh} />
+      <div style={{ display: "flex", gap: 6, padding: "10px 24px 0" }}>
+        {(["feed", "calendar"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            className={`btn sm ${view === v ? "primary" : "ghost"}`.trim()}
+            onClick={() => setView(v)}
+          >
+            {v === "feed" ? tx("Feed", "الخلاصة") : tx("Calendar", "التقويم")}
+          </button>
+        ))}
+      </div>
 
+      {view === "feed" && <ScheduledPanel refreshKey={scheduledRefresh} />}
+
+      {view === "calendar" && <ContentCalendar refreshKey={scheduledRefresh} />}
+
+      {view === "feed" && (
       <div
         className="social-grid"
         style={{
@@ -1516,6 +1534,7 @@ function SocialImpl() {
           </div>
         </aside>
       </div>
+      )}
 
       <style>{`
         .post-card { transition: transform .12s ease, border-color .12s ease, background .12s ease; }
