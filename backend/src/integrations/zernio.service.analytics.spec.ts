@@ -122,6 +122,8 @@ describe("ZernioService.analyticsOverview", () => {
     // the output's engagement slot stays null even though one row above
     // carried an engagementRate.
     expect(fb.engagement).toBeNull();
+    // p1 + p2 both contributed a facebook breakdown entry -> 2 posts summed.
+    expect(fb.postCount).toBe(2);
     expect(fb.followers).toEqual({
       current: 110,
       delta: 10,
@@ -135,6 +137,8 @@ describe("ZernioService.analyticsOverview", () => {
     expect(ig.impressions).toBeNull(); // absent metric -> null, never 0
     expect(ig.likes).toBe(11);
     expect(ig.engagement).toBeNull();
+    // p3 + p4 both contributed an instagram breakdown entry -> 2 posts summed.
+    expect(ig.postCount).toBe(2);
     expect(ig.followers.delta).toBe(-5);
 
     expect(client.getAnalytics).toHaveBeenCalledWith("prof1", {
@@ -146,6 +150,25 @@ describe("ZernioService.analyticsOverview", () => {
       toDate: daysAgo(0),
       granularity: "daily",
     });
+  });
+
+  it("reports postCount:0 for a platform surfaced only via follower data (no analytics rows)", async () => {
+    client.getAnalytics.mockResolvedValue([]);
+    client.getFollowerStats.mockResolvedValue({
+      accounts: [{ _id: "acc-wa", platform: "whatsapp" }],
+      stats: {
+        "acc-wa": [
+          { date: daysAgo(7), followers: 50 },
+          { date: daysAgo(0), followers: 52 },
+        ],
+      },
+    });
+
+    const res = await svc.analyticsOverview("ws1", 7);
+    const wa = res.platforms!.find((p) => p.platform === "whatsapp")!;
+    expect(wa.postCount).toBe(0);
+    expect(wa.impressions).toBeNull();
+    expect(wa.followers.current).toBe(52);
   });
 
   it("collapses a 402 into reason:plan", async () => {

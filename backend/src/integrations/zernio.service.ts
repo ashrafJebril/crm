@@ -412,9 +412,15 @@ export class ZernioService {
       const SUM_METRICS = ["impressions", "reach", "likes", "comments", "shares"] as const;
       type SumMetric = (typeof SUM_METRICS)[number];
       const sums = new Map<string, Record<SumMetric, number | null>>();
+      // One analytics row summed for this platform == one post's contribution
+      // (a cross-posted post contributes once per platform via its
+      // `platforms[]` breakdown) — surfaced as `postCount` so the UI can be
+      // honest about how thin a platform's totals are.
+      const postCounts = new Map<string, number>();
 
       const addEntry = (platform: string, analytics?: ZernioAnalyticsRow["analytics"]) => {
         if (!analytics) return;
+        postCounts.set(platform, (postCounts.get(platform) ?? 0) + 1);
         const acc =
           sums.get(platform) ??
           (Object.fromEntries(SUM_METRICS.map((m) => [m, null])) as Record<
@@ -483,6 +489,11 @@ export class ZernioService {
           likes: m?.likes ?? null,
           comments: m?.comments ?? null,
           shares: m?.shares ?? null,
+          // Platforms surfaced only via follower data (no analytics rows at
+          // all this window) report 0 here rather than being absent from
+          // `postCounts` — lets the UI say "no posts in this window" instead
+          // of implying a metric that just happens to be null.
+          postCount: postCounts.get(platform) ?? 0,
         };
       });
 

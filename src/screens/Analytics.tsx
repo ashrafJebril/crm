@@ -21,8 +21,11 @@ interface PipelineSummary {
 interface SocialPlatformOverview {
   platform: string;
   followers: { current: number; delta: number; series: { date: string; count: number }[] };
-  impressions: number | null; reach: number | null; engagement: number | null;
+  impressions: number | null; reach: number | null;
+  // Backend always sends null — Zernio has no engagement COUNT, only a % rate (engagementRate); see ZernioService.analyticsOverview.
+  engagement: number | null;
   likes: number | null; comments: number | null; shares: number | null;
+  postCount: number;
 }
 interface SocialOverview {
   available: boolean;
@@ -154,6 +157,12 @@ function AnalyticsImpl() {
               {so.platforms!.map((p) => {
                 const fmt = (v: number | null) => (v === null ? "—" : v.toLocaleString());
                 const deltaTone = p.followers.delta > 0 ? "var(--ok)" : p.followers.delta < 0 ? "var(--bad)" : "var(--ink-3)";
+                const engagementValue =
+                  p.engagement ??
+                  (p.likes === null && p.comments === null && p.shares === null
+                    ? null
+                    : (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0));
+                const noMetrics = p.impressions === null && p.reach === null && engagementValue === null;
                 return (
                   <div
                     key={p.platform}
@@ -196,18 +205,21 @@ function AnalyticsImpl() {
                         </div>
                       )}
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                      <Stat label={tx("Impressions", "مرات الظهور")} value={fmt(p.impressions)} />
-                      <Stat label={tx("Reach", "الوصول")} value={fmt(p.reach)} />
-                      <Stat
-                        label={tx("Engagement", "التفاعل")}
-                        value={fmt(
-                          p.engagement ??
-                            (p.likes === null && p.comments === null && p.shares === null
-                              ? null
-                              : (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0)),
-                        )}
-                      />
+                    <div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                        <Stat label={tx("Impressions", "مرات الظهور")} value={fmt(p.impressions)} />
+                        <Stat label={tx("Reach", "الوصول")} value={fmt(p.reach)} />
+                        <Stat label={tx("Engagement", "التفاعل")} value={fmt(engagementValue)} />
+                      </div>
+                      {p.postCount > 0 ? (
+                        <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 8 }}>
+                          {tx(`Based on ${p.postCount} posts`, `استنادًا إلى ${p.postCount} منشورًا`)}
+                        </div>
+                      ) : noMetrics ? (
+                        <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 8 }}>
+                          {tx("No posts in this window", "لا منشورات في هذه الفترة")}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );
