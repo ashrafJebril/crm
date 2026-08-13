@@ -206,6 +206,11 @@ export class ZernioClient {
     return { id: res.post?._id ?? postId, status: res.post?.status ?? null };
   }
 
+  /** Hard cap on pages walked by `getAnalytics` (400 posts at limit=100) — a
+   *  busy account's full history could page indefinitely; past this bound we
+   *  stop and log rather than keep fetching. */
+  private static readonly ANALYTICS_MAX_PAGES = 4;
+
   /**
    * Per-post analytics rows for a date window (spike-verified 2026-08-13:
    * docs/superpowers/plans/2026-08-13-analytics-spike-findings.md). The
@@ -216,15 +221,46 @@ export class ZernioClient {
    * with its own `analytics` — prefer the breakdown when attributing metrics
    * to a platform, since a cross-posted post's rolled-up object doesn't say
    * which platform contributed what.
+   *
+   * The response also carries `pagination: {page, limit, total, pages}`
+   * (spike-verified) — at `limit=100` an account with more than 100 posts in
+   * the window would otherwise have its later pages silently dropped and
+   * totals under-counted with no signal. Walk pages until Zernio says there
+   * are no more, capped at `ANALYTICS_MAX_PAGES` (400 posts) so a very busy
+   * account can't turn one overview load into an unbounded fetch loop; past
+   * the cap, totals are logged as best-effort rather than silently wrong.
    */
   async getAnalytics(
     profileId: string,
     opts: { fromDate: string; toDate: string },
   ): Promise<ZernioAnalyticsRow[]> {
-    const res = await this.request<{ posts?: ZernioAnalyticsRow[] }>("GET", "/analytics", {
-      query: { profileId, fromDate: opts.fromDate, toDate: opts.toDate, limit: "100" },
-    });
-    return res.posts ?? [];
+    const rows: ZernioAnalyticsRow[] = [];
+    let page = 1;
+    for (;;) {
+      const res = await this.request<{
+        posts?: ZernioAnalyticsRow[];
+        pagination?: { page?: number; limit?: number; total?: number; pages?: number };
+      }>("GET", "/analytics", {
+        query: {
+          profileId,
+          fromDate: opts.fromDate,
+          toDate: opts.toDate,
+          limit: "100",
+          page: String(page),
+        },
+      });
+      rows.push(...(res.posts ?? []));
+      const pages = res.pagination?.pages ?? 1;
+      if (page === 1 && pages > ZernioClient.ANALYTICS_MAX_PAGES) {
+        this.log.warn(
+          `Zernio /analytics has ${pages} pages for profile ${profileId} — totals are ` +
+            `best-effort over the first ${ZernioClient.ANALYTICS_MAX_PAGES * 100} posts`,
+        );
+      }
+      if (page >= pages || page >= ZernioClient.ANALYTICS_MAX_PAGES) break;
+      page++;
+    }
+    return rows;
   }
 
   /**

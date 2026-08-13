@@ -194,3 +194,79 @@ describe("ZernioClient comments", () => {
     expect(comments.every((c) => !("replies" in c))).toBe(true);
   });
 });
+
+/**
+ * Fix round (2026-08-13, final review of the analytics-overview plan):
+ * `getAnalytics` was discarding the response's `pagination` object and only
+ * ever reading page 1 — an account with more than 100 posts in the window
+ * silently under-counted totals with no signal. Verify the loop walks pages
+ * while `pagination.pages` says there's more, and stops at one call when
+ * there's only a single page.
+ */
+describe("ZernioClient.getAnalytics pagination", () => {
+  let client: ZernioClient;
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    process.env.ZERNIO_API_KEY = "test-key";
+    client = new ZernioClient();
+  });
+
+  it("fetches both pages and concatenates rows when pagination says there's more", async () => {
+    fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              posts: [{ _id: "p1" }],
+              pagination: { page: 1, limit: 100, total: 150, pages: 2 },
+            }),
+          ),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              posts: [{ _id: "p2" }],
+              pagination: { page: 2, limit: 100, total: 150, pages: 2 },
+            }),
+          ),
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const rows = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
+
+    expect(rows).toEqual([{ _id: "p1" }, { _id: "p2" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const url1 = String(fetchMock.mock.calls[0][0]);
+    const url2 = String(fetchMock.mock.calls[1][0]);
+    expect(url1).toContain("page=1");
+    expect(url2).toContain("page=2");
+  });
+
+  it("makes exactly one call when there's only a single page", async () => {
+    fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            posts: [{ _id: "p1" }],
+            pagination: { page: 1, limit: 100, total: 1, pages: 1 },
+          }),
+        ),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const rows = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
+
+    expect(rows).toEqual([{ _id: "p1" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("page=1");
+  });
+});
