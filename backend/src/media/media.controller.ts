@@ -35,7 +35,8 @@ export class MediaController {
     FileInterceptor("file", {
       // Stage uploads on disk (OS temp dir) instead of buffering in memory —
       // videos are capped at 300 MB and must never sit on the heap.
-      // MediaService validates mime + per-type caps and cleans the temp file.
+      // MediaService validates mime + per-type caps and cleans the temp file
+      // on every exit path (accepted or rejected).
       storage: diskStorage({ destination: tmpdir() }),
       limits: { fileSize: 300 * 1024 * 1024 },
     }),

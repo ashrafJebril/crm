@@ -119,20 +119,23 @@ export class MediaService {
     uploadedById: string,
   ) {
     if (!file) throw new BadRequestException("No file uploaded");
-    const isImage = ALLOWED_IMAGE.has(file.mimetype);
-    const isVideo = ALLOWED_VIDEO.has(file.mimetype);
-    if (!isImage && !isVideo) {
-      throw new BadRequestException(
-        `Unsupported file type: ${file.mimetype}. Allowed: ${[...ALLOWED_IMAGE, ...ALLOWED_VIDEO].join(", ")}`,
-      );
-    }
-    const cap = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-    if (file.size > cap) {
-      throw new BadRequestException(
-        `File too large (${file.size} bytes). Max ${cap} bytes for ${isVideo ? "videos" : "images"}.`,
-      );
-    }
     try {
+      // Validation lives inside the try so a rejected upload still hits the
+      // finally below — multer's diskStorage has already written file.path
+      // to tmpdir by the time we get here, and we must not leak it.
+      const isImage = ALLOWED_IMAGE.has(file.mimetype);
+      const isVideo = ALLOWED_VIDEO.has(file.mimetype);
+      if (!isImage && !isVideo) {
+        throw new BadRequestException(
+          `Unsupported file type: ${file.mimetype}. Allowed: ${[...ALLOWED_IMAGE, ...ALLOWED_VIDEO].join(", ")}`,
+        );
+      }
+      const cap = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+      if (file.size > cap) {
+        throw new BadRequestException(
+          `File too large (${file.size} bytes). Max ${cap} bytes for ${isVideo ? "videos" : "images"}.`,
+        );
+      }
       // Disk-staged uploads (current multer config) hand us file.path; memory
       // uploads (tests, legacy) hand us file.buffer. Storage accepts either.
       const { key } = await this.storage.put({

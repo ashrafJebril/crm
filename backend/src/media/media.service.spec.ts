@@ -1,4 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
+import { promises as fsp } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { MediaService } from "./media.service";
 
 function makeFile(over: Partial<Express.Multer.File>): Express.Multer.File {
@@ -72,5 +75,31 @@ describe("MediaService.finalizeUpload", () => {
       "u1",
     );
     expect(row.mimeType).toBe("image/jpeg");
+  });
+
+  it("unlinks the staged temp file when validation rejects the upload", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "media-test-"));
+    const tmpPath = path.join(dir, "staged-upload");
+    await fsp.writeFile(tmpPath, "fake bytes");
+
+    await expect(
+      svc.finalizeUpload(
+        "ws1",
+        makeFile({ mimetype: "video/x-msvideo", path: tmpPath }),
+        "u1",
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    await expect(fsp.access(tmpPath)).rejects.toBeTruthy();
+  });
+
+  it("unlinks the staged temp file after a successful upload", async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "media-test-"));
+    const tmpPath = path.join(dir, "staged-upload");
+    await fsp.writeFile(tmpPath, "fake bytes");
+
+    await svc.finalizeUpload("ws1", makeFile({ path: tmpPath }), "u1");
+
+    await expect(fsp.access(tmpPath)).rejects.toBeTruthy();
   });
 });
