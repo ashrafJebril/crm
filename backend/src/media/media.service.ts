@@ -10,13 +10,15 @@ import { MEDIA_STORAGE } from "./storage/storage.provider";
 import { LocalStorage } from "./storage/local-storage";
 import type { MediaStorage } from "./storage/storage.types";
 
-const ALLOWED_MIME = new Set([
+const ALLOWED_IMAGE = new Set([
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
 ]);
-const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
+const ALLOWED_VIDEO = new Set(["video/mp4", "video/quicktime"]);
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
+const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB — IG's ceiling; FB/TikTok allow more
 
 @Injectable()
 export class MediaService {
@@ -117,34 +119,45 @@ export class MediaService {
     uploadedById: string,
   ) {
     if (!file) throw new BadRequestException("No file uploaded");
-    if (!ALLOWED_MIME.has(file.mimetype)) {
+    const isImage = ALLOWED_IMAGE.has(file.mimetype);
+    const isVideo = ALLOWED_VIDEO.has(file.mimetype);
+    if (!isImage && !isVideo) {
       throw new BadRequestException(
-        `Unsupported file type: ${file.mimetype}. Allowed: ${Array.from(ALLOWED_MIME).join(", ")}`,
+        `Unsupported file type: ${file.mimetype}. Allowed: ${[...ALLOWED_IMAGE, ...ALLOWED_VIDEO].join(", ")}`,
       );
     }
-    if (file.size > MAX_BYTES) {
+    const cap = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    if (file.size > cap) {
       throw new BadRequestException(
-        `File too large (${file.size} bytes). Max ${MAX_BYTES} bytes.`,
+        `File too large (${file.size} bytes). Max ${cap} bytes for ${isVideo ? "videos" : "images"}.`,
       );
     }
-    // multer.memoryStorage puts the bytes on file.buffer.
-    const { key } = await this.storage.put({
-      workspaceId,
-      buffer: file.buffer,
-      mimeType: file.mimetype,
-      originalFilename: file.originalname,
-    });
-    return this.prisma.media.create({
-      data: {
+    try {
+      // Disk-staged uploads (current multer config) hand us file.path; memory
+      // uploads (tests, legacy) hand us file.buffer. Storage accepts either.
+      const { key } = await this.storage.put({
         workspaceId,
-        fileName: file.originalname,
         mimeType: file.mimetype,
-        sizeBytes: file.size,
-        storedPath: key,
-        storageKind: this.storage.kind,
-        uploadedById,
-      },
-    });
+        originalFilename: file.originalname,
+        ...(file.path ? { sourcePath: file.path } : { buffer: file.buffer }),
+      });
+      return await this.prisma.media.create({
+        data: {
+          workspaceId,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          sizeBytes: file.size,
+          storedPath: key,
+          storageKind: this.storage.kind,
+          uploadedById,
+        },
+      });
+    } finally {
+      if (file.path) {
+        const fs = await import("node:fs/promises");
+        await fs.unlink(file.path).catch(() => {});
+      }
+    }
   }
 
   /**
@@ -159,10 +172,10 @@ export class MediaService {
     mimeType: string;
     fileName: string;
   }) {
-    if (!ALLOWED_MIME.has(input.mimeType)) {
+    if (!ALLOWED_IMAGE.has(input.mimeType)) {
       throw new BadRequestException(`Unsupported file type: ${input.mimeType}`);
     }
-    if (input.buffer.length > MAX_BYTES) {
+    if (input.buffer.length > MAX_IMAGE_BYTES) {
       throw new BadRequestException(`File too large (${input.buffer.length} bytes)`);
     }
     const { key } = await this.storage.put({

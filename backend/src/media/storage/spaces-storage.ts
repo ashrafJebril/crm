@@ -51,9 +51,10 @@ export class SpacesStorage implements MediaStorage {
 
   async put(args: {
     workspaceId: string;
-    buffer: Buffer;
     mimeType: string;
     originalFilename: string;
+    buffer?: Buffer;
+    sourcePath?: string;
   }): Promise<{ key: string }> {
     const ext = path
       .extname(args.originalFilename)
@@ -61,12 +62,19 @@ export class SpacesStorage implements MediaStorage {
       .slice(0, 8);
     const id = randomBytes(8).toString("hex");
     const key = `${args.workspaceId}/${id}${ext}`;
+    const body = args.sourcePath
+      ? (await import("node:fs")).createReadStream(args.sourcePath)
+      : args.buffer!;
+    const contentLength = args.sourcePath
+      ? (await (await import("node:fs/promises")).stat(args.sourcePath)).size
+      : args.buffer!.length;
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.config.bucket,
         Key: key,
-        Body: args.buffer,
+        Body: body,
         ContentType: args.mimeType,
+        ContentLength: contentLength,
         // No ACL — bucket-default. We expose via signed URLs only.
       }),
     );

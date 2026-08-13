@@ -12,7 +12,8 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
-import { memoryStorage } from "multer";
+import { diskStorage } from "multer";
+import { tmpdir } from "node:os";
 import { MediaService } from "./media.service";
 import {
   CurrentWorkspace,
@@ -32,11 +33,11 @@ export class MediaController {
   @Post("upload")
   @UseInterceptors(
     FileInterceptor("file", {
-      // Buffer the file in memory and hand off to MediaService.finalizeUpload,
-      // which writes to whichever storage backend is active (LocalStorage or
-      // SpacesStorage). 20 MB cap matches MediaService validation.
-      storage: memoryStorage(),
-      limits: { fileSize: 20 * 1024 * 1024 },
+      // Stage uploads on disk (OS temp dir) instead of buffering in memory —
+      // videos are capped at 300 MB and must never sit on the heap.
+      // MediaService validates mime + per-type caps and cleans the temp file.
+      storage: diskStorage({ destination: tmpdir() }),
+      limits: { fileSize: 300 * 1024 * 1024 },
     }),
   )
   upload(

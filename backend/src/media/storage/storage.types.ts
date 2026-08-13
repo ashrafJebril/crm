@@ -10,9 +10,12 @@ export interface MediaStorage {
    *  Media.storedPath. */
   put(args: {
     workspaceId: string;
-    buffer: Buffer;
     mimeType: string;
     originalFilename: string;
+    /** Exactly one of buffer/sourcePath. sourcePath = staged temp file; the
+     *  backend must move/stream it WITHOUT loading the whole file in memory. */
+    buffer?: Buffer;
+    sourcePath?: string;
   }): Promise<{ key: string }>;
 
   /** Mint a short-lived URL the user's browser can hit directly to download

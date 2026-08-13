@@ -17,9 +17,10 @@ export class LocalStorage implements MediaStorage {
 
   async put(args: {
     workspaceId: string;
-    buffer: Buffer;
     mimeType: string;
     originalFilename: string;
+    buffer?: Buffer;
+    sourcePath?: string;
   }): Promise<{ key: string }> {
     const ext = path
       .extname(args.originalFilename)
@@ -29,7 +30,11 @@ export class LocalStorage implements MediaStorage {
     const dir = path.resolve(UPLOAD_ROOT, args.workspaceId);
     await fs.mkdir(dir, { recursive: true });
     const filePath = path.resolve(dir, `${id}${ext}`);
-    await fs.writeFile(filePath, args.buffer);
+    if (args.sourcePath) {
+      await fs.copyFile(args.sourcePath, filePath);
+    } else {
+      await fs.writeFile(filePath, args.buffer!);
+    }
     const key = `${args.workspaceId}/${id}${ext}`;
     return { key };
   }
