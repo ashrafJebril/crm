@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useFetch, useMutation } from "@/api/useFetch";
@@ -255,6 +255,13 @@ function PostDetailModal({
   const [newTime, setNewTime] = useState<Date | null>(null);
   const [armedCancel, setArmedCancel] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  // Reset the broken-thumbnail flag if the underlying item changes (e.g. the
+  // same modal instance gets pointed at a different calendar item).
+  useEffect(() => {
+    setThumbFailed(false);
+  }, [item.key]);
 
   const rescheduleMut = useMutation<{ id: string; scheduledFor: string; timezone: string }, { ok: true }>(
     ({ id, scheduledFor, timezone }) => api.patch(`/social/scheduled/${id}`, { scheduledFor, timezone }),
@@ -284,8 +291,13 @@ function PostDetailModal({
         </span>
       </div>
 
-      {item.mediaUrl && (
-        <img src={item.mediaUrl} alt="" style={{ maxHeight: 180, objectFit: "cover", borderRadius: 8 }} />
+      {item.mediaUrl && !thumbFailed && (
+        <img
+          src={item.mediaUrl}
+          alt=""
+          onError={() => setThumbFailed(true)}
+          style={{ maxHeight: 180, objectFit: "cover", borderRadius: 8 }}
+        />
       )}
 
       <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, maxHeight: 160, overflowY: "auto" }}>
