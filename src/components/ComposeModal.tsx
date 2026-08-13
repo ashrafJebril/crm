@@ -376,6 +376,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                   username={accountFor("instagram")?.name ?? activeWorkspace?.name ?? "instagram"}
                   content={content}
                   media={selectedMedia}
+                  tx={tx}
                 />
               )}
 
@@ -928,10 +929,12 @@ function IgPreviewCard({
   username,
   content,
   media,
+  tx,
 }: {
   username: string;
   content: string;
   media: Media | null;
+  tx: (en: string, ar: string) => string;
 }) {
   return (
     <div
@@ -976,7 +979,7 @@ function IgPreviewCard({
             fontSize: 11,
           }}
         >
-          (image required)
+          {tx("(media required)", "(الوسائط مطلوبة)")}
         </div>
       )}
       <div style={{ padding: "8px 12px", fontSize: 13, color: "var(--ink-1)" }}>
