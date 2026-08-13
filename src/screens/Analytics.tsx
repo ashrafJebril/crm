@@ -2,7 +2,7 @@ import { memo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
-import { AreaChart, Donut } from "@/components/charts";
+import { AreaChart, Donut, Spark } from "@/components/charts";
 import { useFetch } from "@/api/useFetch";
 import type { Campaign } from "@/lib/types";
 
@@ -17,6 +17,18 @@ interface Summary {
 interface PipelineSummary {
   openValue: number; currency: string; winRate: number;
   wonCount: number; lostCount: number; avgCloseHours: number; totalTickets: number;
+}
+interface SocialPlatformOverview {
+  platform: string;
+  followers: { current: number; delta: number; series: { date: string; count: number }[] };
+  impressions: number | null; reach: number | null; engagement: number | null;
+  likes: number | null; comments: number | null; shares: number | null;
+}
+interface SocialOverview {
+  available: boolean;
+  reason?: "not_connected" | "plan" | "upstream";
+  windowDays?: 7 | 30;
+  platforms?: SocialPlatformOverview[];
 }
 
 const CHANNEL_COLORS: Record<string, string> = {
@@ -45,10 +57,12 @@ function AnalyticsImpl() {
   const summaryQ = useFetch<Summary>(`/dashboard/summary?days=${days}`);
   const pipelineQ = useFetch<PipelineSummary>("/tickets/dashboard/summary");
   const campaignsQ = useFetch<Campaign[]>("/campaigns");
+  const socialQ = useFetch<SocialOverview>(`/social/analytics/overview?days=${days}`);
 
   const s = summaryQ.data;
   const p = pipelineQ.data;
   const campaigns = campaignsQ.data ?? [];
+  const so = socialQ.data;
 
   const msgTotal = s ? s.daily.reduce((a, d) => a + d.total, 0) : 0;
   const totals = campaigns.reduce(
@@ -111,6 +125,96 @@ function AnalyticsImpl() {
             )}
           </div>
         </div>
+
+        {so && so.available === false && (so.reason === "plan" || so.reason === "upstream") && (
+          <div className="card">
+            <div className="card-h"><h3>{tx("Social performance", "الأداء الاجتماعي")}</h3></div>
+            <div style={{ padding: 18, fontSize: 13, color: "var(--ink-3)" }}>
+              {so.reason === "plan"
+                ? tx(
+                    "Social analytics isn't included in the current Zernio plan.",
+                    "تحليلات التواصل غير متضمنة في خطة Zernio الحالية.",
+                  )
+                : tx(
+                    "Social analytics is temporarily unavailable.",
+                    "تحليلات التواصل غير متاحة مؤقتًا.",
+                  )}
+            </div>
+          </div>
+        )}
+        {so?.available && (so.platforms?.length ?? 0) > 0 && (
+          <div className="card">
+            <div className="card-h">
+              <h3>{tx("Social performance", "الأداء الاجتماعي")}</h3>
+              <span className="sub">
+                {days === 7 ? tx("Last 7 days", "آخر ٧ أيام") : tx("Last 30 days", "آخر ٣٠ يوم")}
+              </span>
+            </div>
+            <div style={{ padding: 18, display: "grid", gap: 14 }}>
+              {so.platforms!.map((p) => {
+                const fmt = (v: number | null) => (v === null ? "—" : v.toLocaleString());
+                const deltaTone = p.followers.delta > 0 ? "var(--ok)" : p.followers.delta < 0 ? "var(--bad)" : "var(--ink-3)";
+                return (
+                  <div
+                    key={p.platform}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "180px 1fr",
+                      gap: 16,
+                      alignItems: "center",
+                      padding: 12,
+                      background: "var(--bg-1)",
+                      border: "1px solid var(--line-soft)",
+                      borderRadius: 10,
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span
+                          style={{
+                            width: 8, height: 8, borderRadius: "50%",
+                            background: CHANNEL_COLORS[p.platform] ?? "var(--ink-3)",
+                          }}
+                        />
+                        <span style={{ fontWeight: 600, fontSize: 13, textTransform: "capitalize" }}>
+                          {p.platform}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 22, fontWeight: 600, marginTop: 6 }}>
+                        {p.followers.current.toLocaleString()}
+                        <span className="mono" style={{ fontSize: 11, color: deltaTone, marginInlineStart: 8 }}>
+                          {p.followers.delta > 0 ? "+" : ""}
+                          {p.followers.delta.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="mono" style={{ fontSize: 10, color: "var(--ink-3)", textTransform: "uppercase" }}>
+                        {tx("Followers", "المتابعون")}
+                      </div>
+                      {p.followers.series.length > 1 && (
+                        <div style={{ marginTop: 6 }}>
+                          <Spark values={p.followers.series.map((s) => s.count)} w={140} h={24} />
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                      <Stat label={tx("Impressions", "مرات الظهور")} value={fmt(p.impressions)} />
+                      <Stat label={tx("Reach", "الوصول")} value={fmt(p.reach)} />
+                      <Stat
+                        label={tx("Engagement", "التفاعل")}
+                        value={fmt(
+                          p.engagement ??
+                            (p.likes === null && p.comments === null && p.shares === null
+                              ? null
+                              : (p.likes ?? 0) + (p.comments ?? 0) + (p.shares ?? 0)),
+                        )}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div className="card">
