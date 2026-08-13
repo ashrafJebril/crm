@@ -453,6 +453,15 @@ function AuthorizedImage({
 function VideoTile({ url, token, label }: { url: string; token: string | null; label: string }) {
   const [src, setSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Same "cancelled" guard AuthorizedImage uses: a fast unmount mid-fetch
+  // must not leave a blob URL nobody will ever revoke.
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -474,8 +483,18 @@ function VideoTile({ url, token, label }: { url: string; token: string | null; l
         setLoading(true);
         fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
           .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
-          .then((b) => setSrc(URL.createObjectURL(b)))
-          .catch(() => setLoading(false));
+          .then((b) => {
+            const objectUrl = URL.createObjectURL(b);
+            if (cancelledRef.current) {
+              // Unmounted before the fetch resolved — revoke instead of leaking.
+              URL.revokeObjectURL(objectUrl);
+              return;
+            }
+            setSrc(objectUrl);
+          })
+          .catch(() => {
+            if (!cancelledRef.current) setLoading(false);
+          });
       }}
       style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 22 }}
       aria-label={label}
