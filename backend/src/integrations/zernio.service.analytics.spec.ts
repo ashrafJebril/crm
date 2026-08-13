@@ -64,7 +64,9 @@ describe("ZernioService.analyticsOverview", () => {
           {
             platform: "facebook",
             accountId: "acc-fb",
-            analytics: { impressions: 100, likes: 5, comments: 2, shares: 1 },
+            // engagementRate present here on purpose: it must NOT leak into
+            // the output's count-shaped `engagement` slot (fix round 1).
+            analytics: { impressions: 100, likes: 5, comments: 2, shares: 1, engagementRate: 1.35 },
           },
         ],
       },
@@ -116,6 +118,10 @@ describe("ZernioService.analyticsOverview", () => {
     const fb = res.platforms!.find((p) => p.platform === "facebook")!;
     expect(fb.impressions).toBe(150);
     expect(fb.likes).toBe(8);
+    // engagementRate (a %) is categorically absent as a COUNT upstream —
+    // the output's engagement slot stays null even though one row above
+    // carried an engagementRate.
+    expect(fb.engagement).toBeNull();
     expect(fb.followers).toEqual({
       current: 110,
       delta: 10,
@@ -128,6 +134,7 @@ describe("ZernioService.analyticsOverview", () => {
     const ig = res.platforms!.find((p) => p.platform === "instagram")!;
     expect(ig.impressions).toBeNull(); // absent metric -> null, never 0
     expect(ig.likes).toBe(11);
+    expect(ig.engagement).toBeNull();
     expect(ig.followers.delta).toBe(-5);
 
     expect(client.getAnalytics).toHaveBeenCalledWith("prof1", {

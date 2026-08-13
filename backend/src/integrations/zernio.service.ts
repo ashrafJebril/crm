@@ -383,9 +383,10 @@ export class ZernioService {
    * that never appears on any row for a platform stays `null` (the platform
    * genuinely doesn't report it — e.g. WhatsApp has no post-analytics
    * concept, and this account's Instagram rows never carry `impressions`);
-   * it must never be reported as `0`. `engagementRate` is already a rate, so
-   * it's averaged across the posts that report it rather than summed like
-   * the count metrics.
+   * it must never be reported as `0`. The output's `engagement` slot is
+   * count-shaped (same as impressions/likes/etc.) but upstream has no
+   * engagement COUNT at all — only `engagementRate`, a % — so it stays
+   * `null` unconditionally rather than smuggling a rate into a count field.
    *
    * Follower history comes from a separate endpoint
    * (`GET /accounts/follower-stats`) which reports per-ACCOUNT, not
@@ -411,7 +412,6 @@ export class ZernioService {
       const SUM_METRICS = ["impressions", "reach", "likes", "comments", "shares"] as const;
       type SumMetric = (typeof SUM_METRICS)[number];
       const sums = new Map<string, Record<SumMetric, number | null>>();
-      const engagement = new Map<string, { total: number; count: number }>();
 
       const addEntry = (platform: string, analytics?: ZernioAnalyticsRow["analytics"]) => {
         if (!analytics) return;
@@ -426,12 +426,6 @@ export class ZernioService {
           if (typeof v === "number") acc[m] = (acc[m] ?? 0) + v;
         }
         sums.set(platform, acc);
-        if (typeof analytics.engagementRate === "number") {
-          const e = engagement.get(platform) ?? { total: 0, count: 0 };
-          e.total += analytics.engagementRate;
-          e.count += 1;
-          engagement.set(platform, e);
-        }
       };
 
       for (const row of rows) {
@@ -476,13 +470,16 @@ export class ZernioService {
       const names = new Set([...sums.keys(), ...followers.keys()]);
       const platforms = [...names].map((platform) => {
         const m = sums.get(platform);
-        const e = engagement.get(platform);
         return {
           platform,
           followers: followers.get(platform) ?? { current: 0, delta: 0, series: [] },
           impressions: m?.impressions ?? null,
           reach: m?.reach ?? null,
-          engagement: e ? e.total / e.count : null,
+          // Always null: upstream has no engagement COUNT, only
+          // `engagementRate` (a %) — see the doc comment above. A future
+          // slice that wants a rate-typed field should add a new one rather
+          // than repurpose this count-shaped slot.
+          engagement: null,
           likes: m?.likes ?? null,
           comments: m?.comments ?? null,
           shares: m?.shares ?? null,
