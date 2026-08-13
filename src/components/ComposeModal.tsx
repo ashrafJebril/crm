@@ -249,8 +249,8 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                 onChange={(e) => setContent(e.target.value)}
                 rows={8}
                 placeholder={tx(
-                  "Write your post… text and one image are supported in this phase.",
-                  "اكتب منشورك… النص وصورة واحدة مدعومة في هذه المرحلة.",
+                  "Write your post… text and one image or video are supported in this phase.",
+                  "اكتب منشورك… النص وصورة أو فيديو واحد مدعوم في هذه المرحلة.",
                 )}
                 style={{
                   width: "100%",
@@ -639,7 +639,7 @@ function MediaPicker({
       <input
         ref={fileRef}
         type="file"
-        accept="image/jpeg,image/png,image/gif,image/webp"
+        accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime"
         onChange={onFile}
         style={{ display: "none" }}
       />
@@ -655,7 +655,10 @@ function MediaPicker({
             background: "var(--bg-2)",
           }}
         >
-          <PreviewThumb mediaId={selectedId} />
+          <PreviewThumb
+            mediaId={selectedId}
+            mimeType={media.find((m) => m.id === selectedId)?.mimeType}
+          />
           <span style={{ flex: 1, fontSize: 12, color: "var(--ink-2)" }}>
             {media.find((m) => m.id === selectedId)?.fileName ?? "selected"}
           </span>
@@ -732,7 +735,23 @@ function MediaPicker({
               }}
               title={m.fileName}
             >
-              <PreviewThumb mediaId={m.id} />
+              {m.mimeType.startsWith("video/") ? (
+                <div
+                  className="mono muted"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 20,
+                  }}
+                  aria-label={tx("Video", "فيديو")}
+                >
+                  ▶
+                </div>
+              ) : (
+                <PreviewThumb mediaId={m.id} />
+              )}
               {m.id === selectedId && (
                 <span
                   style={{
@@ -772,7 +791,7 @@ function MediaPicker({
 
 /* ── Thumbnail (fetches binary with bearer, renders as blob URL) ────── */
 
-function PreviewThumb({ mediaId }: { mediaId: string }) {
+function PreviewThumb({ mediaId, mimeType }: { mediaId: string; mimeType?: string }) {
   const [src, setSrc] = useState<string | null>(null);
 
   useEffect(() => {
@@ -815,6 +834,17 @@ function PreviewThumb({ mediaId }: { mediaId: string }) {
       >
         …
       </div>
+    );
+  }
+  const isVideo = !!mimeType?.startsWith("video/");
+  if (isVideo) {
+    return (
+      <video
+        src={src}
+        controls
+        preload="metadata"
+        style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+      />
     );
   }
   return (
@@ -873,7 +903,7 @@ function FbPreviewCard({
           {content}
         </div>
       )}
-      {media && <PreviewThumb mediaId={media.id} />}
+      {media && <PreviewThumb mediaId={media.id} mimeType={media.mimeType} />}
       <div
         style={{
           padding: "10px 12px",
@@ -934,7 +964,7 @@ function IgPreviewCard({
         <span style={{ marginInlineStart: "auto", color: "var(--ink-3)" }}>···</span>
       </div>
       {media ? (
-        <PreviewThumb mediaId={media.id} />
+        <PreviewThumb mediaId={media.id} mimeType={media.mimeType} />
       ) : (
         <div
           className="mono muted"

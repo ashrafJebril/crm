@@ -98,8 +98,8 @@ function MediaImpl() {
       <PageHeader
         title={tx("Media library", "مكتبة الوسائط")}
         subtitle={tx(
-          "Images you can attach to posts. Up to 20 MB per file.",
-          "صور يمكنك إرفاقها بالمنشورات. الحد الأقصى ٢٠ ميغا بايت.",
+          "Images up to 20 MB and videos up to 300 MB you can attach to posts.",
+          "صور حتى ٢٠ م.ب وفيديو حتى ٣٠٠ م.ب يمكنك إرفاقها بالمنشورات.",
         )}
         actions={
           <button
@@ -116,7 +116,7 @@ function MediaImpl() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/gif,image/webp"
+        accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime"
         onChange={onFileChosen}
         style={{ display: "none" }}
       />
@@ -156,8 +156,8 @@ function MediaImpl() {
             }}
           >
             {tx(
-              "No media yet. Click Upload to add an image.",
-              "لا توجد وسائط بعد. اضغط رفع لإضافة صورة.",
+              "No media yet. Click Upload to add an image or video.",
+              "لا توجد وسائط بعد. اضغط رفع لإضافة صورة أو فيديو.",
             )}
           </div>
         )}
@@ -340,7 +340,11 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
           placeItems: "center",
         }}
       >
-        <AuthorizedImage url={previewUrl} alt={m.fileName} token={tok} />
+        {m.mimeType.startsWith("video/") ? (
+          <VideoTile url={previewUrl} token={tok} label={tx("Load video", "تحميل الفيديو")} />
+        ) : (
+          <AuthorizedImage url={previewUrl} alt={m.fileName} token={tok} />
+        )}
       </div>
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
         <div
@@ -441,6 +445,43 @@ function AuthorizedImage({
         display: "block",
       }}
     />
+  );
+}
+
+/** Videos aren't fetched until asked — a grid of large blobs would be brutal.
+ *  First click fetches with the bearer token and swaps in a playable element. */
+function VideoTile({ url, token, label }: { url: string; token: string | null; label: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (src) URL.revokeObjectURL(src);
+    };
+  }, [src]);
+
+  if (src) {
+    return (
+      <video src={src} controls style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="btn ghost"
+      disabled={loading}
+      onClick={() => {
+        setLoading(true);
+        fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .then((b) => setSrc(URL.createObjectURL(b)))
+          .catch(() => setLoading(false));
+      }}
+      style={{ width: "100%", height: "100%", display: "grid", placeItems: "center", fontSize: 22 }}
+      aria-label={label}
+    >
+      {loading ? "…" : "▶"}
+    </button>
   );
 }
 
