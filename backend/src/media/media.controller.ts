@@ -62,17 +62,21 @@ export class MediaController {
       // the redirect target — and DO Spaces' header allowlist doesn't
       // include `authorization`. Streaming through the backend keeps the
       // browser same-origin so CORS never enters the picture. Cost: one
-      // extra hop. For 20 MB-capped images, negligible.
+      // extra hop. Videos are capped at 300 MB, so the response is piped
+      // through rather than buffered in memory.
       const upstream = await fetch(resolved.url);
       if (!upstream.ok) {
         throw new NotFoundException(
           `Upstream fetch failed (${upstream.status})`,
         );
       }
-      const buf = Buffer.from(await upstream.arrayBuffer());
       res.setHeader("Content-Type", resolved.mimeType);
       res.setHeader("Cache-Control", "private, max-age=3600");
-      return res.send(buf);
+      const contentLength = upstream.headers.get("content-length");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+      const { Readable } = await import("node:stream");
+      Readable.fromWeb(upstream.body as never).pipe(res);
+      return;
     }
     res.setHeader("Content-Type", resolved.mimeType);
     res.setHeader("Cache-Control", "private, max-age=3600");
