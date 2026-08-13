@@ -323,6 +323,18 @@ export class ZernioService {
       }));
   }
 
+  /** Guard: Zernio (and every platform behind it) needs real lead time to
+   *  actually publish at the requested moment — enforce a 5-minute minimum
+   *  here so the user gets a clear, immediate error instead of a confusing
+   *  provider-side failure (or a "scheduled" post that silently never fires). */
+  private assertFutureSchedule(scheduledFor: string) {
+    if (new Date(scheduledFor).getTime() <= Date.now() + 5 * 60_000) {
+      throw new BadRequestException(
+        "Scheduled time must be at least 5 minutes in the future",
+      );
+    }
+  }
+
   async cancelScheduledPost(workspaceId: string, postId: string) {
     // Ownership check: the id must be in this workspace's own queue.
     const mine = await this.listScheduledPosts(workspaceId);
@@ -349,6 +361,7 @@ export class ZernioService {
     if (!mine.some((p) => p.id === postId)) {
       throw new NotFoundException("Scheduled post not found");
     }
+    this.assertFutureSchedule(scheduledFor);
     const res = await this.client.updatePost(postId, { scheduledFor, timezone });
     return { ok: true as const, id: res.id ?? postId };
   }
@@ -717,6 +730,9 @@ export class ZernioService {
       .map((r) => ({ platform: r.platform, accountId: r.pageId! }));
     if (platforms.length === 0) {
       throw new BadRequestException("No connected Zernio accounts for the requested platforms");
+    }
+    if (input.scheduledFor) {
+      this.assertFutureSchedule(input.scheduledFor);
     }
     // Zernio fetches media by URL — mint short-lived public URLs per asset,
     // the same mechanism Instagram publishing uses.

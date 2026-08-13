@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
@@ -103,11 +103,109 @@ describe("reschedulePost (PUT strategy)", () => {
       { _id: "p1", status: "scheduled", content: "hi", platforms: ["facebook"] },
     ]);
     client.updatePost.mockResolvedValue({ id: "p1", status: "scheduled" });
-    const res = await svc.reschedulePost("ws1", "p1", "2026-08-20T10:00:00.000Z", "Asia/Riyadh");
+    const future = new Date(Date.now() + 60 * 60_000).toISOString();
+    const res = await svc.reschedulePost("ws1", "p1", future, "Asia/Riyadh");
     expect(client.updatePost).toHaveBeenCalledWith("p1", {
-      scheduledFor: "2026-08-20T10:00:00.000Z",
+      scheduledFor: future,
       timezone: "Asia/Riyadh",
     });
     expect(res).toEqual({ ok: true, id: "p1" });
+  });
+
+  it("rejects a past scheduledFor with BadRequestException and never calls updatePost", async () => {
+    client.listCreatedPosts.mockResolvedValue([
+      { _id: "p1", status: "scheduled", content: "hi", platforms: ["facebook"] },
+    ]);
+    const past = new Date(Date.now() - 60_000).toISOString();
+    await expect(
+      svc.reschedulePost("ws1", "p1", past, "Asia/Riyadh"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(client.updatePost).not.toHaveBeenCalled();
+  });
+
+  it("rejects a scheduledFor less than 5 minutes out, even if it's technically in the future", async () => {
+    client.listCreatedPosts.mockResolvedValue([
+      { _id: "p1", status: "scheduled", content: "hi", platforms: ["facebook"] },
+    ]);
+    const tooSoon = new Date(Date.now() + 60_000).toISOString(); // only 1 minute ahead
+    await expect(
+      svc.reschedulePost("ws1", "p1", tooSoon, "Asia/Riyadh"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(client.updatePost).not.toHaveBeenCalled();
+  });
+
+  it("still 404s on an unowned post even if the requested time is also invalid", async () => {
+    client.listCreatedPosts.mockResolvedValue([]);
+    const past = new Date(Date.now() - 60_000).toISOString();
+    await expect(
+      svc.reschedulePost("ws1", "not-mine", past, "Asia/Riyadh"),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(client.updatePost).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * publish() carries the same "must be far enough in the future" rule when the
+ * caller supplies `scheduledFor` — this is the compose-side counterpart to
+ * reschedulePost's guard, closed in the same move since both ultimately hit
+ * the same Zernio scheduling behavior.
+ */
+describe("ZernioService.publish schedule guard", () => {
+  let prisma: { integration: { findMany: jest.Mock } };
+  let media: { mintPublicToken: jest.Mock };
+  let client: { createPost: jest.Mock };
+  let svc: ZernioService;
+
+  beforeEach(() => {
+    prisma = {
+      integration: {
+        findMany: jest.fn().mockResolvedValue([
+          { platform: "facebook", pageId: "acct1" },
+        ]),
+      },
+    };
+    media = { mintPublicToken: jest.fn() };
+    client = {
+      createPost: jest.fn().mockResolvedValue({ id: "post1", status: "scheduled" }),
+    };
+    svc = new ZernioService(
+      prisma as unknown as PrismaService,
+      {} as unknown as RealtimeService,
+      media as unknown as MediaService,
+      client as unknown as ZernioClient,
+    );
+  });
+
+  it("rejects a scheduledFor less than 5 minutes out and never calls createPost", async () => {
+    const tooSoon = new Date(Date.now() + 60_000).toISOString();
+    await expect(
+      svc.publish(
+        "ws1",
+        { content: "hi", platforms: ["facebook"], scheduledFor: tooSoon },
+        "http://localhost:3001",
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(client.createPost).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds when scheduledFor is comfortably in the future", async () => {
+    const future = new Date(Date.now() + 60 * 60_000).toISOString();
+    const res = await svc.publish(
+      "ws1",
+      { content: "hi", platforms: ["facebook"], scheduledFor: future, timezone: "Asia/Riyadh" },
+      "http://localhost:3001",
+    );
+    expect(client.createPost).toHaveBeenCalled();
+    expect(res).toEqual({ id: "post1", status: "scheduled" });
+  });
+
+  it("still succeeds with no scheduledFor at all (immediate publish)", async () => {
+    const res = await svc.publish(
+      "ws1",
+      { content: "hi", platforms: ["facebook"] },
+      "http://localhost:3001",
+    );
+    expect(client.createPost).toHaveBeenCalled();
+    expect(res).toEqual({ id: "post1", status: "scheduled" });
   });
 });
