@@ -392,6 +392,11 @@ export class ZernioService {
    * (`GET /accounts/follower-stats`) which reports per-ACCOUNT, not
    * per-platform — its `accounts[]` array is the join back to a platform
    * name for `stats[accountId]`.
+   *
+   * Plan gating has two independent signals: the 402/403 error shapes
+   * caught below, and `GET /analytics`'s own `hasAnalyticsAccess: false` —
+   * a 200 response that isn't an error at all. Both collapse to
+   * `{ available: false, reason: "plan" }`.
    */
   async analyticsOverview(workspaceId: string, days: 7 | 30) {
     const profileId = await this.getProfileId(workspaceId);
@@ -404,10 +409,20 @@ export class ZernioService {
     const toDate = iso(to);
 
     try {
-      const [rows, followerStats] = await Promise.all([
+      const [analyticsRes, followerStats] = await Promise.all([
         this.client.getAnalytics(profileId, { fromDate, toDate }),
         this.client.getFollowerStats(profileId, { fromDate, toDate, granularity: "daily" }),
       ]);
+
+      // A second plan-gate signal alongside the 402/403 error shapes caught
+      // below: `GET /analytics` can answer 200 with an explicit
+      // `hasAnalyticsAccess: false` rather than erroring (spike-verified
+      // shape — see ZernioClient.getAnalytics). Treat it the same as those.
+      if (analyticsRes.hasAnalyticsAccess === false) {
+        this.log.warn(`analyticsOverview ws=${workspaceId} unavailable (plan): hasAnalyticsAccess=false`);
+        return { available: false as const, reason: "plan" as const };
+      }
+      const rows = analyticsRes.rows;
 
       const SUM_METRICS = ["impressions", "reach", "likes", "comments", "shares"] as const;
       type SumMetric = (typeof SUM_METRICS)[number];

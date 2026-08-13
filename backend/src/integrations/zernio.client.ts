@@ -229,17 +229,26 @@ export class ZernioClient {
    * are no more, capped at `ANALYTICS_MAX_PAGES` (400 posts) so a very busy
    * account can't turn one overview load into an unbounded fetch loop; past
    * the cap, totals are logged as best-effort rather than silently wrong.
+   *
+   * The response also carries a top-level `hasAnalyticsAccess: boolean`
+   * (spike-verified: always present, `true` for our own workspace — see
+   * docs/superpowers/plans/2026-08-13-analytics-spike-findings.md). It's the
+   * API's own plan-gate signal, distinct from the 402/403 error responses
+   * ZernioService already matches on — surfaced here rather than thrown so
+   * the caller can fold both signals into one gate check.
    */
   async getAnalytics(
     profileId: string,
     opts: { fromDate: string; toDate: string },
-  ): Promise<ZernioAnalyticsRow[]> {
+  ): Promise<{ rows: ZernioAnalyticsRow[]; hasAnalyticsAccess: boolean }> {
     const rows: ZernioAnalyticsRow[] = [];
+    let hasAnalyticsAccess = true;
     let page = 1;
     for (;;) {
       const res = await this.request<{
         posts?: ZernioAnalyticsRow[];
         pagination?: { page?: number; limit?: number; total?: number; pages?: number };
+        hasAnalyticsAccess?: boolean;
       }>("GET", "/analytics", {
         query: {
           profileId,
@@ -250,6 +259,7 @@ export class ZernioClient {
         },
       });
       rows.push(...(res.posts ?? []));
+      if (typeof res.hasAnalyticsAccess === "boolean") hasAnalyticsAccess = res.hasAnalyticsAccess;
       const pages = res.pagination?.pages ?? 1;
       if (page === 1 && pages > ZernioClient.ANALYTICS_MAX_PAGES) {
         this.log.warn(
@@ -260,7 +270,7 @@ export class ZernioClient {
       if (page >= pages || page >= ZernioClient.ANALYTICS_MAX_PAGES) break;
       page++;
     }
-    return rows;
+    return { rows, hasAnalyticsAccess };
   }
 
   /**

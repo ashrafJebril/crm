@@ -57,43 +57,46 @@ describe("ZernioService.analyticsOverview", () => {
     // Live shape (spike-verified): each post carries a platforms[] breakdown
     // and each breakdown entry has its OWN analytics object — that's what
     // gets summed, not the post's rolled-up `analytics`.
-    client.getAnalytics.mockResolvedValue([
-      {
-        _id: "p1",
-        platforms: [
-          {
-            platform: "facebook",
-            accountId: "acc-fb",
-            // engagementRate present here on purpose: it must NOT leak into
-            // the output's count-shaped `engagement` slot (fix round 1).
-            analytics: { impressions: 100, likes: 5, comments: 2, shares: 1, engagementRate: 1.35 },
-          },
-        ],
-      },
-      {
-        _id: "p2",
-        platforms: [
-          {
-            platform: "facebook",
-            accountId: "acc-fb",
-            analytics: { impressions: 50, likes: 3, comments: 0, shares: 0 },
-          },
-        ],
-      },
-      {
-        _id: "p3",
-        // no impressions on these Instagram breakdown rows
-        platforms: [
-          { platform: "instagram", accountId: "acc-ig", analytics: { likes: 7, comments: 4 } },
-        ],
-      },
-      {
-        _id: "p4",
-        platforms: [
-          { platform: "instagram", accountId: "acc-ig", analytics: { likes: 4, comments: 0 } },
-        ],
-      },
-    ]);
+    client.getAnalytics.mockResolvedValue({
+      hasAnalyticsAccess: true,
+      rows: [
+        {
+          _id: "p1",
+          platforms: [
+            {
+              platform: "facebook",
+              accountId: "acc-fb",
+              // engagementRate present here on purpose: it must NOT leak into
+              // the output's count-shaped `engagement` slot (fix round 1).
+              analytics: { impressions: 100, likes: 5, comments: 2, shares: 1, engagementRate: 1.35 },
+            },
+          ],
+        },
+        {
+          _id: "p2",
+          platforms: [
+            {
+              platform: "facebook",
+              accountId: "acc-fb",
+              analytics: { impressions: 50, likes: 3, comments: 0, shares: 0 },
+            },
+          ],
+        },
+        {
+          _id: "p3",
+          // no impressions on these Instagram breakdown rows
+          platforms: [
+            { platform: "instagram", accountId: "acc-ig", analytics: { likes: 7, comments: 4 } },
+          ],
+        },
+        {
+          _id: "p4",
+          platforms: [
+            { platform: "instagram", accountId: "acc-ig", analytics: { likes: 4, comments: 0 } },
+          ],
+        },
+      ],
+    });
     client.getFollowerStats.mockResolvedValue({
       accounts: [
         { _id: "acc-fb", platform: "facebook" },
@@ -153,7 +156,7 @@ describe("ZernioService.analyticsOverview", () => {
   });
 
   it("reports postCount:0 for a platform surfaced only via follower data (no analytics rows)", async () => {
-    client.getAnalytics.mockResolvedValue([]);
+    client.getAnalytics.mockResolvedValue({ rows: [], hasAnalyticsAccess: true });
     client.getFollowerStats.mockResolvedValue({
       accounts: [{ _id: "acc-wa", platform: "whatsapp" }],
       stats: {
@@ -169,6 +172,16 @@ describe("ZernioService.analyticsOverview", () => {
     expect(wa.postCount).toBe(0);
     expect(wa.impressions).toBeNull();
     expect(wa.followers.current).toBe(52);
+  });
+
+  it("collapses hasAnalyticsAccess:false (a 200, not an error) into reason:plan", async () => {
+    // Spike-verified shape: GET /analytics can answer 200 with an explicit
+    // hasAnalyticsAccess:false rather than a 402/403 — a second, independent
+    // plan-gate signal alongside the error-shape matching below.
+    client.getAnalytics.mockResolvedValue({ rows: [], hasAnalyticsAccess: false });
+    client.getFollowerStats.mockResolvedValue({ accounts: [], stats: {} });
+    const res = await svc.analyticsOverview("ws1", 7);
+    expect(res).toEqual({ available: false, reason: "plan" });
   });
 
   it("collapses a 402 into reason:plan", async () => {

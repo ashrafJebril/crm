@@ -239,9 +239,9 @@ describe("ZernioClient.getAnalytics pagination", () => {
       });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const rows = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
+    const res = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
 
-    expect(rows).toEqual([{ _id: "p1" }, { _id: "p2" }]);
+    expect(res.rows).toEqual([{ _id: "p1" }, { _id: "p2" }]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const url1 = String(fetchMock.mock.calls[0][0]);
     const url2 = String(fetchMock.mock.calls[1][0]);
@@ -263,10 +263,55 @@ describe("ZernioClient.getAnalytics pagination", () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const rows = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
+    const res = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
 
-    expect(rows).toEqual([{ _id: "p1" }]);
+    expect(res.rows).toEqual([{ _id: "p1" }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain("page=1");
+  });
+});
+
+/**
+ * Fix round (2026-08-13, final review): `GET /analytics` carries a top-level
+ * `hasAnalyticsAccess` flag (spike-verified) that was being discarded — the
+ * service had no way to distinguish "this plan doesn't have analytics" from
+ * an ordinary empty result. Verify it's surfaced on the returned shape.
+ */
+describe("ZernioClient.getAnalytics hasAnalyticsAccess", () => {
+  let client: ZernioClient;
+
+  beforeEach(() => {
+    process.env.ZERNIO_API_KEY = "test-key";
+    client = new ZernioClient();
+  });
+
+  it("surfaces hasAnalyticsAccess:false from the response", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            posts: [],
+            pagination: { page: 1, limit: 100, total: 0, pages: 1 },
+            hasAnalyticsAccess: false,
+          }),
+        ),
+    }) as unknown as typeof fetch;
+
+    const res = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
+    expect(res.hasAnalyticsAccess).toBe(false);
+  });
+
+  it("defaults hasAnalyticsAccess to true when the response omits it", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(JSON.stringify({ posts: [], pagination: { page: 1, limit: 100, total: 0, pages: 1 } })),
+    }) as unknown as typeof fetch;
+
+    const res = await client.getAnalytics("prof1", { fromDate: "2026-01-01", toDate: "2026-01-31" });
+    expect(res.hasAnalyticsAccess).toBe(true);
   });
 });
