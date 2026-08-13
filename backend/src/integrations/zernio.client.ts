@@ -193,6 +193,19 @@ export class ZernioClient {
     await this.request<unknown>("DELETE", `/posts/${encodeURIComponent(postId)}`, {});
   }
 
+  /** Update a Zernio-created post in place (spike-verified 2026-08-13). */
+  async updatePost(
+    postId: string,
+    body: { scheduledFor: string; timezone?: string },
+  ): Promise<{ id: string | null; status: string | null }> {
+    const res = await this.request<{ post?: { _id?: string; status?: string } }>(
+      "PUT",
+      `/posts/${encodeURIComponent(postId)}`,
+      { body },
+    );
+    return { id: res.post?._id ?? postId, status: res.post?.status ?? null };
+  }
+
   /**
    * Returns POSTS with comment counts aggregated across every connected
    * account — NOT individual comments (confirmed against

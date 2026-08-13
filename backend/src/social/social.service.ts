@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ZernioService } from "../integrations/zernio.service";
-import { PublishDto, PublishChannel } from "./social.dto";
+import { PublishDto, PublishChannel, RescheduleDto } from "./social.dto";
 
 export interface ChannelResult {
   ok: boolean;
@@ -55,5 +55,9 @@ export class SocialService {
 
   cancelScheduled(workspaceId: string, postId: string) {
     return this.zernio.cancelScheduledPost(workspaceId, postId);
+  }
+
+  reschedule(workspaceId: string, postId: string, dto: RescheduleDto) {
+    return this.zernio.reschedulePost(workspaceId, postId, dto.scheduledFor, dto.timezone);
   }
 }

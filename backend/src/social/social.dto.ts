@@ -31,3 +31,11 @@ export class PublishDto {
   @IsString()
   timezone?: string;
 }
+
+export class RescheduleDto {
+  @IsISO8601()
+  scheduledFor!: string;
+
+  @IsString()
+  timezone!: string;
+}

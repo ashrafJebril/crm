@@ -333,6 +333,26 @@ export class ZernioService {
     return { ok: true as const };
   }
 
+  /**
+   * Reschedule a scheduled post in place via `PUT /posts/{id}` (spike-verified
+   * 2026-08-13: PUT_WORKS=yes — see docs/superpowers/plans/2026-08-13-spike-findings.md).
+   * Same ownership guard as `cancelScheduledPost`: the id must be in this
+   * workspace's own queue. The id is stable across the reschedule.
+   */
+  async reschedulePost(
+    workspaceId: string,
+    postId: string,
+    scheduledFor: string,
+    timezone: string,
+  ) {
+    const mine = await this.listScheduledPosts(workspaceId);
+    if (!mine.some((p) => p.id === postId)) {
+      throw new NotFoundException("Scheduled post not found");
+    }
+    const res = await this.client.updatePost(postId, { scheduledFor, timezone });
+    return { ok: true as const, id: res.id ?? postId };
+  }
+
   async disconnect(workspaceId: string, platform: string) {
     const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: platform.toLowerCase(), provider: "zernio" },
