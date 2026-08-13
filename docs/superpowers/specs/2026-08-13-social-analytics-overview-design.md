@@ -36,11 +36,12 @@ Live-verify against the real connected account, recording raw evidence in a comm
       platforms: [{
         platform: string,
         followers: { current: number, delta: number, series: { date: string, count: number }[] },
-        impressions: number, reach: number, engagement: number,
-        likes: number, comments: number, shares: number,
+        impressions: number | null, reach: number | null, engagement: number | null,
+        likes: number | null, comments: number | null, shares: number | null,
       }]
     }
     ```
+    Metrics a platform doesn't provide are `null` (rendered as "—"), never a fabricated 0 — same honesty rule the rest of the product follows.
   - Sums per-post rows server-side if Zernio has no aggregate mode (spike decides).
   - `followers.delta` = change across the selected window (`series[last].count - series[first].count`); `series` covers the window at daily granularity, oldest first.
   - **Degradation:** Zernio 402 → `{ available: false, reason: "plan" }`; any other upstream error → `{ available: false, reason: "upstream" }`. Both HTTP 200 — the screen never errors because an external vendor did.
