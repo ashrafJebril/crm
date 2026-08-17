@@ -250,7 +250,15 @@ describe("ZernioService.commentOnPost", () => {
       },
     };
     client = {
-      listPosts: jest.fn().mockResolvedValue([{ _id: "post1", platform: "facebook" }]),
+      listPosts: jest.fn().mockResolvedValue([
+        {
+          _id: "post1",
+          platform: "facebook",
+          platforms: [
+            { platform: "facebook", accountId: "acc1", platformPostId: "native_123" },
+          ],
+        },
+      ]),
       replyToComment: jest.fn().mockResolvedValue({ id: "c-new" }),
     };
     svc = new ZernioService(
@@ -277,10 +285,18 @@ describe("ZernioService.commentOnPost", () => {
     expect(client.replyToComment).not.toHaveBeenCalled();
   });
 
-  it("creates a top-level comment (no parent commentId) on an owned post", async () => {
+  it("creates a top-level comment addressing the NATIVE platform post id", async () => {
+    // The feed exposes Zernio's internal _id; Zernio's comment endpoint wants
+    // platforms[].platformPostId — the service must translate.
     const res = await svc.commentOnPost("ws1", "post1", "hello!", "acc1");
-    expect(client.replyToComment).toHaveBeenCalledWith("post1", "acc1", "hello!", undefined);
+    expect(client.replyToComment).toHaveBeenCalledWith("native_123", "acc1", "hello!", undefined);
     expect(res).toEqual({ id: "c-new" });
+  });
+
+  it("falls back to the feed id when no platformPostId exists on the row", async () => {
+    client.listPosts.mockResolvedValue([{ _id: "post1", platform: "facebook" }]);
+    await svc.commentOnPost("ws1", "post1", "hello!", "acc1");
+    expect(client.replyToComment).toHaveBeenCalledWith("post1", "acc1", "hello!", undefined);
   });
 
   it("rejects when Zernio isn't connected", async () => {

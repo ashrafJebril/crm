@@ -310,11 +310,25 @@ export class ZernioService {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) throw new BadRequestException("Zernio is not connected");
     await this.assertOwnAccount(workspaceId, accountId);
-    const feed = await this.listPosts(workspaceId);
-    if (!feed.some((p) => p.id === postId)) {
-      throw new NotFoundException("Post not found");
-    }
-    return this.client.replyToComment(postId, accountId, message, undefined);
+    // The feed hands the frontend Zernio's internal _id, but the comments
+    // endpoint addresses the platform's NATIVE post id (spike-verified:
+    // platforms[].platformPostId). Resolve via the raw feed row — which
+    // doubles as the own-feed tenancy check.
+    const raw = (await this.client.listPosts(profileId)).find(
+      (p) => (p._id ?? p.id) === postId,
+    );
+    if (!raw) throw new NotFoundException("Post not found");
+    const entries = Array.isArray(raw.platforms)
+      ? raw.platforms.filter(
+          (pl): pl is { platform?: string; accountId?: string; platformPostId?: string } =>
+            typeof pl !== "string",
+        )
+      : [];
+    const nativeId =
+      entries.find((pl) => pl.accountId === accountId)?.platformPostId ??
+      entries.find((pl) => pl.platformPostId)?.platformPostId ??
+      postId;
+    return this.client.replyToComment(nativeId, accountId, message, undefined);
   }
 
   async deleteComment(workspaceId: string, commentId: string, accountId?: string) {

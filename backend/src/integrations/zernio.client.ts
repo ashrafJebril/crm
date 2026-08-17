@@ -521,7 +521,9 @@ export interface ZernioPost {
   _id?: string;
   id?: string;
   platform?: string;
-  platforms?: Array<{ platform?: string; accountId?: string } | string>;
+  platforms?: Array<
+    { platform?: string; accountId?: string; platformPostId?: string } | string
+  >;
   content?: string;
   caption?: string;
   text?: string;
