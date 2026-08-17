@@ -989,6 +989,12 @@ function SocialImpl() {
                     lineHeight: 1.55,
                     color: "var(--ink-1)",
                     whiteSpace: "pre-wrap",
+                    // Long captions must not shove the comments below the fold:
+                    // the caption scrolls inside its own box instead, keeping
+                    // the comments bar + list always on screen.
+                    maxHeight: "38vh",
+                    overflowY: "auto",
+                    paddingInlineEnd: 6,
                   }}
                 >
                   {isAr && selected.bodyAr ? selected.bodyAr : selected.body}
