@@ -992,7 +992,7 @@ function SocialImpl() {
                     // Long captions must not shove the comments below the fold:
                     // the caption scrolls inside its own box instead, keeping
                     // the comments bar + list always on screen.
-                    maxHeight: "38vh",
+                    maxHeight: "30vh",
                     overflowY: "auto",
                     paddingInlineEnd: 6,
                   }}
@@ -1191,7 +1191,7 @@ function SocialImpl() {
 
               <div
                 style={{
-                  padding: 14,
+                  padding: "8px 14px",
                   borderTop: "1px solid var(--line-soft)",
                   background: "var(--bg-1)",
                 }}
@@ -1201,10 +1201,10 @@ function SocialImpl() {
                     border: "1px solid var(--line)",
                     borderRadius: 12,
                     background: "var(--bg)",
-                    padding: 10,
+                    padding: "6px 8px",
                     display: "flex",
                     flexDirection: "column",
-                    gap: 8,
+                    gap: 6,
                   }}
                 >
                   {replyTo && (
@@ -1242,7 +1242,10 @@ function SocialImpl() {
                       </button>
                     </div>
                   )}
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  {/* Single compact row: avatar + field + icon send. "Posting
+                      as" lives in the placeholder; the reply chip above has
+                      its own dismiss, so no separate Clear row. */}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <Avatar
                       name={user?.name ?? "You"}
                       color={user?.color ?? "150"}
@@ -1257,6 +1260,7 @@ function SocialImpl() {
                           submitComment();
                         }
                       }}
+                      rows={1}
                       disabled={!replyTo}
                       placeholder={
                         replyTo
@@ -1265,7 +1269,8 @@ function SocialImpl() {
                       }
                       style={{
                         flex: 1,
-                        minHeight: 44,
+                        minHeight: 22,
+                        maxHeight: 96,
                         resize: "none",
                         border: 0,
                         outline: 0,
@@ -1276,42 +1281,16 @@ function SocialImpl() {
                         lineHeight: 1.5,
                       }}
                     />
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <span
-                      className="muted mono"
-                      style={{ fontSize: 11 }}
+                    <button
+                      type="button"
+                      className="btn primary icon sm"
+                      onClick={submitComment}
+                      disabled={!replyTo || draft.trim().length === 0}
+                      aria-label={tx("Post comment", "نشر التعليق")}
+                      title={tx("Post comment (Ctrl+Enter)", "نشر التعليق (Ctrl+Enter)")}
                     >
-                      {tx("Posting as", "نشر بصفة")}{" "}
-                      <strong style={{ color: "var(--ink-1)" }}>
-                        {user?.name ?? tx("you", "أنت")}
-                      </strong>
-                    </span>
-                    <span style={{ marginInlineStart: "auto", display: "flex", gap: 6 }}>
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        onClick={() => setDraft("")}
-                        disabled={draft.length === 0}
-                      >
-                        {tx("Clear", "مسح")}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn primary"
-                        onClick={submitComment}
-                        disabled={!replyTo || draft.trim().length === 0}
-                      >
-                        <IconSend w={13} />
-                        {tx("Post comment", "نشر التعليق")}
-                      </button>
-                    </span>
+                      <IconSend w={14} />
+                    </button>
                   </div>
                 </div>
               </div>
