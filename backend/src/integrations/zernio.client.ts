@@ -169,12 +169,45 @@ export class ZernioClient {
 
   /** List a profile's posts. Zernio serves a page's OWN (synced/external) posts
    *  under /analytics — the /posts endpoint only returns posts CREATED through
-   *  Zernio. Hitting /analytics also triggers Zernio's external-post sync. */
+   *  Zernio. Hitting /analytics also triggers Zernio's external-post sync.
+   *
+   *  The window is explicit because /analytics defaults to ~90 days
+   *  (spike-verified 2026-08-13; bit us live 2026-08-17 — the feed showed one
+   *  post because everything older fell outside the silent default). 365 days
+   *  is Zernio's documented maximum range; pages are walked like getAnalytics
+   *  so a busy year isn't cut at the first 100 posts. */
   async listPosts(profileId: string, platform?: string): Promise<ZernioPost[]> {
-    const res = await this.request<{ posts?: ZernioPost[] }>("GET", "/analytics", {
-      query: { profileId, platform, limit: "50" },
-    });
-    return res.posts ?? [];
+    const to = new Date();
+    const from = new Date(to.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const posts: ZernioPost[] = [];
+    let page = 1;
+    for (;;) {
+      const res = await this.request<{
+        posts?: ZernioPost[];
+        pagination?: { page?: number; pages?: number; total?: number };
+      }>("GET", "/analytics", {
+        query: {
+          profileId,
+          platform,
+          fromDate: iso(from),
+          toDate: iso(to),
+          limit: "100",
+          page: String(page),
+        },
+      });
+      posts.push(...(res.posts ?? []));
+      const pages = res.pagination?.pages ?? 1;
+      if (page >= pages || page >= ZernioClient.ANALYTICS_MAX_PAGES) {
+        if (pages > ZernioClient.ANALYTICS_MAX_PAGES) {
+          this.log.warn(
+            `listPosts: profile ${profileId} has ${pages} pages in the window; feed is best-effort over the first ${ZernioClient.ANALYTICS_MAX_PAGES * 100} posts`,
+          );
+        }
+        return posts;
+      }
+      page += 1;
+    }
   }
 
   /** Posts CREATED through Zernio (drafts/scheduled/published) — unlike the

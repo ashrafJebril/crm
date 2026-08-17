@@ -272,6 +272,84 @@ describe("ZernioClient.getAnalytics pagination", () => {
 });
 
 /**
+ * Live-incident fix (2026-08-17): the Social feed showed only 1 post because
+ * `listPosts` called /analytics with NO date range, and Zernio's default
+ * window is ~90 days (spike-verified) — everything older silently vanished.
+ * Verify the feed now requests an explicit 365-day window and walks pages.
+ */
+describe("ZernioClient.listPosts window + pagination", () => {
+  let client: ZernioClient;
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    process.env.ZERNIO_API_KEY = "test-key";
+    client = new ZernioClient();
+  });
+
+  it("requests an explicit 365-day window instead of Zernio's ~90-day default", async () => {
+    fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            posts: [{ _id: "p1" }],
+            pagination: { page: 1, limit: 100, total: 1, pages: 1 },
+          }),
+        ),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await client.listPosts("prof1", "facebook");
+
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("platform=facebook");
+    expect(url).toContain("limit=100");
+    const from = new URL(url).searchParams.get("fromDate");
+    const to = new URL(url).searchParams.get("toDate");
+    expect(from).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(to).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const spanDays = (Date.parse(to!) - Date.parse(from!)) / 86_400_000;
+    expect(spanDays).toBeGreaterThanOrEqual(364);
+    expect(spanDays).toBeLessThanOrEqual(366);
+  });
+
+  it("walks pagination so feeds aren't cut at the first page", async () => {
+    fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              posts: [{ _id: "p1" }],
+              pagination: { page: 1, limit: 100, total: 120, pages: 2 },
+            }),
+          ),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              posts: [{ _id: "p2" }],
+              pagination: { page: 2, limit: 100, total: 120, pages: 2 },
+            }),
+          ),
+      });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const posts = await client.listPosts("prof1");
+
+    expect(posts.map((p) => p._id)).toEqual(["p1", "p2"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("page=2");
+  });
+});
+
+/**
  * Fix round (2026-08-13, final review): `GET /analytics` carries a top-level
  * `hasAnalyticsAccess` flag (spike-verified) that was being discarded — the
  * service had no way to distinguish "this plan doesn't have analytics" from
