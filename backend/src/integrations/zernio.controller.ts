@@ -31,6 +31,11 @@ class ZernioCommentReplyDto {
   @IsOptional() @IsString() accountId?: string;
 }
 
+class ZernioPostCommentDto {
+  @IsString() message!: string;
+  @IsString() accountId!: string;
+}
+
 @Controller()
 export class ZernioController {
   constructor(private readonly zernio: ZernioService) {}
@@ -75,6 +80,16 @@ export class ZernioController {
     @Body() dto: ZernioCommentReplyDto,
   ) {
     return this.zernio.replyToComment(workspaceId, id, dto.message, dto.accountId);
+  }
+
+  /** Top-level comment on one of the workspace's own posts (no parent comment). */
+  @Post("integrations/zernio/posts/:postId/comments")
+  commentOnPost(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("postId") postId: string,
+    @Body() dto: ZernioPostCommentDto,
+  ) {
+    return this.zernio.commentOnPost(workspaceId, postId, dto.message, dto.accountId);
   }
 
   @Delete("integrations/zernio/comments/:id")

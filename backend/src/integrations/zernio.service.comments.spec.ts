@@ -222,3 +222,71 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
     expect(rows[0].author).toBe("handle_only");
   });
 });
+
+/**
+ * Top-level comments (2026-08-17): the composer used to be reply-only, which
+ * read as "broken" — you couldn't type until you picked a comment. Zernio's
+ * comment endpoint creates a TOP-LEVEL comment when `commentId` is omitted
+ * (live-verified during Tier 0 verification), so commentOnPost exposes that
+ * with the same two tenancy guards as the other write paths: accountId must
+ * be a workspace-owned account, and the postId must be in the workspace's
+ * own feed.
+ */
+describe("ZernioService.commentOnPost", () => {
+  let prisma: { workspace: { findUnique: jest.Mock }; integration: { findFirst: jest.Mock } };
+  let client: {
+    listPosts: jest.Mock;
+    replyToComment: jest.Mock;
+  };
+  let svc: ZernioService;
+
+  beforeEach(() => {
+    prisma = {
+      workspace: {
+        findUnique: jest.fn().mockResolvedValue({ zernioProfileId: "prof1" }),
+      },
+      integration: {
+        findFirst: jest.fn().mockResolvedValue({ id: "i1", pageId: "acc1" }),
+      },
+    };
+    client = {
+      listPosts: jest.fn().mockResolvedValue([{ _id: "post1", platform: "facebook" }]),
+      replyToComment: jest.fn().mockResolvedValue({ id: "c-new" }),
+    };
+    svc = new ZernioService(
+      prisma as unknown as PrismaService,
+      {} as unknown as RealtimeService,
+      {} as unknown as MediaService,
+      client as unknown as ZernioClient,
+    );
+  });
+
+  it("rejects an accountId from another workspace", async () => {
+    prisma.integration.findFirst.mockResolvedValue(null);
+    await expect(
+      svc.commentOnPost("ws1", "post1", "hi", "foreign-acc"),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(client.replyToComment).not.toHaveBeenCalled();
+  });
+
+  it("rejects a postId that isn't in this workspace's own feed", async () => {
+    client.listPosts.mockResolvedValue([]);
+    await expect(
+      svc.commentOnPost("ws1", "someone-elses-post", "hi", "acc1"),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(client.replyToComment).not.toHaveBeenCalled();
+  });
+
+  it("creates a top-level comment (no parent commentId) on an owned post", async () => {
+    const res = await svc.commentOnPost("ws1", "post1", "hello!", "acc1");
+    expect(client.replyToComment).toHaveBeenCalledWith("post1", "acc1", "hello!", undefined);
+    expect(res).toEqual({ id: "c-new" });
+  });
+
+  it("rejects when Zernio isn't connected", async () => {
+    prisma.workspace.findUnique.mockResolvedValue({ zernioProfileId: null });
+    await expect(
+      svc.commentOnPost("ws1", "post1", "hi", "acc1"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});

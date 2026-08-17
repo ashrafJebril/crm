@@ -293,6 +293,30 @@ export class ZernioService {
     );
   }
 
+  /**
+   * Top-level comment on one of the workspace's own posts. Zernio's comment
+   * endpoint addresses the POST id; omitting `commentId` creates a top-level
+   * comment instead of a reply (live-verified 2026-08-12 during Tier 0
+   * verification). Feed membership is the tenancy guard for the post id,
+   * same pattern as cancelScheduledPost; accountId must be one of the
+   * workspace's own connected accounts.
+   */
+  async commentOnPost(
+    workspaceId: string,
+    postId: string,
+    message: string,
+    accountId: string,
+  ) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) throw new BadRequestException("Zernio is not connected");
+    await this.assertOwnAccount(workspaceId, accountId);
+    const feed = await this.listPosts(workspaceId);
+    if (!feed.some((p) => p.id === postId)) {
+      throw new NotFoundException("Post not found");
+    }
+    return this.client.replyToComment(postId, accountId, message, undefined);
+  }
+
   async deleteComment(workspaceId: string, commentId: string, accountId?: string) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) throw new BadRequestException("Zernio is not connected");

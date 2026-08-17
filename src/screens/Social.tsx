@@ -212,9 +212,9 @@ function SocialImpl() {
   // FB/IG connect through Zernio now. Connection state comes from the Zernio
   // account list; the feed comes from Zernio's /posts (a page's existing posts
   // backfill via Zernio's ~90-min external sync, so it can be sparse at first).
-  const zernioStatusQ = useFetch<{ accounts?: { platform: string; name?: string | null }[] }>(
-    "/integrations/zernio/status",
-  );
+  const zernioStatusQ = useFetch<{
+    accounts?: { platform: string; accountId?: string | null; name?: string | null }[];
+  }>("/integrations/zernio/status");
   const zernioAccount = (p: string) =>
     zernioStatusQ.data?.accounts?.find((a) => a.platform === p);
 
@@ -401,9 +401,10 @@ function SocialImpl() {
   }, [baseSelected, overrides]);
 
   /* ── Zernio comment mutations (reply + delete) ────────────────────────── */
-  // Comments on externally-published posts flow through Zernio: replying to
-  // a comment is the only write Zernio supports (no top-level comment create,
-  // no post edit/delete on posts published outside our composer).
+  // Comment writes flow through Zernio: replies address a parent comment,
+  // and (verified live) omitting the parent creates a TOP-LEVEL comment on
+  // the post — so the composer works with or without a selected comment.
+  // Post edit/delete on externally-published posts remains unsupported.
   const zernioReplyMut = useMutation<
     { commentId: string; message: string; accountId?: string },
     { id: string | null }
@@ -413,6 +414,19 @@ function SocialImpl() {
       accountId: input.accountId,
     }),
   );
+
+  const zernioTopLevelMut = useMutation<
+    { postId: string; message: string; accountId: string },
+    { id: string | null }
+  >((input) =>
+    api.post(`/integrations/zernio/posts/${input.postId}/comments`, {
+      message: input.message,
+      accountId: input.accountId,
+    }),
+  );
+
+  // Composer failures surface inline instead of silently rolling back.
+  const [composerError, setComposerError] = useState<string | null>(null);
 
   const zernioDeleteMut = useMutation<
     { commentId: string; accountId?: string },
@@ -501,9 +515,17 @@ function SocialImpl() {
   }
 
   function submitComment() {
-    if (!selected || !user || !replyTo) return;
+    if (!selected || !user) return;
     const body = draft.trim();
     if (!body) return;
+    // Top-level comments post as the workspace's own account on that platform.
+    const ownAccountId = zernioAccount(selected.platform)?.accountId ?? null;
+    if (!replyTo && !ownAccountId) {
+      setComposerError(
+        tx("This platform isn't connected for commenting.", "هذه المنصة غير متصلة للتعليق."),
+      );
+      return;
+    }
     const localId = `${selected.id}-local-${Date.now()}`;
     const newComment: SocialComment = {
       id: localId,
@@ -516,8 +538,19 @@ function SocialImpl() {
     const postId = selected.id;
     writeComments(postId, [...getCurrentComments(selected), newComment]);
     setDraft("");
-    zernioReplyMut
-      .mutate({ commentId: replyTo.id, message: body, accountId: replyTo.accountId ?? undefined })
+    setComposerError(null);
+    const request = replyTo
+      ? zernioReplyMut.mutate({
+          commentId: replyTo.id,
+          message: body,
+          accountId: replyTo.accountId ?? undefined,
+        })
+      : zernioTopLevelMut.mutate({
+          postId,
+          message: body,
+          accountId: ownAccountId!,
+        });
+    request
       .then((res) => {
         if (res.id) {
           setOverrides((prev) => {
@@ -531,11 +564,18 @@ function SocialImpl() {
         setReplyTo(null);
       })
       .catch(() => {
-        // Roll back the optimistic row so a failed reply isn't shown as posted.
+        // Roll back the optimistic row so a failed post isn't shown as live,
+        // and say so — restore the draft so nothing typed is lost.
         setOverrides((prev) => {
           const list = prev[postId]?.comments ?? [];
           return { ...prev, [postId]: { comments: list.filter((c) => c.id !== localId) } };
         });
+        setDraft(body);
+        setComposerError(
+          replyTo
+            ? tx("Couldn't post the reply.", "تعذر نشر الرد.")
+            : tx("Couldn't post the comment.", "تعذر نشر التعليق."),
+        );
       });
   }
 
@@ -1253,7 +1293,10 @@ function SocialImpl() {
                     />
                     <textarea
                       value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
+                      onChange={(e) => {
+                        setDraft(e.target.value);
+                        if (composerError) setComposerError(null);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                           e.preventDefault();
@@ -1261,11 +1304,13 @@ function SocialImpl() {
                         }
                       }}
                       rows={1}
-                      disabled={!replyTo}
                       placeholder={
                         replyTo
                           ? tx(`Reply as ${user?.name ?? "you"}…`, `رد بصفتك ${user?.name ?? "أنت"}…`)
-                          : tx("Select a comment to reply", "اختر تعليقًا للرد عليه")
+                          : tx(
+                              `Comment as ${user?.name ?? "you"}…`,
+                              `علّق بصفتك ${user?.name ?? "أنت"}…`,
+                            )
                       }
                       style={{
                         flex: 1,
@@ -1285,13 +1330,18 @@ function SocialImpl() {
                       type="button"
                       className="btn primary icon sm"
                       onClick={submitComment}
-                      disabled={!replyTo || draft.trim().length === 0}
+                      disabled={draft.trim().length === 0}
                       aria-label={tx("Post comment", "نشر التعليق")}
                       title={tx("Post comment (Ctrl+Enter)", "نشر التعليق (Ctrl+Enter)")}
                     >
                       <IconSend w={14} />
                     </button>
                   </div>
+                  {composerError && (
+                    <div style={{ fontSize: 11.5, color: "var(--bad)", paddingInlineStart: 34 }}>
+                      {composerError}
+                    </div>
+                  )}
                 </div>
               </div>
             </>
