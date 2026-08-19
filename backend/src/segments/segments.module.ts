@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from "@nestjs/common";
 import {
   IsArray,
@@ -40,7 +42,8 @@ class CreateSegmentDto {
   @IsString() @IsNotEmpty() @MaxLength(64) name!: string;
   @IsOptional() @IsString() @MaxLength(64) nameAr?: string;
   @IsOptional() @IsString() @MaxLength(16) color?: string;
-  @ValidateNested() @Type(() => SegmentFilterDto) filter!: SegmentFilterDto;
+  @IsOptional() @IsIn(["crm", "manual"]) origin?: "crm" | "manual";
+  @IsOptional() @ValidateNested() @Type(() => SegmentFilterDto) filter?: SegmentFilterDto;
 }
 
 class UpdateSegmentDto {
@@ -54,8 +57,12 @@ class PreviewSegmentDto {
   @ValidateNested() @Type(() => SegmentFilterDto) filter!: SegmentFilterDto;
 }
 
+class AddMembersDto {
+  @IsArray() @IsString({ each: true }) contactIds!: string[];
+}
+
 @Controller("segments")
-class SegmentsController {
+export class SegmentsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly svc: SegmentsService,
@@ -73,7 +80,9 @@ class SegmentsController {
     // if it ever bites we cache by hash(filter) or materialize.
     const counts = await Promise.all(
       rows.map((s) =>
-        this.svc.countByFilter(workspaceId, this.svc.parseFilter(s.filter)),
+        s.origin === "crm"
+          ? this.svc.countByFilter(workspaceId, this.svc.parseFilter(s.filter))
+          : this.prisma.segmentMember.count({ where: { segmentId: s.id } }),
       ),
     );
     return rows.map((s, i) => ({
@@ -81,6 +90,7 @@ class SegmentsController {
       name: s.name,
       nameAr: s.nameAr,
       color: s.color,
+      origin: s.origin,
       filter: this.svc.parseFilter(s.filter),
       count: counts[i],
       createdAt: s.createdAt,
@@ -109,8 +119,8 @@ class SegmentsController {
         name: dto.name,
         nameAr: dto.nameAr ?? null,
         color: dto.color ?? null,
-        filter: JSON.stringify(dto.filter),
-        origin: 'crm',
+        filter: JSON.stringify(dto.filter ?? {}),
+        origin: dto.origin ?? "crm",
       },
     });
     void this.outbound.emitSegmentUpserted(workspaceId, seg.id);
@@ -158,6 +168,72 @@ class SegmentsController {
     await this.prisma.segment.delete({ where: { id } });
     void this.outbound.emitSegmentDeleted(workspaceId, id);
     return { ok: true };
+  }
+
+  /** Resolve a segment, asserting it's a manual group in this workspace. */
+  private async requireManual(workspaceId: string, id: string) {
+    const seg = await this.prisma.segment.findFirst({ where: { id, workspaceId } });
+    if (!seg) throw new NotFoundException("Segment not found");
+    if (seg.origin !== "manual") {
+      throw new BadRequestException("Members can only be managed on manual groups");
+    }
+    return seg;
+  }
+
+  @Post(":id/members")
+  async addMembers(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: AddMembersDto,
+  ) {
+    await this.requireManual(workspaceId, id);
+    const ids = [...new Set(dto.contactIds)];
+    const found = await this.prisma.contact.findMany({
+      where: { workspaceId, id: { in: ids } },
+      select: { id: true },
+    });
+    if (found.length !== ids.length) {
+      throw new NotFoundException("One or more contacts not found in this workspace");
+    }
+    const res = await this.prisma.segmentMember.createMany({
+      data: ids.map((contactId) => ({ segmentId: id, contactId })),
+      skipDuplicates: true,
+    });
+    void this.outbound.emitSegmentUpserted(workspaceId, id);
+    return { added: res.count };
+  }
+
+  @Delete(":id/members/:contactId")
+  async removeMember(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Param("contactId") contactId: string,
+  ) {
+    await this.requireManual(workspaceId, id);
+    await this.prisma.segmentMember.deleteMany({ where: { segmentId: id, contactId } });
+    void this.outbound.emitSegmentUpserted(workspaceId, id);
+    return { ok: true };
+  }
+
+  @Get(":id/members")
+  async listMembers(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Query("search") search?: string,
+  ) {
+    await this.requireManual(workspaceId, id);
+    const members = await this.prisma.segmentMember.findMany({
+      where: {
+        segmentId: id,
+        contact: search
+          ? { name: { contains: search, mode: "insensitive" } }
+          : undefined,
+      },
+      include: { contact: { select: { id: true, name: true, phone: true, source: true } } },
+      take: 100,
+      orderBy: { addedAt: "desc" },
+    });
+    return members.map((m) => m.contact);
   }
 
   @Post('admin/resync-hjz')
