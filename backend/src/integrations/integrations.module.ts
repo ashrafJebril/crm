@@ -14,9 +14,10 @@ import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
+import { TicketsModule } from "../tickets/tickets.module";
 
 @Module({
-  imports: [MediaModule, RealtimeModule],
+  imports: [MediaModule, RealtimeModule, TicketsModule],
   // HjzWebhooksController is inert until HJZ_WEBHOOK_SECRET is set (the
   // service rejects requests without it), so it's safe to register standalone.
   controllers: [

@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
+import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -45,6 +46,7 @@ export class ZernioService {
     private readonly realtime: RealtimeService,
     private readonly media: MediaService,
     private readonly client: ZernioClient,
+    private readonly pipelineAutomation: PipelineAutomationService,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -757,6 +759,9 @@ export class ZernioService {
       channel,
       conversationId: conv.id,
     });
+    // Replying counts as making contact — moves the auto-created ticket
+    // new → contacted (no-op when nothing sits in 'new'). Never throws.
+    await this.pipelineAutomation.onOutboundReply(workspaceId, conv.contactId);
     return { ok: true, id };
   }
 
@@ -1219,6 +1224,21 @@ export class ZernioService {
       channel,
       conversationId: conv.id,
     });
+    // Lifecycle automation (never throws): a customer message opens a ticket
+    // in 'new' unless one is already open; ANY outbound human message — from
+    // the app or typed on the phone (this same path ingests message.sent) —
+    // moves the 'new' ticket to 'contacted'.
+    if (isOutbound) {
+      await this.pipelineAutomation.onOutboundReply(workspaceId, contact.id);
+    } else {
+      await this.pipelineAutomation.onInboundMessage(
+        workspaceId,
+        contact.id,
+        conv.id,
+        channel,
+        text || undefined,
+      );
+    }
   }
 
   /** Returns how many rows matched — 0 tells the caller this message isn't

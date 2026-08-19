@@ -38,6 +38,7 @@ describe("ZernioService.cancelScheduledPost ownership guard", () => {
       {} as unknown as RealtimeService,
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 
@@ -87,6 +88,7 @@ describe("reschedulePost (PUT strategy)", () => {
       {} as unknown as RealtimeService,
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 
@@ -173,6 +175,7 @@ describe("ZernioService.publish schedule guard", () => {
       {} as unknown as RealtimeService,
       media as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 

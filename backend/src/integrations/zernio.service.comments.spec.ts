@@ -56,6 +56,7 @@ describe("ZernioService comment ownership guard", () => {
       {} as unknown as RealtimeService,
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 
@@ -154,6 +155,7 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
       {} as unknown as RealtimeService,
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 
@@ -266,6 +268,7 @@ describe("ZernioService.commentOnPost", () => {
       {} as unknown as RealtimeService,
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 

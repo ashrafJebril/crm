@@ -43,6 +43,7 @@ describe("ZernioService.analyticsOverview", () => {
       { emitToWorkspace: jest.fn() } as unknown as RealtimeService,
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
+      { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     );
   });
 
