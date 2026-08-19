@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
@@ -40,6 +40,27 @@ import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
 
 type FilterId = "all" | "human" | "unread" | "closed" | "spam";
+
+/** Day label for thread separators: Today / Yesterday / a localized date.
+ *  Threads span days (a recovered complaint sat a week), so per-message
+ *  clock times alone were misleading. */
+function dayLabel(
+  iso: string,
+  lang: Lang,
+  tx: (en: string, ar: string) => string,
+): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round((startOf(new Date()) - startOf(d)) / 86_400_000);
+  if (diffDays === 0) return tx("Today", "اليوم");
+  if (diffDays === 1) return tx("Yesterday", "أمس");
+  return d.toLocaleDateString(lang === "ar" ? "ar" : undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+}
 type ConversationDetail = Conversation & { messages: Message[] };
 
 const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat"];
@@ -1328,9 +1349,6 @@ function ConversationPane({
           backgroundPosition: "0 0",
         }}
       >
-        <div className="day-divider">
-          <span>{tx("Today", "اليوم")}</span>
-        </div>
         {messagesLoading && messages.length === 0 ? (
           <div
             aria-label={tx("Loading messages", "جارٍ تحميل الرسائل")}
@@ -1350,9 +1368,21 @@ function ConversationPane({
             {tx("No messages in this thread yet.", "لا توجد رسائل في هذه المحادثة بعد.")}
           </div>
         ) : (
-          messages.map((m, i) => (
-            <Bubble key={`${conv.id}-${i}`} m={m} />
-          ))
+          messages.map((m, i) => {
+            const label = m.createdAt ? dayLabel(m.createdAt, lang, tx) : "";
+            const prev = i > 0 ? messages[i - 1] : null;
+            const prevLabel = prev?.createdAt ? dayLabel(prev.createdAt, lang, tx) : "";
+            return (
+              <Fragment key={`${conv.id}-${i}`}>
+                {label && label !== prevLabel && (
+                  <div className="day-divider">
+                    <span>{label}</span>
+                  </div>
+                )}
+                <Bubble m={m} />
+              </Fragment>
+            );
+          })
         )}
       </div>
 

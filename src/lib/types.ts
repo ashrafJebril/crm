@@ -186,6 +186,8 @@ export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
 export interface Message {
   from: "them" | "human";
   t: string;
+  /** ISO timestamp from the server — drives the thread's day separators. */
+  createdAt?: string;
   body: string;
   attach?: string;
   metaMessageId?: string | null;
