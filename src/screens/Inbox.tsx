@@ -1114,6 +1114,13 @@ function Bubble({ m }: BubbleProps) {
   // of showing cryptic dots. (Live-diagnosed 2026-08-19: a sticker arrived as
   // "•••••••••" with attachments: [].)
   const isUnsupported = !m.attach && /^•+$/.test(m.body.trim());
+  // Stored `t` strings are inconsistent across ingestion eras (some local,
+  // some UTC — one thread showed 14:26 above 11:36). createdAt is the truth;
+  // render it in the viewer's own timezone, falling back to `t` only for
+  // rows without a timestamp.
+  const timeLabel = m.createdAt
+    ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : m.t;
   return (
     <div
       className="ix-msg"
@@ -1170,7 +1177,7 @@ function Bubble({ m }: BubbleProps) {
             textAlign: isOut ? "end" : "start",
           }}
         >
-          {m.t}
+          {timeLabel}
           {isOut && <DeliveryTicks status={m.deliveryStatus ?? undefined} />}
         </div>
       </div>
