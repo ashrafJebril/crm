@@ -292,6 +292,8 @@ export interface SegmentFilter {
   tagsAny?: string[];
   search?: string;
   hasPhone?: boolean;
+  /** Contact has at least one deal currently in any of these stage keys. */
+  stageAny?: string[];
 }
 
 /** crm = saved filter (re-evaluated), manual = user-picked membership,

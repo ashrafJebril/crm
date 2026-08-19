@@ -77,6 +77,19 @@ describe("ContactsService.list — segment resolution by origin", () => {
     expect(where.workspaceId).toBe("ws1");
   });
 
+  it("resolves a stage-driven CRM segment to a ticket-stage predicate", async () => {
+    prisma.segment.findFirst.mockResolvedValue({
+      id: "s3",
+      origin: "crm",
+      filter: JSON.stringify({ stageAny: ["lost"] }),
+    });
+    await svc.list("ws1", { segmentId: "s3" });
+    expect(whereOf()).toEqual({
+      workspaceId: "ws1",
+      tickets: { some: { stage: { key: { in: ["lost"] } } } },
+    });
+  });
+
   it("lists the whole workspace when no segmentId is given", async () => {
     await svc.list("ws1");
     expect(whereOf()).toEqual({ workspaceId: "ws1" });

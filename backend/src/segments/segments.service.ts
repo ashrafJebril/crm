@@ -19,6 +19,7 @@ export interface SegmentFilter {
   tagsAny?: string[]; // contact tags must contain ANY of these
   search?: string; // case-insensitive `name` substring
   hasPhone?: boolean;
+  stageAny?: string[]; // contact has ≥1 deal currently in any of these stage keys
 }
 
 @Injectable()
@@ -36,6 +37,13 @@ export class SegmentsService {
     }
     if (f.hasPhone === true) where.phone = { not: null };
     if (f.hasPhone === false) where.phone = null;
+
+    // A ticket sits in exactly one stage at a time, so "deal currently in
+    // stage X" is just a stage-key match on the contact's tickets. Stage keys
+    // are only unique per pipeline, but tickets are workspace-scoped already.
+    if (f.stageAny && f.stageAny.length > 0) {
+      where.tickets = { some: { stage: { key: { in: f.stageAny } } } };
+    }
 
     // tags is a TEXT column holding a JSON-encoded string array like ["VIP","Pro"].
     // We don't normalize it (yet) so we match via substring on the quoted form.
