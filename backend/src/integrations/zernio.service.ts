@@ -23,6 +23,19 @@ import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client
  * Graph live-fetch); webhooks additionally persist messages + emit realtime so
  * DB-backed views and delivery status stay in sync.
  */
+
+/** WhatsApp participant ids ARE phone numbers (E.164 digits, no '+') — the
+ *  other platforms use opaque user ids. Returns a display-ready +E.164 for
+ *  WhatsApp contacts, null for everything else or malformed ids. */
+export function phoneFromParticipantId(
+  channel: string,
+  participantId: string,
+): string | null {
+  if (channel !== "whatsapp") return null;
+  const digits = participantId.replace(/^\+/, "");
+  return /^[0-9]{8,15}$/.test(digits) ? `+${digits}` : null;
+}
+
 @Injectable()
 export class ZernioService {
   private readonly log = new Logger(ZernioService.name);
@@ -758,6 +771,7 @@ export class ZernioService {
           create: {
             workspaceId,
             name: zc.participantName ?? `${channel} user`,
+            phone: phoneFromParticipantId(channel, participantId),
             industry: channel,
             lifecycle: "lead",
             source: channel,
@@ -767,6 +781,13 @@ export class ZernioService {
           },
           update: {},
         });
+        {
+          // Older rows predate phone capture — fill it once, never overwrite.
+          const phone = phoneFromParticipantId(channel, participantId);
+          if (phone && !contact.phone) {
+            await this.prisma.contact.update({ where: { id: contact.id }, data: { phone } });
+          }
+        }
 
         let conv = await this.prisma.conversation.findFirst({
           where: { workspaceId, contactId: contact.id, channel },
@@ -1088,6 +1109,7 @@ export class ZernioService {
       create: {
         workspaceId,
         name: participantName ?? `${channel} user`,
+        phone: phoneFromParticipantId(channel, participantId),
         industry: channel,
         lifecycle: "lead",
         source: channel,
@@ -1098,6 +1120,13 @@ export class ZernioService {
       // lastSeen tracks the CUSTOMER's activity — our own replies don't move it.
       update: isOutbound ? {} : { lastSeen: "now" },
     });
+    {
+      // Older rows predate phone capture — fill it once, never overwrite.
+      const phone = phoneFromParticipantId(channel, participantId);
+      if (phone && !contact.phone) {
+        await this.prisma.contact.update({ where: { id: contact.id }, data: { phone } });
+      }
+    }
 
     // Zernio's conversation id — persisted so replies can address the provider
     // conversation directly instead of re-listing on every send.
