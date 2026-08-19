@@ -299,10 +299,20 @@ export interface Segment {
   name: string;
   nameAr: string | null;
   color: string | null;
+  origin: string;
   filter: SegmentFilter;
   count: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Tags ─────────────────────────────────────────────────────────────────
+
+export interface TagRow {
+  id: string;
+  name: string;
+  color: string;
+  usageCount: number;
 }
 
 // ─── Notes ────────────────────────────────────────────────────────────────

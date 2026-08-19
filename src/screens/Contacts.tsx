@@ -21,11 +21,30 @@ import {
   IconTag,
 } from "@/icons";
 import { api } from "@/api/client";
-import { useFetch } from "@/api/useFetch";
+import { useFetch, useMutation } from "@/api/useFetch";
 import { Modal } from "@/components/Modal";
-import type { Contact, Segment } from "@/lib/types";
+import type { Contact, Segment, TagRow } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
 import { SegmentManager } from "./contacts/SegmentManager";
+
+type ContactsTabId = "contacts" | "groups" | "tags";
+
+interface GroupsTabProps {
+  tx: Tx;
+  lang: string;
+}
+
+function GroupsTab(_props: GroupsTabProps) {
+  return <div />;
+}
+
+interface TagsTabProps {
+  tx: Tx;
+}
+
+function TagsTab(_props: TagsTabProps) {
+  return <div />;
+}
 
 type View = "table" | "pipeline";
 
@@ -70,6 +89,11 @@ interface ContactsTableProps {
   onBulkTag: () => void;
   bulkDeleting: boolean;
   onOpenContact: (id: string) => void;
+  manualGroups: Segment[];
+  onAddToGroup: (segmentId: string) => void;
+  addToGroupError: string | null;
+  tagColorByName: Map<string, string>;
+  lang: string;
 }
 
 function tagKind(tag: string): BadgeKind {
@@ -87,7 +111,13 @@ function ContactsTable({
   onBulkTag,
   bulkDeleting,
   onOpenContact,
+  manualGroups,
+  onAddToGroup,
+  addToGroupError,
+  tagColorByName,
+  lang,
 }: ContactsTableProps) {
+  const [groupPick, setGroupPick] = useState("");
   const toggle = (id: string) => {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
@@ -111,10 +141,29 @@ function ContactsTable({
             {selected.size} {tx("selected", "محدد")}
           </span>
           <span style={{ flex: 1 }} />
+          {addToGroupError && (
+            <span style={{ fontSize: 11, color: "var(--bad)" }}>{addToGroupError}</span>
+          )}
           <button className="btn sm" onClick={onBulkTag}>
             <IconTag w={12} />
             {tx("Tag", "وسم")}
           </button>
+          <select
+            value={groupPick}
+            onChange={(e) => {
+              const id = e.target.value;
+              setGroupPick("");
+              if (id) onAddToGroup(id);
+            }}
+            style={{ ...INPUT_STYLE, height: 28, width: 168 }}
+          >
+            <option value="">{tx("Add to group…", "أضف إلى مجموعة…")}</option>
+            {manualGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {lang === "ar" ? g.nameAr || g.name : g.name}
+              </option>
+            ))}
+          </select>
           <button className="btn sm">
             <IconCampaign w={12} />
             {tx("Add to campaign", "حملة")}
@@ -182,11 +231,24 @@ function ContactsTable({
               </td>
               <td>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {c.tags.map((tg) => (
-                    <Badge key={tg} kind={tagKind(tg)}>
-                      {tg}
-                    </Badge>
-                  ))}
+                  {c.tags.map((tg) => {
+                    const hue = tagColorByName.get(tg);
+                    return hue ? (
+                      <span
+                        key={tg}
+                        style={{
+                          fontSize: 11, padding: "2px 8px", borderRadius: 999,
+                          background: `hsl(${hue} 70% 45% / 0.15)`,
+                          color: `hsl(${hue} 70% 35%)`,
+                          border: `1px solid hsl(${hue} 70% 45% / 0.35)`,
+                        }}
+                      >
+                        {tg}
+                      </span>
+                    ) : (
+                      <Badge key={tg} kind={tagKind(tg)}>{tg}</Badge>
+                    );
+                  })}
                 </div>
               </td>
               <td>
@@ -642,6 +704,7 @@ function NewContactModal({ tx, onClose, onCreated }: NewContactModalProps) {
 function ContactsImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
+  const [activeTab, setActiveTab] = useState<ContactsTabId>("contacts");
   const [view, setView] = useState<View>("table");
   const [selected, setSelected] = useState<Set<string>>(new Set<string>());
   const [showNew, setShowNew] = useState(false);
@@ -664,6 +727,16 @@ function ContactsImpl() {
     refetch: refetchSegments,
   } = useFetch<Segment[]>("/segments");
   const segments = segmentsData ?? [];
+  const manualGroups = useMemo(
+    () => segments.filter((s) => s.origin === "manual"),
+    [segments],
+  );
+
+  const tagsQ = useFetch<TagRow[]>("/tags");
+  const tagColorByName = useMemo(
+    () => new Map((tagsQ.data ?? []).map((t) => [t.name, t.color])),
+    [tagsQ.data],
+  );
 
   // Total count for the "All" chip — fetched once without a segment filter so
   // the badge stays accurate even while a segment is active.
@@ -691,13 +764,9 @@ function ContactsImpl() {
     setShowBulkTag(true);
   };
 
-  const applyBulkTags = (raw: string) => {
+  const applyBulkTags = (names: string[]) => {
     if (selected.size === 0 || bulkTagging) return;
-    const newTags = raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (newTags.length === 0) {
+    if (names.length === 0) {
       setShowBulkTag(false);
       return;
     }
@@ -705,17 +774,14 @@ function ContactsImpl() {
     const run = async () => {
       try {
         const ids = Array.from(selected);
-        await Promise.all(
-          ids.map((id) => {
-            const existing =
-              contacts.find((c) => c.id === id)?.tags ?? [];
-            const merged = Array.from(new Set([...existing, ...newTags]));
-            return api.patch<Contact>(`/contacts/${id}`, { tags: merged });
-          }),
-        );
+        await api.post<{ contactsUpdated: number }>("/tags/assign", {
+          contactIds: ids,
+          add: names,
+        });
         setShowBulkTag(false);
         setSelected(new Set<string>());
         refetch();
+        tagsQ.refetch();
         showStatus(
           tx(
             `Tagged ${ids.length} contact${ids.length === 1 ? "" : "s"}.`,
@@ -731,6 +797,25 @@ function ContactsImpl() {
       }
     };
     void run();
+  };
+
+  const addToGroup = useMutation<
+    { segmentId: string; contactIds: string[] },
+    { added: number }
+  >(({ segmentId, contactIds }) => api.post(`/segments/${segmentId}/members`, { contactIds }));
+
+  const handleAddToGroup = (segmentId: string) => {
+    if (selected.size === 0) return;
+    void addToGroup
+      .mutate({ segmentId, contactIds: Array.from(selected) })
+      .then((res) => {
+        setSelected(new Set<string>());
+        refetchSegments();
+        showStatus(
+          tx(`Added ${res.added} contact${res.added === 1 ? "" : "s"} to group.`, `تمت إضافة ${res.added} جهة إلى المجموعة.`),
+        );
+      })
+      .catch(() => {/* error surfaces via addToGroup.error; rendered in the bulk bar */});
   };
 
   const onBulkDelete = () => {
@@ -818,6 +903,26 @@ function ContactsImpl() {
         }
       />
 
+      <div style={{ display: "flex", gap: 6, padding: "0 24px 10px" }}>
+        {(
+          [
+            ["contacts", tx("Contacts", "جهات الاتصال")],
+            ["groups", tx("Groups", "المجموعات")],
+            ["tags", tx("Tags", "الوسوم")],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`btn sm ${activeTab === id ? "primary" : "ghost"}`.trim()}
+            onClick={() => setActiveTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "contacts" && (
       <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
         <div
           style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
@@ -914,12 +1019,21 @@ function ContactsImpl() {
             onBulkTag={onBulkTag}
             bulkDeleting={bulkDeleting}
             onOpenContact={setOpenContactId}
+            manualGroups={manualGroups}
+            onAddToGroup={handleAddToGroup}
+            addToGroupError={addToGroup.error}
+            tagColorByName={tagColorByName}
+            lang={t.lang}
           />
         )}
         {!loading && !error && view === "pipeline" && (
           <Pipeline tx={tx} contacts={contacts} />
         )}
       </div>
+      )}
+
+      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} />}
+      {activeTab === "tags" && <TagsTab tx={tx} />}
 
       {showNew && (
         <NewContactModal
@@ -937,6 +1051,7 @@ function ContactsImpl() {
           tx={tx}
           count={selected.size}
           saving={bulkTagging}
+          tags={tagsQ.data ?? []}
           onClose={() => setShowBulkTag(false)}
           onApply={applyBulkTags}
         />
@@ -1027,13 +1142,48 @@ interface BulkTagModalProps {
   tx: Tx;
   count: number;
   saving: boolean;
+  tags: TagRow[];
   onClose: () => void;
-  onApply: (raw: string) => void;
+  onApply: (selectedNames: string[]) => void;
 }
 
-function BulkTagModal({ tx, count, saving, onClose, onApply }: BulkTagModalProps) {
-  const [value, setValue] = useState("");
-  const canSubmit = value.trim().length > 0 && !saving;
+function BulkTagModal({ tx, count, saving, tags, onClose, onApply }: BulkTagModalProps) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [customNames, setCustomNames] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
+  const canSubmit = selected.size > 0 && !saving;
+
+  const toggle = (name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const addDraft = () => {
+    const name = draft.trim();
+    if (!name) return;
+    if (!customNames.includes(name) && !tags.some((t) => t.name === name)) {
+      setCustomNames((prev) => [...prev, name]);
+    }
+    setSelected((prev) => new Set(prev).add(name));
+    setDraft("");
+  };
+
+  const chipStyle = (hue: string | null, isSelected: boolean): CSSProperties =>
+    isSelected
+      ? {
+          background: hue ? `hsl(${hue} 70% 45%)` : "var(--accent)",
+          color: "#fff",
+          border: `1px solid ${hue ? `hsl(${hue} 70% 40%)` : "var(--accent)"}`,
+        }
+      : {
+          background: hue ? `hsl(${hue} 70% 45% / 0.12)` : "transparent",
+          color: hue ? `hsl(${hue} 70% 35%)` : "var(--ink-2)",
+          border: `1px solid ${hue ? `hsl(${hue} 70% 45% / 0.35)` : "var(--line-soft)"}`,
+        };
 
   return (
     <Modal onClose={onClose} width={420} label="Add tags" panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1054,18 +1204,77 @@ function BulkTagModal({ tx, count, saving, onClose, onApply }: BulkTagModalProps
             className="mono muted"
             style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.06 }}
           >
-            {tx("Tags (comma-separated)", "وسوم (بفواصل)")}
+            {tx("Tags", "الوسوم")}
+          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {tags.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => toggle(t.name)}
+                style={{
+                  ...chipStyle(t.color, selected.has(t.name)),
+                  fontSize: 12,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {t.name}
+              </button>
+            ))}
+            {customNames.map((name) => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => toggle(name)}
+                style={{
+                  ...chipStyle(null, selected.has(name)),
+                  fontSize: 12,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                {name}
+                <span style={{ fontSize: 10, opacity: 0.75 }}>
+                  {tx("new", "جديد")}
+                </span>
+              </button>
+            ))}
+            {tags.length === 0 && customNames.length === 0 && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {tx("No tags yet — create one below.", "لا توجد وسوم بعد — أنشئ واحدًا أدناه.")}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label
+            className="mono muted"
+            style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.06 }}
+          >
+            {tx("Quick-create", "إنشاء سريع")}
           </label>
           <input
             type="text"
-            value={value}
+            value={draft}
             autoFocus
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && canSubmit) onApply(value);
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addDraft();
+              }
               if (e.key === "Escape") onClose();
             }}
-            placeholder={tx("VIP, Hot, Riyadh", "مهم, ساخن, الرياض")}
+            placeholder={tx("Type a name and press Enter…", "اكتب اسمًا واضغط Enter…")}
             style={{
               width: "100%",
               marginTop: 6,
@@ -1088,7 +1297,7 @@ function BulkTagModal({ tx, count, saving, onClose, onApply }: BulkTagModalProps
           <button
             className="btn primary"
             type="button"
-            onClick={() => onApply(value)}
+            onClick={() => onApply(Array.from(selected))}
             disabled={!canSubmit}
           >
             {saving ? tx("Applying…", "جارٍ التطبيق…") : tx("Apply", "تطبيق")}
