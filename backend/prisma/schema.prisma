@@ -195,6 +195,23 @@ model Template {
   @@index([metaTemplateId])
 }
 
+// Managed tag catalog: metadata (color, identity) OVER the tag names stored
+// on Contact.tags. Assignment truth stays the contact's name array, so every
+// name-matching surface (Inbox editor, segment filters) works unchanged.
+model Tag {
+  id    String @id @default(cuid())
+  name  String
+  color String // hue string, same convention as Segment.color
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTags", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
 // ─── Contact segments ─────────────────────────────────────────────────────
 // A Segment is a named, saved filter spec over the Contact table. Used by the
 // Contacts chip bar (preset views) and the Campaigns audience picker. The
@@ -465,6 +482,7 @@ model Workspace {
   appointments      Appointment[]      @relation("WorkspaceAppointments")
   templates         Template[]         @relation("WorkspaceTemplates")
   segments          Segment[]          @relation("WorkspaceSegments")
+  tags              Tag[]              @relation("WorkspaceTags")
   campaigns         Campaign[]         @relation("WorkspaceCampaigns")
   pipelines         Pipeline[]         @relation("WorkspacePipelines")
   ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")
