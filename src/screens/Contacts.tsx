@@ -1017,7 +1017,9 @@ function ContactsImpl() {
       </div>
       )}
 
-      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={contacts} />}
+      {/* The member-add picker searches the FULL contact list, independent of
+          whatever segment chip / name search is active on the Contacts tab. */}
+      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={allRowsForCount ?? allContacts} />}
       {activeTab === "tags" && (
         <TagsTab
           tx={tx}

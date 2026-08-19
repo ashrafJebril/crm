@@ -233,6 +233,7 @@ function GroupMembersModal({
 }) {
   const membersQ = useFetch<MemberRow[]>(`/segments/${group.id}/members`);
   const [search, setSearch] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const addMut = useMutation<{ contactIds: string[] }, { added: number }>((input) =>
     api.post(`/segments/${group.id}/members`, input),
   );
@@ -243,9 +244,15 @@ function GroupMembersModal({
   const memberIds = useMemo(() => new Set((membersQ.data ?? []).map((m) => m.id)), [membersQ.data]);
   const candidates = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return [];
-    return contacts.filter((c) => !memberIds.has(c.id) && c.name.toLowerCase().includes(q)).slice(0, 8);
+    const pool = contacts.filter((c) => !memberIds.has(c.id));
+    // Empty query: suggest the first few contacts so adding works without
+    // knowing a name to type.
+    if (!q) return pool.slice(0, 8);
+    return pool
+      .filter((c) => c.name.toLowerCase().includes(q) || (c.phone ?? "").toLowerCase().includes(q))
+      .slice(0, 8);
   }, [search, contacts, memberIds]);
+  const showCandidates = candidates.length > 0 && (searchFocused || search.trim().length > 0);
 
   const name = lang === "ar" && group.nameAr ? group.nameAr : group.name;
   const busy = addMut.loading || removeMut.loading;
@@ -259,11 +266,16 @@ function GroupMembersModal({
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
           placeholder={tx("Search contacts to add…", "ابحث عن جهات لإضافتها…")}
           style={{ width: "100%", height: 34, padding: "0 10px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg-1)", color: "var(--ink)", fontSize: 13 }}
         />
-        {candidates.length > 0 && (
-          <div style={{ position: "absolute", top: 38, insetInlineStart: 0, insetInlineEnd: 0, zIndex: 5, background: "var(--bg-elev)", border: "1px solid var(--line-soft)", borderRadius: 10, boxShadow: "var(--shadow-lg)", overflow: "hidden" }}>
+        {showCandidates && (
+          <div
+            onMouseDown={(e) => e.preventDefault()}
+            style={{ position: "absolute", top: 38, insetInlineStart: 0, insetInlineEnd: 0, zIndex: 5, background: "var(--bg-elev)", border: "1px solid var(--line-soft)", borderRadius: 10, boxShadow: "var(--shadow-lg)", overflow: "hidden" }}
+          >
             {candidates.map((c) => (
               <button
                 key={c.id}
