@@ -26,17 +26,9 @@ import { Modal } from "@/components/Modal";
 import type { Contact, Segment, TagRow } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
 import { SegmentManager } from "./contacts/SegmentManager";
+import { GroupsTab } from "./contacts/GroupsTab";
 
 type ContactsTabId = "contacts" | "groups" | "tags";
-
-interface GroupsTabProps {
-  tx: Tx;
-  lang: string;
-}
-
-function GroupsTab(_props: GroupsTabProps) {
-  return <div />;
-}
 
 interface TagsTabProps {
   tx: Tx;
@@ -1032,7 +1024,7 @@ function ContactsImpl() {
       </div>
       )}
 
-      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} />}
+      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={contacts} />}
       {activeTab === "tags" && <TagsTab tx={tx} />}
 
       {showNew && (
