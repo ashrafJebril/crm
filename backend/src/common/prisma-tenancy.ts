@@ -17,6 +17,7 @@ const SCOPED_MODELS = new Set([
   "Note",
   "Media",
   "Segment",
+  "Tag",
 ]);
 
 const READ_ACTIONS = new Set([
