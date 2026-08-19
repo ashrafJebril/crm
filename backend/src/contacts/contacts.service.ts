@@ -48,11 +48,12 @@ export class ContactsService {
   ) {}
 
   async list(workspaceId: string, opts: { segmentId?: string } = {}) {
+    // Origin-aware: manual groups and hjz segments resolve by membership, crm
+    // segments by their saved filter. Never run a non-crm segment's inert
+    // filter — "{}" would degenerate to the whole workspace under the group's
+    // name (with the bulk bar's destructive actions attached to it).
     const where = opts.segmentId
-      ? this.segments.buildWhere(
-          workspaceId,
-          await this.segments.getFilter(workspaceId, opts.segmentId),
-        )
+      ? await this.segments.resolveContactWhere(workspaceId, opts.segmentId)
       : { workspaceId };
     const rows = await this.prisma.contact.findMany({
       where,

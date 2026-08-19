@@ -294,12 +294,16 @@ export interface SegmentFilter {
   hasPhone?: boolean;
 }
 
+/** crm = saved filter (re-evaluated), manual = user-picked membership,
+ *  hjz = membership snapshot pushed by the HJZ sync (read-only here). */
+export type SegmentOrigin = "crm" | "manual" | "hjz";
+
 export interface Segment {
   id: string;
   name: string;
   nameAr: string | null;
   color: string | null;
-  origin: string;
+  origin: SegmentOrigin;
   filter: SegmentFilter;
   count: number;
   createdAt: string;

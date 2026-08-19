@@ -64,6 +64,33 @@ export class SegmentsService {
     });
   }
 
+  /**
+   * Resolve a saved segment to the Prisma `where` that selects its audience.
+   *
+   * Origin decides the resolution strategy and it is NOT optional:
+   *  - `crm`    → run the saved filter (buildWhere).
+   *  - `manual` → materialized membership (SegmentMember rows the user picked).
+   *  - `hjz`    → materialized membership (HJZ ships the resolved client list;
+   *               its rules reference fields the CRM doesn't have).
+   * Non-crm segments carry an inert `filter` ("{}"), and an empty filter means
+   * "the entire workspace" — so running them through buildWhere silently
+   * resolves a 3-member group to every contact in the tenant. Every audience
+   * consumer (contacts list, future campaign send engine) must go through here.
+   */
+  async resolveContactWhere(
+    workspaceId: string,
+    segmentId: string,
+  ): Promise<Prisma.ContactWhereInput> {
+    const row = await this.prisma.segment.findFirst({
+      where: { id: segmentId, workspaceId },
+    });
+    if (!row) throw new NotFoundException("Segment not found");
+    if (row.origin !== "crm") {
+      return { workspaceId, segmentMembers: { some: { segmentId } } };
+    }
+    return this.buildWhere(workspaceId, this.parseFilter(row.filter));
+  }
+
   async getFilter(workspaceId: string, segmentId: string): Promise<SegmentFilter> {
     const row = await this.prisma.segment.findFirst({
       where: { id: segmentId, workspaceId },
