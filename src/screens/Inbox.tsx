@@ -1105,8 +1105,15 @@ function InboxList({
 function Bubble({ m }: BubbleProps) {
   const isOut = m.from === "human";
   const { user } = useAuth();
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
   const humanName = user?.name ?? "You";
   const humanColor = user?.color ?? "150";
+  // Zernio flattens WhatsApp content it can't carry (stickers, polls, …) into
+  // a bullets-only placeholder with no attachment — label it honestly instead
+  // of showing cryptic dots. (Live-diagnosed 2026-08-19: a sticker arrived as
+  // "•••••••••" with attachments: [].)
+  const isUnsupported = !m.attach && /^•+$/.test(m.body.trim());
   return (
     <div
       className="ix-msg"
@@ -1143,7 +1150,16 @@ function Bubble({ m }: BubbleProps) {
             textAlign: "start",
           }}
         >
-          {m.body}
+          {isUnsupported ? (
+            <span style={{ fontStyle: "italic", color: "var(--ink-3)" }}>
+              {tx(
+                "🧩 Unsupported message (sticker, poll, or similar) — view it in WhatsApp",
+                "🧩 رسالة غير مدعومة (ملصق أو استفتاء أو نحوه) — اعرضها في واتساب",
+              )}
+            </span>
+          ) : (
+            m.body
+          )}
           {m.attach && <MessageAttachment value={m.attach} />}
         </div>
         <div
