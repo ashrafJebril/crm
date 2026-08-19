@@ -115,13 +115,15 @@ export class ConversationsService {
   }
 
   async markRead(workspaceId: string, id: string) {
-    await this.get(workspaceId, id);
-    const conv = await this.prisma.conversation.update({
-      where: { id },
-      data: { unread: 0 },
-    });
+    const conv = await this.get(workspaceId, id);
+    // Raw UPDATE on purpose: the list orders by updatedAt, and Prisma's
+    // @updatedAt bumps on every model-level update — so opening a thread
+    // (mark-read) would hoist it to the top. Reading must not reorder.
+    await this.prisma.$executeRaw`
+      UPDATE "Conversation" SET "unread" = 0
+      WHERE "id" = ${id} AND "workspaceId" = ${workspaceId}`;
     this.emitActivity(workspaceId, conv.channel, conv.id);
-    return conv;
+    return { ...conv, unread: 0 };
   }
 
   async remove(workspaceId: string, id: string) {
