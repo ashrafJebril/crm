@@ -233,7 +233,6 @@ function GroupMembersModal({
 }) {
   const membersQ = useFetch<MemberRow[]>(`/segments/${group.id}/members`);
   const [search, setSearch] = useState("");
-  const [searchFocused, setSearchFocused] = useState(false);
   const addMut = useMutation<{ contactIds: string[] }, { added: number }>((input) =>
     api.post(`/segments/${group.id}/members`, input),
   );
@@ -242,17 +241,24 @@ function GroupMembersModal({
   );
 
   const memberIds = useMemo(() => new Set((membersQ.data ?? []).map((m) => m.id)), [membersQ.data]);
-  const candidates = useMemo(() => {
+
+  const CAP = 200;
+  // One pick list of EVERY contact — members first — narrowed by the search.
+  // Members missing from the passed-in contacts array (shouldn't happen, but
+  // the server list is authoritative) are merged in from the members query.
+  const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const pool = contacts.filter((c) => !memberIds.has(c.id));
-    // Empty query: suggest the first few contacts so adding works without
-    // knowing a name to type.
-    if (!q) return pool.slice(0, 8);
-    return pool
-      .filter((c) => c.name.toLowerCase().includes(q) || (c.phone ?? "").toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [search, contacts, memberIds]);
-  const showCandidates = candidates.length > 0 && (searchFocused || search.trim().length > 0);
+    const byId = new Map<string, MemberRow>(
+      contacts.map((c) => [c.id, { id: c.id, name: c.name, phone: c.phone || null, source: c.source }]),
+    );
+    for (const m of membersQ.data ?? []) if (!byId.has(m.id)) byId.set(m.id, m);
+    let all = [...byId.values()];
+    if (q) {
+      all = all.filter((r) => r.name.toLowerCase().includes(q) || (r.phone ?? "").toLowerCase().includes(q));
+    }
+    all.sort((a, b) => Number(memberIds.has(b.id)) - Number(memberIds.has(a.id)));
+    return { list: all.slice(0, CAP), total: all.length };
+  }, [search, contacts, membersQ.data, memberIds]);
 
   const name = lang === "ar" && group.nameAr ? group.nameAr : group.name;
   const busy = addMut.loading || removeMut.loading;
@@ -262,71 +268,77 @@ function GroupMembersModal({
       <h3 style={{ margin: 0, fontSize: 15 }}>
         {name} <span className="mono muted" style={{ fontSize: 11 }}>· {(membersQ.data ?? []).length} {tx("members", "عضو")}</span>
       </h3>
-      <div style={{ position: "relative" }}>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onFocus={() => setSearchFocused(true)}
-          onBlur={() => setSearchFocused(false)}
-          placeholder={tx("Search contacts to add…", "ابحث عن جهات لإضافتها…")}
-          style={{ width: "100%", height: 34, padding: "0 10px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg-1)", color: "var(--ink)", fontSize: 13 }}
-        />
-        {showCandidates && (
-          <div
-            onMouseDown={(e) => e.preventDefault()}
-            style={{ position: "absolute", top: 38, insetInlineStart: 0, insetInlineEnd: 0, zIndex: 5, background: "var(--bg-elev)", border: "1px solid var(--line-soft)", borderRadius: 10, boxShadow: "var(--shadow-lg)", overflow: "hidden" }}
-          >
-            {candidates.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  void addMut.mutate({ contactIds: [c.id] }).then(() => {
-                    setSearch("");
-                    membersQ.refetch();
-                    onChanged();
-                  }).catch(() => {});
-                }}
-                style={{ display: "flex", width: "100%", gap: 8, padding: "8px 12px", background: "transparent", border: 0, cursor: "pointer", textAlign: "start", fontSize: 13 }}
-              >
-                <span style={{ flex: 1 }}>{c.name}</span>
-                <span className="mono muted" style={{ fontSize: 11 }}>{c.phone ?? c.source}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      <input
+        autoFocus
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={tx("Search contacts…", "ابحث في جهات الاتصال…")}
+        style={{ width: "100%", height: 34, padding: "0 10px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg-1)", color: "var(--ink)", fontSize: 13 }}
+      />
       {(addMut.error || removeMut.error) && (
         <div style={{ fontSize: 12, color: "var(--bad)" }}>{addMut.error ?? removeMut.error}</div>
       )}
       <div style={{ overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
         {membersQ.loading && <div className="mono muted" style={{ fontSize: 12 }}>{tx("loading…", "جارٍ التحميل…")}</div>}
-        {!membersQ.loading && (membersQ.data ?? []).length === 0 && (
+        {!membersQ.loading && rows.list.length === 0 && (
           <div className="mono muted" style={{ fontSize: 12, padding: 8 }}>
-            {tx("No members yet — search above or bulk-add from the Contacts tab.", "لا أعضاء بعد — ابحث أعلاه أو أضف جماعيًا من تبويب جهات الاتصال.")}
+            {search.trim()
+              ? tx("No contacts match your search.", "لا توجد جهات مطابقة لبحثك.")
+              : tx("No contacts yet.", "لا توجد جهات اتصال بعد.")}
           </div>
         )}
-        {(membersQ.data ?? []).map((m) => (
-          <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: "var(--bg-1)", border: "1px solid var(--line-soft)", borderRadius: 8 }}>
-            <span style={{ flex: 1, fontSize: 13 }}>{m.name}</span>
-            <span className="mono muted" style={{ fontSize: 11 }}>{m.phone ?? m.source}</span>
-            <button
-              type="button"
-              className="btn ghost icon sm"
-              aria-label={tx("Remove from group", "إزالة من المجموعة")}
-              disabled={busy}
-              onClick={() => {
-                void removeMut.mutate({ contactId: m.id }).then(() => {
-                  membersQ.refetch();
-                  onChanged();
-                }).catch(() => {});
+        {rows.list.map((c) => {
+          const isMember = memberIds.has(c.id);
+          return (
+            <div
+              key={c.id}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "6px 10px",
+                background: isMember ? hueBg(group.color, 0.1) : "var(--bg-1)",
+                border: "1px solid var(--line-soft)", borderRadius: 8,
               }}
             >
-              <IconX w={12} />
-            </button>
+              <span style={{ flex: 1, fontSize: 13, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+              <span className="mono muted" style={{ fontSize: 11 }}>{c.phone ?? c.source}</span>
+              {isMember ? (
+                <button
+                  type="button"
+                  className="btn ghost icon sm"
+                  aria-label={tx("Remove from group", "إزالة من المجموعة")}
+                  disabled={busy}
+                  onClick={() => {
+                    void removeMut.mutate({ contactId: c.id }).then(() => {
+                      membersQ.refetch();
+                      onChanged();
+                    }).catch(() => {});
+                  }}
+                >
+                  <IconX w={12} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  disabled={busy}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}
+                  onClick={() => {
+                    void addMut.mutate({ contactIds: [c.id] }).then(() => {
+                      membersQ.refetch();
+                      onChanged();
+                    }).catch(() => {});
+                  }}
+                >
+                  <IconPlus w={12} /> {tx("Add", "إضافة")}
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {rows.total > rows.list.length && (
+          <div className="mono muted" style={{ fontSize: 11, padding: "4px 8px" }}>
+            {tx(`Showing ${rows.list.length} of ${rows.total} — type to narrow.`, `يعرض ${rows.list.length} من ${rows.total} — اكتب للتضييق.`)}
           </div>
-        ))}
+        )}
       </div>
     </Modal>
   );
