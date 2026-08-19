@@ -2810,13 +2810,15 @@ function InboxImpl() {
 
   // Reply into a DB-backed conversation whose transport is Zernio (WhatsApp,
   // and FB/IG threads persisted by the inbound webhook). The backend resolves
-  // the Zernio conversation + accountId from the contact, so we only send text.
+  // the Zernio conversation + accountId from the contact; media attaches via
+  // mediaId (Zernio's attachmentUrl contract, live-verified 2026-08-19).
   const sendZernioDbMessage = useMutation<
-    { conversationId: string; body: string },
+    { conversationId: string; body: string; mediaId?: string },
     { ok: true; id?: string | null }
   >((input) =>
     api.post(`/integrations/zernio/db-conversations/${input.conversationId}/send`, {
       message: input.body,
+      mediaId: input.mediaId,
     }),
   );
 
@@ -2900,7 +2902,7 @@ function InboxImpl() {
     // bubble immediately, same as the live-thread paths above.
     if (conv && body) addPending(activeId, body);
     if (conv && zernioOwnsChannel) {
-      await sendZernioDbMessage.mutate({ conversationId: activeId, body });
+      await sendZernioDbMessage.mutate({ conversationId: activeId, body, mediaId });
     } else if (conv?.channel === "instagram") {
       await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
     } else if (conv?.channel === "whatsapp") {

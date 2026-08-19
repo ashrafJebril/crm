@@ -660,12 +660,36 @@ export class ZernioService {
    * platform id rather than storing it, which means this also works for
    * threads created before Zernio existed.
    */
-  async sendInDbConversation(workspaceId: string, conversationId: string, message: string) {
+  async sendInDbConversation(
+    workspaceId: string,
+    conversationId: string,
+    message: string,
+    mediaId?: string,
+    publicBaseUrl?: string,
+  ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
       include: { contact: true },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
+
+    // Media rides as a publicly fetchable URL (same mint-token mechanism the
+    // publisher uses) with Zernio's attachmentUrl/attachmentType contract.
+    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined;
+    if (mediaId) {
+      if (!publicBaseUrl) throw new BadRequestException("Media sends need a public base URL");
+      const row = await this.media.get(workspaceId, mediaId);
+      const token = await this.media.mintPublicToken(workspaceId, mediaId);
+      const type = row.mimeType.startsWith("image/")
+        ? ("image" as const)
+        : row.mimeType.startsWith("video/")
+          ? ("video" as const)
+          : ("file" as const);
+      attachment = {
+        url: `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`,
+        type,
+      };
+    }
 
     const channel = conv.channel.toLowerCase();
     const integ = await this.prisma.integration.findFirst({
@@ -699,7 +723,12 @@ export class ZernioService {
       });
     }
 
-    const { id } = await this.client.sendMessage(zernioConvId, integ.pageId, message);
+    const { id } = await this.client.sendMessage(
+      zernioConvId,
+      integ.pageId,
+      message,
+      attachment,
+    );
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -710,13 +739,15 @@ export class ZernioService {
         from: "human",
         body: message,
         t,
+        // Frontend convention: attach carries our Media id for outbound sends.
+        attach: mediaId ?? null,
         metaMessageId: id,
       },
     });
     await this.prisma.conversation.update({
       where: { id: conv.id },
       data: {
-        preview: message.slice(0, 140),
+        preview: message ? message.slice(0, 140) : "📎",
         lastAt: "now",
         lastFrom: "human",
         unread: 0,

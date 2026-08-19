@@ -134,13 +134,30 @@ export class ZernioClient {
     conversationId: string,
     accountId: string,
     message: string,
+    /** Publicly fetchable URL — Zernio's UNDOCUMENTED but SDK-typed and
+     *  live-verified (2026-08-19) attachmentUrl/attachmentType pair. */
+    attachment?: { url: string; type: "image" | "video" | "audio" | "file" },
   ): Promise<{ id: string | null }> {
-    const res = await this.request<{ id?: string; _id?: string; message?: { id?: string } }>(
+    const res = await this.request<{
+      id?: string;
+      _id?: string;
+      message?: { id?: string };
+      data?: { messageId?: string };
+    }>(
       "POST",
       `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
-      { body: { accountId, message } },
+      {
+        body: {
+          accountId,
+          message: message || undefined,
+          attachmentUrl: attachment?.url,
+          attachmentType: attachment?.type,
+        },
+      },
     );
-    return { id: res.id ?? res._id ?? res.message?.id ?? null };
+    // Live response shape is { success, data: { messageId } } — the older
+    // fallbacks are kept for defensiveness.
+    return { id: res.data?.messageId ?? res.id ?? res._id ?? res.message?.id ?? null };
   }
 
   // ─── Publishing ──────────────────────────────────────────────────────────

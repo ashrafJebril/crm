@@ -21,9 +21,12 @@ class ZernioSendDto {
 }
 
 /** Reply into one of our own DB conversations — the accountId is resolved
- *  server-side from the conversation's channel, so the client needn't know it. */
+ *  server-side from the conversation's channel, so the client needn't know it.
+ *  mediaId attaches an image/video from the media library (message may then
+ *  be empty — the attachment satisfies the platform's content requirement). */
 class ZernioDbSendDto {
   @IsString() message!: string;
+  @IsOptional() @IsString() mediaId?: string;
 }
 
 class ZernioCommentReplyDto {
@@ -139,7 +142,9 @@ export class ZernioController {
     @Param("id") id: string,
     @Body() dto: ZernioDbSendDto,
   ) {
-    return this.zernio.sendInDbConversation(workspaceId, id, dto.message);
+    const publicBase =
+      process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL ?? "http://localhost:3001";
+    return this.zernio.sendInDbConversation(workspaceId, id, dto.message, dto.mediaId, publicBase);
   }
 
   @Delete("integrations/zernio/:platform")
