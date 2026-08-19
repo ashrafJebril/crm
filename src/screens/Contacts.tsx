@@ -27,16 +27,9 @@ import type { Contact, Segment, TagRow } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
 import { SegmentManager } from "./contacts/SegmentManager";
 import { GroupsTab } from "./contacts/GroupsTab";
+import { TagsTab } from "./contacts/TagsTab";
 
 type ContactsTabId = "contacts" | "groups" | "tags";
-
-interface TagsTabProps {
-  tx: Tx;
-}
-
-function TagsTab(_props: TagsTabProps) {
-  return <div />;
-}
 
 type View = "table" | "pipeline";
 
@@ -1025,7 +1018,15 @@ function ContactsImpl() {
       )}
 
       {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={contacts} />}
-      {activeTab === "tags" && <TagsTab tx={tx} />}
+      {activeTab === "tags" && (
+        <TagsTab
+          tx={tx}
+          onCatalogChanged={() => {
+            tagsQ.refetch();
+            refetch();
+          }}
+        />
+      )}
 
       {showNew && (
         <NewContactModal
