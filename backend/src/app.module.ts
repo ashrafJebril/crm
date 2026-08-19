@@ -23,6 +23,7 @@ import { JoteckModule } from "./joteck/joteck.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
+import { TagsModule } from "./tags/tags.module";
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { SegmentsModule } from "./segments/segments.module";
     AuthModule,
     HealthModule,
     SegmentsModule,
+    TagsModule,
     ContactsModule,
     ConversationsModule,
     AppointmentsModule,
