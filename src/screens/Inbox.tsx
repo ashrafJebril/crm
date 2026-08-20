@@ -19,6 +19,7 @@ import {
 } from "@/icons";
 import { API_BASE, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { uploadMedia } from "@/api/uploadMedia";
 import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
 import {
@@ -1203,6 +1204,22 @@ function ConversationPane({
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState<boolean>(false);
+  const [attachUploading, setAttachUploading] = useState<boolean>(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+
+  /** Upload a file straight into the composer's attachment slot — used by the
+   *  paste handler so a screenshot never has to be saved to disk first. */
+  const attachDirect = async (file: File) => {
+    setAttachUploading(true);
+    setAttachError(null);
+    try {
+      setAttachedMedia(await uploadMedia(file));
+    } catch (e) {
+      setAttachError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setAttachUploading(false);
+    }
+  };
 
   // WhatsApp 24-hour customer-service window. Backend computes `waWindowOpen`
   // on the conversation payload (true when the last inbound message landed
@@ -1466,6 +1483,18 @@ function ConversationPane({
                 handleSend();
               }
             }}
+            onPaste={(e) => {
+              if (waBlocked) return;
+              // Screenshots and copied images arrive as clipboard FILES; upload
+              // straight to the attachment slot. Anything else (text, HTML)
+              // falls through to the browser's normal paste.
+              const img = Array.from(e.clipboardData?.files ?? []).find((f) =>
+                f.type.startsWith("image/"),
+              );
+              if (!img) return;
+              e.preventDefault();
+              void attachDirect(img);
+            }}
             disabled={waBlocked}
             placeholder={
               waBlocked
@@ -1538,10 +1567,52 @@ function ConversationPane({
               </button>
             </div>
           )}
+          {attachUploading && (
+            <div
+              className="mono"
+              style={{
+                marginTop: 6,
+                fontSize: 11,
+                color: "var(--ink-3)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  border: "2px solid currentColor",
+                  borderRightColor: "transparent",
+                  display: "inline-block",
+                  animation: "aram-spin 0.7s linear infinite",
+                }}
+              />
+              {tx("Uploading pasted image…", "جارٍ تحميل الصورة الملصقة…")}
+            </div>
+          )}
+          {attachError && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--bad)",
+                marginTop: 4,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {attachError}
+            </div>
+          )}
           {attachedMedia && (
             <AttachmentPreview
               media={attachedMedia}
-              onRemove={() => setAttachedMedia(null)}
+              onRemove={() => {
+                setAttachedMedia(null);
+                setAttachError(null);
+              }}
               label={tx("Attached", "مرفق")}
             />
           )}

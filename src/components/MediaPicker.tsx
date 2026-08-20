@@ -3,6 +3,7 @@ import { useFetch } from "@/api/useFetch";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { API_BASE, api, tokenStore } from "@/api/client";
+import { uploadMedia } from "@/api/uploadMedia";
 import { IconPlus, IconX } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -44,28 +45,8 @@ export function MediaPicker({ open, onClose, onPick }: Props) {
     setUploading(true);
     setError(null);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const base = API_BASE;
-      const token = tokenStore.get();
-      const resp = await fetch(`${base}/media/upload`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      });
-      if (!resp.ok) {
-        let msg = `Upload failed (${resp.status})`;
-        try {
-          const j = (await resp.json()) as { message?: string };
-          if (j.message) msg = j.message;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
-      const created: Media = await resp.json();
       // Auto-pick the freshly uploaded item.
-      onPick(created);
+      onPick(await uploadMedia(file));
       onClose();
       listQ.refetch();
     } catch (e) {
