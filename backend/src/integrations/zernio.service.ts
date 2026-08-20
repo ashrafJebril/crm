@@ -675,22 +675,27 @@ export class ZernioService {
     });
     if (!conv) throw new NotFoundException("Conversation not found");
 
-    // Media rides as a publicly fetchable URL (same mint-token mechanism the
-    // publisher uses) with Zernio's attachmentUrl/attachmentType contract.
+    // Media rides as a publicly fetchable URL with Zernio's attachmentUrl/
+    // attachmentType contract. Spaces-stored media resolves to a signed
+    // Spaces URL (fetchable from anywhere — no tunnel/PUBLIC_BASE_URL
+    // dependency); only legacy local-disk media still needs publicBaseUrl.
     let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined;
     if (mediaId) {
-      if (!publicBaseUrl) throw new BadRequestException("Media sends need a public base URL");
       const row = await this.media.get(workspaceId, mediaId);
-      const token = await this.media.mintPublicToken(workspaceId, mediaId);
+      let url: string;
+      if (row.storageKind === "spaces") {
+        url = await this.media.resolveExternalUrl(workspaceId, mediaId);
+      } else {
+        if (!publicBaseUrl) throw new BadRequestException("Media sends need a public base URL");
+        const token = await this.media.mintPublicToken(workspaceId, mediaId);
+        url = `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`;
+      }
       const type = row.mimeType.startsWith("image/")
         ? ("image" as const)
         : row.mimeType.startsWith("video/")
           ? ("video" as const)
           : ("file" as const);
-      attachment = {
-        url: `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`,
-        type,
-      };
+      attachment = { url, type };
     }
 
     const channel = conv.channel.toLowerCase();
@@ -990,14 +995,20 @@ export class ZernioService {
     if (input.scheduledFor) {
       this.assertFutureSchedule(input.scheduledFor);
     }
-    // Zernio fetches media by URL — mint short-lived public URLs per asset,
-    // the same mechanism Instagram publishing uses.
+    // Zernio fetches media by URL at post-creation time. Spaces media gets a
+    // signed Spaces URL (reachable from anywhere); legacy local-disk media
+    // keeps the short-lived token URL through publicBaseUrl.
     const mediaUrls: string[] = [];
     for (const mediaId of input.mediaIds ?? []) {
-      const token = await this.media.mintPublicToken(workspaceId, mediaId);
-      mediaUrls.push(
-        `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`,
-      );
+      const row = await this.media.get(workspaceId, mediaId);
+      if (row.storageKind === "spaces") {
+        mediaUrls.push(await this.media.resolveExternalUrl(workspaceId, mediaId));
+      } else {
+        const token = await this.media.mintPublicToken(workspaceId, mediaId);
+        mediaUrls.push(
+          `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`,
+        );
+      }
     }
     return this.client.createPost({
       content: input.content,
