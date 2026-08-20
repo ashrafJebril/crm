@@ -4,7 +4,13 @@ import { useFetch } from "@/api/useFetch";
 import { useRealtime } from "@/api/useRealtime";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
-import { IconBell } from "@/icons";
+import { IconBell, IconVolume, IconVolumeMute } from "@/icons";
+import {
+  armNotificationSound,
+  isNotificationSoundOn,
+  playNotificationChime,
+  setNotificationSoundOn,
+} from "@/lib/chime";
 import type { Conversation, Contact } from "@/lib/types";
 
 interface InboxActivity {
@@ -157,11 +163,16 @@ export function NotificationsBell(): React.ReactElement {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const seq = useRef(0);
 
+  const [soundOn, setSoundOn] = useState(() => isNotificationSoundOn());
+
   // Ask for OS notification permission once per session.
   const askedPermRef = useRef(false);
   useEffect(() => {
     if (askedPermRef.current) return;
     askedPermRef.current = true;
+    // Audio needs a user gesture before it may play — arm the unlock now so
+    // the first click anywhere (logging in, opening a thread) enables it.
+    armNotificationSound();
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (Notification.permission === "default") {
       void Notification.requestPermission();
@@ -262,6 +273,10 @@ export function NotificationsBell(): React.ReactElement {
 
     setItems((prev) => [...fresh, ...prev].slice(0, MAX_ITEMS));
     setUnread((n) => n + fresh.length);
+
+    // One chime per batch, whether or not the tab is focused — the whole point
+    // is hearing it while looking at something else.
+    playNotificationChime();
 
     const tabVisible = document.visibilityState === "visible";
     if (tabVisible) {
@@ -438,6 +453,34 @@ export function NotificationsBell(): React.ReactElement {
                 </span>
               )}
             </span>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !soundOn;
+                setNotificationSoundOn(next);
+                setSoundOn(next);
+                // Play the chime as immediate feedback when switching it on —
+                // this click is also the gesture that unlocks audio.
+                if (next) playNotificationChime();
+              }}
+              title={
+                soundOn
+                  ? tx("Sound on — click to mute", "الصوت مفعّل — انقر للكتم")
+                  : tx("Sound off — click to unmute", "الصوت مكتوم — انقر للتفعيل")
+              }
+              aria-pressed={soundOn}
+              style={{
+                border: 0,
+                background: "transparent",
+                color: soundOn ? "var(--ink-2)" : "var(--ink-3)",
+                cursor: "pointer",
+                padding: "2px 4px",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              {soundOn ? <IconVolume w={13} /> : <IconVolumeMute w={13} />}
+            </button>
             {sorted.length > 0 && (
               <button
                 type="button"

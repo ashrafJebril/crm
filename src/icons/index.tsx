@@ -90,6 +90,18 @@ export const IconBell = (p: IconProps) => (
     <path d="M10 20a2 2 0 0 0 4 0" />
   </I>
 );
+export const IconVolume = (p: IconProps) => (
+  <I {...p}>
+    <path d="M11 5L6 9H3v6h3l5 4V5z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+  </I>
+);
+export const IconVolumeMute = (p: IconProps) => (
+  <I {...p}>
+    <path d="M11 5L6 9H3v6h3l5 4V5z" />
+    <path d="M16 10l4 4M20 10l-4 4" />
+  </I>
+);
 export const IconPlus = (p: IconProps) => <I {...p}><path d="M12 5v14M5 12h14" /></I>;
 export const IconChev = (p: IconProps) => <I {...p}><path d="M9 6l6 6-6 6" /></I>;
 export const IconChevDown = (p: IconProps) => <I {...p}><path d="M6 9l6 6 6-6" /></I>;
