@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
+import { seedWorkspaceDefaults } from "./workspace-defaults";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
@@ -83,6 +84,9 @@ export class WorkspacesService {
       await tx.workspaceMember.create({
         data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
       });
+      // Same defaults every workspace gets: sales pipeline + stages (which the
+      // inbound-message automation needs) and the starter/stage smart groups.
+      await seedWorkspaceDefaults(tx, ws.id);
       return ws;
     });
   }

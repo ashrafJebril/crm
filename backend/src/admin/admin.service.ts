@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/auth.guard";
+import { seedWorkspaceDefaults } from "../workspaces/workspace-defaults";
 import { ProvisionClientDto, SuspendWorkspaceDto, UpdateWorkspaceAdminDto } from "./admin.dto";
 
 function toSlug(name: string): string {
@@ -203,6 +204,10 @@ export class AdminService {
       await tx.workspaceMember.create({
         data: { userId: user.id, workspaceId: ws.id, role: "owner" },
       });
+
+      // Default pipeline + stages + smart groups, inside the same transaction
+      // so a client is never provisioned half-configured.
+      await seedWorkspaceDefaults(tx, ws.id);
 
       return {
         workspace: { id: ws.id, name: ws.name, slug: ws.slug },

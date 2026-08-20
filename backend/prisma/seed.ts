@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
+import { seedWorkspaceDefaults } from "../src/workspaces/workspace-defaults";
 
 const prisma = new PrismaClient();
 
@@ -105,25 +106,10 @@ async function main() {
   ];
   for (const c of cmps) await prisma.campaign.create({ data: { ...c, workspaceId: wsId } });
 
-  // ─── Pipeline + stages ───────────────────────────────────────────────────
-  // Single Sales pipeline.  Each stage is its own column — no sub-states.
-  const sales = await prisma.pipeline.create({
-    data: {
-      key: "sales",
-      name: "Sales",
-      nameAr: "المبيعات",
-      isDefault: true,
-      workspaceId: wsId,
-    },
-  });
-  await Promise.all([
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "new",        label: "New",        labelAr: "جديد",        color: "info",   order: 0, groupKey: "new",        slaMinutes: 60 * 4 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "contacted",  label: "Contacted",  labelAr: "تم التواصل",  color: "info",   order: 1, groupKey: "contacted",  slaMinutes: 60 * 24 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "interested", label: "Interested", labelAr: "مهتم",         color: "accent", order: 2, groupKey: "interested", slaMinutes: 60 * 48 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "waiting",    label: "Waiting",    labelAr: "بالانتظار",    color: "warn",   order: 3, groupKey: "waiting",    slaMinutes: 60 * 72 } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "won",        label: "Won",        labelAr: "تم الفوز",     color: "ok",     order: 4, groupKey: "won",        isTerminal: true, isWon: true } }),
-    prisma.ticketStage.create({ data: { pipelineId: sales.id, workspaceId: wsId, key: "lost",       label: "Lost",       labelAr: "خسارة",        color: "bad",    order: 5, groupKey: "lost",        isTerminal: true } }),
-  ]);
+  // ─── Pipeline + stages + smart groups ────────────────────────────────────
+  // Same defaults every workspace gets at provisioning time, from the one
+  // definition in src/workspaces/workspace-defaults.ts.
+  await seedWorkspaceDefaults(prisma, wsId);
 
   console.log(`✓ Seeded with default user yara@samemha.com / demo1234`);
   console.log(`  Workspace: ${defaultWs.name} (id: ${wsId}, slug: ${defaultWs.slug})`);
