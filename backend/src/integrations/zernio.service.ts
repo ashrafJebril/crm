@@ -730,12 +730,25 @@ export class ZernioService {
       });
     }
 
-    const { id } = await this.client.sendMessage(
-      zernioConvId,
-      integ.pageId,
-      message,
-      attachment,
-    );
+    // Instagram and Messenger DMs carry ONE body shape per message — text OR
+    // an attachment, never both (there is no caption field; the legacy Meta
+    // send path splits them for the same reason). Handing Zernio both in one
+    // call delivers only the image and silently drops the text, so split it
+    // into two sends: image first, then the text as its own message. WhatsApp
+    // does support media captions, so it keeps the single call.
+    const captionCapable = channel === "whatsapp";
+    let id: string | null = null;
+    if (attachment && message && !captionCapable) {
+      await this.client.sendMessage(zernioConvId, integ.pageId, "", attachment);
+      ({ id } = await this.client.sendMessage(zernioConvId, integ.pageId, message));
+    } else {
+      ({ id } = await this.client.sendMessage(
+        zernioConvId,
+        integ.pageId,
+        message,
+        attachment,
+      ));
+    }
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
