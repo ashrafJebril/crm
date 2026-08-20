@@ -1,0 +1,44 @@
+# Aram frontend (Vite + React, served by nginx) — deploy from the repo root:
+#   fly launch --no-deploy --copy-config --name kewy-marketing-web --region fra
+#   fly deploy
+#   fly certs add -a kewy-marketing-web marketing.kewy.ai   # then add the DNS records it prints
+#
+# VITE_API_URL is baked into the bundle at build time, so changing it requires a
+# redeploy — it is a [build.args] entry, not a secret or runtime env var.
+
+app = "kewy-marketing-web"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+  [build.args]
+    VITE_API_URL = "https://api-marketing.kewy.ai/api"
+    VITE_WA_APP_ID = "1245753357432458"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  # Static assets only — safe to scale to zero between requests.
+  auto_stop_machines = "stop"
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/index.html"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

@@ -1,0 +1,87 @@
+# Aram backend (NestJS + Prisma) — deploy from this directory:
+#   fly launch --no-deploy --copy-config --name kewy-marketing-api --region fra
+#   fly postgres create --name kewy-marketing-db --region fra && fly postgres attach kewy-marketing-db -a kewy-marketing-api
+#   fly secrets set -a kewy-marketing-api JWT_SECRET=... META_APP_SECRET=... (see [secrets] notes below)
+#   fly deploy
+#   fly certs add -a kewy-marketing-api api-marketing.kewy.ai   # then add the DNS records it prints
+
+app = "kewy-marketing-api"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Runs in a one-off machine on the new release image, before traffic shifts.
+# A failing migration aborts the deploy instead of half-rolling it out.
+#
+# DATABASE_URL points at pgbouncer (transaction pooling), where migrations hang:
+# advisory locks are not session-scoped there. So migrations — and only
+# migrations — run against DIRECT_DATABASE_URL, the cluster's direct endpoint.
+[deploy]
+  release_command = "sh -c 'DATABASE_URL=\"$DIRECT_DATABASE_URL\" npx prisma migrate deploy'"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  META_GRAPH_VERSION = "v21.0"
+  META_APP_ID = "2203796510457334"
+  META_APP_ID_WA = "1245753357432458"
+  BACKEND_PUBLIC_URL = "https://api-marketing.kewy.ai"
+  # Backend origin used to build public media/webhook URLs (media, social, zernio,
+  # instagram controllers all read PUBLIC_BASE_URL first).
+  PUBLIC_BASE_URL = "https://api-marketing.kewy.ai"
+  FRONTEND_PUBLIC_URL = "https://marketing.kewy.ai"
+  CORS_ORIGIN = "https://marketing.kewy.ai"
+  # Frontend origin the Kapso embedded-signup and Zernio connect flows redirect
+  # back to after the hosted OAuth step.
+  APP_PUBLIC_URL = "https://marketing.kewy.ai"
+  ZERNIO_REDIRECT_BASE = "https://marketing.kewy.ai"
+  # Mirrors the dev .env: /auth/register returns 403, email+password login still
+  # works, hjz-signed SSO tokens are accepted.
+  AUTH_MODE = "sso"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  # Kept running: socket.io holds long-lived connections and @nestjs/schedule
+  # cron jobs only fire while a machine is up.
+  auto_stop_machines = "off"
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+
+# Media falls back to local disk unless all DO_SPACES_* vars are set. With a
+# volume mounted, keep the app at a single machine — volumes are per-machine and
+# not shared. Create it first: fly volumes create kewy_marketing_uploads -a kewy-marketing-api -r fra -s 3
+# [mounts]
+#   source = "kewy_marketing_uploads"
+#   destination = "/app/uploads"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
+
+# Secrets — set with `fly secrets set -a kewy-marketing-api KEY=value` (never in this file):
+#   DATABASE_URL          (set automatically by `fly postgres attach`)
+#   JWT_SECRET            (must be >= 32 chars — the app refuses to boot otherwise)
+#   META_APP_SECRET, META_APP_SECRET_WA, META_VERIFY_TOKEN
+#   OPENAI_API_KEY
+#   TOKEN_ENC_KEY
+#   ZERNIO_API_KEY, ZERNIO_BASE_URL, ZERNIO_WEBHOOK_SECRET, ZERNIO_REDIRECT_BASE
+#   HJZ_JWT_ACCESS_SECRET, HJZ_OUTBOUND_URL, HJZ_WEBHOOK_SECRET, JOTECK_CRM_SECRET
+#   DO_SPACES_KEY, DO_SPACES_SECRET, DO_SPACES_BUCKET, DO_SPACES_REGION,
+#   DO_SPACES_ENDPOINT, DO_SPACES_CDN_ENDPOINT   (optional — S3 media storage)

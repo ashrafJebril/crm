@@ -1,0 +1,48 @@
+name: Deploy API
+
+# Only backend changes redeploy the API. The frontend has its own workflow so a
+# CSS tweak never restarts the socket.io connections or reruns migrations.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy to Fly
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      # Prisma's generated client is imported by the code under test.
+      - run: npx prisma generate
+
+      - run: npm test
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Runs `prisma migrate deploy` as the release command first (see fly.toml);
+      # a failed migration aborts the release instead of half-deploying it.
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
