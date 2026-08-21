@@ -309,7 +309,7 @@ export function NotificationsBell(): React.ReactElement {
           ? `${count > 1 ? `${count} ` : ""}رسالة ${channelLabel} جديدة`
           : `${count > 1 ? `${count} new ` : "New "}${channelLabel} message${count > 1 ? "s" : ""}`;
         const n = new Notification(title, {
-          body: isAr ? "افتح الصندوق للقراءة" : "Open Aram to read",
+          body: isAr ? "افتح الصندوق للقراءة" : "Open Kewy Marketing to read",
           tag: `aram-inbox-${ch}`,
           icon: "/favicon.svg",
         });

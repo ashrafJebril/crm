@@ -90,8 +90,8 @@ export function ProfileTab() {
       <SettingsCard
         title={tx("Your profile", "حسابك")}
         description={tx(
-          "How you appear to your teammates across Aram.",
-          "كيف تظهر لزملائك في آرام.",
+          "How you appear to your teammates across Kewy Marketing.",
+          "كيف تظهر لزملائك في كيوي ماركتنج.",
         )}
         footer={
           <button

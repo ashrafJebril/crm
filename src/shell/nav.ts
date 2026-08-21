@@ -12,7 +12,7 @@ interface NavItem {
   ar: string;
   Icon: ComponentType<{ w?: number }>;
   badge?: number;
-  // When true, hide from non-super-admin users. Aram operator-only.
+  // When true, hide from non-super-admin users. Kewy operator-only.
   superAdminOnly?: boolean;
 }
 
@@ -38,7 +38,7 @@ export const NAV: NavEntry[] = [
   { id: "media",       label: "Media",       ar: "الوسائط",        Icon: IconAttach },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },
-  { section: "Aram ops" },
+  { section: "Kewy ops" },
   { id: "admin",       label: "Admin portal", ar: "بوابة الإدارة",  Icon: IconBolt, superAdminOnly: true },
 ];
 
@@ -55,5 +55,5 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   media:       { en: "Media library",   ar: "مكتبة الوسائط" },
   team:        { en: "Team",            ar: "الفريق" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
-  admin:       { en: "Aram admin portal", ar: "بوابة إدارة آرام" },
+  admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
 };

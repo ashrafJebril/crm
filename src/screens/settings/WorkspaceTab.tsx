@@ -144,8 +144,8 @@ export function WorkspaceTab() {
       <SettingsCard
         title={tx("Plan", "الخطة")}
         description={tx(
-          "Plan changes will move here when billing is wired. For now plans are set by Aram ops.",
-          "ستظهر إدارة الخطة هنا عند ربط الفوترة. حالياً تُدار من فريق آرام.",
+          "Plan changes will move here when billing is wired. For now plans are set by Kewy ops.",
+          "ستظهر إدارة الخطة هنا عند ربط الفوترة. حالياً تُدار من فريق كيوي.",
         )}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -163,7 +163,7 @@ export function WorkspaceTab() {
             {activeWorkspace.plan}
           </span>
           <span className="muted" style={{ fontSize: 12 }}>
-            {tx("Contact Aram support to change plans.", "تواصل مع دعم آرام لتغيير الخطة.")}
+            {tx("Contact Kewy support to change plans.", "تواصل مع دعم كيوي لتغيير الخطة.")}
           </span>
         </div>
       </SettingsCard>

@@ -77,10 +77,10 @@ function AdminImpl() {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <PageHeader
-        title={tx("Aram admin portal", "بوابة إدارة آرام")}
+        title={tx("Kewy admin portal", "بوابة إدارة كيوي")}
         subtitle={tx(
-          "All customer workspaces and users across Aram.",
-          "كل مساحات العمل والمستخدمين على آرام.",
+          "All customer workspaces and users across Kewy Marketing.",
+          "كل مساحات العمل والمستخدمين على كيوي ماركتنج.",
         )}
       />
 

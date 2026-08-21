@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "./context";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
+import { BrandLogo } from "@/components/BrandLogo";
 
 type Mode = "login" | "signup";
 
@@ -123,18 +124,8 @@ export function Login() {
           boxShadow: "var(--shadow-lg)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-          <span className="brand-mark" style={{ width: 36, height: 36, fontSize: 22 }}>
-            A
-          </span>
-          <div>
-            <div className="display" style={{ fontSize: 26, lineHeight: 1, color: "var(--ink)" }}>
-              Aram<span style={{ color: "var(--accent)" }}>.</span>
-            </div>
-            <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-              {tx("AI WhatsApp agents", "وكلاء واتساب الذكية")}
-            </div>
-          </div>
+        <div style={{ marginBottom: 24 }}>
+          <BrandLogo height={44} />
         </div>
 
         {/* Tabs */}

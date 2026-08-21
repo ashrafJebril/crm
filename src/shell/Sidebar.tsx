@@ -5,6 +5,7 @@ import { useAuth } from "@/auth/context";
 import { useFetch } from "@/api/useFetch";
 import { NAV, isSection, type NavEntry } from "./nav";
 import { Avatar } from "@/components/Avatar";
+import { BrandLogo } from "@/components/BrandLogo";
 import { IconBell, IconChevDown, IconSearch } from "@/icons";
 
 interface SidebarProps {
@@ -50,17 +51,14 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   return (
     <aside className="side">
       <div className="side-brand">
-        <span className="brand-mark">A</span>
+        {/* The lockup carries the wordmark, so no separate name/subtitle. */}
+        <BrandLogo height={t.collapsed ? 26 : 34} markOnly={t.collapsed} />
         {!t.collapsed && (
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="brand-name">
-              Aram<span style={{ color: "var(--accent)" }}>.</span>
-            </div>
-            <div className="brand-sub">v2.4 · MENA</div>
-          </div>
-        )}
-        {!t.collapsed && (
-          <button className="btn ghost icon sm" title="Search" style={{ color: "var(--ink-3)" }}>
+          <button
+            className="btn ghost icon sm"
+            title="Search"
+            style={{ color: "var(--ink-3)", marginInlineStart: "auto" }}
+          >
             <IconSearch w={14} />
           </button>
         )}

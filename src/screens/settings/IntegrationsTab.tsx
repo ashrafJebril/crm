@@ -381,8 +381,8 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
                     </li>
                     <li>
                       {tx(
-                        "Paste the token below and click Connect. Aram discovers your phone number and WABA automatically.",
-                        "الصق الرمز أدناه واضغط 'اتصال'. سيكتشف Aram رقمك ومعرف WABA تلقائيًا.",
+                        "Paste the token below and click Connect. Kewy Marketing discovers your phone number and WABA automatically.",
+                        "الصق الرمز أدناه واضغط 'اتصال'. سيكتشف كيوي رقمك ومعرف WABA تلقائيًا.",
                       )}
                     </li>
                   </ol>
@@ -633,7 +633,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
       <SettingsCard
         title={tx("Facebook Page", "صفحة فيسبوك")}
         description={tx(
-          "Connect your Facebook Page to bring posts, comments, and Messenger threads into Aram.",
+          "Connect your Facebook Page to bring posts, comments, and Messenger threads into Kewy Marketing.",
           "اربط صفحتك على فيسبوك لجلب المنشورات والتعليقات والرسائل.",
         )}
       >
