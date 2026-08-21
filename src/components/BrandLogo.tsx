@@ -9,7 +9,7 @@ import { useTweaks } from "@/tweaks/context";
  * for the wordmark.
  */
 export function BrandLogo({
-  height = 30,
+  height = 52,
   markOnly = false,
 }: {
   height?: number;
@@ -26,8 +26,9 @@ export function BrandLogo({
       src={src}
       alt="Kewy Marketing"
       // The lockup is 240×84 and the mark 72×84 — height drives the box and
-      // width follows, so neither ever distorts.
-      style={{ height, width: "auto", display: "block", flex: "0 0 auto" }}
+      // width follows, so neither ever distorts. 52px matches the logo size
+      // HJZ uses.
+      style={{ height, width: "auto", display: "inline-block", flex: "0 0 auto" }}
     />
   );
 }

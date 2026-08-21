@@ -125,7 +125,7 @@ export function Login() {
         }}
       >
         <div style={{ marginBottom: 24 }}>
-          <BrandLogo height={44} />
+          <BrandLogo />
         </div>
 
         {/* Tabs */}

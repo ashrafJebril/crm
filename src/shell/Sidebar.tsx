@@ -52,7 +52,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
     <aside className="side">
       <div className="side-brand">
         {/* The lockup carries the wordmark, so no separate name/subtitle. */}
-        <BrandLogo height={t.collapsed ? 26 : 34} markOnly={t.collapsed} />
+        <BrandLogo markOnly={t.collapsed} />
         {!t.collapsed && (
           <button
             className="btn ghost icon sm"
