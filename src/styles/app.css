@@ -34,13 +34,19 @@ input, textarea, select { font-family: inherit; }
   min-width: 0;
   overflow: hidden;
 }
+/* Brand row: same spacing HJZ gives its Kewy lockup — 16/14/12 around a
+   52px logo, no fixed height, and no divider of its own (the line sits
+   below the workspace card, as it does there). */
 .side-brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 56px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 16px 14px 12px;
+  flex-shrink: 0;
+}
+[data-collapsed="true"] .side .side-brand {
+  padding: 14px 8px 10px;
+  justify-content: center;
 }
 .brand-mark {
   width: 26px; height: 26px;
@@ -66,7 +72,7 @@ input, textarea, select { font-family: inherit; }
 }
 
 .workspace {
-  margin: 12px 12px 6px;
+  margin: 4px 12px 14px;
   padding: 10px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
@@ -93,7 +99,7 @@ input, textarea, select { font-family: inherit; }
 .workspace .ws-tier { font-size: 11px; color: var(--ink-3); font-family: var(--font-mono); }
 .workspace .ws-caret { color: var(--ink-3); }
 
-.nav { padding: 6px 8px; flex: 1; overflow-y: auto; }
+.nav { padding: 6px 8px; flex: 1; overflow-y: auto; border-top: 1px solid var(--line-soft); }
 .nav-section {
   font-size: 10px;
   text-transform: uppercase;
