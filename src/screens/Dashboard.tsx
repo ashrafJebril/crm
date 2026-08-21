@@ -10,6 +10,15 @@ import {
   IconArrowDown, IconArrowUp, IconBolt, IconCal, IconChev, IconChevDown, IconMore,
 } from "@/icons";
 import { useFetch } from "@/api/useFetch";
+import { Skeleton } from "@/components/Skeleton";
+import {
+  ActivitySkeleton,
+  CampaignsSkeleton,
+  ChannelsSkeleton,
+  ChartSkeleton,
+  IntentsSkeleton,
+  PipelineSkeleton,
+} from "./dashboard/DashboardSkeletons";
 import { CHANNEL_LABEL } from "@/lib/types";
 import type {
   Campaign,
@@ -108,9 +117,11 @@ interface StatTileProps {
   sub: string;
   spark?: number[];
   invert?: boolean;
+  /** First-load placeholder: the tile keeps its shape but shows no number. */
+  loading?: boolean;
 }
 
-function StatTile({ label, value, unit, delta, sub, spark, invert }: StatTileProps) {
+function StatTile({ label, value, unit, delta, sub, spark, invert, loading }: StatTileProps) {
   const isEmpty = delta === null || delta === undefined || delta === "";
   const isDown = !isEmpty && delta.startsWith("-");
   const tone = isEmpty ? "muted" : isDown ? (invert ? "" : "down") : "";
@@ -123,12 +134,18 @@ function StatTile({ label, value, unit, delta, sub, spark, invert }: StatTilePro
         </span>
       </div>
       <div className="value">
-        {value}
-        {unit && <span className="unit">{unit}</span>}
+        {loading ? (
+          <Skeleton h={26} w={96} style={{ margin: "3px 0" }} />
+        ) : (
+          <>
+            {value}
+            {unit && <span className="unit">{unit}</span>}
+          </>
+        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {!isEmpty && (
+          {!loading && !isEmpty && (
             <span className={`delta ${tone}`.trim()}>
               {isDown ? <IconArrowDown w={11} /> : <IconArrowUp w={11} />}
               {delta}
@@ -136,7 +153,9 @@ function StatTile({ label, value, unit, delta, sub, spark, invert }: StatTilePro
           )}
           <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{sub}</span>
         </div>
-        {spark && spark.length > 0 && <Spark values={spark} w={80} h={24} />}
+        {loading
+          ? <Skeleton h={24} w={80} />
+          : spark && spark.length > 0 && <Spark values={spark} w={80} h={24} />}
       </div>
     </div>
   );
@@ -146,15 +165,25 @@ function DashboardImpl() {
   const { t } = useTweaks();
   const [, setRoute] = useRoute();
   const tx = makeTx(t.lang);
-  const { data: summary, error: summaryError } =
-    useFetch<DashboardSummary>("/dashboard/summary");
-  const { data: ticketsSummary } =
+  const {
+    data: summary,
+    loading: summaryLoading,
+    error: summaryError,
+  } = useFetch<DashboardSummary>("/dashboard/summary");
+  const { data: ticketsSummary, loading: ticketsLoading } =
     useFetch<TicketsDashboardSummary>("/tickets/dashboard/summary");
   const {
     data: conversations,
     loading: convLoading,
     error: convError,
   } = useFetch<Conversation[]>("/conversations");
+
+  // `loading` is true for background refetches too (the lists poll), so gate
+  // the placeholders on "still waiting for the FIRST response" — otherwise
+  // every poll would blink the cards back to skeletons.
+  const summaryPending = summaryLoading && !summary;
+  const ticketsPending = ticketsLoading && !ticketsSummary;
+  const convPending = convLoading && !conversations;
 
   const channelStats = useMemo(() => {
     const counts: Record<ConvChannel, number> = {
@@ -230,12 +259,14 @@ function DashboardImpl() {
             delta={conversationsDelta}
             sub={tx("vs prev 7d", "مقارنة بالأسبوع السابق")}
             spark={totalSpark}
+            loading={summaryPending}
           />
           <StatTile
             label={tx("Unread", "غير مقروء")}
             value={summary?.counts.unread.toLocaleString() ?? "0"}
             delta=""
             sub={tx("Across all channels", "عبر جميع القنوات")}
+            loading={summaryPending}
           />
           <StatTile
             label={tx("Pipeline value", "قيمة المبيعات")}
@@ -246,6 +277,7 @@ function DashboardImpl() {
             }
             delta=""
             sub={tx("Open tickets", "تذاكر مفتوحة")}
+            loading={ticketsPending}
           />
         </div>
 
@@ -266,21 +298,27 @@ function DashboardImpl() {
               </div>
             </div>
             <div style={{ padding: "16px 16px 8px" }}>
-              <AreaChart a={aSeries} b={bSeries} w={680} h={180} />
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginTop: 4,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--ink-3)",
-                }}
-              >
-                {xLabels.map((d, i) => (
-                  <span key={`${d}-${i}`}>{d}</span>
-                ))}
-              </div>
+              {summaryPending ? (
+                <ChartSkeleton h={180} />
+              ) : (
+                <>
+                  <AreaChart a={aSeries} b={bSeries} w={680} h={180} />
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginTop: 4,
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11,
+                      color: "var(--ink-3)",
+                    }}
+                  >
+                    {xLabels.map((d, i) => (
+                      <span key={`${d}-${i}`}>{d}</span>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -296,7 +334,8 @@ function DashboardImpl() {
               </span>
             </div>
             <div style={{ padding: "4px 6px 12px" }}>
-              {recentActivity.length === 0 && (
+              {summaryPending && <ActivitySkeleton />}
+              {!summaryPending && recentActivity.length === 0 && (
                 <div
                   className="mono muted"
                   style={{ padding: "12px 12px", fontSize: 11, opacity: 0.7 }}
@@ -359,7 +398,9 @@ function DashboardImpl() {
               <span className="sub">{tx("all conversations", "كل المحادثات")}</span>
             </div>
             <div style={{ padding: 16 }}>
-              {topIntents.length === 0 ? (
+              {summaryPending ? (
+                <IntentsSkeleton />
+              ) : topIntents.length === 0 ? (
                 <div
                   className="mono muted"
                   style={{ fontSize: 11, opacity: 0.7 }}
@@ -411,7 +452,8 @@ function DashboardImpl() {
               <span className="sub">{tx("all time", "كل الفترة")}</span>
             </div>
             <div style={{ padding: "12px 16px 16px" }}>
-              {(() => {
+              {ticketsPending && <PipelineSkeleton />}
+              {!ticketsPending && (() => {
                 const won = ticketsSummary?.wonCount ?? 0;
                 const lost = ticketsSummary?.lostCount ?? 0;
                 const total = won + lost;
@@ -522,7 +564,9 @@ function DashboardImpl() {
               </button>
             </div>
             <div style={{ padding: "4px 6px 12px" }}>
-              {summaryError ? (
+              {summaryPending ? (
+                <CampaignsSkeleton />
+              ) : summaryError ? (
                 <div style={{ padding: 12, fontSize: 12, color: "var(--danger, #c33)" }}>
                   {summaryError}
                 </div>
@@ -592,7 +636,7 @@ function DashboardImpl() {
           <div className="card">
             <div className="card-h">
               <div>
-                <h3 className={convLoading && !conversations ? "pulse" : undefined}>
+                <h3>
                   {tx("Messages by channel", "الرسائل حسب القناة")}
                 </h3>
                 <div className="sub">
@@ -601,101 +645,107 @@ function DashboardImpl() {
               </div>
             </div>
             <div style={{ padding: "12px 16px 16px" }}>
-              <div
-                style={{
-                  fontSize: 24,
-                  fontWeight: 600,
-                  letterSpacing: "-0.01em",
-                  fontFamily: "var(--font-mono)",
-                  lineHeight: 1.1,
-                }}
-              >
-                {channelStats.total.toLocaleString()}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
-                {tx("Total messages", "إجمالي الرسائل")}
-              </div>
-
-              {convError ? (
-                <div
-                  style={{
-                    marginTop: 14,
-                    fontSize: 12,
-                    color: "var(--bad)",
-                  }}
-                >
-                  {convError}
-                </div>
+              {convPending ? (
+                <ChannelsSkeleton />
               ) : (
+                <>
                 <div
                   style={{
-                    marginTop: 14,
-                    display: "flex",
-                    height: 10,
-                    width: "100%",
-                    borderRadius: 999,
-                    overflow: "hidden",
-                    background: "var(--bg-2)",
+                    fontSize: 24,
+                    fontWeight: 600,
+                    letterSpacing: "-0.01em",
+                    fontFamily: "var(--font-mono)",
+                    lineHeight: 1.1,
                   }}
                 >
-                  {channelStats.rows.map((r) =>
-                    r.pct > 0 ? (
-                      <div
-                        key={r.channel}
-                        title={`${CHANNEL_LABEL[r.channel]} · ${r.count}`}
-                        style={{
-                          width: `${r.pct}%`,
-                          background: CHANNEL_FILL[r.channel],
-                        }}
-                      />
-                    ) : null,
-                  )}
+                  {channelStats.total.toLocaleString()}
                 </div>
-              )}
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
+                  {tx("Total messages", "إجمالي الرسائل")}
+                </div>
 
-              <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
-                {channelStats.rows.map((r) => (
+                {convError ? (
                   <div
-                    key={r.channel}
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
+                      marginTop: 14,
                       fontSize: 12,
+                      color: "var(--bad)",
                     }}
                   >
-                    <span
-                      aria-hidden
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 999,
-                        background: CHANNEL_DOT[r.channel],
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span style={{ color: "var(--ink-1)", flex: 1 }}>
-                      {CHANNEL_LABEL[r.channel]}
-                    </span>
-                    <span
-                      className="mono"
-                      style={{ color: "var(--ink-2)", fontSize: 11 }}
-                    >
-                      {r.count.toLocaleString()}
-                    </span>
-                    <span
-                      className="mono muted"
-                      style={{
-                        fontSize: 11,
-                        width: 44,
-                        textAlign: "end",
-                      }}
-                    >
-                      {r.pct.toFixed(1)}%
-                    </span>
+                    {convError}
                   </div>
-                ))}
-              </div>
+                ) : (
+                  <div
+                    style={{
+                      marginTop: 14,
+                      display: "flex",
+                      height: 10,
+                      width: "100%",
+                      borderRadius: 999,
+                      overflow: "hidden",
+                      background: "var(--bg-2)",
+                    }}
+                  >
+                    {channelStats.rows.map((r) =>
+                      r.pct > 0 ? (
+                        <div
+                          key={r.channel}
+                          title={`${CHANNEL_LABEL[r.channel]} · ${r.count}`}
+                          style={{
+                            width: `${r.pct}%`,
+                            background: CHANNEL_FILL[r.channel],
+                          }}
+                        />
+                      ) : null,
+                    )}
+                  </div>
+                )}
+
+                <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+                  {channelStats.rows.map((r) => (
+                    <div
+                      key={r.channel}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        fontSize: 12,
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 999,
+                          background: CHANNEL_DOT[r.channel],
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span style={{ color: "var(--ink-1)", flex: 1 }}>
+                        {CHANNEL_LABEL[r.channel]}
+                      </span>
+                      <span
+                        className="mono"
+                        style={{ color: "var(--ink-2)", fontSize: 11 }}
+                      >
+                        {r.count.toLocaleString()}
+                      </span>
+                      <span
+                        className="mono muted"
+                        style={{
+                          fontSize: 11,
+                          width: 44,
+                          textAlign: "end",
+                        }}
+                      >
+                        {r.pct.toFixed(1)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                </>
+              )}
             </div>
           </div>
         </div>
