@@ -94,9 +94,11 @@ async function executeGatedTool(
  * defensive lives here because this is the single line between an approval click
  * and a real change on Meta:
  *   • workspace-scoped load (cross-workspace action_id → NotFound)
- *   • the approver is the authenticated ads.view user (whoever can open the ads
- *     screen), passed by the endpoint — access IS authority, ONE tier, no owner-role
- *     check (Feras 2026-07-17); NO body/model-supplied "approved" flag is read anywhere
+ *   • the approver is the authenticated user passed by the endpoint; this service
+ *     performs NO role check itself — approve/reject/topup are guarded upstream in
+ *     ads.controller.ts by @UseGuards(WorkspaceRolesGuard) + @WorkspaceRoles('owner',
+ *     'admin'), so any new endpoint that reaches approveAndExecute MUST carry the
+ *     same guard. NO body/model-supplied "approved" flag is read anywhere
  *   • {tool,args} re-hashed and compared to the frozen argsHash (tamper/swap check)
  *   • un-rendered (placeholder) summaries are refused
  *   • expiry enforced lazily at approve/reject time (and re-guarded in the claim)
@@ -247,14 +249,15 @@ export class AdsPendingActionService {
     const db = this.prisma;
     const now = new Date();
 
-    // Authority = access (Feras 2026-07-17): the endpoint's `ads.view` guard — the
-    // SAME permission that opens the ads-assistant screen — IS the approval authority.
-    // There is deliberately NO extra owner-role check: one tier, not two. (Owner-only
-    // approval was considered and ruled out as today's default; a future client that
-    // wants it gets it as a later feature.) Defense in depth here is STRUCTURAL, not
-    // role-based: executeGatedTool is unimportable and this service is not
-    // cross-module injectable, so a gated write can only be reached through this
-    // method, behind that HTTP guard.
+    // Authority is enforced at the HTTP layer, not here: ads.controller.ts guards
+    // the approve/reject/topup routes with @UseGuards(WorkspaceRolesGuard) +
+    // @WorkspaceRoles('owner','admin'), so only an owner/admin request ever reaches
+    // this method. This service does NOT re-check the role itself — it trusts the
+    // guard already ran. Defense in depth here is additionally STRUCTURAL:
+    // executeGatedTool is unimportable and this service is not cross-module
+    // injectable, so a gated write can only be reached through this method, behind
+    // that same HTTP guard. Any new endpoint wired to approveAndExecute MUST carry
+    // the identical @WorkspaceRoles('owner','admin') guard.
 
     // Re-read state from the store — trust nothing from the request but the id.
     // workspace-scoped: a cross-workspace id reads back null → NotFound (no leak).

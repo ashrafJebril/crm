@@ -794,12 +794,10 @@ export class AdsChatService {
       messages: withRollingToolResultCache(messages),
     });
 
-    // NOTE: no request timeout yet — a hung socket blocks indefinitely. This is
-    // the PRE-EXISTING status quo, NOT a regression from the retry work. We do
-    // NOT guess an AbortController value: too short kills a legitimate slow
-    // analysis generation, and a per-attempt timeout gives no per-request bound
-    // anyway. Set it from the harness p99 of a HEALTHY createMessage once
-    // Anthropic is no longer overloaded (see the 529 plan). Until then: unbounded.
+    // NOTE: each attempt below carries AbortSignal.timeout(CALL_TIMEOUT_MS) — a
+    // 90s per-attempt cap, so a hung/slow Claude socket aborts instead of blocking
+    // indefinitely. That bounds a single attempt, not the whole request: with
+    // retries, a request can still take a multiple of CALL_TIMEOUT_MS end to end.
     for (let attempt = 0; ; attempt++) {
       let res: any;
       let raw = '';

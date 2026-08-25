@@ -19,6 +19,7 @@ import { AdsPendingActionService } from './ads-pending-action.service';
 import { ADS_PROMPTS, ADS_TIPS } from './ads-prompt-catalog';
 import { AdsWalletService } from './ads-wallet.service';
 import { AdsChatOverloadedError } from './ads-chat.service';
+import { InsufficientBalanceError } from './ads-wallet.service';
 import { AdsInsufficientBalanceException } from './ads.exceptions';
 import { PAYMENT_GATEWAY } from './payment-gateway.port';
 import type { PaymentGatewayPort } from './payment-gateway.port';
@@ -48,9 +49,19 @@ function createdIdLine(tool: string, result: unknown): string {
 // existing post.error.code branches (ADS_SERVICE_BUSY / PROMPT_NOT_AVAILABLE) light
 // up unchanged. Anything unclassified is a generic 'ERROR' whose message the web
 // surfaces (e.g. the per-request-limit ServiceUnavailableException text).
-function sseErrorPayload(e: unknown): { code: string; message: string } {
+function sseErrorPayload(e: unknown): { code: string; message: string; status?: number } {
   if (e instanceof AdsChatOverloadedError) {
     return { code: 'ADS_SERVICE_BUSY', message: 'Ads Assistant is temporarily busy' };
+  }
+  // Post-flush balance race: the controller's pre-check passed, but the session
+  // service's internal wallet gate (AdsChatSessionService.postMessage) found the
+  // balance had since dropped — e.g. a concurrent chat request drained it between
+  // the pre-check and this one's debit. Map it the same way the pre-flush 402
+  // (AdsInsufficientBalanceException) would have, so the web's existing
+  // insufficient-balance branch lights up unchanged even though it arrives as an
+  // SSE `error` event instead of an HTTP status.
+  if (e instanceof InsufficientBalanceError) {
+    return { code: 'ADS_INSUFFICIENT_BALANCE', message: e.message, status: 402 };
   }
   if (e instanceof HttpException) {
     const resp = e.getResponse();
