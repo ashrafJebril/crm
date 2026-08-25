@@ -10,7 +10,7 @@ import { AdsPromptNotAvailableException } from './ads.exceptions';
  * only ADD new ones or flip `status`. Renaming silently breaks those references.
  *
  * Entries are written NATIVELY in ar + en (not translations); Arabic is feminine
- * 2nd-person (women-only salon). Rules baked into the prompt text:
+ * 2nd-person (women-only business). Rules baked into the prompt text:
  *  - CURRENCY: never hardcode $/JOD — say "the account currency" and let the
  *    assistant read it from the currency field on the get_insights result (this
  *    account is USD today; another tenant may use a different currency).
@@ -237,8 +237,8 @@ export const ADS_PROMPTS: AdsPromptEntry[] = [
     id: 'create_lead_gen_campaign', category: 'create', status: 'coming_soon', blockedBy: ['write_path'],
     titleEn: 'Lead Generation Campaign', titleAr: 'حملة جمع ليدز',
     descEn: "Create a lead-gen campaign with form fields and targeting", descAr: 'إنشاء حملة جمع ليدز بحقول نموذج واستهداف',
-    promptEn: "Help me create a lead-generation campaign. Tell me the service and I'll recommend the form fields, targeting, and creative approach, plus which lead magnets tend to work for salons. Created paused for your approval.",
-    promptAr: 'ساعديني أنشئ حملة جمع ليدز. قوليلي الخدمة ورح أوصّي بحقول النموذج والاستهداف وأسلوب التصميم، وأي عروض جذب بتنفع للصالونات. تتنشأ متوقّفة لموافقتك.',
+    promptEn: "Help me create a lead-generation campaign. Tell me the service and I'll recommend the form fields, targeting, and creative approach, plus which lead magnets tend to work for businesses. Created paused for your approval.",
+    promptAr: 'ساعديني أنشئ حملة جمع ليدز. قوليلي الخدمة ورح أوصّي بحقول النموذج والاستهداف وأسلوب التصميم، وأي عروض جذب بتنفع للمنشآت. تتنشأ متوقّفة لموافقتك.',
   },
   {
     id: 'create_brand_awareness_campaign', category: 'create', status: 'active', blockedBy: [],

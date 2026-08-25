@@ -8,7 +8,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
  *
  *   { error: { code: 'ADS_INSUFFICIENT_BALANCE', message: '...' } }
  *
- * The Arabic message is what the web surfaces to the salon owner.
+ * The Arabic message is what the web surfaces to the business owner.
  */
 export class AdsInsufficientBalanceException extends HttpException {
   constructor() {

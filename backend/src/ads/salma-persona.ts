@@ -102,7 +102,7 @@ export const SALMA_CHAT_BEHAVIOR_EN = [
   `- Example: "I've set up pausing campaign [name] — but it needs the account owner's approval before it actually stops. The moment he approves, I'll tell you. ✋"`,
 ].join('\n');
 
-// ── Ads analysis tail (not reused by the gate). Timezone follows Tenant.timezone. ──
+// ── Ads analysis tail (not reused by the gate). Timezone follows Workspace.timezone. ──
 function adsTailAr(timezone: string): string {
   return [
     'قواعد التحليل (ثابتة، ما بتتغيّر):',
@@ -153,7 +153,7 @@ function adsTailEn(timezone: string): string {
 
 /**
  * Full ads chat system prompt: persona (CORE + CHAT_BEHAVIOR) then the analysis
- * tail. `timezone` follows Tenant.timezone (default Asia/Amman) and interpolates
+ * tail. `timezone` follows Workspace.timezone (default Asia/Amman) and interpolates
  * into the tail only — the persona prefix above it stays byte-stable so the
  * Anthropic cache prefix holds per (locale, timezone).
  */

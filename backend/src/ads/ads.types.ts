@@ -217,7 +217,7 @@ export type GetAdsPromptsResponse = z.infer<typeof getAdsPromptsResponseSchema>;
 // Role values are lowercase to mirror the Anthropic wire + the API surface. No
 // `AdsChatRole` type is exported here on purpose: the Prisma client generates a
 // type of that name (UPPERCASE), and the service maps at the persistence
-// boundary — keeping the names from colliding across @hjz/contracts + Prisma.
+// boundary — keeping the names from colliding across this file + Prisma.
 export const adsChatRoleEnum = z.enum(['user', 'assistant']);
 
 export const adsChatMessageSchema = z.object({
