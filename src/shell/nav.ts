@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconCampaign, IconUsers,
   IconChart, IconTemplate, IconTeam, IconCog, IconCal, IconGlobe,
-  IconLayers, IconBolt, IconAttach,
+  IconLayers, IconBolt, IconAttach, IconSparkles,
 } from "@/icons";
 
 interface NavItem {
@@ -30,6 +30,7 @@ export const NAV: NavEntry[] = [
   { id: "calendar",    label: "Calendar",    ar: "التقويم",       Icon: IconCal },
   { id: "social",      label: "Social",      ar: "السوشيال",      Icon: IconGlobe },
   { id: "campaigns",   label: "Campaigns",   ar: "الحملات",       Icon: IconCampaign },
+  { id: "ads",         label: "Ads Assistant", ar: "مساعد الإعلانات", Icon: IconSparkles },
   { id: "pipeline",    label: "Pipeline",    ar: "خط الأنابيب",   Icon: IconLayers },
   { id: "contacts",    label: "Contacts",    ar: "جهات الاتصال",  Icon: IconUsers },
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
@@ -48,6 +49,7 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   calendar:    { en: "Calendar",        ar: "التقويم والحجوزات" },
   social:      { en: "Social media",    ar: "وسائل التواصل" },
   campaigns:   { en: "Campaigns",       ar: "الحملات" },
+  ads:         { en: "Ads Assistant",   ar: "مساعد الإعلانات" },
   pipeline:    { en: "Sales pipeline",  ar: "مسار المبيعات" },
   contacts:    { en: "Contacts",        ar: "جهات الاتصال" },
   analytics:   { en: "Analytics",       ar: "التحليلات" },

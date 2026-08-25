@@ -20,6 +20,7 @@ export type RouteId =
   | "media"
   | "pipeline"
   | "campaigns"
+  | "ads"
   | "contacts"
   | "analytics"
   | "templates"
