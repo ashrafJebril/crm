@@ -24,6 +24,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
+import { AdsModule } from "./ads/ads.module";
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { TagsModule } from "./tags/tags.module";
     JoteckModule,
     RealtimeModule,
     SearchModule,
+    AdsModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },

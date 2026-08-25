@@ -299,7 +299,10 @@ export class AdsChatSessionService {
 
   // One transaction: create-or-touch the session, then write the user +
   // assistant rows. workspaceId is auto-injected by the scoped client, including
-  // here inside $transaction (same reliance as the tags module's transactional writes).
+  // here inside $transaction — verified Prisma 5 behavior: the tenancy extension
+  // applies inside interactive transactions (create-payload injection, read
+  // filters, WHERE, upsert), and fails loud with "Argument workspace is missing"
+  // if the context is absent.
   private async persist(
     db: any,
     userId: string,

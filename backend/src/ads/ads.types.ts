@@ -372,7 +372,10 @@ export type ListAdsWalletTransactionsResponse = z.infer<
 // floor in this isomorphic package can't read env, and would silently CAP the
 // operator's setting (env could then only raise, never lower). One rule, one
 // source of truth.
-const ADS_TOPUP_MAX_JOD = 10000;
+// Exported so the controller (which enforces the top-up rules for the
+// class-validator DTO — see ads.dto.ts) uses the SAME cap as this schema
+// instead of a second copy of the number.
+export const ADS_TOPUP_MAX_JOD = 10000;
 
 export const postAdsTopupRequestSchema = z.object({
   amountJod: z
