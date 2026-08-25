@@ -492,6 +492,13 @@ model Workspace {
   notes             Note[]             @relation("WorkspaceNotes")
   media             Media[]            @relation("WorkspaceMedia")
 
+  adsChatSessions       AdsChatSession[]       @relation("WorkspaceAdsChatSessions")
+  adsChatMessages       AdsChatMessage[]       @relation("WorkspaceAdsChatMessages")
+  adsPendingActions     AdsPendingAction[]     @relation("WorkspaceAdsPendingActions")
+  adsActionAudits       AdsActionAudit[]       @relation("WorkspaceAdsActionAudits")
+  adsWallet             AdsWallet?             @relation("WorkspaceAdsWallet")
+  adsWalletTransactions AdsWalletTransaction[] @relation("WorkspaceAdsWalletTransactions")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -538,4 +545,133 @@ model Media {
 
   @@index([workspaceId])
   @@index([uploadedById])
+}
+
+// ─── Ads Assistant (ported from hjz-v2) ───────────────────────────────────
+// Chat agent ("Salma") that analyzes Meta ad campaigns via Pipeboard MCP,
+// with a JOD wallet (token-metered billing) and an approval-gated write path.
+
+model AdsChatSession {
+  id          String    @id @default(cuid())
+  createdById String    // User.id of the member who owns this chat — sessions are per-user, not shared across the workspace (they carry spend paid from that user's wallet activity)
+  title       String?
+  deletedAt   DateTime?
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAdsChatSessions", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  messages AdsChatMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, updatedAt])
+}
+
+model AdsChatMessage {
+  id        String         @id @default(cuid())
+  sessionId String
+  session   AdsChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String         // "USER" | "ASSISTANT"
+  content   String         // full message text (Postgres TEXT)
+  toolCallsJson Json?      // assistant turns: the agent's tool calls (audit trail)
+  usageJson     Json?      // token usage for the turn — reconciliation source if the wallet debit fails
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAdsChatMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, sessionId, createdAt])
+  @@index([sessionId])
+}
+
+model AdsPendingAction {
+  // id is SUPPLIED by the write gate (the action_id shown to the model and user) — no default on purpose.
+  id                   String  @id
+  createdById          String  // session owner who chatted with Salma
+  sessionId            String?
+  tool                 String  // Pipeboard tool name, e.g. "update_campaign"
+  argsJson             Json    // EXACT args the execute path sends to Meta — never redacted (argsHash seals them)
+  argsHash             String  // sha256 over canonical {tool,args,summary} — tamper check at approve time
+  summary              String  // the exact human-readable text shown to the approver
+  summaryIsPlaceholder Boolean @default(true) // true = no machine renderer for this tool → NOT approvable
+  status               String  @default("PENDING") // PENDING | EXECUTING | EXECUTED | FAILED | REJECTED | EXPIRED
+  approvedById         String?
+  approvedAt           DateTime?
+  executedAt           DateTime?
+  resultJson           Json?   // provider response, PII-redacted copy (for idempotent replay)
+  errorText            String?
+  expiresAt            DateTime // lazy TTL — expired rows are refused at approve time, not swept
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAdsPendingActions", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, status, createdAt])
+  @@index([sessionId])
+}
+
+model AdsActionAudit {
+  // APPEND-ONLY by code contract: one row per pending-action state transition.
+  id                 String  @id @default(cuid())
+  actionId           String
+  event              String  // PROPOSED | APPROVED | EXECUTED | FAILED | REJECTED | EXPIRED
+  actorId            String?
+  tool               String
+  sessionId          String?
+  argsRedactedJson   Json?   // PROPOSED only — PII-redacted
+  summary            String? // PROPOSED only
+  resultRedactedJson Json?   // EXECUTED only — PII-redacted
+  errorText          String? // FAILED only
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAdsActionAudits", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, actionId, createdAt])
+  @@index([workspaceId, event, createdAt])
+}
+
+model AdsWallet {
+  id          String  @id @default(cuid())
+  // One wallet per workspace. Decimal(12,4) not (12,2): a typical question costs
+  // ~0.035 JOD, so 2 dp would be a ~14% rounding error per charge.
+  balanceJod  Decimal @default(0) @db.Decimal(12, 4)
+  // DB-level backstop added in raw migration SQL (PSL can't express CHECK):
+  //   CONSTRAINT "AdsWallet_balanceJod_non_negative" CHECK ("balanceJod" >= 0)
+
+  workspaceId String    @unique
+  workspace   Workspace @relation("WorkspaceAdsWallet", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  transactions AdsWalletTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdsWalletTransaction {
+  id              String    @id @default(cuid())
+  walletId        String
+  // onDelete: Restrict — this is an append-only financial ledger; a wallet with
+  // history must never cascade-delete its rows.
+  wallet          AdsWallet @relation(fields: [walletId], references: [id], onDelete: Restrict)
+  type            String    // MONTHLY_GRANT | TOPUP | DEBIT | REFUND | ADJUST
+  amountJod       Decimal   @db.Decimal(12, 4) // signed per type (DEBIT rows are negative)
+  balanceAfterJod Decimal   @db.Decimal(12, 4)
+  description     String?
+  breakdownJson   Json?     // frozen charge computation — immutable source of truth
+  costBasisUsd    Decimal?  @db.Decimal(24, 14) // indexed mirror of breakdownJson.usdCost
+  costBasisJod    Decimal?  @db.Decimal(24, 14) // costBasisUsd × the frozen fx rate
+  externalRef     String?   @unique // Stripe checkout session id — webhook idempotency key
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAdsWalletTransactions", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([walletId, createdAt])
 }
