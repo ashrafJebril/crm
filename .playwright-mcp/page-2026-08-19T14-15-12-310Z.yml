@@ -1,0 +1,162 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "Dashboard" [ref=f6e24] [cursor=pointer]
+      - button "Inbox 7" [ref=f6e29] [cursor=pointer]:
+        - generic [ref=f6e34]: Inbox
+        - generic [ref=f6e35]: "7"
+      - button "Calendar" [ref=f6e36] [cursor=pointer]
+      - button "Social" [ref=f6e42] [cursor=pointer]
+      - button "Campaigns" [ref=f6e48] [cursor=pointer]
+      - button "Pipeline" [ref=f6e55] [cursor=pointer]
+      - button "Contacts" [ref=f6e62] [cursor=pointer]
+      - button "Analytics" [ref=f6e70] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "Templates" [ref=f6e77] [cursor=pointer]
+      - button "Media" [ref=f6e82] [cursor=pointer]
+      - button "Team" [ref=f6e87] [cursor=pointer]
+      - button "Settings" [ref=f6e93] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "Admin portal" [ref=f6e100] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: Contacts
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f6e124]
+        - generic [ref=f6e125]: ⌘K
+      - button "ع" [ref=f6e126] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "Notifications" [ref=f6e132] [cursor=pointer]
+      - button "Create" [ref=f6e136] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "Sign out" [ref=f6e149] [cursor=pointer]
+    - generic [ref=f6e3056]:
+      - generic [ref=f6e3058]:
+        - generic [ref=f6e3059]:
+          - heading "Contacts" [level=1] [ref=f6e3060]
+          - paragraph [ref=f6e3061]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=f6e3062]:
+          - generic [ref=f6e3063]:
+            - button "Table" [ref=f6e3064] [cursor=pointer]
+            - button "Pipeline" [ref=f6e3065] [cursor=pointer]
+          - button "New contact" [ref=f6e3066] [cursor=pointer]
+      - generic [ref=f6e3069]:
+        - button "Contacts" [ref=f6e3070] [cursor=pointer]
+        - button "Groups" [ref=f6e3071] [cursor=pointer]
+        - button "Tags" [ref=f6e3072] [cursor=pointer]
+      - generic [ref=f6e7057]:
+        - generic [ref=f6e7058]:
+          - button "All 42" [ref=f6e7059] [cursor=pointer]:
+            - text: All
+            - generic [ref=f6e7060]: "42"
+          - button "All leads 42" [ref=f6e7061] [cursor=pointer]:
+            - text: All leads
+            - generic [ref=f6e7063]: "42"
+          - button "Customers 0" [ref=f6e7064] [cursor=pointer]:
+            - text: Customers
+            - generic [ref=f6e7066]: "0"
+          - button "Has phone 3" [active] [ref=f6e7067] [cursor=pointer]:
+            - text: Has phone
+            - generic [ref=f6e7069]: "3"
+          - button "No phone 39" [ref=f6e7070] [cursor=pointer]:
+            - text: No phone
+            - generic [ref=f6e7072]: "39"
+          - button "عملاء الجملة 2" [ref=f6e7073] [cursor=pointer]:
+            - text: عملاء الجملة
+            - generic [ref=f6e7075]: "2"
+          - button "Manage segments" [ref=f6e7076] [cursor=pointer]
+          - textbox "Search contacts…" [ref=f6e7079]
+        - table [ref=f6e8025]:
+          - rowgroup [ref=f6e8026]:
+            - row [ref=f6e8027]:
+              - columnheader [ref=f6e8028]:
+                - checkbox [ref=f6e8029]
+              - columnheader "Name" [ref=f6e8030]
+              - columnheader "Phone" [ref=f6e8031]
+              - columnheader "Tags" [ref=f6e8032]
+              - columnheader "Lifecycle" [ref=f6e8033]
+              - columnheader "Source" [ref=f6e8034]
+              - columnheader "Convs" [ref=f6e8035]
+              - columnheader "Value" [ref=f6e8036]
+              - columnheader "Last seen" [ref=f6e8037]
+              - columnheader [ref=f6e8038]
+          - rowgroup [ref=f6e8039]:
+            - row [ref=f6e8040] [cursor=pointer]:
+              - cell [ref=f6e8041]:
+                - checkbox [ref=f6e8042]
+              - cell "FB Feras Balawi 🤗 whatsapp" [ref=f6e8043]:
+                - generic [ref=f6e8044]:
+                  - generic [ref=f6e8045]: FB
+                  - generic [ref=f6e8046]:
+                    - generic [ref=f6e8047]: Feras Balawi 🤗
+                    - generic [ref=f6e8048]: whatsapp
+              - cell "+962799828287" [ref=f6e8049]
+              - cell [ref=f6e8050]
+              - cell "lead" [ref=f6e8051]
+              - cell "whatsapp" [ref=f6e8052]
+              - cell "0" [ref=f6e8053]
+              - cell "—" [ref=f6e8054]
+              - cell "now" [ref=f6e8055]
+              - cell [ref=f6e8056]:
+                - button [ref=f6e8057]
+            - row [ref=f6e8062] [cursor=pointer]:
+              - cell [ref=f6e8063]:
+                - checkbox [ref=f6e8064]
+              - cell "R Razan whatsapp" [ref=f6e8065]:
+                - generic [ref=f6e8066]:
+                  - generic [ref=f6e8067]: R
+                  - generic [ref=f6e8068]:
+                    - generic [ref=f6e8069]: Razan
+                    - generic [ref=f6e8070]: whatsapp
+              - cell "+962792917293" [ref=f6e8071]
+              - cell [ref=f6e8072]
+              - cell "lead" [ref=f6e8073]
+              - cell "whatsapp" [ref=f6e8074]
+              - cell "0" [ref=f6e8075]
+              - cell "—" [ref=f6e8076]
+              - cell "now" [ref=f6e8077]
+              - cell [ref=f6e8078]:
+                - button [ref=f6e8079]
+            - row [ref=f6e8084] [cursor=pointer]:
+              - cell [ref=f6e8085]:
+                - checkbox [ref=f6e8086]
+              - cell "A Ashraf whatsapp" [ref=f6e8087]:
+                - generic [ref=f6e8088]:
+                  - generic [ref=f6e8089]: A
+                  - generic [ref=f6e8090]:
+                    - generic [ref=f6e8091]: Ashraf
+                    - generic [ref=f6e8092]: whatsapp
+              - cell "+962790286021" [ref=f6e8093]
+              - cell [ref=f6e8094]
+              - cell "lead" [ref=f6e8095]
+              - cell "whatsapp" [ref=f6e8096]
+              - cell "0" [ref=f6e8097]
+              - cell "—" [ref=f6e8098]
+              - cell "now" [ref=f6e8099]
+              - cell [ref=f6e8100]:
+                - button [ref=f6e8101]

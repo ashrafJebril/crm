@@ -1,0 +1,109 @@
+- generic [ref=f17e1214]:
+  - complementary [ref=f17e1215]:
+    - generic [ref=f17e1216]:
+      - generic [ref=f17e1217]: A
+      - generic [ref=f17e1218]:
+        - generic [ref=f17e1219]: Aram.
+        - generic [ref=f17e1220]: v2.4 · MENA
+      - button "Search" [ref=f17e1221] [cursor=pointer]
+    - generic "Switch workspace" [ref=f17e1225] [cursor=pointer]:
+      - generic [ref=f17e1227]:
+        - generic [ref=f17e1228]: Default Workspace
+        - generic [ref=f17e1229]: free · owner
+    - navigation [ref=f17e1233]:
+      - generic [ref=f17e1234]: Workspace
+      - button "Dashboard" [ref=f17e1235] [cursor=pointer]
+      - button "Inbox 7" [ref=f17e1240] [cursor=pointer]:
+        - generic [ref=f17e1245]: Inbox
+        - generic [ref=f17e1246]: "7"
+      - button "Calendar" [ref=f17e1247] [cursor=pointer]
+      - button "Social" [ref=f17e1253] [cursor=pointer]
+      - button "Campaigns" [ref=f17e1259] [cursor=pointer]
+      - button "Pipeline" [ref=f17e1266] [cursor=pointer]
+      - button "Contacts" [ref=f17e1273] [cursor=pointer]
+      - button "Analytics" [ref=f17e1281] [cursor=pointer]
+      - generic [ref=f17e1287]: Manage
+      - button "Templates" [ref=f17e1288] [cursor=pointer]
+      - button "Media" [ref=f17e1293] [cursor=pointer]
+      - button "Team" [ref=f17e1298] [cursor=pointer]
+      - button "Settings" [ref=f17e1304] [cursor=pointer]
+      - generic [ref=f17e1310]: Aram ops
+      - button "Admin portal" [ref=f17e1311] [cursor=pointer]
+    - generic [ref=f17e1316]:
+      - generic [ref=f17e1317]: YK
+      - generic [ref=f17e1318]:
+        - generic [ref=f17e1319]: Yara Khaled
+        - generic [ref=f17e1320]: owner · Default Workspace
+      - button "Notifications" [ref=f17e1321] [cursor=pointer]
+  - main [ref=f17e1325]:
+    - generic [ref=f17e1326]:
+      - generic [ref=f17e1327]:
+        - generic [ref=f17e1328]: Samemha
+        - generic [ref=f17e1329]: /
+        - generic [ref=f17e1330]: Contacts
+      - generic [ref=f17e1331] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f17e1335]
+        - generic [ref=f17e1336]: ⌘K
+      - button "ع" [ref=f17e1337] [cursor=pointer]
+      - button "Toggle theme" [ref=f17e1339] [cursor=pointer]
+      - button "Notifications" [ref=f17e1343] [cursor=pointer]
+      - button "Create" [ref=f17e1347] [cursor=pointer]
+      - button "Default Workspace" [ref=f17e1351] [cursor=pointer]
+      - generic [ref=f17e1355]:
+        - generic [ref=f17e1356]: YK
+        - generic [ref=f17e1357]:
+          - generic [ref=f17e1358]: Yara Khaled
+          - generic [ref=f17e1359]: Owner
+        - button "Sign out" [ref=f17e1360] [cursor=pointer]
+    - generic [ref=f17e1365]:
+      - generic [ref=f17e1367]:
+        - generic [ref=f17e1368]:
+          - heading "Contacts" [level=1] [ref=f17e1369]
+          - paragraph [ref=f17e1370]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=f17e1371]:
+          - generic [ref=f17e1372]:
+            - button "Table" [ref=f17e1373] [cursor=pointer]
+            - button "Pipeline" [ref=f17e1374] [cursor=pointer]
+          - button "New contact" [ref=f17e1375] [cursor=pointer]
+      - generic [ref=f17e1378]:
+        - button "Contacts" [ref=f17e1379] [cursor=pointer]
+        - button "Groups" [active] [ref=f17e1380] [cursor=pointer]
+        - button "Tags" [ref=f17e1381] [cursor=pointer]
+      - generic [ref=f17e2347]:
+        - generic [ref=f17e2348]:
+          - generic [ref=f17e2349]: Your groups · 1
+          - generic [ref=f17e2350]:
+            - button "New group" [ref=f17e2351] [cursor=pointer]
+            - button "New manual 0 contacts" [ref=f17e2355] [cursor=pointer]:
+              - generic [ref=f17e2356]:
+                - generic [ref=f17e2357]: New
+                - generic [ref=f17e2358]: manual
+              - generic [ref=f17e2359]: "0"
+              - generic [ref=f17e2360]: contacts
+        - generic [ref=f17e2361]:
+          - generic [ref=f17e2362]: Smart segments · 4
+          - generic [ref=f17e2363]:
+            - button "All leads smart 42 contacts" [disabled] [ref=f17e2364]:
+              - generic [ref=f17e2365]:
+                - generic [ref=f17e2366]: All leads
+                - generic [ref=f17e2367]: smart
+              - generic [ref=f17e2368]: "42"
+              - generic [ref=f17e2369]: contacts
+            - button "Customers smart 0 contacts" [disabled] [ref=f17e2370]:
+              - generic [ref=f17e2371]:
+                - generic [ref=f17e2372]: Customers
+                - generic [ref=f17e2373]: smart
+              - generic [ref=f17e2374]: "0"
+              - generic [ref=f17e2375]: contacts
+            - button "Has phone smart 3 contacts" [disabled] [ref=f17e2376]:
+              - generic [ref=f17e2377]:
+                - generic [ref=f17e2378]: Has phone
+                - generic [ref=f17e2379]: smart
+              - generic [ref=f17e2380]: "3"
+              - generic [ref=f17e2381]: contacts
+            - button "No phone smart 39 contacts" [disabled] [ref=f17e2382]:
+              - generic [ref=f17e2383]:
+                - generic [ref=f17e2384]: No phone
+                - generic [ref=f17e2385]: smart
+              - generic [ref=f17e2386]: "39"
+              - generic [ref=f17e2387]: contacts

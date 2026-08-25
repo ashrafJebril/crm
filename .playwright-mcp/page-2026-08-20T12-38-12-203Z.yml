@@ -1,0 +1,22 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - generic [ref=e6]: A
+    - generic [ref=e7]:
+      - generic [ref=e8]: Aram.
+      - generic [ref=e9]: AI WhatsApp agents
+  - generic [ref=e10]:
+    - button "Sign in" [ref=e11] [cursor=pointer]
+    - button "Create account" [ref=e12] [cursor=pointer]
+  - heading "Sign in to your workspace" [level=1] [ref=e13]
+  - paragraph [ref=e14]: Welcome back. Use your team credentials.
+  - generic [ref=e15]:
+    - generic [ref=e16]:
+      - generic [ref=e17]: Email
+      - textbox "Email" [active] [ref=e18]: yara@samemha.com
+    - generic [ref=e19]:
+      - generic [ref=e20]: Password
+      - textbox "Password" [ref=e21]: demo1234
+    - generic [ref=e22] [cursor=pointer]:
+      - checkbox "Remember me" [checked] [ref=e23]
+      - text: Remember me
+    - button "Sign in" [ref=e24] [cursor=pointer]

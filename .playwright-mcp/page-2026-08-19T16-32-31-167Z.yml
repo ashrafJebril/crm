@@ -1,0 +1,284 @@
+- generic [ref=f17e1214]:
+  - complementary [ref=f17e1215]:
+    - generic [ref=f17e1216]:
+      - generic [ref=f17e1217]: A
+      - generic [ref=f17e1218]:
+        - generic [ref=f17e1219]: Aram.
+        - generic [ref=f17e1220]: v2.4 · MENA
+      - button "Search" [ref=f17e1221] [cursor=pointer]
+    - generic "Switch workspace" [ref=f17e1225] [cursor=pointer]:
+      - generic [ref=f17e1227]:
+        - generic [ref=f17e1228]: Default Workspace
+        - generic [ref=f17e1229]: free · owner
+    - navigation [ref=f17e1233]:
+      - generic [ref=f17e1234]: Workspace
+      - button "Dashboard" [ref=f17e1235] [cursor=pointer]
+      - button "Inbox 7" [ref=f17e1240] [cursor=pointer]:
+        - generic [ref=f17e1245]: Inbox
+        - generic [ref=f17e1246]: "7"
+      - button "Calendar" [ref=f17e1247] [cursor=pointer]
+      - button "Social" [ref=f17e1253] [cursor=pointer]
+      - button "Campaigns" [ref=f17e1259] [cursor=pointer]
+      - button "Pipeline" [ref=f17e1266] [cursor=pointer]
+      - button "Contacts" [ref=f17e1273] [cursor=pointer]
+      - button "Analytics" [ref=f17e1281] [cursor=pointer]
+      - generic [ref=f17e1287]: Manage
+      - button "Templates" [ref=f17e1288] [cursor=pointer]
+      - button "Media" [ref=f17e1293] [cursor=pointer]
+      - button "Team" [ref=f17e1298] [cursor=pointer]
+      - button "Settings" [ref=f17e1304] [cursor=pointer]
+      - generic [ref=f17e1310]: Aram ops
+      - button "Admin portal" [ref=f17e1311] [cursor=pointer]
+    - generic [ref=f17e1316]:
+      - generic [ref=f17e1317]: YK
+      - generic [ref=f17e1318]:
+        - generic [ref=f17e1319]: Yara Khaled
+        - generic [ref=f17e1320]: owner · Default Workspace
+      - button "Notifications" [ref=f17e1321] [cursor=pointer]
+  - main [ref=f17e1325]:
+    - generic [ref=f17e1326]:
+      - generic [ref=f17e1327]:
+        - generic [ref=f17e1328]: Samemha
+        - generic [ref=f17e1329]: /
+        - generic [ref=f17e1330]: Contacts
+      - generic [ref=f17e1331] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f17e1335]
+        - generic [ref=f17e1336]: ⌘K
+      - button "ع" [ref=f17e1337] [cursor=pointer]
+      - button "Toggle theme" [ref=f17e1339] [cursor=pointer]
+      - button "Notifications" [ref=f17e1343] [cursor=pointer]
+      - button "Create" [ref=f17e1347] [cursor=pointer]
+      - button "Default Workspace" [ref=f17e1351] [cursor=pointer]
+      - generic [ref=f17e1355]:
+        - generic [ref=f17e1356]: YK
+        - generic [ref=f17e1357]:
+          - generic [ref=f17e1358]: Yara Khaled
+          - generic [ref=f17e1359]: Owner
+        - button "Sign out" [ref=f17e1360] [cursor=pointer]
+    - generic [ref=f17e1365]:
+      - generic [ref=f17e1367]:
+        - generic [ref=f17e1368]:
+          - heading "Contacts" [level=1] [ref=f17e1369]
+          - paragraph [ref=f17e1370]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=f17e1371]:
+          - generic [ref=f17e1372]:
+            - button "Table" [ref=f17e1373] [cursor=pointer]
+            - button "Pipeline" [ref=f17e1374] [cursor=pointer]
+          - button "New contact" [ref=f17e1375] [cursor=pointer]
+      - generic [ref=f17e1378]:
+        - button "Contacts" [ref=f17e1379] [cursor=pointer]
+        - button "Groups" [ref=f17e1380] [cursor=pointer]
+        - button "Tags" [ref=f17e1381] [cursor=pointer]
+      - generic [ref=f17e2347]:
+        - generic [ref=f17e2348]:
+          - generic [ref=f17e2349]: Your groups · 1
+          - generic [ref=f17e2350]:
+            - button "New group" [ref=f17e2351] [cursor=pointer]
+            - button "New manual 0 contacts" [ref=f17e2355] [cursor=pointer]:
+              - generic [ref=f17e2356]:
+                - generic [ref=f17e2357]: New
+                - generic [ref=f17e2358]: manual
+              - generic [ref=f17e2359]: "0"
+              - generic [ref=f17e2360]: contacts
+        - generic [ref=f17e2361]:
+          - generic [ref=f17e2362]: Smart segments · 4
+          - generic [ref=f17e2363]:
+            - button "All leads smart 42 contacts" [disabled] [ref=f17e2364]:
+              - generic [ref=f17e2365]:
+                - generic [ref=f17e2366]: All leads
+                - generic [ref=f17e2367]: smart
+              - generic [ref=f17e2368]: "42"
+              - generic [ref=f17e2369]: contacts
+            - button "Customers smart 0 contacts" [disabled] [ref=f17e2370]:
+              - generic [ref=f17e2371]:
+                - generic [ref=f17e2372]: Customers
+                - generic [ref=f17e2373]: smart
+              - generic [ref=f17e2374]: "0"
+              - generic [ref=f17e2375]: contacts
+            - button "Has phone smart 3 contacts" [disabled] [ref=f17e2376]:
+              - generic [ref=f17e2377]:
+                - generic [ref=f17e2378]: Has phone
+                - generic [ref=f17e2379]: smart
+              - generic [ref=f17e2380]: "3"
+              - generic [ref=f17e2381]: contacts
+            - button "No phone smart 39 contacts" [disabled] [ref=f17e2382]:
+              - generic [ref=f17e2383]:
+                - generic [ref=f17e2384]: No phone
+                - generic [ref=f17e2385]: smart
+              - generic [ref=f17e2386]: "39"
+              - generic [ref=f17e2387]: contacts
+        - dialog "Group members" [active] [ref=f17e2388]:
+          - heading "New · 0 members" [level=3] [ref=f17e2389]:
+            - text: New
+            - generic [ref=f17e2390]: · 0 members
+          - textbox "Search contacts…" [ref=f17e2391]
+          - generic [ref=f17e2392]:
+            - generic [ref=f17e2645]: loading…
+            - generic [ref=f17e2393]:
+              - generic [ref=f17e2394]: Instagram User
+              - generic [ref=f17e2395]: instagram
+              - button "Add" [ref=f17e2396] [cursor=pointer]
+            - generic [ref=f17e2399]:
+              - generic [ref=f17e2400]: مـنال
+              - generic [ref=f17e2401]: instagram
+              - button "Add" [ref=f17e2402] [cursor=pointer]
+            - generic [ref=f17e2405]:
+              - generic [ref=f17e2406]: Feras Balawi 🤗
+              - generic [ref=f17e2407]: "+962799828287"
+              - button "Add" [ref=f17e2408] [cursor=pointer]
+            - generic [ref=f17e2411]:
+              - generic [ref=f17e2412]: njoudaldabain
+              - generic [ref=f17e2413]: instagram
+              - button "Add" [ref=f17e2414] [cursor=pointer]
+            - generic [ref=f17e2417]:
+              - generic [ref=f17e2418]: intisarjawawdeh
+              - generic [ref=f17e2419]: instagram
+              - button "Add" [ref=f17e2420] [cursor=pointer]
+            - generic [ref=f17e2423]:
+              - generic [ref=f17e2424]: salamalqudah
+              - generic [ref=f17e2425]: instagram
+              - button "Add" [ref=f17e2426] [cursor=pointer]
+            - generic [ref=f17e2429]:
+              - generic [ref=f17e2430]: wejdanalabbadi
+              - generic [ref=f17e2431]: instagram
+              - button "Add" [ref=f17e2432] [cursor=pointer]
+            - generic [ref=f17e2435]:
+              - generic [ref=f17e2436]: mayshijazi
+              - generic [ref=f17e2437]: instagram
+              - button "Add" [ref=f17e2438] [cursor=pointer]
+            - generic [ref=f17e2441]:
+              - generic [ref=f17e2442]: muna.hijazeen3
+              - generic [ref=f17e2443]: instagram
+              - button "Add" [ref=f17e2444] [cursor=pointer]
+            - generic [ref=f17e2447]:
+              - generic [ref=f17e2448]: fifi.manasrah
+              - generic [ref=f17e2449]: instagram
+              - button "Add" [ref=f17e2450] [cursor=pointer]
+            - generic [ref=f17e2453]:
+              - generic [ref=f17e2454]: malak_mloook
+              - generic [ref=f17e2455]: instagram
+              - button "Add" [ref=f17e2456] [cursor=pointer]
+            - generic [ref=f17e2459]:
+              - generic [ref=f17e2460]: daadaladwan
+              - generic [ref=f17e2461]: instagram
+              - button "Add" [ref=f17e2462] [cursor=pointer]
+            - generic [ref=f17e2465]:
+              - generic [ref=f17e2466]: makhamrehjumana
+              - generic [ref=f17e2467]: instagram
+              - button "Add" [ref=f17e2468] [cursor=pointer]
+            - generic [ref=f17e2471]:
+              - generic [ref=f17e2472]: motasemamleh
+              - generic [ref=f17e2473]: instagram
+              - button "Add" [ref=f17e2474] [cursor=pointer]
+            - generic [ref=f17e2477]:
+              - generic [ref=f17e2478]: hamzeh.duridi
+              - generic [ref=f17e2479]: instagram
+              - button "Add" [ref=f17e2480] [cursor=pointer]
+            - generic [ref=f17e2483]:
+              - generic [ref=f17e2484]: yazan.barjawi
+              - generic [ref=f17e2485]: instagram
+              - button "Add" [ref=f17e2486] [cursor=pointer]
+            - generic [ref=f17e2489]:
+              - generic [ref=f17e2490]: albustanjihuda
+              - generic [ref=f17e2491]: instagram
+              - button "Add" [ref=f17e2492] [cursor=pointer]
+            - generic [ref=f17e2495]:
+              - generic [ref=f17e2496]: a.b.abood_
+              - generic [ref=f17e2497]: instagram
+              - button "Add" [ref=f17e2498] [cursor=pointer]
+            - generic [ref=f17e2501]:
+              - generic [ref=f17e2502]: raad_amira28
+              - generic [ref=f17e2503]: instagram
+              - button "Add" [ref=f17e2504] [cursor=pointer]
+            - generic [ref=f17e2507]:
+              - generic [ref=f17e2508]: 0o0.d0
+              - generic [ref=f17e2509]: instagram
+              - button "Add" [ref=f17e2510] [cursor=pointer]
+            - generic [ref=f17e2513]:
+              - generic [ref=f17e2514]: __areej_16
+              - generic [ref=f17e2515]: instagram
+              - button "Add" [ref=f17e2516] [cursor=pointer]
+            - generic [ref=f17e2519]:
+              - generic [ref=f17e2520]: 6.inr_
+              - generic [ref=f17e2521]: instagram
+              - button "Add" [ref=f17e2522] [cursor=pointer]
+            - generic [ref=f17e2525]:
+              - generic [ref=f17e2526]: rama__alomari
+              - generic [ref=f17e2527]: instagram
+              - button "Add" [ref=f17e2528] [cursor=pointer]
+            - generic [ref=f17e2531]:
+              - generic [ref=f17e2532]: aya.eid2.22
+              - generic [ref=f17e2533]: instagram
+              - button "Add" [ref=f17e2534] [cursor=pointer]
+            - generic [ref=f17e2537]:
+              - generic [ref=f17e2538]: besan.kwaik
+              - generic [ref=f17e2539]: instagram
+              - button "Add" [ref=f17e2540] [cursor=pointer]
+            - generic [ref=f17e2543]:
+              - generic [ref=f17e2544]: purplestardustt
+              - generic [ref=f17e2545]: instagram
+              - button "Add" [ref=f17e2546] [cursor=pointer]
+            - generic [ref=f17e2549]:
+              - generic [ref=f17e2550]: natalieomarii
+              - generic [ref=f17e2551]: instagram
+              - button "Add" [ref=f17e2552] [cursor=pointer]
+            - generic [ref=f17e2555]:
+              - generic [ref=f17e2556]: razanshteiwi
+              - generic [ref=f17e2557]: instagram
+              - button "Add" [ref=f17e2558] [cursor=pointer]
+            - generic [ref=f17e2561]:
+              - generic [ref=f17e2562]: amalnaseraltum
+              - generic [ref=f17e2563]: instagram
+              - button "Add" [ref=f17e2564] [cursor=pointer]
+            - generic [ref=f17e2567]:
+              - generic [ref=f17e2568]: Razan
+              - generic [ref=f17e2569]: "+962792917293"
+              - button "Add" [ref=f17e2570] [cursor=pointer]
+            - generic [ref=f17e2573]:
+              - generic [ref=f17e2574]: 𝑶𝒎𝒂𝒓_𝑨𝒍-𝑹𝒂𝒘𝒂𝒔𝒉𝒅𝒆𝒉
+              - generic [ref=f17e2575]: instagram
+              - button "Add" [ref=f17e2576] [cursor=pointer]
+            - generic [ref=f17e2579]:
+              - generic [ref=f17e2580]: Ellen
+              - generic [ref=f17e2581]: instagram
+              - button "Add" [ref=f17e2582] [cursor=pointer]
+            - generic [ref=f17e2585]:
+              - generic [ref=f17e2586]: Ammar Alamleh
+              - generic [ref=f17e2587]: facebook
+              - button "Add" [ref=f17e2588] [cursor=pointer]
+            - generic [ref=f17e2591]:
+              - generic [ref=f17e2592]: يحيى المشاقبه
+              - generic [ref=f17e2593]: facebook
+              - button "Add" [ref=f17e2594] [cursor=pointer]
+            - generic [ref=f17e2597]:
+              - generic [ref=f17e2598]: Yazan Al Talb
+              - generic [ref=f17e2599]: facebook
+              - button "Add" [ref=f17e2600] [cursor=pointer]
+            - generic [ref=f17e2603]:
+              - generic [ref=f17e2604]: Abdalrhman Ghazaleh
+              - generic [ref=f17e2605]: facebook
+              - button "Add" [ref=f17e2606] [cursor=pointer]
+            - generic [ref=f17e2609]:
+              - generic [ref=f17e2610]: Maram Mizher
+              - generic [ref=f17e2611]: facebook
+              - button "Add" [ref=f17e2612] [cursor=pointer]
+            - generic [ref=f17e2615]:
+              - generic [ref=f17e2616]: Lina Hussein Mubarak
+              - generic [ref=f17e2617]: facebook
+              - button "Add" [ref=f17e2618] [cursor=pointer]
+            - generic [ref=f17e2621]:
+              - generic [ref=f17e2622]: Ashraf Jibreel
+              - generic [ref=f17e2623]: facebook
+              - button "Add" [ref=f17e2624] [cursor=pointer]
+            - generic [ref=f17e2627]:
+              - generic [ref=f17e2628]: ashrafjib
+              - generic [ref=f17e2629]: instagram
+              - button "Add" [ref=f17e2630] [cursor=pointer]
+            - generic [ref=f17e2633]:
+              - generic [ref=f17e2634]: سالم ابو كرم الجبارات
+              - generic [ref=f17e2635]: facebook
+              - button "Add" [ref=f17e2636] [cursor=pointer]
+            - generic [ref=f17e2639]:
+              - generic [ref=f17e2640]: Ashraf
+              - generic [ref=f17e2641]: "+962790286021"
+              - button "Add" [ref=f17e2642] [cursor=pointer]

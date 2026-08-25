@@ -1,0 +1,351 @@
+- generic [ref=f5e22]:
+  - complementary [ref=f5e23]:
+    - generic [ref=f5e24]:
+      - img "Kewy Marketing" [ref=f5e25]
+      - button "Search" [ref=f5e26] [cursor=pointer]
+    - generic "Switch workspace" [ref=f5e30] [cursor=pointer]:
+      - generic [ref=f5e32]:
+        - generic [ref=f5e33]: Default Workspace
+        - generic [ref=f5e34]: free · owner
+    - navigation [ref=f5e38]:
+      - generic [ref=f5e39]: Workspace
+      - button "Dashboard" [ref=f5e40] [cursor=pointer]
+      - button "Inbox 7" [ref=f5e792] [cursor=pointer]:
+        - generic [ref=f5e50]: Inbox
+        - generic [ref=f5e793]: "7"
+      - button "Calendar" [ref=f5e51] [cursor=pointer]
+      - button "Social" [ref=f5e57] [cursor=pointer]
+      - button "Campaigns" [ref=f5e63] [cursor=pointer]
+      - button "Ads Assistant" [ref=f5e70] [cursor=pointer]
+      - button "Pipeline" [ref=f5e76] [cursor=pointer]
+      - button "Contacts" [ref=f5e83] [cursor=pointer]
+      - button "Analytics" [ref=f5e91] [cursor=pointer]
+      - generic [ref=f5e97]: Manage
+      - button "Templates" [ref=f5e98] [cursor=pointer]
+      - button "Media" [ref=f5e103] [cursor=pointer]
+      - button "Team" [ref=f5e108] [cursor=pointer]
+      - button "Settings" [ref=f5e114] [cursor=pointer]
+      - generic [ref=f5e120]: Kewy ops
+      - button "Admin portal" [ref=f5e121] [cursor=pointer]
+    - generic [ref=f5e126]:
+      - generic [ref=f5e127]: YK
+      - generic [ref=f5e128]:
+        - generic [ref=f5e129]: Yara Khaled
+        - generic [ref=f5e130]: owner · Default Workspace
+      - button "Notifications" [ref=f5e131] [cursor=pointer]
+  - main [ref=f5e135]:
+    - generic [ref=f5e136]:
+      - generic [ref=f5e137]:
+        - generic [ref=f5e138]: Samemha
+        - generic [ref=f5e139]: /
+        - generic [ref=f5e140]: Ads Assistant
+      - generic [ref=f5e141] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f5e145]
+        - generic [ref=f5e146]: ⌘K
+      - button "ع" [ref=f5e147] [cursor=pointer]
+      - button "Toggle theme" [ref=f5e149] [cursor=pointer]
+      - button "Notifications" [ref=f5e153] [cursor=pointer]
+      - button "Create" [ref=f5e157] [cursor=pointer]
+      - button "Default Workspace" [ref=f5e161] [cursor=pointer]
+      - generic [ref=f5e165]:
+        - generic [ref=f5e166]: YK
+        - generic [ref=f5e167]:
+          - generic [ref=f5e168]: Yara Khaled
+          - generic [ref=f5e169]: Owner
+        - button "Sign out" [ref=f5e170] [cursor=pointer]
+    - generic [ref=f5e175]:
+      - generic [ref=f5e178]:
+        - heading "Ads Assistant" [level=1] [ref=f5e179]
+        - paragraph [ref=f5e180]: Ask about your ad campaigns' performance and get instant analysis based on your real data.
+      - generic [ref=f5e182]:
+        - generic [ref=f5e183]: Meta
+        - generic "Google — Soon — other platforms are coming." [ref=f5e189]: Google
+        - generic "TikTok — Soon — other platforms are coming." [ref=f5e200]: TikTok
+        - generic "Snapchat — Soon — other platforms are coming." [ref=f5e208]: Snapchat
+        - generic "Google Analytics — Soon — other platforms are coming." [ref=f5e216]: Google Analytics
+      - generic [ref=f5e226]:
+        - generic [ref=f5e227]:
+          - generic [ref=f5e795]:
+            - generic [ref=f5e796]: How did my campaigns perform last month?
+            - generic [ref=f5e797]: 19:45
+          - generic [ref=f5e798]:
+            - generic [ref=f5e799]: Internal server error
+            - button "Retry" [ref=f5e800] [cursor=pointer]
+          - generic [ref=f5e236]:
+            - textbox "Type your question here…" [ref=f5e237]
+            - button "Send" [disabled] [ref=f5e238]
+        - generic [ref=f5e239]:
+          - generic [ref=f5e240]: Connected to Meta account
+          - generic [ref=f5e243]:
+            - generic [ref=f5e244]:
+              - generic [ref=f5e245]: Prompt Library
+              - generic [ref=f5e249]: 38 prompts
+            - generic [ref=f5e250]:
+              - button "All" [ref=f5e251] [cursor=pointer]
+              - button "Analysis" [ref=f5e252] [cursor=pointer]
+              - button "Optimization" [ref=f5e253] [cursor=pointer]
+              - button "Audience" [ref=f5e254] [cursor=pointer]
+              - button "Creative" [ref=f5e255] [cursor=pointer]
+              - button "Create" [ref=f5e256] [cursor=pointer]
+              - button "Bulk Ops" [ref=f5e257] [cursor=pointer]
+              - button "Trends" [ref=f5e258] [cursor=pointer]
+            - textbox "Search prompts…" [ref=f5e263]
+            - generic [ref=f5e264]:
+              - generic [ref=f5e265]:
+                - generic [ref=f5e266]:
+                  - generic [ref=f5e267]: Top & Bottom Performers
+                  - generic [ref=f5e269]: Your best and worst 5 ads by cost per conversation, and why
+                - generic [ref=f5e270]:
+                  - button "Copy prompt" [ref=f5e271] [cursor=pointer]
+                  - button "Run" [ref=f5e275] [cursor=pointer]
+              - generic [ref=f5e278]:
+                - generic [ref=f5e279]:
+                  - generic [ref=f5e280]: Campaign Audit
+                  - generic [ref=f5e282]: Which campaigns overspend for weak results, ranked by efficiency
+                - generic [ref=f5e283]:
+                  - button "Copy prompt" [ref=f5e284] [cursor=pointer]
+                  - button "Run" [ref=f5e288] [cursor=pointer]
+              - generic [ref=f5e291]:
+                - generic [ref=f5e292]:
+                  - generic [ref=f5e293]: Weekly Performance Summary
+                  - generic [ref=f5e295]: This week vs last week at a glance, with the big changes flagged
+                - generic [ref=f5e296]:
+                  - button "Copy prompt" [ref=f5e297] [cursor=pointer]
+                  - button "Run" [ref=f5e301] [cursor=pointer]
+              - generic [ref=f5e304]:
+                - generic [ref=f5e305]:
+                  - generic [ref=f5e306]: Cost per Result Breakdown
+                  - generic [ref=f5e308]: What a conversation costs per campaign, cheapest to priciest
+                - generic [ref=f5e309]:
+                  - button "Copy prompt" [ref=f5e310] [cursor=pointer]
+                  - button "Run" [ref=f5e314] [cursor=pointer]
+              - generic [ref=f5e317]:
+                - generic [ref=f5e318]:
+                  - generic [ref=f5e319]: Efficiency Deep Dive
+                  - generic [ref=f5e321]: Every campaign vs your account average, plus savings from pausing
+                - generic [ref=f5e322]:
+                  - button "Copy prompt" [ref=f5e323] [cursor=pointer]
+                  - button "Run" [ref=f5e327] [cursor=pointer]
+              - generic [ref=f5e330]:
+                - generic [ref=f5e331]:
+                  - generic [ref=f5e332]: Daily Performance Snapshot
+                  - generic [ref=f5e334]: Today vs yesterday at a glance, with anything unusual flagged
+                - generic [ref=f5e335]:
+                  - button "Copy prompt" [ref=f5e336] [cursor=pointer]
+                  - button "Run" [ref=f5e340] [cursor=pointer]
+              - generic [ref=f5e343]:
+                - generic [ref=f5e344]:
+                  - generic [ref=f5e345]: Monthly Performance Report
+                  - generic [ref=f5e347]: "A full month report: totals, best/worst campaigns, and next steps"
+                - generic [ref=f5e348]:
+                  - button "Copy prompt" [ref=f5e349] [cursor=pointer]
+                  - button "Run" [ref=f5e353] [cursor=pointer]
+              - generic [ref=f5e356]:
+                - generic [ref=f5e357]:
+                  - generic [ref=f5e358]: Budget Optimization
+                  - generic [ref=f5e360]: How to shift spend across campaigns to get more conversations
+                - generic [ref=f5e361]:
+                  - button "Copy prompt" [ref=f5e362] [cursor=pointer]
+                  - button "Run" [ref=f5e366] [cursor=pointer]
+              - generic [ref=f5e369]:
+                - generic [ref=f5e370]:
+                  - generic [ref=f5e371]: Fix Underperforming Ads
+                  - generic [ref=f5e373]: Your weak ads and whether to pause, refresh, retarget, or rebudget
+                - generic [ref=f5e374]:
+                  - button "Copy prompt" [ref=f5e375] [cursor=pointer]
+                  - button "Run" [ref=f5e379] [cursor=pointer]
+              - generic [ref=f5e382]:
+                - generic [ref=f5e383]:
+                  - generic [ref=f5e384]: Scaling Strategy
+                  - generic [ref=f5e386]: Which campaigns are ready to scale, and by how much
+                - generic [ref=f5e387]:
+                  - button "Copy prompt" [ref=f5e388] [cursor=pointer]
+                  - button "Run" [ref=f5e392] [cursor=pointer]
+              - generic [ref=f5e395]:
+                - generic [ref=f5e396]:
+                  - generic [ref=f5e397]: A/B Test Analysis
+                  - generic [ref=f5e399]: Compare ads within each ad set — which win, which to cut
+                - generic [ref=f5e400]:
+                  - button "Copy prompt" [ref=f5e401] [cursor=pointer]
+                  - button "Run" [ref=f5e405] [cursor=pointer]
+              - generic [ref=f5e408]:
+                - generic [ref=f5e409]:
+                  - generic [ref=f5e410]: What to Pause
+                  - generic [ref=f5e412]: Which campaigns to pause now, and what you'd save this month
+                - generic [ref=f5e413]:
+                  - button "Copy prompt" [ref=f5e414] [cursor=pointer]
+                  - button "Run" [ref=f5e418] [cursor=pointer]
+              - generic [ref=f5e421]:
+                - generic [ref=f5e422]:
+                  - generic [ref=f5e423]: Quick Wins
+                  - generic [ref=f5e425]: 3–5 quick changes to lower your cost per conversation now
+                - generic [ref=f5e426]:
+                  - button "Copy prompt" [ref=f5e427] [cursor=pointer]
+                  - button "Run" [ref=f5e431] [cursor=pointer]
+              - generic [ref=f5e435]:
+                - generic [ref=f5e436]:
+                  - generic [ref=f5e437]: Learning Phase Check
+                  - generic [ref=f5e438]: Soon
+                - generic [ref=f5e442]: Which ad sets are still in the learning phase, and how they're doing
+              - generic [ref=f5e448]:
+                - generic [ref=f5e449]:
+                  - generic [ref=f5e450]: Audience Performance
+                  - generic [ref=f5e452]: Cost per conversation by audience type — custom, lookalike, broad
+                - generic [ref=f5e453]:
+                  - button "Copy prompt" [ref=f5e454] [cursor=pointer]
+                  - button "Run" [ref=f5e458] [cursor=pointer]
+              - generic [ref=f5e461]:
+                - generic [ref=f5e462]:
+                  - generic [ref=f5e463]: Demographic Insights
+                  - generic [ref=f5e465]: Which ages, genders, and places give your cheapest conversations
+                - generic [ref=f5e466]:
+                  - button "Copy prompt" [ref=f5e467] [cursor=pointer]
+                  - button "Run" [ref=f5e471] [cursor=pointer]
+              - generic [ref=f5e475]:
+                - generic [ref=f5e476]:
+                  - generic [ref=f5e477]: Lookalike Recommendations
+                  - generic [ref=f5e478]: Soon
+                - generic [ref=f5e482]: Which lookalike audiences to create, and the best seeds for them
+              - generic [ref=f5e488]:
+                - generic [ref=f5e489]:
+                  - generic [ref=f5e490]: Placement Performance
+                  - generic [ref=f5e492]: Which placements convert best — Feed, Stories, Reels, Messenger
+                - generic [ref=f5e493]:
+                  - button "Copy prompt" [ref=f5e494] [cursor=pointer]
+                  - button "Run" [ref=f5e498] [cursor=pointer]
+              - generic [ref=f5e501]:
+                - generic [ref=f5e502]:
+                  - generic [ref=f5e503]: Device Performance
+                  - generic [ref=f5e505]: How mobile compares to desktop, and whether to shift budget
+                - generic [ref=f5e506]:
+                  - button "Copy prompt" [ref=f5e507] [cursor=pointer]
+                  - button "Run" [ref=f5e511] [cursor=pointer]
+              - generic [ref=f5e514]:
+                - generic [ref=f5e515]:
+                  - generic [ref=f5e516]: Creative Performance
+                  - generic [ref=f5e518]: Which images and videos perform best, and what they share
+                - generic [ref=f5e519]:
+                  - button "Copy prompt" [ref=f5e520] [cursor=pointer]
+                  - button "Run" [ref=f5e524] [cursor=pointer]
+              - generic [ref=f5e527]:
+                - generic [ref=f5e528]:
+                  - generic [ref=f5e529]: Ad Copy Analysis
+                  - generic [ref=f5e531]: Which headlines and messages drive the most conversations
+                - generic [ref=f5e532]:
+                  - button "Copy prompt" [ref=f5e533] [cursor=pointer]
+                  - button "Run" [ref=f5e537] [cursor=pointer]
+              - generic [ref=f5e540]:
+                - generic [ref=f5e541]:
+                  - generic [ref=f5e542]: Ad Fatigue Detection
+                  - generic [ref=f5e544]: Which ads are wearing out and need a creative refresh
+                - generic [ref=f5e545]:
+                  - button "Copy prompt" [ref=f5e546] [cursor=pointer]
+                  - button "Run" [ref=f5e550] [cursor=pointer]
+              - generic [ref=f5e554]:
+                - generic [ref=f5e555]:
+                  - generic [ref=f5e556]: Video vs Image Ads
+                  - generic [ref=f5e557]: Soon
+                - generic [ref=f5e561]: How your video ads compare to image ads on cost per conversation
+              - generic [ref=f5e568]:
+                - generic [ref=f5e569]:
+                  - generic [ref=f5e570]: Creative Format Comparison
+                  - generic [ref=f5e571]: Soon
+                - generic [ref=f5e575]: Which format works best — single image, video, carousel, collection
+              - generic [ref=f5e582]:
+                - generic [ref=f5e583]:
+                  - generic [ref=f5e584]: Creative Testing Status
+                  - generic [ref=f5e585]: Soon
+                - generic [ref=f5e589]: Which creative tests are winning, and what to test next
+              - generic [ref=f5e595]:
+                - generic [ref=f5e596]:
+                  - generic [ref=f5e597]: New Campaign Setup
+                  - generic [ref=f5e599]: Set up a new conversation campaign — created paused for approval
+                - generic [ref=f5e600]:
+                  - button "Copy prompt" [ref=f5e601] [cursor=pointer]
+                  - button "Run" [ref=f5e605] [cursor=pointer]
+              - generic [ref=f5e609]:
+                - generic [ref=f5e610]:
+                  - generic [ref=f5e611]: Carousel Ad Creation
+                  - generic [ref=f5e612]: Soon
+                - generic [ref=f5e616]: Build a carousel ad with suggested headlines and descriptions
+              - generic [ref=f5e623]:
+                - generic [ref=f5e624]:
+                  - generic [ref=f5e625]: Retargeting Campaign
+                  - generic [ref=f5e626]: Soon
+                - generic [ref=f5e630]: Re-reach people who engaged but didn't book yet
+              - generic [ref=f5e637]:
+                - generic [ref=f5e638]:
+                  - generic [ref=f5e639]: Lead Generation Campaign
+                  - generic [ref=f5e640]: Soon
+                - generic [ref=f5e644]: Create a lead-gen campaign with form fields and targeting
+              - generic [ref=f5e650]:
+                - generic [ref=f5e651]:
+                  - generic [ref=f5e652]: Brand Awareness Campaign
+                  - generic [ref=f5e654]: Reach new audiences and measure success by reach and frequency
+                - generic [ref=f5e655]:
+                  - button "Copy prompt" [ref=f5e656] [cursor=pointer]
+                  - button "Run" [ref=f5e660] [cursor=pointer]
+              - generic [ref=f5e663]:
+                - generic [ref=f5e664]:
+                  - generic [ref=f5e665]: Bulk Pause Underperformers
+                  - generic [ref=f5e667]: Pause every weak ad at once — shown for your confirmation first
+                - generic [ref=f5e668]:
+                  - button "Copy prompt" [ref=f5e669] [cursor=pointer]
+                  - button "Run" [ref=f5e673] [cursor=pointer]
+              - generic [ref=f5e677]:
+                - generic [ref=f5e678]:
+                  - generic [ref=f5e679]: Bulk Budget Increase
+                  - generic [ref=f5e680]: Soon
+                - generic [ref=f5e684]: Raise budgets on your efficient campaigns — after you confirm
+              - generic [ref=f5e690]:
+                - generic [ref=f5e691]:
+                  - generic [ref=f5e692]: Bulk Activate Ads
+                  - generic [ref=f5e694]: Reactivate paused ads with strong CTR — after you confirm
+                - generic [ref=f5e695]:
+                  - button "Copy prompt" [ref=f5e696] [cursor=pointer]
+                  - button "Run" [ref=f5e700] [cursor=pointer]
+              - generic [ref=f5e704]:
+                - generic [ref=f5e705]:
+                  - generic [ref=f5e706]: Bulk Creative Swap
+                  - generic [ref=f5e707]: Soon
+                - generic [ref=f5e711]: Swap the creative across a whole ad set — nothing changes until you confirm
+              - generic [ref=f5e717]:
+                - generic [ref=f5e718]:
+                  - generic [ref=f5e719]: Weekly Trend Analysis
+                  - generic [ref=f5e721]: Day-by-day performance over the last 14 days, with patterns
+                - generic [ref=f5e722]:
+                  - button "Copy prompt" [ref=f5e723] [cursor=pointer]
+                  - button "Run" [ref=f5e727] [cursor=pointer]
+              - generic [ref=f5e730]:
+                - generic [ref=f5e731]:
+                  - generic [ref=f5e732]: Day of Week Analysis
+                  - generic [ref=f5e734]: Which days of the week give you the best results
+                - generic [ref=f5e735]:
+                  - button "Copy prompt" [ref=f5e736] [cursor=pointer]
+                  - button "Run" [ref=f5e740] [cursor=pointer]
+              - generic [ref=f5e743]:
+                - generic [ref=f5e744]:
+                  - generic [ref=f5e745]: Time of Day Performance
+                  - generic [ref=f5e747]: Which hours of the day bring your best conversations
+                - generic [ref=f5e748]:
+                  - button "Copy prompt" [ref=f5e749] [cursor=pointer]
+                  - button "Run" [ref=f5e753] [cursor=pointer]
+              - generic [ref=f5e756]:
+                - generic [ref=f5e757]:
+                  - generic [ref=f5e758]: Month-over-Month Comparison
+                  - generic [ref=f5e760]: This month vs last across spend, conversations, cost, and CTR
+                - generic [ref=f5e761]:
+                  - button "Copy prompt" [ref=f5e762] [cursor=pointer]
+                  - button "Run" [ref=f5e766] [cursor=pointer]
+          - generic [ref=f5e769]:
+            - generic [ref=f5e770]: Tips for Better Results
+            - generic [ref=f5e771]:
+              - generic [ref=f5e772]:
+                - generic [ref=f5e778]: Be specific
+                - generic [ref=f5e779]: Name the campaign, the date range, or the exact metric you care about — the more specific your question, the sharper the answer.
+              - generic [ref=f5e780]:
+                - generic [ref=f5e784]: Ask follow-ups
+                - generic [ref=f5e785]: After you get an answer, dig deeper — ask 'why' to understand what's driving the numbers.
+              - generic [ref=f5e786]:
+                - generic [ref=f5e790]: Ask what to do
+                - generic [ref=f5e791]: Don't stop at analysis — ask 'what should I do?'. When actions unlock, campaigns are created paused and wait for your explicit activation.

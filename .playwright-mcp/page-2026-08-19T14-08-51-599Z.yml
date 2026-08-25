@@ -1,0 +1,119 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "Dashboard" [ref=f6e24] [cursor=pointer]
+      - button "Inbox 7" [ref=f6e29] [cursor=pointer]:
+        - generic [ref=f6e34]: Inbox
+        - generic [ref=f6e35]: "7"
+      - button "Calendar" [ref=f6e36] [cursor=pointer]
+      - button "Social" [ref=f6e42] [cursor=pointer]
+      - button "Campaigns" [ref=f6e48] [cursor=pointer]
+      - button "Pipeline" [ref=f6e55] [cursor=pointer]
+      - button "Contacts" [ref=f6e62] [cursor=pointer]
+      - button "Analytics" [ref=f6e70] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "Templates" [ref=f6e77] [cursor=pointer]
+      - button "Media" [ref=f6e82] [cursor=pointer]
+      - button "Team" [ref=f6e87] [cursor=pointer]
+      - button "Settings" [ref=f6e93] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "Admin portal" [ref=f6e100] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: Campaigns
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f6e124]
+        - generic [ref=f6e125]: ⌘K
+      - button "ع" [ref=f6e126] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "Notifications" [ref=f6e132] [cursor=pointer]
+      - button "Create" [ref=f6e136] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "Sign out" [ref=f6e149] [cursor=pointer]
+    - generic [ref=f6e2748]:
+      - generic [ref=f6e2749]:
+        - button [ref=f6e2750] [cursor=pointer]
+        - textbox "Campaign name" [ref=f6e2754]
+      - generic [ref=f6e2755]:
+        - button "01 Audience" [ref=f6e2756] [cursor=pointer]:
+          - generic [ref=f6e2757]: "01"
+          - generic [ref=f6e2758]: Audience
+        - generic [ref=f6e2759]: —
+        - button "02 Message" [ref=f6e2760] [cursor=pointer]:
+          - generic [ref=f6e2761]: "02"
+          - generic [ref=f6e2762]: Message
+        - generic [ref=f6e2763]: —
+        - button "03 Schedule" [ref=f6e2764] [cursor=pointer]:
+          - generic [ref=f6e2765]: "03"
+          - generic [ref=f6e2766]: Schedule
+        - generic [ref=f6e2767]: —
+        - button "04 Review" [ref=f6e2768] [cursor=pointer]:
+          - generic [ref=f6e2769]: "04"
+          - generic [ref=f6e2770]: Review
+      - generic [ref=f6e2771]:
+        - generic [ref=f6e2772]:
+          - generic [ref=f6e2773]:
+            - generic [ref=f6e2774]:
+              - heading "Audience" [level=3] [ref=f6e2775]
+              - generic [ref=f6e2776]: 42 contacts match
+            - generic [ref=f6e2777]:
+              - generic [ref=f6e2778] [cursor=pointer]:
+                - radio "All contacts" [checked] [ref=f6e2779]
+                - generic [ref=f6e2780]: All contacts
+              - generic [ref=f6e2781] [cursor=pointer]:
+                - radio "All leads 42" [ref=f6e2782]
+                - generic [ref=f6e2783]: All leads
+                - generic [ref=f6e2784]: "42"
+              - generic [ref=f6e2785] [cursor=pointer]:
+                - radio "Customers 0" [ref=f6e2786]
+                - generic [ref=f6e2787]: Customers
+                - generic [ref=f6e2788]: "0"
+              - generic [ref=f6e2789] [cursor=pointer]:
+                - radio "Has phone 3" [ref=f6e2790]
+                - generic [ref=f6e2791]: Has phone
+                - generic [ref=f6e2792]: "3"
+              - generic [ref=f6e2793] [cursor=pointer]:
+                - radio "No phone 39" [ref=f6e2794]
+                - generic [ref=f6e2795]: No phone
+                - generic [ref=f6e2796]: "39"
+              - generic [ref=f6e2797] [cursor=pointer]:
+                - radio "عملاء الجملة 2" [ref=f6e2798]
+                - generic [ref=f6e2799]: عملاء الجملة
+                - generic [ref=f6e2800]: "2"
+          - generic [ref=f6e2801]:
+            - button "Back" [disabled] [ref=f6e2802]
+            - button "Continue" [ref=f6e2803] [cursor=pointer]
+        - generic [ref=f6e2806]:
+          - generic [ref=f6e2807]: Live preview
+          - generic [ref=f6e2808]:
+            - generic [ref=f6e2810]:
+              - generic [ref=f6e2811]: Samemha
+              - generic [ref=f6e2812]: ● online
+            - generic [ref=f6e2820]:
+              - text: Select a template to preview it.
+              - generic [ref=f6e2821]: 10:00 ✓
