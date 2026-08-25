@@ -37,6 +37,11 @@ model User {
   // so the same hjz user upserts to the same row across logins.
   externalId String? @unique
 
+  // Kewy workspace federation — the Kewy Account id this user mirrors. Set on
+  // users provisioned or SSO-exchanged through the Kewy control panel.
+  // Distinct from externalId above, which belongs to the hjz bridge.
+  kewyAccountId String? @unique
+
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
 
@@ -463,6 +468,16 @@ model Workspace {
   // are untouched.
   externalTenantId String? @unique
 
+  // Kewy workspace federation — the id of the Kewy Workspace (the customer's
+  // organization in the Kewy control panel) that owns this workspace. Kewy
+  // sends it at provision time and on SSO handoff, so either side can resolve
+  // the other without a lookup service.
+  //
+  // DISTINCT FROM externalTenantId ABOVE ON PURPOSE. That one holds an *hjz*
+  // tenant id for the hjz SSO bridge. Reusing it here would silently fuse hjz
+  // tenants with Kewy workspaces. Do not "consolidate" these two fields.
+  kewyWorkspaceId String? @unique
+
   // JOTECK admin — module flag list ("inbox", "campaigns", …). NULL = all
   // modules enabled (backwards compatible). When set, route guards consult
   // this and 403 modules outside the list.
@@ -538,4 +553,20 @@ model Media {
 
   @@index([workspaceId])
   @@index([uploadedById])
+}
+
+// ─── Kewy SSO ─────────────────────────────────────────────────────────────
+
+model SsoNonce {
+  // Single-use guard for Kewy handoff tokens. The `jti` of every accepted
+  // token is inserted here inside the exchange transaction; a unique-constraint
+  // violation means the token is being replayed.
+  //
+  // Deliberately a table and not an in-memory set: this API runs multiple
+  // instances on Fly, so a per-process cache would let a replay through on any
+  // machine that had not seen the token.
+  jti       String   @id
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }
