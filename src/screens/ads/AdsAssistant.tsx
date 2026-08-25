@@ -38,8 +38,15 @@ const JOD = new Intl.NumberFormat("en-JO", {
   maximumFractionDigits: 3,
 });
 
-const HHMM = (iso: string): string =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+// Follows the UI language, the way Calendar's fmtTime does — but appends the
+// BCP-47 `-u-nu-latn` extension to the Arabic locale, which keeps Arabic's clock
+// conventions (including the ص/م meridiem) while forcing Latin 0-9 digits, as
+// every other formatter in the app does.
+const HHMM = (iso: string, lang: "en" | "ar"): string =>
+  new Date(iso).toLocaleTimeString(lang === "ar" ? "ar-EG-u-nu-latn" : "en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 /** Session id storage key, namespaced per (workspace, user) so one login's
  *  stored thread can never surface under another on a shared device. */
@@ -119,6 +126,11 @@ function AdsAssistantImpl() {
     if (restore.data) {
       setThread(restore.data.messages);
       setPendingActions(restore.data.pendingActions);
+      // A restore that failed once can still succeed later on its own — React
+      // Query refetches this key on window focus — so clear the failure flag
+      // here too. Without it the recovered thread would render underneath a
+      // stale "couldn't restore" screen with the composer still locked.
+      setRestoreFailed(false);
       setRehydrated(true);
       return;
     }
@@ -273,7 +285,7 @@ function AdsAssistantImpl() {
         toast(
           tx(
             "Only a workspace owner or admin can approve or reject ads actions.",
-            "الموافقة على إجراءات الإعلانات أو رفضها متاح لمالك مساحة العمل أو المشرف فقط.",
+            "الموافقة على إجراءات الإعلانات أو رفضها متاحة لمالك مساحة العمل أو المشرف فقط.",
           ),
           "error",
         );
@@ -374,14 +386,15 @@ function AdsAssistantImpl() {
                   className="btn sm"
                   onClick={() => {
                     setRestoreFailed(false);
-                    // Reset first: it clears the cached error in the same tick,
-                    // so the effect above can't re-process the STALE failure
-                    // before the new request has flipped `loading` on and snap
-                    // us straight back to this screen. refetch() then guarantees
-                    // a request even if nothing else re-subscribes (React Query
-                    // de-dupes if reset already started one).
+                    // resetQueries is the whole retry: it clears the cached
+                    // error in the same tick — so the effect above can't
+                    // re-process the STALE failure before the new request has
+                    // flipped `loading` on and snap us back to this screen —
+                    // and it refetches active observers, which this query has.
+                    // Chaining refetch() after it would only cancel that fetch
+                    // (refetch defaults to cancelRefetch: true) and start a
+                    // second GET.
                     if (restorePath) void qc.resetQueries({ queryKey: [restorePath], exact: true });
-                    restore.refetch();
                   }}
                 >
                   {tx("Retry", "إعادة المحاولة")}
@@ -405,7 +418,12 @@ function AdsAssistantImpl() {
             ) : (
               <>
                 {thread.map((m) => (
-                  <ChatBubble key={m.id} role={m.role} text={m.content} time={HHMM(m.createdAt)} />
+                  <ChatBubble
+                    key={m.id}
+                    role={m.role}
+                    text={m.content}
+                    time={HHMM(m.createdAt, t.lang)}
+                  />
                 ))}
                 {pendingActions.map((p) => (
                   <ActionCard
@@ -423,7 +441,7 @@ function AdsAssistantImpl() {
                   <ChatBubble
                     role="user"
                     text={pending}
-                    time={HHMM(new Date().toISOString())}
+                    time={HHMM(new Date().toISOString(), t.lang)}
                     muted
                   />
                 )}
