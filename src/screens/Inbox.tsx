@@ -36,6 +36,7 @@ import {
   type TicketsListPage,
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
+import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
@@ -1104,7 +1105,11 @@ function InboxList({
 }
 
 function Bubble({ m }: BubbleProps) {
-  const isOut = m.from === "human";
+  // 'ai' is outbound too: it is the salon speaking, just not a person. Treating
+  // only 'human' as outbound put AI replies on the customer's side of the
+  // thread, which reads as though the customer said it.
+  const isAi = m.from === "ai";
+  const isOut = m.from === "human" || isAi;
   const { user } = useAuth();
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
@@ -1139,8 +1144,36 @@ function Bubble({ m }: BubbleProps) {
               justifyContent: "flex-end",
             }}
           >
-            <Avatar name={humanName} color={humanColor} size="sm" />
-            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-2)" }}>{humanName}</span>
+            {isAi ? (
+              <>
+                {/* Staff must be able to tell at a glance who spoke. An AI reply
+                    that looks like a colleague's is how a wrong answer gets
+                    trusted. The 'shadow' agent suffix is set by the CRM when
+                    the draft was logged but never delivered. */}
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "var(--ink-2)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span aria-hidden>🤖</span>
+                  {m.agent?.includes("shadow")
+                    ? tx("AI (draft — not sent)", "الذكاء الاصطناعي (مسودة — لم تُرسل)")
+                    : tx("AI", "الذكاء الاصطناعي")}
+                </span>
+              </>
+            ) : (
+              <>
+                <Avatar name={humanName} color={humanColor} size="sm" />
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-2)" }}>
+                  {humanName}
+                </span>
+              </>
+            )}
           </div>
         )}
         <div
@@ -1149,7 +1182,13 @@ function Bubble({ m }: BubbleProps) {
             padding: "11px 15px",
             borderRadius: isOut ? "18px 18px 6px 18px" : "18px 18px 18px 6px",
             background: isOut ? "var(--bubble-out)" : "var(--bubble-in)",
-            border: `1px solid ${isOut ? "var(--bubble-out-line)" : "var(--bubble-in-line)"}`,
+            // A shadow draft is dashed: it is visible to staff but was never
+            // delivered, and nothing in the thread should imply the customer
+            // saw it.
+            border: m.agent?.includes("shadow")
+              ? "1px dashed var(--bubble-out-line)"
+              : `1px solid ${isOut ? "var(--bubble-out-line)" : "var(--bubble-in-line)"}`,
+            opacity: m.agent?.includes("shadow") ? 0.75 : 1,
             boxShadow: "var(--ix-shadow)",
             color: isOut ? "var(--bubble-out-ink)" : "var(--ink)",
             fontSize: 13.5,
@@ -1344,6 +1383,12 @@ function ConversationPane({
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
+          <ConversationAiToggle
+            conversationId={conv.id}
+            enabled={conv.aiEnabled ?? false}
+            pausedAt={conv.aiPausedAt ?? null}
+            lang={lang}
+          />
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
