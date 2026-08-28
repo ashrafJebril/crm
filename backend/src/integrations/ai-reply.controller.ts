@@ -61,6 +61,8 @@ export class AiReplyController {
       stageGroupKey?: string;
       /** Agent's own confidence in that stage, 0..1. */
       stageConfidence?: number;
+      /** Why the agent chose that stage — written into the ticket history. */
+      stageReason?: string;
       /** Set when the agent decided a human must take over. */
       escalate?: boolean;
       escalateReason?: string;
@@ -147,6 +149,21 @@ export class AiReplyController {
     // this, only a human answer moved new -> contacted, so an AI-served lead
     // would have sat in New forever.
     await this.pipelineAutomation.onOutboundReply(workspaceId, conv.contactId);
+
+    // Then apply whatever stage the agent actually inferred from the
+    // conversation (quoted, payment, fulfill…). Runs AFTER onOutboundReply so
+    // the baseline new -> contacted move is never skipped when the suggestion
+    // is rejected for low confidence. The service enforces forward-only,
+    // the confidence floor, and never auto-closing won/lost.
+    if (dto.stageGroupKey) {
+      await this.pipelineAutomation.onAiStageSuggestion(
+        workspaceId,
+        conv.contactId,
+        dto.stageGroupKey,
+        dto.stageConfidence ?? 0,
+        dto.stageReason,
+      );
+    }
 
     return { delivered: true };
   }

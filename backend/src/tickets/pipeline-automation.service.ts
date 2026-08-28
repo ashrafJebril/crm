@@ -50,6 +50,95 @@ export class PipelineAutomationService {
     return null;
   }
 
+  /**
+   * Advance a ticket to the stage the AI inferred from the conversation.
+   *
+   * FOUR RULES, all deliberate:
+   *
+   * 1. FORWARD ONLY. The agent may advance a ticket, never drag it back. A
+   *    confused customer message must not be able to undo a real sale, and a
+   *    board that reorders itself behind staff is worse than no automation.
+   *
+   * 2. CONFIDENCE FLOOR. Below the threshold the suggestion is logged and
+   *    dropped. A few bad auto-moves destroy trust in the board faster than
+   *    having no automation at all.
+   *
+   * 3. NEVER auto-close. isTerminal / isWon stages stay human-only: won and
+   *    lost are money outcomes and need a person.
+   *
+   * 4. Resolved by groupKey, never by label — matching the rest of this
+   *    service, so renaming a stage in the UI cannot break automation.
+   */
+  async onAiStageSuggestion(
+    workspaceId: string,
+    contactId: string,
+    groupKey: string,
+    confidence: number,
+    reason?: string,
+  ): Promise<void> {
+    const MIN_CONFIDENCE = 0.7;
+    try {
+      if (!Number.isFinite(confidence) || confidence < MIN_CONFIDENCE) {
+        this.log.log(
+          `ai stage '${groupKey}' for contact=${contactId} ignored: confidence ${confidence} < ${MIN_CONFIDENCE}`,
+        );
+        return;
+      }
+
+      const ticket = await this.prisma.ticket.findFirst({
+        where: { workspaceId, contactId, stage: { isTerminal: false } },
+        include: { stage: true },
+        orderBy: { createdAt: "desc" },
+      });
+      if (!ticket) return;
+
+      const target = await this.prisma.ticketStage.findFirst({
+        where: { workspaceId, pipelineId: ticket.pipelineId, groupKey },
+        orderBy: { order: "asc" },
+      });
+      if (!target) {
+        this.log.warn(
+          `ai suggested stage group '${groupKey}' but pipeline=${ticket.pipelineId} has no such stage`,
+        );
+        return;
+      }
+
+      if (target.isTerminal || target.isWon) {
+        this.log.log(`ai stage '${groupKey}' ignored: won/lost stays a human decision`);
+        return;
+      }
+      if (target.order <= ticket.stage.order) {
+        this.log.log(
+          `ai stage '${groupKey}' ignored: would move ticket=${ticket.id} backwards or sideways`,
+        );
+        return;
+      }
+
+      await this.prisma.$transaction([
+        this.prisma.ticket.update({
+          where: { id: ticket.id },
+          data: { stageId: target.id },
+        }),
+        // byUserId stays null — the board history must show this was not a
+        // person, and the reason makes the move auditable after the fact.
+        this.prisma.ticketActivity.create({
+          data: {
+            workspaceId,
+            ticketId: ticket.id,
+            kind: "stage_changed",
+            fromStage: ticket.stage.key,
+            toStage: target.key,
+            note: `moved by AI (${Math.round(confidence * 100)}%)${reason ? `: ${reason}` : ""}`,
+          },
+        }),
+      ]);
+    } catch (e) {
+      // Same discipline as the rest of this service: pipeline automation must
+      // never break the message path that triggered it.
+      this.log.warn(`ai stage move for contact=${contactId} failed: ${(e as Error).message}`);
+    }
+  }
+
   /** Inbound customer message: open a ticket in 'new' if none is open. */
   async onInboundMessage(
     workspaceId: string,
