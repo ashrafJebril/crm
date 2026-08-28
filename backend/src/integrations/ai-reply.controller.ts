@@ -88,7 +88,7 @@ export class AiReplyController {
 
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
-      select: { id: true, contactId: true, aiEnabled: true, aiPausedAt: true },
+      select: { id: true, contactId: true, aiEnabled: true, aiPausedAt: true, channel: true },
     });
     if (!conv) throw new BadRequestException("Conversation not found");
 
@@ -139,6 +139,48 @@ export class AiReplyController {
         shadow: true,
       });
       return { delivered: false, reason: "shadow_mode", logged: true };
+    }
+
+    // Re-check the 24-hour window at SEND time, not at receive time.
+    //
+    // The bridge tells kewy-ai the window is open when the customer messages
+    // us, which is true at that instant. But an agent turn takes 5-20s, a
+    // queued turn can be delayed, and a retried turn can land much later —
+    // by then the window may have shut. Meta then rejects the send, and
+    // without this check the reply is simply lost: the customer sees silence
+    // and staff see a message in the thread that never arrived.
+    //
+    // Storing it as an undelivered AI draft keeps the thread honest — the
+    // text is there for a human to send as a template — and hands the
+    // decision to a person instead of failing invisibly.
+    const lastInbound = await this.prisma.message.findFirst({
+      where: { conversationId: conv.id, from: "them" },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const windowOpen = lastInbound
+      ? Date.now() - lastInbound.createdAt.getTime() < WA_WINDOW_MS
+      : false;
+
+    if (conv.channel === "whatsapp" && !windowOpen) {
+      const now = new Date();
+      await this.prisma.message.create({
+        data: {
+          workspaceId,
+          conversationId: conv.id,
+          from: "ai",
+          body,
+          t: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+          agent: "kewy-ai (window closed — not sent)",
+        },
+      });
+      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+        channel: "whatsapp",
+        conversationId: conv.id,
+        windowClosed: true,
+      });
+      return { delivered: false, reason: "window_closed", logged: true };
     }
 
     // Live delivery reuses the human send path verbatim, so media handling,
