@@ -93,6 +93,15 @@ model Conversation {
   intent     String
   confidence Float
   escalated  Boolean  @default(false)
+
+  /// Kewy AI — per-thread opt-in. OFF by default on purpose: enabling the AI
+  /// for a workspace must never silently start answering existing threads.
+  aiEnabled  Boolean   @default(false)
+  /// Set when a human sends into an AI-handled thread. The agent backs off
+  /// while this is present so staff and the bot can't talk over each other;
+  /// clearing it hands the thread back to the AI.
+  aiPausedAt DateTime?
+
   // Provider-side conversation id (currently Zernio's). Lets replies address
   // the provider conversation directly instead of re-listing every send.
   externalId String?

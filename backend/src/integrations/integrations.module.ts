@@ -12,6 +12,8 @@ import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
+import { AiBridgeService } from "./ai-bridge.service";
+import { AiReplyController } from "./ai-reply.controller";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
@@ -27,6 +29,9 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioController,
     MetaWebhooksController,
     HjzWebhooksController,
+    // Inert until KEWY_AI_URL + KEWY_AI_WEBHOOK_SECRET are set: without them
+    // AiBridgeService reports unconfigured and every signature check fails.
+    AiReplyController,
   ],
   providers: [
     FacebookService,
@@ -36,7 +41,8 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioClient,
     MetaWebhooksService,
     HjzWebhooksService,
+    AiBridgeService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService],
+  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, AiBridgeService],
 })
 export class IntegrationsModule {}
