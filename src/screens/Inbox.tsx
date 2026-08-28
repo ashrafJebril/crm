@@ -2022,6 +2022,21 @@ function WhatsAppTemplatePicker({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, sending, onClose]);
 
+  // Live preview of what the customer will see, with variables substituted.
+  //
+  // MUST stay ABOVE the `if (!open)` early return below. It used to sit further
+  // down next to the render, so a closed picker ran 20 hooks and an open one ran
+  // 21 — React threw "Rendered more hooks than during the previous render" and
+  // tore down the whole Inbox the moment you clicked Use template.
+  const preview = useMemo(() => {
+    if (!selected?.body) return "";
+    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
+      const i = parseInt(idx, 10) - 1;
+      const v = vars[i]?.trim();
+      return v || `{{${idx}}}`;
+    });
+  }, [selected, vars]);
+
   if (!open) return null;
 
   const canSend =
@@ -2046,15 +2061,6 @@ function WhatsAppTemplatePicker({
     }
   };
 
-  // Live preview of what the customer will see, with variables substituted.
-  const preview = useMemo(() => {
-    if (!selected?.body) return "";
-    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
-      const i = parseInt(idx, 10) - 1;
-      const v = vars[i]?.trim();
-      return v || `{{${idx}}}`;
-    });
-  }, [selected, vars]);
 
   return (
     <Modal
