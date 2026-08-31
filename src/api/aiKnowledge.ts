@@ -67,3 +67,49 @@ export function deleteDoc(id: string): Promise<{ ok: true; id: string }> {
 export function resyncFromHjz(): Promise<SyncResult> {
   return api.post<SyncResult>("/ai/knowledge/sync");
 }
+
+/* ─── The assistant's on/off switch ─────────────────────────────────────── */
+
+/**
+ * Three separate things, deliberately not conflated:
+ *
+ *  - `aiEnabled` is the emergency stop. Off means the agent is never invoked:
+ *    no model call, no cost. Inbound customer messages are STILL saved so a
+ *    human can answer — turning the AI off never loses a message.
+ *  - `autonomyMode` is whether the reply is SENT. SHADOW still runs the model
+ *    and still costs money; it writes a draft into the thread. AUTONOMOUS
+ *    delivers to the customer.
+ *  - Conversation.aiEnabled (the per-thread toggle in the Inbox) is a different
+ *    switch entirely and is not touched from here.
+ */
+export const AUTONOMY_MODES = ["SHADOW", "AUTONOMOUS"] as const;
+export type AutonomyMode = (typeof AUTONOMY_MODES)[number];
+
+/** Upstream's cap on the disable reason. */
+export const REASON_MAX = 500;
+
+export interface AiSettings {
+  /** Effective state — the backend already folds in an operator kill switch. */
+  aiEnabled: boolean;
+  autonomyMode: AutonomyMode;
+  personaName: string;
+  locale: string;
+  dailyCostCapJod: number | null;
+  configured: boolean;
+}
+
+export interface ToggleResult {
+  aiEnabled: boolean;
+  /** False when it was already in that state — nothing actually changed. */
+  changed: boolean;
+  reason?: string;
+}
+
+/** `reason` is REQUIRED when turning it off; the backend 400s without one. */
+export function setAiEnabled(enabled: boolean, reason?: string): Promise<ToggleResult> {
+  return api.post<ToggleResult>("/ai/settings/toggle", { enabled, ...(reason ? { reason } : {}) });
+}
+
+export function setAutonomyMode(autonomyMode: AutonomyMode): Promise<AiSettings> {
+  return api.patch<AiSettings>("/ai/settings", { autonomyMode });
+}

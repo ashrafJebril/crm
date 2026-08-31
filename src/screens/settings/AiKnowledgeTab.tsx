@@ -5,16 +5,23 @@ import { useAuth } from "@/auth/context";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
+  AUTONOMY_MODES,
   BODY_MAX,
   KNOWLEDGE_KINDS,
+  REASON_MAX,
   TITLE_MAX,
   deleteDoc,
   resyncFromHjz,
   saveDoc,
+  setAiEnabled,
+  setAutonomyMode,
   type AiKnowledgeDoc,
+  type AiSettings,
+  type AutonomyMode,
   type KnowledgeKind,
   type SaveDocResult,
   type SyncResult,
+  type ToggleResult,
 } from "@/api/aiKnowledge";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 
@@ -210,6 +217,8 @@ export function AiKnowledgeTab() {
 
   return (
     <>
+      {!draft && <AiAssistantCard tx={tx} canEdit={canEdit} showStatus={showStatus} />}
+
       {draft ? (
         <DraftEditor
           tx={tx}
@@ -328,6 +337,251 @@ export function AiKnowledgeTab() {
 
       <StatusToast message={status} />
     </>
+  );
+}
+
+/* ─── The assistant's on/off switch ──────────────────────────────────────────
+ *
+ * The owner's real question on opening this tab is "is my bot talking to my
+ * customers right now?", and until this card existed the only answer was in a
+ * database. Two independent controls, kept visibly separate because conflating
+ * them is the expensive mistake:
+ *
+ *   ON/OFF  — the emergency stop. Off = the agent never runs, nothing is spent.
+ *   DELIVERY — sent automatically, or written as a draft for review. Drafting
+ *              still runs the model and still costs money.
+ *
+ * The OFF copy leads with "messages still arrive", because the fear that stops
+ * an owner from ever touching this switch is losing a customer while it's off.
+ */
+function AiAssistantCard({
+  tx,
+  canEdit,
+  showStatus,
+}: {
+  tx: Tx;
+  canEdit: boolean;
+  showStatus: (msg: string) => void;
+}) {
+  const settingsQ = useFetch<AiSettings>("/ai/settings");
+  const s = settingsQ.data;
+
+  // Open only while turning OFF: the reason is what upstream demands, and it is
+  // the record of why the bot was silenced. Turning it back on needs nothing.
+  const [reason, setReason] = useState<string | null>(null);
+
+  const toggleMut = useMutation<{ enabled: boolean; reason?: string }, ToggleResult>((i) =>
+    setAiEnabled(i.enabled, i.reason),
+  );
+  const modeMut = useMutation<AutonomyMode, AiSettings>((m) => setAutonomyMode(m));
+
+  const onTurnOff = async () => {
+    const text = (reason ?? "").trim();
+    if (!text) return;
+    await toggleMut.mutate({ enabled: false, reason: text });
+    setReason(null);
+    settingsQ.refetch();
+    showStatus(
+      tx(
+        "The assistant is off. Messages still reach your team.",
+        "المساعد صار مطفي. الرسائل بتوصل لفريقك عادي.",
+      ),
+    );
+  };
+
+  const onTurnOn = async () => {
+    await toggleMut.mutate({ enabled: true });
+    settingsQ.refetch();
+    showStatus(tx("The assistant is answering again.", "المساعد رجع يرد."));
+  };
+
+  const onChangeMode = async (mode: AutonomyMode) => {
+    if (!s || mode === s.autonomyMode) return;
+    await modeMut.mutate(mode);
+    settingsQ.refetch();
+    showStatus(
+      mode === "AUTONOMOUS"
+        ? tx("Replies now go out automatically.", "صار بيبعت الردود تلقائياً.")
+        : tx("The assistant will write drafts for review.", "صار بيكتب مسودات لتراجعها."),
+    );
+  };
+
+  if (!s) {
+    return (
+      <SettingsCard title={tx("AI assistant", "المساعد الذكي")}>
+        {settingsQ.error ? (
+          <ErrorRow message={settingsQ.error} />
+        ) : (
+          <div className="mono muted pulse" style={{ fontSize: 12 }}>
+            {tx("loading…", "جارٍ التحميل…")}
+          </div>
+        )}
+      </SettingsCard>
+    );
+  }
+
+  const busy = toggleMut.loading || modeMut.loading;
+  const on = s.aiEnabled;
+  const drafting = s.autonomyMode === "SHADOW";
+
+  // One sentence, no jargon: what is happening to a customer messaging RIGHT NOW.
+  const statusLine = !on
+    ? tx(
+        "Not answering. Messages still arrive for your team.",
+        "ما بيرد. الرسائل بتوصل لفريقك عادي.",
+      )
+    : drafting
+      ? tx("Writing drafts only — nothing is sent.", "بيكتب مسودات بس — ما بينبعت شي.")
+      : tx("Answering customers on WhatsApp", "عم يرد على العملاء بواتساب");
+
+  return (
+    <SettingsCard
+      title={tx("AI assistant", "المساعد الذكي")}
+      description={
+        s.personaName
+          ? tx(`Your assistant is called ${s.personaName}.`, `اسم مساعدتك ${s.personaName}.`)
+          : undefined
+      }
+      footer={
+        canEdit ? (
+          on ? (
+            // Not a switch that flips instantly: turning it off is the one
+            // action here with a customer-visible consequence, so it opens the
+            // reason box and commits only after that is filled in.
+            reason === null ? (
+              <button type="button" className="btn ghost" onClick={() => setReason("")} disabled={busy}>
+                {tx("Turn off", "طفّيه")}
+              </button>
+            ) : null
+          ) : (
+            <button type="button" className="btn primary" onClick={onTurnOn} disabled={busy}>
+              {busy ? tx("Turning on…", "جارٍ التشغيل…") : tx("Turn on", "شغّله")}
+            </button>
+          )
+        ) : null
+      }
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "12px 14px",
+          background: "var(--bg-2)",
+          borderRadius: 10,
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 9,
+            height: 9,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: !on ? "var(--ink-3)" : drafting ? "var(--warn)" : "var(--ok)",
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>{statusLine}</div>
+          {!on && (
+            <div className="muted" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.6 }}>
+              {tx(
+                "Nothing is lost while it's off — every message still lands in your inbox.",
+                "ما بيضيع إشي وهو مطفي — كل رسالة بتوصل لصندوق الوارد.",
+              )}
+            </div>
+          )}
+        </div>
+        <Badge kind={!on ? "" : drafting ? "warn" : "ok"}>
+          {on ? tx("On", "شغّال") : tx("Off", "مطفي")}
+        </Badge>
+      </div>
+
+      {/* The reason box, only while turning off. */}
+      {canEdit && on && reason !== null && (
+        <div style={{ display: "grid", gap: 8 }}>
+          <Field
+            label={tx("Why are you turning it off?", "ليش عم تطفيه؟")}
+            hint={tx(
+              "This is the record of why the assistant was silenced — whoever finds it off later will know whether to turn it back on.",
+              "هذا سجل ليش انطفى المساعد — اللي بيلاقيه مطفي بعدين بيعرف إذا لازم يرجّعه.",
+            )}
+          >
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={tx("Giving wrong prices", "عم يعطي أسعار غلط")}
+              maxLength={REASON_MAX}
+              autoFocus
+              style={inputStyle}
+            />
+          </Field>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setReason(null)}
+              disabled={busy}
+            >
+              {tx("Cancel", "إلغاء")}
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={onTurnOff}
+              disabled={busy || reason.trim().length === 0}
+              style={{ background: "var(--bad)", borderColor: "var(--bad)" }}
+            >
+              {busy ? tx("Turning off…", "جارٍ الإطفاء…") : tx("Turn off", "طفّيه")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery mode. Shown while off too — so the owner can see what will
+          happen when they turn it back on — but only actionable while on. */}
+      <Field
+        label={tx("When a customer messages", "لما يبعت الزبون رسالة")}
+        hint={
+          drafting
+            ? tx(
+                "Drafts appear in the conversation for someone to send. The assistant still reads and thinks about every message.",
+                "المسودات بتظهر بالمحادثة وحدا من فريقك بيبعتها. المساعد بيضل يقرأ ويفكر بكل رسالة.",
+              )
+            : tx(
+                "The assistant replies on its own, without waiting for anyone.",
+                "المساعد بيرد لحاله، بدون ما يستنى حدا.",
+              )
+        }
+      >
+        <select
+          value={s.autonomyMode}
+          onChange={(e) => void onChangeMode(e.target.value as AutonomyMode)}
+          disabled={!canEdit || busy || !on}
+          style={{ ...inputStyle, opacity: canEdit && on ? 1 : 0.6 }}
+        >
+          {AUTONOMY_MODES.map((m) => (
+            <option key={m} value={m}>
+              {m === "AUTONOMOUS"
+                ? tx("Send replies automatically", "ابعت الردود تلقائياً")
+                : tx("Write drafts for review", "اكتب مسودات للمراجعة")}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {!canEdit && (
+        <div className="muted" style={{ fontSize: 11 }}>
+          {tx(
+            "Only an owner or admin can turn the assistant on or off.",
+            "بس صاحب الحساب أو الأدمن بيقدر يشغّل أو يطفي المساعد.",
+          )}
+        </div>
+      )}
+
+      <ErrorRow message={toggleMut.error ?? modeMut.error} />
+    </SettingsCard>
   );
 }
 
