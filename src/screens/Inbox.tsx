@@ -2115,8 +2115,8 @@ function WhatsAppTemplatePicker({
             ) : items.length === 0 ? (
               <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
                 {tx(
-                  "No approved templates yet.",
-                  "لا توجد قوالب معتمدة بعد.",
+                  "No Meta-approved templates yet. Create one on the Templates screen — Meta has to approve it before it can be sent.",
+                  "لا توجد قوالب معتمدة من Meta بعد. أنشئ قالبًا من شاشة القوالب — يجب أن تعتمده Meta قبل الإرسال.",
                 )}
               </div>
             ) : (
@@ -3000,6 +3000,26 @@ function InboxImpl() {
     ),
   );
 
+  // WhatsApp template over the Zernio transport. Zernio carries templates on
+  // the same endpoint as free text, so this mirrors sendZernioDbMessage — and
+  // is the path that actually works while WhatsApp is connected via Zernio
+  // (the Meta path below has no token for a provider="zernio" row).
+  const sendZernioDbTemplate = useMutation<
+    {
+      conversationId: string;
+      name: string;
+      language: string;
+      variables: string[];
+    },
+    { ok: true; id?: string | null }
+  >((input) =>
+    api.post(`/integrations/zernio/db-conversations/${input.conversationId}/send-template`, {
+      name: input.name,
+      language: input.language,
+      variables: input.variables,
+    }),
+  );
+
   const addPending = (convId: string, body: string) => {
     const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const at = Date.now();
@@ -3015,6 +3035,17 @@ function InboxImpl() {
         return { ...prev, [convId]: list };
       });
     }, 15000);
+  };
+
+  /**
+   * Does Zernio own this conversation's channel? Both the text and the
+   * template send need the same answer — the template path 404'd for months
+   * because only handleSend asked the question.
+   */
+  const zernioOwnsConvChannel = (convId: string): boolean => {
+    const conv = (convsQ.data ?? []).find((c) => c.id === convId);
+    if (!conv) return false;
+    return (zernioStatusQ.data?.accounts ?? []).some((a) => a.platform === conv.channel);
   };
 
   const handleSend = async (body: string, mediaId?: string): Promise<void> => {
@@ -3040,9 +3071,7 @@ function InboxImpl() {
     // through Zernio — the legacy Meta services no longer hold a usable token
     // for them, since Zernio's sync replaced those Integration rows.
     const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
-    const zernioOwnsChannel = (zernioStatusQ.data?.accounts ?? []).some(
-      (a) => a.platform === conv?.channel,
-    );
+    const zernioOwnsChannel = zernioOwnsConvChannel(activeId);
     // DB-backed sends round-trip Zernio + the remote DB (~2s) — show the
     // bubble immediately, same as the live-thread paths above.
     if (conv && body) addPending(activeId, body);
@@ -3244,12 +3273,24 @@ function InboxImpl() {
           onSend={handleSend}
           onSendTemplate={async (name, language, variables) => {
             if (!activeId) return;
-            await sendWaTemplate.mutate({
-              conversationId: activeId,
-              name,
-              language,
-              variables,
-            });
+            // Same transport routing as handleSend: Zernio-owned WhatsApp goes
+            // through Zernio, which carries templates on its normal send
+            // endpoint. Only a direct Meta connection uses the Cloud API path.
+            if (zernioOwnsConvChannel(activeId)) {
+              await sendZernioDbTemplate.mutate({
+                conversationId: activeId,
+                name,
+                language,
+                variables,
+              });
+            } else {
+              await sendWaTemplate.mutate({
+                conversationId: activeId,
+                name,
+                language,
+                variables,
+              });
+            }
             // messageVersion bump refetches the thread via the new queryKey.
             setMessageVersion((n) => n + 1);
             convsQ.refetch();
@@ -3261,7 +3302,8 @@ function InboxImpl() {
             sendIgLiveMessage.loading ||
             sendZernioDbMessage.loading ||
             sendWaMessage.loading ||
-            sendWaTemplate.loading
+            sendWaTemplate.loading ||
+            sendZernioDbTemplate.loading
           }
           sendError={
             sendMessage.error ??
@@ -3270,7 +3312,8 @@ function InboxImpl() {
             sendIgLiveMessage.error ??
             sendZernioDbMessage.error ??
             sendWaMessage.error ??
-            sendWaTemplate.error
+            sendWaTemplate.error ??
+            sendZernioDbTemplate.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
           messagesLoading={

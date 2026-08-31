@@ -1,3 +1,4 @@
+import { AiBridgeService } from "./ai-bridge.service";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -57,7 +58,8 @@ describe("ZernioService comment ownership guard", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
   });
 
   it("throws NotFoundException when accountId belongs to another workspace", async () => {
@@ -156,7 +158,8 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
   });
 
   it("fetches real comments only for posts with commentCount > 0, and maps genuine fields", async () => {
@@ -269,7 +272,8 @@ describe("ZernioService.commentOnPost", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
   });
 
   it("rejects an accountId from another workspace", async () => {

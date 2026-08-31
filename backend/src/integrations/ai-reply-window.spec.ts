@@ -1,3 +1,4 @@
+import { ZernioService } from "./zernio.service";
 import { AiReplyController } from "./ai-reply.controller";
 import * as crypto from "node:crypto";
 
@@ -46,7 +47,14 @@ describe("AiReplyController — 24h window re-check", () => {
     const realtime = { emitToWorkspace: jest.fn() } as any;
     const pipeline = { onOutboundReply: jest.fn(), onAiStageSuggestion: jest.fn() } as any;
     const bridge = { verifyInboundSignature: jest.fn(() => true) } as any;
-    const ctrl = new AiReplyController(prisma, whatsapp, bridge, realtime, pipeline);
+    const ctrl = new AiReplyController(
+      prisma,
+      whatsapp,
+      bridge,
+      realtime,
+      pipeline,
+      { sendInDbConversation: jest.fn() } as unknown as ZernioService,
+    );
     return { ctrl, created, sent, whatsapp };
   }
 

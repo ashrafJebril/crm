@@ -14,6 +14,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { WhatsAppService } from "./whatsapp.service";
 import { AiBridgeService } from "./ai-bridge.service";
+import { ZernioService } from "./zernio.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 
 /**
@@ -35,6 +36,7 @@ export class AiReplyController {
     private readonly bridge: AiBridgeService,
     private readonly realtime: RealtimeService,
     private readonly pipelineAutomation: PipelineAutomationService,
+    private readonly zernio: ZernioService,
   ) {}
 
   /**
@@ -185,7 +187,21 @@ export class AiReplyController {
 
     // Live delivery reuses the human send path verbatim, so media handling,
     // wamid capture and delivery-status tracking all behave identically.
-    await this.whatsapp.sendInConversation(workspaceId, conv.id, body);
+    //
+    // Which path depends on the TRANSPORT, not the channel: WhatsApp runs on
+    // Zernio here, and whatsapp.sendInConversation requires a Meta access token
+    // this workspace does not have — it threw "WhatsApp is not connected" 404
+    // and every AI reply was written to the DB but never delivered. Pick the
+    // provider the thread's integration actually uses.
+    const waIntegration = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "whatsapp" },
+      select: { provider: true },
+    });
+    if (waIntegration?.provider === "zernio") {
+      await this.zernio.sendInDbConversation(workspaceId, conv.id, body);
+    } else {
+      await this.whatsapp.sendInConversation(workspaceId, conv.id, body);
+    }
 
     // An AI reply advances the pipeline exactly as a human reply does. Before
     // this, only a human answer moved new -> contacted, so an AI-served lead

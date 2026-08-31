@@ -86,12 +86,18 @@ async function main() {
   // No mock conversations or appointments either.  Real conversations come
   // through the Facebook/Instagram/etc. integrations; appointments are user-created.
 
-  // Templates
+  // Templates — demo rows, deliberately status "local".
+  //
+  // These used to be seeded as "approved", which made them indistinguishable
+  // from real Meta-approved templates in a workspace that HAS a live WhatsApp
+  // connection. The Templates screen advertised them as sendable and every
+  // send failed, because Meta had never seen them. "local" is the honest
+  // status: stored here, not approved by Meta, not sendable.
   const tpls = [
-    { name: "order_confirmed_v2", lang: "en", category: "TRANSACTIONAL", status: "approved", uses: 4812 },
-    { name: "appointment_24h",    lang: "en", category: "UTILITY",       status: "approved", uses: 1304 },
-    { name: "abandoned_cart_24h", lang: "en", category: "MARKETING",     status: "approved", uses: 412 },
-    { name: "tahdid_eid_promo",   lang: "ar", category: "MARKETING",     status: "pending",  uses: 0 },
+    { name: "order_confirmed_v2", lang: "en", category: "TRANSACTIONAL", status: "local",    uses: 4812 },
+    { name: "appointment_24h",    lang: "en", category: "UTILITY",       status: "local",    uses: 1304 },
+    { name: "abandoned_cart_24h", lang: "en", category: "MARKETING",     status: "local",    uses: 412 },
+    { name: "tahdid_eid_promo",   lang: "ar", category: "MARKETING",     status: "local",    uses: 0 },
   ];
   for (const t of tpls) await prisma.template.create({ data: { ...t, workspaceId: wsId } });
 

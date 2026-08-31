@@ -287,7 +287,7 @@ export interface Template {
   name: string;
   lang: Lang;
   category: "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
-  status: "approved" | "pending" | "rejected" | "submitted" | "failed";
+  status: "approved" | "pending" | "rejected" | "submitted" | "failed" | "local";
   uses: number;
   body?: string | null;
   footer?: string | null;
