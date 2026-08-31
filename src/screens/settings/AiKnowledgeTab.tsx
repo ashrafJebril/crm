@@ -35,6 +35,28 @@ import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
  * live rather than validated after a long paste.
  */
 
+/**
+ * Synced docs all arrive as SERVICE_DESCRIPTION, so the badge alone called the
+ * staff and branch docs "Service" — wrong, and confusing next to a title the
+ * owner can't read if they're browsing in English.
+ *
+ * kewy-ai renders these titles in the TENANT's locale (Arabic here) because
+ * that text is what the model reads when answering an Arabic-speaking
+ * customer — translating it would make the AI quote English service names
+ * back in an Arabic reply. So we translate the LABEL beside it instead, and
+ * leave the AI's own text exactly as it is stored.
+ */
+const SYNCED_DOC_LABELS: Array<{ match: RegExp; en: string; ar: string }> = [
+  { match: /^(الخدمات المتوفرة|Services offered)$/, en: "Services", ar: "الخدمات" },
+  { match: /^(الفروع والمواقع|Branches and locations)$/, en: "Branches", ar: "الفروع" },
+  { match: /^(الطاقم|Our team)$/, en: "Team", ar: "الطاقم" },
+];
+
+/** The label for a synced doc, by title — falls back to the kind badge. */
+function syncedLabel(title: string): { en: string; ar: string } | null {
+  return SYNCED_DOC_LABELS.find((s) => s.match.test(title.trim())) ?? null;
+}
+
 const KIND_LABELS: Record<KnowledgeKind, { en: string; ar: string }> = {
   POLICY: { en: "Policy", ar: "سياسة" },
   FAQ: { en: "FAQ", ar: "سؤال متكرر" },
@@ -310,7 +332,7 @@ export function AiKnowledgeTab() {
  * collapsing them would misrepresent what is stored.
  */
 function ViewCard({ tx, doc, onClose }: { tx: Tx; doc: AiKnowledgeDoc; onClose: () => void }) {
-  const label = KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
+  const label = syncedLabel(doc.title) ?? KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
   return (
     <SettingsCard
       title={doc.title}
@@ -359,6 +381,10 @@ function DocRow({
   onDelete?: () => void;
 }) {
   const label = KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
+  // A synced doc's real subject is in its title, not its kind — all three come
+  // back as SERVICE_DESCRIPTION. Prefer the specific label so "Team" isn't
+  // badged "Service".
+  const shown = syncedLabel(doc.title) ?? label;
   return (
     <div
       style={{
@@ -378,7 +404,7 @@ function DocRow({
           >
             {doc.title}
           </span>
-          <Badge kind={KIND_BADGE[doc.kind] ?? ""}>{tx(label.en, label.ar)}</Badge>
+          <Badge kind={KIND_BADGE[doc.kind] ?? ""}>{tx(shown.en, shown.ar)}</Badge>
         </div>
         <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
           {tx(
