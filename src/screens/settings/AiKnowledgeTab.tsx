@@ -87,6 +87,11 @@ export function AiKnowledgeTab() {
   // thing that confirms. Inline rather than window.confirm so the doc's title
   // is visible while deciding.
   const [pendingDelete, setPendingDelete] = useState<AiKnowledgeDoc | null>(null);
+  // Read-only inspection, separate from `draft` (the editor). Synced docs can't
+  // be edited, but the owner still needs to see what the AI is actually working
+  // from — a list of titles alone gives no way to tell whether a wrong answer
+  // came from wrong knowledge.
+  const [viewing, setViewing] = useState<AiKnowledgeDoc | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [fileNote, setFileNote] = useState<{ kind: "ok" | "bad"; text: string } | null>(null);
@@ -217,6 +222,7 @@ export function AiKnowledgeTab() {
                   tx={tx}
                   doc={d}
                   canEdit={canEdit}
+                  onView={() => setViewing(d)}
                   onEdit={() => setDraft({ id: d.id, title: d.title, kind: d.kind, body: d.body })}
                   onDelete={() => setPendingDelete(d)}
                 />
@@ -226,6 +232,8 @@ export function AiKnowledgeTab() {
           <ErrorRow message={listQ.error ?? deleteMut.error} />
         </SettingsCard>
       )}
+
+      {viewing && <ViewCard tx={tx} doc={viewing} onClose={() => setViewing(null)} />}
 
       {!draft && canEdit && <FileDropCard tx={tx} onExtracted={setDraft} setFileNote={setFileNote} fileNote={fileNote} />}
 
@@ -256,7 +264,7 @@ export function AiKnowledgeTab() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {syncedDocs.map((d) => (
-                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} />
+                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} onView={() => setViewing(d)} />
               ))}
             </div>
           )}
@@ -292,16 +300,61 @@ export function AiKnowledgeTab() {
 
 /* ─── List row ────────────────────────────────────────────────────────── */
 
+/* ─── Read-only viewer ───────────────────────────────────────────────────────
+ *
+ * The exact text the AI retrieves, shown verbatim. When the assistant answers a
+ * customer wrongly, the first question is always "what does it actually know?"
+ * — without this the owner can only see a title and has to guess.
+ *
+ * whiteSpace: pre-wrap because the synced docs are newline-separated lists;
+ * collapsing them would misrepresent what is stored.
+ */
+function ViewCard({ tx, doc, onClose }: { tx: Tx; doc: AiKnowledgeDoc; onClose: () => void }) {
+  const label = KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
+  return (
+    <SettingsCard
+      title={doc.title}
+      description={tx(
+        `${tx(label.en, label.ar)} · ${doc.body.length.toLocaleString()} chars · this is exactly what the AI reads`,
+        `${tx(label.en, label.ar)} · ${doc.body.length.toLocaleString()} حرف · هذا بالضبط اللي بيقرأه الذكاء الاصطناعي`,
+      )}
+      footer={
+        <button type="button" className="btn ghost" onClick={onClose}>
+          {tx("Close", "إغلاق")}
+        </button>
+      }
+    >
+      <div
+        style={{
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          fontSize: 13,
+          lineHeight: 1.8,
+          background: "var(--bg-2)",
+          borderRadius: 10,
+          padding: "12px 14px",
+          maxHeight: 420,
+          overflowY: "auto",
+        }}
+      >
+        {doc.body}
+      </div>
+    </SettingsCard>
+  );
+}
+
 function DocRow({
   tx,
   doc,
   canEdit,
+  onView,
   onEdit,
   onDelete,
 }: {
   tx: Tx;
   doc: AiKnowledgeDoc;
   canEdit: boolean;
+  onView?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
 }) {
@@ -334,6 +387,11 @@ function DocRow({
           )}
         </div>
       </div>
+      {onView && (
+        <button type="button" className="btn ghost sm" onClick={onView}>
+          {tx("View", "عرض")}
+        </button>
+      )}
       {canEdit && onEdit && (
         <button type="button" className="btn ghost sm" onClick={onEdit}>
           {tx("Edit", "تعديل")}
