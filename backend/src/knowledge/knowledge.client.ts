@@ -83,8 +83,50 @@ export class KnowledgeClient {
     });
   }
 
+  /* ─── Tenant AI settings ───────────────────────────────────────────────
+   *
+   * Same secret, same base URL, same failure classification — so these live
+   * here rather than in a second client that would have to re-derive both.
+   * Note the tenant moves into the PATH for these routes, not the body.
+   */
+
+  async getConfig(tenantId: string): Promise<KewyTenantConfig> {
+    return this.request<KewyTenantConfig>("GET", `/admin/tenants/${encodeURIComponent(tenantId)}/config`);
+  }
+
+  /**
+   * Partial update. Upstream rejects an empty patch with a 400, and identity
+   * fields are not writable — callers must send only what they mean to change.
+   */
+  async patchConfig(
+    tenantId: string,
+    patch: Partial<Pick<KewyTenantConfig, "autonomyMode">>,
+  ): Promise<KewyTenantConfig> {
+    return this.request<KewyTenantConfig>(
+      "PATCH",
+      `/admin/tenants/${encodeURIComponent(tenantId)}/config`,
+      { body: patch },
+    );
+  }
+
+  /**
+   * The emergency stop. `reason` is REQUIRED upstream when disabling (1..500
+   * chars) — a silent kill switch is one nobody dares reverse. Callers should
+   * enforce that before calling so the owner gets our wording, not a raw 400.
+   */
+  async setKillSwitch(
+    tenantId: string,
+    input: { aiEnabled: boolean; reason?: string },
+  ): Promise<KewyKillSwitchResult> {
+    return this.request<KewyKillSwitchResult>(
+      "POST",
+      `/admin/tenants/${encodeURIComponent(tenantId)}/kill-switch`,
+      { body: input },
+    );
+  }
+
   private async request<T>(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     opts: { query?: Record<string, string>; body?: unknown } = {},
   ): Promise<T> {
@@ -149,7 +191,7 @@ export class KnowledgeClient {
 
       if (res.status === 404) {
         throw new HttpException(
-          { code: "NOT_FOUND", message: upstreamMsg || "That knowledge document no longer exists." },
+          { code: "NOT_FOUND", message: upstreamMsg || "The AI service has no record of that." },
           404,
         );
       }
@@ -222,4 +264,37 @@ export interface KewySaveDocResult extends KewyKnowledgeDoc {
 export interface KewySyncResult {
   synced?: unknown[];
   [k: string]: unknown;
+}
+
+/** Whether the reply is SENT, not whether the agent runs. SHADOW still calls
+ *  the model and still costs money; it writes the draft into the thread marked
+ *  as not sent. AUTONOMOUS delivers it to the customer. */
+export const KEWY_AUTONOMY_MODES = ["SHADOW", "AUTONOMOUS"] as const;
+export type KewyAutonomyMode = (typeof KEWY_AUTONOMY_MODES)[number];
+
+/**
+ * kewy-ai's tenant config as returned by `GET /admin/tenants/:id/config`.
+ *
+ * Deliberately narrow: only the fields this proxy is willing to hand to the
+ * browser are declared. Upstream redacts `apiKeyRef` already, and nothing
+ * secret-shaped should be added here even if a future response carries it.
+ */
+export interface KewyTenantConfig {
+  tenantId: string;
+  /** The emergency stop, as stored. False = the agent is never invoked. */
+  aiEnabled: boolean;
+  /** Set by an operator upstream; forces the agent off regardless of aiEnabled. */
+  killSwitch: boolean;
+  autonomyMode: KewyAutonomyMode;
+  personaName: string;
+  locale: string;
+  dailyCostCapJod: number | null;
+}
+
+export interface KewyKillSwitchResult {
+  aiEnabled: boolean;
+  /** False when the tenant was already in the requested state — the toggle was
+   *  a no-op, which the UI should not report as a change. */
+  changed: boolean;
+  reason?: string;
 }

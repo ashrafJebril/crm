@@ -6,6 +6,7 @@ import {
   type KewySaveDocResult,
   type KewySyncResult,
 } from "./knowledge.client";
+import { tenantIdFor } from "./tenant";
 
 /**
  * The tenant boundary.
@@ -20,17 +21,11 @@ export class KnowledgeService {
   constructor(private readonly client: KnowledgeClient) {}
 
   /**
-   * CRM workspaceId -> kewy-ai tenantId.
-   *
-   * Today these are the same string (the live salon is cmpayevw8000011v0tgyu6rz1
-   * in both systems), which is exactly why this function exists rather than the
-   * value being passed straight through: the identity is a coincidence of how
-   * the tenant was provisioned, not a contract. When kewy-ai is sold to a
-   * workspace that was created separately, this becomes a lookup and every
-   * call site is already routed through it.
+   * CRM workspaceId -> kewy-ai tenantId. Shared with the AI settings proxy so
+   * both surfaces resolve a salon the same way (see ./tenant.ts).
    */
   private tenantIdFor(workspaceId: string): string {
-    return workspaceId;
+    return tenantIdFor(workspaceId);
   }
 
   async listDocs(workspaceId: string): Promise<{ docs: KewyKnowledgeDoc[] }> {

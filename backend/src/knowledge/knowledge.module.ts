@@ -4,6 +4,8 @@ import { Transform } from "class-transformer";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { KnowledgeClient, KEWY_KNOWLEDGE_KINDS, type KewyKnowledgeKind } from "./knowledge.client";
 import { KnowledgeService } from "./knowledge.service";
+import { AiSettingsController } from "./ai-settings.controller";
+import { AiSettingsService } from "./ai-settings.service";
 
 /** Trim at the DTO boundary so a body of only spaces fails @MinLength here
  *  rather than upstream, where the error arrives as a generic 400. */
@@ -83,8 +85,8 @@ export class KnowledgeController {
 }
 
 @Module({
-  controllers: [KnowledgeController],
-  providers: [KnowledgeService, KnowledgeClient],
-  exports: [KnowledgeService],
+  controllers: [KnowledgeController, AiSettingsController],
+  providers: [KnowledgeService, AiSettingsService, KnowledgeClient],
+  exports: [KnowledgeService, AiSettingsService],
 })
 export class KnowledgeModule {}
