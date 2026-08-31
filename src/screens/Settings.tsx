@@ -6,9 +6,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { WorkspaceTab } from "./settings/WorkspaceTab";
 import { MembersTab } from "./settings/MembersTab";
 import { IntegrationsTab } from "./settings/IntegrationsTab";
+import { AiKnowledgeTab } from "./settings/AiKnowledgeTab";
 import { ProfileTab } from "./settings/ProfileTab";
 
-type Tab = "workspace" | "members" | "integrations" | "profile";
+type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "profile";
 
 function SettingsImpl() {
   const { t } = useTweaks();
@@ -21,6 +22,7 @@ function SettingsImpl() {
     { id: "workspace", label: "Workspace", ar: "مساحة العمل" },
     { id: "members", label: "Members", ar: "الأعضاء" },
     { id: "integrations", label: "Integrations", ar: "التكاملات" },
+    { id: "aiKnowledge", label: "AI Knowledge", ar: "معرفة الذكاء" },
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
@@ -56,6 +58,7 @@ function SettingsImpl() {
           {tab === "workspace" && <WorkspaceTab />}
           {tab === "members" && <MembersTab />}
           {tab === "integrations" && <IntegrationsTab />}
+          {tab === "aiKnowledge" && <AiKnowledgeTab />}
           {tab === "profile" && <ProfileTab />}
         </div>
       </div>

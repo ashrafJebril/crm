@@ -1,0 +1,752 @@
+import { useMemo, useRef, useState } from "react";
+import { useTweaks } from "@/tweaks/context";
+import { makeTx, type Tx } from "@/lib/tx";
+import { useAuth } from "@/auth/context";
+import { useFetch, useMutation } from "@/api/useFetch";
+import { Badge, type BadgeKind } from "@/components/Badge";
+import {
+  BODY_MAX,
+  KNOWLEDGE_KINDS,
+  TITLE_MAX,
+  deleteDoc,
+  resyncFromHjz,
+  saveDoc,
+  type AiKnowledgeDoc,
+  type KnowledgeKind,
+  type SaveDocResult,
+  type SyncResult,
+} from "@/api/aiKnowledge";
+import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
+
+/**
+ * Teach the AI.
+ *
+ * The agent answers real WhatsApp customers, and until this screen existed
+ * everything it knew was loaded by an engineer running curl. This is where the
+ * salon owner corrects a wrong answer or adds a policy without a developer.
+ *
+ * Two classes of document, and the difference matters to the user:
+ *  - SYNCED (`editable: false`) — services, branches, staff, pulled from hjz.
+ *    Read-only here, because the next sync would silently revert a hand edit.
+ *  - OWNER-AUTHORED — everything the salon knows that no upstream API does.
+ *
+ * Saving is not free: kewy-ai embeds the body inline on every save, so the
+ * 100k cap is a cost ceiling as much as a size one and the counter is shown
+ * live rather than validated after a long paste.
+ */
+
+const KIND_LABELS: Record<KnowledgeKind, { en: string; ar: string }> = {
+  POLICY: { en: "Policy", ar: "سياسة" },
+  FAQ: { en: "FAQ", ar: "سؤال متكرر" },
+  SERVICE_DESCRIPTION: { en: "Service", ar: "وصف خدمة" },
+  PROMOTION: { en: "Promotion", ar: "عرض" },
+  TONE: { en: "Tone", ar: "أسلوب الرد" },
+  OTHER: { en: "Other", ar: "أخرى" },
+};
+
+const KIND_BADGE: Record<KnowledgeKind, BadgeKind> = {
+  POLICY: "warn",
+  FAQ: "info",
+  SERVICE_DESCRIPTION: "accent",
+  PROMOTION: "ok",
+  TONE: "human",
+  OTHER: "",
+};
+
+/** Only these two. A silently bad PDF/DOCX extraction teaches the AI garbage
+ *  that then goes out to customers as fact.
+ *  TODO: PDF via pdf-parse and DOCX via mammoth deserve their own pass —
+ *  both need testing against real salon price lists before being trusted,
+ *  plus a way to show the owner what was dropped (tables, headers, images). */
+const ACCEPTED_EXTENSIONS = [".txt", ".md"];
+
+interface DraftState {
+  /** Absent = creating. Present = editing that doc. */
+  id?: string;
+  title: string;
+  kind: KnowledgeKind;
+  body: string;
+  /** Set when the body came from a file, so the editor can say where it's from. */
+  sourceFilename?: string;
+}
+
+const EMPTY_DRAFT: DraftState = { title: "", kind: "POLICY", body: "" };
+
+export function AiKnowledgeTab() {
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
+  const { activeWorkspace } = useAuth();
+
+  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+
+  const listQ = useFetch<{ docs: AiKnowledgeDoc[] }>("/ai/knowledge/docs");
+  const statusQ = useFetch<{ configured: boolean }>("/ai/knowledge/status");
+
+  const [draft, setDraft] = useState<DraftState | null>(null);
+  // Delete is the one destructive, irreversible action here, so it is the one
+  // thing that confirms. Inline rather than window.confirm so the doc's title
+  // is visible while deciding.
+  const [pendingDelete, setPendingDelete] = useState<AiKnowledgeDoc | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [fileNote, setFileNote] = useState<{ kind: "ok" | "bad"; text: string } | null>(null);
+
+  const saveMut = useMutation<DraftState, SaveDocResult>((d) =>
+    saveDoc({ id: d.id, title: d.title.trim(), body: d.body.trim(), kind: d.kind }),
+  );
+  const deleteMut = useMutation<{ id: string }, { ok: true }>((i) => deleteDoc(i.id));
+  const syncMut = useMutation<void, SyncResult>(() => resyncFromHjz());
+
+  const showStatus = (msg: string) => {
+    setStatus(msg);
+    window.setTimeout(() => setStatus(null), 3000);
+  };
+
+  const docs = listQ.data?.docs ?? [];
+  const ownerDocs = useMemo(() => docs.filter((d) => d.editable), [docs]);
+  const syncedDocs = useMemo(() => docs.filter((d) => !d.editable), [docs]);
+
+  const onSave = async () => {
+    if (!draft) return;
+    const res = await saveMut.mutate(draft);
+    setDraft(null);
+    setFileNote(null);
+    listQ.refetch();
+    // Report chunksWritten: it is the proof the text was actually embedded and
+    // is now reachable by the agent, not merely stored.
+    showStatus(
+      tx(
+        `Saved — the AI learned this in ${res.chunksWritten} chunk${res.chunksWritten === 1 ? "" : "s"}.`,
+        `تم الحفظ — صار الذكاء الاصطناعي يعرف هالمعلومة (${res.chunksWritten} مقطع).`,
+      ),
+    );
+  };
+
+  const onConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    await deleteMut.mutate({ id: pendingDelete.id });
+    const title = pendingDelete.title;
+    setPendingDelete(null);
+    listQ.refetch();
+    showStatus(tx(`Deleted "${title}".`, `تم حذف "${title}".`));
+  };
+
+  const onSync = async () => {
+    setSyncResult(null);
+    try {
+      const res = await syncMut.mutate();
+      const n = Array.isArray(res.synced) ? res.synced.length : 0;
+      listQ.refetch();
+      setSyncResult(
+        tx(
+          `Re-synced ${n} document${n === 1 ? "" : "s"} from hjz (services, branches, staff).`,
+          `تم تحديث ${n} مستند من hjz (الخدمات والفروع والطاقم).`,
+        ),
+      );
+    } catch {
+      /* error stays in syncMut.error */
+    }
+  };
+
+  if (!activeWorkspace) {
+    return (
+      <div className="muted" style={{ fontSize: 13 }}>
+        {tx("No active workspace.", "لا توجد مساحة عمل نشطة.")}
+      </div>
+    );
+  }
+
+  // A deployment that never bought the AI module shouldn't show a red error.
+  if (statusQ.data && !statusQ.data.configured) {
+    return (
+      <SettingsCard title={tx("AI Knowledge", "معرفة الذكاء الاصطناعي")}>
+        <div className="muted" style={{ fontSize: 13, lineHeight: 1.7 }}>
+          {tx(
+            "The AI assistant isn't set up for this workspace yet. Contact Kewy support to enable it.",
+            "المساعد الذكي مش مفعّل لهالمساحة بعد. تواصل مع دعم كيوي لتفعيله.",
+          )}
+        </div>
+      </SettingsCard>
+    );
+  }
+
+  return (
+    <>
+      {draft ? (
+        <DraftEditor
+          tx={tx}
+          draft={draft}
+          setDraft={setDraft}
+          onSave={onSave}
+          onCancel={() => {
+            setDraft(null);
+            setFileNote(null);
+            setStatus(null);
+          }}
+          saving={saveMut.loading}
+          error={saveMut.error}
+          fileNote={fileNote}
+          setFileNote={setFileNote}
+        />
+      ) : (
+        <SettingsCard
+          title={tx("What the AI knows", "شو بيعرف الذكاء الاصطناعي")}
+          description={tx(
+            "Anything you write here, the assistant can use when it answers a customer on WhatsApp.",
+            "أي شي بتكتبه هون، المساعد بيقدر يستخدمه لما يرد على الزباين على واتساب.",
+          )}
+          footer={
+            canEdit ? (
+              <button type="button" className="btn primary" onClick={() => setDraft(EMPTY_DRAFT)}>
+                {tx("Add knowledge", "أضف معلومة")}
+              </button>
+            ) : null
+          }
+        >
+          {listQ.loading && docs.length === 0 ? (
+            <div className="mono muted pulse" style={{ fontSize: 12 }}>
+              {tx("loading…", "جارٍ التحميل…")}
+            </div>
+          ) : ownerDocs.length === 0 ? (
+            <EmptyState tx={tx} />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {ownerDocs.map((d) => (
+                <DocRow
+                  key={d.id}
+                  tx={tx}
+                  doc={d}
+                  canEdit={canEdit}
+                  onEdit={() => setDraft({ id: d.id, title: d.title, kind: d.kind, body: d.body })}
+                  onDelete={() => setPendingDelete(d)}
+                />
+              ))}
+            </div>
+          )}
+          <ErrorRow message={listQ.error ?? deleteMut.error} />
+        </SettingsCard>
+      )}
+
+      {!draft && canEdit && <FileDropCard tx={tx} onExtracted={setDraft} setFileNote={setFileNote} fileNote={fileNote} />}
+
+      {!draft && (
+        <SettingsCard
+          title={tx("Synced from hjz", "مسحوب من hjz")}
+          description={tx(
+            "Services, branches and staff are pulled automatically. They're read-only here — edit them in hjz, then re-sync.",
+            "الخدمات والفروع والطاقم بتنسحب تلقائياً. ما بتنعدل من هون — عدّلها بـ hjz وبعدين حدّث.",
+          )}
+          footer={
+            canEdit ? (
+              <button type="button" className="btn ghost" onClick={onSync} disabled={syncMut.loading}>
+                {syncMut.loading
+                  ? tx("Re-syncing…", "جارٍ التحديث…")
+                  : tx("Re-sync services from hjz", "حدّث الخدمات من hjz")}
+              </button>
+            ) : null
+          }
+        >
+          {syncedDocs.length === 0 ? (
+            <div className="muted" style={{ fontSize: 12 }}>
+              {tx(
+                "Nothing synced yet. Press re-sync to pull your services, branches and staff.",
+                "ما في شي محدّث لهلأ. اضغط تحديث لسحب الخدمات والفروع والطاقم.",
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {syncedDocs.map((d) => (
+                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} />
+              ))}
+            </div>
+          )}
+          {syncMut.loading && (
+            <div className="mono muted pulse" style={{ fontSize: 12 }}>
+              {tx(
+                "Pulling from hjz and re-indexing — this can take a moment.",
+                "عم نسحب من hjz ونعيد الفهرسة — بدها شوي وقت.",
+              )}
+            </div>
+          )}
+          {syncResult && (
+            <div style={{ fontSize: 12, color: "var(--ok)" }}>✓ {syncResult}</div>
+          )}
+          <ErrorRow message={syncMut.error} />
+        </SettingsCard>
+      )}
+
+      {pendingDelete && (
+        <DeleteConfirm
+          tx={tx}
+          doc={pendingDelete}
+          busy={deleteMut.loading}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={onConfirmDelete}
+        />
+      )}
+
+      <StatusToast message={status} />
+    </>
+  );
+}
+
+/* ─── List row ────────────────────────────────────────────────────────── */
+
+function DocRow({
+  tx,
+  doc,
+  canEdit,
+  onEdit,
+  onDelete,
+}: {
+  tx: Tx;
+  doc: AiKnowledgeDoc;
+  canEdit: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) {
+  const label = KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 12px",
+        background: "var(--bg-2)",
+        borderRadius: 10,
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={doc.title}
+          >
+            {doc.title}
+          </span>
+          <Badge kind={KIND_BADGE[doc.kind] ?? ""}>{tx(label.en, label.ar)}</Badge>
+        </div>
+        <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
+          {tx(
+            `${doc.body.length.toLocaleString()} chars · updated ${formatWhen(doc.updatedAt, tx)}`,
+            `${doc.body.length.toLocaleString()} حرف · آخر تحديث ${formatWhen(doc.updatedAt, tx)}`,
+          )}
+        </div>
+      </div>
+      {canEdit && onEdit && (
+        <button type="button" className="btn ghost sm" onClick={onEdit}>
+          {tx("Edit", "تعديل")}
+        </button>
+      )}
+      {canEdit && onDelete && (
+        <button
+          type="button"
+          className="btn ghost sm"
+          onClick={onDelete}
+          style={{ color: "var(--bad)" }}
+        >
+          {tx("Delete", "حذف")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ─── Empty state ─────────────────────────────────────────────────────── */
+
+/** Not "no data" — an explanation of what this screen is for, with examples
+ *  drawn from what the agent currently CANNOT answer. */
+function EmptyState({ tx }: { tx: Tx }) {
+  const examples = [
+    { en: "Cancellation policy — how much notice you need", ar: "سياسة الإلغاء — قديش بدك إشعار مسبق" },
+    { en: "Parking — where customers can park", ar: "المواقف — وين بيركنوا الزباين" },
+    { en: "Are kids welcome?", ar: "بتستقبلوا أطفال؟" },
+  ];
+  return (
+    <div style={{ padding: "8px 4px", lineHeight: 1.8 }}>
+      <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>
+        {tx(
+          "The AI only knows your services, branches and staff so far.",
+          "لهلأ الذكاء الاصطناعي بس بيعرف خدماتك وفروعك وطاقمك.",
+        )}
+      </div>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+        {tx(
+          "Ask it anything else and it has nothing to go on. Add what your customers actually ask about:",
+          "أي شي غير هيك بيسأله الزبون، ما عنده جواب. ضيف الأشياء اللي الزباين بيسألوا عنها فعلاً:",
+        )}
+      </div>
+      <ul style={{ margin: 0, paddingInlineStart: 18, fontSize: 12, color: "var(--ink-2)" }}>
+        {examples.map((e) => (
+          <li key={e.en} style={{ marginBottom: 3 }}>
+            {tx(e.en, e.ar)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/* ─── Editor ──────────────────────────────────────────────────────────── */
+
+function DraftEditor({
+  tx,
+  draft,
+  setDraft,
+  onSave,
+  onCancel,
+  saving,
+  error,
+  fileNote,
+  setFileNote,
+}: {
+  tx: Tx;
+  draft: DraftState;
+  setDraft: (d: DraftState) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  error: string | null;
+  fileNote: { kind: "ok" | "bad"; text: string } | null;
+  setFileNote: (n: { kind: "ok" | "bad"; text: string } | null) => void;
+}) {
+  const len = draft.body.length;
+  const overCap = len > BODY_MAX;
+  // Warn before the wall, not at it: an owner pasting a long price list should
+  // see the counter change colour with room left to trim.
+  const nearCap = len > BODY_MAX * 0.9;
+  const titleTooLong = draft.title.trim().length > TITLE_MAX;
+  const canSave =
+    draft.title.trim().length > 0 && draft.body.trim().length > 0 && !overCap && !titleTooLong;
+
+  return (
+    <SettingsCard
+      title={draft.id ? tx("Edit knowledge", "تعديل المعلومة") : tx("Add knowledge", "أضف معلومة")}
+      description={
+        draft.sourceFilename
+          ? tx(
+              `From ${draft.sourceFilename} — review it below, then save. Nothing is sent to the AI until you do.`,
+              `من ملف ${draft.sourceFilename} — راجع النص تحت وبعدين احفظ. ما بينحفظ شي قبل ما تضغط حفظ.`,
+            )
+          : tx(
+              "Write it the way you'd explain it to a new employee.",
+              "اكتبها متل ما بتشرحها لموظفة جديدة.",
+            )
+      }
+      footer={
+        <>
+          <button type="button" className="btn ghost" onClick={onCancel} disabled={saving}>
+            {tx("Cancel", "إلغاء")}
+          </button>
+          <button type="button" className="btn primary" onClick={onSave} disabled={saving || !canSave}>
+            {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Save", "حفظ")}
+          </button>
+        </>
+      }
+    >
+      {fileNote && (
+        <div
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 12,
+            background: fileNote.kind === "ok" ? "var(--bg-2)" : "oklch(0.7 0.22 24 / 0.12)",
+            color: fileNote.kind === "ok" ? "var(--ink-2)" : "var(--bad)",
+          }}
+        >
+          {fileNote.text}
+        </div>
+      )}
+
+      <Field label={tx("Title", "العنوان")}>
+        <input
+          type="text"
+          value={draft.title}
+          onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+          placeholder={tx("Cancellation policy", "سياسة الإلغاء")}
+          maxLength={TITLE_MAX}
+          style={inputStyle}
+        />
+      </Field>
+
+      <Field
+        label={tx("Type", "النوع")}
+        hint={tx(
+          "Helps the assistant judge how to use it.",
+          "بيساعد المساعد يعرف كيف يستخدم المعلومة.",
+        )}
+      >
+        <select
+          value={draft.kind}
+          onChange={(e) => setDraft({ ...draft, kind: e.target.value as KnowledgeKind })}
+          style={inputStyle}
+        >
+          {KNOWLEDGE_KINDS.map((k) => (
+            <option key={k} value={k}>
+              {tx(KIND_LABELS[k].en, KIND_LABELS[k].ar)}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label={tx("What should the AI know?", "شو لازم يعرف الذكاء الاصطناعي؟")}>
+        <textarea
+          value={draft.body}
+          onChange={(e) => {
+            setDraft({ ...draft, body: e.target.value });
+            if (fileNote) setFileNote(null);
+          }}
+          rows={12}
+          placeholder={tx(
+            "Cancelling less than 24 hours before the appointment costs half the service price.",
+            "الإلغاء قبل أقل من ٢٤ ساعة من الموعد بيكلف نص سعر الخدمة.",
+          )}
+          style={{
+            ...inputStyle,
+            height: "auto",
+            minHeight: 220,
+            padding: 12,
+            lineHeight: 1.7,
+            resize: "vertical",
+            borderColor: overCap ? "var(--bad)" : "var(--line)",
+          }}
+        />
+      </Field>
+
+      <div
+        className="mono"
+        style={{
+          fontSize: 11,
+          textAlign: "end",
+          color: overCap ? "var(--bad)" : nearCap ? "var(--warn)" : "var(--ink-3)",
+          fontWeight: nearCap ? 600 : 400,
+        }}
+      >
+        {len.toLocaleString()} / {BODY_MAX.toLocaleString()}
+        {overCap &&
+          ` — ${tx(
+            `${(len - BODY_MAX).toLocaleString()} over the limit`,
+            `زيادة ${(len - BODY_MAX).toLocaleString()} حرف عن الحد`,
+          )}`}
+      </div>
+
+      <ErrorRow message={error} />
+    </SettingsCard>
+  );
+}
+
+/* ─── File upload ─────────────────────────────────────────────────────── */
+
+/**
+ * Parses a .txt/.md file in the BROWSER and prefills the editor with the text.
+ * It is never saved automatically — the owner must read it and press Save,
+ * because an unreviewed document becomes something the AI states to customers
+ * as fact.
+ */
+function FileDropCard({
+  tx,
+  onExtracted,
+  setFileNote,
+  fileNote,
+}: {
+  tx: Tx;
+  onExtracted: (d: DraftState) => void;
+  setFileNote: (n: { kind: "ok" | "bad"; text: string } | null) => void;
+  fileNote: { kind: "ok" | "bad"; text: string } | null;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const handleFile = async (file: File) => {
+    const lower = file.name.toLowerCase();
+    if (!ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+      setFileNote({
+        kind: "bad",
+        text: tx(
+          `${file.name} isn't a .txt or .md file. PDF and Word aren't supported yet — copy the text in by hand for now.`,
+          `${file.name} مش ملف .txt أو .md. الـPDF وWord لسا مش مدعومين — انسخ النص يدوياً هلأ.`,
+        ),
+      });
+      return;
+    }
+
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      setFileNote({
+        kind: "bad",
+        text: tx("Couldn't read that file.", "ما قدرنا نقرأ هالملف."),
+      });
+      return;
+    }
+
+    // Say so plainly rather than opening an editor onto an empty box: a file
+    // that looked fine on disk but yielded nothing is the confusing case.
+    if (text.trim().length === 0) {
+      setFileNote({
+        kind: "bad",
+        text: tx(
+          `${file.name} has no readable text in it — nothing to teach the AI.`,
+          `${file.name} ما فيه نص مقروء — ما في شي نعلّمه للذكاء الاصطناعي.`,
+        ),
+      });
+      return;
+    }
+
+    const truncated = text.length > BODY_MAX;
+    const body = truncated ? text.slice(0, BODY_MAX) : text;
+    // Filename minus extension is a better first guess at a title than blank.
+    const title = file.name.replace(/\.(txt|md)$/i, "").slice(0, TITLE_MAX);
+
+    setFileNote({
+      kind: "ok",
+      text: truncated
+        ? tx(
+            `Read ${text.length.toLocaleString()} characters from ${file.name}, trimmed to the ${BODY_MAX.toLocaleString()} limit. Review before saving.`,
+            `قرأنا ${text.length.toLocaleString()} حرف من ${file.name}، وقصّيناها للحد ${BODY_MAX.toLocaleString()}. راجعها قبل الحفظ.`,
+          )
+        : tx(
+            `Read ${text.length.toLocaleString()} characters from ${file.name}. Review before saving.`,
+            `قرأنا ${text.length.toLocaleString()} حرف من ${file.name}. راجعها قبل الحفظ.`,
+          ),
+    });
+    onExtracted({ title, kind: "OTHER", body, sourceFilename: file.name });
+  };
+
+  return (
+    <SettingsCard
+      title={tx("Upload a document", "ارفع ملف")}
+      description={tx(
+        "Drop a .txt or .md file and we'll fill the editor with its text for you to review. Nothing reaches the AI until you save.",
+        "أسقط ملف .txt أو .md ومنعبّي المحرر بنصه لتراجعه. ما بيوصل شي للذكاء الاصطناعي قبل ما تحفظ.",
+      )}
+    >
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) void handleFile(f);
+        }}
+        onClick={() => inputRef.current?.click()}
+        style={{
+          border: `1.5px dashed ${dragging ? "var(--accent)" : "var(--line)"}`,
+          background: dragging ? "var(--bg-2)" : "transparent",
+          borderRadius: 10,
+          padding: "22px 16px",
+          textAlign: "center",
+          cursor: "pointer",
+          transition: "border-color .12s, background .12s",
+        }}
+      >
+        <div style={{ fontSize: 13, marginBottom: 4 }}>
+          {tx("Drop a file here, or click to choose", "أسقط ملف هون، أو اضغط لتختار")}
+        </div>
+        <div className="mono muted" style={{ fontSize: 11 }}>
+          .txt · .md
+        </div>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".txt,.md,text/plain,text/markdown"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void handleFile(f);
+            // Reset so re-picking the same file fires change again.
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {fileNote && fileNote.kind === "bad" && <ErrorRow message={fileNote.text} />}
+    </SettingsCard>
+  );
+}
+
+/* ─── Delete confirmation ─────────────────────────────────────────────── */
+
+function DeleteConfirm({
+  tx,
+  doc,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  tx: Tx;
+  doc: AiKnowledgeDoc;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "grid",
+        placeItems: "center",
+        zIndex: 1000,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--bg-1)",
+          border: "1px solid var(--line)",
+          borderRadius: 12,
+          padding: 24,
+          width: 440,
+          maxWidth: "90vw",
+        }}
+      >
+        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+          {tx("Delete this knowledge?", "حذف هالمعلومة؟")}
+        </h3>
+        <p className="muted" style={{ fontSize: 12, marginBottom: 14, lineHeight: 1.7 }}>
+          {tx(
+            `The AI will immediately stop using "${doc.title}" when answering customers. This can't be undone — you'd have to write it again.`,
+            `الذكاء الاصطناعي رح يبطّل يستخدم "${doc.title}" فوراً لما يرد على الزباين. ما في رجعة — بدك تكتبها من جديد.`,
+          )}
+        </p>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
+            {tx("Keep it", "خليها")}
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={onConfirm}
+            disabled={busy}
+            style={{ background: "var(--bad)", borderColor: "var(--bad)" }}
+          >
+            {busy ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "احذف")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── helpers ─────────────────────────────────────────────────────────── */
+
+function formatWhen(iso: string, tx: Tx): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return tx("just now", "هلأ");
+  if (mins < 60) return tx(`${mins}m ago`, `قبل ${mins} دقيقة`);
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return tx(`${hours}h ago`, `قبل ${hours} ساعة`);
+  const days = Math.floor(hours / 24);
+  if (days < 30) return tx(`${days}d ago`, `قبل ${days} يوم`);
+  return new Date(iso).toLocaleDateString();
+}
