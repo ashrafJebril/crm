@@ -36,25 +36,36 @@ import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
  */
 
 /**
- * Synced docs all arrive as SERVICE_DESCRIPTION, so the badge alone called the
- * staff and branch docs "Service" — wrong, and confusing next to a title the
- * owner can't read if they're browsing in English.
+ * Synced doc titles arrive in the TENANT's locale (Arabic here), so an English
+ * UI showed "الطاقم" beside "Synced from hjz" — half the list in each language.
  *
- * kewy-ai renders these titles in the TENANT's locale (Arabic here) because
- * that text is what the model reads when answering an Arabic-speaking
- * customer — translating it would make the AI quote English service names
- * back in an Arabic reply. So we translate the LABEL beside it instead, and
- * leave the AI's own text exactly as it is stored.
+ * The title is only a label, so it follows the UI language. The BODY is left
+ * exactly as stored: that text is what the model reads when answering an
+ * Arabic-speaking customer, and translating it would make the AI quote English
+ * service names in an Arabic reply and mismatch the names in hjz.
  */
 const SYNCED_DOC_LABELS: Array<{ match: RegExp; en: string; ar: string }> = [
-  { match: /^(الخدمات المتوفرة|Services offered)$/, en: "Services", ar: "الخدمات" },
-  { match: /^(الفروع والمواقع|Branches and locations)$/, en: "Branches", ar: "الفروع" },
-  { match: /^(الطاقم|Our team)$/, en: "Team", ar: "الطاقم" },
+  { match: /^(الخدمات المتوفرة|Services offered)$/, en: "Services offered", ar: "الخدمات المتوفرة" },
+  { match: /^(الفروع والمواقع|Branches and locations)$/, en: "Branches and locations", ar: "الفروع والمواقع" },
+  { match: /^(الطاقم|Our team)$/, en: "Our team", ar: "الطاقم" },
 ];
 
-/** The label for a synced doc, by title — falls back to the kind badge. */
+/** Display title for a synced doc, in the UI language. Owner-written docs keep
+ *  their own title — the owner chose those words themselves. */
+function displayTitle(title: string, tx: Tx): string {
+  const hit = SYNCED_DOC_LABELS.find((s) => s.match.test(title.trim()));
+  return hit ? tx(hit.en, hit.ar) : title;
+}
+
+/** The badge beside a synced doc: its subject, not SERVICE_DESCRIPTION. */
 function syncedLabel(title: string): { en: string; ar: string } | null {
-  return SYNCED_DOC_LABELS.find((s) => s.match.test(title.trim())) ?? null;
+  const hit = SYNCED_DOC_LABELS.find((s) => s.match.test(title.trim()));
+  if (!hit) return null;
+  return hit.en === "Our team"
+    ? { en: "Team", ar: "الطاقم" }
+    : hit.en === "Branches and locations"
+      ? { en: "Branches", ar: "الفروع" }
+      : { en: "Services", ar: "الخدمات" };
 }
 
 const KIND_LABELS: Record<KnowledgeKind, { en: string; ar: string }> = {
@@ -335,7 +346,7 @@ function ViewCard({ tx, doc, onClose }: { tx: Tx; doc: AiKnowledgeDoc; onClose: 
   const label = syncedLabel(doc.title) ?? KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
   return (
     <SettingsCard
-      title={doc.title}
+      title={displayTitle(doc.title, tx)}
       description={tx(
         `${tx(label.en, label.ar)} · ${doc.body.length.toLocaleString()} chars · this is exactly what the AI reads`,
         `${tx(label.en, label.ar)} · ${doc.body.length.toLocaleString()} حرف · هذا بالضبط اللي بيقرأه الذكاء الاصطناعي`,
@@ -400,9 +411,9 @@ function DocRow({
         <div style={{ fontWeight: 500, display: "flex", alignItems: "center", gap: 6 }}>
           <span
             style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            title={doc.title}
+            title={displayTitle(doc.title, tx)}
           >
-            {doc.title}
+            {displayTitle(doc.title, tx)}
           </span>
           <Badge kind={KIND_BADGE[doc.kind] ?? ""}>{tx(shown.en, shown.ar)}</Badge>
         </div>
