@@ -483,6 +483,15 @@ model Workspace {
   // Per-workspace isolation rides on this id (auth is a single global API key).
   zernioProfileId String?
 
+  // Kapso — the BSP customer id this workspace maps to for WhatsApp.
+  //
+  // Restored after being dropped in 20260811150000_remove_kapso. That removal
+  // moved WhatsApp onto Zernio, but the number was never migrated: Kapso kept
+  // delivering to POST /api/webhooks/kapso, which had become a 404, and every
+  // inbound WhatsApp message was silently dropped for three days before anyone
+  // noticed. WhatsApp runs on Kapso; Zernio keeps Facebook and Instagram.
+  kapsoCustomerId String?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")

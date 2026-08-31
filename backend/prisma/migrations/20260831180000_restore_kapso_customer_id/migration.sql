@@ -1,0 +1,12 @@
+-- Restore Workspace.kapsoCustomerId.
+--
+-- 20260811150000_remove_kapso dropped this column when WhatsApp was moved to
+-- Zernio. The move was never completed: the WhatsApp number stayed on Kapso,
+-- Kapso kept POSTing to /api/webhooks/kapso, and that route had been deleted —
+-- so every inbound message got a 404 and was lost. WhatsApp is going back to
+-- Kapso; Zernio keeps Facebook and Instagram.
+--
+-- Forward-only: the old migration is left untouched because it has already run
+-- against production. IF NOT EXISTS so re-running is harmless, and the column
+-- is nullable so existing rows need no backfill.
+ALTER TABLE "Workspace" ADD COLUMN IF NOT EXISTS "kapsoCustomerId" TEXT;
