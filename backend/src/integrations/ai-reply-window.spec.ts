@@ -38,6 +38,12 @@ describe("AiReplyController — 24h window re-check", () => {
           return args.data;
         }),
       },
+      // The send path picks a transport from the thread's integration row.
+      // null = no row, which falls back to the direct-Meta WhatsAppService —
+      // the transport these window tests assert against.
+      integration: {
+        findFirst: jest.fn(async () => null),
+      },
     } as any;
     const whatsapp = {
       sendInConversation: jest.fn(async (...a: unknown[]) => {
