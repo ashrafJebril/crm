@@ -6,8 +6,6 @@ import { InstagramService } from "./instagram.service";
 import { WhatsAppController } from "./whatsapp.controller";
 import { WhatsAppService } from "./whatsapp.service";
 import { ZernioController } from "./zernio.controller";
-import { KapsoController } from "./kapso.controller";
-import { KapsoService } from "./kapso.service";
 import { ZernioService } from "./zernio.service";
 import { ZernioClient } from "./zernio.client";
 import { MetaWebhooksController } from "./meta-webhooks.controller";
@@ -29,7 +27,6 @@ import { TicketsModule } from "../tickets/tickets.module";
     InstagramController,
     WhatsAppController,
     ZernioController,
-    KapsoController,
     MetaWebhooksController,
     HjzWebhooksController,
     // Inert until KEWY_AI_URL + KEWY_AI_WEBHOOK_SECRET are set: without them
@@ -41,7 +38,6 @@ import { TicketsModule } from "../tickets/tickets.module";
     InstagramService,
     WhatsAppService,
     ZernioService,
-    KapsoService,
     ZernioClient,
     MetaWebhooksService,
     HjzWebhooksService,
