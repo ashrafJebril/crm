@@ -141,6 +141,26 @@ export class ConversationsService {
     });
   }
 
+  /**
+   * Turn the AI on or off for one thread, and hand a paused thread back.
+   *
+   * Enabling always clears `aiPausedAt`: the operator flipping it on IS the
+   * decision to let the agent speak again, so leaving a stale pause would make
+   * the toggle look broken.
+   */
+  async setAi(
+    workspaceId: string,
+    conversationId: string,
+    enabled: boolean,
+  ) {
+    await this.get(workspaceId, conversationId); // 404s if not in this workspace
+    return await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { aiEnabled: enabled, aiPausedAt: null },
+      select: { id: true, aiEnabled: true, aiPausedAt: true },
+    });
+  }
+
   async addMessage(
     workspaceId: string,
     conversationId: string,
@@ -159,6 +179,14 @@ export class ConversationsService {
         lastAt: "now",
         lastFrom: dto.from,
         unread: dto.from === "them" ? { increment: 1 } : 0,
+        // A human sending into an AI-handled thread takes it over: the agent
+        // stops answering until someone clears the pause. Without this, staff
+        // and the bot talk over each other in front of the customer — the
+        // fastest way to destroy trust in the feature.
+        //
+        // 'ai' is excluded deliberately: the agent's own replies arrive through
+        // this path too and must not pause itself.
+        ...(dto.from === "human" ? { aiPausedAt: now } : {}),
       },
     });
     this.emitActivity(workspaceId, conv.channel, conversationId);

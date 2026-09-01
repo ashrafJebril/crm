@@ -1,3 +1,4 @@
+import { AiBridgeService } from "./ai-bridge.service";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -39,7 +40,8 @@ describe("ZernioService.cancelScheduledPost ownership guard", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
   });
 
   it("throws NotFoundException when the post id is not in this workspace's scheduled list", async () => {
@@ -89,7 +91,8 @@ describe("reschedulePost (PUT strategy)", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
   });
 
   it("404s when the post isn't in the workspace queue", async () => {
@@ -176,7 +179,8 @@ describe("ZernioService.publish schedule guard", () => {
       media as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
   });
 
   it("rejects a scheduledFor less than 5 minutes out and never calls createPost", async () => {

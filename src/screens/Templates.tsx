@@ -51,6 +51,8 @@ const STATUS_BADGE: Record<string, BadgeKind> = {
   rejected: "bad",
   submitted: "warn",
   failed: "bad",
+  // Neutral, deliberately not "ok": a local template cannot be sent.
+  local: "",
 };
 
 interface TemplatePreviewProps {
@@ -244,7 +246,12 @@ function toTemplateFull(t: Template): TemplateFull {
   }
 
   const status: TemplateFull["status"] =
-    t.status === "approved" || t.status === "pending" || t.status === "rejected"
+    t.status === "approved" ||
+    t.status === "pending" ||
+    t.status === "rejected" ||
+    // Must pass through, not collapse to "pending": "local" means Meta has
+    // never seen this template, so it can never be sent as-is.
+    t.status === "local"
       ? t.status
       : t.status === "failed"
         ? "rejected"
@@ -315,12 +322,14 @@ function TemplatesImpl() {
     let approved = 0;
     let pending = 0;
     let rejected = 0;
+    let local = 0;
     for (const tpl of allFull) {
       if (tpl.status === "approved") approved++;
       else if (tpl.status === "pending") pending++;
       else if (tpl.status === "rejected") rejected++;
+      else if (tpl.status === "local") local++;
     }
-    return { approved, pending, rejected };
+    return { approved, pending, rejected, local };
   }, [allFull]);
 
   // Close the row context menu on outside click.
@@ -648,6 +657,11 @@ function TemplatesImpl() {
               <span style={{ color: "var(--ok)" }}>● {counts.approved} approved</span>
               <span style={{ color: "var(--warn)" }}>● {counts.pending} pending</span>
               <span style={{ color: "var(--bad)" }}>● {counts.rejected} rejected</span>
+              {counts.local > 0 ? (
+                <span style={{ color: "var(--ink-3)" }} title="Not submitted to Meta — cannot be sent">
+                  ● {counts.local} local only
+                </span>
+              ) : null}
             </div>
           </div>
 

@@ -160,6 +160,164 @@ export class ZernioClient {
     return { id: res.data?.messageId ?? res.id ?? res._id ?? res.message?.id ?? null };
   }
 
+  /**
+   * Send an APPROVED WhatsApp template into an existing conversation.
+   *
+   * Templates are the only message type WhatsApp accepts once the 24-hour
+   * customer-service window has closed. Zernio carries them on the same
+   * endpoint as free text via a `template.elements[0]` reference, and forwards
+   * `components` to Meta's Cloud API verbatim (OpenAPI v1.0.4, live-probed
+   * 2026-08-28). `message` is deliberately never set — Meta rejects a send
+   * that carries both a template and free text.
+   */
+  async sendTemplateMessage(
+    conversationId: string,
+    accountId: string,
+    template: {
+      name: string;
+      language: string;
+      /** Meta Cloud API send-shape components, forwarded verbatim. */
+      components?: Array<Record<string, unknown>>;
+    },
+  ): Promise<{ id: string | null }> {
+    const element: Record<string, unknown> = {
+      name: template.name,
+      language: template.language,
+    };
+    // Absent, not present-and-empty: Meta 400s on an empty components array.
+    if (template.components && template.components.length > 0) {
+      element.components = template.components;
+    }
+    const res = await this.request<{
+      id?: string;
+      _id?: string;
+      message?: { id?: string };
+      data?: { messageId?: string };
+    }>(
+      "POST",
+      `/inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+      { body: { accountId, template: { elements: [element] } } },
+    );
+    return { id: res.data?.messageId ?? res.id ?? res._id ?? res.message?.id ?? null };
+  }
+
+  // ─── WhatsApp templates ──────────────────────────────────────────────────
+
+  /**
+   * List the WABA's message templates. Zernio proxies the WhatsApp Cloud API,
+   * so `status` here is Meta's real verdict — not a local guess. A WABA with
+   * no templates answers 200 with the key absent (live-probed 2026-08-28).
+   */
+  async whatsappTemplates(accountId: string): Promise<ZernioWhatsAppTemplate[]> {
+    const res = await this.request<{ templates?: ZernioWhatsAppTemplate[] }>(
+      "GET",
+      "/whatsapp/templates",
+      { query: { accountId } },
+    );
+    return res.templates ?? [];
+  }
+
+  /**
+   * Create a template. Two modes, per Zernio's spec:
+   *  - custom: pass `components` → submitted to Meta, review can take 24h
+   *  - library: pass `libraryTemplateName` → pre-approved by Meta, no wait
+   *
+   * The library field goes on the wire as Meta's snake_case
+   * `library_template_name`; a camelCase key is ignored and the template comes
+   * back needing review instead.
+   */
+  async createWhatsAppTemplate(body: {
+    accountId: string;
+    name: string;
+    category: "AUTHENTICATION" | "MARKETING" | "UTILITY";
+    language: string;
+    components?: Array<Record<string, unknown>>;
+    libraryTemplateName?: string;
+    /** Button inputs a library template with URL/PHONE_NUMBER buttons requires. */
+    libraryButtonInputs?: Array<Record<string, unknown>>;
+  }): Promise<ZernioWhatsAppTemplate> {
+    const payload: Record<string, unknown> = {
+      accountId: body.accountId,
+      name: body.name,
+      category: body.category,
+      language: body.language,
+    };
+    if (body.libraryTemplateName) {
+      payload.library_template_name = body.libraryTemplateName;
+      if (body.libraryButtonInputs && body.libraryButtonInputs.length > 0) {
+        payload.library_template_button_inputs = body.libraryButtonInputs;
+      }
+    } else if (body.components) {
+      payload.components = body.components;
+    }
+    const res = await this.request<{ template?: ZernioWhatsAppTemplate }>(
+      "POST",
+      "/whatsapp/templates",
+      { body: payload },
+    );
+    return (
+      res.template ?? {
+        id: null,
+        name: body.name,
+        status: "PENDING",
+        category: body.category,
+        language: body.language,
+      }
+    );
+  }
+
+  /** Delete a template from the WABA. Meta deletes by name, not id. */
+  async deleteWhatsAppTemplate(accountId: string, templateName: string): Promise<void> {
+    await this.request("DELETE", `/whatsapp/templates/${encodeURIComponent(templateName)}`, {
+      query: { accountId },
+    });
+  }
+
+  /**
+   * Update an approved template's components. Meta re-reviews it, so the
+   * status comes back PENDING and the final verdict arrives later on the
+   * `whatsapp.template.status_updated` webhook. A template already PENDING
+   * cannot be edited until Meta finishes.
+   */
+  async updateWhatsAppTemplate(
+    accountId: string,
+    templateName: string,
+    components: Array<Record<string, unknown>>,
+  ): Promise<ZernioWhatsAppTemplate> {
+    const res = await this.request<{ template?: ZernioWhatsAppTemplate }>(
+      "PATCH",
+      `/whatsapp/templates/${encodeURIComponent(templateName)}`,
+      { body: { accountId, components } },
+    );
+    return (
+      res.template ?? {
+        id: null,
+        name: templateName,
+        status: "PENDING",
+        category: "UTILITY",
+        language: "",
+      }
+    );
+  }
+
+  /**
+   * Look up one pre-approved Template Library template by exact name, to see
+   * its body params and which buttons Meta will demand inputs for. Returns
+   * null when nothing matches exactly.
+   */
+  async whatsappLibraryTemplate(
+    accountId: string,
+    name: string,
+    language?: string,
+  ): Promise<ZernioLibraryTemplate | null> {
+    const res = await this.request<{ template?: ZernioLibraryTemplate | null }>(
+      "GET",
+      "/whatsapp/template-library",
+      { query: { accountId, name, language } },
+    );
+    return res.template ?? null;
+  }
+
   // ─── Publishing ──────────────────────────────────────────────────────────
 
   async createPost(body: {
@@ -666,6 +824,37 @@ function flattenComments(
     if (replies?.length) out.push(...flattenComments(replies, c.id));
   }
   return out;
+}
+
+/** A pre-approved Template Library entry, before it is imported to the WABA. */
+export interface ZernioLibraryTemplate {
+  name: string;
+  language: string;
+  category: string;
+  body: string;
+  /** Names of the body placeholders, in order. */
+  body_params?: string[];
+  availableLanguages?: string[];
+  /** URL / PHONE_NUMBER buttons here need matching inputs at create time. */
+  buttons?: Array<{ type: string; text?: string }>;
+}
+
+/** A template as Meta reports it, proxied through Zernio. */
+export interface ZernioWhatsAppTemplate {
+  id: string | null;
+  name: string;
+  /** Meta's real review verdict. */
+  status: "APPROVED" | "PENDING" | "REJECTED" | string;
+  category: "AUTHENTICATION" | "MARKETING" | "UTILITY" | string;
+  language: string;
+  /** Meta component definitions (HEADER / BODY / FOOTER / BUTTONS). */
+  components?: Array<Record<string, unknown>>;
+  /**
+   * Why Meta rejected it, e.g. INVALID_FORMAT — which is what you get for a
+   * template whose {{n}} variables carry no example values, or whose content
+   * duplicates an already-rejected template (both verified live 2026-08-28).
+   */
+  rejected_reason?: string;
 }
 
 export interface ZernioWhatsAppNumbers {

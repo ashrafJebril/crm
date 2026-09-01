@@ -1,3 +1,4 @@
+import { AiBridgeService } from "./ai-bridge.service";
 import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
@@ -46,7 +47,8 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
       media as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-    );
+        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+);
     return { svc, client, prisma };
   };
 

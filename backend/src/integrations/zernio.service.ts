@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
+import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 
 /**
@@ -47,6 +48,7 @@ export class ZernioService {
     private readonly media: MediaService,
     private readonly client: ZernioClient,
     private readonly pipelineAutomation: PipelineAutomationService,
+    private readonly aiBridge: AiBridgeService,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -662,6 +664,136 @@ export class ZernioService {
    * platform id rather than storing it, which means this also works for
    * threads created before Zernio existed.
    */
+  /**
+   * Send an APPROVED WhatsApp template into a DB-backed conversation.
+   *
+   * This is the only way to reply once the 24-hour customer-service window has
+   * closed. It deliberately mirrors `sendInDbConversation`'s target resolution
+   * (integration row → Zernio conversation id) so both paths behave the same
+   * on a thread the inbound webhook has not yet stamped with an externalId.
+   */
+  async sendTemplateInDbConversation(
+    workspaceId: string,
+    conversationId: string,
+    name: string,
+    language: string,
+    variables: string[],
+  ) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      include: { contact: true },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+
+    const channel = conv.channel.toLowerCase();
+    if (channel !== "whatsapp") {
+      throw new BadRequestException(
+        "Templates can only be sent into a WhatsApp thread",
+      );
+    }
+
+    const { accountId, zernioConvId } = await this.resolveZernioTarget(
+      workspaceId,
+      conv,
+      channel,
+    );
+
+    // Positional {{1}}, {{2}} … variables become Meta's body component. Left
+    // absent when there are none — an empty parameters array is a 400 at Meta.
+    const components =
+      variables.length > 0
+        ? [
+            {
+              type: "body",
+              parameters: variables.map((v) => ({ type: "text", text: v })),
+            },
+          ]
+        : undefined;
+
+    const { id } = await this.client.sendTemplateMessage(zernioConvId, accountId, {
+      name,
+      language,
+      ...(components ? { components } : {}),
+    });
+
+    // Our DB only holds the template's raw body, so render a readable stand-in
+    // rather than an empty bubble; Meta renders the real thing for the customer.
+    const previewBody =
+      variables.length > 0
+        ? `[template: ${name}] ${variables.join(" · ")}`
+        : `[template: ${name}]`;
+
+    const now = new Date();
+    const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    await this.prisma.message.create({
+      data: {
+        workspaceId,
+        conversationId: conv.id,
+        from: "human",
+        body: previewBody,
+        t,
+        metaMessageId: id,
+      },
+    });
+    await this.prisma.conversation.update({
+      where: { id: conv.id },
+      data: {
+        preview: previewBody.slice(0, 140),
+        lastAt: "now",
+        lastFrom: "human",
+        unread: 0,
+      },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel,
+      conversationId: conv.id,
+    });
+    await this.pipelineAutomation.onOutboundReply(workspaceId, conv.contactId);
+    return { ok: true, id };
+  }
+
+  /**
+   * Resolve the Zernio send target for a DB conversation: the sending account
+   * id and Zernio's own conversation id.
+   *
+   * The inbound webhook stamps Zernio's conversation id onto the row, letting
+   * us send directly. Rows that predate the column fall back to the live
+   * conversation list — and get backfilled so they only pay that ~0.5s once.
+   */
+  private async resolveZernioTarget(
+    workspaceId: string,
+    conv: { id: string; externalId: string | null; contact?: { externalId: string | null } | null },
+    channel: string,
+  ): Promise<{ accountId: string; zernioConvId: string }> {
+    const integ = await this.prisma.integration.findFirst({
+      where: { workspaceId, provider: "zernio", platform: channel },
+    });
+    if (!integ?.pageId) {
+      throw new NotFoundException(`${channel} is not connected via Zernio`);
+    }
+
+    let zernioConvId = conv.externalId;
+    if (!zernioConvId) {
+      const participantId = conv.contact?.externalId;
+      if (!participantId) {
+        throw new BadRequestException("This contact has no platform id to reply to");
+      }
+      const convs = await this.listConversations(workspaceId, channel);
+      const match = convs.find((c) => c.participantId === participantId);
+      if (!match) {
+        throw new NotFoundException(
+          "No Zernio conversation for this contact yet — they need to message you first",
+        );
+      }
+      zernioConvId = match.id;
+      await this.prisma.conversation.update({
+        where: { id: conv.id },
+        data: { externalId: zernioConvId },
+      });
+    }
+    return { accountId: integ.pageId, zernioConvId };
+  }
+
   async sendInDbConversation(
     workspaceId: string,
     conversationId: string,
@@ -699,36 +831,11 @@ export class ZernioService {
     }
 
     const channel = conv.channel.toLowerCase();
-    const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, provider: "zernio", platform: channel },
-    });
-    if (!integ?.pageId) {
-      throw new NotFoundException(`${channel} is not connected via Zernio`);
-    }
-
-    // Fast path: the inbound webhook stores Zernio's conversation id on the
-    // row, letting us send directly. Rows that predate the column fall back to
-    // resolving via the live conversation list — and get backfilled so they
-    // only ever pay that ~0.5s once.
-    let zernioConvId = conv.externalId;
-    if (!zernioConvId) {
-      const participantId = conv.contact?.externalId;
-      if (!participantId) {
-        throw new BadRequestException("This contact has no platform id to reply to");
-      }
-      const convs = await this.listConversations(workspaceId, channel);
-      const match = convs.find((c) => c.participantId === participantId);
-      if (!match) {
-        throw new NotFoundException(
-          "No Zernio conversation for this contact yet — they need to message you first",
-        );
-      }
-      zernioConvId = match.id;
-      await this.prisma.conversation.update({
-        where: { id: conv.id },
-        data: { externalId: zernioConvId },
-      });
-    }
+    const { accountId, zernioConvId } = await this.resolveZernioTarget(
+      workspaceId,
+      conv,
+      channel,
+    );
 
     // Instagram and Messenger DMs carry ONE body shape per message — text OR
     // an attachment, never both (there is no caption field; the legacy Meta
@@ -739,12 +846,12 @@ export class ZernioService {
     const captionCapable = channel === "whatsapp";
     let id: string | null = null;
     if (attachment && message && !captionCapable) {
-      await this.client.sendMessage(zernioConvId, integ.pageId, "", attachment);
-      ({ id } = await this.client.sendMessage(zernioConvId, integ.pageId, message));
+      await this.client.sendMessage(zernioConvId, accountId, "", attachment);
+      ({ id } = await this.client.sendMessage(zernioConvId, accountId, message));
     } else {
       ({ id } = await this.client.sendMessage(
         zernioConvId,
-        integ.pageId,
+        accountId,
         message,
         attachment,
       ));
@@ -1262,6 +1369,33 @@ export class ZernioService {
         channel,
         text || undefined,
       );
+
+      // Hand the message to the AI service if this thread has it enabled.
+      //
+      // The Meta path (whatsapp.service.ts) has always done this; Zernio never
+      // did — so with WhatsApp running on Zernio, the AI was wired up, enabled
+      // and simply never called. Inbound arrived, was stored, and nothing asked
+      // the agent to reply.
+      //
+      // Last and fire-and-forget on purpose: everything above is already
+      // persisted, so a slow or dead AI service can never cost us the message
+      // or the 200 that stops Zernio retrying.
+      if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && this.aiBridge.isConfigured()) {
+        await this.aiBridge.notifyInbound({
+          workspaceId,
+          conversationId: conv.id,
+          contactId: contact.id,
+          channel,
+          messageId: externalMsgId,
+          body: text,
+          contactName: contact.name,
+          contactPhone: contact.phone,
+          // The customer just messaged us, so the 24h free-text window is open
+          // by definition at this instant.
+          windowOpen: true,
+          receivedAt: new Date().toISOString(),
+        });
+      }
     }
   }
 

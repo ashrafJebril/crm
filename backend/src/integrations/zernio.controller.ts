@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { IsOptional, IsString } from "class-validator";
+import { IsArray, IsOptional, IsString } from "class-validator";
 import { ZernioService } from "./zernio.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
@@ -27,6 +27,15 @@ class ZernioSendDto {
 class ZernioDbSendDto {
   @IsString() message!: string;
   @IsOptional() @IsString() mediaId?: string;
+}
+
+/** Send an approved WhatsApp template into one of our DB conversations. The
+ *  accountId is resolved server-side from the conversation's channel, same as
+ *  ZernioDbSendDto. `variables` fill the template's {{1}}, {{2}} … in order. */
+class ZernioDbSendTemplateDto {
+  @IsString() name!: string;
+  @IsString() language!: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) variables?: string[];
 }
 
 class ZernioCommentReplyDto {
@@ -145,6 +154,21 @@ export class ZernioController {
     const publicBase =
       process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL ?? "http://localhost:3001";
     return this.zernio.sendInDbConversation(workspaceId, id, dto.message, dto.mediaId, publicBase);
+  }
+
+  @Post("integrations/zernio/db-conversations/:id/send-template")
+  sendTemplateInDbConversation(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: ZernioDbSendTemplateDto,
+  ) {
+    return this.zernio.sendTemplateInDbConversation(
+      workspaceId,
+      id,
+      dto.name,
+      dto.language,
+      dto.variables ?? [],
+    );
   }
 
   @Delete("integrations/zernio/:platform")

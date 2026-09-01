@@ -25,6 +25,7 @@ import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
 import { AdsModule } from "./ads/ads.module";
+import { KnowledgeModule } from "./knowledge/knowledge.module";
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { AdsModule } from "./ads/ads.module";
     RealtimeModule,
     SearchModule,
     AdsModule,
+    KnowledgeModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },
