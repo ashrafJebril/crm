@@ -1381,7 +1381,7 @@ export class ZernioService {
       // persisted, so a slow or dead AI service can never cost us the message
       // or the 200 that stops Zernio retrying.
       if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && this.aiBridge.isConfigured()) {
-        await this.aiBridge.notifyInbound({
+        void this.aiBridge.notifyInbound({
           workspaceId,
           conversationId: conv.id,
           contactId: contact.id,
