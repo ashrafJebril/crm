@@ -15,11 +15,14 @@ import {
   saveDoc,
   setAiEnabled,
   setAutonomyMode,
+  setSyncEnabled,
   type AiKnowledgeDoc,
   type AiSettings,
   type AutonomyMode,
   type KnowledgeKind,
   type SaveDocResult,
+  type SetSyncEnabledResult,
+  type SyncEnabledState,
   type SyncResult,
   type ToggleResult,
 } from "@/api/aiKnowledge";
@@ -142,6 +145,15 @@ export function AiKnowledgeTab() {
   const deleteMut = useMutation<{ id: string }, { ok: true }>((i) => deleteDoc(i.id));
   const syncMut = useMutation<void, SyncResult>(() => resyncFromHjz());
 
+  // The sync on/off switch. Off = the synced docs are REMOVED and the AI stops
+  // using hjz data; on = syncing is allowed again (but nothing pulls until the
+  // owner presses re-sync, so the slow part stays visible).
+  const syncEnabledQ = useFetch<SyncEnabledState>("/ai/knowledge/sync-enabled");
+  const syncToggleMut = useMutation<boolean, SetSyncEnabledResult>((enabled) => setSyncEnabled(enabled));
+  // Turning it off deletes data, so it asks once — same inline pattern as doc
+  // deletion, because window.confirm hides WHAT will be removed.
+  const [confirmSyncOff, setConfirmSyncOff] = useState(false);
+
   const showStatus = (msg: string) => {
     setStatus(msg);
     window.setTimeout(() => setStatus(null), 3000);
@@ -190,6 +202,41 @@ export function AiKnowledgeTab() {
       );
     } catch {
       /* error stays in syncMut.error */
+    }
+  };
+
+  const syncEnabled = syncEnabledQ.data?.enabled ?? true;
+
+  const onSyncOff = async () => {
+    try {
+      const res = await syncToggleMut.mutate(false);
+      setConfirmSyncOff(false);
+      syncEnabledQ.refetch();
+      listQ.refetch();
+      setSyncResult(null);
+      showStatus(
+        tx(
+          `Sync is off — ${res.deletedDocs} synced document${res.deletedDocs === 1 ? "" : "s"} removed. The AI no longer uses hjz data.`,
+          `التزامن متوقف — انحذف ${res.deletedDocs} مستند. الذكاء الاصطناعي ما عاد يستخدم بيانات hjz.`,
+        ),
+      );
+    } catch {
+      /* error stays in syncToggleMut.error */
+    }
+  };
+
+  const onSyncOn = async () => {
+    try {
+      await syncToggleMut.mutate(true);
+      syncEnabledQ.refetch();
+      showStatus(
+        tx(
+          "Sync is on. Press re-sync to pull your services, branches and staff.",
+          "التزامن اشتغل. اضغط تحديث لسحب الخدمات والفروع والطاقم.",
+        ),
+      );
+    } catch {
+      /* error stays in syncToggleMut.error */
     }
   };
 
@@ -288,20 +335,111 @@ export function AiKnowledgeTab() {
           )}
           footer={
             canEdit ? (
-              <button type="button" className="btn ghost" onClick={onSync} disabled={syncMut.loading}>
-                {syncMut.loading
-                  ? tx("Re-syncing…", "جارٍ التحديث…")
-                  : tx("Re-sync services from hjz", "حدّث الخدمات من hjz")}
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {syncEnabled ? (
+                  <>
+                    <button type="button" className="btn ghost" onClick={onSync} disabled={syncMut.loading || syncToggleMut.loading}>
+                      {syncMut.loading
+                        ? tx("Re-syncing…", "جارٍ التحديث…")
+                        : tx("Re-sync services from hjz", "حدّث الخدمات من hjz")}
+                    </button>
+                    {!confirmSyncOff && (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => setConfirmSyncOff(true)}
+                        disabled={syncMut.loading || syncToggleMut.loading}
+                      >
+                        {tx("Turn sync off", "وقّف التزامن")}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button type="button" className="btn primary" onClick={onSyncOn} disabled={syncToggleMut.loading}>
+                    {syncToggleMut.loading ? tx("Turning on…", "جارٍ التشغيل…") : tx("Turn sync on", "شغّل التزامن")}
+                  </button>
+                )}
+              </div>
             ) : null
           }
         >
+          {/* The state line: is the catalogue reaching the AI right now? */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 14px",
+              background: "var(--bg-2)",
+              borderRadius: 10,
+            }}
+          >
+            <span
+              aria-hidden
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: syncEnabled ? "var(--ok)" : "var(--ink-3)",
+              }}
+            />
+            <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500 }}>
+              {syncEnabled
+                ? tx("Sync is on — the AI uses your hjz services, branches and staff.", "التزامن شغّال — الذكاء الاصطناعي بيستخدم خدماتك وفروعك وطاقمك من hjz.")
+                : tx("Sync is off — the AI is not using any hjz data.", "التزامن متوقف — الذكاء الاصطناعي ما بيستخدم أي بيانات من hjz.")}
+            </div>
+            <Badge kind={syncEnabled ? "ok" : ""}>
+              {syncEnabled ? tx("On", "شغّال") : tx("Off", "متوقف")}
+            </Badge>
+          </div>
+
+          {/* Turning sync off removes data, so it confirms inline — same
+              pattern as doc deletion: say exactly what will happen. */}
+          {canEdit && syncEnabled && confirmSyncOff && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 14px",
+                background: "var(--bg-2)",
+                border: "1px solid var(--bad)",
+                borderRadius: 10,
+              }}
+            >
+              <div style={{ flex: 1, fontSize: 12, lineHeight: 1.6 }}>
+                {tx(
+                  `This removes the ${syncedDocs.length || ""} synced document${syncedDocs.length === 1 ? "" : "s"} (services, branches, staff) and the AI stops using hjz data until you turn sync back on and re-sync. Your own written knowledge stays.`,
+                  `هيك بننحذف المستندات المسحوبة (الخدمات والفروع والطاقم) وبيوقف الذكاء الاصطناعي عن استخدام بيانات hjz لحد ما ترجّع التزامن وتحدّث. معلوماتك المكتوبة بإيدك بتظل.`,
+                )}
+              </div>
+              <button type="button" className="btn ghost" onClick={() => setConfirmSyncOff(false)} disabled={syncToggleMut.loading}>
+                {tx("Cancel", "إلغاء")}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={onSyncOff}
+                disabled={syncToggleMut.loading}
+                style={{ background: "var(--bad)", borderColor: "var(--bad)" }}
+              >
+                {syncToggleMut.loading ? tx("Turning off…", "جارٍ الإيقاف…") : tx("Turn off and remove", "وقّفه واحذف")}
+              </button>
+            </div>
+          )}
+
           {syncedDocs.length === 0 ? (
             <div className="muted" style={{ fontSize: 12 }}>
-              {tx(
-                "Nothing synced yet. Press re-sync to pull your services, branches and staff.",
-                "ما في شي محدّث لهلأ. اضغط تحديث لسحب الخدمات والفروع والطاقم.",
-              )}
+              {syncEnabled
+                ? tx(
+                    "Nothing synced yet. Press re-sync to pull your services, branches and staff.",
+                    "ما في شي محدّث لهلأ. اضغط تحديث لسحب الخدمات والفروع والطاقم.",
+                  )
+                : tx(
+                    "No synced documents — sync is off.",
+                    "ما في مستندات مسحوبة — التزامن متوقف.",
+                  )}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -321,7 +459,7 @@ export function AiKnowledgeTab() {
           {syncResult && (
             <div style={{ fontSize: 12, color: "var(--ok)" }}>✓ {syncResult}</div>
           )}
-          <ErrorRow message={syncMut.error} />
+          <ErrorRow message={syncMut.error ?? syncToggleMut.error} />
         </SettingsCard>
       )}
 

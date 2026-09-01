@@ -68,6 +68,29 @@ export function resyncFromHjz(): Promise<SyncResult> {
   return api.post<SyncResult>("/ai/knowledge/sync");
 }
 
+/* ─── The sync on/off switch ────────────────────────────────────────────── */
+
+export interface SyncEnabledState {
+  enabled: boolean;
+}
+
+export interface SetSyncEnabledResult {
+  enabled: boolean;
+  /** False when it was already in that state. */
+  changed: boolean;
+  /** How many synced docs were removed (only on turning OFF). */
+  deletedDocs: number;
+}
+
+/**
+ * Turning it OFF also REMOVES the synced documents, so the AI immediately
+ * stops using hjz data — it does not keep answering from a stale copy.
+ * Turning it ON does not sync by itself; call resyncFromHjz() after.
+ */
+export function setSyncEnabled(enabled: boolean): Promise<SetSyncEnabledResult> {
+  return api.post<SetSyncEnabledResult>("/ai/knowledge/sync-enabled", { enabled });
+}
+
 /* ─── The assistant's on/off switch ─────────────────────────────────────── */
 
 /**

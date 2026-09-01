@@ -83,6 +83,18 @@ export class KnowledgeClient {
     });
   }
 
+  /**
+   * The owner's on/off switch for the product sync. Disabling DELETES the
+   * synced docs upstream (owner's chosen semantics: off = the AI stops using
+   * hjz data entirely). Enabling does not auto-sync; the UI re-syncs
+   * explicitly so the owner watches the pull happen.
+   */
+  async setSyncEnabled(tenantId: string, enabled: boolean): Promise<KewySyncEnabledResult> {
+    return this.request<KewySyncEnabledResult>("POST", "/knowledge/sync-enabled", {
+      body: { tenantId, enabled },
+    });
+  }
+
   /* ─── Tenant AI settings ───────────────────────────────────────────────
    *
    * Same secret, same base URL, same failure classification — so these live
@@ -266,6 +278,17 @@ export interface KewySyncResult {
   [k: string]: unknown;
 }
 
+/** kewy-ai's answer to POST /knowledge/sync-enabled. */
+export interface KewySyncEnabledResult {
+  tenantId: string;
+  productSyncEnabled: boolean;
+  previousProductSyncEnabled: boolean;
+  /** False when the flag was already in the requested state. */
+  changed: boolean;
+  /** How many synced docs were removed (0 on enable). */
+  deletedDocs: number;
+}
+
 /** Whether the reply is SENT, not whether the agent runs. SHADOW still calls
  *  the model and still costs money; it writes the draft into the thread marked
  *  as not sent. AUTONOMOUS delivers it to the customer. */
@@ -289,6 +312,8 @@ export interface KewyTenantConfig {
   personaName: string;
   locale: string;
   dailyCostCapJod: number | null;
+  /** Whether the product sync (hjz catalogue -> knowledge) may run. */
+  productSyncEnabled: boolean;
 }
 
 export interface KewyKillSwitchResult {

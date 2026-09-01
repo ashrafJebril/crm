@@ -63,4 +63,23 @@ export class KnowledgeService {
   async sync(workspaceId: string): Promise<KewySyncResult> {
     return this.client.sync(this.tenantIdFor(workspaceId));
   }
+
+  /** Whether the product sync is currently allowed for this workspace. */
+  async getSyncEnabled(workspaceId: string): Promise<{ enabled: boolean }> {
+    const cfg = await this.client.getConfig(this.tenantIdFor(workspaceId));
+    return { enabled: cfg.productSyncEnabled };
+  }
+
+  /**
+   * Flip the product sync. Disabling deletes the synced docs upstream — the
+   * response carries how many, so the UI can say what happened instead of the
+   * list just silently emptying.
+   */
+  async setSyncEnabled(
+    workspaceId: string,
+    enabled: boolean,
+  ): Promise<{ enabled: boolean; changed: boolean; deletedDocs: number }> {
+    const res = await this.client.setSyncEnabled(this.tenantIdFor(workspaceId), enabled);
+    return { enabled: res.productSyncEnabled, changed: res.changed, deletedDocs: res.deletedDocs };
+  }
 }

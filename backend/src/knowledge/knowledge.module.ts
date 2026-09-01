@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Module, Param, Post } from "@nestjs/common";
-import { IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { Transform } from "class-transformer";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { KnowledgeClient, KEWY_KNOWLEDGE_KINDS, type KewyKnowledgeKind } from "./knowledge.client";
@@ -30,6 +30,11 @@ class SaveDocDto {
   @Trim @IsString() @MinLength(1) @MaxLength(100_000) body!: string;
 
   @IsIn(KEWY_KNOWLEDGE_KINDS as unknown as string[]) kind!: KewyKnowledgeKind;
+}
+
+/** The sync on/off switch. No tenantId here either — same rule as SaveDocDto. */
+class SetSyncEnabledDto {
+  @IsBoolean() enabled!: boolean;
 }
 
 /**
@@ -81,6 +86,20 @@ export class KnowledgeController {
   @Post("sync")
   sync(@CurrentWorkspace() workspaceId: string) {
     return this.svc.sync(workspaceId);
+  }
+
+  /** Whether the product sync is allowed for this workspace right now. */
+  @Get("sync-enabled")
+  getSyncEnabled(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.getSyncEnabled(workspaceId);
+  }
+
+  /** Turn the product sync on or off. OFF also removes the synced documents
+   *  upstream, so the AI stops using hjz data entirely — the response says how
+   *  many were removed. ON does not auto-sync; press re-sync afterwards. */
+  @Post("sync-enabled")
+  setSyncEnabled(@CurrentWorkspace() workspaceId: string, @Body() dto: SetSyncEnabledDto) {
+    return this.svc.setSyncEnabled(workspaceId, dto.enabled);
   }
 }
 
