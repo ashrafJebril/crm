@@ -47,9 +47,13 @@ export class ProvisionClientDto {
   @MinLength(2)
   ownerName!: string;
 
+  // Optional since Kewy workspace federation: an owner provisioned through the
+  // Kewy control panel arrives by SSO handoff and has no local password. The
+  // super-admin console still sends one so an admin can hand over credentials.
+  @IsOptional()
   @IsString()
   @MinLength(6)
-  ownerPassword!: string;
+  ownerPassword?: string;
 
   @IsOptional()
   @IsString()
@@ -58,4 +62,18 @@ export class ProvisionClientDto {
   @IsOptional()
   @IsString()
   lang?: string;
+
+  // ─── Kewy workspace federation ───
+  // The global ValidationPipe uses forbidNonWhitelisted, so these must be
+  // declared here or Kewy's provision call is rejected with a 400.
+
+  /** Id of the Kewy Workspace that owns this crm workspace. */
+  @IsOptional()
+  @IsString()
+  kewyWorkspaceId?: string;
+
+  /** Id of the Kewy Account that owns it. */
+  @IsOptional()
+  @IsString()
+  kewyAccountId?: string;
 }

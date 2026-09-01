@@ -6,6 +6,8 @@ import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
 import { SsoController } from "./sso.controller";
 import { SsoService } from "./sso.service";
+import { KewySsoController } from "./kewy-sso.controller";
+import { KewySsoService } from "./kewy-sso.service";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
 import { requireJwtSecret } from "../common/jwt-secret";
 
@@ -20,10 +22,11 @@ import { requireJwtSecret } from "../common/jwt-secret";
   ],
   // HJZ SSO bridge controller is inert unless AUTH_MODE=sso (the service
   // rejects calls), so registering it standalone-side is harmless.
-  controllers: [AuthController, SsoController],
+  controllers: [AuthController, SsoController, KewySsoController],
   providers: [
     AuthService,
     SsoService,
+    KewySsoService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
   exports: [AuthService],

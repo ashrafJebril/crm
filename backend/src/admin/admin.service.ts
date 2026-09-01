@@ -162,11 +162,45 @@ export class AdminService {
    * customer can change it later via Settings → Profile.
    */
   async provisionClient(dto: ProvisionClientDto) {
-    const existing = await this.prisma.raw.user.findUnique({
-      where: { email: dto.ownerEmail },
+    // Idempotency: Kewy retries a provision whose response it never saw (a
+    // timeout after the write succeeded). Returning the existing workspace
+    // instead of creating a second one is what makes that retry safe.
+    if (dto.kewyWorkspaceId) {
+      const already = await this.prisma.raw.workspace.findUnique({
+        where: { kewyWorkspaceId: dto.kewyWorkspaceId },
+        select: { id: true, name: true, slug: true },
+      });
+      if (already) {
+        const owner = await this.prisma.raw.workspaceMember.findFirst({
+          where: { workspaceId: already.id, role: "owner" },
+          select: { user: { select: { id: true, email: true, name: true } } },
+        });
+        return { workspace: already, user: owner?.user ?? null };
+      }
+    }
+
+    // A returning customer already has a crm User. crm has WorkspaceMember, so
+    // one user legitimately spans several workspaces — reuse the row and add a
+    // membership rather than rejecting. Previously this threw a 409, which made
+    // a second workspace (or any retry) impossible.
+    const existing = await this.prisma.raw.user.findFirst({
+      where: dto.kewyAccountId
+        ? { OR: [{ kewyAccountId: dto.kewyAccountId }, { email: dto.ownerEmail }] }
+        : { email: dto.ownerEmail },
     });
-    if (existing) {
-      throw new ConflictException("A user with that email already exists");
+
+    // The one genuine conflict left: the email belongs to somebody who is
+    // already linked to a *different* Kewy account. Silently attaching that
+    // person's workspaces to this account would be a cross-tenant leak.
+    if (
+      existing &&
+      dto.kewyAccountId &&
+      existing.kewyAccountId &&
+      existing.kewyAccountId !== dto.kewyAccountId
+    ) {
+      throw new ConflictException(
+        "That email belongs to a user linked to a different Kewy account",
+      );
     }
 
     const baseSlug = toSlug(dto.workspaceName);
@@ -177,20 +211,36 @@ export class AdminService {
       slug = `${baseSlug}-${suffix}`;
     }
 
-    const hashed = await bcrypt.hash(dto.ownerPassword, 10);
+    // No password when Kewy provisions: that owner arrives by SSO handoff and
+    // never needs a local one. `User.password` is already nullable for exactly
+    // this reason (the hjz bridge relies on it too).
+    const hashed = dto.ownerPassword
+      ? await bcrypt.hash(dto.ownerPassword, 10)
+      : null;
 
     return this.prisma.raw.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email: dto.ownerEmail,
-          name: dto.ownerName,
-          password: hashed,
-          role: "Owner",
-          initials: initialsOf(dto.ownerName),
-          color: "210",
-          status: "offline",
-        },
-      });
+      const user = existing
+        ? await tx.user.update({
+            where: { id: existing.id },
+            // Only ever fill in a missing link; never overwrite an existing
+            // password or rename a user because a provision call said so.
+            data: {
+              kewyAccountId: existing.kewyAccountId ?? dto.kewyAccountId ?? null,
+              ...(existing.password === null && hashed ? { password: hashed } : {}),
+            },
+          })
+        : await tx.user.create({
+            data: {
+              email: dto.ownerEmail,
+              name: dto.ownerName,
+              password: hashed,
+              kewyAccountId: dto.kewyAccountId ?? null,
+              role: "Owner",
+              initials: initialsOf(dto.ownerName),
+              color: "210",
+              status: "offline",
+            },
+          });
 
       const ws = await tx.workspace.create({
         data: {
@@ -198,6 +248,7 @@ export class AdminService {
           slug,
           timezone: dto.timezone ?? "Asia/Riyadh",
           lang: dto.lang ?? "ar",
+          kewyWorkspaceId: dto.kewyWorkspaceId ?? null,
         },
       });
 

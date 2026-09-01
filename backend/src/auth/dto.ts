@@ -83,3 +83,10 @@ export class SsoExchangeDto {
   @IsNotEmpty()
   name?: string;
 }
+
+export class KewySsoExchangeDto {
+  /** The short-lived RS256 handoff token minted by the Kewy control panel. */
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+}
