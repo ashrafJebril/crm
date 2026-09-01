@@ -182,6 +182,49 @@ export function AiKnowledgeTab() {
     advanceQueue();
   };
 
+  // Sequential rather than Promise.all: each save embeds inline upstream, and
+  // ten concurrent embedding runs would race the same tenant for no benefit.
+  const [bulkSaving, setBulkSaving] = useState<{ done: number; total: number } | null>(null);
+
+  /** Save the current draft AND everything queued behind it, one by one. */
+  const onSaveAll = async () => {
+    if (!draft) return;
+    const batch = [draft, ...fileQueue];
+    setFileQueue([]);
+    const failed: string[] = [];
+    let saved = 0;
+    for (let i = 0; i < batch.length; i++) {
+      setBulkSaving({ done: i, total: batch.length });
+      setFileNote({
+        kind: "ok",
+        text: tx(
+          `Saving ${i + 1} of ${batch.length}: ${batch[i].sourceFilename ?? batch[i].title}…`,
+          `عم نحفظ ${i + 1} من ${batch.length}: ${batch[i].sourceFilename ?? batch[i].title}…`,
+        ),
+      });
+      try {
+        await saveMut.mutate(batch[i]);
+        saved++;
+      } catch {
+        // Keep going: one bad file must not strand the other ten. The names
+        // of the failures are reported at the end so nothing fails silently.
+        failed.push(batch[i].sourceFilename ?? batch[i].title);
+      }
+    }
+    setBulkSaving(null);
+    setDraft(null);
+    setFileNote(null);
+    listQ.refetch();
+    showStatus(
+      failed.length === 0
+        ? tx(`Saved all ${saved} files — the AI knows them now.`, `تم حفظ كل الملفات (${saved}) — صار الذكاء الاصطناعي يعرفها.`)
+        : tx(
+            `Saved ${saved} of ${saved + failed.length}. Failed: ${failed.join(", ")} — try those again.`,
+            `تم حفظ ${saved} من ${saved + failed.length}. فشل: ${failed.join("، ")} — جرّبها مرة تانية.`,
+          ),
+    );
+  };
+
   /** Move to the next queued file, or close the editor when none remain. */
   const advanceQueue = () => {
     if (fileQueue.length > 0) {
@@ -311,8 +354,9 @@ export function AiKnowledgeTab() {
             setStatus(null);
           }}
           onSkip={fileQueue.length > 0 ? advanceQueue : undefined}
+          onSaveAll={fileQueue.length > 0 ? onSaveAll : undefined}
           queueCount={fileQueue.length}
-          saving={saveMut.loading}
+          saving={saveMut.loading || bulkSaving !== null}
           error={saveMut.error}
           fileNote={fileNote}
           setFileNote={setFileNote}
@@ -965,6 +1009,7 @@ function DraftEditor({
   onSave,
   onCancel,
   onSkip,
+  onSaveAll,
   queueCount = 0,
   saving,
   error,
@@ -978,6 +1023,8 @@ function DraftEditor({
   onCancel: () => void;
   /** Present while more uploaded files wait behind this one — skips to the next without saving. */
   onSkip?: () => void;
+  /** Present while more uploaded files wait — saves this file and every queued one in order. */
+  onSaveAll?: () => void;
   queueCount?: number;
   saving: boolean;
   error: string | null;
@@ -1026,6 +1073,13 @@ function DraftEditor({
           {onSkip && (
             <button type="button" className="btn ghost" onClick={onSkip} disabled={saving}>
               {tx("Skip this file", "تخطَّ هالملف")}
+            </button>
+          )}
+          {onSaveAll && (
+            <button type="button" className="btn ghost" onClick={onSaveAll} disabled={saving || !canSave}>
+              {saving
+                ? tx("Saving all…", "عم نحفظ الكل…")
+                : tx(`Save all ${queueCount + 1} files`, `احفظ كل الملفات (${queueCount + 1})`)}
             </button>
           )}
           <button type="button" className="btn primary" onClick={onSave} disabled={saving || !canSave}>
