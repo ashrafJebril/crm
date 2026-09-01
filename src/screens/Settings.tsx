@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
@@ -11,12 +11,53 @@ import { ProfileTab } from "./settings/ProfileTab";
 
 type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "profile";
 
+const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "profile"];
+
+/**
+ * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
+ * transient state: a refresh, a shared link, or a back-navigation should land
+ * on the tab the user was actually looking at, not silently reset to the
+ * first one. The router already strips the query part when matching the
+ * route (see router.tsx parseHash), so this piggybacks on the same hash.
+ */
+const parseTab = (): Tab => {
+  const query = window.location.hash.split("?")[1] ?? "";
+  const tab = new URLSearchParams(query).get("tab");
+  return TAB_IDS.includes(tab as Tab) ? (tab as Tab) : "workspace";
+};
+
+const writeTab = (tab: Tab) => {
+  const [route, query] = window.location.hash.split("?");
+  // Only the `tab` param is ours. Anything else in the query — the hosted
+  // OAuth flows send customers back to `#/settings?zernio=connected&…` — must
+  // survive a tab click, or switching tabs mid-redirect eats the result.
+  const params = new URLSearchParams(query ?? "");
+  if (tab === "workspace") params.delete("tab");
+  else params.set("tab", tab);
+  const qs = params.toString();
+  const next = qs ? `${route}?${qs}` : route;
+  if (window.location.hash !== next) window.location.hash = next;
+};
+
 function SettingsImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
 
-  const [tab, setTab] = useState<Tab>("workspace");
+  const [tab, setTabState] = useState<Tab>(parseTab);
+
+  // Follow the URL, not just drive it: back/forward and hand-edited links
+  // must move the tab too, or the URL and the screen silently disagree.
+  useEffect(() => {
+    const onHash = () => setTabState(parseTab());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const setTab = (next: Tab) => {
+    writeTab(next);
+    setTabState(next);
+  };
 
   const tabs: Array<{ id: Tab; label: string; ar: string }> = [
     { id: "workspace", label: "Workspace", ar: "مساحة العمل" },
