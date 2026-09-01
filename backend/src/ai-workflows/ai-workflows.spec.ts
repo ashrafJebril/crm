@@ -25,7 +25,7 @@ describe("AI workflows tenant-scoped proxy", () => {
     const fetchSpy = jest.fn(async () => ({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ workflows: [] }),
+      text: async () => JSON.stringify({ workflows: [], workflowKillSwitch: true }),
     })) as any;
     global.fetch = fetchSpy;
 
@@ -35,6 +35,119 @@ describe("AI workflows tenant-scoped proxy", () => {
     expect(url).toBe("http://kewy.test/api/v1/admin/tenants/tenant-from-session/workflows");
     expect(init.headers["x-kewy-admin-secret"]).toBe("server-only");
     expect(init.body).toBeUndefined();
+  });
+
+  it("rejects a legacy raw workflow array instead of hiding upstream contract drift", async () => {
+    process.env.KEWY_AI_URL = "http://kewy.test";
+    process.env.KEWY_AI_ADMIN_SECRET = "server-only";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify([]),
+    })) as any;
+
+    await expect(new AiWorkflowsClient().list("tenant-1")).rejects.toMatchObject({
+      status: 502,
+      response: { code: "AI_WORKFLOW_INVALID_RESPONSE" },
+    });
+  });
+
+  it("requires lastRun on every workflow response", async () => {
+    process.env.KEWY_AI_URL = "http://kewy.test";
+    process.env.KEWY_AI_ADMIN_SECRET = "server-only";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        workflowKillSwitch: false,
+        workflows: [{ id: "wf-1", ...WORKFLOW }],
+      }),
+    })) as any;
+
+    await expect(new AiWorkflowsClient().list("tenant-1")).rejects.toMatchObject({
+      status: 502,
+      response: { code: "AI_WORKFLOW_INVALID_RESPONSE" },
+    });
+  });
+
+  it("rejects the legacy kill-switch response field", async () => {
+    process.env.KEWY_AI_URL = "http://kewy.test";
+    process.env.KEWY_AI_ADMIN_SECRET = "server-only";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ tenantId: "tenant-1", workflowKillSwitch: true, enabled: true }),
+    })) as any;
+
+    await expect(new AiWorkflowsClient().setKillSwitch("tenant-1", true)).rejects.toMatchObject({
+      status: 502,
+      response: { code: "AI_WORKFLOW_INVALID_RESPONSE" },
+    });
+  });
+
+  it("rejects a legacy raw run array instead of hiding upstream contract drift", async () => {
+    process.env.KEWY_AI_URL = "http://kewy.test";
+    process.env.KEWY_AI_ADMIN_SECRET = "server-only";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify([]),
+    })) as any;
+
+    await expect(new AiWorkflowsClient().listRuns("tenant-1")).rejects.toMatchObject({
+      status: 502,
+      response: { code: "AI_WORKFLOW_INVALID_RESPONSE" },
+    });
+  });
+
+  it("requires flattened workflowName, event, bookingId, and typed actions on runs", async () => {
+    process.env.KEWY_AI_URL = "http://kewy.test";
+    process.env.KEWY_AI_ADMIN_SECRET = "server-only";
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        runs: [{ id: "run-1", status: "COMPLETED", createdAt: "2026-09-01T10:00:00.000Z", workflow: { name: "Legacy nested" }, actions: [] }],
+      }),
+    })) as any;
+
+    await expect(new AiWorkflowsClient().listRuns("tenant-1")).rejects.toMatchObject({
+      status: 502,
+      response: { code: "AI_WORKFLOW_INVALID_RESPONSE" },
+    });
+  });
+
+  it("pins the explicit upstream list, runs, and kill-switch response shapes", async () => {
+    process.env.KEWY_AI_URL = "http://kewy.test";
+    process.env.KEWY_AI_ADMIN_SECRET = "server-only";
+    const workflowView = {
+      workflows: [{ id: "wf-1", ...WORKFLOW, lastRun: { status: "COMPLETED", createdAt: "2026-09-01T10:00:00.000Z" } }],
+      workflowKillSwitch: false,
+    };
+    const runsView = {
+      runs: [{
+        id: "run-1",
+        workflowName: "Booking confirmation",
+        event: "booking.created",
+        bookingId: "booking-1",
+        status: "PARTIAL_FAILED",
+        createdAt: "2026-09-01T10:00:00.000Z",
+        actions: [{ id: "action-1", type: "CUSTOMER_EMAIL", status: "BLOCKED_BY_TEST_ALLOWLIST", recipient: "sara@example.com", providerMessageId: null, error: null }],
+        error: null,
+      }],
+    };
+    const killSwitchView = { tenantId: "tenant-1", workflowKillSwitch: true };
+    const fetchSpy = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify(workflowView) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify(runsView) })
+      .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify(killSwitchView) });
+    global.fetch = fetchSpy as any;
+    const client = new AiWorkflowsClient();
+
+    expect(await client.list("tenant-1")).toEqual(workflowView);
+    expect(await client.listRuns("tenant-1")).toEqual(runsView);
+    expect(await client.setKillSwitch("tenant-1", true)).toEqual(killSwitchView);
+    expect(JSON.parse(fetchSpy.mock.calls[2][1].body)).toEqual({ enabled: true });
   });
 
   it("service never accepts a browser tenantId and forwards the session workspace", async () => {

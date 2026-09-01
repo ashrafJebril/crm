@@ -24,33 +24,36 @@ export interface WorkflowDraft {
 export interface Workflow extends WorkflowDraft {
   id: string;
   updatedAt?: string;
-  lastRun?: { status: string; createdAt: string } | null;
+  lastRun: { status: WorkflowRunStatus; createdAt: string } | null;
 }
+export type WorkflowRunStatus = "PENDING" | "RUNNING" | "COMPLETED" | "PARTIAL_FAILED" | "FAILED" | "BLOCKED_KILL_SWITCH";
+export type WorkflowActionStatus = "PENDING" | "SENT" | "FAILED_RETRYABLE" | "FAILED_PERMANENT" | "SKIPPED_NO_CUSTOMER_EMAIL" | "SKIPPED_CUSTOMER_OPT_OUT" | "BLOCKED_BY_TEST_ALLOWLIST";
 export interface WorkflowRunAction {
   id?: string;
-  type?: string;
-  status: string;
+  type: WorkflowAction["type"];
+  status: WorkflowActionStatus;
   recipient?: string | null;
   providerMessageId?: string | null;
   error?: string | null;
 }
 export interface WorkflowRun {
   id: string;
-  workflowName?: string;
-  status: string;
-  event?: string;
-  bookingId?: string;
+  workflowName: string;
+  status: WorkflowRunStatus;
+  event: string;
+  bookingId: string;
   createdAt: string;
-  actions?: WorkflowRunAction[];
+  actions: WorkflowRunAction[];
   error?: string | null;
 }
-export interface WorkflowListResponse { workflows: Workflow[]; killSwitch?: boolean; workflowKillSwitch?: boolean; }
+export interface WorkflowListResponse { workflows: Workflow[]; workflowKillSwitch: boolean; }
 export interface WorkflowRunsResponse { runs: WorkflowRun[]; }
+export interface WorkflowKillSwitchResponse { tenantId: string; workflowKillSwitch: boolean; }
 
 export const listWorkflows = () => api.get<WorkflowListResponse>("/ai/workflows");
 export const createWorkflow = (draft: WorkflowDraft) => api.post<Workflow>("/ai/workflows", draft);
 export const updateWorkflow = (id: string, patch: Partial<WorkflowDraft>) => api.patch<Workflow>(`/ai/workflows/${encodeURIComponent(id)}`, patch);
 export const deleteWorkflow = (id: string) => api.delete<{ ok: true }>(`/ai/workflows/${encodeURIComponent(id)}`);
 export const previewWorkflow = (draft: WorkflowDraft) => api.post<{ subject?: string; body?: string; actions?: Array<{ subject: string; body: string }> }>("/ai/workflows/preview", draft);
-export const setWorkflowKillSwitch = (enabled: boolean) => api.post<{ enabled: boolean }>("/ai/workflows/kill-switch", { enabled });
+export const setWorkflowKillSwitch = (enabled: boolean) => api.post<WorkflowKillSwitchResponse>("/ai/workflows/kill-switch", { enabled });
 export const retryWorkflowRun = (runId: string) => api.post<WorkflowRun>(`/ai/workflows/runs/${encodeURIComponent(runId)}/retry`, {});
