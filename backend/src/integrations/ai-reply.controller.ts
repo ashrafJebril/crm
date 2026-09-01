@@ -68,6 +68,8 @@ export class AiReplyController {
       /** Set when the agent decided a human must take over. */
       escalate?: boolean;
       escalateReason?: string;
+      /** Validated email captured deterministically from this customer turn. */
+      capturedContactEmail?: string;
     },
   ) {
     // Verify against the RAW body: re-serialising the parsed object would
@@ -102,6 +104,24 @@ export class AiReplyController {
     }
     if (!conv.aiEnabled) {
       return { delivered: false, reason: "ai_disabled_for_conversation" };
+    }
+
+    if (dto.capturedContactEmail !== undefined) {
+      const email = dto.capturedContactEmail.trim().toLowerCase();
+      // Deliberately deterministic and conservative. The AI may extract a
+      // candidate, but only CRM validation decides what is persisted.
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new BadRequestException("capturedContactEmail must be a valid email address");
+      }
+      // The contact id is derived exclusively from the workspace-scoped
+      // conversation lookup above. No callback-supplied contact id is accepted.
+      const updated = await this.prisma.contact.updateMany({
+        where: { id: conv.contactId, workspaceId },
+        data: { email },
+      });
+      if (updated.count !== 1) {
+        throw new BadRequestException("Conversation contact not found");
+      }
     }
 
     if (dto.escalate) {

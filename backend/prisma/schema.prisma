@@ -55,6 +55,7 @@ model Contact {
   id        String   @id @default(cuid())
   name      String
   phone     String?
+  email     String?
   industry  String
   lifecycle String
   source    String
@@ -83,6 +84,7 @@ model Contact {
 
   @@unique([workspaceId, externalSource, externalId])
   @@index([workspaceId])
+  @@index([workspaceId, email])
 }
 
 model Conversation {

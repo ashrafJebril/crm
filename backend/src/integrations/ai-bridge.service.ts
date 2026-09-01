@@ -60,6 +60,7 @@ export class AiBridgeService {
     body: string;
     contactName: string | null;
     contactPhone: string | null;
+    contactEmail: string | null;
     windowOpen: boolean;
     receivedAt: string;
   }): Promise<void> {

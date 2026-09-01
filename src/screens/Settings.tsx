@@ -8,10 +8,11 @@ import { MembersTab } from "./settings/MembersTab";
 import { IntegrationsTab } from "./settings/IntegrationsTab";
 import { AiKnowledgeTab } from "./settings/AiKnowledgeTab";
 import { ProfileTab } from "./settings/ProfileTab";
+import { AiWorkflowsTab } from "./settings/AiWorkflowsTab";
 
-type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "profile";
+type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "aiWorkflows" | "profile";
 
-const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "profile"];
+const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "aiWorkflows", "profile"];
 
 /**
  * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
@@ -64,6 +65,7 @@ function SettingsImpl() {
     { id: "members", label: "Members", ar: "الأعضاء" },
     { id: "integrations", label: "Integrations", ar: "التكاملات" },
     { id: "aiKnowledge", label: "AI Knowledge", ar: "معرفة الذكاء" },
+    { id: "aiWorkflows", label: "AI Workflows", ar: "سير العمل الذكي" },
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
@@ -95,11 +97,12 @@ function SettingsImpl() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ maxWidth: tab === "aiWorkflows" ? 960 : 720, margin: "0 auto" }}>
           {tab === "workspace" && <WorkspaceTab />}
           {tab === "members" && <MembersTab />}
           {tab === "integrations" && <IntegrationsTab />}
           {tab === "aiKnowledge" && <AiKnowledgeTab />}
+          {tab === "aiWorkflows" && <AiWorkflowsTab />}
           {tab === "profile" && <ProfileTab />}
         </div>
       </div>

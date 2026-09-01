@@ -28,6 +28,7 @@ const PAYLOAD = {
   body: "مرحبا بدي صبغة",
   contactName: "سارة",
   contactPhone: "+962790000001",
+  contactEmail: "sara@example.com",
   windowOpen: true,
   receivedAt: "2026-08-28T09:00:00.000Z",
 };

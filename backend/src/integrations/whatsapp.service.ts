@@ -1109,6 +1109,7 @@ export class WhatsAppService {
         body: body || `[${msg.type} message]`,
         contactName: contact.name,
         contactPhone: contact.phone,
+        contactEmail: contact.email,
         // The customer just messaged us, so the 24h free-text window is open
         // by definition at this instant.
         windowOpen: true,
