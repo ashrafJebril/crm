@@ -734,9 +734,32 @@ function AiAssistantCard({
  * whiteSpace: pre-wrap because the synced docs are newline-separated lists;
  * collapsing them would misrepresent what is stored.
  */
+
+/** A back control at the TOP of any full-tab takeover (editor, viewer).
+ *  The footer buttons sit below the fold on a long card, and a user who
+ *  changed their mind should not have to scroll to find the way out. */
+function BackRow({ tx, onBack, disabled }: { tx: Tx; onBack: () => void; disabled?: boolean }) {
+  return (
+    <div>
+      <button
+        type="button"
+        className="btn ghost"
+        onClick={onBack}
+        disabled={disabled}
+        style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+      >
+        <span aria-hidden>{tx("←", "→")}</span>
+        {tx("Back", "رجوع")}
+      </button>
+    </div>
+  );
+}
+
 function ViewCard({ tx, doc, onClose }: { tx: Tx; doc: AiKnowledgeDoc; onClose: () => void }) {
   const label = syncedLabel(doc.title) ?? KIND_LABELS[doc.kind] ?? KIND_LABELS.OTHER;
   return (
+    <>
+    <BackRow tx={tx} onBack={onClose} />
     <SettingsCard
       title={displayTitle(doc.title, tx)}
       description={tx(
@@ -765,6 +788,7 @@ function ViewCard({ tx, doc, onClose }: { tx: Tx; doc: AiKnowledgeDoc; onClose: 
         {doc.body}
       </div>
     </SettingsCard>
+    </>
   );
 }
 
@@ -908,6 +932,8 @@ function DraftEditor({
     draft.title.trim().length > 0 && draft.body.trim().length > 0 && !overCap && !titleTooLong;
 
   return (
+    <>
+    <BackRow tx={tx} onBack={onCancel} disabled={saving} />
     <SettingsCard
       title={draft.id ? tx("Edit knowledge", "تعديل المعلومة") : tx("Add knowledge", "أضف معلومة")}
       description={
@@ -1020,6 +1046,7 @@ function DraftEditor({
 
       <ErrorRow message={error} />
     </SettingsCard>
+    </>
   );
 }
 
