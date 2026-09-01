@@ -138,6 +138,10 @@ export function AiKnowledgeTab() {
   const [status, setStatus] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [fileNote, setFileNote] = useState<{ kind: "ok" | "bad"; text: string } | null>(null);
+  // Files waiting behind the one currently in the editor. Uploading several at
+  // once queues them: save (or skip) advances to the next, so each file still
+  // gets the same review-before-save pass a single file gets.
+  const [fileQueue, setFileQueue] = useState<DraftState[]>([]);
 
   const saveMut = useMutation<DraftState, SaveDocResult>((d) =>
     saveDoc({ id: d.id, title: d.title.trim(), body: d.body.trim(), kind: d.kind }),
@@ -166,8 +170,6 @@ export function AiKnowledgeTab() {
   const onSave = async () => {
     if (!draft) return;
     const res = await saveMut.mutate(draft);
-    setDraft(null);
-    setFileNote(null);
     listQ.refetch();
     // Report chunksWritten: it is the proof the text was actually embedded and
     // is now reachable by the agent, not merely stored.
@@ -177,6 +179,26 @@ export function AiKnowledgeTab() {
         `تم الحفظ — صار الذكاء الاصطناعي يعرف هالمعلومة (${res.chunksWritten} مقطع).`,
       ),
     );
+    advanceQueue();
+  };
+
+  /** Move to the next queued file, or close the editor when none remain. */
+  const advanceQueue = () => {
+    if (fileQueue.length > 0) {
+      const [next, ...rest] = fileQueue;
+      setFileQueue(rest);
+      setDraft(next);
+      setFileNote({
+        kind: "ok",
+        text: tx(
+          `Now reviewing ${next.sourceFilename ?? next.title}${rest.length > 0 ? ` — ${rest.length} more file${rest.length === 1 ? "" : "s"} after this` : " — last one"}.`,
+          `عم نراجع ${next.sourceFilename ?? next.title}${rest.length > 0 ? ` — بعده ${rest.length} ملف` : " — آخر ملف"}.`,
+        ),
+      });
+    } else {
+      setDraft(null);
+      setFileNote(null);
+    }
   };
 
   const onConfirmDelete = async () => {
@@ -273,10 +295,23 @@ export function AiKnowledgeTab() {
           setDraft={setDraft}
           onSave={onSave}
           onCancel={() => {
+            // Cancel abandons the whole batch, not just this file — the queue
+            // note says how many were dropped so it never looks like a bug.
+            if (fileQueue.length > 0) {
+              showStatus(
+                tx(
+                  `Cancelled — ${fileQueue.length} queued file${fileQueue.length === 1 ? "" : "s"} dropped too.`,
+                  `تم الإلغاء — انشال كمان ${fileQueue.length} ملف من الانتظار.`,
+                ),
+              );
+              setFileQueue([]);
+            }
             setDraft(null);
             setFileNote(null);
             setStatus(null);
           }}
+          onSkip={fileQueue.length > 0 ? advanceQueue : undefined}
+          queueCount={fileQueue.length}
           saving={saveMut.loading}
           error={saveMut.error}
           fileNote={fileNote}
@@ -324,7 +359,29 @@ export function AiKnowledgeTab() {
 
       {viewing && <ViewCard tx={tx} doc={viewing} onClose={() => setViewing(null)} />}
 
-      {!draft && canEdit && <FileDropCard tx={tx} onExtracted={setDraft} setFileNote={setFileNote} fileNote={fileNote} />}
+      {!draft && canEdit && (
+        <FileDropCard
+          tx={tx}
+          onExtracted={(drafts) => {
+            // First file opens in the editor; the rest wait their turn.
+            const [first, ...rest] = drafts;
+            if (!first) return;
+            setDraft(first);
+            setFileQueue(rest);
+            if (rest.length > 0) {
+              setFileNote({
+                kind: "ok",
+                text: tx(
+                  `Reviewing ${first.sourceFilename ?? first.title} — ${rest.length} more file${rest.length === 1 ? "" : "s"} queued. Save each one to move to the next.`,
+                  `عم نراجع ${first.sourceFilename ?? first.title} — في ${rest.length} ملف بالانتظار. احفظ كل واحد لننتقل للي بعده.`,
+                ),
+              });
+            }
+          }}
+          setFileNote={setFileNote}
+          fileNote={fileNote}
+        />
+      )}
 
       {!draft && (
         <SettingsCard
@@ -907,6 +964,8 @@ function DraftEditor({
   setDraft,
   onSave,
   onCancel,
+  onSkip,
+  queueCount = 0,
   saving,
   error,
   fileNote,
@@ -917,6 +976,9 @@ function DraftEditor({
   setDraft: (d: DraftState) => void;
   onSave: () => void;
   onCancel: () => void;
+  /** Present while more uploaded files wait behind this one — skips to the next without saving. */
+  onSkip?: () => void;
+  queueCount?: number;
   saving: boolean;
   error: string | null;
   fileNote: { kind: "ok" | "bad"; text: string } | null;
@@ -935,7 +997,16 @@ function DraftEditor({
     <>
     <BackRow tx={tx} onBack={onCancel} disabled={saving} />
     <SettingsCard
-      title={draft.id ? tx("Edit knowledge", "تعديل المعلومة") : tx("Add knowledge", "أضف معلومة")}
+      title={
+        draft.id
+          ? tx("Edit knowledge", "تعديل المعلومة")
+          : queueCount > 0
+            ? tx(
+                `Add knowledge (${queueCount} more file${queueCount === 1 ? "" : "s"} waiting)`,
+                `أضف معلومة (${queueCount} ملف بالانتظار)`,
+              )
+            : tx("Add knowledge", "أضف معلومة")
+      }
       description={
         draft.sourceFilename
           ? tx(
@@ -952,8 +1023,17 @@ function DraftEditor({
           <button type="button" className="btn ghost" onClick={onCancel} disabled={saving}>
             {tx("Cancel", "إلغاء")}
           </button>
+          {onSkip && (
+            <button type="button" className="btn ghost" onClick={onSkip} disabled={saving}>
+              {tx("Skip this file", "تخطَّ هالملف")}
+            </button>
+          )}
           <button type="button" className="btn primary" onClick={onSave} disabled={saving || !canSave}>
-            {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Save", "حفظ")}
+            {saving
+              ? tx("Saving…", "جارٍ الحفظ…")
+              : queueCount > 0
+                ? tx("Save & next", "احفظ والتالي")
+                : tx("Save", "حفظ")}
           </button>
         </>
       }
@@ -1053,10 +1133,11 @@ function DraftEditor({
 /* ─── File upload ─────────────────────────────────────────────────────── */
 
 /**
- * Parses a .txt/.md file in the BROWSER and prefills the editor with the text.
- * It is never saved automatically — the owner must read it and press Save,
- * because an unreviewed document becomes something the AI states to customers
- * as fact.
+ * Parses .txt/.md files in the BROWSER and prefills the editor with their
+ * text. Several files at once are fine: each becomes its own draft, reviewed
+ * and saved one at a time. Nothing is ever saved automatically — the owner
+ * must read each one and press Save, because an unreviewed document becomes
+ * something the AI states to customers as fact.
  */
 function FileDropCard({
   tx,
@@ -1065,76 +1146,102 @@ function FileDropCard({
   fileNote,
 }: {
   tx: Tx;
-  onExtracted: (d: DraftState) => void;
+  onExtracted: (drafts: DraftState[]) => void;
   setFileNote: (n: { kind: "ok" | "bad"; text: string } | null) => void;
   fileNote: { kind: "ok" | "bad"; text: string } | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
-  const handleFile = async (file: File) => {
-    const lower = file.name.toLowerCase();
-    if (!ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+  const handleFiles = async (files: File[]) => {
+    const drafts: DraftState[] = [];
+    const problems: string[] = [];
+
+    for (const file of files) {
+      const lower = file.name.toLowerCase();
+      if (!ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+        problems.push(
+          tx(
+            `${file.name} isn't a .txt or .md file — skipped.`,
+            `${file.name} مش ملف .txt أو .md — تخطيناه.`,
+          ),
+        );
+        continue;
+      }
+
+      let text: string;
+      try {
+        text = await file.text();
+      } catch {
+        problems.push(tx(`Couldn't read ${file.name} — skipped.`, `ما قدرنا نقرأ ${file.name} — تخطيناه.`));
+        continue;
+      }
+
+      // Skip silently-empty files with a named reason rather than opening an
+      // editor onto an empty box — the confusing case is a file that looked
+      // fine on disk but yielded nothing.
+      if (text.trim().length === 0) {
+        problems.push(
+          tx(
+            `${file.name} has no readable text — skipped.`,
+            `${file.name} ما فيه نص مقروء — تخطيناه.`,
+          ),
+        );
+        continue;
+      }
+
+      const truncated = text.length > BODY_MAX;
+      drafts.push({
+        // Filename minus extension is a better first guess at a title than blank.
+        title: file.name.replace(/\.(txt|md)$/i, "").slice(0, TITLE_MAX),
+        kind: "OTHER",
+        body: truncated ? text.slice(0, BODY_MAX) : text,
+        sourceFilename: file.name,
+      });
+      if (truncated) {
+        problems.push(
+          tx(
+            `${file.name} was longer than the ${BODY_MAX.toLocaleString()}-character limit and was trimmed.`,
+            `${file.name} أطول من حد ${BODY_MAX.toLocaleString()} حرف وتم قصّه.`,
+          ),
+        );
+      }
+    }
+
+    if (drafts.length === 0) {
       setFileNote({
         kind: "bad",
-        text: tx(
-          `${file.name} isn't a .txt or .md file. PDF and Word aren't supported yet — copy the text in by hand for now.`,
-          `${file.name} مش ملف .txt أو .md. الـPDF وWord لسا مش مدعومين — انسخ النص يدوياً هلأ.`,
-        ),
+        text:
+          problems.join(" ") ||
+          tx("No readable files were found.", "ما لقينا ملفات مقروءة."),
       });
       return;
     }
-
-    let text: string;
-    try {
-      text = await file.text();
-    } catch {
-      setFileNote({
-        kind: "bad",
-        text: tx("Couldn't read that file.", "ما قدرنا نقرأ هالملف."),
-      });
-      return;
-    }
-
-    // Say so plainly rather than opening an editor onto an empty box: a file
-    // that looked fine on disk but yielded nothing is the confusing case.
-    if (text.trim().length === 0) {
-      setFileNote({
-        kind: "bad",
-        text: tx(
-          `${file.name} has no readable text in it — nothing to teach the AI.`,
-          `${file.name} ما فيه نص مقروء — ما في شي نعلّمه للذكاء الاصطناعي.`,
-        ),
-      });
-      return;
-    }
-
-    const truncated = text.length > BODY_MAX;
-    const body = truncated ? text.slice(0, BODY_MAX) : text;
-    // Filename minus extension is a better first guess at a title than blank.
-    const title = file.name.replace(/\.(txt|md)$/i, "").slice(0, TITLE_MAX);
 
     setFileNote({
       kind: "ok",
-      text: truncated
-        ? tx(
-            `Read ${text.length.toLocaleString()} characters from ${file.name}, trimmed to the ${BODY_MAX.toLocaleString()} limit. Review before saving.`,
-            `قرأنا ${text.length.toLocaleString()} حرف من ${file.name}، وقصّيناها للحد ${BODY_MAX.toLocaleString()}. راجعها قبل الحفظ.`,
-          )
-        : tx(
-            `Read ${text.length.toLocaleString()} characters from ${file.name}. Review before saving.`,
-            `قرأنا ${text.length.toLocaleString()} حرف من ${file.name}. راجعها قبل الحفظ.`,
-          ),
+      text: [
+        drafts.length === 1
+          ? tx(
+              `Read ${drafts[0].body.length.toLocaleString()} characters from ${drafts[0].sourceFilename}. Review before saving.`,
+              `قرأنا ${drafts[0].body.length.toLocaleString()} حرف من ${drafts[0].sourceFilename}. راجعها قبل الحفظ.`,
+            )
+          : tx(
+              `Read ${drafts.length} files. Review and save each one in turn.`,
+              `قرأنا ${drafts.length} ملفات. راجع واحفظ كل واحد بدوره.`,
+            ),
+        ...problems,
+      ].join(" "),
     });
-    onExtracted({ title, kind: "OTHER", body, sourceFilename: file.name });
+    onExtracted(drafts);
   };
 
   return (
     <SettingsCard
-      title={tx("Upload a document", "ارفع ملف")}
+      title={tx("Upload documents", "ارفع ملفات")}
       description={tx(
-        "Drop a .txt or .md file and we'll fill the editor with its text for you to review. Nothing reaches the AI until you save.",
-        "أسقط ملف .txt أو .md ومنعبّي المحرر بنصه لتراجعه. ما بيوصل شي للذكاء الاصطناعي قبل ما تحفظ.",
+        "Drop .txt or .md files — several at once is fine. Each fills the editor for you to review; nothing reaches the AI until you save it.",
+        "أسقط ملفات .txt أو .md — عدة ملفات مرة وحدة عادي. كل ملف بيتعبّى بالمحرر لتراجعه، وما بيوصل شي للذكاء الاصطناعي قبل ما تحفظه.",
       )}
     >
       <div
@@ -1146,8 +1253,8 @@ function FileDropCard({
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          const f = e.dataTransfer.files?.[0];
-          if (f) void handleFile(f);
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length) void handleFiles(files);
         }}
         onClick={() => inputRef.current?.click()}
         style={{
@@ -1161,7 +1268,7 @@ function FileDropCard({
         }}
       >
         <div style={{ fontSize: 13, marginBottom: 4 }}>
-          {tx("Drop a file here, or click to choose", "أسقط ملف هون، أو اضغط لتختار")}
+          {tx("Drop files here, or click to choose", "أسقط ملفات هون، أو اضغط لتختار")}
         </div>
         <div className="mono muted" style={{ fontSize: 11 }}>
           .txt · .md
@@ -1169,11 +1276,12 @@ function FileDropCard({
         <input
           ref={inputRef}
           type="file"
+          multiple
           accept=".txt,.md,text/plain,text/markdown"
           style={{ display: "none" }}
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void handleFile(f);
+            const files = Array.from(e.target.files ?? []);
+            if (files.length) void handleFiles(files);
             // Reset so re-picking the same file fires change again.
             e.target.value = "";
           }}
