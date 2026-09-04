@@ -9,6 +9,7 @@ import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
+import { LAgentService } from "./l-agent.service";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -47,6 +48,7 @@ export class ZernioService {
     private readonly media: MediaService,
     private readonly client: ZernioClient,
     private readonly pipelineAutomation: PipelineAutomationService,
+    private readonly lAgent: LAgentService,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -1248,6 +1250,12 @@ export class ZernioService {
       channel,
       conversationId: conv.id,
     });
+
+    // Our own outbound echo is not something to answer, and a thread only
+    // auto-replies once someone has switched it into AI mode.
+    if (!isOutbound && conv.aiEnabled && this.lAgent.enabled) {
+      this.queueAgentReply(workspaceId, conv.id, channel, text);
+    }
     // Lifecycle automation (never throws): a customer message opens a ticket
     // in 'new' unless one is already open; ANY outbound human message — from
     // the app or typed on the phone (this same path ingests message.sent) —
@@ -1291,6 +1299,55 @@ export class ZernioService {
       });
     }
     return updated.count;
+  }
+
+  /**
+   * Answer an inbound customer message with the workspace's l agent and send
+   * that answer back out on the conversation's own channel.
+   *
+   * Fire-and-forget: the customer's message is already stored and the webhook
+   * owes Zernio a prompt 200. An l turn takes seconds, and Zernio retries a
+   * slow endpoint — blocking here would turn one message into several.
+   */
+  private queueAgentReply(
+    workspaceId: string,
+    conversationId: string,
+    channel: string,
+    inbound: string,
+  ): void {
+    void (async () => {
+      const answer = await this.lAgent.ask(workspaceId, {
+        externalId: conversationId,
+        message: inbound,
+      });
+      if (!answer) return;
+
+      // Send first, store second. A stored message the customer never received
+      // is worse than a delivered one we briefly fail to show: an agent would
+      // read the thread as answered when it is not.
+      await this.sendInDbConversation(workspaceId, conversationId, answer);
+
+      const now = new Date();
+      const t = `${String(now.getHours()).padStart(2, "0")}:${String(
+        now.getMinutes(),
+      ).padStart(2, "0")}`;
+      await this.prisma.message.create({
+        data: { workspaceId, conversationId, from: "ai", body: answer, t },
+      });
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { preview: answer.slice(0, 140), lastAt: "now", lastFrom: "ai" },
+      });
+      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+        channel,
+        conversationId,
+      });
+    })().catch((err) => {
+      this.log.error(
+        `l auto-reply failed for conversation ${conversationId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    });
   }
 }
 
@@ -1347,4 +1404,5 @@ export interface ZernioWebhookEvent {
   };
   // account.connected / account.disconnected still carry a `data` envelope.
   data?: { profileId?: string };
+
 }

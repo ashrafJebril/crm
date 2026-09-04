@@ -14,6 +14,7 @@ import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { LWebhooksController } from "./l-webhooks.controller";
 import { LWebhooksService } from "./l-webhooks.service";
+import { LAgentService } from "./l-agent.service";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
@@ -40,6 +41,7 @@ import { TicketsModule } from "../tickets/tickets.module";
     MetaWebhooksService,
     HjzWebhooksService,
     LWebhooksService,
+    LAgentService,
   ],
   exports: [FacebookService, InstagramService, WhatsAppService, ZernioService],
 })

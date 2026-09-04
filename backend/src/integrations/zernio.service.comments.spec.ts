@@ -57,6 +57,9 @@ describe("ZernioService comment ownership guard", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
+      // Auto-reply is opt-in per conversation and off in these fixtures, so
+      // the agent is never consulted; a stub that would fail loudly if it were.
+      { ask: jest.fn().mockResolvedValue(null) } as never,
     );
   });
 
@@ -156,6 +159,9 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
+      // Auto-reply is opt-in per conversation and off in these fixtures, so
+      // the agent is never consulted; a stub that would fail loudly if it were.
+      { ask: jest.fn().mockResolvedValue(null) } as never,
     );
   });
 
@@ -269,6 +275,9 @@ describe("ZernioService.commentOnPost", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
+      // Auto-reply is opt-in per conversation and off in these fixtures, so
+      // the agent is never consulted; a stub that would fail loudly if it were.
+      { ask: jest.fn().mockResolvedValue(null) } as never,
     );
   });
 

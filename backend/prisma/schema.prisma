@@ -106,6 +106,13 @@ model Conversation {
   // l agent id — set for conversations created by an l agent
   lAgentId String?
 
+  // Opt-in: when true, an inbound customer message on this thread is answered
+  // by the l agent and the answer is sent back out on the conversation's own
+  // channel. Defaults false, and deliberately per-conversation rather than
+  // per-workspace — switching a live page to unreviewed AI replies wholesale
+  // is not something a default should ever do.
+  aiEnabled Boolean @default(false)
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
 

@@ -1202,6 +1202,27 @@ function ConversationPane({
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
   const { user } = useAuth();
+  // Optimistic so the pill responds immediately; reverted if the PATCH fails,
+  // because a toggle that lies about whether a live page is auto-answering
+  // is worse than one that is briefly slow.
+  const [aiEnabled, setAiEnabled] = useState<boolean>(conv.aiEnabled === true);
+  const [aiSaving, setAiSaving] = useState<boolean>(false);
+  useEffect(() => {
+    setAiEnabled(conv.aiEnabled === true);
+  }, [conv.id, conv.aiEnabled]);
+
+  const toggleAi = async () => {
+    const next = !aiEnabled;
+    setAiEnabled(next);
+    setAiSaving(true);
+    try {
+      await api.patch<Conversation>(`/conversations/${conv.id}`, { aiEnabled: next });
+    } catch {
+      setAiEnabled(!next);
+    } finally {
+      setAiSaving(false);
+    }
+  };
   const [draft, setDraft] = useState<string>("");
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
@@ -1330,6 +1351,36 @@ function ConversationPane({
               <span className="dot" />
               {tx("Online", "متصل")}
             </span>
+            <button
+              type="button"
+              onClick={toggleAi}
+              disabled={aiSaving}
+              title={
+                aiEnabled
+                  ? tx(
+                      "The AI agent answers this thread automatically",
+                      "يرد الوكيل الذكي على هذه المحادثة تلقائيًا",
+                    )
+                  : tx(
+                      "Replies are written by hand on this thread",
+                      "يتم الرد على هذه المحادثة يدويًا",
+                    )
+              }
+              style={{
+                cursor: aiSaving ? "default" : "pointer",
+                border: "1px solid var(--line-soft)",
+                borderRadius: 999,
+                padding: "2px 9px",
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: 1.6,
+                opacity: aiSaving ? 0.6 : 1,
+                background: aiEnabled ? "#8b5cf6" : "transparent",
+                color: aiEnabled ? "#fff" : "var(--ink-3)",
+              }}
+            >
+              {aiEnabled ? tx("AI on", "الذكاء مفعّل") : tx("AI off", "الذكاء متوقف")}
+            </button>
           </div>
           <div
             style={{

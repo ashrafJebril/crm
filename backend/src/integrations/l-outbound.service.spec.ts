@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
 import { LOutboundService } from "./l-outbound.service";
+import { LAgentService } from "./l-agent.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 
@@ -42,6 +43,9 @@ describe("LOutboundService.forwardReply", () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         LOutboundService,
+        // The real one: it owns the request these assertions are about, and
+        // it reaches the network only through the mocked global fetch.
+        LAgentService,
         { provide: PrismaService, useValue: prisma },
         { provide: RealtimeService, useValue: realtime },
       ],

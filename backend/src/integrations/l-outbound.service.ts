@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { LAgentService } from "./l-agent.service";
 
 /**
  * The CRM half of the round trip: a human's reply going back to the l agent.
@@ -19,12 +20,10 @@ import { RealtimeService } from "../realtime/realtime.service";
 export class LOutboundService {
   private readonly logger = new Logger(LOutboundService.name);
 
-  // An l turn invokes a model, so this is a model's latency, not an HTTP hop's.
-  private static readonly TIMEOUT_MS = 30_000;
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly agent: LAgentService,
   ) {}
 
   /**
@@ -45,8 +44,7 @@ export class LOutboundService {
     conversationId: string,
     body: string,
   ): Promise<void> {
-    const baseUrl = process.env.L_API_URL;
-    if (!baseUrl) return;
+    if (!this.agent.enabled) return;
 
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -55,62 +53,14 @@ export class LOutboundService {
     // Only conversations that came from l have somewhere to go back to.
     if (!conversation?.lConversationId) return;
 
-    const workspace = await this.prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      select: { lEndpointId: true, lEndpointSecret: true },
+    const answer = await this.agent.ask(workspaceId, {
+      externalId: conversation.id,
+      message: body,
+      // The whole point: continue the chat the person is already in rather
+      // than opening a second, parallel one.
+      sessionId: conversation.lConversationId,
     });
-    if (!workspace?.lEndpointId || !workspace.lEndpointSecret) {
-      this.logger.warn(
-        `Conversation ${conversationId} came from l but workspace ${workspaceId} ` +
-          `has no l webhook endpoint configured; reply not forwarded`,
-      );
-      return;
-    }
-
-    const url =
-      `${baseUrl.replace(/\/$/, "")}/api/v1/webhooks/` +
-      `${encodeURIComponent(workspace.lEndpointId)}/messages`;
-
-    let answer: string;
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-webhook-secret": workspace.lEndpointSecret,
-        },
-        body: JSON.stringify({
-          // Our conversation id is the caller's own handle on the l side.
-          external_id: conversation.id,
-          message: body,
-          // The whole point: continue the chat the person is already in
-          // rather than opening a second, parallel one.
-          session_id: conversation.lConversationId,
-        }),
-        signal: AbortSignal.timeout(LOutboundService.TIMEOUT_MS),
-      });
-
-      if (!res.ok) {
-        this.logger.warn(
-          `l returned ${res.status} for conversation ${conversationId}; reply not delivered`,
-        );
-        return;
-      }
-      const payload = (await res.json()) as { answer?: unknown };
-      if (typeof payload.answer !== "string" || payload.answer.length === 0) {
-        this.logger.warn(
-          `l returned no answer for conversation ${conversationId}`,
-        );
-        return;
-      }
-      answer = payload.answer;
-    } catch (err) {
-      this.logger.warn(
-        `Could not reach l for conversation ${conversationId}: ` +
-          (err instanceof Error ? err.message : String(err)),
-      );
-      return;
-    }
+    if (!answer) return;
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(
