@@ -93,7 +93,7 @@ model Conversation {
   lastAt     String
   lastFrom   String   // them | human
   preview    String
-  channel    String   // whatsapp | instagram | facebook | webchat
+  channel    String   // whatsapp | instagram | facebook | webchat | l
   status     String   // human | closed | spam
   intent     String
   confidence Float
@@ -101,6 +101,10 @@ model Conversation {
   // Provider-side conversation id (currently Zernio's). Lets replies address
   // the provider conversation directly instead of re-listing every send.
   externalId String?
+  // l (agent platform) conversation id — set for conversations originating from l
+  lConversationId String?
+  // l agent id — set for conversations created by an l agent
+  lAgentId String?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -113,6 +117,7 @@ model Conversation {
 
   @@index([contactId])
   @@index([workspaceId])
+  @@index([lConversationId])
 }
 
 model Message {
@@ -488,6 +493,19 @@ model Workspace {
   // the first time we generate a Zernio connect link, and reuse it thereafter.
   // Per-workspace isolation rides on this id (auth is a single global API key).
   zernioProfileId String?
+
+  // l (agent platform) workspace id — maps this CRM workspace to an l workspace
+  // for bidirectional conversation sync. Set by admin configuration.
+  lWorkspaceId String? @unique
+
+  // The l webhook endpoint this workspace's replies are posted to, and the
+  // plaintext secret l issued when that endpoint was created. l stores only a
+  // bcrypt hash of the secret, so this is the only readable copy — losing it
+  // means rotating on the l side, not re-reading it. Both NULL means replies
+  // are not forwarded, which is the default for a workspace with no agent
+  // platform behind it.
+  lEndpointId     String?
+  lEndpointSecret String?
 
   members WorkspaceMember[]
 

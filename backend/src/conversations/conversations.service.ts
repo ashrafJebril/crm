@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { LOutboundService } from "../integrations/l-outbound.service";
 import {
   CreateConversationDto,
   CreateMessageDto,
@@ -12,6 +13,7 @@ export class ConversationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly lOutbound: LOutboundService,
   ) {}
 
   private emitActivity(
@@ -162,6 +164,14 @@ export class ConversationsService {
       },
     });
     this.emitActivity(workspaceId, conv.channel, conversationId);
+
+    // A reply typed here has to reach the l agent, or the person waiting in
+    // that chat never hears back. "them" is the contact's own message arriving
+    // by some other path and is not ours to forward. The call returns at once;
+    // the agent's answer is written when it arrives.
+    if (dto.from === "human") {
+      this.lOutbound.queueReply(workspaceId, conversationId, dto.body);
+    }
     return message;
   }
 }

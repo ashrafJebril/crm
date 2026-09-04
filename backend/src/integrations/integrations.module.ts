@@ -12,6 +12,8 @@ import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
+import { LWebhooksController } from "./l-webhooks.controller";
+import { LWebhooksService } from "./l-webhooks.service";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
@@ -27,6 +29,7 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioController,
     MetaWebhooksController,
     HjzWebhooksController,
+    LWebhooksController,
   ],
   providers: [
     FacebookService,
@@ -36,6 +39,7 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioClient,
     MetaWebhooksService,
     HjzWebhooksService,
+    LWebhooksService,
   ],
   exports: [FacebookService, InstagramService, WhatsAppService, ZernioService],
 })
