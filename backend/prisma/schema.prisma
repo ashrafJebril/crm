@@ -106,12 +106,18 @@ model Conversation {
   // l agent id — set for conversations created by an l agent
   lAgentId String?
 
-  // Opt-in: when true, an inbound customer message on this thread is answered
-  // by the l agent and the answer is sent back out on the conversation's own
-  // channel. Defaults false, and deliberately per-conversation rather than
-  // per-workspace — switching a live page to unreviewed AI replies wholesale
-  // is not something a default should ever do.
-  aiEnabled Boolean @default(false)
+  // When true, an inbound customer message on this thread is answered by the l
+  // agent and the answer is sent back out on the conversation's own channel.
+  //
+  // On by default: the agent is meant to be the first responder, and a thread
+  // that has to be switched on by hand is one the customer waits in. Turning
+  // it OFF per conversation is how a human takes a thread over — the pill in
+  // the inbox thread header does that.
+  //
+  // It still does nothing unless the workspace has an l endpoint configured
+  // and L_API_URL is set, so a deployment without an agent platform is
+  // unaffected by this default.
+  aiEnabled Boolean @default(true)
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)

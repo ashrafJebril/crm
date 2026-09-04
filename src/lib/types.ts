@@ -219,8 +219,9 @@ export interface Conversation {
   intent: string;
   confidence: number;
   escalated?: boolean;
-  // Opt-in: when true, an inbound customer message on this thread is answered
-  // by the workspace's l agent and sent straight back out on the channel.
+  // On by default: an inbound customer message on this thread is answered by
+  // the workspace's l agent and sent straight back out on the channel.
+  // Switching it OFF is how a human takes the thread over.
   aiEnabled?: boolean;
   messages?: Message[];
   // WhatsApp-only: backend populates these when channel === "whatsapp".
