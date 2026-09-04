@@ -54,6 +54,7 @@ const CHANNEL_ORDER: ConvChannel[] = [
   "facebook",
   "tiktok",
   "webchat",
+  "l",
 ];
 
 const CHANNEL_FILL: Record<ConvChannel, string> = {
@@ -62,6 +63,7 @@ const CHANNEL_FILL: Record<ConvChannel, string> = {
   facebook:  "#1877F2",
   tiktok:    "#000000",
   webchat:   "var(--info)",
+  l:         "#8b5cf6",
 };
 
 const CHANNEL_DOT: Record<ConvChannel, string> = {
@@ -70,6 +72,7 @@ const CHANNEL_DOT: Record<ConvChannel, string> = {
   facebook:  "#1877F2",
   tiktok:    "#000000",
   webchat:   "var(--info)",
+  l:         "#8b5cf6",
 };
 
 interface DashboardSummary {
@@ -192,6 +195,7 @@ function DashboardImpl() {
       facebook:  0,
       tiktok:    0,
       webchat:   0,
+      l:         0,
     };
     if (conversations) {
       for (const c of conversations) {

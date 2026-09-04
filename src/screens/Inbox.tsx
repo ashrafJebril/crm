@@ -64,7 +64,7 @@ function dayLabel(
 }
 type ConversationDetail = Conversation & { messages: Message[] };
 
-const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat"];
+const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "l"];
 
 /** Channel brand colors — used for the filter-pill dots and the solid channel
  *  tag in the thread header (per the Samemha Inbox v2 mock). */
@@ -74,6 +74,7 @@ const CHANNEL_DOT: Record<ConvChannel, string> = {
   facebook: "#4267b2",
   tiktok: "#7a7a7a",
   webchat: "#5A8FD4",
+  l: "#8b5cf6",
 };
 
 /* ── Inline channel glyphs ───────────────────────────────────────────────── */
@@ -196,6 +197,7 @@ const CHANNEL_BG: Record<ConvChannel, string> = {
   facebook: "#1877F2",
   tiktok: "#000000",
   webchat: "var(--info)",
+  l: "#8b5cf6",
 };
 
 function ChannelMark({

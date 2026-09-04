@@ -114,7 +114,17 @@ export interface TicketsDashboardSummary {
   totalTickets: number;
 }
 
-export type ConvChannel = "whatsapp" | "instagram" | "facebook" | "tiktok" | "webchat";
+// "l" is the agent platform. Conversations arrive over its webhook rather than
+// from a social network, but they are ordinary inbox threads once here — and
+// omitting the channel from this union is not a no-op: the inbox filters on a
+// Set seeded from it, so an unlisted channel is silently dropped from the list.
+export type ConvChannel =
+  | "whatsapp"
+  | "instagram"
+  | "facebook"
+  | "tiktok"
+  | "webchat"
+  | "l";
 
 export const CHANNEL_LABEL: Record<ConvChannel, string> = {
   whatsapp:  "WhatsApp",
@@ -122,6 +132,7 @@ export const CHANNEL_LABEL: Record<ConvChannel, string> = {
   facebook:  "Facebook",
   tiktok:    "TikTok",
   webchat:   "Web chat",
+  l:         "AI Agent",
 };
 
 export type SocialPlatform = "facebook" | "instagram" | "tiktok";
