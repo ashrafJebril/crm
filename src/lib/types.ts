@@ -24,6 +24,7 @@ export type RouteId =
   | "analytics"
   | "templates"
   | "team"
+  | "agent"
   | "settings"
   | "admin";
 
