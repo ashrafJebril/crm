@@ -520,6 +520,11 @@ model Workspace {
   lEndpointId     String?
   lEndpointSecret String?
 
+  // The l agent slug this workspace's Kewy AI config screens operate on.
+  // Resolved lazily via l's idempotent "ensure default agent" endpoint and
+  // cached here so every tool/MCP-server bind call doesn't re-resolve it.
+  lAgentSlug String?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")
