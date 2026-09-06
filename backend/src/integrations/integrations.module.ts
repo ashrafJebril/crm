@@ -15,14 +15,19 @@ import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { LWebhooksController } from "./l-webhooks.controller";
 import { LWebhooksService } from "./l-webhooks.service";
 import { LAgentService } from "./l-agent.service";
+import { LConfigController } from "./l-config.controller";
+import { LJoteckClient } from "./l-joteck.client";
+import { LAgentResolverService } from "./l-agent-resolver.service";
+import { LKnowledgeService } from "./l-knowledge.service";
+import { LToolsService } from "./l-tools.service";
+import { LMcpService } from "./l-mcp.service";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
+import { WorkspacesModule } from "../workspaces/workspaces.module";
 
 @Module({
-  imports: [MediaModule, RealtimeModule, TicketsModule],
-  // HjzWebhooksController is inert until HJZ_WEBHOOK_SECRET is set (the
-  // service rejects requests without it), so it's safe to register standalone.
+  imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule],
   controllers: [
     FacebookController,
     InstagramController,
@@ -31,6 +36,7 @@ import { TicketsModule } from "../tickets/tickets.module";
     MetaWebhooksController,
     HjzWebhooksController,
     LWebhooksController,
+    LConfigController,
   ],
   providers: [
     FacebookService,
@@ -42,6 +48,11 @@ import { TicketsModule } from "../tickets/tickets.module";
     HjzWebhooksService,
     LWebhooksService,
     LAgentService,
+    LJoteckClient,
+    LAgentResolverService,
+    LKnowledgeService,
+    LToolsService,
+    LMcpService,
   ],
   exports: [FacebookService, InstagramService, WhatsAppService, ZernioService],
 })
