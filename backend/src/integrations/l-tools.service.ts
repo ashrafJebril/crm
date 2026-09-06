@@ -56,7 +56,10 @@ export class LToolsService {
   async remove(workspaceId: string, toolId: string): Promise<void> {
     const lWorkspaceId = await this.requireLWorkspaceId(workspaceId);
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
-    await this.client.request<void>(`/workspaces/${lWorkspaceId}/tools/${toolId}`, { method: "DELETE" });
+    await this.client.request<void>(
+      `/workspaces/${lWorkspaceId}/tools/${encodeURIComponent(toolId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async bind(workspaceId: string, toolId: string): Promise<void> {
@@ -64,7 +67,8 @@ export class LToolsService {
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
     const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
     await this.client.request<void>(
-      `/workspaces/${lWorkspaceId}/agents/${slug}/tools/${toolId}`, { method: "PUT" },
+      `/workspaces/${lWorkspaceId}/agents/${slug}/tools/${encodeURIComponent(toolId)}`,
+      { method: "PUT" },
     );
   }
 
@@ -73,7 +77,8 @@ export class LToolsService {
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
     const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
     await this.client.request<void>(
-      `/workspaces/${lWorkspaceId}/agents/${slug}/tools/${toolId}`, { method: "DELETE" },
+      `/workspaces/${lWorkspaceId}/agents/${slug}/tools/${encodeURIComponent(toolId)}`,
+      { method: "DELETE" },
     );
   }
 }

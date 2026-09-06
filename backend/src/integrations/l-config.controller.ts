@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -68,13 +69,22 @@ export class LConfigController {
   }
 
   @Post("knowledge")
-  @UseInterceptors(FileInterceptor("file", { storage: memoryStorage() }))
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: memoryStorage(),
+      // 25MB matches the cap the l platform itself already enforces for
+      // document uploads — no point buffering more into this process's heap
+      // than the upstream would accept anyway.
+      limits: { fileSize: 25 * 1024 * 1024 },
+    }),
+  )
   async uploadKnowledge(
     @CurrentWorkspace() workspaceId: string,
     @CurrentUserId() userId: string,
     @UploadedFile() file: Express.Multer.File,
   ) {
     await this.requireEditor(userId, workspaceId);
+    if (!file) throw new BadRequestException("No file provided");
     return this.knowledge.upload(workspaceId, file);
   }
 

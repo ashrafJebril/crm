@@ -63,11 +63,22 @@ export class LJoteckClient {
     const data: unknown = raw ? safeJson(raw) : undefined;
 
     if (!res.ok) {
-      const message =
-        isRecord(data) && typeof data.detail === "string"
-          ? data.detail
-          : `Kewy AI platform returned ${res.status}`;
-      throw new HttpException(message, res.status);
+      const detail = isRecord(data) && typeof data.detail === "string" ? data.detail : undefined;
+      this.logger.warn(
+        `l platform returned ${res.status} for ${url}${detail ? `: ${detail}` : ""}`,
+      );
+
+      // A 401/403 here means the l platform rejected THIS CRM's own
+      // service-to-service secret (misconfigured/rotated L_JOTECK_SECRET) —
+      // it has nothing to do with the end user's CRM session. Passing it
+      // through verbatim would trip the frontend's global "401 with a token
+      // attached = session expired" logout hook (src/api/client.ts), logging
+      // out a user over a platform misconfiguration. Remap to 502 instead.
+      const status = res.status === 401 || res.status === 403 ? 502 : res.status;
+
+      // Per spec: don't leak upstream error detail to the browser — log it
+      // server-side (above) and surface a generic message instead.
+      throw new HttpException("Kewy AI platform returned an error", status);
     }
     return data as T;
   }

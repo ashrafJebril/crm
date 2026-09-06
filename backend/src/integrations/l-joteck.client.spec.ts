@@ -56,14 +56,30 @@ describe("LJoteckClient", () => {
     await expect(client.request("/workspaces/ws-1/tools/t1")).resolves.toBeUndefined();
   });
 
-  it("throws HttpException with the upstream status and detail message on a non-2xx", async () => {
+  it("throws HttpException with the upstream status and a generic message on a non-2xx (upstream detail is logged, not leaked)", async () => {
     fetchMock.mockResolvedValue({
       ok: false, status: 409, text: async () => JSON.stringify({ detail: "already exists", code: "conflict" }),
     });
+    const warnSpy = jest.spyOn((client as unknown as { logger: { warn: (...a: unknown[]) => void } }).logger, "warn");
     await expect(client.request("/workspaces/ws-1/tools", { method: "POST" })).rejects.toMatchObject({
       status: 409,
-      message: "already exists",
+      message: "Kewy AI platform returned an error",
     });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("already exists"));
+  });
+
+  it("remaps a 401 from the l platform to a 502 (own secret rejected, not the user's CRM session)", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false, status: 401, text: async () => JSON.stringify({ detail: "invalid secret" }),
+    });
+    await expect(client.request("/workspaces/ws-1/tools")).rejects.toMatchObject({ status: 502 });
+  });
+
+  it("remaps a 403 from the l platform to a 502", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false, status: 403, text: async () => JSON.stringify({ detail: "forbidden" }),
+    });
+    await expect(client.request("/workspaces/ws-1/tools")).rejects.toMatchObject({ status: 502 });
   });
 
   it("throws BadGatewayException when the platform is unreachable", async () => {
@@ -78,8 +94,11 @@ describe("LJoteckClient", () => {
     );
   });
 
-  it("is still an HttpException on the non-2xx path (subclass check)", async () => {
+  it("is still an HttpException on the non-2xx path (subclass check), preserving a non-401/403 status like 404", async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 404, text: async () => JSON.stringify({ detail: "not found" }) });
+    await expect(client.request("/workspaces/ws-1/tools/t1", { method: "DELETE" })).rejects.toMatchObject({
+      status: 404,
+    });
     await expect(client.request("/workspaces/ws-1/tools/t1", { method: "DELETE" })).rejects.toBeInstanceOf(
       HttpException,
     );

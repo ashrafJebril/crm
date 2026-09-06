@@ -62,9 +62,10 @@ export class LMcpService {
   async remove(workspaceId: string, serverId: string): Promise<void> {
     const lWorkspaceId = await this.requireLWorkspaceId(workspaceId);
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
-    await this.client.request<void>(`/workspaces/${lWorkspaceId}/mcp-servers/${serverId}`, {
-      method: "DELETE",
-    });
+    await this.client.request<void>(
+      `/workspaces/${lWorkspaceId}/mcp-servers/${encodeURIComponent(serverId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async bind(workspaceId: string, serverId: string): Promise<void> {
@@ -72,7 +73,8 @@ export class LMcpService {
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
     const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
     await this.client.request<void>(
-      `/workspaces/${lWorkspaceId}/agents/${slug}/mcp-servers/${serverId}`, { method: "PUT" },
+      `/workspaces/${lWorkspaceId}/agents/${slug}/mcp-servers/${encodeURIComponent(serverId)}`,
+      { method: "PUT" },
     );
   }
 
@@ -81,7 +83,8 @@ export class LMcpService {
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
     const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
     await this.client.request<void>(
-      `/workspaces/${lWorkspaceId}/agents/${slug}/mcp-servers/${serverId}`, { method: "DELETE" },
+      `/workspaces/${lWorkspaceId}/agents/${slug}/mcp-servers/${encodeURIComponent(serverId)}`,
+      { method: "DELETE" },
     );
   }
 
@@ -89,7 +92,8 @@ export class LMcpService {
     const lWorkspaceId = await this.requireLWorkspaceId(workspaceId);
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
     return this.client.request<LMcpTestResult>(
-      `/workspaces/${lWorkspaceId}/mcp-servers/${serverId}/test`, { method: "POST" },
+      `/workspaces/${lWorkspaceId}/mcp-servers/${encodeURIComponent(serverId)}/test`,
+      { method: "POST" },
     );
   }
 }

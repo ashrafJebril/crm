@@ -135,6 +135,7 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
         )
       }
     >
+      <ErrorRow message={listQ.error} />
       <ErrorRow message={error} />
       {servers.length === 0 && (
         <div className="muted" style={{ textAlign: "center", padding: 24 }}>
@@ -233,6 +234,7 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                 style={{ ...inputStyle, height: 80, fontFamily: "var(--font-mono)", resize: "vertical" }}
               />
             </Field>
+            <ErrorRow message={error} />
             <button
               type="button"
               className="btn primary"

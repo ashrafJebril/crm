@@ -58,6 +58,7 @@ export function KnowledgeTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
         "المستندات التي يمكن لوكيلك الرجوع إليها عند الرد.",
       )}
     >
+      <ErrorRow message={listQ.error} />
       <ErrorRow message={error} />
       {canEdit && (
         <div>

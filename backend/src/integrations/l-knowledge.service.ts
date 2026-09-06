@@ -47,8 +47,9 @@ export class LKnowledgeService {
   async remove(workspaceId: string, documentId: string): Promise<void> {
     const lWorkspaceId = await this.requireLWorkspaceId(workspaceId);
     if (!lWorkspaceId) throw new ServiceUnavailableException("Workspace is not connected to Kewy");
-    await this.client.request<void>(`/workspaces/${lWorkspaceId}/documents/${documentId}`, {
-      method: "DELETE",
-    });
+    await this.client.request<void>(
+      `/workspaces/${lWorkspaceId}/documents/${encodeURIComponent(documentId)}`,
+      { method: "DELETE" },
+    );
   }
 }

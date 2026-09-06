@@ -104,6 +104,7 @@ export function ToolsTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
         )
       }
     >
+      <ErrorRow message={listQ.error} />
       <ErrorRow message={error} />
       {tools.length === 0 && (
         <div className="muted" style={{ textAlign: "center", padding: 24 }}>
@@ -186,6 +187,7 @@ export function ToolsTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                 style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
               />
             </Field>
+            <ErrorRow message={error} />
             <button
               type="button"
               className="btn primary"
