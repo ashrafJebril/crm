@@ -34,6 +34,7 @@ interface CreateServerInput {
   name: string;
   description: string;
   url: string;
+  headers?: Record<string, string>;
 }
 
 export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
@@ -61,12 +62,23 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
   const servers = listQ.data?.servers ?? [];
 
   const [form, setForm] = useState<CreateServerInput>({ name: "", description: "", url: "" });
+  const [headersText, setHeadersText] = useState("");
 
   async function onCreate() {
     setError(null);
+    let headers: Record<string, string> | undefined;
+    if (headersText.trim()) {
+      try {
+        headers = JSON.parse(headersText);
+      } catch {
+        setError(tx("Headers must be valid JSON", "يجب أن تكون الترويسات JSON صالحًا"));
+        return;
+      }
+    }
     try {
-      await createMut.mutate(form);
+      await createMut.mutate(headers ? { ...form, headers } : form);
       setForm({ name: "", description: "", url: "" });
+      setHeadersText("");
       setShowAdd(false);
       listQ.refetch();
     } catch (err) {
@@ -209,6 +221,16 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                 value={form.url}
                 onChange={(e) => setForm({ ...form, url: e.target.value })}
                 style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+              />
+            </Field>
+            <Field
+              label={tx("Headers (JSON, optional)", "الترويسات (JSON، اختياري)")}
+              hint={tx('e.g. {"Authorization": "Bearer ..."}', 'مثال: {"Authorization": "Bearer ..."}')}
+            >
+              <textarea
+                value={headersText}
+                onChange={(e) => setHeadersText(e.target.value)}
+                style={{ ...inputStyle, height: 80, fontFamily: "var(--font-mono)", resize: "vertical" }}
               />
             </Field>
             <button
