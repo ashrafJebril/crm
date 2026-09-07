@@ -1106,11 +1106,12 @@ function InboxList({
 }
 
 function Bubble({ m }: BubbleProps) {
-  const isOut = m.from === "human";
+  const isAi = m.from === "ai";
+  const isOut = m.from === "human" || isAi;
   const { user } = useAuth();
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const humanName = user?.name ?? "You";
+  const humanName = isAi ? tx("AI Agent", "الوكيل الذكي") : (user?.name ?? "You");
   const humanColor = user?.color ?? "150";
   // Zernio flattens WhatsApp content it can't carry (stickers, polls, …) into
   // a bullets-only placeholder with no attachment — label it honestly instead

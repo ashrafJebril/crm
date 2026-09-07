@@ -17,8 +17,12 @@ import { PrismaService } from "../prisma/prisma.service";
 export class LAgentService {
   private readonly logger = new Logger(LAgentService.name);
 
-  // An l turn invokes a model, so this is a model's latency, not an HTTP hop's.
-  private static readonly TIMEOUT_MS = 30_000;
+  // An l turn invokes a model, and a turn that consults the knowledge base
+  // costs a retrieval plus a second model round trip — measured at 8-10s, so
+  // 30s was only ~3x headroom on a path nobody is waiting on synchronously.
+  // Generous here is cheap: the caller already returned, so the only cost of
+  // waiting is a held socket, while giving up early loses the customer's reply.
+  private static readonly TIMEOUT_MS = 60_000;
 
   constructor(private readonly prisma: PrismaService) {}
 

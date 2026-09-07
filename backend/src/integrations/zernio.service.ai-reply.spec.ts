@@ -59,7 +59,7 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
 
   it("answers and sends back out when the thread has AI mode on", async () => {
     const ask = jest.fn().mockResolvedValue("We offer property management.");
-    const { svc, prisma, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+    const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
 
     await svc.handleEvent(inbound as never);
     await settle();
@@ -68,12 +68,15 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       externalId: CONV,
       message: "Hello what do you offer",
     });
-    expect(send).toHaveBeenCalledWith(WS, CONV, "We offer property management.");
-    // Stored as the agent's own turn, so the thread reads correctly.
-    expect(prisma.message.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ from: "ai", body: "We offer property management." }),
-      }),
+    // Tagged "ai" so sendInDbConversation stores the single row as the
+    // agent's own turn instead of a staff reply.
+    expect(send).toHaveBeenCalledWith(
+      WS,
+      CONV,
+      "We offer property management.",
+      undefined,
+      undefined,
+      "ai",
     );
   });
 

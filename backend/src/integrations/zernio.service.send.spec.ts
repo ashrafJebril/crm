@@ -103,4 +103,21 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
     expect(data.body).toBe("هاد الشعار ؟");
     expect(data.attach).toBe("media-1");
   });
+
+  it("tags the stored message and conversation 'ai' when sending on the agent's behalf", async () => {
+    const { svc, prisma } = build("whatsapp");
+    await svc.sendInDbConversation(workspaceId, "conv-db", "hi there", undefined, undefined, "ai");
+
+    expect(prisma.message.create).toHaveBeenCalledTimes(1);
+    expect(prisma.message.create.mock.calls[0][0].data.from).toBe("ai");
+    expect(prisma.conversation.update.mock.calls[0][0].data.lastFrom).toBe("ai");
+  });
+
+  it("defaults to tagging the stored message 'human'", async () => {
+    const { svc, prisma } = build("whatsapp");
+    await svc.sendInDbConversation(workspaceId, "conv-db", "hi there");
+
+    expect(prisma.message.create.mock.calls[0][0].data.from).toBe("human");
+    expect(prisma.conversation.update.mock.calls[0][0].data.lastFrom).toBe("human");
+  });
 });

@@ -196,7 +196,7 @@ export interface Contact {
 export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
 
 export interface Message {
-  from: "them" | "human";
+  from: "them" | "human" | "ai";
   t: string;
   /** ISO timestamp from the server — drives the thread's day separators. */
   createdAt?: string;
@@ -213,7 +213,7 @@ export interface Conversation {
   unread: number;
   pinned: boolean;
   lastAt: string;
-  lastFrom: "them" | "human";
+  lastFrom: "them" | "human" | "ai";
   preview: string;
   channel: ConvChannel;
   status: "human" | "closed" | "spam";

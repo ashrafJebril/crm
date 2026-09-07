@@ -670,6 +670,7 @@ export class ZernioService {
     message: string,
     mediaId?: string,
     publicBaseUrl?: string,
+    from: "human" | "ai" = "human",
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -758,7 +759,7 @@ export class ZernioService {
       data: {
         workspaceId,
         conversationId: conv.id,
-        from: "human",
+        from,
         body: message,
         t,
         // Frontend convention: attach carries our Media id for outbound sends.
@@ -771,7 +772,7 @@ export class ZernioService {
       data: {
         preview: message ? message.slice(0, 140) : "📎",
         lastAt: "now",
-        lastFrom: "human",
+        lastFrom: from,
         unread: 0,
       },
     });
@@ -1254,7 +1255,7 @@ export class ZernioService {
     // Our own outbound echo is not something to answer, and a thread only
     // auto-replies once someone has switched it into AI mode.
     if (!isOutbound && conv.aiEnabled && this.lAgent.enabled) {
-      this.queueAgentReply(workspaceId, conv.id, channel, text);
+      this.queueAgentReply(workspaceId, conv.id, text);
     }
     // Lifecycle automation (never throws): a customer message opens a ticket
     // in 'new' unless one is already open; ANY outbound human message — from
@@ -1312,7 +1313,6 @@ export class ZernioService {
   private queueAgentReply(
     workspaceId: string,
     conversationId: string,
-    channel: string,
     inbound: string,
   ): void {
     void (async () => {
@@ -1322,26 +1322,18 @@ export class ZernioService {
       });
       if (!answer) return;
 
-      // Send first, store second. A stored message the customer never received
-      // is worse than a delivered one we briefly fail to show: an agent would
-      // read the thread as answered when it is not.
-      await this.sendInDbConversation(workspaceId, conversationId, answer);
-
-      const now = new Date();
-      const t = `${String(now.getHours()).padStart(2, "0")}:${String(
-        now.getMinutes(),
-      ).padStart(2, "0")}`;
-      await this.prisma.message.create({
-        data: { workspaceId, conversationId, from: "ai", body: answer, t },
-      });
-      await this.prisma.conversation.update({
-        where: { id: conversationId },
-        data: { preview: answer.slice(0, 140), lastAt: "now", lastFrom: "ai" },
-      });
-      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
-        channel,
+      // sendInDbConversation both delivers the reply and stores the single
+      // Message row (with real delivery metadata) plus the conversation
+      // preview update — tagged "ai" so the thread still reads as the
+      // agent's own turn instead of a staff reply.
+      await this.sendInDbConversation(
+        workspaceId,
         conversationId,
-      });
+        answer,
+        undefined,
+        undefined,
+        "ai",
+      );
     })().catch((err) => {
       this.log.error(
         `l auto-reply failed for conversation ${conversationId}`,
