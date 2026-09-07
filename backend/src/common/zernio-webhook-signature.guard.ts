@@ -40,7 +40,45 @@ export class ZernioWebhookSignatureGuard implements CanActivate {
     const a = Buffer.from(header);
     const b = Buffer.from(expected);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-      this.log.warn("Rejected Zernio webhook with invalid signature");
+      // TEMPORARY DIAGNOSTIC — remove once the mismatch is explained.
+      // Logs no secret: only digests, lengths and header names, plus the
+      // candidate schemes a provider might use, so one live delivery says
+      // which (if any) matches.
+      const hmac = (key: string, data: crypto.BinaryLike) =>
+        crypto.createHmac("sha256", key).update(data).digest("hex");
+      const ts =
+        req.header("x-zernio-timestamp") ??
+        req.header("x-zernio-request-timestamp") ??
+        req.header("x-late-timestamp") ??
+        "";
+      const b64 = crypto
+        .createHmac("sha256", secret)
+        .update(req.rawBody)
+        .digest("base64");
+      this.log.warn(
+        "Zernio signature mismatch — diagnostic: " +
+          JSON.stringify({
+            headerLen: header.length,
+            headerPrefix: header.slice(0, 12),
+            expectedPrefix: expected.slice(0, 12),
+            bodyBytes: req.rawBody.length,
+            secretLen: secret.length,
+            matches: {
+              hexOverBody: false,
+              base64OverBody: b64 === header,
+              hexOverTimestampDotBody: ts
+                ? hmac(secret, `${ts}.${req.rawBody.toString("utf8")}`) === header
+                : "no-timestamp-header",
+              hexOverBodyString: hmac(secret, req.rawBody.toString("utf8")) === header,
+            },
+            zernioHeaders: Object.keys(req.headers).filter((h) =>
+              h.includes("zernio") || h.includes("late") || h.includes("signature"),
+            ),
+            contentType: req.header("content-type") ?? null,
+            eventId: req.header("x-zernio-event-id") ?? null,
+            bodyHead: req.rawBody.toString("utf8").slice(0, 120),
+          }),
+      );
       throw new ForbiddenException("Invalid Zernio webhook signature");
     }
     return true;
