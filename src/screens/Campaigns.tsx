@@ -3,11 +3,11 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/Badge";
+import { PhonePreview } from "@/components/PhonePreview";
 import {
   IconCheck,
   IconChev,
   IconMore,
-  IconPhone,
   IconPlus,
 } from "@/icons";
 import type { Campaign, Segment, Template } from "@/lib/types";
@@ -315,114 +315,6 @@ function ReviewStep({ tx, audienceLabel, audienceCount, template, scheduleLabel 
             "Saved as a draft — sending arrives with the campaign engine.",
             "تُحفظ كمسودة — الإرسال يتوفر مع محرك الحملات.",
           )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface PhonePreviewProps {
-  body: string;
-  buttons: string[];
-  tx: Tx;
-}
-
-function PhonePreview({ body, buttons, tx }: PhonePreviewProps) {
-  return (
-    <div style={{ position: "sticky", top: 12, alignSelf: "start" }}>
-      <div
-        className="mono"
-        style={{
-          fontSize: 11,
-          color: "var(--ink-3)",
-          textTransform: "uppercase",
-          marginBottom: 8,
-          letterSpacing: 0.06,
-        }}
-      >
-        {tx("Live preview", "معاينة")}
-      </div>
-      <div
-        style={{
-          width: 320,
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderRadius: 28,
-          padding: 14,
-          boxShadow: "var(--shadow-lg)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "4px 4px 12px",
-            borderBottom: "1px solid var(--line-soft)",
-          }}
-        >
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>Samemha</div>
-            <div style={{ fontSize: 10, color: "var(--ok)" }}>● online</div>
-          </div>
-          <IconPhone w={14} className="muted" />
-          <IconMore w={14} className="muted" />
-        </div>
-        <div
-          style={{
-            minHeight: 280,
-            padding: "12px 0",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-            backgroundImage:
-              "radial-gradient(circle, var(--line-soft) 1px, transparent 1px)",
-            backgroundSize: "16px 16px",
-          }}
-        >
-          <div
-            style={{
-              alignSelf: "flex-start",
-              maxWidth: "85%",
-              padding: "8px 12px",
-              background: "var(--bubble-out)",
-              border: "1px solid var(--bubble-out-line)",
-              borderRadius: "12px 12px 12px 4px",
-              fontSize: 12.5,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {body}
-            {buttons.length > 0 && (
-              <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap" }}>
-                {buttons.map((b) => (
-                  <span
-                    key={b}
-                    style={{
-                      padding: "3px 10px",
-                      borderRadius: 999,
-                      background: "var(--bg)",
-                      border: "1px solid var(--line)",
-                      fontSize: 11,
-                    }}
-                  >
-                    {b}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div
-              className="mono"
-              style={{
-                fontSize: 9,
-                color: "var(--ink-3)",
-                textAlign: "end",
-                marginTop: 4,
-              }}
-            >
-              10:00 ✓
-            </div>
-          </div>
         </div>
       </div>
     </div>
