@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
-import type { Pipeline, TagRow } from "@/lib/types";
+import type { Pipeline } from "@/lib/types";
 import { newAutomation, type Automation } from "@/lib/automations";
 import { useFetch } from "@/api/useFetch";
 import { PageHeader } from "@/components/PageHeader";
@@ -9,46 +9,10 @@ import { Toggle } from "@/components/Toggle";
 import { Modal } from "@/components/Modal";
 import { useToast } from "@/components/Toast";
 import { IconBolt, IconPlus, IconTrash } from "@/icons";
-import { RECIPES, summarize, type LabelContext } from "./catalog";
+import { RECIPES, summarize } from "./catalog";
 import { useAutomationsStore } from "./store";
-
-/** Resolves stage and tag ids to display labels for summaries and names. */
-export function useLabelContext(): LabelContext {
-  const { t } = useTweaks();
-  const pipelinesQ = useFetch<Pipeline[]>("/pipelines");
-  const tagsQ = useFetch<TagRow[]>("/tags");
-  return useMemo<LabelContext>(
-    () => ({
-      stageLabel: (stageId) => {
-        for (const p of pipelinesQ.data ?? []) {
-          const s = p.stages.find((x) => x.id === stageId);
-          if (s) return t.lang === "ar" ? s.labelAr || s.label : s.label;
-        }
-        return undefined;
-      },
-      tagName: (tagId) => tagsQ.data?.find((x) => x.id === tagId)?.name,
-    }),
-    [pipelinesQ.data, tagsQ.data, t.lang],
-  );
-}
-
-// Temporary stub, replaced by the real builder in a later task.
-function AutomationBuilder({
-  initial,
-  onSave,
-  onBack,
-}: {
-  initial: Automation;
-  onSave: (a: Automation) => void;
-  onBack: () => void;
-}) {
-  return (
-    <div style={{ padding: 24 }}>
-      <button className="btn" onClick={onBack}>Back</button>
-      <button className="btn primary" onClick={() => onSave(initial)}>Save stub</button>
-    </div>
-  );
-}
+import AutomationBuilder from "./AutomationBuilder";
+import { useLabelContext } from "./useLabelContext";
 
 type View = { kind: "list" } | { kind: "edit"; draft: Automation };
 
