@@ -32,8 +32,13 @@ export function saveAutomations(
   }
 }
 
-const browserStorage = (): Storage | null =>
-  typeof localStorage === "undefined" ? null : localStorage;
+const browserStorage = (): Storage | null => {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+};
 
 export function useAutomationsStore() {
   const { activeWorkspace } = useAuth();
