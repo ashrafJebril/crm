@@ -165,7 +165,7 @@ export default function AutomationsPage() {
       {confirmDelete && (
         <Modal onClose={() => setConfirmDelete(null)} label={tx("Delete automation", "حذف الأتمتة")}>
           <h3 style={{ marginTop: 0 }}>{tx("Delete this automation?", "حذف هذه الأتمتة؟")}</h3>
-          <p style={{ color: "var(--ink-3)", fontSize: 13 }}>{confirmDelete.name}</p>
+          <p style={{ color: "var(--ink-3)", fontSize: 13 }}>{confirmDelete.name || tx("Untitled", "بدون اسم")}</p>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button className="btn" onClick={() => setConfirmDelete(null)}>{tx("Cancel", "إلغاء")}</button>
             <button
