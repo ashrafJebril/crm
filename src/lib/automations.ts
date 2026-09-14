@@ -2,14 +2,6 @@
 // the future Prisma `Automation` model (trigger + steps as JSON columns), so
 // the backend phase is CRUD plus a dispatcher with no frontend rework.
 
-export type TriggerKind =
-  | "contact.created"
-  | "deal.stage_changed"
-  | "conversation.started"
-  | "appointment.booked"
-  | "appointment.upcoming"
-  | "contact.tagged";
-
 export type ConversationChannel = "any" | "whatsapp" | "instagram" | "facebook";
 
 export type Trigger =
@@ -19,6 +11,8 @@ export type Trigger =
   | { kind: "appointment.booked" }
   | { kind: "appointment.upcoming"; hoursBefore: number }
   | { kind: "contact.tagged"; tagId: string };
+
+export type TriggerKind = Trigger["kind"];
 
 export type StepKind = "whatsapp" | "email" | "wait";
 export type WaitUnit = "hours" | "days";
@@ -41,20 +35,7 @@ export interface Automation {
   lastRunAt: string | null;
 }
 
-export type Token =
-  | "contact.name"
-  | "contact.phone"
-  | "workspace.name"
-  | "agent.name"
-  | "deal.title"
-  | "deal.value"
-  | "stage.label"
-  | "conversation.channel"
-  | "appointment.time"
-  | "appointment.service"
-  | "tag.name";
-
-export const ALL_TOKENS: readonly Token[] = [
+export const ALL_TOKENS = [
   "contact.name",
   "contact.phone",
   "workspace.name",
@@ -66,7 +47,9 @@ export const ALL_TOKENS: readonly Token[] = [
   "appointment.time",
   "appointment.service",
   "tag.name",
-];
+] as const;
+
+export type Token = (typeof ALL_TOKENS)[number];
 
 /** Tokens every trigger can supply. */
 export const BASE_TOKENS: readonly Token[] = [

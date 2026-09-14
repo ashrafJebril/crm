@@ -34,10 +34,17 @@ export function warningText(missing: Token[], trigger: Trigger | null, lang: Lan
     : `This template needs ${groups} info, but the trigger is "${trig}"`;
 }
 
-export function TemplatePreview({ template }: { template: AutomationTemplate }) {
+export function TemplatePreview({
+  template,
+  subject: subjectOverride,
+}: {
+  template: AutomationTemplate;
+  subject?: string | null;
+}) {
   const values = SAMPLE[template.lang];
   const body = renderTemplate(template.body, values, template.variableMap);
-  const subject = template.subject ? renderTemplate(template.subject, values, template.variableMap) : null;
+  const rawSubject = subjectOverride === undefined ? template.subject : subjectOverride;
+  const subject = rawSubject ? renderTemplate(rawSubject, values, template.variableMap) : null;
   return (
     <div
       dir={template.lang === "ar" ? "rtl" : "ltr"}

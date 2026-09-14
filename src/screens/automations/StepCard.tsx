@@ -146,7 +146,7 @@ export function StepCard({ step, trigger, expanded, onToggle, onChange, onRemove
 
               {tpl ? (
                 <div style={{ display: "grid", gap: 8 }}>
-                  <TemplatePreview template={tpl} />
+                  <TemplatePreview template={tpl} subject={step.kind === "email" ? step.subject : undefined} />
                   {missing.length > 0 && (
                     <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--warn, #b7791f)", fontSize: 12 }}>
                       <IconAlert w={13} /> {warningText(missing, trigger, t.lang)}

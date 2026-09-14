@@ -279,25 +279,27 @@ export function stepLabel(step: Step, lang: Lang): string {
 /** "When a deal moves to Won → WhatsApp: Thank you → wait 2 days → Email: Onboarding" */
 export function summarize(a: Automation, lang: Lang, ctx: LabelContext): string {
   const ar = lang === "ar";
+  const arrow = lang === "ar" ? " ← " : " → ";
   const head = a.trigger
     ? (ar ? "عندما " : "When ") + triggerClause(a.trigger, lang, ctx)
     : ar
       ? "لم يُحدَّد مشغّل"
       : "No trigger yet";
   const parts = [head, ...a.steps.map((s) => stepLabel(s, lang))];
-  return parts.join(" → ");
+  return parts.join(arrow);
 }
 
 /** "<trigger label> → <first action>" until the user edits the name. */
 export function suggestName(a: Automation, lang: Lang, ctx: LabelContext): string {
   if (!a.trigger) return lang === "ar" ? "أتمتة جديدة" : "New automation";
+  const arrow = lang === "ar" ? " ← " : " → ";
   const first = a.steps.find((s) => s.kind !== "wait");
   const action = !first
     ? "…"
     : first.kind === "whatsapp"
       ? lang === "ar" ? "واتساب" : "WhatsApp"
       : lang === "ar" ? "بريد" : "Email";
-  return `${triggerLabel(a.trigger, lang, ctx)} → ${action}`;
+  return `${triggerLabel(a.trigger, lang, ctx)}${arrow}${action}`;
 }
 
 export interface Recipe {

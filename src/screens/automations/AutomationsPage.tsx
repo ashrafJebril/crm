@@ -70,7 +70,7 @@ export default function AutomationsPage() {
         {store.list.length === 0 ? (
           <div className="card" style={{ padding: 32 }}>
             <div style={{ textAlign: "center", marginBottom: 24 }}>
-              <IconBolt w={28} />
+              <IconBolt w={28} style={{ margin: "0 auto" }} />
               <h3 style={{ margin: "12px 0 4px", fontSize: 16 }}>
                 {tx("Start with a recipe", "ابدأ بوصفة جاهزة")}
               </h3>

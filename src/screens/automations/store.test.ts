@@ -31,6 +31,12 @@ describe("store", () => {
     expect(loadAutomations(fakeStorage({ k: '{"a":1}' }), "k")).toEqual([]);
   });
 
+  it("filters out malformed entries in a stored array", () => {
+    const a = newAutomation();
+    const raw = JSON.stringify([a, null, { id: "x" }]);
+    expect(loadAutomations(fakeStorage({ k: raw }), "k")).toEqual([a]);
+  });
+
   it("swallows storage write errors", () => {
     const s = {
       setItem: () => {

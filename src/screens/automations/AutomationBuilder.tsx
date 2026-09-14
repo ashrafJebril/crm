@@ -50,28 +50,41 @@ export default function AutomationBuilder({ initial, onSave, onBack }: Automatio
   );
 
   const patch = (p: Partial<Automation>) => setDraft((d) => ({ ...d, ...p }));
+  const patchFn = (f: (d: Automation) => Partial<Automation>) => setDraft((d) => ({ ...d, ...f(d) }));
   const setTrigger = (trigger: Trigger) => patch({ trigger });
-  const updateStep = (s: Step) => patch({ steps: draft.steps.map((x) => (x.id === s.id ? s : x)) });
-  const removeStep = (id: string) => patch({ steps: draft.steps.filter((x) => x.id !== id) });
+  const updateStep = (s: Step) => patchFn((d) => ({ steps: d.steps.map((x) => (x.id === s.id ? s : x)) }));
+  const removeStep = (id: string) => patchFn((d) => ({ steps: d.steps.filter((x) => x.id !== id) }));
   const addStep = (kind: StepKind) => {
     const s = newStep(kind);
-    patch({ steps: [...draft.steps, s] });
+    patchFn((d) => ({ steps: [...d.steps, s] }));
     setExpanded(s.id);
   };
   const onDragEnd = (e: DragEndEvent) => {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
-    const from = draft.steps.findIndex((s) => s.id === active.id);
-    const to = draft.steps.findIndex((s) => s.id === over.id);
-    if (from === -1 || to === -1) return;
-    patch({ steps: arrayMove(draft.steps, from, to) });
+    patchFn((d) => {
+      const from = d.steps.findIndex((s) => s.id === active.id);
+      const to = d.steps.findIndex((s) => s.id === over.id);
+      if (from === -1 || to === -1) return {};
+      return { steps: arrayMove(d.steps, from, to) };
+    });
   };
+
+  const triggerIncomplete = (tr: Trigger | null): boolean =>
+    !!tr && ((tr.kind === "deal.stage_changed" && (!tr.pipelineId || !tr.stageId)) || (tr.kind === "contact.tagged" && !tr.tagId));
+
+  const blocked = !canSave(draft) || triggerIncomplete(draft.trigger);
 
   const missingHint = !draft.trigger
     ? tx("Choose a trigger to continue.", "اختر مشغّلاً للمتابعة.")
-    : !canSave(draft)
-      ? tx("Add a WhatsApp or Email step and pick a template.", "أضف خطوة واتساب أو بريد واختر قالباً.")
-      : null;
+    : triggerIncomplete(draft.trigger)
+      ? tx(
+          "Pick the pipeline stage (or tag) this automation should watch.",
+          "اختر مرحلة المسار (أو الوسم) التي تراقبها هذه الأتمتة.",
+        )
+      : !canSave(draft)
+        ? tx("Add a WhatsApp or Email step and pick a template.", "أضف خطوة واتساب أو بريد واختر قالباً.")
+        : null;
 
   const back = () => (dirty ? setConfirmLeave(true) : onBack());
 
@@ -91,7 +104,7 @@ export default function AutomationBuilder({ initial, onSave, onBack }: Automatio
         }}
       >
         <button type="button" className="btn" onClick={back} aria-label={tx("Back", "رجوع")}>
-          <span className="flip-rtl" style={{ display: "inline-flex", transform: "rotate(180deg)" }}><IconArrow w={14} /></span>
+          <span style={{ display: "inline-flex", transform: t.lang === "ar" ? "none" : "rotate(180deg)" }}><IconArrow w={14} /></span>
         </button>
         <input
           value={displayName}
@@ -103,7 +116,7 @@ export default function AutomationBuilder({ initial, onSave, onBack }: Automatio
         <button
           type="button"
           className="btn primary"
-          disabled={!canSave(draft)}
+          disabled={blocked}
           title={missingHint ?? undefined}
           onClick={() => onSave({ ...draft, name: displayName })}
         >

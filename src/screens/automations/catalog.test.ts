@@ -62,10 +62,14 @@ describe("summarize / suggestName", () => {
     expect(s).toContain("عندما تنتقل صفقة إلى Won");
     expect(s).toContain("واتساب: Deal won thank-you");
     expect(s).toContain("انتظر 2 يوم");
+    expect(s).toContain(" ← ");
+    expect(s).not.toContain(" → ");
   });
 
   it("suggests a name from trigger and first action", () => {
-    expect(suggestName(a, "en", ctx)).toBe("Deal moves to Won → WhatsApp");
+    const en = suggestName(a, "en", ctx);
+    expect(en).toBe("Deal moves to Won → WhatsApp");
+    expect(en).toContain(" → ");
     const empty = newAutomation();
     expect(suggestName(empty, "en", ctx)).toBe("New automation");
   });

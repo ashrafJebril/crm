@@ -13,7 +13,15 @@ export function loadAutomations(storage: Pick<Storage, "getItem">, key: string):
     const raw = storage.getItem(key);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Automation[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    const valid = parsed.filter(
+      (x): x is Automation =>
+        typeof x === "object" &&
+        x !== null &&
+        Array.isArray((x as { steps?: unknown }).steps) &&
+        typeof (x as { id?: unknown }).id === "string",
+    );
+    return valid;
   } catch {
     return [];
   }

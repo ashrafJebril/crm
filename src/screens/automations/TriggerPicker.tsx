@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import type { Pipeline, TagRow } from "@/lib/types";
@@ -38,11 +38,24 @@ export function TriggerPicker({ trigger, onChange, ctx }: TriggerPickerProps) {
   const pipelinesQ = useFetch<Pipeline[]>("/pipelines", { enabled: trigger?.kind === "deal.stage_changed" });
   const tagsQ = useFetch<TagRow[]>("/tags", { enabled: trigger?.kind === "contact.tagged" });
 
+  const pipelines = pipelinesQ.data ?? [];
+  const pipeline =
+    trigger?.kind === "deal.stage_changed"
+      ? pipelines.find((p) => p.id === trigger.pipelineId) ?? pipelines.find((p) => p.isDefault) ?? pipelines[0]
+      : undefined;
+
+  useEffect(() => {
+    if (trigger?.kind === "deal.stage_changed" && trigger.pipelineId === "" && pipeline) {
+      onChange({ ...trigger, pipelineId: pipeline.id });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigger, pipeline?.id, onChange]);
+
   if (choosing || !trigger) {
     return (
       <div className="card" style={{ padding: 16, borderStyle: trigger ? "solid" : "dashed" }}>
         <div style={{ fontSize: 11, color: "var(--ink-3)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
-          {tx("When…", "عندما…")}
+          {trigger ? tx("When…", "عندما…") : tx("Choose what starts this automation", "اختر ما يبدأ هذه الأتمتة")}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
           {TRIGGERS.map((def) => {
@@ -86,11 +99,6 @@ export function TriggerPicker({ trigger, onChange, ctx }: TriggerPickerProps) {
 
   const def = triggerDef(trigger.kind);
   const Icon = ICONS[trigger.kind];
-  const pipelines = pipelinesQ.data ?? [];
-  const pipeline =
-    trigger.kind === "deal.stage_changed"
-      ? pipelines.find((p) => p.id === trigger.pipelineId) ?? pipelines.find((p) => p.isDefault) ?? pipelines[0]
-      : undefined;
 
   return (
     <div className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
