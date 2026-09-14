@@ -23,14 +23,19 @@ export function warningText(missing: Token[], trigger: Trigger | null, lang: Lan
   const groups = [...new Set(missing.map((m) => m.split(".")[0]))]
     .map((g) => GROUP_LABEL[lang][g] ?? g)
     .join(lang === "ar" ? " و" : " and ");
-  const trig = trigger ? (lang === "ar" ? triggerDef(trigger.kind).ar : triggerDef(trigger.kind).en) : "";
+  if (!trigger) {
+    return lang === "ar"
+      ? `هذا القالب يحتاج معلومات ${groups}. اختر مشغّلاً يوفّرها.`
+      : `This template needs ${groups} info. Choose a trigger that provides it.`;
+  }
+  const trig = lang === "ar" ? triggerDef(trigger.kind).ar : triggerDef(trigger.kind).en;
   return lang === "ar"
     ? `هذا القالب يحتاج معلومات ${groups}، لكن المشغّل هو "${trig}"`
     : `This template needs ${groups} info, but the trigger is "${trig}"`;
 }
 
-export function TemplatePreview({ template, lang }: { template: AutomationTemplate; lang: Lang }) {
-  const values = SAMPLE[lang];
+export function TemplatePreview({ template }: { template: AutomationTemplate }) {
+  const values = SAMPLE[template.lang];
   const body = renderTemplate(template.body, values, template.variableMap);
   const subject = template.subject ? renderTemplate(template.subject, values, template.variableMap) : null;
   return (
@@ -126,7 +131,7 @@ export function TemplatePicker({ channel, trigger, selectedId, onSelect }: Templ
                 <Badge kind="ok" dot>{tx("Approved", "معتمد")}</Badge>
                 {selected && <IconCheck w={14} />}
               </div>
-              <TemplatePreview template={tpl} lang={t.lang} />
+              <TemplatePreview template={tpl} />
               {missing.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--warn, #b7791f)", fontSize: 12 }}>
                   <IconAlert w={13} />
