@@ -3,6 +3,38 @@
 Date: 2026-09-13
 Status: approved design, awaiting implementation plan
 
+## Revision 2026-09-14: guided wizard replaces the card builder
+
+After a hands-on review the user rejected the single-column card builder
+(too many clicks, drag handles felt like a developer tool, the template list
+with warnings was confusing, and the look did not match the app). The builder
+was replaced with a three-step wizard that mirrors the existing Campaigns
+wizard:
+
+- **Shell:** back arrow, editable name, Enabled toggle; pill stepper
+  `01 When — 02 Messages — 03 Review`; full-width two-column layout with the
+  shared `PhonePreview` (extracted from Campaigns into `src/components/`) on the
+  right, plus an email preview card under it when Email is on.
+- **Step 1, When:** six colored trigger tiles with icons; settings for the chosen
+  trigger appear under the tiles (same six triggers and settings as before).
+- **Step 2, Messages:** two channel panels, WhatsApp (green) and Email (blue),
+  each with an on/off toggle, a template dropdown (incompatible templates are
+  listed but disabled with a short reason), a "Send" timing select
+  (Immediately, after 1 hour, 1 day, 2 days, 3 days, 7 days, custom), and for
+  Email an editable subject. No cards, no drag, no add-step menu.
+- **Step 3, Review:** a timeline of trigger and messages with rendered text, then
+  "Turn on" (or "Save" when the Enabled toggle is off).
+- **List page:** rows show the trigger's colored icon, an Active/Paused pill,
+  channel icons, and run stats; recipes are colored tiles with channel badges.
+- **Data shape unchanged.** `src/screens/automations/wizard.ts` maps the two
+  channel panels to and from the persisted `steps` array
+  (`[wait?, whatsapp, wait?, email]`), so the store, catalog, summarizer, and
+  tests are untouched. Consequence: the wizard edits at most one WhatsApp and
+  one Email step per rule; extra steps saved by the old builder are dropped on
+  the next save.
+- Removed: `AutomationBuilder.tsx`, `StepCard.tsx`, `TriggerPicker.tsx`.
+  `TemplatePicker.tsx` now only holds `TemplatePreview` and `warningText`.
+
 ## Goal
 
 Let a workspace user build a simple automation rule in tkana without training:
