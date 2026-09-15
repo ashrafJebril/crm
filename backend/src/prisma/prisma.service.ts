@@ -41,6 +41,8 @@ export class PrismaService implements OnModuleDestroy {
   get segment() { return this.client.segment; }
   get segmentMember() { return this.client.segmentMember; }
   get tag() { return this.client.tag; }
+  get workflow() { return this.client.workflow; }
+  get workflowRun() { return this.client.workflowRun; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }
