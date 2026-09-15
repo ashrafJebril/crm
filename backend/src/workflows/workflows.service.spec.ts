@@ -89,8 +89,10 @@ describe("WorkflowsService", () => {
   });
 
   it("test() starts a run via WorkflowDispatchService and returns its id, bypassing status", async () => {
+    const fixture = row();
+    prisma.workflow.findFirst.mockResolvedValue(fixture);
     const result = await svc.test("ws1", "wf1", { payload: { contact: { id: "c1" } } });
-    expect(dispatch.startRun).toHaveBeenCalledWith(row(), { contact: { id: "c1" } }, true);
+    expect(dispatch.startRun).toHaveBeenCalledWith(fixture, { contact: { id: "c1" } }, true);
     expect(result).toEqual({ runId: "run1" });
   });
 });
