@@ -1,5 +1,5 @@
 // src/screens/workflows/WorkflowsPage.tsx
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useFetch } from "@/api/useFetch";
@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/Badge";
 import type { BadgeKind } from "@/components/Badge";
 import type { Workflow } from "@/lib/types";
+import { WorkflowBuilder } from "./WorkflowBuilder";
 
 const TRIGGER_LABEL: Record<Workflow["triggerType"], [string, string]> = {
   contact_created: ["New contact", "جهة اتصال جديدة"],
@@ -20,8 +21,21 @@ const TRIGGER_LABEL: Record<Workflow["triggerType"], [string, string]> = {
 function WorkflowsPageImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { data, loading } = useFetch<Workflow[]>("/workflows");
+  const { data, loading, refetch } = useFetch<Workflow[]>("/workflows");
   const workflows = data ?? [];
+  const [openId, setOpenId] = useState<string | "new" | null>(null);
+
+  if (openId !== null) {
+    return (
+      <WorkflowBuilder
+        workflowId={openId === "new" ? null : openId}
+        onClose={() => {
+          setOpenId(null);
+          refetch();
+        }}
+      />
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
@@ -31,6 +45,11 @@ function WorkflowsPageImpl() {
           "Automate what happens when a contact, message, or ticket event occurs.",
           "أتمتة ما يحدث عند وقوع حدث متعلق بجهة اتصال أو رسالة أو تذكرة.",
         )}
+        actions={
+          <button type="button" onClick={() => setOpenId("new")}>
+            {tx("New workflow", "أتمتة جديدة")}
+          </button>
+        }
       />
 
       <div style={{ flex: 1, overflowY: "auto", padding: "0 32px 32px" }}>
@@ -50,7 +69,11 @@ function WorkflowsPageImpl() {
             </thead>
             <tbody>
               {workflows.map((wf) => (
-                <tr key={wf.id} style={{ borderTop: "1px solid var(--line-soft)" }}>
+                <tr
+                  key={wf.id}
+                  onClick={() => setOpenId(wf.id)}
+                  style={{ borderTop: "1px solid var(--line-soft)", cursor: "pointer" }}
+                >
                   <td style={{ padding: "10px 12px", fontWeight: 600 }}>{wf.name}</td>
                   <td style={{ padding: "10px 12px" }}>
                     {t.lang === "ar" ? TRIGGER_LABEL[wf.triggerType][1] : TRIGGER_LABEL[wf.triggerType][0]}
