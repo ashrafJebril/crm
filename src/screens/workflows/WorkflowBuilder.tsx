@@ -6,6 +6,8 @@ import { api } from "@/api/client";
 import type { Workflow, WorkflowStep, WorkflowStepGraph, WorkflowStepType, WorkflowTriggerType } from "@/lib/types";
 import { StepCard } from "./StepCard";
 import { AddStepButton } from "./AddStepButton";
+import { ConditionConfigForm, AiConditionConfigForm, DelayConfigForm, UpdateDataConfigForm } from "./config/StepConfigForms";
+import { TriggerConfigFields } from "./config/TriggerConfigFields";
 
 const TRIGGER_OPTIONS: Array<{ value: WorkflowTriggerType; en: string; ar: string }> = [
   { value: "contact_created", en: "New contact", ar: "جهة اتصال جديدة" },
@@ -132,6 +134,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
   const [id, setId] = useState<string | null>(workflowId);
   const [name, setName] = useState("");
   const [triggerType, setTriggerType] = useState<WorkflowTriggerType>("contact_created");
+  const [triggerConfig, setTriggerConfig] = useState<Record<string, unknown>>({});
   const [status, setStatus] = useState<Workflow["status"]>("draft");
   const [graph, setGraph] = useState<WorkflowStepGraph>(EMPTY_GRAPH);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -142,12 +145,18 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
       setId(wfQ.data.id);
       setName(wfQ.data.name);
       setTriggerType(wfQ.data.triggerType);
+      setTriggerConfig(wfQ.data.triggerConfig ?? {});
       setStatus(wfQ.data.status);
       setGraph(wfQ.data.steps);
     }
   }, [wfQ.data]);
 
-  type SavePayload = { name: string; triggerType: WorkflowTriggerType; steps: WorkflowStepGraph };
+  type SavePayload = {
+    name: string;
+    triggerType: WorkflowTriggerType;
+    triggerConfig: Record<string, unknown>;
+    steps: WorkflowStepGraph;
+  };
   const createMut = useMutation<SavePayload, Workflow>((input) => api.post("/workflows", input));
   const updateMut = useMutation<SavePayload, Workflow>((input) => api.patch(`/workflows/${id}`, input));
   const activateMut = useMutation<void, Workflow>(() => api.post(`/workflows/${id}/activate`));
@@ -156,7 +165,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
   async function onSave() {
     setError(null);
     try {
-      const payload: SavePayload = { name, triggerType, steps: graph };
+      const payload: SavePayload = { name, triggerType, triggerConfig, steps: graph };
       const saved = id ? await updateMut.mutate(payload) : await createMut.mutate(payload);
       setId(saved.id);
       setStatus(saved.status);
@@ -234,6 +243,13 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
     setSelectedId(null);
   }
 
+  function updateStepConfig(stepId: string, config: WorkflowStep["config"]) {
+    setGraph((g) => ({
+      ...g,
+      steps: { ...g.steps, [stepId]: { ...g.steps[stepId], config } as WorkflowStep },
+    }));
+  }
+
   const selectedStep = selectedId ? graph.steps[selectedId] : null;
 
   return (
@@ -294,6 +310,12 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
               ))}
             </select>
           </div>
+          <TriggerConfigFields
+            triggerType={triggerType}
+            triggerConfig={triggerConfig}
+            onChange={setTriggerConfig}
+            tx={tx}
+          />
 
           {graph.entry ? (
             renderChain(
@@ -320,16 +342,40 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
           {selectedStep ? (
             <div>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>{selectedStep.type}</div>
-              <pre style={{ background: "var(--bg-1)", padding: 12, borderRadius: 8, fontSize: 12 }}>
-                {JSON.stringify(selectedStep.config, null, 2)}
-              </pre>
-              <p className="muted" style={{ fontSize: 12 }}>
-                {tx(
-                  "Per-step editing forms are added in the next tasks.",
-                  "سيتم إضافة نماذج تحرير كل خطوة في المهام التالية.",
-                )}
-              </p>
+              <div style={{ fontWeight: 600, marginBottom: 12 }}>{selectedStep.type}</div>
+              {selectedStep.type === "condition" && (
+                <ConditionConfigForm
+                  config={selectedStep.config}
+                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                  tx={tx}
+                />
+              )}
+              {selectedStep.type === "ai_condition" && (
+                <AiConditionConfigForm
+                  config={selectedStep.config}
+                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                  tx={tx}
+                />
+              )}
+              {selectedStep.type === "delay" && (
+                <DelayConfigForm
+                  config={selectedStep.config}
+                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                  tx={tx}
+                />
+              )}
+              {selectedStep.type === "update_data" && (
+                <UpdateDataConfigForm
+                  config={selectedStep.config}
+                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                  tx={tx}
+                />
+              )}
+              {(selectedStep.type === "send_whatsapp" || selectedStep.type === "ask_agent") && (
+                <pre style={{ background: "var(--bg-1)", padding: 12, borderRadius: 8, fontSize: 12 }}>
+                  {JSON.stringify(selectedStep.config, null, 2)}
+                </pre>
+              )}
             </div>
           ) : (
             <div className="muted">{tx("Select a step to configure it.", "اختر خطوة لتعديلها.")}</div>
