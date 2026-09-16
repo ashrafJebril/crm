@@ -9,6 +9,8 @@ import { AddStepButton } from "./AddStepButton";
 import { ConditionConfigForm, AiConditionConfigForm, DelayConfigForm, UpdateDataConfigForm } from "./config/StepConfigForms";
 import { TriggerConfigFields } from "./config/TriggerConfigFields";
 import { SendWhatsappConfigForm, AskAgentConfigForm } from "./config/MessageConfigForms";
+import { ExecutionsTab } from "./ExecutionsTab";
+import { TestWorkflowModal } from "./TestWorkflowModal";
 
 const TRIGGER_OPTIONS: Array<{ value: WorkflowTriggerType; en: string; ar: string }> = [
   { value: "contact_created", en: "New contact", ar: "جهة اتصال جديدة" },
@@ -140,6 +142,8 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
   const [graph, setGraph] = useState<WorkflowStepGraph>(EMPTY_GRAPH);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"builder" | "executions">("builder");
+  const [showTest, setShowTest] = useState(false);
 
   useEffect(() => {
     if (wfQ.data) {
@@ -289,111 +293,142 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
             {tx("Deactivate", "إيقاف")}
           </button>
         )}
+        {id && (
+          <button type="button" onClick={() => setShowTest(true)}>
+            {tx("Test", "اختبار")}
+          </button>
+        )}
+        {id && (
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              type="button"
+              onClick={() => setTab("builder")}
+              style={{ fontWeight: tab === "builder" ? 700 : 400 }}
+            >
+              {tx("Builder", "الإنشاء")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("executions")}
+              style={{ fontWeight: tab === "executions" ? 700 : 400 }}
+            >
+              {tx("Executions", "التشغيلات")}
+            </button>
+          </div>
+        )}
       </div>
 
       {error && <div style={{ color: "var(--bad)", padding: "8px 32px" }}>{error}</div>}
 
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <div style={{ width: "45%", overflowY: "auto", padding: 24, borderInlineEnd: "1px solid var(--line-soft)" }}>
-          <div style={{ marginBottom: 12 }}>
-            <label className="muted" style={{ fontSize: 12 }}>
-              {tx("Trigger", "المُشغّل")}
-            </label>
-            <select
-              value={triggerType}
-              onChange={(e) => setTriggerType(e.target.value as WorkflowTriggerType)}
-              style={{ display: "block", width: "100%", marginTop: 4 }}
-            >
-              {TRIGGER_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {t.lang === "ar" ? o.ar : o.en}
-                </option>
-              ))}
-            </select>
-          </div>
-          <TriggerConfigFields
-            triggerType={triggerType}
-            triggerConfig={triggerConfig}
-            onChange={setTriggerConfig}
-            tx={tx}
-          />
-
-          {graph.entry ? (
-            renderChain(
-              graph.entry,
-              {
-                graph,
-                selectedId,
-                onSelect: setSelectedId,
-                onAddAfter: addStepAfter,
-                onAddBranch: addBranchStep,
-                onRemoveTail: removeTailStep,
-                tx,
-              },
-              new Set(),
-              null,
-              undefined,
-              0,
-            )
-          ) : (
-            <AddStepButton onAdd={addStepAtEntry} tx={tx} />
-          )}
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          {selectedStep ? (
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: 12 }}>{selectedStep.type}</div>
-              {selectedStep.type === "condition" && (
-                <ConditionConfigForm
-                  config={selectedStep.config}
-                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
-                  tx={tx}
-                />
-              )}
-              {selectedStep.type === "ai_condition" && (
-                <AiConditionConfigForm
-                  config={selectedStep.config}
-                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
-                  tx={tx}
-                />
-              )}
-              {selectedStep.type === "delay" && (
-                <DelayConfigForm
-                  config={selectedStep.config}
-                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
-                  tx={tx}
-                />
-              )}
-              {selectedStep.type === "update_data" && (
-                <UpdateDataConfigForm
-                  config={selectedStep.config}
-                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
-                  tx={tx}
-                />
-              )}
-              {selectedStep.type === "send_whatsapp" && (
-                <SendWhatsappConfigForm
-                  config={selectedStep.config}
-                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
-                  triggerType={triggerType}
-                  tx={tx}
-                />
-              )}
-              {selectedStep.type === "ask_agent" && (
-                <AskAgentConfigForm
-                  config={selectedStep.config}
-                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
-                  triggerType={triggerType}
-                  tx={tx}
-                />
-              )}
+      {tab === "builder" ? (
+        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+          <div style={{ width: "45%", overflowY: "auto", padding: 24, borderInlineEnd: "1px solid var(--line-soft)" }}>
+            <div style={{ marginBottom: 12 }}>
+              <label className="muted" style={{ fontSize: 12 }}>
+                {tx("Trigger", "المُشغّل")}
+              </label>
+              <select
+                value={triggerType}
+                onChange={(e) => setTriggerType(e.target.value as WorkflowTriggerType)}
+                style={{ display: "block", width: "100%", marginTop: 4 }}
+              >
+                {TRIGGER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {t.lang === "ar" ? o.ar : o.en}
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : (
-            <div className="muted">{tx("Select a step to configure it.", "اختر خطوة لتعديلها.")}</div>
-          )}
+            <TriggerConfigFields
+              triggerType={triggerType}
+              triggerConfig={triggerConfig}
+              onChange={setTriggerConfig}
+              tx={tx}
+            />
+
+            {graph.entry ? (
+              renderChain(
+                graph.entry,
+                {
+                  graph,
+                  selectedId,
+                  onSelect: setSelectedId,
+                  onAddAfter: addStepAfter,
+                  onAddBranch: addBranchStep,
+                  onRemoveTail: removeTailStep,
+                  tx,
+                },
+                new Set(),
+                null,
+                undefined,
+                0,
+              )
+            ) : (
+              <AddStepButton onAdd={addStepAtEntry} tx={tx} />
+            )}
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+            {selectedStep ? (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 12 }}>{selectedStep.type}</div>
+                {selectedStep.type === "condition" && (
+                  <ConditionConfigForm
+                    config={selectedStep.config}
+                    onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                    tx={tx}
+                  />
+                )}
+                {selectedStep.type === "ai_condition" && (
+                  <AiConditionConfigForm
+                    config={selectedStep.config}
+                    onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                    tx={tx}
+                  />
+                )}
+                {selectedStep.type === "delay" && (
+                  <DelayConfigForm
+                    config={selectedStep.config}
+                    onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                    tx={tx}
+                  />
+                )}
+                {selectedStep.type === "update_data" && (
+                  <UpdateDataConfigForm
+                    config={selectedStep.config}
+                    onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                    tx={tx}
+                  />
+                )}
+                {selectedStep.type === "send_whatsapp" && (
+                  <SendWhatsappConfigForm
+                    config={selectedStep.config}
+                    onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                    triggerType={triggerType}
+                    tx={tx}
+                  />
+                )}
+                {selectedStep.type === "ask_agent" && (
+                  <AskAgentConfigForm
+                    config={selectedStep.config}
+                    onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                    triggerType={triggerType}
+                    tx={tx}
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="muted">{tx("Select a step to configure it.", "اختر خطوة لتعديلها.")}</div>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        id && <ExecutionsTab workflowId={id} tx={tx} lang={t.lang} />
+      )}
+
+      {showTest && id && (
+        <TestWorkflowModal workflowId={id} onClose={() => setShowTest(false)} tx={tx} />
+      )}
     </div>
   );
 }
