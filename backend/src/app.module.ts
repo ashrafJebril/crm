@@ -25,6 +25,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
+import { WorkflowsModule } from "./workflows/workflows.module";
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { TagsModule } from "./tags/tags.module";
     DashboardModule,
     IntegrationsModule,
     TicketsModule,
+    WorkflowsModule,
     WorkspacesModule,
     NotesModule,
     MediaModule,

@@ -54,6 +54,6 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LToolsService,
     LMcpService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService],
+  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, LAgentService],
 })
 export class IntegrationsModule {}
