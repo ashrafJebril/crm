@@ -1,15 +1,33 @@
 import type { WorkflowStepType } from "@/lib/types";
+import type { Tx } from "@/lib/tx";
 
-const OPTIONS: Array<{ value: WorkflowStepType; label: string }> = [
-  { value: "send_whatsapp", label: "Send WhatsApp" },
-  { value: "ask_agent", label: "Ask AI Agent" },
-  { value: "update_data", label: "Update CRM Data" },
-  { value: "condition", label: "Condition" },
-  { value: "ai_condition", label: "AI Condition" },
-  { value: "delay", label: "Delay" },
+function optionLabel(value: WorkflowStepType, tx: Tx): string {
+  switch (value) {
+    case "send_whatsapp":
+      return tx("Send WhatsApp", "إرسال واتساب");
+    case "ask_agent":
+      return tx("Ask AI Agent", "اسأل وكيل الذكاء");
+    case "update_data":
+      return tx("Update CRM Data", "تحديث بيانات العميل");
+    case "condition":
+      return tx("Condition", "شرط");
+    case "ai_condition":
+      return tx("AI Condition", "شرط بالذكاء الاصطناعي");
+    case "delay":
+      return tx("Delay", "تأخير");
+  }
+}
+
+const OPTION_VALUES: WorkflowStepType[] = [
+  "send_whatsapp",
+  "ask_agent",
+  "update_data",
+  "condition",
+  "ai_condition",
+  "delay",
 ];
 
-export function AddStepButton({ onAdd }: { onAdd: (type: WorkflowStepType) => void }) {
+export function AddStepButton({ onAdd, tx }: { onAdd: (type: WorkflowStepType) => void; tx: Tx }) {
   return (
     <select
       value=""
@@ -20,10 +38,10 @@ export function AddStepButton({ onAdd }: { onAdd: (type: WorkflowStepType) => vo
       }}
       style={{ marginTop: 8, fontSize: 12 }}
     >
-      <option value="">{"+ Add step"}</option>
-      {OPTIONS.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
+      <option value="">{tx("+ Add step", "+ إضافة خطوة")}</option>
+      {OPTION_VALUES.map((value) => (
+        <option key={value} value={value}>
+          {optionLabel(value, tx)}
         </option>
       ))}
     </select>

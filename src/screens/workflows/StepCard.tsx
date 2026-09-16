@@ -1,25 +1,36 @@
 import type { WorkflowStep } from "@/lib/types";
+import type { Tx } from "@/lib/tx";
 import { IconTrash } from "@/icons";
 
-const STEP_LABEL: Record<WorkflowStep["type"], string> = {
-  condition: "Condition",
-  ai_condition: "AI Condition",
-  send_whatsapp: "Send WhatsApp",
-  ask_agent: "Ask AI Agent",
-  update_data: "Update CRM Data",
-  delay: "Delay",
-};
+function stepLabel(type: WorkflowStep["type"], tx: Tx): string {
+  switch (type) {
+    case "condition":
+      return tx("Condition", "شرط");
+    case "ai_condition":
+      return tx("AI Condition", "شرط بالذكاء الاصطناعي");
+    case "send_whatsapp":
+      return tx("Send WhatsApp", "إرسال واتساب");
+    case "ask_agent":
+      return tx("Ask AI Agent", "اسأل وكيل الذكاء");
+    case "update_data":
+      return tx("Update CRM Data", "تحديث بيانات العميل");
+    case "delay":
+      return tx("Delay", "تأخير");
+  }
+}
 
 export function StepCard({
   step,
   selected,
   onSelect,
   onRemove,
+  tx,
 }: {
   step: WorkflowStep;
   selected: boolean;
   onSelect: () => void;
   onRemove?: () => void;
+  tx: Tx;
 }) {
   return (
     <div
@@ -35,7 +46,7 @@ export function StepCard({
         background: selected ? "var(--bg-2)" : "var(--bg-1)",
       }}
     >
-      <span style={{ fontSize: 13 }}>{STEP_LABEL[step.type]}</span>
+      <span style={{ fontSize: 13 }}>{stepLabel(step.type, tx)}</span>
       {onRemove && (
         <button
           type="button"

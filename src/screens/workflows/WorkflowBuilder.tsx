@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useTweaks } from "@/tweaks/context";
-import { makeTx } from "@/lib/tx";
+import { makeTx, type Tx } from "@/lib/tx";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import type { Workflow, WorkflowStep, WorkflowStepGraph, WorkflowStepType, WorkflowTriggerType } from "@/lib/types";
@@ -52,6 +52,7 @@ interface RenderCtx {
   onAddAfter: (parentId: string, type: WorkflowStepType) => void;
   onAddBranch: (conditionId: string, branch: "then" | "else", type: WorkflowStepType) => void;
   onRemoveTail: (id: string, parentId: string | null, branchInfo?: BranchInfo) => void;
+  tx: Tx;
 }
 
 function renderChain(
@@ -74,7 +75,7 @@ function renderChain(
     if (!step) break;
 
     const isBranch = step.type === "condition" || step.type === "ai_condition";
-    const isTail = !step.next;
+    const isTail = isBranch ? !step.thenNext && !step.elseNext : !step.next;
     const removeParentId = prevId;
     const removeBranchInfo = prevId ? undefined : prevBranchInfo;
 
@@ -85,8 +86,9 @@ function renderChain(
           selected={ctx.selectedId === step.id}
           onSelect={() => ctx.onSelect(step.id)}
           onRemove={isTail ? () => ctx.onRemoveTail(step.id, removeParentId, removeBranchInfo) : undefined}
+          tx={ctx.tx}
         />
-        {!isBranch && isTail && <AddStepButton onAdd={(type) => ctx.onAddAfter(step.id, type)} />}
+        {!isBranch && isTail && <AddStepButton onAdd={(type) => ctx.onAddAfter(step.id, type)} tx={ctx.tx} />}
         {isBranch && (
           <div style={{ display: "flex", gap: 16, marginTop: 8, marginInlineStart: 16 }}>
             <div style={{ flex: 1, borderInlineStart: "2px solid var(--line)", paddingInlineStart: 12 }}>
@@ -94,14 +96,18 @@ function renderChain(
                 THEN
               </div>
               {renderChain(step.thenNext, ctx, visited, null, { conditionId: step.id, branch: "then" }, depth + 1)}
-              {!step.thenNext && <AddStepButton onAdd={(type) => ctx.onAddBranch(step.id, "then", type)} />}
+              {!step.thenNext && (
+                <AddStepButton onAdd={(type) => ctx.onAddBranch(step.id, "then", type)} tx={ctx.tx} />
+              )}
             </div>
             <div style={{ flex: 1, borderInlineStart: "2px solid var(--line)", paddingInlineStart: 12 }}>
               <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
                 ELSE
               </div>
               {renderChain(step.elseNext, ctx, visited, null, { conditionId: step.id, branch: "else" }, depth + 1)}
-              {!step.elseNext && <AddStepButton onAdd={(type) => ctx.onAddBranch(step.id, "else", type)} />}
+              {!step.elseNext && (
+                <AddStepButton onAdd={(type) => ctx.onAddBranch(step.id, "else", type)} tx={ctx.tx} />
+              )}
             </div>
           </div>
         )}
@@ -208,7 +214,10 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
   function removeTailStep(stepId: string, parentId: string | null, branchInfo?: BranchInfo) {
     setGraph((g) => {
       const step = g.steps[stepId];
-      if (!step || step.next) return g;
+      if (!step) return g;
+      const isBranchStep = step.type === "condition" || step.type === "ai_condition";
+      const hasChildren = isBranchStep ? Boolean(step.thenNext) || Boolean(step.elseNext) : Boolean(step.next);
+      if (hasChildren) return g;
       const rest = { ...g.steps };
       delete rest[stepId];
       if (parentId) {
@@ -296,6 +305,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
                 onAddAfter: addStepAfter,
                 onAddBranch: addBranchStep,
                 onRemoveTail: removeTailStep,
+                tx,
               },
               new Set(),
               null,
@@ -303,7 +313,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
               0,
             )
           ) : (
-            <AddStepButton onAdd={addStepAtEntry} />
+            <AddStepButton onAdd={addStepAtEntry} tx={tx} />
           )}
         </div>
 
