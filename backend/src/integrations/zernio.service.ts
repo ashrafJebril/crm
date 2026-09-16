@@ -3,13 +3,16 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { LAgentService } from "./l-agent.service";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -49,6 +52,7 @@ export class ZernioService {
     private readonly client: ZernioClient,
     private readonly pipelineAutomation: PipelineAutomationService,
     private readonly lAgent: LAgentService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -1271,6 +1275,15 @@ export class ZernioService {
         channel,
         text || undefined,
       );
+      this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType: "message_received",
+        payload: {
+          contact: { id: contact.id, name: contact.name },
+          conversation: { id: conv.id, channel },
+          message: { body: text },
+        },
+      } satisfies WorkflowTriggerEvent);
     }
   }
 
