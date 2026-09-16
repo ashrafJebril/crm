@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkflowDispatchService } from "./workflow-dispatch.service";
-import { validateStepGraph } from "./workflow-steps";
+import { StepGraph, validateStepGraph } from "./workflow-steps";
 import { CreateWorkflowDto, TestWorkflowDto, UpdateWorkflowDto } from "./workflows.dto";
 
 const shape = (w: {
@@ -72,7 +72,12 @@ export class WorkflowsService {
   }
 
   async create(workspaceId: string, dto: CreateWorkflowDto) {
-    const graph = validateStepGraph(dto.steps ?? { entry: null, steps: {} });
+    let graph: StepGraph;
+    try {
+      graph = validateStepGraph(dto.steps ?? { entry: null, steps: {} });
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
     const row = await this.prisma.workflow.create({
       data: {
         workspaceId,
@@ -89,7 +94,14 @@ export class WorkflowsService {
 
   async update(workspaceId: string, id: string, dto: UpdateWorkflowDto) {
     await this.get(workspaceId, id);
-    const graph = dto.steps !== undefined ? validateStepGraph(dto.steps) : undefined;
+    let graph: StepGraph | undefined;
+    if (dto.steps !== undefined) {
+      try {
+        graph = validateStepGraph(dto.steps);
+      } catch (e) {
+        throw new BadRequestException((e as Error).message);
+      }
+    }
     const row = await this.prisma.workflow.update({
       where: { id },
       data: {
@@ -111,7 +123,12 @@ export class WorkflowsService {
   async activate(workspaceId: string, id: string) {
     const row = await this.prisma.workflow.findFirst({ where: { id, workspaceId } });
     if (!row) throw new NotFoundException("Workflow not found");
-    const graph = validateStepGraph(row.steps);
+    let graph: StepGraph;
+    try {
+      graph = validateStepGraph(row.steps);
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
     if (!graph.entry) throw new BadRequestException("Workflow has no steps to run");
     const updated = await this.prisma.workflow.update({ where: { id }, data: { status: "active" } });
     return shape(updated);

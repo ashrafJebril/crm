@@ -71,7 +71,11 @@ describe("WorkflowsService", () => {
   });
 
   it("rejects a create with a malformed step graph", async () => {
-    await expect(svc.create("ws1", { name: "n", triggerType: "contact_created", steps: "nope" })).rejects.toThrow();
+    await expect(svc.create("ws1", { name: "n", triggerType: "contact_created", steps: "nope" })).rejects.toThrow(BadRequestException);
+  });
+
+  it("rejects an update with a malformed step graph", async () => {
+    await expect(svc.update("ws1", "wf1", { steps: "nope" })).rejects.toThrow(BadRequestException);
   });
 
   it("rejects activating a workflow with no steps", async () => {
