@@ -164,6 +164,26 @@ describe("WorkflowRunnerService", () => {
     expect(sendWhatsapp.execute).toHaveBeenCalledWith("ws1", { message: "else" }, expect.anything());
   });
 
+  it("flags aiUnavailable and still follows elseNext when the AI agent is unreachable (answer: null)", async () => {
+    askAgent.execute.mockResolvedValue({ answer: null });
+    prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(
+      baseRun({
+        cursor: { stepId: "ai1" },
+        stepsSnapshot: {
+          entry: "ai1",
+          steps: {
+            ai1: { id: "ai1", type: "ai_condition", config: { prompt: "eligible?" }, elseNext: "else1" },
+            else1: { id: "else1", type: "send_whatsapp", config: { message: "else" } },
+          },
+        },
+      }),
+    );
+    await runner.run("run1");
+    expect(sendWhatsapp.execute).toHaveBeenCalledWith("ws1", { message: "else" }, expect.anything());
+    const call = prisma.workflowRun.update.mock.calls[0][0];
+    expect(call.data.result.ai1).toEqual({ passed: false, aiUnavailable: true });
+  });
+
   it("marks the run failed when a step executor throws, without throwing itself", async () => {
     sendWhatsapp.execute.mockRejectedValue(new Error("zernio down"));
     prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(

@@ -4,7 +4,7 @@ import { WorkflowRunPollerScheduler } from "./workflow-run-poller.scheduler";
 
 describe("WorkflowRunPollerScheduler", () => {
   let prisma: {
-    workflowRun: { findMany: jest.Mock };
+    workflowRun: { findMany: jest.Mock; updateMany: jest.Mock };
     workflow: { findMany: jest.Mock; update: jest.Mock };
   };
   let runner: { run: jest.Mock };
@@ -13,7 +13,10 @@ describe("WorkflowRunPollerScheduler", () => {
 
   beforeEach(() => {
     prisma = {
-      workflowRun: { findMany: jest.fn().mockResolvedValue([]) },
+      workflowRun: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       workflow: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
     };
     runner = { run: jest.fn().mockResolvedValue(undefined) };
@@ -30,6 +33,10 @@ describe("WorkflowRunPollerScheduler", () => {
         where: { status: "waiting", resumeAt: { lte: expect.any(Date) } },
         select: { id: true },
       });
+      expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith({
+        where: { id: "run1", status: "waiting" },
+        data: { status: "running" },
+      });
       expect(runner.run).toHaveBeenCalledWith("run1");
       expect(runner.run).toHaveBeenCalledWith("run2");
     });
@@ -39,6 +46,15 @@ describe("WorkflowRunPollerScheduler", () => {
       runner.run.mockRejectedValueOnce(new Error("boom"));
       await expect(scheduler.resumeDueRuns()).resolves.toBeUndefined();
       expect(runner.run).toHaveBeenCalledWith("run2");
+    });
+
+    it("skips a run that another poller tick already claimed (updateMany matches zero rows)", async () => {
+      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1" }, { id: "run2" }]);
+      prisma.workflowRun.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+      await scheduler.resumeDueRuns();
+      expect(runner.run).not.toHaveBeenCalledWith("run1");
+      expect(runner.run).toHaveBeenCalledWith("run2");
+      expect(runner.run).toHaveBeenCalledTimes(1);
     });
   });
 

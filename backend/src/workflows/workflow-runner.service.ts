@@ -53,12 +53,21 @@ export class WorkflowRunnerService {
           return;
         }
 
-        if (step.type === "condition" || step.type === "ai_condition") {
-          const passed =
-            step.type === "condition"
-              ? evaluateCondition(step.config, context)
-              : interpretYesNo((await this.askAgent.execute(run.workspaceId, step.config, context)).answer);
+        if (step.type === "condition") {
+          const passed = evaluateCondition(step.config, context);
           result[step.id] = { passed };
+          currentId = (passed ? step.thenNext : step.elseNext) ?? null;
+          continue;
+        }
+
+        if (step.type === "ai_condition") {
+          const { answer } = await this.askAgent.execute(run.workspaceId, step.config, context);
+          const passed = interpretYesNo(answer);
+          // `answer === null` covers every AskAgentExecutor failure mode (unconfigured
+          // integration, timeout, network error, non-2xx) — it never throws. Flag it so
+          // "the AI was unreachable" is distinguishable from a genuine "no" in the
+          // persisted result, without changing the branch taken.
+          result[step.id] = answer === null ? { passed, aiUnavailable: true } : { passed };
           currentId = (passed ? step.thenNext : step.elseNext) ?? null;
           continue;
         }

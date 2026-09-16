@@ -112,30 +112,36 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 function requireString(v: unknown, label: string): string {
-  if (typeof v !== "string" || v.length === 0) throw new Error(`${label} must be a non-empty string`);
+  if (typeof v !== "string") throw new Error(`${label} must be a string`);
   return v;
 }
 
-function validateConfig(type: Step["type"], config: unknown): void {
+function requireNonEmptyString(v: unknown, label: string, strict: boolean): string {
+  const s = requireString(v, label);
+  if (strict && s.length === 0) throw new Error(`${label} must be a non-empty string`);
+  return s;
+}
+
+function validateConfig(type: Step["type"], config: unknown, strict: boolean): void {
   if (!isObject(config)) throw new Error(`step config must be an object (type=${type})`);
 
   switch (type) {
     case "condition": {
-      requireString(config.field, "condition.field");
+      requireNonEmptyString(config.field, "condition.field", strict);
       if (!CONDITION_OPERATORS.includes(config.operator as ConditionOperator)) {
         throw new Error(`condition.operator must be one of ${CONDITION_OPERATORS.join(", ")}`);
       }
-      requireString(config.value, "condition.value");
+      requireNonEmptyString(config.value, "condition.value", strict);
       return;
     }
     case "ai_condition":
-      requireString(config.prompt, "ai_condition.prompt");
+      requireNonEmptyString(config.prompt, "ai_condition.prompt", strict);
       return;
     case "send_whatsapp":
-      requireString(config.message, "send_whatsapp.message");
+      requireNonEmptyString(config.message, "send_whatsapp.message", strict);
       return;
     case "ask_agent":
-      requireString(config.prompt, "ask_agent.prompt");
+      requireNonEmptyString(config.prompt, "ask_agent.prompt", strict);
       return;
     case "delay": {
       if (typeof config.amount !== "number" || config.amount <= 0) {
@@ -151,21 +157,22 @@ function validateConfig(type: Step["type"], config: unknown): void {
         throw new Error(`update_data.operation must be one of ${UPDATE_DATA_OPERATIONS.join(", ")}`);
       }
       if (config.operation === "add_tag" || config.operation === "remove_tag") {
-        requireString(config.tag, "update_data.tag");
+        requireNonEmptyString(config.tag, "update_data.tag", strict);
       } else if (config.operation === "move_ticket_stage") {
-        requireString(config.stageId, "update_data.stageId");
+        requireNonEmptyString(config.stageId, "update_data.stageId", strict);
       } else if (config.operation === "update_contact_field") {
         if (!CONTACT_FIELDS.includes(config.field as string)) {
           throw new Error(`update_data.field must be one of ${CONTACT_FIELDS.join(", ")}`);
         }
-        requireString(config.value, "update_data.value");
+        requireNonEmptyString(config.value, "update_data.value", strict);
       }
       return;
     }
   }
 }
 
-export function validateStepGraph(value: unknown): StepGraph {
+export function validateStepGraph(value: unknown, opts?: { strict?: boolean }): StepGraph {
+  const strict = opts?.strict ?? true;
   if (!isObject(value)) throw new Error("Workflow steps must be an object");
   const { entry, steps } = value as { entry?: unknown; steps?: unknown };
 
@@ -181,7 +188,7 @@ export function validateStepGraph(value: unknown): StepGraph {
     if (!STEP_TYPES.includes(raw.type as (typeof STEP_TYPES)[number])) {
       throw new Error(`step ${id} has an unknown step type: ${String(raw.type)}`);
     }
-    validateConfig(raw.type as Step["type"], raw.config);
+    validateConfig(raw.type as Step["type"], raw.config, strict);
     if (raw.next !== undefined && typeof raw.next !== "string") {
       throw new Error(`step ${id}.next must be a string`);
     }

@@ -78,6 +78,24 @@ describe("WorkflowsService", () => {
     await expect(svc.update("ws1", "wf1", { steps: "nope" })).rejects.toThrow(BadRequestException);
   });
 
+  const incompleteGraph = {
+    entry: "s1",
+    steps: { s1: { id: "s1", type: "send_whatsapp", config: { message: "" } } },
+  };
+
+  it("allows creating a draft with an empty-but-correctly-typed string field", async () => {
+    await expect(svc.create("ws1", { name: "n", triggerType: "contact_created", steps: incompleteGraph })).resolves.toBeDefined();
+  });
+
+  it("allows updating a draft with an empty-but-correctly-typed string field", async () => {
+    await expect(svc.update("ws1", "wf1", { steps: incompleteGraph })).resolves.toBeDefined();
+  });
+
+  it("rejects activating a workflow with an empty-but-correctly-typed string field", async () => {
+    prisma.workflow.findFirst.mockResolvedValue(row({ steps: incompleteGraph }));
+    await expect(svc.activate("ws1", "wf1")).rejects.toThrow(BadRequestException);
+  });
+
   it("rejects activating a workflow with no steps", async () => {
     prisma.workflow.findFirst.mockResolvedValue(row({ steps: { entry: null, steps: {} } }));
     await expect(svc.activate("ws1", "wf1")).rejects.toThrow(BadRequestException);
@@ -90,6 +108,33 @@ describe("WorkflowsService", () => {
     const result = await svc.activate("ws1", "wf1");
     expect(prisma.workflow.update).toHaveBeenCalledWith({ where: { id: "wf1" }, data: { status: "active" } });
     expect(result.status).toBe("active");
+  });
+
+  it("mints a webhookSecret when update() switches triggerType into webhook", async () => {
+    prisma.workflow.findFirst.mockResolvedValue(row({ triggerType: "contact_created", webhookSecret: null }));
+    await svc.update("ws1", "wf1", { triggerType: "webhook" });
+    expect(prisma.workflow.update).toHaveBeenCalledWith({
+      where: { id: "wf1" },
+      data: expect.objectContaining({ triggerType: "webhook", webhookSecret: expect.any(String) }),
+    });
+  });
+
+  it("clears webhookSecret when update() switches triggerType away from webhook", async () => {
+    prisma.workflow.findFirst.mockResolvedValue(row({ triggerType: "webhook", webhookSecret: "abc123" }));
+    await svc.update("ws1", "wf1", { triggerType: "contact_created" });
+    expect(prisma.workflow.update).toHaveBeenCalledWith({
+      where: { id: "wf1" },
+      data: expect.objectContaining({ triggerType: "contact_created", webhookSecret: null }),
+    });
+  });
+
+  it("leaves webhookSecret untouched when triggerType is not changed", async () => {
+    prisma.workflow.findFirst.mockResolvedValue(row({ triggerType: "webhook", webhookSecret: "abc123" }));
+    await svc.update("ws1", "wf1", { name: "renamed" });
+    expect(prisma.workflow.update).toHaveBeenCalledWith({
+      where: { id: "wf1" },
+      data: expect.objectContaining({ webhookSecret: undefined }),
+    });
   });
 
   it("test() starts a run via WorkflowDispatchService and returns its id, bypassing status", async () => {

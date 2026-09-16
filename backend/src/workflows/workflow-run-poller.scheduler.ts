@@ -23,6 +23,15 @@ export class WorkflowRunPollerScheduler {
     });
     for (const run of due) {
       try {
+        // Claim the run before dispatching it: if another poller tick already claimed
+        // it (e.g. the previous run() call is still in flight past this cron cadence),
+        // the conditional update matches zero rows and we skip it, avoiding a duplicate
+        // resume of the same run from the same cursor.
+        const claimed = await this.prisma.workflowRun.updateMany({
+          where: { id: run.id, status: "waiting" },
+          data: { status: "running" },
+        });
+        if (claimed.count === 0) continue;
         await this.runner.run(run.id);
       } catch (e) {
         this.log.warn(`resuming workflow run ${run.id} threw: ${(e as Error).message}`);

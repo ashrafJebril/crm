@@ -144,6 +144,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"builder" | "executions">("builder");
   const [showTest, setShowTest] = useState(false);
+  const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
 
   useEffect(() => {
     if (wfQ.data) {
@@ -153,6 +154,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
       setTriggerConfig(wfQ.data.triggerConfig ?? {});
       setStatus(wfQ.data.status);
       setGraph(wfQ.data.steps);
+      setWebhookSecret(wfQ.data.webhookSecret);
     }
   }, [wfQ.data]);
 
@@ -174,6 +176,7 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
       const saved = id ? await updateMut.mutate(payload) : await createMut.mutate(payload);
       setId(saved.id);
       setStatus(saved.status);
+      setWebhookSecret(saved.webhookSecret);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -343,6 +346,8 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
               triggerType={triggerType}
               triggerConfig={triggerConfig}
               onChange={setTriggerConfig}
+              workflowId={id}
+              webhookSecret={webhookSecret}
               tx={tx}
             />
 

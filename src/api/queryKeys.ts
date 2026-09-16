@@ -19,8 +19,4 @@ export const qk = {
 
   conversationTickets: (conversationId: string) =>
     ["tickets", "conversation", conversationId] as const,
-
-  workflows: () => ["workflows"] as const,
-  workflow: (id: string) => ["workflows", "detail", id] as const,
-  workflowRuns: (workflowId: string) => ["workflows", "runs", workflowId] as const,
 };

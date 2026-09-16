@@ -74,7 +74,7 @@ export class WorkflowsService {
   async create(workspaceId: string, dto: CreateWorkflowDto) {
     let graph: StepGraph;
     try {
-      graph = validateStepGraph(dto.steps ?? { entry: null, steps: {} });
+      graph = validateStepGraph(dto.steps ?? { entry: null, steps: {} }, { strict: false });
     } catch (e) {
       throw new BadRequestException((e as Error).message);
     }
@@ -93,15 +93,27 @@ export class WorkflowsService {
   }
 
   async update(workspaceId: string, id: string, dto: UpdateWorkflowDto) {
-    await this.get(workspaceId, id);
+    const existing = await this.get(workspaceId, id);
     let graph: StepGraph | undefined;
     if (dto.steps !== undefined) {
       try {
-        graph = validateStepGraph(dto.steps);
+        graph = validateStepGraph(dto.steps, { strict: false });
       } catch (e) {
         throw new BadRequestException((e as Error).message);
       }
     }
+
+    // webhookSecret must stay in sync with triggerType: minted when switching into
+    // "webhook", cleared when switching away from it, untouched otherwise.
+    let webhookSecret: string | null | undefined;
+    if (dto.triggerType !== undefined && dto.triggerType !== existing.triggerType) {
+      if (dto.triggerType === "webhook") {
+        webhookSecret = crypto.randomBytes(24).toString("hex");
+      } else if (existing.triggerType === "webhook") {
+        webhookSecret = null;
+      }
+    }
+
     const row = await this.prisma.workflow.update({
       where: { id },
       data: {
@@ -109,6 +121,7 @@ export class WorkflowsService {
         triggerType: dto.triggerType,
         triggerConfig: dto.triggerConfig as Prisma.InputJsonValue | undefined,
         steps: graph as unknown as Prisma.InputJsonValue | undefined,
+        webhookSecret,
       },
     });
     return shape(row);

@@ -1,16 +1,21 @@
 import type { Tx } from "@/lib/tx";
 import { useFetch } from "@/api/useFetch";
+import { API_BASE } from "@/api/client";
 import type { Pipeline, WorkflowTriggerType } from "@/lib/types";
 
 export function TriggerConfigFields({
   triggerType,
   triggerConfig,
   onChange,
+  workflowId,
+  webhookSecret,
   tx,
 }: {
   triggerType: WorkflowTriggerType;
   triggerConfig: Record<string, unknown>;
   onChange: (config: Record<string, unknown>) => void;
+  workflowId: string | null;
+  webhookSecret: string | null;
   tx: Tx;
 }) {
   const { data: pipelines } = useFetch<Pipeline[]>(triggerType === "ticket_stage_changed" ? "/pipelines" : null);
@@ -63,6 +68,48 @@ export function TriggerConfigFields({
             style={{ display: "block", width: "100%", marginTop: 4 }}
           />
         </div>
+      </div>
+    );
+  }
+
+  if (triggerType === "webhook") {
+    if (!workflowId || !webhookSecret) {
+      return (
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          {tx(
+            "The webhook URL and secret will appear here after you save this workflow for the first time.",
+            "سيظهر رابط الويبهوك والمفتاح السري هنا بعد حفظ هذه الأتمتة لأول مرة.",
+          )}
+        </p>
+      );
+    }
+    const url = `${API_BASE}/webhooks/workflows/${workflowId}`;
+    return (
+      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Webhook URL", "رابط الويبهوك")}</label>
+          <input
+            readOnly
+            value={url}
+            onFocus={(e) => e.currentTarget.select()}
+            style={{ display: "block", width: "100%", marginTop: 4 }}
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Secret", "المفتاح السري")}</label>
+          <input
+            readOnly
+            value={webhookSecret}
+            onFocus={(e) => e.currentTarget.select()}
+            style={{ display: "block", width: "100%", marginTop: 4, fontFamily: "monospace" }}
+          />
+        </div>
+        <p className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+          {tx(
+            "Sign requests with an X-Workflow-Signature header: hex-encoded HMAC-SHA256 of the raw request body, keyed with this secret.",
+            "وقّع الطلبات برأس X-Workflow-Signature: قيمة HMAC-SHA256 بترميز hex لجسم الطلب الخام، باستخدام هذا المفتاح السري.",
+          )}
+        </p>
       </div>
     );
   }

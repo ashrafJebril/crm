@@ -25,6 +25,8 @@ const TRIGGER_VARIABLES: Record<WorkflowTriggerType, VariableOption[]> = {
   webhook: [],
 };
 
+const NO_CONVERSATION_TRIGGERS: WorkflowTriggerType[] = ["contact_created", "schedule", "webhook"];
+
 export function SendWhatsappConfigForm({
   config,
   onChange,
@@ -45,6 +47,30 @@ export function SendWhatsappConfigForm({
         variables={TRIGGER_VARIABLES[triggerType]}
         placeholder={tx("Type your message…", "اكتب رسالتك…")}
       />
+      {NO_CONVERSATION_TRIGGERS.includes(triggerType) && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "10px 12px",
+            borderRadius: 8,
+            background: "color-mix(in oklch, var(--warn) 10%, transparent)",
+            border: "1px solid color-mix(in oklch, var(--warn) 35%, transparent)",
+            color: "var(--ink-1)",
+            fontSize: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span style={{ color: "var(--warn)", fontSize: 14 }}>⚠</span>
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.4 }}>
+            {tx(
+              "This trigger has no conversation to reply in — sending will fail. Use a Message received or Ticket trigger instead, or add an Update CRM Data / Ask AI Agent step instead.",
+              "لا يوجد محادثة للرد عليها لهذا المُشغّل — سيفشل الإرسال. استخدم مُشغّل رسالة واردة أو تذكرة بدلاً من ذلك، أو أضف خطوة تحديث بيانات CRM / اسأل وكيل الذكاء بدلاً من ذلك.",
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
