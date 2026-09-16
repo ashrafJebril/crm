@@ -8,6 +8,7 @@ import { StepCard } from "./StepCard";
 import { AddStepButton } from "./AddStepButton";
 import { ConditionConfigForm, AiConditionConfigForm, DelayConfigForm, UpdateDataConfigForm } from "./config/StepConfigForms";
 import { TriggerConfigFields } from "./config/TriggerConfigFields";
+import { SendWhatsappConfigForm, AskAgentConfigForm } from "./config/MessageConfigForms";
 
 const TRIGGER_OPTIONS: Array<{ value: WorkflowTriggerType; en: string; ar: string }> = [
   { value: "contact_created", en: "New contact", ar: "جهة اتصال جديدة" },
@@ -371,10 +372,21 @@ export function WorkflowBuilder({ workflowId, onClose }: { workflowId: string | 
                   tx={tx}
                 />
               )}
-              {(selectedStep.type === "send_whatsapp" || selectedStep.type === "ask_agent") && (
-                <pre style={{ background: "var(--bg-1)", padding: 12, borderRadius: 8, fontSize: 12 }}>
-                  {JSON.stringify(selectedStep.config, null, 2)}
-                </pre>
+              {selectedStep.type === "send_whatsapp" && (
+                <SendWhatsappConfigForm
+                  config={selectedStep.config}
+                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                  triggerType={triggerType}
+                  tx={tx}
+                />
+              )}
+              {selectedStep.type === "ask_agent" && (
+                <AskAgentConfigForm
+                  config={selectedStep.config}
+                  onChange={(c) => updateStepConfig(selectedStep.id, c)}
+                  triggerType={triggerType}
+                  tx={tx}
+                />
               )}
             </div>
           ) : (
