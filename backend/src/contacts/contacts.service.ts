@@ -73,6 +73,21 @@ export class ContactsService {
     return shape(row);
   }
 
+  async search(workspaceId: string, query: string) {
+    const rows = await this.prisma.contact.findMany({
+      where: {
+        workspaceId,
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { phone: { contains: query, mode: "insensitive" } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return rows.map(shape);
+  }
+
   /**
    * Aggregated contact profile for the contacts drawer — stats + recent
    * activity in one round-trip so the drawer doesn't fire 4 separate GETs.
