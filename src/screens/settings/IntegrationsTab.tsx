@@ -8,6 +8,7 @@ import { Badge } from "@/components/Badge";
 import { IconGlobe, IconCheck, IconX } from "@/icons";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 import { ZernioCard } from "./ZernioCard";
+import { McpAccessCard } from "./McpAccessCard";
 
 // Facebook/Instagram now connect through Zernio (ZernioCard) instead of our own
 // Meta app — no App Review, no Tester enrollment. The legacy Meta-app cards are
@@ -41,6 +42,8 @@ export function IntegrationsTab() {
       {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
+
+      <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canEdit={canEdit} />
     </>
   );
 }
