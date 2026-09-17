@@ -26,6 +26,7 @@ import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
 import { WorkflowsModule } from "./workflows/workflows.module";
+import { McpServerModule } from "./mcp-server/mcp-server.module";
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { WorkflowsModule } from "./workflows/workflows.module";
     CampaignsModule,
     DashboardModule,
     IntegrationsModule,
+    McpServerModule,
     TicketsModule,
     WorkflowsModule,
     WorkspacesModule,
