@@ -48,9 +48,9 @@ export class McpTokenService {
 
   /** Returns the owning workspace id for a valid, non-revoked token, else null. */
   async findWorkspaceByToken(token: string): Promise<string | null> {
-    const parts = token.split("_");
-    if (parts.length !== 3 || parts[0] !== "mcp") return null;
-    const [, prefix] = parts;
+    const match = token.match(/^mcp_([0-9a-f]{12})_(.+)$/);
+    if (!match) return null;
+    const [, prefix] = match;
     const ws = await this.prisma.workspace.findUnique({
       where: { mcpTokenPrefix: prefix },
       select: { id: true, mcpTokenHash: true },
