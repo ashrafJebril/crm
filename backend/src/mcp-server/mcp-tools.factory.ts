@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { HttpException, Injectable } from "@nestjs/common";
 import { createTool, type Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { AppointmentsService } from "../appointments/appointments.service";
@@ -17,7 +17,10 @@ async function unwrap<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    throw new Error(err instanceof Error ? err.message : "Unexpected error");
+    if (err instanceof HttpException) {
+      throw new Error(err.message);
+    }
+    throw new Error("Unexpected error");
   }
 }
 
@@ -34,9 +37,10 @@ export class McpToolsFactory {
         id: "list_appointments",
         description: "List appointments in this workspace, optionally filtered by date range or status.",
         inputSchema: z.object({
-          from: z.string().datetime().optional().describe("ISO 8601 start of range (inclusive)"),
-          to: z.string().datetime().optional().describe("ISO 8601 end of range (inclusive)"),
+          from: z.string().datetime({ offset: true }).optional().describe("ISO 8601 start of range (inclusive)"),
+          to: z.string().datetime({ offset: true }).optional().describe("ISO 8601 end of range (inclusive)"),
           status: z.enum(APPOINTMENT_STATUSES).optional(),
+          limit: z.number().int().min(1).max(200).default(50).describe("Max rows to return (default 50, max 200)"),
         }),
         execute: (input) => unwrap(() => this.appointments.list(workspaceId, input)),
       }),
@@ -55,7 +59,7 @@ export class McpToolsFactory {
           contactId: z.string(),
           service: z.string(),
           serviceAr: z.string(),
-          startAt: z.string().datetime(),
+          startAt: z.string().datetime({ offset: true }),
           durationMin: z.number().int().min(1),
           status: z.enum(APPOINTMENT_STATUSES),
           source: z.enum(APPOINTMENT_SOURCES),
@@ -73,7 +77,7 @@ export class McpToolsFactory {
           id: z.string(),
           service: z.string().optional(),
           serviceAr: z.string().optional(),
-          startAt: z.string().datetime().optional(),
+          startAt: z.string().datetime({ offset: true }).optional(),
           durationMin: z.number().int().min(1).optional(),
           status: z.enum(APPOINTMENT_STATUSES).optional(),
           source: z.enum(APPOINTMENT_SOURCES).optional(),

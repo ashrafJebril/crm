@@ -29,7 +29,7 @@ describe("McpToolsFactory", () => {
   it("list_appointments scopes to the workspace and forwards filters", async () => {
     appointments.list.mockResolvedValue([{ id: "a1" }]);
     const result = await tools("ws1").list_appointments.execute!({ status: "confirmed" }, {} as never);
-    expect(appointments.list).toHaveBeenCalledWith("ws1", { status: "confirmed" });
+    expect(appointments.list).toHaveBeenCalledWith("ws1", { status: "confirmed", limit: 50 });
     expect(result).toEqual([{ id: "a1" }]);
   });
 
@@ -37,6 +37,17 @@ describe("McpToolsFactory", () => {
     appointments.get.mockRejectedValue(new NotFoundException("Appointment not found"));
     await expect(tools("ws1").get_appointment.execute!({ id: "missing" }, {} as never)).rejects.toThrow(
       "Appointment not found",
+    );
+  });
+
+  it("converts a non-HttpException error (e.g. a Prisma error) to a generic message, not leaking internals", async () => {
+    appointments.get.mockRejectedValue(
+      new Error(
+        'Invalid `prisma.appointment.findFirst()` invocation: table "Appointment" column "secret_internal_col" ...',
+      ),
+    );
+    await expect(tools("ws1").get_appointment.execute!({ id: "x" }, {} as never)).rejects.toThrow(
+      "Unexpected error",
     );
   });
 
@@ -87,7 +98,7 @@ describe("McpToolsFactory", () => {
     appointments.list.mockResolvedValue([]);
     await tools("ws-a").list_appointments.execute!({}, {} as never);
     await tools("ws-b").list_appointments.execute!({}, {} as never);
-    expect(appointments.list).toHaveBeenNthCalledWith(1, "ws-a", {});
-    expect(appointments.list).toHaveBeenNthCalledWith(2, "ws-b", {});
+    expect(appointments.list).toHaveBeenNthCalledWith(1, "ws-a", { limit: 50 });
+    expect(appointments.list).toHaveBeenNthCalledWith(2, "ws-b", { limit: 50 });
   });
 });

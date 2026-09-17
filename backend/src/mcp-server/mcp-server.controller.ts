@@ -24,9 +24,10 @@ export class McpServerController {
     // serverless:true — a fresh MCPServer is built per request (see above),
     // so there is no shared session-transport map across requests for a
     // sessionIdGenerator's ids to ever be resolved against.
+    const url = new URL(req.url ?? "", `${req.protocol}://${req.get("host")}`);
     await server.startHTTP({
-      url: new URL(req.url ?? "", `${req.protocol}://${req.get("host")}`),
-      httpPath: "/api/mcp/v1",
+      url,
+      httpPath: url.pathname,
       req,
       res,
       options: { serverless: true },

@@ -75,7 +75,7 @@ describe("MCP server HTTP transport", () => {
     await startFor("ws-42");
     appointments.list.mockResolvedValue([]);
     await call("tools/call", { name: "list_appointments", arguments: {} });
-    expect(appointments.list).toHaveBeenCalledWith("ws-42", {});
+    expect(appointments.list).toHaveBeenCalledWith("ws-42", { limit: 50 });
   });
 
   it("returns isError:true with a clean message when the service throws NotFoundException", async () => {
