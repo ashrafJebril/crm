@@ -6,9 +6,16 @@ import { CreateAppointmentDto, UpdateAppointmentDto } from "./appointments.dto";
 export class AppointmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  list(workspaceId: string) {
+  list(workspaceId: string, opts: { from?: string; to?: string; status?: string } = {}) {
     return this.prisma.appointment.findMany({
-      where: { workspaceId },
+      where: {
+        workspaceId,
+        startAt:
+          opts.from || opts.to
+            ? { gte: opts.from ? new Date(opts.from) : undefined, lte: opts.to ? new Date(opts.to) : undefined }
+            : undefined,
+        status: opts.status,
+      },
       orderBy: { startAt: "asc" },
     });
   }
