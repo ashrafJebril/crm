@@ -21,6 +21,8 @@ import { LAgentResolverService } from "./l-agent-resolver.service";
 import { LKnowledgeService } from "./l-knowledge.service";
 import { LToolsService } from "./l-tools.service";
 import { LMcpService } from "./l-mcp.service";
+import { McpTokenController } from "./mcp-token.controller";
+import { McpTokenService } from "./mcp-token.service";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
@@ -37,6 +39,7 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     HjzWebhooksController,
     LWebhooksController,
     LConfigController,
+    McpTokenController,
   ],
   providers: [
     FacebookService,
@@ -53,7 +56,8 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LKnowledgeService,
     LToolsService,
     LMcpService,
+    McpTokenService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, LAgentService],
+  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, LAgentService, McpTokenService],
 })
 export class IntegrationsModule {}
