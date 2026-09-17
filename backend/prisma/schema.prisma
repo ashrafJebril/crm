@@ -573,6 +573,17 @@ model Workspace {
   // cached here so every tool/MCP-server bind call doesn't re-resolve it.
   lAgentSlug String?
 
+  // Per-workspace credential for the inbound MCP server endpoint
+  // (POST /api/mcp/v1). The l platform's agent authenticates as this
+  // workspace using this token, registered via the existing McpServersTab
+  // "Add server" flow. Only a bcrypt hash is stored — losing the plaintext
+  // means generating a new one, same contract as lEndpointSecret above.
+  // mcpTokenPrefix is plaintext and indexed so the auth guard can find the
+  // owning workspace in one lookup before the (expensive) bcrypt compare.
+  mcpTokenPrefix    String?   @unique
+  mcpTokenHash      String?
+  mcpTokenCreatedAt DateTime?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")
