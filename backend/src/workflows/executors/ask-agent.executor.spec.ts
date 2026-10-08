@@ -5,7 +5,7 @@ describe("AskAgentExecutor", () => {
   let executor: AskAgentExecutor;
 
   beforeEach(() => {
-    lAgent = { ask: jest.fn().mockResolvedValue("Yes, they qualify") };
+    lAgent = { ask: jest.fn().mockResolvedValue({ answer: "Yes, they qualify" }) };
     executor = new AskAgentExecutor(lAgent as never);
   });
 

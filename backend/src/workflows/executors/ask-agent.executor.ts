@@ -14,8 +14,8 @@ export class AskAgentExecutor {
   ): Promise<{ answer: string | null }> {
     const prompt = resolveVariables(config.prompt, context);
     const externalId = this.resolveExternalId(context);
-    const answer = await this.lAgent.ask(workspaceId, { externalId, message: prompt });
-    return { answer };
+    const result = await this.lAgent.ask(workspaceId, { externalId, message: prompt });
+    return { answer: result?.answer ?? null };
   }
 
   private resolveExternalId(context: RunContext): string {
