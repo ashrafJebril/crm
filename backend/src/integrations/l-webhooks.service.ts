@@ -115,6 +115,7 @@ export class LWebhooksService {
         }),
         body: data.message,
         agent: data.agentId,
+        attach: data.imageUrl ?? null,
       },
     });
 
