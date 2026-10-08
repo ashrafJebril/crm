@@ -155,4 +155,41 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       { url: "https://cdn.example.com/pic.png", type: "image" },
     );
   });
+
+  it("retries text-only when the channel rejects the image, so the customer still gets the answer", async () => {
+    const ask = jest
+      .fn()
+      .mockResolvedValue({ answer: "here's one", imageUrl: "https://cdn.example.com/pic.png" });
+    const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+    send
+      .mockRejectedValueOnce(new Error("zernio: channel could not fetch attachment"))
+      .mockResolvedValueOnce({ ok: true });
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    // A bad image costs the image, never the reply: first call still carried
+    // the attachment, but the retry drops it and keeps the text.
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenNthCalledWith(
+      1,
+      WS,
+      CONV,
+      "here's one",
+      undefined,
+      undefined,
+      "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+    expect(send).toHaveBeenNthCalledWith(
+      2,
+      WS,
+      CONV,
+      "here's one",
+      undefined,
+      undefined,
+      "ai",
+      undefined,
+    );
+  });
 });

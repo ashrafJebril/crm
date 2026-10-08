@@ -1344,15 +1344,37 @@ export class ZernioService {
       // Message row (with real delivery metadata) plus the conversation
       // preview update — tagged "ai" so the thread still reads as the
       // agent's own turn instead of a staff reply.
-      await this.sendInDbConversation(
-        workspaceId,
-        conversationId,
-        result.answer,
-        undefined,
-        undefined,
-        "ai",
-        result.imageUrl ? { url: result.imageUrl, type: "image" } : undefined,
-      );
+      try {
+        await this.sendInDbConversation(
+          workspaceId,
+          conversationId,
+          result.answer,
+          undefined,
+          undefined,
+          "ai",
+          result.imageUrl ? { url: result.imageUrl, type: "image" } : undefined,
+        );
+      } catch (err) {
+        // l validates the image URL before it ever reaches us, but the
+        // channel itself can still reject it (hotlink-blocking CDN, expired
+        // signed URL, a size/format l allows but the channel doesn't). A
+        // bad image should only cost the image — never the text answer the
+        // agent already produced — so retry once without the attachment.
+        if (!result.imageUrl) throw err;
+        this.log.warn(
+          `l auto-reply image failed to send for conversation ${conversationId}, retrying text-only`,
+          err instanceof Error ? err.stack : String(err),
+        );
+        await this.sendInDbConversation(
+          workspaceId,
+          conversationId,
+          result.answer,
+          undefined,
+          undefined,
+          "ai",
+          undefined,
+        );
+      }
     })().catch((err) => {
       this.log.error(
         `l auto-reply failed for conversation ${conversationId}`,
