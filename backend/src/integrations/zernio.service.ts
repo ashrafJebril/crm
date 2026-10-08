@@ -675,6 +675,7 @@ export class ZernioService {
     mediaId?: string,
     publicBaseUrl?: string,
     from: "human" | "ai" = "human",
+    externalAttachment?: { url: string; type: "image" },
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -686,8 +687,11 @@ export class ZernioService {
     // attachmentType contract. Spaces-stored media resolves to a signed
     // Spaces URL (fetchable from anywhere — no tunnel/PUBLIC_BASE_URL
     // dependency); only legacy local-disk media still needs publicBaseUrl.
-    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined;
-    if (mediaId) {
+    // An AI-sourced image already has a public URL of its own — it skips the
+    // CRM Media store entirely rather than being re-hosted there.
+    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined =
+      externalAttachment;
+    if (!attachment && mediaId) {
       const row = await this.media.get(workspaceId, mediaId);
       let url: string;
       if (row.storageKind === "spaces") {
@@ -766,8 +770,9 @@ export class ZernioService {
         from,
         body: message,
         t,
-        // Frontend convention: attach carries our Media id for outbound sends.
-        attach: mediaId ?? null,
+        // Frontend convention: attach carries either our Media id, or — for
+        // an AI-sourced image — the external URL directly.
+        attach: mediaId ?? externalAttachment?.url ?? null,
         metaMessageId: id,
       },
     });
@@ -1329,11 +1334,11 @@ export class ZernioService {
     inbound: string,
   ): void {
     void (async () => {
-      const answer = await this.lAgent.ask(workspaceId, {
+      const result = await this.lAgent.ask(workspaceId, {
         externalId: conversationId,
         message: inbound,
       });
-      if (!answer) return;
+      if (!result) return;
 
       // sendInDbConversation both delivers the reply and stores the single
       // Message row (with real delivery metadata) plus the conversation
@@ -1342,10 +1347,11 @@ export class ZernioService {
       await this.sendInDbConversation(
         workspaceId,
         conversationId,
-        answer,
+        result.answer,
         undefined,
         undefined,
         "ai",
+        result.imageUrl ? { url: result.imageUrl, type: "image" } : undefined,
       );
     })().catch((err) => {
       this.log.error(

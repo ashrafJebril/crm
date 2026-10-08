@@ -58,7 +58,7 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
   afterEach(() => jest.restoreAllMocks());
 
   it("answers and sends back out when the thread has AI mode on", async () => {
-    const ask = jest.fn().mockResolvedValue("We offer property management.");
+    const ask = jest.fn().mockResolvedValue({ answer: "We offer property management." });
     const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
 
     await svc.handleEvent(inbound as never);
@@ -68,8 +68,6 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       externalId: CONV,
       message: "Hello what do you offer",
     });
-    // Tagged "ai" so sendInDbConversation stores the single row as the
-    // agent's own turn instead of a staff reply.
     expect(send).toHaveBeenCalledWith(
       WS,
       CONV,
@@ -77,6 +75,7 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       undefined,
       undefined,
       "ai",
+      undefined,
     );
   });
 
@@ -122,7 +121,7 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
   });
 
   it("does not store a reply the customer never received", async () => {
-    const ask = jest.fn().mockResolvedValue("hi");
+    const ask = jest.fn().mockResolvedValue({ answer: "hi" });
     const { svc, prisma, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
     send.mockRejectedValue(new Error("zernio down"));
 
@@ -135,5 +134,25 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       (c: [{ data: { from: string } }]) => c[0].data.from === "ai",
     );
     expect(aiWrites).toHaveLength(0);
+  });
+
+  it("forwards the image url as an external attachment", async () => {
+    const ask = jest
+      .fn()
+      .mockResolvedValue({ answer: "here's one", imageUrl: "https://cdn.example.com/pic.png" });
+    const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    expect(send).toHaveBeenCalledWith(
+      WS,
+      CONV,
+      "here's one",
+      undefined,
+      undefined,
+      "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
   });
 });
