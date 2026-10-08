@@ -97,6 +97,35 @@ describe("LOutboundService.forwardReply", () => {
     );
   });
 
+  it("stores the image url in attach when l's answer carries one", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ answer: "here it is", citations: [], image_url: "https://example.com/pic.png" }),
+    });
+
+    await svc.forwardReply("ws-1", "conv-1", "send me a picture");
+
+    expect(prisma.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          body: "here it is",
+          attach: "https://example.com/pic.png",
+        }),
+      }),
+    );
+  });
+
+  it("stores a null attach when l's answer carries no image", async () => {
+    await svc.forwardReply("ws-1", "conv-1", "hello");
+
+    expect(prisma.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ attach: null }),
+      }),
+    );
+  });
+
   it("does not forward a conversation that did not come from l", async () => {
     prisma.conversation.findFirst.mockResolvedValue({
       id: "conv-2",

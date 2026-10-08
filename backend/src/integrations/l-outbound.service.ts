@@ -53,14 +53,14 @@ export class LOutboundService {
     // Only conversations that came from l have somewhere to go back to.
     if (!conversation?.lConversationId) return;
 
-    const answer = await this.agent.ask(workspaceId, {
+    const result = await this.agent.ask(workspaceId, {
       externalId: conversation.id,
       message: body,
       // The whole point: continue the chat the person is already in rather
       // than opening a second, parallel one.
       sessionId: conversation.lConversationId,
     });
-    if (!answer) return;
+    if (!result) return;
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(
@@ -73,12 +73,13 @@ export class LOutboundService {
         workspaceId,
         from: "ai",
         t,
-        body: answer,
+        body: result.answer,
+        attach: result.imageUrl ?? null,
       },
     });
     await this.prisma.conversation.update({
       where: { id: conversation.id },
-      data: { preview: answer.slice(0, 140), lastAt: "now", lastFrom: "ai" },
+      data: { preview: result.answer.slice(0, 140), lastAt: "now", lastFrom: "ai" },
     });
 
     // The inbox is already rendered by the time this lands, so it has to be
