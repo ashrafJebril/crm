@@ -104,3 +104,44 @@ describe("ContactsService.list — segment resolution by origin", () => {
     expect(prisma.contact.findMany).not.toHaveBeenCalled();
   });
 });
+
+describe("ContactsService.search", () => {
+  let prisma: { contact: { findMany: jest.Mock } };
+  let svc: ContactsService;
+
+  beforeEach(() => {
+    prisma = { contact: { findMany: jest.fn().mockResolvedValue([]) } };
+    svc = new ContactsService(prisma as never, new SegmentsService(prisma as never));
+  });
+
+  it("matches by name or phone, case-insensitive, scoped to the workspace", async () => {
+    await svc.search("ws1", "sara");
+    expect(prisma.contact.findMany).toHaveBeenCalledWith({
+      where: {
+        workspaceId: "ws1",
+        OR: [
+          { name: { contains: "sara", mode: "insensitive" } },
+          { phone: { contains: "sara", mode: "insensitive" } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+  });
+
+  it("shapes results the same way list() does", async () => {
+    prisma.contact.findMany.mockResolvedValue([
+      {
+        id: "c1", name: "Sara", phone: null, industry: "retail", lifecycle: "lead",
+        source: "wa", value: null, lastSeen: "2m", tags: "[]", convs: 0,
+      },
+    ]);
+    const result = await svc.search("ws1", "sara");
+    expect(result).toEqual([
+      {
+        id: "c1", name: "Sara", phone: "", industry: "retail", lifecycle: "lead",
+        source: "wa", value: "—", lastSeen: "2m", tags: [], convs: 0,
+      },
+    ]);
+  });
+});

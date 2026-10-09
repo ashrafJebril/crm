@@ -93,7 +93,7 @@ model Conversation {
   lastAt     String
   lastFrom   String   // them | human
   preview    String
-  channel    String   // whatsapp | instagram | facebook | webchat
+  channel    String   // whatsapp | instagram | facebook | webchat | l
   status     String   // human | closed | spam
   intent     String
   confidence Float
@@ -101,6 +101,7 @@ model Conversation {
 
   /// Kewy AI — per-thread opt-in. OFF by default on purpose: enabling the AI
   /// for a workspace must never silently start answering existing threads.
+  /// The same flag gates the workspace's l agent auto-reply when one is linked.
   aiEnabled  Boolean   @default(false)
   /// Set when a human sends into an AI-handled thread. The agent backs off
   /// while this is present so staff and the bot can't talk over each other;
@@ -110,6 +111,10 @@ model Conversation {
   // Provider-side conversation id (currently Zernio's). Lets replies address
   // the provider conversation directly instead of re-listing every send.
   externalId String?
+  // l (agent platform) conversation id — set for conversations originating from l
+  lConversationId String?
+  // l agent id — set for conversations created by an l agent
+  lAgentId String?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -122,6 +127,7 @@ model Conversation {
 
   @@index([contactId])
   @@index([workspaceId])
+  @@index([lConversationId])
 }
 
 model Message {
@@ -427,6 +433,54 @@ model Campaign {
   @@index([workspaceId])
 }
 
+// ─── Workflows ────────────────────────────────────────────────────────────
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String
+  status      String   @default("draft") // "draft" | "active"
+  triggerType String   // "contact_created" | "message_received" | "ticket_created" | "ticket_stage_changed" | "schedule" | "webhook"
+  triggerConfig Json   @default("{}")
+  steps       Json     @default("{\"entry\": null, \"steps\": {}}")
+  webhookSecret   String?
+  lastScheduledAt DateTime?
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceWorkflows", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  runs WorkflowRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, triggerType, status])
+}
+
+model WorkflowRun {
+  id            String   @id @default(cuid())
+  status        String   // "running" | "waiting" | "completed" | "failed" | "cancelled"
+  context       Json     @default("{}")
+  stepsSnapshot Json     @default("{}")
+  cursor        Json     @default("{\"stepId\": null}")
+  result        Json     @default("{}")
+  resumeAt      DateTime?
+  isTest        Boolean  @default(false)
+  error         String?
+
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceWorkflowRuns", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([workspaceId, workflowId, startedAt])
+  @@index([status, resumeAt])
+}
+
 // ─── Notes ────────────────────────────────────────────────────────────────
 
 model Note {
@@ -498,6 +552,35 @@ model Workspace {
   // Per-workspace isolation rides on this id (auth is a single global API key).
   zernioProfileId String?
 
+  // l (agent platform) workspace id — maps this CRM workspace to an l workspace
+  // for bidirectional conversation sync. Set by admin configuration.
+  lWorkspaceId String? @unique
+
+  // The l webhook endpoint this workspace's replies are posted to, and the
+  // plaintext secret l issued when that endpoint was created. l stores only a
+  // bcrypt hash of the secret, so this is the only readable copy — losing it
+  // means rotating on the l side, not re-reading it. Both NULL means replies
+  // are not forwarded, which is the default for a workspace with no agent
+  // platform behind it.
+  lEndpointId     String?
+  lEndpointSecret String?
+
+  // The l agent slug this workspace's Kewy AI config screens operate on.
+  // Resolved lazily via l's idempotent "ensure default agent" endpoint and
+  // cached here so every tool/MCP-server bind call doesn't re-resolve it.
+  lAgentSlug String?
+
+  // Per-workspace credential for the inbound MCP server endpoint
+  // (POST /api/mcp/v1). The l platform's agent authenticates as this
+  // workspace using this token, registered via the existing McpServersTab
+  // "Add server" flow. Only a bcrypt hash is stored — losing the plaintext
+  // means generating a new one, same contract as lEndpointSecret above.
+  // mcpTokenPrefix is plaintext and indexed so the auth guard can find the
+  // owning workspace in one lookup before the (expensive) bcrypt compare.
+  mcpTokenPrefix    String?   @unique
+  mcpTokenHash      String?
+  mcpTokenCreatedAt DateTime?
+
   // Kapso — the BSP customer id this workspace maps to for WhatsApp.
   //
   // Restored after being dropped in 20260811150000_remove_kapso. That removal
@@ -524,6 +607,8 @@ model Workspace {
   integrations      Integration[]      @relation("WorkspaceIntegrations")
   notes             Note[]             @relation("WorkspaceNotes")
   media             Media[]            @relation("WorkspaceMedia")
+  workflows         Workflow[]         @relation("WorkspaceWorkflows")
+  workflowRuns      WorkflowRun[]      @relation("WorkspaceWorkflowRuns")
 
   adsChatSessions       AdsChatSession[]       @relation("WorkspaceAdsChatSessions")
   adsChatMessages       AdsChatMessage[]       @relation("WorkspaceAdsChatMessages")

@@ -23,9 +23,11 @@ export type RouteId =
   | "automations"
   | "ads"
   | "contacts"
+  | "workflows"
   | "analytics"
   | "templates"
   | "team"
+  | "agent"
   | "settings"
   | "admin";
 
@@ -116,7 +118,17 @@ export interface TicketsDashboardSummary {
   totalTickets: number;
 }
 
-export type ConvChannel = "whatsapp" | "instagram" | "facebook" | "tiktok" | "webchat";
+// "l" is the agent platform. Conversations arrive over its webhook rather than
+// from a social network, but they are ordinary inbox threads once here — and
+// omitting the channel from this union is not a no-op: the inbox filters on a
+// Set seeded from it, so an unlisted channel is silently dropped from the list.
+export type ConvChannel =
+  | "whatsapp"
+  | "instagram"
+  | "facebook"
+  | "tiktok"
+  | "webchat"
+  | "l";
 
 export const CHANNEL_LABEL: Record<ConvChannel, string> = {
   whatsapp:  "WhatsApp",
@@ -124,6 +136,7 @@ export const CHANNEL_LABEL: Record<ConvChannel, string> = {
   facebook:  "Facebook",
   tiktok:    "TikTok",
   webchat:   "Web chat",
+  l:         "AI Agent",
 };
 
 export type SocialPlatform = "facebook" | "instagram" | "tiktok";
@@ -217,7 +230,7 @@ export interface Conversation {
   unread: number;
   pinned: boolean;
   lastAt: string;
-  lastFrom: "them" | "human";
+  lastFrom: "them" | "human" | "ai";
   preview: string;
   channel: ConvChannel;
   status: "human" | "closed" | "spam";
@@ -462,4 +475,129 @@ export interface ChannelResult {
   ok: boolean;
   postId?: string;
   error?: string;
+}
+
+// ─── Workflows ────────────────────────────────────────────────────────────
+
+export type WorkflowTriggerType =
+  | "contact_created"
+  | "message_received"
+  | "ticket_created"
+  | "ticket_stage_changed"
+  | "schedule"
+  | "webhook";
+
+export type WorkflowStatus = "draft" | "active";
+
+export type WorkflowConditionOperator = "equals" | "not_equals" | "contains" | "not_contains";
+
+export interface WorkflowConditionConfig {
+  field: string;
+  operator: WorkflowConditionOperator;
+  value: string;
+}
+
+export interface WorkflowAiConditionConfig {
+  prompt: string;
+}
+
+export interface WorkflowSendWhatsappConfig {
+  message: string;
+}
+
+export interface WorkflowAskAgentConfig {
+  prompt: string;
+}
+
+export type WorkflowUpdateDataConfig =
+  | { operation: "add_tag"; tag: string }
+  | { operation: "remove_tag"; tag: string }
+  | { operation: "move_ticket_stage"; stageId: string }
+  | {
+      operation: "update_contact_field";
+      field: "name" | "phone" | "industry" | "lifecycle" | "source" | "value";
+      value: string;
+    };
+
+export interface WorkflowDelayConfig {
+  amount: number;
+  unit: "minutes" | "hours" | "days";
+}
+
+interface WorkflowBaseStep {
+  id: string;
+  next?: string;
+}
+
+export interface WorkflowConditionStep extends WorkflowBaseStep {
+  type: "condition";
+  config: WorkflowConditionConfig;
+  thenNext?: string;
+  elseNext?: string;
+}
+
+export interface WorkflowAiConditionStep extends WorkflowBaseStep {
+  type: "ai_condition";
+  config: WorkflowAiConditionConfig;
+  thenNext?: string;
+  elseNext?: string;
+}
+
+export interface WorkflowSendWhatsappStep extends WorkflowBaseStep {
+  type: "send_whatsapp";
+  config: WorkflowSendWhatsappConfig;
+}
+
+export interface WorkflowAskAgentStep extends WorkflowBaseStep {
+  type: "ask_agent";
+  config: WorkflowAskAgentConfig;
+}
+
+export interface WorkflowUpdateDataStep extends WorkflowBaseStep {
+  type: "update_data";
+  config: WorkflowUpdateDataConfig;
+}
+
+export interface WorkflowDelayStep extends WorkflowBaseStep {
+  type: "delay";
+  config: WorkflowDelayConfig;
+}
+
+export type WorkflowStep =
+  | WorkflowConditionStep
+  | WorkflowAiConditionStep
+  | WorkflowSendWhatsappStep
+  | WorkflowAskAgentStep
+  | WorkflowUpdateDataStep
+  | WorkflowDelayStep;
+
+export type WorkflowStepType = WorkflowStep["type"];
+
+export interface WorkflowStepGraph {
+  entry: string | null;
+  steps: Record<string, WorkflowStep>;
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  status: WorkflowStatus;
+  triggerType: WorkflowTriggerType;
+  triggerConfig: Record<string, unknown>;
+  steps: WorkflowStepGraph;
+  webhookSecret: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRun {
+  id: string;
+  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  context: { trigger: Record<string, unknown>; steps: Record<string, unknown> };
+  stepsSnapshot: WorkflowStepGraph;
+  result: Record<string, unknown>;
+  isTest: boolean;
+  error: string | null;
+  startedAt: string;
+  completedAt: string | null;
 }

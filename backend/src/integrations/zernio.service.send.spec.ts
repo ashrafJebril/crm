@@ -47,9 +47,12 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
       media as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
-        { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
-);
-    return { svc, client, prisma };
+      // Auto-reply is opt-in per conversation and off in these fixtures, so
+      // the agent is never consulted; a stub that would fail loudly if it were.
+      { ask: jest.fn().mockResolvedValue(null) } as never,
+      { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
+    );
+    return { svc, client, prisma, media };
   };
 
   it("splits image and caption into two sends on Instagram", async () => {
@@ -101,5 +104,65 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
     const data = prisma.message.create.mock.calls[0][0].data;
     expect(data.body).toBe("هاد الشعار ؟");
     expect(data.attach).toBe("media-1");
+  });
+
+  it("tags the stored message and conversation 'ai' when sending on the agent's behalf", async () => {
+    const { svc, prisma } = build("whatsapp");
+    await svc.sendInDbConversation(workspaceId, "conv-db", "hi there", undefined, undefined, "ai");
+
+    expect(prisma.message.create).toHaveBeenCalledTimes(1);
+    expect(prisma.message.create.mock.calls[0][0].data.from).toBe("ai");
+    expect(prisma.conversation.update.mock.calls[0][0].data.lastFrom).toBe("ai");
+  });
+
+  it("defaults to tagging the stored message 'human'", async () => {
+    const { svc, prisma } = build("whatsapp");
+    await svc.sendInDbConversation(workspaceId, "conv-db", "hi there");
+
+    expect(prisma.message.create.mock.calls[0][0].data.from).toBe("human");
+    expect(prisma.conversation.update.mock.calls[0][0].data.lastFrom).toBe("human");
+  });
+
+  it("sends an externally-hosted image directly, without resolving a mediaId", async () => {
+    const { svc, client, media } = build("whatsapp");
+    await svc.sendInDbConversation(
+      workspaceId, "conv-db", "here you go", undefined, undefined, "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+
+    expect(media.get).not.toHaveBeenCalled();
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage.mock.calls[0]).toEqual([
+      "z-conv",
+      "acc1",
+      "here you go",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    ]);
+  });
+
+  it("stores the external image url directly in attach, not a mediaId", async () => {
+    const { svc, prisma } = build("whatsapp");
+    await svc.sendInDbConversation(
+      workspaceId, "conv-db", "here you go", undefined, undefined, "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+
+    expect(prisma.message.create.mock.calls[0][0].data.attach).toBe(
+      "https://cdn.example.com/pic.png",
+    );
+  });
+
+  it("still splits an externally-hosted image and caption on Instagram", async () => {
+    const { svc, client } = build("instagram");
+    await svc.sendInDbConversation(
+      workspaceId, "conv-db", "caption text", undefined, undefined, "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+
+    expect(client.sendMessage).toHaveBeenCalledTimes(2);
+    expect(client.sendMessage.mock.calls[0]).toEqual([
+      "z-conv", "acc1", "", { url: "https://cdn.example.com/pic.png", type: "image" },
+    ]);
+    expect(client.sendMessage.mock.calls[1]).toEqual(["z-conv", "acc1", "caption text"]);
   });
 });

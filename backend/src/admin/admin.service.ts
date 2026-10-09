@@ -249,6 +249,7 @@ export class AdminService {
           timezone: dto.timezone ?? "Asia/Riyadh",
           lang: dto.lang ?? "ar",
           kewyWorkspaceId: dto.kewyWorkspaceId ?? null,
+          lWorkspaceId: dto.lWorkspaceId ?? null,
         },
       });
 

@@ -39,26 +39,55 @@ async function main() {
   }
 
   // 3) Backfill workspaceId on every customer-owned table.
-  const updates: Array<{ name: string; count: number }> = [];
+  //
+  // Raw SQL on purpose: the Prisma schema already declares workspaceId as a
+  // required String, so the generated client can't express `where: { workspaceId: null }`
+  // even though pre-migration rows still hold NULLs. We also skip tables that
+  // don't exist (or don't have the column) in this database, so the script stays
+  // safe to run against schemas at different migration points.
+  const TABLES = [
+    "Contact",
+    "Conversation",
+    "Message",
+    "Appointment",
+    "Template",
+    "Tag",
+    "Segment",
+    "Campaign",
+    "Pipeline",
+    "TicketStage",
+    "Ticket",
+    "TicketActivity",
+    "Integration",
+    "Workflow",
+    "WorkflowRun",
+    "Media",
+    "Keyword",
+    "Mention",
+    "Note",
+  ] as const;
 
-  for (const [name, fn] of [
-    ["Contact",         () => prisma.contact.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Conversation",    () => prisma.conversation.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Message",         () => prisma.message.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Appointment",     () => prisma.appointment.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Template",        () => prisma.template.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Campaign",        () => prisma.campaign.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Pipeline",        () => prisma.pipeline.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["TicketStage",     () => prisma.ticketStage.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Ticket",          () => prisma.ticket.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["TicketActivity",  () => prisma.ticketActivity.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Integration",     () => prisma.integration.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Keyword",         () => prisma.keyword.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Mention",         () => prisma.mention.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-    ["Note",            () => prisma.note.updateMany({ where: { workspaceId: null }, data: { workspaceId: wsId } })],
-  ] as const) {
-    const res = await fn();
-    updates.push({ name, count: res.count });
+  const present = await prisma.$queryRaw<Array<{ table_name: string }>>`
+    SELECT table_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND column_name = 'workspaceId'
+  `;
+  const presentTables = new Set(present.map((r) => r.table_name));
+
+  const targets = TABLES.filter((t) => presentTables.has(t));
+  const skipped = TABLES.filter((t) => !presentTables.has(t));
+  if (skipped.length > 0) {
+    console.log(`\nSkipping tables not present in this database: ${skipped.join(", ")}`);
+  }
+
+  const updates: Array<{ name: string; count: number }> = [];
+  for (const table of targets) {
+    const count = await prisma.$executeRawUnsafe(
+      `UPDATE "${table}" SET "workspaceId" = $1 WHERE "workspaceId" IS NULL`,
+      wsId,
+    );
+    updates.push({ name: table, count });
   }
 
   console.log("\nBackfill summary:");
@@ -66,23 +95,11 @@ async function main() {
 
   // 4) Verify no rows remain with null workspaceId.
   const checks: Array<{ name: string; nulls: number }> = [];
-  for (const [name, fn] of [
-    ["Contact",         () => prisma.contact.count({ where: { workspaceId: null } })],
-    ["Conversation",    () => prisma.conversation.count({ where: { workspaceId: null } })],
-    ["Message",         () => prisma.message.count({ where: { workspaceId: null } })],
-    ["Appointment",     () => prisma.appointment.count({ where: { workspaceId: null } })],
-    ["Template",        () => prisma.template.count({ where: { workspaceId: null } })],
-    ["Campaign",        () => prisma.campaign.count({ where: { workspaceId: null } })],
-    ["Pipeline",        () => prisma.pipeline.count({ where: { workspaceId: null } })],
-    ["TicketStage",     () => prisma.ticketStage.count({ where: { workspaceId: null } })],
-    ["Ticket",          () => prisma.ticket.count({ where: { workspaceId: null } })],
-    ["TicketActivity",  () => prisma.ticketActivity.count({ where: { workspaceId: null } })],
-    ["Integration",     () => prisma.integration.count({ where: { workspaceId: null } })],
-    ["Keyword",         () => prisma.keyword.count({ where: { workspaceId: null } })],
-    ["Mention",         () => prisma.mention.count({ where: { workspaceId: null } })],
-    ["Note",            () => prisma.note.count({ where: { workspaceId: null } })],
-  ] as const) {
-    checks.push({ name, nulls: await fn() });
+  for (const table of targets) {
+    const rows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(
+      `SELECT COUNT(*)::bigint AS count FROM "${table}" WHERE "workspaceId" IS NULL`,
+    );
+    checks.push({ name: table, nulls: Number(rows[0]?.count ?? 0) });
   }
   const stillNull = checks.filter((c) => c.nulls > 0);
   if (stillNull.length > 0) {

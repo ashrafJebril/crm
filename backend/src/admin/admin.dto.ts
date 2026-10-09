@@ -76,4 +76,9 @@ export class ProvisionClientDto {
   @IsOptional()
   @IsString()
   kewyAccountId?: string;
+
+  /** Id of the Kewy AI (`l`) workspace this crm workspace is linked to. */
+  @IsOptional()
+  @IsString()
+  lWorkspaceId?: string;
 }

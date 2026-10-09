@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { SegmentsService } from "../segments/segments.service";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 
 interface ContactRow {
   id: string;
@@ -45,6 +47,7 @@ export class ContactsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly segments: SegmentsService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   async list(workspaceId: string, opts: { segmentId?: string } = {}) {
@@ -68,6 +71,21 @@ export class ContactsService {
     });
     if (!row) throw new NotFoundException("Contact not found");
     return shape(row);
+  }
+
+  async search(workspaceId: string, query: string) {
+    const rows = await this.prisma.contact.findMany({
+      where: {
+        workspaceId,
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { phone: { contains: query, mode: "insensitive" } },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    });
+    return rows.map(shape);
   }
 
   /**
@@ -149,7 +167,13 @@ export class ContactsService {
         convs: dto.convs ?? 0,
       },
     });
-    return shape(row);
+    const shaped = shape(row);
+    this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+      workspaceId,
+      triggerType: "contact_created",
+      payload: { contact: shaped },
+    } satisfies WorkflowTriggerEvent);
+    return shaped;
   }
 
   async update(workspaceId: string, id: string, dto: UpdateContactDto) {

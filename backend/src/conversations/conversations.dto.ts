@@ -29,6 +29,7 @@ export class UpdateConversationDto {
   @IsOptional() @IsBoolean() pinned?: boolean;
   @IsOptional() @IsBoolean() escalated?: boolean;
   @IsOptional() @IsNumber() unread?: number;
+  @IsOptional() @IsBoolean() aiEnabled?: boolean;
 }
 
 export class CreateMessageDto {

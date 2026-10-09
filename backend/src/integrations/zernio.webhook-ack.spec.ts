@@ -49,6 +49,7 @@ describe("ZernioService webhook acknowledgement", () => {
       {} as never,
       {} as never,
       { onInboundMessage: jest.fn(async () => {}), onOutboundReply: jest.fn() } as never,
+      { ask: jest.fn(), enabled: false } as never,
       aiBridge,
     );
 

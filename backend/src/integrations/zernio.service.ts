@@ -3,13 +3,17 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
+import { LAgentService } from "./l-agent.service";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -48,7 +52,9 @@ export class ZernioService {
     private readonly media: MediaService,
     private readonly client: ZernioClient,
     private readonly pipelineAutomation: PipelineAutomationService,
+    private readonly lAgent: LAgentService,
     private readonly aiBridge: AiBridgeService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -800,6 +806,8 @@ export class ZernioService {
     message: string,
     mediaId?: string,
     publicBaseUrl?: string,
+    from: "human" | "ai" = "human",
+    externalAttachment?: { url: string; type: "image" },
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -811,8 +819,11 @@ export class ZernioService {
     // attachmentType contract. Spaces-stored media resolves to a signed
     // Spaces URL (fetchable from anywhere — no tunnel/PUBLIC_BASE_URL
     // dependency); only legacy local-disk media still needs publicBaseUrl.
-    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined;
-    if (mediaId) {
+    // An AI-sourced image already has a public URL of its own — it skips the
+    // CRM Media store entirely rather than being re-hosted there.
+    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined =
+      externalAttachment;
+    if (!attachment && mediaId) {
       const row = await this.media.get(workspaceId, mediaId);
       let url: string;
       if (row.storageKind === "spaces") {
@@ -863,11 +874,12 @@ export class ZernioService {
       data: {
         workspaceId,
         conversationId: conv.id,
-        from: "human",
+        from,
         body: message,
         t,
-        // Frontend convention: attach carries our Media id for outbound sends.
-        attach: mediaId ?? null,
+        // Frontend convention: attach carries either our Media id, or — for
+        // an AI-sourced image — the external URL directly.
+        attach: mediaId ?? externalAttachment?.url ?? null,
         metaMessageId: id,
       },
     });
@@ -876,7 +888,7 @@ export class ZernioService {
       data: {
         preview: message ? message.slice(0, 140) : "📎",
         lastAt: "now",
-        lastFrom: "human",
+        lastFrom: from,
         unread: 0,
       },
     });
@@ -1355,6 +1367,13 @@ export class ZernioService {
       channel,
       conversationId: conv.id,
     });
+
+    // Our own outbound echo is not something to answer, and a thread only
+    // auto-replies once someone has switched it into AI mode — and stops while
+    // a human has taken it over (aiPausedAt), same as the kewy-ai path below.
+    if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && this.lAgent.enabled) {
+      this.queueAgentReply(workspaceId, conv.id, text);
+    }
     // Lifecycle automation (never throws): a customer message opens a ticket
     // in 'new' unless one is already open; ANY outbound human message — from
     // the app or typed on the phone (this same path ingests message.sent) —
@@ -1369,6 +1388,15 @@ export class ZernioService {
         channel,
         text || undefined,
       );
+      this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType: "message_received",
+        payload: {
+          contact: { id: contact.id, name: contact.name },
+          conversation: { id: conv.id, channel },
+          message: { body: text },
+        },
+      } satisfies WorkflowTriggerEvent);
 
       // Hand the message to the AI service if this thread has it enabled.
       //
@@ -1380,7 +1408,17 @@ export class ZernioService {
       // Last and fire-and-forget on purpose: everything above is already
       // persisted, so a slow or dead AI service can never cost us the message
       // or the 200 that stops Zernio retrying.
-      if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && this.aiBridge.isConfigured()) {
+      //
+      // Skipped when the workspace's own l agent already took this message
+      // (queueAgentReply above): both paths key off conv.aiEnabled, so with
+      // both platforms configured the customer would get two AI replies.
+      if (
+        !isOutbound &&
+        conv.aiEnabled &&
+        !conv.aiPausedAt &&
+        this.aiBridge.isConfigured() &&
+        !(await this.lAgentAnswers(workspaceId))
+      ) {
         void this.aiBridge.notifyInbound({
           workspaceId,
           conversationId: conv.id,
@@ -1425,6 +1463,83 @@ export class ZernioService {
       });
     }
     return updated.count;
+  }
+
+  /**
+   * Whether this workspace's inbound messages are answered by its own l agent.
+   * Mirrors the precondition LAgentService.ask() applies before calling l, so
+   * the kewy-ai bridge stands down exactly when an l reply can be produced.
+   */
+  private async lAgentAnswers(workspaceId: string): Promise<boolean> {
+    if (!this.lAgent.enabled) return false;
+    const ws = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { lEndpointId: true, lEndpointSecret: true },
+    });
+    return Boolean(ws?.lEndpointId && ws.lEndpointSecret);
+  }
+
+  /**
+   * Answer an inbound customer message with the workspace's l agent and send
+   * that answer back out on the conversation's own channel.
+   *
+   * Fire-and-forget: the customer's message is already stored and the webhook
+   * owes Zernio a prompt 200. An l turn takes seconds, and Zernio retries a
+   * slow endpoint — blocking here would turn one message into several.
+   */
+  private queueAgentReply(
+    workspaceId: string,
+    conversationId: string,
+    inbound: string,
+  ): void {
+    void (async () => {
+      const result = await this.lAgent.ask(workspaceId, {
+        externalId: conversationId,
+        message: inbound,
+      });
+      if (!result) return;
+
+      // sendInDbConversation both delivers the reply and stores the single
+      // Message row (with real delivery metadata) plus the conversation
+      // preview update — tagged "ai" so the thread still reads as the
+      // agent's own turn instead of a staff reply.
+      try {
+        await this.sendInDbConversation(
+          workspaceId,
+          conversationId,
+          result.answer,
+          undefined,
+          undefined,
+          "ai",
+          result.imageUrl ? { url: result.imageUrl, type: "image" } : undefined,
+        );
+      } catch (err) {
+        // l validates the image URL before it ever reaches us, but the
+        // channel itself can still reject it (hotlink-blocking CDN, expired
+        // signed URL, a size/format l allows but the channel doesn't). A
+        // bad image should only cost the image — never the text answer the
+        // agent already produced — so retry once without the attachment.
+        if (!result.imageUrl) throw err;
+        this.log.warn(
+          `l auto-reply image failed to send for conversation ${conversationId}, retrying text-only`,
+          err instanceof Error ? err.stack : String(err),
+        );
+        await this.sendInDbConversation(
+          workspaceId,
+          conversationId,
+          result.answer,
+          undefined,
+          undefined,
+          "ai",
+          undefined,
+        );
+      }
+    })().catch((err) => {
+      this.log.error(
+        `l auto-reply failed for conversation ${conversationId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    });
   }
 }
 
@@ -1481,4 +1596,5 @@ export interface ZernioWebhookEvent {
   };
   // account.connected / account.disconnected still carry a `data` envelope.
   data?: { profileId?: string };
+
 }

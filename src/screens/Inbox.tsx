@@ -65,7 +65,7 @@ function dayLabel(
 }
 type ConversationDetail = Conversation & { messages: Message[] };
 
-const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat"];
+const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "l"];
 
 /** Channel brand colors — used for the filter-pill dots and the solid channel
  *  tag in the thread header (per the Samemha Inbox v2 mock). */
@@ -75,6 +75,7 @@ const CHANNEL_DOT: Record<ConvChannel, string> = {
   facebook: "#4267b2",
   tiktok: "#7a7a7a",
   webchat: "#5A8FD4",
+  l: "#8b5cf6",
 };
 
 /* ── Inline channel glyphs ───────────────────────────────────────────────── */
@@ -197,6 +198,7 @@ const CHANNEL_BG: Record<ConvChannel, string> = {
   facebook: "#1877F2",
   tiktok: "#000000",
   webchat: "var(--info)",
+  l: "#8b5cf6",
 };
 
 function ChannelMark({
@@ -1113,7 +1115,7 @@ function Bubble({ m }: BubbleProps) {
   const { user } = useAuth();
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const humanName = user?.name ?? "You";
+  const humanName = isAi ? tx("AI Agent", "الوكيل الذكي") : (user?.name ?? "You");
   const humanColor = user?.color ?? "150";
   // Zernio flattens WhatsApp content it can't carry (stickers, polls, …) into
   // a bullets-only placeholder with no attachment — label it honestly instead

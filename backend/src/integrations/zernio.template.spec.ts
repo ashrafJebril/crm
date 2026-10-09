@@ -117,6 +117,7 @@ describe("ZernioService.sendTemplateInDbConversation", () => {
       {} as unknown as MediaService,
       client as unknown as ZernioClient,
       { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
+      { ask: jest.fn(), enabled: false } as never,
         { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
 );
     return { svc, client, prisma };

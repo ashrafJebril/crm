@@ -1,0 +1,13 @@
+-- Intentionally a no-op.
+--
+-- This used to flip "Conversation"."aiEnabled" to DEFAULT true and set it to
+-- true on every existing row. That was safe while the flag only gated the l
+-- agent, which answers nothing unless the workspace is linked to an l endpoint.
+-- The flag now also gates the kewy-ai bridge, which is configured for the whole
+-- deployment, so the same statements would switch AI replies on for every
+-- existing thread in every workspace — what 20260828120000_conversation_ai_flags
+-- deliberately rules out. The column stays opt-in per thread (DEFAULT false).
+--
+-- The file is kept so databases that already applied it keep a matching
+-- migration history.
+SELECT 1;

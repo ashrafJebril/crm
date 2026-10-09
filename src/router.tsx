@@ -11,11 +11,13 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   automations: lazy(() => import("@/screens/automations/AutomationsPage")),
   ads: lazy(() => import("@/screens/ads/AdsAssistant")),
   pipeline: lazy(() => import("@/screens/pipeline/PipelinePage")),
+  workflows: lazy(() => import("@/screens/workflows/WorkflowsPage")),
   contacts: lazy(() => import("@/screens/Contacts")),
   analytics: lazy(() => import("@/screens/Analytics")),
   templates: lazy(() => import("@/screens/Templates")),
   media: lazy(() => import("@/screens/Media")),
   team: lazy(() => import("@/screens/Team")),
+  agent: lazy(() => import("@/screens/KewyAgent")),
   settings: lazy(() => import("@/screens/Settings")),
   admin: lazy(() => import("@/screens/Admin")),
 };

@@ -12,16 +12,27 @@ import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
+import { LWebhooksController } from "./l-webhooks.controller";
+import { LWebhooksService } from "./l-webhooks.service";
+import { LAgentService } from "./l-agent.service";
+import { LAgentSetupService } from "./l-agent-setup.service";
+import { LConfigController } from "./l-config.controller";
+import { LJoteckClient } from "./l-joteck.client";
+import { LAgentResolverService } from "./l-agent-resolver.service";
+import { LKnowledgeService } from "./l-knowledge.service";
+import { LToolsService } from "./l-tools.service";
+import { LMcpService } from "./l-mcp.service";
+import { McpTokenController } from "./mcp-token.controller";
+import { McpTokenService } from "./mcp-token.service";
 import { AiBridgeService } from "./ai-bridge.service";
 import { AiReplyController } from "./ai-reply.controller";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
+import { WorkspacesModule } from "../workspaces/workspaces.module";
 
 @Module({
-  imports: [MediaModule, RealtimeModule, TicketsModule],
-  // HjzWebhooksController is inert until HJZ_WEBHOOK_SECRET is set (the
-  // service rejects requests without it), so it's safe to register standalone.
+  imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule],
   controllers: [
     FacebookController,
     InstagramController,
@@ -29,6 +40,9 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioController,
     MetaWebhooksController,
     HjzWebhooksController,
+    LWebhooksController,
+    LConfigController,
+    McpTokenController,
     // Inert until KEWY_AI_URL + KEWY_AI_WEBHOOK_SECRET are set: without them
     // AiBridgeService reports unconfigured and every signature check fails.
     AiReplyController,
@@ -41,6 +55,15 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioClient,
     MetaWebhooksService,
     HjzWebhooksService,
+    LWebhooksService,
+    LAgentService,
+    LJoteckClient,
+    LAgentResolverService,
+    LKnowledgeService,
+    LToolsService,
+    LMcpService,
+    LAgentSetupService,
+    McpTokenService,
     AiBridgeService,
   ],
   exports: [
@@ -51,6 +74,9 @@ import { TicketsModule } from "../tickets/tickets.module";
     // TemplatesModule talks to the WhatsApp template endpoints directly.
     ZernioClient,
     AiBridgeService,
+    LAgentService,
+    LAgentSetupService,
+    McpTokenService,
   ],
 })
 export class IntegrationsModule {}

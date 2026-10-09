@@ -1,13 +1,15 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AdminService } from "../admin/admin.service";
 import type { ProvisionClientDto } from "../admin/admin.dto";
+import { LAgentSetupService } from "../integrations/l-agent-setup.service";
 
 @Injectable()
 export class JoteckService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly admin: AdminService,
+    private readonly agentSetup: LAgentSetupService,
   ) {}
 
   /**
@@ -17,6 +19,7 @@ export class JoteckService {
    */
   async provisionWorkspace(dto: ProvisionClientDto) {
     const { workspace } = await this.admin.provisionClient(dto);
+    if (dto.lWorkspaceId) await this.agentSetup.ensureQuietly(workspace.id);
     return this.getWorkspace(workspace.id);
   }
 
@@ -40,6 +43,7 @@ export class JoteckService {
         suspendedAt: true,
         externalTenantId: true,
         kewyWorkspaceId: true,
+        lWorkspaceId: true,
         lang: true,
         timezone: true,
         enabledModules: true,
@@ -65,6 +69,7 @@ export class JoteckService {
         suspendedAt: true,
         externalTenantId: true,
         kewyWorkspaceId: true,
+        lWorkspaceId: true,
         lang: true,
         timezone: true,
         enabledModules: true,
@@ -78,6 +83,11 @@ export class JoteckService {
       suspendedAt: w.suspendedAt ? w.suspendedAt.toISOString() : null,
       enabledModules: Array.isArray(w.enabledModules) ? (w.enabledModules as string[]) : null,
     };
+  }
+
+  /** Explicit (re-)run of the agent wiring, e.g. to backfill already-linked workspaces. */
+  setupAgent(id: string) {
+    return this.agentSetup.ensure(id);
   }
 
   async stats(id: string) {
@@ -104,8 +114,40 @@ export class JoteckService {
     };
   }
 
-  async patchWorkspace(id: string, body: { active?: boolean; enabledModules?: string[] }) {
+  async patchWorkspace(
+    id: string,
+    body: {
+      active?: boolean;
+      enabledModules?: string[];
+      lWorkspaceId?: string | null;
+      lEndpointId?: string | null;
+      lEndpointSecret?: string | null;
+    },
+  ) {
     const data: Record<string, unknown> = {};
+    // Links this crm workspace to its Kewy AI (`l`) workspace; null unlinks.
+    if (body.lWorkspaceId !== undefined) {
+      const lId = body.lWorkspaceId?.trim() || null;
+      if (lId) {
+        const taken = await this.prisma.raw.workspace.findUnique({
+          where: { lWorkspaceId: lId },
+          select: { id: true },
+        });
+        if (taken && taken.id !== id) {
+          throw new ConflictException("That Kewy AI workspace is already linked to another workspace");
+        }
+      }
+      data.lWorkspaceId = lId;
+      // The cached agent slug belongs to the previous l workspace; keeping it
+      // would point tool/MCP bindings at an agent that doesn't exist there.
+      data.lAgentSlug = null;
+    }
+    // Webhook credentials l issued for this workspace's agent. The secret is
+    // write-only: it is never included in any joteck response.
+    if (body.lEndpointId !== undefined) data.lEndpointId = body.lEndpointId?.trim() || null;
+    if (body.lEndpointSecret !== undefined) {
+      data.lEndpointSecret = body.lEndpointSecret?.trim() || null;
+    }
     if (typeof body.active === "boolean") {
       data.suspendedAt = body.active ? null : new Date();
     }
@@ -123,12 +165,18 @@ export class JoteckService {
         suspendedAt: true,
         externalTenantId: true,
         kewyWorkspaceId: true,
+        lWorkspaceId: true,
         lang: true,
         timezone: true,
         enabledModules: true,
         createdAt: true,
       },
     });
+    // A newly linked workspace gets its agent wired to this CRM straight away
+    // (tools + prompt), so Kewy AI can book without anyone configuring it.
+    if (updated.lWorkspaceId && body.lWorkspaceId) {
+      await this.agentSetup.ensureQuietly(id);
+    }
     return {
       ...updated,
       createdAt: updated.createdAt.toISOString(),

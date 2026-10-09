@@ -2,8 +2,10 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import {
@@ -13,12 +15,14 @@ import {
   MoveTicketDto,
   UpdateTicketDto,
 } from "./tickets.dto";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 
 @Injectable()
 export class TicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   // ─── Pipelines ─────────────────────────────────────────────────────────
@@ -199,6 +203,12 @@ export class TicketsService {
 
     this.realtime.emitToWorkspace(workspaceId, "ticket.created", { ticket });
 
+    this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+      workspaceId,
+      triggerType: "ticket_created",
+      payload: { ticket },
+    } satisfies WorkflowTriggerEvent);
+
     return ticket;
   }
 
@@ -302,6 +312,12 @@ export class TicketsService {
       fromStageId: ticket.stageId,
       toStageId: targetStage.id,
     });
+
+    this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+      workspaceId,
+      triggerType: "ticket_stage_changed",
+      payload: { ticket: updated },
+    } satisfies WorkflowTriggerEvent);
 
     return updated;
   }

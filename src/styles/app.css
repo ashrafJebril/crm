@@ -608,3 +608,82 @@ input, textarea, select { font-family: inherit; }
 /* Lifecycle segmented bar */
 .ix-stage-seg { flex: 1; height: 8px; border-radius: 8px; background: var(--bg-2); }
 .ix-stage-seg.on { background: var(--accent); }
+
+/* ─── Workflow variable-mention field ────────────────────────────────────
+   Rendered by VariableMentionField.tsx (tiptap). `.variable-mention-field`
+   is the outer wrapper <div> that tiptap's <EditorContent> renders (it
+   passes className straight through), with the actual contentEditable
+   node — tiptap/prosemirror always sets class="ProseMirror" on it —
+   mounted inside as a child. `.variable-chip` is the HTMLAttributes class
+   on each rendered mention <span>. `.mention-suggestion-list` /
+   `.mention-suggestion-item` are plain DOM nodes (not React) built by
+   renderSuggestionItems() and mounted into document.body via tippy.js, so
+   they need real global rules here rather than component-scoped styles. */
+.variable-mention-field {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-2);
+  padding: 8px 10px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.variable-mention-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.variable-mention-field .ProseMirror {
+  min-height: 72px;
+  outline: none;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.variable-mention-field .ProseMirror p { margin: 0; }
+.variable-mention-field .ProseMirror p + p { margin-top: 4px; }
+
+.variable-chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--accent-ring);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  cursor: default;
+}
+/* tiptap injects its own base rule `.ProseMirror [contenteditable="false"] {
+   white-space: normal }` for atom nodes at the same (0,2,0) specificity as a
+   two-class selector, and its <style> tag is appended to <head> at editor-
+   mount time — after this stylesheet — so on a specificity tie it wins on
+   source order. Three classes (0,3,0) beats it outright regardless of when
+   either stylesheet loads, keeping a chip from wrapping mid-token. */
+.variable-mention-field .ProseMirror .variable-chip {
+  white-space: nowrap;
+}
+
+.mention-suggestion-list {
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+}
+.mention-suggestion-item {
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--ink-1);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mention-suggestion-item:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}

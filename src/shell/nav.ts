@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconCampaign, IconUsers,
   IconChart, IconTemplate, IconTeam, IconCog, IconCal, IconGlobe,
-  IconLayers, IconBolt, IconAttach, IconSparkles,
+  IconLayers, IconBolt, IconAttach, IconBot, IconFlow, IconSparkles,
 } from "@/icons";
 
 interface NavItem {
@@ -33,12 +33,14 @@ export const NAV: NavEntry[] = [
   { id: "automations", label: "Automations", ar: "الأتمتة",        Icon: IconBolt },
   { id: "ads",         label: "Ads Assistant", ar: "مساعد الإعلانات", Icon: IconSparkles },
   { id: "pipeline",    label: "Pipeline",    ar: "خط الأنابيب",   Icon: IconLayers },
+  { id: "workflows",   label: "Workflows",   ar: "الأتمتة",       Icon: IconFlow },
   { id: "contacts",    label: "Contacts",    ar: "جهات الاتصال",  Icon: IconUsers },
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
   { section: "Manage" },
   { id: "templates",   label: "Templates",   ar: "القوالب",       Icon: IconTemplate },
   { id: "media",       label: "Media",       ar: "الوسائط",        Icon: IconAttach },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
+  { id: "agent",       label: "Kewy AI",     ar: "كيوي الذكاء",    Icon: IconBot },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },
   { section: "Kewy ops" },
   { id: "admin",       label: "Admin portal", ar: "بوابة الإدارة",  Icon: IconBolt, superAdminOnly: true },
@@ -53,11 +55,13 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   automations: { en: "Automations",     ar: "الأتمتة" },
   ads:         { en: "Ads Assistant",   ar: "مساعد الإعلانات" },
   pipeline:    { en: "Sales pipeline",  ar: "مسار المبيعات" },
+  workflows:   { en: "Workflows",       ar: "الأتمتة" },
   contacts:    { en: "Contacts",        ar: "جهات الاتصال" },
   analytics:   { en: "Analytics",       ar: "التحليلات" },
   templates:   { en: "Templates",       ar: "القوالب" },
   media:       { en: "Media library",   ar: "مكتبة الوسائط" },
   team:        { en: "Team",            ar: "الفريق" },
+  agent:       { en: "Kewy AI agent",   ar: "وكيل كيوي الذكاء" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
   admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
 };

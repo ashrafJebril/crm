@@ -18,6 +18,8 @@ const SCOPED_MODELS = new Set([
   "Media",
   "Segment",
   "Tag",
+  "Workflow",
+  "WorkflowRun",
   "AdsChatSession",
   "AdsChatMessage",
   "AdsPendingAction",
