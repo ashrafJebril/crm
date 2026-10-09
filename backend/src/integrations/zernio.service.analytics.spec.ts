@@ -1,3 +1,4 @@
+import { AiBridgeService } from "./ai-bridge.service";
 import { HttpException } from "@nestjs/common";
 import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -47,6 +48,7 @@ describe("ZernioService.analyticsOverview", () => {
       // Auto-reply is opt-in per conversation and off in these fixtures, so
       // the agent is never consulted; a stub that would fail loudly if it were.
       { ask: jest.fn().mockResolvedValue(null) } as never,
+      { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
     );
   });
 

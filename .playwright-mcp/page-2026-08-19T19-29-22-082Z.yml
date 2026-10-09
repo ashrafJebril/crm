@@ -1,0 +1,58 @@
+- generic [ref=f1e3]:
+  - complementary [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - generic [ref=f1e6]: A
+      - generic [ref=f1e7]:
+        - generic [ref=f1e8]: Aram.
+        - generic [ref=f1e9]: v2.4 · MENA
+      - button "Search" [ref=f1e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f1e14] [cursor=pointer]:
+      - generic [ref=f1e16]:
+        - generic [ref=f1e17]: Default Workspace
+        - generic [ref=f1e18]: free · owner
+    - navigation [ref=f1e22]:
+      - generic [ref=f1e23]: Workspace
+      - button "Dashboard" [ref=f1e24] [cursor=pointer]
+      - button "Inbox 7" [ref=f1e29] [cursor=pointer]:
+        - generic [ref=f1e34]: Inbox
+        - generic [ref=f1e35]: "7"
+      - button "Calendar" [ref=f1e36] [cursor=pointer]
+      - button "Social" [ref=f1e42] [cursor=pointer]
+      - button "Campaigns" [ref=f1e48] [cursor=pointer]
+      - button "Pipeline" [ref=f1e55] [cursor=pointer]
+      - button "Contacts" [ref=f1e62] [cursor=pointer]
+      - button "Analytics" [ref=f1e70] [cursor=pointer]
+      - generic [ref=f1e76]: Manage
+      - button "Templates" [ref=f1e77] [cursor=pointer]
+      - button "Media" [ref=f1e82] [cursor=pointer]
+      - button "Team" [ref=f1e87] [cursor=pointer]
+      - button "Settings" [ref=f1e93] [cursor=pointer]
+      - generic [ref=f1e99]: Aram ops
+      - button "Admin portal" [ref=f1e100] [cursor=pointer]
+    - generic [ref=f1e105]:
+      - generic [ref=f1e106]: YK
+      - generic [ref=f1e107]:
+        - generic [ref=f1e108]: Yara Khaled
+        - generic [ref=f1e109]: owner · Default Workspace
+      - button "Notifications" [ref=f1e110] [cursor=pointer]
+  - main [ref=f1e114]:
+    - generic [ref=f1e115]:
+      - generic [ref=f1e116]:
+        - generic [ref=f1e117]: Samemha
+        - generic [ref=f1e118]: /
+        - generic [ref=f1e119]: Inbox
+      - generic [ref=f1e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f1e124]
+        - generic [ref=f1e125]: ⌘K
+      - button "ع" [ref=f1e126] [cursor=pointer]
+      - button "Toggle theme" [ref=f1e128] [cursor=pointer]
+      - button "Notifications" [ref=f1e132] [cursor=pointer]
+      - button "Create" [ref=f1e136] [cursor=pointer]
+      - button "Default Workspace" [ref=f1e140] [cursor=pointer]
+      - generic [ref=f1e144]:
+        - generic [ref=f1e145]: YK
+        - generic [ref=f1e146]:
+          - generic [ref=f1e147]: Yara Khaled
+          - generic [ref=f1e148]: Owner
+        - button "Sign out" [ref=f1e149] [cursor=pointer]
+    - generic [ref=f1e154]: loading…

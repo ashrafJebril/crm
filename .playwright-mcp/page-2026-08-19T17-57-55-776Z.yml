@@ -1,0 +1,144 @@
+- generic [ref=e4]:
+  - complementary [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: A
+      - generic [ref=e8]:
+        - generic [ref=e9]: Aram.
+        - generic [ref=e10]: v2.4 · MENA
+      - button "Search" [ref=e11] [cursor=pointer]
+    - generic "Switch workspace" [ref=e15] [cursor=pointer]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: Default Workspace
+        - generic [ref=e19]: free · owner
+    - navigation [ref=e23]:
+      - generic [ref=e24]: Workspace
+      - button "Dashboard" [ref=e25] [cursor=pointer]
+      - button "Inbox 7" [ref=e30] [cursor=pointer]:
+        - generic [ref=e35]: Inbox
+        - generic [ref=e36]: "7"
+      - button "Calendar" [ref=e37] [cursor=pointer]
+      - button "Social" [ref=e43] [cursor=pointer]
+      - button "Campaigns" [ref=e49] [cursor=pointer]
+      - button "Pipeline" [ref=e56] [cursor=pointer]
+      - button "Contacts" [ref=e63] [cursor=pointer]
+      - button "Analytics" [ref=e71] [cursor=pointer]
+      - generic [ref=e77]: Manage
+      - button "Templates" [ref=e78] [cursor=pointer]
+      - button "Media" [ref=e83] [cursor=pointer]
+      - button "Team" [ref=e88] [cursor=pointer]
+      - button "Settings" [ref=e94] [cursor=pointer]
+      - generic [ref=e100]: Aram ops
+      - button "Admin portal" [ref=e101] [cursor=pointer]
+    - generic [ref=e106]:
+      - generic [ref=e107]: YK
+      - generic [ref=e108]:
+        - generic [ref=e109]: Yara Khaled
+        - generic [ref=e110]: owner · Default Workspace
+      - button "Notifications" [ref=e111] [cursor=pointer]
+  - main [ref=e115]:
+    - generic [ref=e116]:
+      - generic [ref=e117]:
+        - generic [ref=e118]: Samemha
+        - generic [ref=e119]: /
+        - generic [ref=e120]: Contacts
+      - generic [ref=e121] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=e125]
+        - generic [ref=e126]: ⌘K
+      - button "ع" [ref=e127] [cursor=pointer]
+      - button "Toggle theme" [ref=e129] [cursor=pointer]
+      - button "Notifications" [ref=e133] [cursor=pointer]
+      - button "Create" [ref=e137] [cursor=pointer]
+      - button "Default Workspace" [ref=e141] [cursor=pointer]
+      - generic [ref=e145]:
+        - generic [ref=e146]: YK
+        - generic [ref=e147]:
+          - generic [ref=e148]: Yara Khaled
+          - generic [ref=e149]: Owner
+        - button "Sign out" [ref=e150] [cursor=pointer]
+    - generic [ref=e155]:
+      - generic [ref=e157]:
+        - generic [ref=e158]:
+          - heading "Contacts" [level=1] [ref=e159]
+          - paragraph [ref=e160]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=e161]:
+          - generic [ref=e162]:
+            - button "Table" [ref=e163] [cursor=pointer]
+            - button "Pipeline" [ref=e164] [cursor=pointer]
+          - button "New contact" [ref=e165] [cursor=pointer]
+      - generic [ref=e168]:
+        - button "Contacts" [ref=e169] [cursor=pointer]
+        - button "Groups" [ref=e170] [cursor=pointer]
+        - button "Tags" [ref=e171] [cursor=pointer]
+      - generic [ref=e249]:
+        - generic [ref=e250]:
+          - button "All 42" [ref=e251] [cursor=pointer]:
+            - text: All
+            - generic [ref=e252]: "42"
+          - button "All leads 42" [ref=e253] [cursor=pointer]:
+            - text: All leads
+            - generic [ref=e255]: "42"
+          - button "Customers 0" [ref=e256] [cursor=pointer]:
+            - text: Customers
+            - generic [ref=e258]: "0"
+          - button "Has phone 3" [ref=e259] [cursor=pointer]:
+            - text: Has phone
+            - generic [ref=e261]: "3"
+          - button "No phone 39" [ref=e262] [cursor=pointer]:
+            - text: No phone
+            - generic [ref=e264]: "39"
+          - button "New 0" [ref=e265] [cursor=pointer]:
+            - text: New
+            - generic [ref=e267]: "0"
+          - button "New 0" [ref=e268] [cursor=pointer]:
+            - text: New
+            - generic [ref=e270]: "0"
+          - button "Contacted 1" [active] [ref=e271] [cursor=pointer]:
+            - text: Contacted
+            - generic [ref=e273]: "1"
+          - button "Interested 0" [ref=e274] [cursor=pointer]:
+            - text: Interested
+            - generic [ref=e276]: "0"
+          - button "Waiting 1" [ref=e277] [cursor=pointer]:
+            - text: Waiting
+            - generic [ref=e279]: "1"
+          - button "Won deals 1" [ref=e280] [cursor=pointer]:
+            - text: Won deals
+            - generic [ref=e282]: "1"
+          - button "Lost deals 0" [ref=e283] [cursor=pointer]:
+            - text: Lost deals
+            - generic [ref=e285]: "0"
+          - button "Manage segments" [ref=e286] [cursor=pointer]
+          - textbox "Search contacts…" [ref=e289]
+        - table [ref=e1233]:
+          - rowgroup [ref=e1234]:
+            - row [ref=e1235]:
+              - columnheader [ref=e1236]:
+                - checkbox [ref=e1237]
+              - columnheader "Name" [ref=e1238]
+              - columnheader "Phone" [ref=e1239]
+              - columnheader "Tags" [ref=e1240]
+              - columnheader "Lifecycle" [ref=e1241]
+              - columnheader "Source" [ref=e1242]
+              - columnheader "Convs" [ref=e1243]
+              - columnheader "Value" [ref=e1244]
+              - columnheader "Last seen" [ref=e1245]
+              - columnheader [ref=e1246]
+          - rowgroup [ref=e1247]:
+            - row [ref=e1248] [cursor=pointer]:
+              - cell [ref=e1249]:
+                - checkbox [ref=e1250]
+              - cell "A Ashraf whatsapp" [ref=e1251]:
+                - generic [ref=e1252]:
+                  - generic [ref=e1253]: A
+                  - generic [ref=e1254]:
+                    - generic [ref=e1255]: Ashraf
+                    - generic [ref=e1256]: whatsapp
+              - cell "+962790286021" [ref=e1257]
+              - cell [ref=e1258]
+              - cell "lead" [ref=e1259]
+              - cell "whatsapp" [ref=e1260]
+              - cell "0" [ref=e1261]
+              - cell "—" [ref=e1262]
+              - cell "now" [ref=e1263]
+              - cell [ref=e1264]:
+                - button [ref=e1265]

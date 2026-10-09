@@ -1,0 +1,145 @@
+- generic [ref=e4]:
+  - complementary [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: A
+      - generic [ref=e8]:
+        - generic [ref=e9]: Aram.
+        - generic [ref=e10]: v2.4 · MENA
+      - button "Search" [ref=e11] [cursor=pointer]
+    - generic "Switch workspace" [ref=e15] [cursor=pointer]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: Default Workspace
+        - generic [ref=e19]: free · owner
+    - navigation [ref=e23]:
+      - generic [ref=e24]: Workspace
+      - button "Dashboard" [ref=e25] [cursor=pointer]
+      - button "Inbox 7" [ref=e30] [cursor=pointer]:
+        - generic [ref=e35]: Inbox
+        - generic [ref=e36]: "7"
+      - button "Calendar" [ref=e37] [cursor=pointer]
+      - button "Social" [ref=e43] [cursor=pointer]
+      - button "Campaigns" [ref=e49] [cursor=pointer]
+      - button "Pipeline" [ref=e56] [cursor=pointer]
+      - button "Contacts" [ref=e63] [cursor=pointer]
+      - button "Analytics" [ref=e71] [cursor=pointer]
+      - generic [ref=e77]: Manage
+      - button "Templates" [ref=e78] [cursor=pointer]
+      - button "Media" [ref=e83] [cursor=pointer]
+      - button "Team" [ref=e88] [cursor=pointer]
+      - button "Settings" [ref=e94] [cursor=pointer]
+      - generic [ref=e100]: Aram ops
+      - button "Admin portal" [ref=e101] [cursor=pointer]
+    - generic [ref=e106]:
+      - generic [ref=e107]: YK
+      - generic [ref=e108]:
+        - generic [ref=e109]: Yara Khaled
+        - generic [ref=e110]: owner · Default Workspace
+      - button "Notifications" [ref=e111] [cursor=pointer]
+  - main [ref=e115]:
+    - generic [ref=e116]:
+      - generic [ref=e117]:
+        - generic [ref=e118]: Samemha
+        - generic [ref=e119]: /
+        - generic [ref=e120]: Contacts
+      - generic [ref=e121] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=e125]
+        - generic [ref=e126]: ⌘K
+      - button "ع" [ref=e127] [cursor=pointer]
+      - button "Toggle theme" [ref=e129] [cursor=pointer]
+      - button "Notifications" [ref=e133] [cursor=pointer]
+      - button "Create" [ref=e137] [cursor=pointer]
+      - button "Default Workspace" [ref=e141] [cursor=pointer]
+      - generic [ref=e145]:
+        - generic [ref=e146]: YK
+        - generic [ref=e147]:
+          - generic [ref=e148]: Yara Khaled
+          - generic [ref=e149]: Owner
+        - button "Sign out" [ref=e150] [cursor=pointer]
+    - generic [ref=e155]:
+      - generic [ref=e157]:
+        - generic [ref=e158]:
+          - heading "Contacts" [level=1] [ref=e159]
+          - paragraph [ref=e160]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=e161]:
+          - generic [ref=e162]:
+            - button "Table" [ref=e163] [cursor=pointer]
+            - button "Pipeline" [ref=e164] [cursor=pointer]
+          - button "New contact" [ref=e165] [cursor=pointer]
+      - generic [ref=e168]:
+        - button "Contacts" [ref=e169] [cursor=pointer]
+        - button "Groups" [active] [ref=e170] [cursor=pointer]
+        - button "Tags" [ref=e171] [cursor=pointer]
+      - generic [ref=e172]:
+        - generic [ref=e173]:
+          - generic [ref=e174]: Your groups · 1
+          - generic [ref=e175]:
+            - button "New group" [ref=e176] [cursor=pointer]
+            - button "New manual 0 contacts" [ref=e180] [cursor=pointer]:
+              - generic [ref=e181]:
+                - generic [ref=e182]: New
+                - generic [ref=e183]: manual
+              - generic [ref=e184]: "0"
+              - generic [ref=e185]: contacts
+        - generic [ref=e186]:
+          - generic [ref=e187]: Smart segments · 10
+          - generic [ref=e188]:
+            - button "All leads smart 42 contacts" [disabled] [ref=e189]:
+              - generic [ref=e190]:
+                - generic [ref=e191]: All leads
+                - generic [ref=e192]: smart
+              - generic [ref=e193]: "42"
+              - generic [ref=e194]: contacts
+            - button "Customers smart 0 contacts" [disabled] [ref=e195]:
+              - generic [ref=e196]:
+                - generic [ref=e197]: Customers
+                - generic [ref=e198]: smart
+              - generic [ref=e199]: "0"
+              - generic [ref=e200]: contacts
+            - button "Has phone smart 3 contacts" [disabled] [ref=e201]:
+              - generic [ref=e202]:
+                - generic [ref=e203]: Has phone
+                - generic [ref=e204]: smart
+              - generic [ref=e205]: "3"
+              - generic [ref=e206]: contacts
+            - button "No phone smart 39 contacts" [disabled] [ref=e207]:
+              - generic [ref=e208]:
+                - generic [ref=e209]: No phone
+                - generic [ref=e210]: smart
+              - generic [ref=e211]: "39"
+              - generic [ref=e212]: contacts
+            - button "New smart 0 contacts" [disabled] [ref=e213]:
+              - generic [ref=e214]:
+                - generic [ref=e215]: New
+                - generic [ref=e216]: smart
+              - generic [ref=e217]: "0"
+              - generic [ref=e218]: contacts
+            - button "Contacted smart 1 contacts" [disabled] [ref=e219]:
+              - generic [ref=e220]:
+                - generic [ref=e221]: Contacted
+                - generic [ref=e222]: smart
+              - generic [ref=e223]: "1"
+              - generic [ref=e224]: contacts
+            - button "Interested smart 0 contacts" [disabled] [ref=e225]:
+              - generic [ref=e226]:
+                - generic [ref=e227]: Interested
+                - generic [ref=e228]: smart
+              - generic [ref=e229]: "0"
+              - generic [ref=e230]: contacts
+            - button "Waiting smart 1 contacts" [disabled] [ref=e231]:
+              - generic [ref=e232]:
+                - generic [ref=e233]: Waiting
+                - generic [ref=e234]: smart
+              - generic [ref=e235]: "1"
+              - generic [ref=e236]: contacts
+            - button "Won deals smart 1 contacts" [disabled] [ref=e237]:
+              - generic [ref=e238]:
+                - generic [ref=e239]: Won deals
+                - generic [ref=e240]: smart
+              - generic [ref=e241]: "1"
+              - generic [ref=e242]: contacts
+            - button "Lost deals smart 0 contacts" [disabled] [ref=e243]:
+              - generic [ref=e244]:
+                - generic [ref=e245]: Lost deals
+                - generic [ref=e246]: smart
+              - generic [ref=e247]: "0"
+              - generic [ref=e248]: contacts

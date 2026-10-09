@@ -20,6 +20,12 @@ const SCOPED_MODELS = new Set([
   "Tag",
   "Workflow",
   "WorkflowRun",
+  "AdsChatSession",
+  "AdsChatMessage",
+  "AdsPendingAction",
+  "AdsActionAudit",
+  "AdsWallet",
+  "AdsWalletTransaction",
 ]);
 
 const READ_ACTIONS = new Set([

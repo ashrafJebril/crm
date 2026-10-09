@@ -1,0 +1,27 @@
+- generic [ref=f2e3]:
+  - complementary [ref=f2e4]:
+    - img "Kewy Service Management" [ref=f2e8]:
+      - img [ref=f2e9]:
+        - generic [ref=f2e21]: Kewy
+        - generic [ref=f2e22]: SERVICE MANAGEMENT
+    - generic [ref=f2e23]:
+      - generic [ref=f2e24]: Admin Panel
+      - heading "Where elegance meets precision." [level=1] [ref=f2e29]
+      - paragraph [ref=f2e30]: One panel for every shift, every payslip, and every smile.
+    - generic [ref=f2e31]: Trusted by leading salons across the kingdom
+  - main [ref=f2e32]:
+    - button "Arabic" [ref=f2e34] [cursor=pointer]: ع
+    - generic [ref=f2e35]:
+      - heading "Welcome back" [level=2] [ref=f2e36]
+      - paragraph [ref=f2e37]: Sign in to manage your salon
+      - generic [ref=f2e38]: Mobile number
+      - textbox "07XXXXXXXX" [ref=f2e40]
+      - generic [ref=f2e41]: Password
+      - generic [ref=f2e42]:
+        - textbox [ref=f2e43]
+        - button "Show password" [ref=f2e44] [cursor=pointer]
+      - button "Sign in" [ref=f2e48] [cursor=pointer]
+      - generic [ref=f2e52]:
+        - text: Don't have an account?
+        - link "Create account" [ref=f2e53] [cursor=pointer]:
+          - /url: /signup

@@ -1,0 +1,869 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "Dashboard" [ref=f6e10968] [cursor=pointer]
+      - button "Inbox 7" [ref=f6e10969] [cursor=pointer]:
+        - generic [ref=f6e34]: Inbox
+        - generic [ref=f6e35]: "7"
+      - button "Calendar" [ref=f6e10970] [cursor=pointer]
+      - button "Social" [ref=f6e10971] [cursor=pointer]
+      - button "Campaigns" [ref=f6e10972] [cursor=pointer]
+      - button "Pipeline" [ref=f6e10973] [cursor=pointer]
+      - button "Contacts" [ref=f6e10974] [cursor=pointer]
+      - button "Analytics" [ref=f6e10975] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "Templates" [ref=f6e10976] [cursor=pointer]
+      - button "Media" [ref=f6e10977] [cursor=pointer]
+      - button "Team" [ref=f6e10978] [cursor=pointer]
+      - button "Settings" [ref=f6e10979] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "Admin portal" [ref=f6e10980] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: Contacts
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f6e10981]
+        - generic [ref=f6e125]: ⌘K
+      - button "ع" [ref=f6e10982] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "Notifications" [ref=f6e10983] [cursor=pointer]
+      - button "Create" [ref=f6e10984] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "Sign out" [ref=f6e10985] [cursor=pointer]
+    - generic [ref=f6e8881]:
+      - generic [ref=f6e8883]:
+        - generic [ref=f6e8884]:
+          - heading "Contacts" [level=1] [ref=f6e10986]
+          - paragraph [ref=f6e8886]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=f6e8887]:
+          - generic [ref=f6e8888]:
+            - button "Table" [ref=f6e10987] [cursor=pointer]
+            - button "Pipeline" [ref=f6e10988] [cursor=pointer]
+          - button "New contact" [ref=f6e10989] [cursor=pointer]
+      - generic [ref=f6e8894]:
+        - button "Contacts" [ref=f6e10990] [cursor=pointer]
+        - button "Groups" [ref=f6e10991] [cursor=pointer]
+        - button "Tags" [ref=f6e10992] [cursor=pointer]
+      - generic [ref=f6e11106]:
+        - generic [ref=f6e11107]:
+          - button "All 42" [ref=f6e11108] [cursor=pointer]:
+            - text: All
+            - generic [ref=f6e11109]: "42"
+          - button "All leads 42" [ref=f6e11110] [cursor=pointer]:
+            - text: All leads
+            - generic [ref=f6e11112]: "42"
+          - button "Customers 0" [ref=f6e11113] [cursor=pointer]:
+            - text: Customers
+            - generic [ref=f6e11115]: "0"
+          - button "Has phone 3" [ref=f6e11116] [cursor=pointer]:
+            - text: Has phone
+            - generic [ref=f6e11118]: "3"
+          - button "No phone 39" [ref=f6e11119] [cursor=pointer]:
+            - text: No phone
+            - generic [ref=f6e11121]: "39"
+          - button "Manage segments" [ref=f6e11125] [cursor=pointer]
+          - textbox "Search contacts…" [ref=f6e11128]
+        - generic [ref=f6e12161]:
+          - generic [ref=f6e12162]:
+            - generic [ref=f6e12163]: 1 selected
+            - button "Tag" [ref=f6e12164] [cursor=pointer]
+            - combobox [ref=f6e12168]:
+              - option "Add to group…" [selected]
+            - button "Add to campaign" [ref=f6e12169] [cursor=pointer]
+            - button "Delete" [ref=f6e12174] [cursor=pointer]
+          - table [ref=f6e12178]:
+            - rowgroup [ref=f6e12179]:
+              - row [ref=f6e12180]:
+                - columnheader [ref=f6e12181]:
+                  - checkbox [ref=f6e12182]
+                - columnheader "Name" [ref=f6e12183]
+                - columnheader "Phone" [ref=f6e12184]
+                - columnheader "Tags" [ref=f6e12185]
+                - columnheader "Lifecycle" [ref=f6e12186]
+                - columnheader "Source" [ref=f6e12187]
+                - columnheader "Convs" [ref=f6e12188]
+                - columnheader "Value" [ref=f6e12189]
+                - columnheader "Last seen" [ref=f6e12190]
+                - columnheader [ref=f6e12191]
+            - rowgroup [ref=f6e12192]:
+              - row [ref=f6e12193] [cursor=pointer]:
+                - cell [ref=f6e12194]:
+                  - checkbox [checked] [ref=f6e12195]
+                - cell "IU Instagram User instagram" [ref=f6e12196]:
+                  - generic [ref=f6e12197]:
+                    - generic [ref=f6e12198]: IU
+                    - generic [ref=f6e12199]:
+                      - generic [ref=f6e12200]: Instagram User
+                      - generic [ref=f6e12201]: instagram
+                - cell [ref=f6e12202]
+                - cell [ref=f6e12203]
+                - cell "lead" [ref=f6e12204]
+                - cell "instagram" [ref=f6e12205]
+                - cell "0" [ref=f6e12206]
+                - cell "—" [ref=f6e12207]
+                - cell "—" [ref=f6e12208]
+                - cell [ref=f6e12209]:
+                  - button [ref=f6e12210]
+              - row [ref=f6e12215] [cursor=pointer]:
+                - cell [ref=f6e12216]:
+                  - checkbox [ref=f6e12217]
+                - cell "م مـنال instagram" [ref=f6e12218]:
+                  - generic [ref=f6e12219]:
+                    - generic [ref=f6e12220]: م
+                    - generic [ref=f6e12221]:
+                      - generic [ref=f6e12222]: مـنال
+                      - generic [ref=f6e12223]: instagram
+                - cell [ref=f6e12224]
+                - cell [ref=f6e12225]
+                - cell "lead" [ref=f6e12226]
+                - cell "instagram" [ref=f6e12227]
+                - cell "0" [ref=f6e12228]
+                - cell "—" [ref=f6e12229]
+                - cell "—" [ref=f6e12230]
+                - cell [ref=f6e12231]:
+                  - button [ref=f6e12232]
+              - row [ref=f6e12237] [cursor=pointer]:
+                - cell [ref=f6e12238]:
+                  - checkbox [ref=f6e12239]
+                - cell "FB Feras Balawi 🤗 whatsapp" [ref=f6e12240]:
+                  - generic [ref=f6e12241]:
+                    - generic [ref=f6e12242]: FB
+                    - generic [ref=f6e12243]:
+                      - generic [ref=f6e12244]: Feras Balawi 🤗
+                      - generic [ref=f6e12245]: whatsapp
+                - cell "+962799828287" [ref=f6e12246]
+                - cell [ref=f6e12247]
+                - cell "lead" [ref=f6e12248]
+                - cell "whatsapp" [ref=f6e12249]
+                - cell "0" [ref=f6e12250]
+                - cell "—" [ref=f6e12251]
+                - cell "now" [ref=f6e12252]
+                - cell [ref=f6e12253]:
+                  - button [ref=f6e12254]
+              - row [ref=f6e12259] [cursor=pointer]:
+                - cell [ref=f6e12260]:
+                  - checkbox [ref=f6e12261]
+                - cell "N njoudaldabain instagram" [ref=f6e12262]:
+                  - generic [ref=f6e12263]:
+                    - generic [ref=f6e12264]: "N"
+                    - generic [ref=f6e12265]:
+                      - generic [ref=f6e12266]: njoudaldabain
+                      - generic [ref=f6e12267]: instagram
+                - cell [ref=f6e12268]
+                - cell [ref=f6e12269]
+                - cell "lead" [ref=f6e12270]
+                - cell "instagram" [ref=f6e12271]
+                - cell "0" [ref=f6e12272]
+                - cell "—" [ref=f6e12273]
+                - cell "—" [ref=f6e12274]
+                - cell [ref=f6e12275]:
+                  - button [ref=f6e12276]
+              - row [ref=f6e12281] [cursor=pointer]:
+                - cell [ref=f6e12282]:
+                  - checkbox [ref=f6e12283]
+                - cell "I intisarjawawdeh instagram" [ref=f6e12284]:
+                  - generic [ref=f6e12285]:
+                    - generic [ref=f6e12286]: I
+                    - generic [ref=f6e12287]:
+                      - generic [ref=f6e12288]: intisarjawawdeh
+                      - generic [ref=f6e12289]: instagram
+                - cell [ref=f6e12290]
+                - cell [ref=f6e12291]
+                - cell "lead" [ref=f6e12292]
+                - cell "instagram" [ref=f6e12293]
+                - cell "0" [ref=f6e12294]
+                - cell "—" [ref=f6e12295]
+                - cell "—" [ref=f6e12296]
+                - cell [ref=f6e12297]:
+                  - button [ref=f6e12298]
+              - row [ref=f6e12303] [cursor=pointer]:
+                - cell [ref=f6e12304]:
+                  - checkbox [ref=f6e12305]
+                - cell "S salamalqudah instagram" [ref=f6e12306]:
+                  - generic [ref=f6e12307]:
+                    - generic [ref=f6e12308]: S
+                    - generic [ref=f6e12309]:
+                      - generic [ref=f6e12310]: salamalqudah
+                      - generic [ref=f6e12311]: instagram
+                - cell [ref=f6e12312]
+                - cell [ref=f6e12313]
+                - cell "lead" [ref=f6e12314]
+                - cell "instagram" [ref=f6e12315]
+                - cell "0" [ref=f6e12316]
+                - cell "—" [ref=f6e12317]
+                - cell "—" [ref=f6e12318]
+                - cell [ref=f6e12319]:
+                  - button [ref=f6e12320]
+              - row [ref=f6e12325] [cursor=pointer]:
+                - cell [ref=f6e12326]:
+                  - checkbox [ref=f6e12327]
+                - cell "W wejdanalabbadi instagram" [ref=f6e12328]:
+                  - generic [ref=f6e12329]:
+                    - generic [ref=f6e12330]: W
+                    - generic [ref=f6e12331]:
+                      - generic [ref=f6e12332]: wejdanalabbadi
+                      - generic [ref=f6e12333]: instagram
+                - cell [ref=f6e12334]
+                - cell [ref=f6e12335]
+                - cell "lead" [ref=f6e12336]
+                - cell "instagram" [ref=f6e12337]
+                - cell "0" [ref=f6e12338]
+                - cell "—" [ref=f6e12339]
+                - cell "—" [ref=f6e12340]
+                - cell [ref=f6e12341]:
+                  - button [ref=f6e12342]
+              - row [ref=f6e12347] [cursor=pointer]:
+                - cell [ref=f6e12348]:
+                  - checkbox [ref=f6e12349]
+                - cell "M mayshijazi instagram" [ref=f6e12350]:
+                  - generic [ref=f6e12351]:
+                    - generic [ref=f6e12352]: M
+                    - generic [ref=f6e12353]:
+                      - generic [ref=f6e12354]: mayshijazi
+                      - generic [ref=f6e12355]: instagram
+                - cell [ref=f6e12356]
+                - cell [ref=f6e12357]
+                - cell "lead" [ref=f6e12358]
+                - cell "instagram" [ref=f6e12359]
+                - cell "0" [ref=f6e12360]
+                - cell "—" [ref=f6e12361]
+                - cell "—" [ref=f6e12362]
+                - cell [ref=f6e12363]:
+                  - button [ref=f6e12364]
+              - row [ref=f6e12369] [cursor=pointer]:
+                - cell [ref=f6e12370]:
+                  - checkbox [ref=f6e12371]
+                - cell "M muna.hijazeen3 instagram" [ref=f6e12372]:
+                  - generic [ref=f6e12373]:
+                    - generic [ref=f6e12374]: M
+                    - generic [ref=f6e12375]:
+                      - generic [ref=f6e12376]: muna.hijazeen3
+                      - generic [ref=f6e12377]: instagram
+                - cell [ref=f6e12378]
+                - cell [ref=f6e12379]
+                - cell "lead" [ref=f6e12380]
+                - cell "instagram" [ref=f6e12381]
+                - cell "0" [ref=f6e12382]
+                - cell "—" [ref=f6e12383]
+                - cell "—" [ref=f6e12384]
+                - cell [ref=f6e12385]:
+                  - button [ref=f6e12386]
+              - row [ref=f6e12391] [cursor=pointer]:
+                - cell [ref=f6e12392]:
+                  - checkbox [ref=f6e12393]
+                - cell "F fifi.manasrah instagram" [ref=f6e12394]:
+                  - generic [ref=f6e12395]:
+                    - generic [ref=f6e12396]: F
+                    - generic [ref=f6e12397]:
+                      - generic [ref=f6e12398]: fifi.manasrah
+                      - generic [ref=f6e12399]: instagram
+                - cell [ref=f6e12400]
+                - cell [ref=f6e12401]
+                - cell "lead" [ref=f6e12402]
+                - cell "instagram" [ref=f6e12403]
+                - cell "0" [ref=f6e12404]
+                - cell "—" [ref=f6e12405]
+                - cell "—" [ref=f6e12406]
+                - cell [ref=f6e12407]:
+                  - button [ref=f6e12408]
+              - row [ref=f6e12413] [cursor=pointer]:
+                - cell [ref=f6e12414]:
+                  - checkbox [ref=f6e12415]
+                - cell "M malak_mloook instagram" [ref=f6e12416]:
+                  - generic [ref=f6e12417]:
+                    - generic [ref=f6e12418]: M
+                    - generic [ref=f6e12419]:
+                      - generic [ref=f6e12420]: malak_mloook
+                      - generic [ref=f6e12421]: instagram
+                - cell [ref=f6e12422]
+                - cell [ref=f6e12423]
+                - cell "lead" [ref=f6e12424]
+                - cell "instagram" [ref=f6e12425]
+                - cell "0" [ref=f6e12426]
+                - cell "—" [ref=f6e12427]
+                - cell "—" [ref=f6e12428]
+                - cell [ref=f6e12429]:
+                  - button [ref=f6e12430]
+              - row [ref=f6e12435] [cursor=pointer]:
+                - cell [ref=f6e12436]:
+                  - checkbox [ref=f6e12437]
+                - cell "D daadaladwan instagram" [ref=f6e12438]:
+                  - generic [ref=f6e12439]:
+                    - generic [ref=f6e12440]: D
+                    - generic [ref=f6e12441]:
+                      - generic [ref=f6e12442]: daadaladwan
+                      - generic [ref=f6e12443]: instagram
+                - cell [ref=f6e12444]
+                - cell [ref=f6e12445]
+                - cell "lead" [ref=f6e12446]
+                - cell "instagram" [ref=f6e12447]
+                - cell "0" [ref=f6e12448]
+                - cell "—" [ref=f6e12449]
+                - cell "—" [ref=f6e12450]
+                - cell [ref=f6e12451]:
+                  - button [ref=f6e12452]
+              - row [ref=f6e12457] [cursor=pointer]:
+                - cell [ref=f6e12458]:
+                  - checkbox [ref=f6e12459]
+                - cell "M makhamrehjumana instagram" [ref=f6e12460]:
+                  - generic [ref=f6e12461]:
+                    - generic [ref=f6e12462]: M
+                    - generic [ref=f6e12463]:
+                      - generic [ref=f6e12464]: makhamrehjumana
+                      - generic [ref=f6e12465]: instagram
+                - cell [ref=f6e12466]
+                - cell [ref=f6e12467]
+                - cell "lead" [ref=f6e12468]
+                - cell "instagram" [ref=f6e12469]
+                - cell "0" [ref=f6e12470]
+                - cell "—" [ref=f6e12471]
+                - cell "—" [ref=f6e12472]
+                - cell [ref=f6e12473]:
+                  - button [ref=f6e12474]
+              - row [ref=f6e12479] [cursor=pointer]:
+                - cell [ref=f6e12480]:
+                  - checkbox [ref=f6e12481]
+                - cell "M motasemamleh instagram" [ref=f6e12482]:
+                  - generic [ref=f6e12483]:
+                    - generic [ref=f6e12484]: M
+                    - generic [ref=f6e12485]:
+                      - generic [ref=f6e12486]: motasemamleh
+                      - generic [ref=f6e12487]: instagram
+                - cell [ref=f6e12488]
+                - cell [ref=f6e12489]
+                - cell "lead" [ref=f6e12490]
+                - cell "instagram" [ref=f6e12491]
+                - cell "0" [ref=f6e12492]
+                - cell "—" [ref=f6e12493]
+                - cell "—" [ref=f6e12494]
+                - cell [ref=f6e12495]:
+                  - button [ref=f6e12496]
+              - row [ref=f6e12501] [cursor=pointer]:
+                - cell [ref=f6e12502]:
+                  - checkbox [ref=f6e12503]
+                - cell "H hamzeh.duridi instagram" [ref=f6e12504]:
+                  - generic [ref=f6e12505]:
+                    - generic [ref=f6e12506]: H
+                    - generic [ref=f6e12507]:
+                      - generic [ref=f6e12508]: hamzeh.duridi
+                      - generic [ref=f6e12509]: instagram
+                - cell [ref=f6e12510]
+                - cell [ref=f6e12511]
+                - cell "lead" [ref=f6e12512]
+                - cell "instagram" [ref=f6e12513]
+                - cell "0" [ref=f6e12514]
+                - cell "—" [ref=f6e12515]
+                - cell "—" [ref=f6e12516]
+                - cell [ref=f6e12517]:
+                  - button [ref=f6e12518]
+              - row [ref=f6e12523] [cursor=pointer]:
+                - cell [ref=f6e12524]:
+                  - checkbox [ref=f6e12525]
+                - cell "Y yazan.barjawi instagram" [ref=f6e12526]:
+                  - generic [ref=f6e12527]:
+                    - generic [ref=f6e12528]: "Y"
+                    - generic [ref=f6e12529]:
+                      - generic [ref=f6e12530]: yazan.barjawi
+                      - generic [ref=f6e12531]: instagram
+                - cell [ref=f6e12532]
+                - cell [ref=f6e12533]
+                - cell "lead" [ref=f6e12534]
+                - cell "instagram" [ref=f6e12535]
+                - cell "0" [ref=f6e12536]
+                - cell "—" [ref=f6e12537]
+                - cell "—" [ref=f6e12538]
+                - cell [ref=f6e12539]:
+                  - button [ref=f6e12540]
+              - row [ref=f6e12545] [cursor=pointer]:
+                - cell [ref=f6e12546]:
+                  - checkbox [ref=f6e12547]
+                - cell "A albustanjihuda instagram" [ref=f6e12548]:
+                  - generic [ref=f6e12549]:
+                    - generic [ref=f6e12550]: A
+                    - generic [ref=f6e12551]:
+                      - generic [ref=f6e12552]: albustanjihuda
+                      - generic [ref=f6e12553]: instagram
+                - cell [ref=f6e12554]
+                - cell [ref=f6e12555]
+                - cell "lead" [ref=f6e12556]
+                - cell "instagram" [ref=f6e12557]
+                - cell "0" [ref=f6e12558]
+                - cell "—" [ref=f6e12559]
+                - cell "—" [ref=f6e12560]
+                - cell [ref=f6e12561]:
+                  - button [ref=f6e12562]
+              - row [ref=f6e12567] [cursor=pointer]:
+                - cell [ref=f6e12568]:
+                  - checkbox [ref=f6e12569]
+                - cell "A a.b.abood_ instagram" [ref=f6e12570]:
+                  - generic [ref=f6e12571]:
+                    - generic [ref=f6e12572]: A
+                    - generic [ref=f6e12573]:
+                      - generic [ref=f6e12574]: a.b.abood_
+                      - generic [ref=f6e12575]: instagram
+                - cell [ref=f6e12576]
+                - cell [ref=f6e12577]
+                - cell "lead" [ref=f6e12578]
+                - cell "instagram" [ref=f6e12579]
+                - cell "0" [ref=f6e12580]
+                - cell "—" [ref=f6e12581]
+                - cell "—" [ref=f6e12582]
+                - cell [ref=f6e12583]:
+                  - button [ref=f6e12584]
+              - row [ref=f6e12589] [cursor=pointer]:
+                - cell [ref=f6e12590]:
+                  - checkbox [ref=f6e12591]
+                - cell "R raad_amira28 instagram" [ref=f6e12592]:
+                  - generic [ref=f6e12593]:
+                    - generic [ref=f6e12594]: R
+                    - generic [ref=f6e12595]:
+                      - generic [ref=f6e12596]: raad_amira28
+                      - generic [ref=f6e12597]: instagram
+                - cell [ref=f6e12598]
+                - cell [ref=f6e12599]
+                - cell "lead" [ref=f6e12600]
+                - cell "instagram" [ref=f6e12601]
+                - cell "0" [ref=f6e12602]
+                - cell "—" [ref=f6e12603]
+                - cell "—" [ref=f6e12604]
+                - cell [ref=f6e12605]:
+                  - button [ref=f6e12606]
+              - row [ref=f6e12611] [cursor=pointer]:
+                - cell [ref=f6e12612]:
+                  - checkbox [ref=f6e12613]
+                - cell "0 0o0.d0 instagram" [ref=f6e12614]:
+                  - generic [ref=f6e12615]:
+                    - generic [ref=f6e12616]: "0"
+                    - generic [ref=f6e12617]:
+                      - generic [ref=f6e12618]: 0o0.d0
+                      - generic [ref=f6e12619]: instagram
+                - cell [ref=f6e12620]
+                - cell [ref=f6e12621]
+                - cell "lead" [ref=f6e12622]
+                - cell "instagram" [ref=f6e12623]
+                - cell "0" [ref=f6e12624]
+                - cell "—" [ref=f6e12625]
+                - cell "—" [ref=f6e12626]
+                - cell [ref=f6e12627]:
+                  - button [ref=f6e12628]
+              - row [ref=f6e12633] [cursor=pointer]:
+                - cell [ref=f6e12634]:
+                  - checkbox [ref=f6e12635]
+                - cell "_ __areej_16 instagram" [ref=f6e12636]:
+                  - generic [ref=f6e12637]:
+                    - generic [ref=f6e12638]: _
+                    - generic [ref=f6e12639]:
+                      - generic [ref=f6e12640]: __areej_16
+                      - generic [ref=f6e12641]: instagram
+                - cell [ref=f6e12642]
+                - cell [ref=f6e12643]
+                - cell "lead" [ref=f6e12644]
+                - cell "instagram" [ref=f6e12645]
+                - cell "0" [ref=f6e12646]
+                - cell "—" [ref=f6e12647]
+                - cell "—" [ref=f6e12648]
+                - cell [ref=f6e12649]:
+                  - button [ref=f6e12650]
+              - row [ref=f6e12655] [cursor=pointer]:
+                - cell [ref=f6e12656]:
+                  - checkbox [ref=f6e12657]
+                - cell "6 6.inr_ instagram" [ref=f6e12658]:
+                  - generic [ref=f6e12659]:
+                    - generic [ref=f6e12660]: "6"
+                    - generic [ref=f6e12661]:
+                      - generic [ref=f6e12662]: 6.inr_
+                      - generic [ref=f6e12663]: instagram
+                - cell [ref=f6e12664]
+                - cell [ref=f6e12665]
+                - cell "lead" [ref=f6e12666]
+                - cell "instagram" [ref=f6e12667]
+                - cell "0" [ref=f6e12668]
+                - cell "—" [ref=f6e12669]
+                - cell "—" [ref=f6e12670]
+                - cell [ref=f6e12671]:
+                  - button [ref=f6e12672]
+              - row [ref=f6e12677] [cursor=pointer]:
+                - cell [ref=f6e12678]:
+                  - checkbox [ref=f6e12679]
+                - cell "R rama__alomari instagram" [ref=f6e12680]:
+                  - generic [ref=f6e12681]:
+                    - generic [ref=f6e12682]: R
+                    - generic [ref=f6e12683]:
+                      - generic [ref=f6e12684]: rama__alomari
+                      - generic [ref=f6e12685]: instagram
+                - cell [ref=f6e12686]
+                - cell [ref=f6e12687]
+                - cell "lead" [ref=f6e12688]
+                - cell "instagram" [ref=f6e12689]
+                - cell "0" [ref=f6e12690]
+                - cell "—" [ref=f6e12691]
+                - cell "—" [ref=f6e12692]
+                - cell [ref=f6e12693]:
+                  - button [ref=f6e12694]
+              - row [ref=f6e12699] [cursor=pointer]:
+                - cell [ref=f6e12700]:
+                  - checkbox [ref=f6e12701]
+                - cell "A aya.eid2.22 instagram" [ref=f6e12702]:
+                  - generic [ref=f6e12703]:
+                    - generic [ref=f6e12704]: A
+                    - generic [ref=f6e12705]:
+                      - generic [ref=f6e12706]: aya.eid2.22
+                      - generic [ref=f6e12707]: instagram
+                - cell [ref=f6e12708]
+                - cell [ref=f6e12709]
+                - cell "lead" [ref=f6e12710]
+                - cell "instagram" [ref=f6e12711]
+                - cell "0" [ref=f6e12712]
+                - cell "—" [ref=f6e12713]
+                - cell "—" [ref=f6e12714]
+                - cell [ref=f6e12715]:
+                  - button [ref=f6e12716]
+              - row [ref=f6e12721] [cursor=pointer]:
+                - cell [ref=f6e12722]:
+                  - checkbox [ref=f6e12723]
+                - cell "B besan.kwaik instagram" [ref=f6e12724]:
+                  - generic [ref=f6e12725]:
+                    - generic [ref=f6e12726]: B
+                    - generic [ref=f6e12727]:
+                      - generic [ref=f6e12728]: besan.kwaik
+                      - generic [ref=f6e12729]: instagram
+                - cell [ref=f6e12730]
+                - cell [ref=f6e12731]
+                - cell "lead" [ref=f6e12732]
+                - cell "instagram" [ref=f6e12733]
+                - cell "0" [ref=f6e12734]
+                - cell "—" [ref=f6e12735]
+                - cell "—" [ref=f6e12736]
+                - cell [ref=f6e12737]:
+                  - button [ref=f6e12738]
+              - row [ref=f6e12743] [cursor=pointer]:
+                - cell [ref=f6e12744]:
+                  - checkbox [ref=f6e12745]
+                - cell "P purplestardustt instagram" [ref=f6e12746]:
+                  - generic [ref=f6e12747]:
+                    - generic [ref=f6e12748]: P
+                    - generic [ref=f6e12749]:
+                      - generic [ref=f6e12750]: purplestardustt
+                      - generic [ref=f6e12751]: instagram
+                - cell [ref=f6e12752]
+                - cell [ref=f6e12753]
+                - cell "lead" [ref=f6e12754]
+                - cell "instagram" [ref=f6e12755]
+                - cell "0" [ref=f6e12756]
+                - cell "—" [ref=f6e12757]
+                - cell "—" [ref=f6e12758]
+                - cell [ref=f6e12759]:
+                  - button [ref=f6e12760]
+              - row [ref=f6e12765] [cursor=pointer]:
+                - cell [ref=f6e12766]:
+                  - checkbox [ref=f6e12767]
+                - cell "N natalieomarii instagram" [ref=f6e12768]:
+                  - generic [ref=f6e12769]:
+                    - generic [ref=f6e12770]: "N"
+                    - generic [ref=f6e12771]:
+                      - generic [ref=f6e12772]: natalieomarii
+                      - generic [ref=f6e12773]: instagram
+                - cell [ref=f6e12774]
+                - cell [ref=f6e12775]
+                - cell "lead" [ref=f6e12776]
+                - cell "instagram" [ref=f6e12777]
+                - cell "0" [ref=f6e12778]
+                - cell "—" [ref=f6e12779]
+                - cell "—" [ref=f6e12780]
+                - cell [ref=f6e12781]:
+                  - button [ref=f6e12782]
+              - row [ref=f6e12787] [cursor=pointer]:
+                - cell [ref=f6e12788]:
+                  - checkbox [ref=f6e12789]
+                - cell "R razanshteiwi instagram" [ref=f6e12790]:
+                  - generic [ref=f6e12791]:
+                    - generic [ref=f6e12792]: R
+                    - generic [ref=f6e12793]:
+                      - generic [ref=f6e12794]: razanshteiwi
+                      - generic [ref=f6e12795]: instagram
+                - cell [ref=f6e12796]
+                - cell [ref=f6e12797]
+                - cell "lead" [ref=f6e12798]
+                - cell "instagram" [ref=f6e12799]
+                - cell "0" [ref=f6e12800]
+                - cell "—" [ref=f6e12801]
+                - cell "—" [ref=f6e12802]
+                - cell [ref=f6e12803]:
+                  - button [ref=f6e12804]
+              - row [ref=f6e12809] [cursor=pointer]:
+                - cell [ref=f6e12810]:
+                  - checkbox [ref=f6e12811]
+                - cell "A amalnaseraltum instagram" [ref=f6e12812]:
+                  - generic [ref=f6e12813]:
+                    - generic [ref=f6e12814]: A
+                    - generic [ref=f6e12815]:
+                      - generic [ref=f6e12816]: amalnaseraltum
+                      - generic [ref=f6e12817]: instagram
+                - cell [ref=f6e12818]
+                - cell [ref=f6e12819]
+                - cell "lead" [ref=f6e12820]
+                - cell "instagram" [ref=f6e12821]
+                - cell "0" [ref=f6e12822]
+                - cell "—" [ref=f6e12823]
+                - cell "—" [ref=f6e12824]
+                - cell [ref=f6e12825]:
+                  - button [ref=f6e12826]
+              - row [ref=f6e12831] [cursor=pointer]:
+                - cell [ref=f6e12832]:
+                  - checkbox [ref=f6e12833]
+                - cell "R Razan whatsapp" [ref=f6e12834]:
+                  - generic [ref=f6e12835]:
+                    - generic [ref=f6e12836]: R
+                    - generic [ref=f6e12837]:
+                      - generic [ref=f6e12838]: Razan
+                      - generic [ref=f6e12839]: whatsapp
+                - cell "+962792917293" [ref=f6e12840]
+                - cell [ref=f6e12841]
+                - cell "lead" [ref=f6e12842]
+                - cell "whatsapp" [ref=f6e12843]
+                - cell "0" [ref=f6e12844]
+                - cell "—" [ref=f6e12845]
+                - cell "now" [ref=f6e12846]
+                - cell [ref=f6e12847]:
+                  - button [ref=f6e12848]
+              - row [ref=f6e12853] [cursor=pointer]:
+                - cell [ref=f6e12854]:
+                  - checkbox [ref=f6e12855]
+                - cell "\ud835 𝑶𝒎𝒂𝒓_𝑨𝒍-𝑹𝒂𝒘𝒂𝒔𝒉𝒅𝒆𝒉 instagram" [ref=f6e12856]:
+                  - generic [ref=f6e12857]:
+                    - generic [ref=f6e12858]: �
+                    - generic [ref=f6e12859]:
+                      - generic [ref=f6e12860]: 𝑶𝒎𝒂𝒓_𝑨𝒍-𝑹𝒂𝒘𝒂𝒔𝒉𝒅𝒆𝒉
+                      - generic [ref=f6e12861]: instagram
+                - cell [ref=f6e12862]
+                - cell [ref=f6e12863]
+                - cell "lead" [ref=f6e12864]
+                - cell "instagram" [ref=f6e12865]
+                - cell "0" [ref=f6e12866]
+                - cell "—" [ref=f6e12867]
+                - cell "now" [ref=f6e12868]
+                - cell [ref=f6e12869]:
+                  - button [ref=f6e12870]
+              - row [ref=f6e12875] [cursor=pointer]:
+                - cell [ref=f6e12876]:
+                  - checkbox [ref=f6e12877]
+                - cell "E Ellen instagram" [ref=f6e12878]:
+                  - generic [ref=f6e12879]:
+                    - generic [ref=f6e12880]: E
+                    - generic [ref=f6e12881]:
+                      - generic [ref=f6e12882]: Ellen
+                      - generic [ref=f6e12883]: instagram
+                - cell [ref=f6e12884]
+                - cell [ref=f6e12885]
+                - cell "lead" [ref=f6e12886]
+                - cell "instagram" [ref=f6e12887]
+                - cell "0" [ref=f6e12888]
+                - cell "—" [ref=f6e12889]
+                - cell "now" [ref=f6e12890]
+                - cell [ref=f6e12891]:
+                  - button [ref=f6e12892]
+              - row [ref=f6e12897] [cursor=pointer]:
+                - cell [ref=f6e12898]:
+                  - checkbox [ref=f6e12899]
+                - cell "AA Ammar Alamleh social" [ref=f6e12900]:
+                  - generic [ref=f6e12901]:
+                    - generic [ref=f6e12902]: AA
+                    - generic [ref=f6e12903]:
+                      - generic [ref=f6e12904]: Ammar Alamleh
+                      - generic [ref=f6e12905]: social
+                - cell [ref=f6e12906]
+                - cell "SmokeTest" [ref=f6e12907]
+                - cell "lead" [ref=f6e12910]
+                - cell "facebook" [ref=f6e12911]
+                - cell "0" [ref=f6e12912]
+                - cell "—" [ref=f6e12913]
+                - cell "7/2/2026" [ref=f6e12914]
+                - cell [ref=f6e12915]:
+                  - button [ref=f6e12916]
+              - row [ref=f6e12921] [cursor=pointer]:
+                - cell [ref=f6e12922]:
+                  - checkbox [ref=f6e12923]
+                - cell "يا يحيى المشاقبه social" [ref=f6e12924]:
+                  - generic [ref=f6e12925]:
+                    - generic [ref=f6e12926]: يا
+                    - generic [ref=f6e12927]:
+                      - generic [ref=f6e12928]: يحيى المشاقبه
+                      - generic [ref=f6e12929]: social
+                - cell [ref=f6e12930]
+                - cell [ref=f6e12931]
+                - cell "lead" [ref=f6e12932]
+                - cell "facebook" [ref=f6e12933]
+                - cell "0" [ref=f6e12934]
+                - cell "—" [ref=f6e12935]
+                - cell "6/12/2026" [ref=f6e12936]
+                - cell [ref=f6e12937]:
+                  - button [ref=f6e12938]
+              - row [ref=f6e12943] [cursor=pointer]:
+                - cell [ref=f6e12944]:
+                  - checkbox [ref=f6e12945]
+                - cell "YA Yazan Al Talb social" [ref=f6e12946]:
+                  - generic [ref=f6e12947]:
+                    - generic [ref=f6e12948]: YA
+                    - generic [ref=f6e12949]:
+                      - generic [ref=f6e12950]: Yazan Al Talb
+                      - generic [ref=f6e12951]: social
+                - cell [ref=f6e12952]
+                - cell [ref=f6e12953]
+                - cell "lead" [ref=f6e12954]
+                - cell "facebook" [ref=f6e12955]
+                - cell "0" [ref=f6e12956]
+                - cell "—" [ref=f6e12957]
+                - cell "6/16/2026" [ref=f6e12958]
+                - cell [ref=f6e12959]:
+                  - button [ref=f6e12960]
+              - row [ref=f6e12965] [cursor=pointer]:
+                - cell [ref=f6e12966]:
+                  - checkbox [ref=f6e12967]
+                - cell "AG Abdalrhman Ghazaleh social" [ref=f6e12968]:
+                  - generic [ref=f6e12969]:
+                    - generic [ref=f6e12970]: AG
+                    - generic [ref=f6e12971]:
+                      - generic [ref=f6e12972]: Abdalrhman Ghazaleh
+                      - generic [ref=f6e12973]: social
+                - cell [ref=f6e12974]
+                - cell [ref=f6e12975]
+                - cell "lead" [ref=f6e12976]
+                - cell "facebook" [ref=f6e12977]
+                - cell "0" [ref=f6e12978]
+                - cell "—" [ref=f6e12979]
+                - cell "6/20/2026" [ref=f6e12980]
+                - cell [ref=f6e12981]:
+                  - button [ref=f6e12982]
+              - row [ref=f6e12987] [cursor=pointer]:
+                - cell [ref=f6e12988]:
+                  - checkbox [ref=f6e12989]
+                - cell "MM Maram Mizher social" [ref=f6e12990]:
+                  - generic [ref=f6e12991]:
+                    - generic [ref=f6e12992]: MM
+                    - generic [ref=f6e12993]:
+                      - generic [ref=f6e12994]: Maram Mizher
+                      - generic [ref=f6e12995]: social
+                - cell [ref=f6e12996]
+                - cell [ref=f6e12997]
+                - cell "lead" [ref=f6e12998]
+                - cell "facebook" [ref=f6e12999]
+                - cell "0" [ref=f6e13000]
+                - cell "—" [ref=f6e13001]
+                - cell "6/21/2026" [ref=f6e13002]
+                - cell [ref=f6e13003]:
+                  - button [ref=f6e13004]
+              - row [ref=f6e13009] [cursor=pointer]:
+                - cell [ref=f6e13010]:
+                  - checkbox [ref=f6e13011]
+                - cell "LH Lina Hussein Mubarak social" [ref=f6e13012]:
+                  - generic [ref=f6e13013]:
+                    - generic [ref=f6e13014]: LH
+                    - generic [ref=f6e13015]:
+                      - generic [ref=f6e13016]: Lina Hussein Mubarak
+                      - generic [ref=f6e13017]: social
+                - cell [ref=f6e13018]
+                - cell [ref=f6e13019]
+                - cell "lead" [ref=f6e13020]
+                - cell "facebook" [ref=f6e13021]
+                - cell "0" [ref=f6e13022]
+                - cell "—" [ref=f6e13023]
+                - cell "6/2/2026" [ref=f6e13024]
+                - cell [ref=f6e13025]:
+                  - button [ref=f6e13026]
+              - row [ref=f6e13031] [cursor=pointer]:
+                - cell [ref=f6e13032]:
+                  - checkbox [ref=f6e13033]
+                - cell "AJ Ashraf Jibreel social" [ref=f6e13034]:
+                  - generic [ref=f6e13035]:
+                    - generic [ref=f6e13036]: AJ
+                    - generic [ref=f6e13037]:
+                      - generic [ref=f6e13038]: Ashraf Jibreel
+                      - generic [ref=f6e13039]: social
+                - cell [ref=f6e13040]
+                - cell [ref=f6e13041]
+                - cell "lead" [ref=f6e13042]
+                - cell "facebook" [ref=f6e13043]
+                - cell "0" [ref=f6e13044]
+                - cell "—" [ref=f6e13045]
+                - cell "6/4/2026" [ref=f6e13046]
+                - cell [ref=f6e13047]:
+                  - button [ref=f6e13048]
+              - row [ref=f6e13053] [cursor=pointer]:
+                - cell [ref=f6e13054]:
+                  - checkbox [ref=f6e13055]
+                - cell "A ashrafjib instagram" [ref=f6e13056]:
+                  - generic [ref=f6e13057]:
+                    - generic [ref=f6e13058]: A
+                    - generic [ref=f6e13059]:
+                      - generic [ref=f6e13060]: ashrafjib
+                      - generic [ref=f6e13061]: instagram
+                - cell [ref=f6e13062]
+                - cell [ref=f6e13063]
+                - cell "lead" [ref=f6e13064]
+                - cell "instagram" [ref=f6e13065]
+                - cell "0" [ref=f6e13066]
+                - cell "—" [ref=f6e13067]
+                - cell "6/2/2026" [ref=f6e13068]
+                - cell [ref=f6e13069]:
+                  - button [ref=f6e13070]
+              - row [ref=f6e13075] [cursor=pointer]:
+                - cell [ref=f6e13076]:
+                  - checkbox [ref=f6e13077]
+                - cell "سا سالم ابو كرم الجبارات social" [ref=f6e13078]:
+                  - generic [ref=f6e13079]:
+                    - generic [ref=f6e13080]: سا
+                    - generic [ref=f6e13081]:
+                      - generic [ref=f6e13082]: سالم ابو كرم الجبارات
+                      - generic [ref=f6e13083]: social
+                - cell [ref=f6e13084]
+                - cell [ref=f6e13085]
+                - cell "lead" [ref=f6e13086]
+                - cell "facebook" [ref=f6e13087]
+                - cell "0" [ref=f6e13088]
+                - cell "—" [ref=f6e13089]
+                - cell "5/23/2026" [ref=f6e13090]
+                - cell [ref=f6e13091]:
+                  - button [ref=f6e13092]
+              - row [ref=f6e13097] [cursor=pointer]:
+                - cell [ref=f6e13098]:
+                  - checkbox [ref=f6e13099]
+                - cell "A Ashraf whatsapp" [ref=f6e13100]:
+                  - generic [ref=f6e13101]:
+                    - generic [ref=f6e13102]: A
+                    - generic [ref=f6e13103]:
+                      - generic [ref=f6e13104]: Ashraf
+                      - generic [ref=f6e13105]: whatsapp
+                - cell "+962790286021" [ref=f6e13106]
+                - cell [ref=f6e13107]
+                - cell "lead" [ref=f6e13108]
+                - cell "whatsapp" [ref=f6e13109]
+                - cell "0" [ref=f6e13110]
+                - cell "—" [ref=f6e13111]
+                - cell "now" [ref=f6e13112]
+                - cell [ref=f6e13113]:
+                  - button [ref=f6e13114]

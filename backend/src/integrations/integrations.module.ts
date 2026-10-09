@@ -24,6 +24,8 @@ import { LToolsService } from "./l-tools.service";
 import { LMcpService } from "./l-mcp.service";
 import { McpTokenController } from "./mcp-token.controller";
 import { McpTokenService } from "./mcp-token.service";
+import { AiBridgeService } from "./ai-bridge.service";
+import { AiReplyController } from "./ai-reply.controller";
 import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
@@ -41,6 +43,9 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LWebhooksController,
     LConfigController,
     McpTokenController,
+    // Inert until KEWY_AI_URL + KEWY_AI_WEBHOOK_SECRET are set: without them
+    // AiBridgeService reports unconfigured and every signature check fails.
+    AiReplyController,
   ],
   providers: [
     FacebookService,
@@ -59,7 +64,19 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LMcpService,
     LAgentSetupService,
     McpTokenService,
+    AiBridgeService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, LAgentService, LAgentSetupService, McpTokenService],
+  exports: [
+    FacebookService,
+    InstagramService,
+    WhatsAppService,
+    ZernioService,
+    // TemplatesModule talks to the WhatsApp template endpoints directly.
+    ZernioClient,
+    AiBridgeService,
+    LAgentService,
+    LAgentSetupService,
+    McpTokenService,
+  ],
 })
 export class IntegrationsModule {}

@@ -36,6 +36,7 @@ import {
   type TicketsListPage,
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
+import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
@@ -1106,6 +1107,9 @@ function InboxList({
 }
 
 function Bubble({ m }: BubbleProps) {
+  // 'ai' is outbound too: it is the salon speaking, just not a person. Treating
+  // only 'human' as outbound put AI replies on the customer's side of the
+  // thread, which reads as though the customer said it.
   const isAi = m.from === "ai";
   const isOut = m.from === "human" || isAi;
   const { user } = useAuth();
@@ -1142,8 +1146,36 @@ function Bubble({ m }: BubbleProps) {
               justifyContent: "flex-end",
             }}
           >
-            <Avatar name={humanName} color={humanColor} size="sm" />
-            <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-2)" }}>{humanName}</span>
+            {isAi ? (
+              <>
+                {/* Staff must be able to tell at a glance who spoke. An AI reply
+                    that looks like a colleague's is how a wrong answer gets
+                    trusted. The 'shadow' agent suffix is set by the CRM when
+                    the draft was logged but never delivered. */}
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "var(--ink-2)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span aria-hidden>🤖</span>
+                  {m.agent?.includes("shadow")
+                    ? tx("AI (draft — not sent)", "الذكاء الاصطناعي (مسودة — لم تُرسل)")
+                    : tx("AI", "الذكاء الاصطناعي")}
+                </span>
+              </>
+            ) : (
+              <>
+                <Avatar name={humanName} color={humanColor} size="sm" />
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-2)" }}>
+                  {humanName}
+                </span>
+              </>
+            )}
           </div>
         )}
         <div
@@ -1152,7 +1184,13 @@ function Bubble({ m }: BubbleProps) {
             padding: "11px 15px",
             borderRadius: isOut ? "18px 18px 6px 18px" : "18px 18px 18px 6px",
             background: isOut ? "var(--bubble-out)" : "var(--bubble-in)",
-            border: `1px solid ${isOut ? "var(--bubble-out-line)" : "var(--bubble-in-line)"}`,
+            // A shadow draft is dashed: it is visible to staff but was never
+            // delivered, and nothing in the thread should imply the customer
+            // saw it.
+            border: m.agent?.includes("shadow")
+              ? "1px dashed var(--bubble-out-line)"
+              : `1px solid ${isOut ? "var(--bubble-out-line)" : "var(--bubble-in-line)"}`,
+            opacity: m.agent?.includes("shadow") ? 0.75 : 1,
             boxShadow: "var(--ix-shadow)",
             color: isOut ? "var(--bubble-out-ink)" : "var(--ink)",
             fontSize: 13.5,
@@ -1203,27 +1241,6 @@ function ConversationPane({
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
   const { user } = useAuth();
-  // Optimistic so the pill responds immediately; reverted if the PATCH fails,
-  // because a toggle that lies about whether a live page is auto-answering
-  // is worse than one that is briefly slow.
-  const [aiEnabled, setAiEnabled] = useState<boolean>(conv.aiEnabled === true);
-  const [aiSaving, setAiSaving] = useState<boolean>(false);
-  useEffect(() => {
-    setAiEnabled(conv.aiEnabled === true);
-  }, [conv.id, conv.aiEnabled]);
-
-  const toggleAi = async () => {
-    const next = !aiEnabled;
-    setAiEnabled(next);
-    setAiSaving(true);
-    try {
-      await api.patch<Conversation>(`/conversations/${conv.id}`, { aiEnabled: next });
-    } catch {
-      setAiEnabled(!next);
-    } finally {
-      setAiSaving(false);
-    }
-  };
   const [draft, setDraft] = useState<string>("");
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
@@ -1352,36 +1369,6 @@ function ConversationPane({
               <span className="dot" />
               {tx("Online", "متصل")}
             </span>
-            <button
-              type="button"
-              onClick={toggleAi}
-              disabled={aiSaving}
-              title={
-                aiEnabled
-                  ? tx(
-                      "The AI agent answers this thread automatically",
-                      "يرد الوكيل الذكي على هذه المحادثة تلقائيًا",
-                    )
-                  : tx(
-                      "Replies are written by hand on this thread",
-                      "يتم الرد على هذه المحادثة يدويًا",
-                    )
-              }
-              style={{
-                cursor: aiSaving ? "default" : "pointer",
-                border: "1px solid var(--line-soft)",
-                borderRadius: 999,
-                padding: "2px 9px",
-                fontSize: 11,
-                fontWeight: 700,
-                lineHeight: 1.6,
-                opacity: aiSaving ? 0.6 : 1,
-                background: aiEnabled ? "#8b5cf6" : "transparent",
-                color: aiEnabled ? "#fff" : "var(--ink-3)",
-              }}
-            >
-              {aiEnabled ? tx("AI on", "الذكاء مفعّل") : tx("AI off", "الذكاء متوقف")}
-            </button>
           </div>
           <div
             style={{
@@ -1398,6 +1385,12 @@ function ConversationPane({
           </div>
         </div>
         <div style={{ display: "flex", gap: 6 }}>
+          <ConversationAiToggle
+            conversationId={conv.id}
+            enabled={conv.aiEnabled ?? false}
+            pausedAt={conv.aiPausedAt ?? null}
+            lang={lang}
+          />
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
@@ -2031,6 +2024,21 @@ function WhatsAppTemplatePicker({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, sending, onClose]);
 
+  // Live preview of what the customer will see, with variables substituted.
+  //
+  // MUST stay ABOVE the `if (!open)` early return below. It used to sit further
+  // down next to the render, so a closed picker ran 20 hooks and an open one ran
+  // 21 — React threw "Rendered more hooks than during the previous render" and
+  // tore down the whole Inbox the moment you clicked Use template.
+  const preview = useMemo(() => {
+    if (!selected?.body) return "";
+    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
+      const i = parseInt(idx, 10) - 1;
+      const v = vars[i]?.trim();
+      return v || `{{${idx}}}`;
+    });
+  }, [selected, vars]);
+
   if (!open) return null;
 
   const canSend =
@@ -2055,15 +2063,6 @@ function WhatsAppTemplatePicker({
     }
   };
 
-  // Live preview of what the customer will see, with variables substituted.
-  const preview = useMemo(() => {
-    if (!selected?.body) return "";
-    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
-      const i = parseInt(idx, 10) - 1;
-      const v = vars[i]?.trim();
-      return v || `{{${idx}}}`;
-    });
-  }, [selected, vars]);
 
   return (
     <Modal
@@ -2118,8 +2117,8 @@ function WhatsAppTemplatePicker({
             ) : items.length === 0 ? (
               <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
                 {tx(
-                  "No approved templates yet.",
-                  "لا توجد قوالب معتمدة بعد.",
+                  "No Meta-approved templates yet. Create one on the Templates screen — Meta has to approve it before it can be sent.",
+                  "لا توجد قوالب معتمدة من Meta بعد. أنشئ قالبًا من شاشة القوالب — يجب أن تعتمده Meta قبل الإرسال.",
                 )}
               </div>
             ) : (
@@ -3003,6 +3002,26 @@ function InboxImpl() {
     ),
   );
 
+  // WhatsApp template over the Zernio transport. Zernio carries templates on
+  // the same endpoint as free text, so this mirrors sendZernioDbMessage — and
+  // is the path that actually works while WhatsApp is connected via Zernio
+  // (the Meta path below has no token for a provider="zernio" row).
+  const sendZernioDbTemplate = useMutation<
+    {
+      conversationId: string;
+      name: string;
+      language: string;
+      variables: string[];
+    },
+    { ok: true; id?: string | null }
+  >((input) =>
+    api.post(`/integrations/zernio/db-conversations/${input.conversationId}/send-template`, {
+      name: input.name,
+      language: input.language,
+      variables: input.variables,
+    }),
+  );
+
   const addPending = (convId: string, body: string) => {
     const id = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const at = Date.now();
@@ -3018,6 +3037,17 @@ function InboxImpl() {
         return { ...prev, [convId]: list };
       });
     }, 15000);
+  };
+
+  /**
+   * Does Zernio own this conversation's channel? Both the text and the
+   * template send need the same answer — the template path 404'd for months
+   * because only handleSend asked the question.
+   */
+  const zernioOwnsConvChannel = (convId: string): boolean => {
+    const conv = (convsQ.data ?? []).find((c) => c.id === convId);
+    if (!conv) return false;
+    return (zernioStatusQ.data?.accounts ?? []).some((a) => a.platform === conv.channel);
   };
 
   const handleSend = async (body: string, mediaId?: string): Promise<void> => {
@@ -3043,9 +3073,7 @@ function InboxImpl() {
     // through Zernio — the legacy Meta services no longer hold a usable token
     // for them, since Zernio's sync replaced those Integration rows.
     const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
-    const zernioOwnsChannel = (zernioStatusQ.data?.accounts ?? []).some(
-      (a) => a.platform === conv?.channel,
-    );
+    const zernioOwnsChannel = zernioOwnsConvChannel(activeId);
     // DB-backed sends round-trip Zernio + the remote DB (~2s) — show the
     // bubble immediately, same as the live-thread paths above.
     if (conv && body) addPending(activeId, body);
@@ -3247,12 +3275,24 @@ function InboxImpl() {
           onSend={handleSend}
           onSendTemplate={async (name, language, variables) => {
             if (!activeId) return;
-            await sendWaTemplate.mutate({
-              conversationId: activeId,
-              name,
-              language,
-              variables,
-            });
+            // Same transport routing as handleSend: Zernio-owned WhatsApp goes
+            // through Zernio, which carries templates on its normal send
+            // endpoint. Only a direct Meta connection uses the Cloud API path.
+            if (zernioOwnsConvChannel(activeId)) {
+              await sendZernioDbTemplate.mutate({
+                conversationId: activeId,
+                name,
+                language,
+                variables,
+              });
+            } else {
+              await sendWaTemplate.mutate({
+                conversationId: activeId,
+                name,
+                language,
+                variables,
+              });
+            }
             // messageVersion bump refetches the thread via the new queryKey.
             setMessageVersion((n) => n + 1);
             convsQ.refetch();
@@ -3264,7 +3304,8 @@ function InboxImpl() {
             sendIgLiveMessage.loading ||
             sendZernioDbMessage.loading ||
             sendWaMessage.loading ||
-            sendWaTemplate.loading
+            sendWaTemplate.loading ||
+            sendZernioDbTemplate.loading
           }
           sendError={
             sendMessage.error ??
@@ -3273,7 +3314,8 @@ function InboxImpl() {
             sendIgLiveMessage.error ??
             sendZernioDbMessage.error ??
             sendWaMessage.error ??
-            sendWaTemplate.error
+            sendWaTemplate.error ??
+            sendZernioDbTemplate.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
           messagesLoading={

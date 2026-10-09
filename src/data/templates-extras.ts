@@ -10,7 +10,9 @@ export type TemplateCategory =
   | "MARKETING"
   | "AUTHENTICATION";
 
-export type TemplateStatus = "approved" | "pending" | "rejected";
+// "local" = stored here but NOT submitted to / approved by Meta, so it
+// cannot be sent. Meta owns approval; we never claim it on its behalf.
+export type TemplateStatus = "approved" | "pending" | "rejected" | "local";
 
 export interface TemplateFull {
   id: string;

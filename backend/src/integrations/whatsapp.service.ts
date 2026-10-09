@@ -10,6 +10,8 @@ import { redactUrl } from "../common/redact-url";
 import { decryptSecret, encryptSecret } from "../common/token-crypto";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
+import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
+import { AiBridgeService } from "./ai-bridge.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -101,6 +103,8 @@ export class WhatsAppService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly media: MediaService,
+    private readonly pipelineAutomation: PipelineAutomationService,
+    private readonly aiBridge: AiBridgeService,
   ) {}
 
   // ─── Public REST API ───────────────────────────────────────────────────
@@ -1078,6 +1082,39 @@ export class WhatsAppService {
       channel: "whatsapp",
       conversationId: conv.id,
     });
+
+    // Open a pipeline ticket for the lead. The Zernio transport has always done
+    // this (zernio.service.ts:1258) but the Meta path never did, so WhatsApp
+    // conversations arriving through our own Meta app were invisible to the
+    // pipeline. Swallows its own failures — see PipelineAutomationService.
+    await this.pipelineAutomation.onInboundMessage(
+      workspaceId,
+      contact.id,
+      conv.id,
+      "whatsapp",
+      previewBase,
+    );
+
+    // Hand the message to the AI service if this thread has it enabled. Kept
+    // last and awaited only for its own bounded timeout: everything above is
+    // already persisted, so a slow or dead AI service cannot cost us the
+    // message or the 200 Meta needs.
+    if (conv.aiEnabled && !conv.aiPausedAt && this.aiBridge.isConfigured()) {
+      await this.aiBridge.notifyInbound({
+        workspaceId,
+        conversationId: conv.id,
+        contactId: contact.id,
+        channel: "whatsapp",
+        messageId: wamid ?? null,
+        body: body || `[${msg.type} message]`,
+        contactName: contact.name,
+        contactPhone: contact.phone,
+        // The customer just messaged us, so the 24h free-text window is open
+        // by definition at this instant.
+        windowOpen: true,
+        receivedAt: d.toISOString(),
+      });
+    }
   }
 
   private extractBody(msg: NonNullable<WebhookEntryChangeValue["messages"]>[number]): string {

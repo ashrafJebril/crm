@@ -1,0 +1,86 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "اللوحة" [ref=f6e9865] [cursor=pointer]
+      - button "الرسائل 7" [ref=f6e9866] [cursor=pointer]:
+        - generic [ref=f6e34]: الرسائل
+        - generic [ref=f6e35]: "7"
+      - button "التقويم" [ref=f6e9867] [cursor=pointer]
+      - button "السوشيال" [ref=f6e9868] [cursor=pointer]
+      - button "الحملات" [ref=f6e9869] [cursor=pointer]
+      - button "خط الأنابيب" [ref=f6e9870] [cursor=pointer]
+      - button "جهات الاتصال" [ref=f6e9871] [cursor=pointer]
+      - button "التحليلات" [ref=f6e9872] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "القوالب" [ref=f6e9873] [cursor=pointer]
+      - button "الوسائط" [ref=f6e9874] [cursor=pointer]
+      - button "الفريق" [ref=f6e9875] [cursor=pointer]
+      - button "الإعدادات" [ref=f6e9876] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "بوابة الإدارة" [ref=f6e9877] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: جهات الاتصال
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "ابحث في كل شيء…" [ref=f6e9878]
+        - generic [ref=f6e125]: ⌘K
+      - button "EN" [ref=f6e9879] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "الإشعارات" [ref=f6e9880] [cursor=pointer]
+      - button "إنشاء" [ref=f6e9881] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "تسجيل الخروج" [ref=f6e9882] [cursor=pointer]
+    - generic [ref=f6e8881]:
+      - generic [ref=f6e8883]:
+        - generic [ref=f6e8884]:
+          - heading "جهات الاتصال" [level=1] [ref=f6e9883]
+          - paragraph [ref=f6e8886]: ١٢٬٤٠٨ جهة · ٢٬١٨٤ محتمل · ٩٬٦١٢ عميل
+        - generic [ref=f6e8887]:
+          - generic [ref=f6e8888]:
+            - button "جدول" [ref=f6e9884] [cursor=pointer]
+            - button "المسار" [ref=f6e9885] [cursor=pointer]
+          - button "جهة جديدة" [ref=f6e9886] [cursor=pointer]
+      - generic [ref=f6e8894]:
+        - button "جهات الاتصال" [ref=f6e9887] [cursor=pointer]
+        - button "المجموعات" [ref=f6e9888] [cursor=pointer]
+        - button "الوسوم" [active] [ref=f6e9889] [cursor=pointer]
+      - generic [ref=f6e9947]:
+        - generic [ref=f6e9948]:
+          - textbox "اسم وسم جديد…" [ref=f6e9949]
+          - button "إضافة وسم" [disabled] [ref=f6e9950]
+        - generic [ref=f6e9953]:
+          - generic [ref=f6e9954]:
+            - button "تغيير اللون" [ref=f6e9955] [cursor=pointer]
+            - button "SmokeTest" [ref=f6e9956]
+            - generic [ref=f6e9957]: 1 جهة
+            - button "حذف الوسم" [ref=f6e9958] [cursor=pointer]
+          - generic [ref=f6e9963]:
+            - button "تغيير اللون" [ref=f6e9964] [cursor=pointer]
+            - button "VIPER" [ref=f6e9965]
+            - generic [ref=f6e9966]: 1 جهة
+            - button "حذف الوسم" [ref=f6e9967] [cursor=pointer]

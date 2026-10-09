@@ -1,0 +1,650 @@
+- generic [ref=e25]:
+  - complementary [ref=e26]:
+    - generic [ref=e27]:
+      - generic [ref=e28]: A
+      - generic [ref=e29]:
+        - generic [ref=e30]: Aram.
+        - generic [ref=e31]: v2.4 · MENA
+      - button "Search" [ref=e32] [cursor=pointer]
+    - generic "Switch workspace" [ref=e36] [cursor=pointer]:
+      - generic [ref=e38]:
+        - generic [ref=e39]: Default Workspace
+        - generic [ref=e40]: free · owner
+    - navigation [ref=e44]:
+      - generic [ref=e45]: Workspace
+      - button "Dashboard" [ref=e46] [cursor=pointer]
+      - button "Inbox 7" [ref=e1072] [cursor=pointer]:
+        - generic [ref=e56]: Inbox
+        - generic [ref=e57]: "7"
+      - button "Calendar" [ref=e58] [cursor=pointer]
+      - button "Social" [ref=e64] [cursor=pointer]
+      - button "Campaigns" [ref=e70] [cursor=pointer]
+      - button "Pipeline" [ref=e77] [cursor=pointer]
+      - button "Contacts" [ref=e84] [cursor=pointer]
+      - button "Analytics" [ref=e92] [cursor=pointer]
+      - generic [ref=e98]: Manage
+      - button "Templates" [ref=e99] [cursor=pointer]
+      - button "Media" [ref=e104] [cursor=pointer]
+      - button "Team" [ref=e109] [cursor=pointer]
+      - button "Settings" [ref=e115] [cursor=pointer]
+      - generic [ref=e121]: Aram ops
+      - button "Admin portal" [ref=e122] [cursor=pointer]
+    - generic [ref=e127]:
+      - generic [ref=e128]: YK
+      - generic [ref=e129]:
+        - generic [ref=e130]: Yara Khaled
+        - generic [ref=e131]: owner · Default Workspace
+      - button "Notifications" [ref=e132] [cursor=pointer]
+  - main [ref=e136]:
+    - generic [ref=e137]:
+      - generic [ref=e138]:
+        - generic [ref=e139]: Samemha
+        - generic [ref=e140]: /
+        - generic [ref=e141]: Inbox
+      - generic [ref=e142] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=e146]
+        - generic [ref=e147]: ⌘K
+      - button "ع" [ref=e148] [cursor=pointer]
+      - button "Toggle theme" [ref=e150] [cursor=pointer]
+      - generic [ref=e154]:
+        - button "Notifications" [expanded] [ref=e155] [cursor=pointer]:
+          - generic [ref=e1050]: "1"
+        - menu [ref=e272]:
+          - generic [ref=e273]:
+            - generic [ref=e274]:
+              - text: Notifications
+              - generic [ref=e1051]: · 1
+            - button "Sound on — click to mute" [active] [pressed] [ref=e1052] [cursor=pointer]
+            - button "Clear" [ref=e1056] [cursor=pointer]
+          - button "Ali Mo Instagram و واحد زهري 15m" [ref=e1073] [cursor=pointer]:
+            - generic [ref=e1059]:
+              - generic [ref=e1060]:
+                - generic [ref=e1061]: Ali Mo
+                - generic [ref=e1062]: Instagram
+              - generic [ref=e1063]: و واحد زهري
+            - generic [ref=e1064]: 15m
+      - button "Create" [ref=e159] [cursor=pointer]
+      - button "Default Workspace" [ref=e163] [cursor=pointer]
+      - generic [ref=e167]:
+        - generic [ref=e168]: YK
+        - generic [ref=e169]:
+          - generic [ref=e170]: Yara Khaled
+          - generic [ref=e171]: Owner
+        - button "Sign out" [ref=e172] [cursor=pointer]
+    - generic [ref=e177]:
+      - generic [ref=e179]:
+        - generic [ref=e180]:
+          - generic [ref=e181]:
+            - generic [ref=e182]:
+              - heading "Inbox" [level=2] [ref=e183]
+              - generic [ref=e184]: 43 conversations
+            - generic [ref=e185]:
+              - button "Filter" [ref=e186] [cursor=pointer]
+              - button "Sort" [ref=e189] [cursor=pointer]
+          - textbox "Search conversations" [ref=e194]:
+            - /placeholder: Search conversations…
+          - generic [ref=e195]:
+            - button "All 43" [ref=e196] [cursor=pointer]:
+              - text: All
+              - generic [ref=e197]: "43"
+            - button "Assigned 43" [ref=e198] [cursor=pointer]:
+              - text: Assigned
+              - generic [ref=e199]: "43"
+            - button "Unread 2" [ref=e1074] [cursor=pointer]:
+              - text: Unread
+              - generic [ref=e201]: "2"
+            - button "Closed 0" [ref=e202] [cursor=pointer]:
+              - text: Closed
+              - generic [ref=e203]: "0"
+            - button "Spam 0" [ref=e204] [cursor=pointer]:
+              - text: Spam
+              - generic [ref=e205]: "0"
+          - generic [ref=e206]:
+            - button "WhatsApp 3" [pressed] [ref=e207] [cursor=pointer]:
+              - text: WhatsApp
+              - generic [ref=e209]: "3"
+            - button "Instagram 32" [pressed] [ref=e210] [cursor=pointer]:
+              - text: Instagram
+              - generic [ref=e212]: "32"
+            - button "Facebook 8" [pressed] [ref=e213] [cursor=pointer]:
+              - text: Facebook
+              - generic [ref=e215]: "8"
+            - button "TikTok 0" [pressed] [ref=e216] [cursor=pointer]:
+              - text: TikTok
+              - generic [ref=e218]: "0"
+            - button "Web chat 0" [pressed] [ref=e219] [cursor=pointer]:
+              - text: Web chat
+              - generic [ref=e221]: "0"
+        - generic [ref=e222]:
+          - generic [ref=e281] [cursor=pointer]:
+            - generic [ref=e282]:
+              - generic [ref=e283]: AM
+              - generic "Instagram" [ref=e285]
+            - generic [ref=e290]:
+              - generic [ref=e291]:
+                - generic [ref=e292]: Ali Mo
+                - generic [ref=e293]: now
+              - generic [ref=e294]: ↳ هيك؟
+          - generic [ref=e295] [cursor=pointer]:
+            - generic [ref=e296]:
+              - generic [ref=e297]: FB
+              - generic "WhatsApp" [ref=e299]
+            - generic [ref=e303]:
+              - generic [ref=e304]:
+                - generic [ref=e305]: Feras Balawi 🤗
+                - generic [ref=e306]: now
+              - generic [ref=e307]: •••••••••
+          - generic [ref=e308] [cursor=pointer]:
+            - generic [ref=e309]:
+              - generic [ref=e310]: IU
+              - generic "Instagram" [ref=e312]
+            - generic [ref=e317]:
+              - generic [ref=e318]:
+                - generic [ref=e319]: Instagram User
+                - generic [ref=e320]: 2d
+              - generic [ref=e321]: ↳ ستاند الحمام تاع البيبي كم اذا سمحت؟
+          - generic [ref=e322] [cursor=pointer]:
+            - generic [ref=e323]:
+              - generic [ref=e324]: R
+              - generic "WhatsApp" [ref=e326]
+            - generic [ref=e330]:
+              - generic [ref=e331]:
+                - generic [ref=e332]: Razan
+                - generic [ref=e333]: 6d
+              - generic [ref=e334]: مرحبا بعتولي الاوردر غلط بجرب اتواصل معكم ما في رد
+          - generic [ref=e335] [cursor=pointer]:
+            - generic [ref=e336]:
+              - generic [ref=e337]: �
+              - generic "Instagram" [ref=e339]
+            - generic [ref=e344]:
+              - generic [ref=e345]:
+                - generic [ref=e346]: 𝑶𝒎𝒂𝒓_𝑨𝒍-𝑹𝒂𝒘𝒂𝒔𝒉𝒅𝒆𝒉
+                - generic [ref=e347]: 7d
+              - generic [ref=e348]: ↳ لا صديقي بالعكس بتنور باي وقت
+          - generic [ref=e349] [cursor=pointer]:
+            - generic [ref=e350]:
+              - generic [ref=e351]: A
+              - generic "WhatsApp" [ref=e353]
+            - generic [ref=e357]:
+              - generic [ref=e358]:
+                - generic [ref=e359]: Ashraf
+                - generic [ref=e360]: 7d
+              - generic [ref=e361]: ↳ Ahlan
+          - generic [ref=e362] [cursor=pointer]:
+            - generic [ref=e363]:
+              - generic [ref=e364]: E
+              - generic "Instagram" [ref=e366]
+            - generic [ref=e371]:
+              - generic [ref=e372]:
+                - generic [ref=e373]: Ellen
+                - generic [ref=e374]: 8d
+              - generic [ref=e375]: اها تمام حبيبتي
+            - generic "Unread" [ref=e376]
+          - generic [ref=e377] [cursor=pointer]:
+            - generic [ref=e378]:
+              - generic [ref=e379]: A
+              - generic "Instagram" [ref=e381]
+            - generic [ref=e386]:
+              - generic [ref=e387]:
+                - generic [ref=e388]: amalnaseraltum
+                - generic [ref=e389]: 9d
+              - generic [ref=e390]: ↳ الله يعافيكي اهلا
+          - generic [ref=e391] [cursor=pointer]:
+            - generic [ref=e392]:
+              - generic [ref=e393]: R
+              - generic "Instagram" [ref=e395]
+            - generic [ref=e400]:
+              - generic [ref=e401]:
+                - generic [ref=e402]: razanshteiwi
+                - generic [ref=e403]: 9d
+              - generic [ref=e404]: ↳ همه هدول unisex فاذا بدك كم طويل موجود
+          - generic [ref=e405] [cursor=pointer]:
+            - generic [ref=e406]:
+              - generic [ref=e407]: "N"
+              - generic "Instagram" [ref=e409]
+            - generic [ref=e414]:
+              - generic [ref=e415]:
+                - generic [ref=e416]: natalieomarii
+                - generic [ref=e417]: 17d
+              - generic [ref=e418]: ↳ اهلا فيكي هلا هو حسب حجم اللوجو بس بشكل عام بكلفك ٨.٥ او ٨
+          - generic [ref=e419] [cursor=pointer]:
+            - generic [ref=e420]:
+              - generic [ref=e421]: P
+              - generic "Instagram" [ref=e423]
+            - generic [ref=e428]:
+              - generic [ref=e429]:
+                - generic [ref=e430]: purplestardustt
+                - generic [ref=e431]: 19d
+              - generic [ref=e432]: ↳ اهلا اه في بس احكيلي المقاس اذا سمحت
+          - generic [ref=e433] [cursor=pointer]:
+            - generic [ref=e434]:
+              - generic [ref=e435]: B
+              - generic "Instagram" [ref=e437]
+            - generic [ref=e442]:
+              - generic [ref=e443]:
+                - generic [ref=e444]: besan.kwaik
+                - generic [ref=e445]: 19d
+              - generic [ref=e446]: ↳ اه ٨.٥
+          - generic [ref=e447] [cursor=pointer]:
+            - generic [ref=e448]:
+              - generic [ref=e449]: A
+              - generic "Instagram" [ref=e451]
+            - generic [ref=e456]:
+              - generic [ref=e457]:
+                - generic [ref=e458]: aya.eid2.22
+                - generic [ref=e459]: 29d
+              - generic [ref=e460]: ↳ اه اكيد بنعمل
+          - generic [ref=e461] [cursor=pointer]:
+            - generic [ref=e462]:
+              - generic [ref=e463]: AA
+              - generic "Facebook" [ref=e465]
+            - generic [ref=e468]:
+              - generic [ref=e469]:
+                - generic [ref=e470]: Ammar Alamleh
+                - generic [ref=e471]: 47d
+              - generic [ref=e472]: ↳ نعم
+          - generic [ref=e473] [cursor=pointer]:
+            - generic [ref=e474]:
+              - generic [ref=e475]: MM
+              - generic "Facebook" [ref=e477]
+            - generic [ref=e480]:
+              - generic [ref=e481]:
+                - generic [ref=e482]: Maram Mizher
+                - generic [ref=e483]: 58d
+              - generic [ref=e484]: كم سعر مع طباعه
+          - generic [ref=e485] [cursor=pointer]:
+            - generic [ref=e486]:
+              - generic [ref=e487]: AG
+              - generic "Facebook" [ref=e489]
+            - generic [ref=e492]:
+              - generic [ref=e493]:
+                - generic [ref=e494]: Abdalrhman Ghazaleh
+                - generic [ref=e495]: 59d
+              - generic [ref=e496]: ًتمام
+          - generic [ref=e497] [cursor=pointer]:
+            - generic [ref=e498]:
+              - generic [ref=e499]: YA
+              - generic "Facebook" [ref=e501]
+            - generic [ref=e504]:
+              - generic [ref=e505]:
+                - generic [ref=e506]: Yazan Al Talb
+                - generic [ref=e507]: 63d
+              - generic [ref=e508]: بدي تيشرتات لأنديه مختلف مثل ارجنتين الاردن وعليها اسم ولوجو بطلبو منك
+          - generic [ref=e509] [cursor=pointer]:
+            - generic [ref=e510]:
+              - generic [ref=e511]: يا
+              - generic "Facebook" [ref=e513]
+            - generic [ref=e516]:
+              - generic [ref=e517]:
+                - generic [ref=e518]: يحيى المشاقبه
+                - generic [ref=e519]: 68d
+              - generic [ref=e520]: تعرف طيب مطابع فاتحة اليوم
+          - generic [ref=e521] [cursor=pointer]:
+            - generic [ref=e522]:
+              - generic [ref=e523]: R
+              - generic "Instagram" [ref=e525]
+            - generic [ref=e530]:
+              - generic [ref=e531]:
+                - generic [ref=e532]: rama__alomari
+                - generic [ref=e533]: 71d
+              - generic [ref=e534]: ↳ 0790286021
+          - generic [ref=e535] [cursor=pointer]:
+            - generic [ref=e536]:
+              - generic [ref=e537]: "6"
+              - generic "Instagram" [ref=e539]
+            - generic [ref=e544]:
+              - generic [ref=e545]:
+                - generic [ref=e546]: 6.inr_
+                - generic [ref=e547]: 71d
+              - generic [ref=e548]: ↳ نعم مزبوط
+          - generic [ref=e549] [cursor=pointer]:
+            - generic [ref=e550]:
+              - generic [ref=e551]: AJ
+              - generic "Facebook" [ref=e553]
+            - generic [ref=e556]:
+              - generic [ref=e557]:
+                - generic [ref=e558]: Ashraf Jibreel
+                - generic [ref=e559]: 76d
+              - generic [ref=e560]: ↳ check this
+            - generic "Unread" [ref=e561]
+          - generic [ref=e562] [cursor=pointer]:
+            - generic [ref=e563]:
+              - generic [ref=e564]: LH
+              - generic "Facebook" [ref=e566]
+            - generic [ref=e569]:
+              - generic [ref=e570]:
+                - generic [ref=e571]: Lina Hussein Mubarak
+                - generic [ref=e572]: 77d
+              - generic [ref=e573]: ↳ https://www.samemha.com/en/customize?category=t-shirts
+          - generic [ref=e574] [cursor=pointer]:
+            - generic [ref=e575]:
+              - generic [ref=e576]: A
+              - generic "Instagram" [ref=e578]
+            - generic [ref=e583]:
+              - generic [ref=e584]:
+                - generic [ref=e585]: ashrafjib
+                - generic [ref=e586]: 77d
+              - generic [ref=e587]: Hello
+          - generic [ref=e588] [cursor=pointer]:
+            - generic [ref=e589]:
+              - generic [ref=e590]: _
+              - generic "Instagram" [ref=e592]
+            - generic [ref=e597]:
+              - generic [ref=e598]:
+                - generic [ref=e599]: __areej_16
+                - generic [ref=e600]: 79d
+              - generic [ref=e601]: ↳ تمام موجود متل هيك طبعة كبيرة على الضهر بتكلف 11 دينار التوصيل دينارين
+          - generic [ref=e602] [cursor=pointer]:
+            - generic [ref=e603]:
+              - generic [ref=e604]: "0"
+              - generic "Instagram" [ref=e606]
+            - generic [ref=e611]:
+              - generic [ref=e612]:
+                - generic [ref=e613]: 0o0.d0
+                - generic [ref=e614]: 82d
+              - generic [ref=e615]: ↳ التيشيرت مع طبعة واحدة 10 دنانير اذا بدك اتضيف طبعة زيادة بزيد دنانير واحد
+          - generic [ref=e616] [cursor=pointer]:
+            - generic [ref=e617]:
+              - generic [ref=e618]: R
+              - generic "Instagram" [ref=e620]
+            - generic [ref=e625]:
+              - generic [ref=e626]:
+                - generic [ref=e627]: raad_amira28
+                - generic [ref=e628]: 86d
+              - generic [ref=e629]: مو مشكله
+          - generic [ref=e630] [cursor=pointer]:
+            - generic [ref=e631]:
+              - generic [ref=e632]: A
+              - generic "Instagram" [ref=e634]
+            - generic [ref=e639]:
+              - generic [ref=e640]:
+                - generic [ref=e641]: a.b.abood_
+                - generic [ref=e642]: 86d
+              - generic [ref=e643]: ↳ توصيل فوري باخد اكثر من ٥ بتحب اشوفلك شركة التوصيل كم باخدو؟
+          - generic [ref=e644] [cursor=pointer]:
+            - generic [ref=e645]:
+              - generic [ref=e646]: سا
+              - generic "Facebook" [ref=e648]
+            - generic [ref=e651]:
+              - generic [ref=e652]:
+                - generic [ref=e653]: سالم ابو كرم الجبارات
+                - generic [ref=e654]: 87d
+              - generic [ref=e655]: ↳ https://www.samemha.com/ar/products?category=t-shirts&subcategory=jordan-pride
+          - generic [ref=e656] [cursor=pointer]:
+            - generic [ref=e657]:
+              - generic [ref=e658]: A
+              - generic "Instagram" [ref=e660]
+            - generic [ref=e665]:
+              - generic [ref=e666]:
+                - generic [ref=e667]: albustanjihuda
+                - generic [ref=e668]: 87d
+              - generic [ref=e669]: ↳ ممكن تاكدي المقاس لو سمحتي
+          - generic [ref=e670] [cursor=pointer]:
+            - generic [ref=e671]:
+              - generic [ref=e672]: M
+              - generic "Instagram" [ref=e674]
+            - generic [ref=e679]:
+              - generic [ref=e680]:
+                - generic [ref=e681]: motasemamleh
+                - generic [ref=e682]: 94d
+              - generic [ref=e683]: ↳ وعليكم السلام.. تيشرت المنتخب 11 دينار وممكن تكتب ايا اسم على الضهر تحت الرقم
+          - generic [ref=e684] [cursor=pointer]:
+            - generic [ref=e685]:
+              - generic [ref=e686]: M
+              - generic "Instagram" [ref=e688]
+            - generic [ref=e693]:
+              - generic [ref=e694]:
+                - generic [ref=e695]: makhamrehjumana
+                - generic [ref=e696]: 97d
+              - generic [ref=e697]: ↳ أهلًا وسهلًا 🌸 سعر التيشيرت 10 دنانير ممكن كمان تزورو موقعنا الإلكتروني في تصاميم كثيرة ومتنوعة أكثر من الموجودة على الإنستغرام وكمان ب
+          - generic [ref=e698] [cursor=pointer]:
+            - generic [ref=e699]:
+              - generic [ref=e700]: D
+              - generic "Instagram" [ref=e702]
+            - generic [ref=e707]:
+              - generic [ref=e708]:
+                - generic [ref=e709]: daadaladwan
+                - generic [ref=e710]: 97d
+              - generic [ref=e711]: ↳ أهلًا وسهلًا 🌸 سعر التيشيرت 10 دنانير ممكن كمان تزورو موقعنا الإلكتروني في تصاميم كثيرة ومتنوعة أكثر من الموجودة على الإنستغرام وكمان ب
+          - generic [ref=e712] [cursor=pointer]:
+            - generic [ref=e713]:
+              - generic [ref=e714]: M
+              - generic "Instagram" [ref=e716]
+            - generic [ref=e721]:
+              - generic [ref=e722]:
+                - generic [ref=e723]: malak_mloook
+                - generic [ref=e724]: 97d
+              - generic [ref=e725]: ↳ [image]
+          - generic [ref=e726] [cursor=pointer]:
+            - generic [ref=e727]:
+              - generic [ref=e728]: F
+              - generic "Instagram" [ref=e730]
+            - generic [ref=e735]:
+              - generic [ref=e736]:
+                - generic [ref=e737]: fifi.manasrah
+                - generic [ref=e738]: 97d
+              - generic [ref=e739]: ↳ [image]
+          - generic [ref=e740] [cursor=pointer]:
+            - generic [ref=e741]:
+              - generic [ref=e742]: M
+              - generic "Instagram" [ref=e744]
+            - generic [ref=e749]:
+              - generic [ref=e750]:
+                - generic [ref=e751]: muna.hijazeen3
+                - generic [ref=e752]: 97d
+              - generic [ref=e753]: ↳ [image]
+          - generic [ref=e754] [cursor=pointer]:
+            - generic [ref=e755]:
+              - generic [ref=e756]: M
+              - generic "Instagram" [ref=e758]
+            - generic [ref=e763]:
+              - generic [ref=e764]:
+                - generic [ref=e765]: mayshijazi
+                - generic [ref=e766]: 97d
+              - generic [ref=e767]: ↳ [image]
+          - generic [ref=e768] [cursor=pointer]:
+            - generic [ref=e769]:
+              - generic [ref=e770]: W
+              - generic "Instagram" [ref=e772]
+            - generic [ref=e777]:
+              - generic [ref=e778]:
+                - generic [ref=e779]: wejdanalabbadi
+                - generic [ref=e780]: 97d
+              - generic [ref=e781]: ↳ [image]
+          - generic [ref=e782] [cursor=pointer]:
+            - generic [ref=e783]:
+              - generic [ref=e784]: S
+              - generic "Instagram" [ref=e786]
+            - generic [ref=e791]:
+              - generic [ref=e792]:
+                - generic [ref=e793]: salamalqudah
+                - generic [ref=e794]: 97d
+              - generic [ref=e795]: ↳ [image]
+          - generic [ref=e796] [cursor=pointer]:
+            - generic [ref=e797]:
+              - generic [ref=e798]: I
+              - generic "Instagram" [ref=e800]
+            - generic [ref=e805]:
+              - generic [ref=e806]:
+                - generic [ref=e807]: intisarjawawdeh
+                - generic [ref=e808]: 98d
+              - generic [ref=e809]: ↳ مساء الخير الأحجام المتوفر كم طويل S + M +XL + 2XL + 3XL
+          - generic [ref=e810] [cursor=pointer]:
+            - generic [ref=e811]:
+              - generic [ref=e812]: "N"
+              - generic "Instagram" [ref=e814]
+            - generic [ref=e819]:
+              - generic [ref=e820]:
+                - generic [ref=e821]: njoudaldabain
+                - generic [ref=e822]: 101d
+              - generic [ref=e823]: ↳ يعطيك العافية،، معك موقع صممها 😊 بالنسبة للمقاسات، إحنا منفضّل تعتمدوا على جدول المقاسات بالسنتيمتر لأنه بيعطي نتيجة أدق من الوزن، لأن كل
+          - generic [ref=e824] [cursor=pointer]:
+            - generic [ref=e825]:
+              - generic [ref=e826]: م
+              - generic "Instagram" [ref=e828]
+            - generic [ref=e833]:
+              - generic [ref=e834]:
+                - generic [ref=e835]: مـنال
+                - generic [ref=e836]: —
+              - generic [ref=e837]: السلام عليكم
+          - generic [ref=e838] [cursor=pointer]:
+            - generic [ref=e839]:
+              - generic [ref=e840]: H
+              - generic "Instagram" [ref=e842]
+            - generic [ref=e847]:
+              - generic [ref=e848]:
+                - generic [ref=e849]: hamzeh.duridi
+                - generic [ref=e850]: —
+              - generic [ref=e851]: "[Attachment]"
+          - generic [ref=e852] [cursor=pointer]:
+            - generic [ref=e853]:
+              - generic [ref=e854]: "Y"
+              - generic "Instagram" [ref=e856]
+            - generic [ref=e861]:
+              - generic [ref=e862]:
+                - generic [ref=e863]: yazan.barjawi
+                - generic [ref=e864]: —
+              - generic [ref=e865]: "[Attachment]"
+      - generic [ref=e1075]:
+        - generic [ref=e1076]:
+          - generic [ref=e1077]:
+            - generic [ref=e1078]: AM
+            - generic "Instagram" [ref=e1080]
+          - generic:
+            - generic:
+              - generic [ref=e1085]: Ali Mo
+              - generic [ref=e1086]: Instagram
+              - generic [ref=e1087]: Online
+            - generic:
+              - generic [ref=e1089]: ·
+              - generic [ref=e1090]: instagram
+          - generic [ref=e1091]:
+            - button "Convert to ticket" [ref=e1092] [cursor=pointer]
+            - button "1 open · 0 closed" [ref=e1095] [cursor=pointer]
+            - button "+ Add to pipeline" [ref=e1096] [cursor=pointer]
+            - button [ref=e1097] [cursor=pointer]
+        - generic [ref=e1102]:
+          - generic [ref=e1103]: Today
+          - generic [ref=e1107]:
+            - generic [ref=e1108]: يعطيك العافيه
+            - generic [ref=e1109]: 02:36 AM
+          - generic [ref=e1112]:
+            - generic [ref=e1113]: بدي اطلب من عندك هودين
+            - generic [ref=e1114]: 02:36 AM
+          - generic [ref=e1117]:
+            - generic [ref=e1118]: ب ثيم موعين
+            - generic [ref=e1119]: 02:37 AM
+          - generic [ref=e1121]:
+            - generic [ref=e1122]:
+              - generic [ref=e1123]: YK
+              - generic [ref=e1124]: Yara Khaled
+            - generic [ref=e1125]: الله يعافيك اهلا
+            - generic [ref=e1126]: 11:12 AM✓✓
+          - generic [ref=e1128]:
+            - generic [ref=e1129]:
+              - generic [ref=e1130]: YK
+              - generic [ref=e1131]: Yara Khaled
+            - generic [ref=e1132]: اكيد احكيلي عفوا شو الثيم
+            - generic [ref=e1133]: 11:13 AM✓✓
+          - generic [ref=e1136]:
+            - generic [ref=e1137]: بدي هودين
+            - generic [ref=e1138]: 12:44 PM
+          - generic [ref=e1141]:
+            - generic [ref=e1142]: يكونو ثيم بات مان و بات ويمن
+            - generic [ref=e1143]: 12:46 PM
+          - generic [ref=e1145]:
+            - generic [ref=e1146]:
+              - generic [ref=e1147]: YK
+              - generic [ref=e1148]: Yara Khaled
+            - generic [ref=e1149]: في صور انت في بالك او عندك ؟
+            - generic [ref=e1150]: 01:16 PM✓✓
+          - generic [ref=e1153]:
+            - generic [ref=e1154]: اسمع اشي بصيط
+            - generic [ref=e1155]: 01:16 PM
+          - generic [ref=e1158]:
+            - generic [ref=e1159]: هو بس هودي اسود و عليه شعار بات مان
+            - generic [ref=e1160]: 01:17 PM
+          - generic [ref=e1163]:
+            - generic [ref=e1164]: واحد من الشعارات زهري و واحد اصفر
+            - generic [ref=e1165]: 01:17 PM
+          - generic [ref=e1167]:
+            - generic [ref=e1168]:
+              - generic [ref=e1169]: YK
+              - generic [ref=e1170]: Yara Khaled
+            - generic [ref=e1171]:
+              - text: هاد الشعار ؟
+              - img "attachment" [ref=e1173]
+            - generic [ref=e1174]: 03:19 PM✓✓
+          - generic [ref=e1176]:
+            - generic [ref=e1177]:
+              - generic [ref=e1178]: YK
+              - generic [ref=e1179]: Yara Khaled
+            - generic [ref=e1180]: هاد الشعار؟
+            - generic [ref=e1181]: 03:19 PM✓✓
+          - generic [ref=e1184]:
+            - generic [ref=e1185]: ايوا
+            - generic [ref=e1186]: 03:32 PM
+          - generic [ref=e1189]:
+            - generic [ref=e1190]: و واحد زهري
+            - generic [ref=e1191]: 03:38 PM
+          - generic [ref=e1193]:
+            - generic [ref=e1194]:
+              - generic [ref=e1195]: YK
+              - generic [ref=e1196]: Yara Khaled
+            - img "attachment" [ref=e1199]
+            - generic [ref=e1200]: 03:52 PM✓
+          - generic [ref=e1202]:
+            - generic [ref=e1203]:
+              - generic [ref=e1204]: YK
+              - generic [ref=e1205]: Yara Khaled
+            - generic [ref=e1206]: هيك؟
+            - generic [ref=e1207]: 03:52 PM✓
+        - group [ref=e1208]:
+          - generic "Internal notes for this thread" [ref=e1209] [cursor=pointer]
+        - generic [ref=e1212]:
+          - generic [ref=e1213]:
+            - button "Ahlan! How can we help?" [ref=e1214] [cursor=pointer]
+            - button "Your order is on its way" [ref=e1215] [cursor=pointer]
+            - button "Thanks for reaching out" [ref=e1216] [cursor=pointer]
+          - generic [ref=e1217]:
+            - textbox "Type a reply…" [ref=e1218]
+            - generic [ref=e1219]:
+              - button "Attach image" [ref=e1220] [cursor=pointer]
+              - button [ref=e1223] [cursor=pointer]
+              - generic [ref=e1226]:
+                - text: "Replying as:"
+                - strong [ref=e1227]: Yara Khaled
+              - button "Send" [disabled] [ref=e1228]
+      - complementary [ref=e1002]:
+        - generic [ref=e1003]:
+          - generic [ref=e1004]: AM
+          - generic [ref=e1005]: Ali Mo
+          - button "+ Add tag" [ref=e1009] [cursor=pointer]
+        - button "Call" [ref=e1010] [cursor=pointer]
+        - generic [ref=e1013]:
+          - generic [ref=e1014]: Notes
+          - generic [ref=e1016]:
+            - generic [ref=e1017]:
+              - textbox "Add an internal note…" [ref=e1018]
+              - button "Add note" [disabled] [ref=e1019]
+            - generic [ref=e1022]: No notes yet.
+        - generic [ref=e1023]:
+          - generic [ref=e1024]: Lifecycle
+          - generic [ref=e1025]:
+            - generic "Lead" [ref=e1026]
+            - generic "Qualified" [ref=e1027]
+            - generic "Customer" [ref=e1028]
+            - generic "Repeat" [ref=e1029]
+          - generic [ref=e1030]:
+            - generic [ref=e1031]: Lead
+            - generic [ref=e1032]: Customer
+            - generic [ref=e1033]: Repeat
+        - generic [ref=e1034]:
+          - generic [ref=e1035]: Tickets
+          - generic [ref=e1037]:
+            - generic [ref=e1038]: "#4"
+            - generic "Ali Mo" [ref=e1039]
+            - generic [ref=e1040]: Contacted
+        - generic [ref=e1042]:
+          - generic [ref=e1043]: Internal notes
+          - generic [ref=e1044]: No notes yet

@@ -1,0 +1,199 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "Dashboard" [ref=f6e24] [cursor=pointer]
+      - button "Inbox 7" [ref=f6e29] [cursor=pointer]:
+        - generic [ref=f6e34]: Inbox
+        - generic [ref=f6e35]: "7"
+      - button "Calendar" [ref=f6e36] [cursor=pointer]
+      - button "Social" [ref=f6e42] [cursor=pointer]
+      - button "Campaigns" [ref=f6e48] [cursor=pointer]
+      - button "Pipeline" [ref=f6e55] [cursor=pointer]
+      - button "Contacts" [ref=f6e62] [cursor=pointer]
+      - button "Analytics" [ref=f6e70] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "Templates" [ref=f6e77] [cursor=pointer]
+      - button "Media" [ref=f6e82] [cursor=pointer]
+      - button "Team" [ref=f6e87] [cursor=pointer]
+      - button "Settings" [ref=f6e93] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "Admin portal" [ref=f6e100] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: Campaigns
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f6e124]
+        - generic [ref=f6e125]: ⌘K
+      - button "ع" [ref=f6e126] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "Notifications" [ref=f6e132] [cursor=pointer]
+      - button "Create" [ref=f6e136] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "Sign out" [ref=f6e149] [cursor=pointer]
+    - generic [ref=f6e2822]:
+      - generic [ref=f6e2824]:
+        - generic [ref=f6e2825]:
+          - heading "Campaigns" [level=1] [ref=f6e2826]
+          - paragraph [ref=f6e2827]: Broadcast, drip, and trigger-based WhatsApp campaigns
+        - button "New campaign" [ref=f6e2829] [cursor=pointer]
+      - generic [ref=f6e2832]:
+        - generic [ref=f6e2833]:
+          - generic [ref=f6e2834]:
+            - generic [ref=f6e2835]: Sent
+            - generic [ref=f6e2836]: 4,492
+            - generic [ref=f6e2837]: across all campaigns
+          - generic [ref=f6e2838]:
+            - generic [ref=f6e2839]: Delivered rate
+            - generic [ref=f6e2840]: 99.2%
+            - generic [ref=f6e2841]: 4,457 delivered
+          - generic [ref=f6e2842]:
+            - generic [ref=f6e2843]: Read rate
+            - generic [ref=f6e2844]: 76.5%
+            - generic [ref=f6e2845]: 3,408 read
+          - generic [ref=f6e2846]:
+            - generic [ref=f6e2847]: Reply rate
+            - generic [ref=f6e2848]: 44.3%
+            - generic [ref=f6e2849]: 1,510 replies
+        - generic [ref=f6e2850]:
+          - button "All 6" [ref=f6e2851] [cursor=pointer]:
+            - text: All
+            - generic [ref=f6e2852]: "6"
+          - button "Running 3" [ref=f6e2853] [cursor=pointer]:
+            - text: Running
+            - generic [ref=f6e2854]: "3"
+          - button "Scheduled 1" [ref=f6e2855] [cursor=pointer]:
+            - text: Scheduled
+            - generic [ref=f6e2856]: "1"
+          - button "Drafts 1" [ref=f6e2857] [cursor=pointer]:
+            - text: Drafts
+            - generic [ref=f6e2858]: "1"
+          - button "Completed 1" [ref=f6e2859] [cursor=pointer]:
+            - text: Completed
+            - generic [ref=f6e2860]: "1"
+          - textbox "Search campaigns…" [ref=f6e2861]
+        - table [ref=f6e2863]:
+          - rowgroup [ref=f6e2864]:
+            - row [ref=f6e2865]:
+              - columnheader "Campaign" [ref=f6e2866]
+              - columnheader "Audience" [ref=f6e2867]
+              - columnheader "Channel" [ref=f6e2868]
+              - columnheader "Recipients" [ref=f6e2869]
+              - columnheader "Read" [ref=f6e2870]
+              - columnheader "Replied" [ref=f6e2871]
+              - columnheader "Conv." [ref=f6e2872]
+              - columnheader "Schedule" [ref=f6e2873]
+              - columnheader "Status" [ref=f6e2874]
+              - columnheader [ref=f6e2875]
+          - rowgroup [ref=f6e2876]:
+            - row [ref=f6e2877] [cursor=pointer]:
+              - cell "Q1 NPS survey" [ref=f6e2878]
+              - cell "Repeat · 60d" [ref=f6e2880]
+              - cell "Broadcast" [ref=f6e2881]
+              - cell "2,104" [ref=f6e2883]
+              - cell "77%" [ref=f6e2884]
+              - cell "43%" [ref=f6e2889]
+              - cell "0" [ref=f6e2894]
+              - cell "Mar 03, 11:00" [ref=f6e2895]
+              - cell "completed" [ref=f6e2896]
+              - cell [ref=f6e2899]:
+                - generic [ref=f6e2900]:
+                  - button "Delete" [ref=f6e2901]
+                  - button [ref=f6e2902]
+            - row [ref=f6e2907] [cursor=pointer]:
+              - cell "Ramadan menu launch" [ref=f6e2908]
+              - cell "All customers" [ref=f6e2910]
+              - cell "Broadcast" [ref=f6e2911]
+              - cell "0" [ref=f6e2913]
+              - cell "0%" [ref=f6e2914]
+              - cell "0%" [ref=f6e2918]
+              - cell "0" [ref=f6e2922]
+              - cell [ref=f6e2923]
+              - cell "draft" [ref=f6e2924]
+              - cell [ref=f6e2927]:
+                - generic [ref=f6e2928]:
+                  - button "Delete" [ref=f6e2929]
+                  - button [ref=f6e2930]
+            - row [ref=f6e2935] [cursor=pointer]:
+              - cell "Abandoned cart recovery" [ref=f6e2936]
+              - cell "Cart > 24h" [ref=f6e2938]
+              - cell "Trigger" [ref=f6e2939]
+              - cell "412" [ref=f6e2941]
+              - cell "76%" [ref=f6e2942]
+              - cell "20%" [ref=f6e2947]
+              - cell "47" [ref=f6e2952]
+              - cell [ref=f6e2953]
+              - cell "running" [ref=f6e2954]
+              - cell [ref=f6e2957]:
+                - generic [ref=f6e2958]:
+                  - button "Pause" [ref=f6e2959]
+                  - button "Delete" [ref=f6e2960]
+                  - button [ref=f6e2961]
+            - row [ref=f6e2966] [cursor=pointer]:
+              - cell "Clinic reminders" [ref=f6e2967]
+              - cell "Patients · 24h before" [ref=f6e2969]
+              - cell "Trigger" [ref=f6e2970]
+              - cell "156" [ref=f6e2972]
+              - cell "91%" [ref=f6e2973]
+              - cell "24%" [ref=f6e2978]
+              - cell "134" [ref=f6e2983]
+              - cell [ref=f6e2984]
+              - cell "running" [ref=f6e2985]
+              - cell [ref=f6e2988]:
+                - generic [ref=f6e2989]:
+                  - button "Pause" [ref=f6e2990]
+                  - button "Delete" [ref=f6e2991]
+                  - button [ref=f6e2992]
+            - row [ref=f6e2997] [cursor=pointer]:
+              - cell "Spring drop · waitlist" [ref=f6e2998]
+              - cell "Trial · Hot" [ref=f6e3000]
+              - cell "Drip · 4 steps" [ref=f6e3001]
+              - cell "624" [ref=f6e3003]
+              - cell "0%" [ref=f6e3004]
+              - cell "0%" [ref=f6e3008]
+              - cell "0" [ref=f6e3012]
+              - cell "May 12, 10:00" [ref=f6e3013]
+              - cell "scheduled" [ref=f6e3014]
+              - cell [ref=f6e3017]:
+                - generic [ref=f6e3018]:
+                  - button "Delete" [ref=f6e3019]
+                  - button [ref=f6e3020]
+            - row [ref=f6e3025] [cursor=pointer]:
+              - cell "Eid Pre-orders 2026" [ref=f6e3026]
+              - cell "VIP · Riyadh" [ref=f6e3028]
+              - cell "Broadcast" [ref=f6e3029]
+              - cell "1,842" [ref=f6e3031]
+              - cell "73%" [ref=f6e3032]
+              - cell "26%" [ref=f6e3037]
+              - cell "91" [ref=f6e3042]
+              - cell "Apr 28, 9:00" [ref=f6e3043]
+              - cell "running" [ref=f6e3044]
+              - cell [ref=f6e3047]:
+                - generic [ref=f6e3048]:
+                  - button "Pause" [ref=f6e3049]
+                  - button "Delete" [ref=f6e3050]
+                  - button [ref=f6e3051]

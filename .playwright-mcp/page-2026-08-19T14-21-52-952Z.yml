@@ -1,0 +1,86 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "Dashboard" [ref=f6e10968] [cursor=pointer]
+      - button "Inbox 7" [ref=f6e10969] [cursor=pointer]:
+        - generic [ref=f6e34]: Inbox
+        - generic [ref=f6e35]: "7"
+      - button "Calendar" [ref=f6e10970] [cursor=pointer]
+      - button "Social" [ref=f6e10971] [cursor=pointer]
+      - button "Campaigns" [ref=f6e10972] [cursor=pointer]
+      - button "Pipeline" [ref=f6e10973] [cursor=pointer]
+      - button "Contacts" [ref=f6e10974] [cursor=pointer]
+      - button "Analytics" [ref=f6e10975] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "Templates" [ref=f6e10976] [cursor=pointer]
+      - button "Media" [ref=f6e10977] [cursor=pointer]
+      - button "Team" [ref=f6e10978] [cursor=pointer]
+      - button "Settings" [ref=f6e10979] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "Admin portal" [ref=f6e10980] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: Contacts
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "Search conversations, contacts, campaigns…" [ref=f6e10981]
+        - generic [ref=f6e125]: ⌘K
+      - button "ع" [ref=f6e10982] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "Notifications" [ref=f6e10983] [cursor=pointer]
+      - button "Create" [ref=f6e10984] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "Sign out" [ref=f6e10985] [cursor=pointer]
+    - generic [ref=f6e8881]:
+      - generic [ref=f6e8883]:
+        - generic [ref=f6e8884]:
+          - heading "Contacts" [level=1] [ref=f6e10986]
+          - paragraph [ref=f6e8886]: 12,408 contacts · 2,184 leads · 9,612 customers
+        - generic [ref=f6e8887]:
+          - generic [ref=f6e8888]:
+            - button "Table" [ref=f6e10987] [cursor=pointer]
+            - button "Pipeline" [ref=f6e10988] [cursor=pointer]
+          - button "New contact" [ref=f6e10989] [cursor=pointer]
+      - generic [ref=f6e8894]:
+        - button "Contacts" [ref=f6e10990] [cursor=pointer]
+        - button "Groups" [ref=f6e10991] [cursor=pointer]
+        - button "Tags" [active] [ref=f6e10992] [cursor=pointer]
+      - generic [ref=f6e11012]:
+        - generic [ref=f6e11013]:
+          - textbox "New tag name…" [ref=f6e11014]
+          - button "Add tag" [disabled] [ref=f6e11015]
+        - generic [ref=f6e11018]:
+          - generic [ref=f6e11019]:
+            - button "Change color" [ref=f6e11020] [cursor=pointer]
+            - button "SmokeTest" [ref=f6e11021]
+            - generic [ref=f6e11022]: 1 contacts
+            - button "Delete tag" [ref=f6e11023] [cursor=pointer]
+          - generic [ref=f6e11028]:
+            - button "Change color" [ref=f6e11029] [cursor=pointer]
+            - button "VIPER" [ref=f6e11030]
+            - generic [ref=f6e11031]: 1 contacts
+            - button "Delete tag" [ref=f6e11032] [cursor=pointer]

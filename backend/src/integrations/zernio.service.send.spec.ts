@@ -1,3 +1,4 @@
+import { AiBridgeService } from "./ai-bridge.service";
 import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
@@ -49,6 +50,7 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
       // Auto-reply is opt-in per conversation and off in these fixtures, so
       // the agent is never consulted; a stub that would fail loudly if it were.
       { ask: jest.fn().mockResolvedValue(null) } as never,
+      { isConfigured: () => false, notifyInbound: jest.fn() } as unknown as AiBridgeService,
     );
     return { svc, client, prisma, media };
   };

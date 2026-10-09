@@ -41,6 +41,7 @@ export function IntegrationsTab() {
       {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />}
       {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
+      {/* WhatsApp connects through Zernio, like Facebook and Instagram. */}
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
 
       <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canEdit={canEdit} />

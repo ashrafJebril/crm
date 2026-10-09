@@ -43,6 +43,12 @@ export class PrismaService implements OnModuleDestroy {
   get tag() { return this.client.tag; }
   get workflow() { return this.client.workflow; }
   get workflowRun() { return this.client.workflowRun; }
+  get adsChatSession() { return this.client.adsChatSession; }
+  get adsChatMessage() { return this.client.adsChatMessage; }
+  get adsPendingAction() { return this.client.adsPendingAction; }
+  get adsActionAudit() { return this.client.adsActionAudit; }
+  get adsWallet() { return this.client.adsWallet; }
+  get adsWalletTransaction() { return this.client.adsWalletTransaction; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

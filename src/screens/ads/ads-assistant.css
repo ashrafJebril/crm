@@ -1,0 +1,614 @@
+/* ─── Ads Assistant (Salma) — page-scoped styles ───────────────────────────
+ *
+ * The source design shipped its palette as a block of page-scoped custom
+ * properties, because its global surface token was LIGHTER than the mockup's
+ * screen and would have inverted the "screen darkest, panels lighter" relation.
+ * The CRM's own token layer already IS that palette (same warm-neutral + gold
+ * family, --bg darkest with --bg-1/--bg-2/--bg-3 stacked on top), so this port
+ * drops the alias block entirely and paints from the --bg, --ink, --line and
+ * --accent families directly. Light mode then follows [data-theme="light"] for
+ * free — there is no second palette to keep in sync.
+ *
+ * The only values the token layer can't express are the two tip accents
+ * (purple + teal, straight from the design) — those keep an explicit light
+ * override below.
+ *
+ * CONTAINMENT: every rule is under .ads-scope, which lives only on this
+ * screen's root element. No shared token is redefined, so nothing outside this
+ * page can shift.
+ *
+ * RTL: sizing/spacing uses logical properties (inline-start/end, margin-inline)
+ * so the whole screen mirrors from the <html dir> the language switch sets.
+ *
+ * The soft tints on the status colours are derived with color-mix() from
+ * --ok/--warn/--bad rather than pasted in as rgba literals, so they stay in
+ * step if a status colour is ever retuned. (--ok/--warn/--bad are defined once
+ * in :root and never re-declared per theme, so one derivation covers both.)
+ */
+
+.ads-scope {
+  --ads-tip-a: #a78bfa;
+  --ads-tip-a-bg: rgba(167, 139, 250, 0.14);
+  --ads-tip-b: #2dd4bf;
+  --ads-tip-b-bg: rgba(45, 212, 191, 0.14);
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+[data-theme="light"] .ads-scope {
+  --ads-tip-a: #7c5ce0;
+  --ads-tip-a-bg: rgba(124, 92, 224, 0.1);
+  --ads-tip-b: #0e9384;
+  --ads-tip-b-bg: rgba(14, 147, 132, 0.1);
+}
+
+/* ─── Header balance chip ─────────────────────────────────────────────── */
+.ads-balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.ads-balance .val {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ─── Platform bar — Meta live, the other four permanently locked ─────── */
+.ads-platbar {
+  flex-shrink: 0;
+  padding: 0 24px 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.ads-plat-row {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.ads-plat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--ink-1);
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 7px 13px;
+  white-space: nowrap;
+}
+.ads-plat.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+/* Inert by design: no pointer, no hover, no click target. */
+.ads-plat.locked {
+  opacity: 0.5;
+  cursor: default;
+  color: var(--ink-3);
+}
+.ads-plat .glyph {
+  display: flex;
+}
+.ads-plat .live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--ok);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--ok) 20%, transparent);
+}
+
+/* ─── Two-column body: chat fills, library column fixed ───────────────── */
+.ads-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  padding: 0 24px 16px;
+}
+.ads-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ads-side {
+  width: 440px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* ─── Thread ──────────────────────────────────────────────────────────── */
+.ads-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 2px;
+}
+.ads-thread-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px;
+  max-width: 440px;
+  gap: 5px;
+}
+
+/* Bubbles — token-driven, so light mode needs no override. Outgoing (the
+ * viewer) sits on the end side, matching the Inbox composer thread. */
+.ads-bubble {
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.ads-bubble.out {
+  background: var(--bubble-out);
+  border: 1px solid var(--bubble-out-line);
+  border-end-end-radius: var(--r-xs);
+  color: var(--ink);
+}
+.ads-bubble.in {
+  background: var(--bubble-in);
+  border: 1px solid var(--bubble-in-line);
+  border-end-start-radius: var(--r-xs);
+  color: var(--ink);
+}
+.ads-bubble .stamp {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--ink-4);
+  text-align: end;
+}
+.ads-typing {
+  align-self: flex-start;
+  background: var(--bubble-in);
+  border: 1px solid var(--bubble-in-line);
+  border-radius: var(--r-lg);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+/* ─── Approval card — a decision surface, flatter and wider than a bubble.
+ *     The gold hairline is the "needs you" signal. ─────────────────────── */
+.ads-action {
+  align-self: stretch;
+  background: var(--bg-1);
+  border: 1px solid var(--accent-ring);
+  border-radius: var(--r-lg);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ads-action .head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ads-action .head .title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.ads-action .head .tool {
+  margin-inline-start: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-3);
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+}
+.ads-action .summary {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 13px;
+  color: var(--ink-1);
+}
+.ads-action .warn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent);
+  border-radius: var(--r);
+  padding: 7px 10px;
+}
+.ads-action .note {
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.ads-action .row {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+/* ─── Error / empty-balance strips above the composer ─────────────────── */
+.ads-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  color: var(--bad);
+  border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+  border-radius: var(--r);
+  font-size: 13px;
+}
+.ads-lowbal {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r);
+}
+.ads-lowbal .t {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.ads-lowbal .h {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.ads-lowbal .s {
+  font-size: 12px;
+  color: var(--ink-3);
+  margin-top: 6px;
+}
+
+/* ─── Composer ────────────────────────────────────────────────────────── */
+.ads-composer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding-top: 12px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.ads-composer textarea {
+  flex: 1;
+  min-height: 46px;
+  max-height: 160px;
+  resize: none;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 12px 14px;
+  outline: none;
+}
+.ads-composer textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ads-composer textarea::placeholder {
+  color: var(--ink-4);
+}
+.ads-composer textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ─── Side column: connection chip ───────────────────────────────────── */
+.ads-conn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: var(--ink-1);
+}
+.ads-conn .live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
+}
+
+/* ─── Prompt library ─────────────────────────────────────────────────── */
+.ads-lib {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 14px 14px 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.ads-lib-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ads-lib-head .name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ads-lib-head .name .glyph {
+  display: flex;
+  color: var(--accent);
+}
+
+/* 8 chips (All + 7) wrap instead of scrolling — the column is fixed-width. */
+.ads-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 11px;
+  flex-shrink: 0;
+}
+.ads-chip {
+  flex-shrink: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.ads-chip:hover {
+  color: var(--ink);
+}
+.ads-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.ads-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 0 12px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+  color: var(--ink-3);
+}
+.ads-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 9px 0;
+}
+.ads-search input::placeholder {
+  color: var(--ink-4);
+}
+
+.ads-rows {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex: 1;
+  min-height: 0;
+  margin: 0 -3px;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+}
+.ads-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: 0 6px;
+  border-radius: var(--r);
+  transition: background 0.12s;
+}
+.ads-row:hover {
+  background: var(--bg-2);
+}
+.ads-row + .ads-row {
+  border-top: 1px solid var(--line-soft);
+}
+.ads-row.locked {
+  opacity: 0.55;
+}
+.ads-row .text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+.ads-row .name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.ads-row .name .label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ads-row .desc {
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ads-soon {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  background: var(--bg-2);
+  color: var(--ink-3);
+  font-size: 9.5px;
+  font-weight: 700;
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.ads-row .acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.ads-icon-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--r);
+  display: flex;
+  color: var(--ink-2);
+}
+.ads-icon-btn:hover {
+  color: var(--ink);
+  background: var(--bg-2);
+}
+.ads-icon-btn.copied {
+  color: var(--ok);
+}
+.ads-run-btn {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  color: var(--accent);
+  padding: 6px 7px;
+  border-radius: var(--r);
+  display: flex;
+  cursor: pointer;
+}
+.ads-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ads-lib-empty {
+  padding: 24px 4px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.ads-lock {
+  display: flex;
+  padding: 6px;
+  color: var(--ink-4);
+}
+
+/* ─── Tips — permanent, bottom of the side column ─────────────────────── */
+.ads-tips {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+}
+.ads-tips .heading {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  margin-bottom: 10px;
+}
+.ads-tips .grid {
+  display: flex;
+  gap: 8px;
+}
+.ads-tip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  padding: 12px;
+}
+.ads-tip .glyph {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.ads-tip .t {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.ads-tip .b {
+  font-size: 11px;
+  color: var(--ink-3);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─── Assistant markdown (inside .ads-bubble.in) ─────────────────────── */
+.ads-md > :last-child {
+  margin-bottom: 0;
+}

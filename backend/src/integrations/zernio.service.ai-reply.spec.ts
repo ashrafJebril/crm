@@ -15,7 +15,11 @@ const inbound = {
   message: { id: "m-1", text: "Hello what do you offer", platform: "facebook" },
 };
 
-function build(conversation: Record<string, unknown>, ask: jest.Mock) {
+function build(
+  conversation: Record<string, unknown>,
+  ask: jest.Mock,
+  opts: { bridgeConfigured?: boolean; workspace?: Record<string, unknown> | null } = {},
+) {
   const prisma: any = {
     integration: {
       findFirst: jest.fn().mockResolvedValue({ workspaceId: WS, platform: "facebook", pageId: "page-1" }),
@@ -33,7 +37,9 @@ function build(conversation: Record<string, unknown>, ask: jest.Mock) {
       create: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
     },
+    workspace: { findUnique: jest.fn().mockResolvedValue(opts.workspace ?? null) },
   };
+  const notifyInbound = jest.fn();
   const realtime: any = { emitToWorkspace: jest.fn() };
   const svc = new ZernioService(
     prisma as unknown as PrismaService,
@@ -42,11 +48,12 @@ function build(conversation: Record<string, unknown>, ask: jest.Mock) {
     {} as unknown as ZernioClient,
     { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     { ask, enabled: true } as never,
+    { isConfigured: () => opts.bridgeConfigured === true, notifyInbound } as never,
   );
   const send = jest
     .spyOn(svc as never as { sendInDbConversation: () => Promise<unknown> }, "sendInDbConversation")
     .mockResolvedValue({ ok: true });
-  return { svc, prisma, realtime, send };
+  return { svc, prisma, realtime, send, notifyInbound };
 }
 
 /** The auto-reply is fire-and-forget, so let its microtasks drain. */
@@ -89,6 +96,51 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
     // The whole point of opt-in: a live page does not start answering by itself.
     expect(ask).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("stays silent while a human has taken the thread over", async () => {
+    const ask = jest.fn();
+    const { svc, send } = build(
+      { id: CONV, aiEnabled: true, aiPausedAt: new Date(), channel: "facebook" },
+      ask,
+    );
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    expect(ask).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the kewy-ai bridge out of a thread the workspace's l agent answers", async () => {
+    const ask = jest.fn().mockResolvedValue({ answer: "We offer property management." });
+    const { svc, send, notifyInbound } = build(
+      { id: CONV, aiEnabled: true, channel: "facebook" },
+      ask,
+      { bridgeConfigured: true, workspace: { lEndpointId: "ep-1", lEndpointSecret: "s3cret" } },
+    );
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    // Both platforms key off the same flag; one message must get one reply.
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(notifyInbound).not.toHaveBeenCalled();
+  });
+
+  it("hands the message to the kewy-ai bridge when the workspace has no l endpoint", async () => {
+    const ask = jest.fn().mockResolvedValue(null); // what ask() returns for an unlinked workspace
+    const { svc, send, notifyInbound } = build(
+      { id: CONV, aiEnabled: true, channel: "facebook" },
+      ask,
+      { bridgeConfigured: true, workspace: { lEndpointId: null, lEndpointSecret: null } },
+    );
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(notifyInbound).toHaveBeenCalledTimes(1);
   });
 
   it("does not answer our own outbound echo", async () => {

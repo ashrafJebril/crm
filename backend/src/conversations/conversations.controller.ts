@@ -34,6 +34,16 @@ export class ConversationsController {
   @Get(":id/messages") messages(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     return this.svc.listMessages(workspaceId, id);
   }
+  /** Toggle the AI for one thread. Also clears a human-takeover pause. */
+  @Post(":id/ai")
+  setAi(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: { enabled?: boolean },
+  ) {
+    return this.svc.setAi(workspaceId, id, dto?.enabled === true);
+  }
+
   @Post(":id/messages") send(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Body() dto: CreateMessageDto) {
     return this.svc.addMessage(workspaceId, id, dto);
   }

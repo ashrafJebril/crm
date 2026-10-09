@@ -1,0 +1,109 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - generic [ref=f6e5]:
+      - generic [ref=f6e6]: A
+      - generic [ref=f6e7]:
+        - generic [ref=f6e8]: Aram.
+        - generic [ref=f6e9]: v2.4 · MENA
+      - button "Search" [ref=f6e10] [cursor=pointer]
+    - generic "Switch workspace" [ref=f6e14] [cursor=pointer]:
+      - generic [ref=f6e16]:
+        - generic [ref=f6e17]: Default Workspace
+        - generic [ref=f6e18]: free · owner
+    - navigation [ref=f6e22]:
+      - generic [ref=f6e23]: Workspace
+      - button "اللوحة" [ref=f6e9865] [cursor=pointer]
+      - button "الرسائل 7" [ref=f6e9866] [cursor=pointer]:
+        - generic [ref=f6e34]: الرسائل
+        - generic [ref=f6e35]: "7"
+      - button "التقويم" [ref=f6e9867] [cursor=pointer]
+      - button "السوشيال" [ref=f6e9868] [cursor=pointer]
+      - button "الحملات" [ref=f6e9869] [cursor=pointer]
+      - button "خط الأنابيب" [ref=f6e9870] [cursor=pointer]
+      - button "جهات الاتصال" [ref=f6e9871] [cursor=pointer]
+      - button "التحليلات" [ref=f6e9872] [cursor=pointer]
+      - generic [ref=f6e76]: Manage
+      - button "القوالب" [ref=f6e9873] [cursor=pointer]
+      - button "الوسائط" [ref=f6e9874] [cursor=pointer]
+      - button "الفريق" [ref=f6e9875] [cursor=pointer]
+      - button "الإعدادات" [ref=f6e9876] [cursor=pointer]
+      - generic [ref=f6e99]: Aram ops
+      - button "بوابة الإدارة" [ref=f6e9877] [cursor=pointer]
+    - generic [ref=f6e105]:
+      - generic [ref=f6e106]: YK
+      - generic [ref=f6e107]:
+        - generic [ref=f6e108]: Yara Khaled
+        - generic [ref=f6e109]: owner · Default Workspace
+      - button "Notifications" [ref=f6e110] [cursor=pointer]
+  - main [ref=f6e114]:
+    - generic [ref=f6e115]:
+      - generic [ref=f6e116]:
+        - generic [ref=f6e117]: Samemha
+        - generic [ref=f6e118]: /
+        - generic [ref=f6e119]: جهات الاتصال
+      - generic [ref=f6e120] [cursor=pointer]:
+        - textbox "ابحث في كل شيء…" [ref=f6e9878]
+        - generic [ref=f6e125]: ⌘K
+      - button "EN" [ref=f6e9879] [cursor=pointer]
+      - button "Toggle theme" [ref=f6e128] [cursor=pointer]
+      - button "الإشعارات" [ref=f6e9880] [cursor=pointer]
+      - button "إنشاء" [ref=f6e9881] [cursor=pointer]
+      - button "Default Workspace" [ref=f6e140] [cursor=pointer]
+      - generic [ref=f6e144]:
+        - generic [ref=f6e145]: YK
+        - generic [ref=f6e146]:
+          - generic [ref=f6e147]: Yara Khaled
+          - generic [ref=f6e148]: Owner
+        - button "تسجيل الخروج" [ref=f6e9882] [cursor=pointer]
+    - generic [ref=f6e8881]:
+      - generic [ref=f6e8883]:
+        - generic [ref=f6e8884]:
+          - heading "جهات الاتصال" [level=1] [ref=f6e9883]
+          - paragraph [ref=f6e8886]: ١٢٬٤٠٨ جهة · ٢٬١٨٤ محتمل · ٩٬٦١٢ عميل
+        - generic [ref=f6e8887]:
+          - generic [ref=f6e8888]:
+            - button "جدول" [ref=f6e9884] [cursor=pointer]
+            - button "المسار" [ref=f6e9885] [cursor=pointer]
+          - button "جهة جديدة" [ref=f6e9886] [cursor=pointer]
+      - generic [ref=f6e8894]:
+        - button "جهات الاتصال" [ref=f6e9887] [cursor=pointer]
+        - button "المجموعات" [active] [ref=f6e9888] [cursor=pointer]
+        - button "الوسوم" [ref=f6e9889] [cursor=pointer]
+      - generic [ref=f6e9906]:
+        - generic [ref=f6e9907]:
+          - generic [ref=f6e9908]: مجموعاتك · 1
+          - generic [ref=f6e9909]:
+            - button "مجموعة جديدة" [ref=f6e9910] [cursor=pointer]
+            - button "عملاء الجملة يدوية 2 جهة اتصال" [ref=f6e9914] [cursor=pointer]:
+              - generic [ref=f6e9915]:
+                - generic [ref=f6e9916]: عملاء الجملة
+                - generic [ref=f6e9917]: يدوية
+              - generic [ref=f6e9918]: "2"
+              - generic [ref=f6e9919]: جهة اتصال
+        - generic [ref=f6e9920]:
+          - generic [ref=f6e9921]: الشرائح الذكية · 4
+          - generic [ref=f6e9922]:
+            - button "??????? ????????? ذكية 42 جهة اتصال" [disabled] [ref=f6e9923]:
+              - generic [ref=f6e9924]:
+                - generic [ref=f6e9925]: "??????? ?????????"
+                - generic [ref=f6e9926]: ذكية
+              - generic [ref=f6e9927]: "42"
+              - generic [ref=f6e9928]: جهة اتصال
+            - button "??????? ذكية 0 جهة اتصال" [disabled] [ref=f6e9929]:
+              - generic [ref=f6e9930]:
+                - generic [ref=f6e9931]: "???????"
+                - generic [ref=f6e9932]: ذكية
+              - generic [ref=f6e9933]: "0"
+              - generic [ref=f6e9934]: جهة اتصال
+            - button "????? ???? ذكية 3 جهة اتصال" [disabled] [ref=f6e9935]:
+              - generic [ref=f6e9936]:
+                - generic [ref=f6e9937]: "????? ????"
+                - generic [ref=f6e9938]: ذكية
+              - generic [ref=f6e9939]: "3"
+              - generic [ref=f6e9940]: جهة اتصال
+            - button "???? ???? ذكية 39 جهة اتصال" [disabled] [ref=f6e9941]:
+              - generic [ref=f6e9942]:
+                - generic [ref=f6e9943]: "???? ????"
+                - generic [ref=f6e9944]: ذكية
+              - generic [ref=f6e9945]: "39"
+              - generic [ref=f6e9946]: جهة اتصال
