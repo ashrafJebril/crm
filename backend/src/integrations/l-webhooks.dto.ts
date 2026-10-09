@@ -1,6 +1,7 @@
 import { Type } from "class-transformer";
 import {
   IsIn,
+  IsOptional,
   IsString,
   IsUUID,
   MinLength,
@@ -13,6 +14,7 @@ export class LMessagePayloadDto {
   @IsUUID() agentId!: string;
   @IsString() @MinLength(1) userId!: string;
   @IsString() @MinLength(1) message!: string;
+  @IsOptional() @IsString() imageUrl?: string;
   @IsString() timestamp!: string; // ISO 8601
 }
 

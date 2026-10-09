@@ -436,6 +436,54 @@ model Campaign {
   @@index([workspaceId])
 }
 
+// ─── Workflows ────────────────────────────────────────────────────────────
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String
+  status      String   @default("draft") // "draft" | "active"
+  triggerType String   // "contact_created" | "message_received" | "ticket_created" | "ticket_stage_changed" | "schedule" | "webhook"
+  triggerConfig Json   @default("{}")
+  steps       Json     @default("{\"entry\": null, \"steps\": {}}")
+  webhookSecret   String?
+  lastScheduledAt DateTime?
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceWorkflows", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  runs WorkflowRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([workspaceId, triggerType, status])
+}
+
+model WorkflowRun {
+  id            String   @id @default(cuid())
+  status        String   // "running" | "waiting" | "completed" | "failed" | "cancelled"
+  context       Json     @default("{}")
+  stepsSnapshot Json     @default("{}")
+  cursor        Json     @default("{\"stepId\": null}")
+  result        Json     @default("{}")
+  resumeAt      DateTime?
+  isTest        Boolean  @default(false)
+  error         String?
+
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceWorkflowRuns", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([workspaceId, workflowId, startedAt])
+  @@index([status, resumeAt])
+}
+
 // ─── Notes ────────────────────────────────────────────────────────────────
 
 model Note {
@@ -525,6 +573,17 @@ model Workspace {
   // cached here so every tool/MCP-server bind call doesn't re-resolve it.
   lAgentSlug String?
 
+  // Per-workspace credential for the inbound MCP server endpoint
+  // (POST /api/mcp/v1). The l platform's agent authenticates as this
+  // workspace using this token, registered via the existing McpServersTab
+  // "Add server" flow. Only a bcrypt hash is stored — losing the plaintext
+  // means generating a new one, same contract as lEndpointSecret above.
+  // mcpTokenPrefix is plaintext and indexed so the auth guard can find the
+  // owning workspace in one lookup before the (expensive) bcrypt compare.
+  mcpTokenPrefix    String?   @unique
+  mcpTokenHash      String?
+  mcpTokenCreatedAt DateTime?
+
   members WorkspaceMember[]
 
   contacts          Contact[]          @relation("WorkspaceContacts")
@@ -542,6 +601,8 @@ model Workspace {
   integrations      Integration[]      @relation("WorkspaceIntegrations")
   notes             Note[]             @relation("WorkspaceNotes")
   media             Media[]            @relation("WorkspaceMedia")
+  workflows         Workflow[]         @relation("WorkspaceWorkflows")
+  workflowRuns      WorkflowRun[]      @relation("WorkspaceWorkflowRuns")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

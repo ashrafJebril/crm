@@ -38,7 +38,7 @@ export class LAgentService {
   async ask(
     workspaceId: string,
     opts: { externalId: string; message: string; sessionId?: string | null },
-  ): Promise<string | null> {
+  ): Promise<{ answer: string; imageUrl?: string } | null> {
     const baseUrl = process.env.L_API_URL;
     if (!baseUrl) return null;
 
@@ -80,12 +80,13 @@ export class LAgentService {
         this.logger.warn(`l returned ${res.status} for conversation ${opts.externalId}`);
         return null;
       }
-      const payload = (await res.json()) as { answer?: unknown };
+      const payload = (await res.json()) as { answer?: unknown; image_url?: unknown };
       if (typeof payload.answer !== "string" || payload.answer.length === 0) {
         this.logger.warn(`l returned no answer for conversation ${opts.externalId}`);
         return null;
       }
-      return payload.answer;
+      const imageUrl = typeof payload.image_url === "string" ? payload.image_url : undefined;
+      return { answer: payload.answer, imageUrl };
     } catch (err) {
       this.logger.warn(
         `Could not reach l for conversation ${opts.externalId}: ` +

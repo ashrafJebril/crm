@@ -50,7 +50,7 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
       // the agent is never consulted; a stub that would fail loudly if it were.
       { ask: jest.fn().mockResolvedValue(null) } as never,
     );
-    return { svc, client, prisma };
+    return { svc, client, prisma, media };
   };
 
   it("splits image and caption into two sends on Instagram", async () => {
@@ -119,5 +119,48 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
 
     expect(prisma.message.create.mock.calls[0][0].data.from).toBe("human");
     expect(prisma.conversation.update.mock.calls[0][0].data.lastFrom).toBe("human");
+  });
+
+  it("sends an externally-hosted image directly, without resolving a mediaId", async () => {
+    const { svc, client, media } = build("whatsapp");
+    await svc.sendInDbConversation(
+      workspaceId, "conv-db", "here you go", undefined, undefined, "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+
+    expect(media.get).not.toHaveBeenCalled();
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage.mock.calls[0]).toEqual([
+      "z-conv",
+      "acc1",
+      "here you go",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    ]);
+  });
+
+  it("stores the external image url directly in attach, not a mediaId", async () => {
+    const { svc, prisma } = build("whatsapp");
+    await svc.sendInDbConversation(
+      workspaceId, "conv-db", "here you go", undefined, undefined, "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+
+    expect(prisma.message.create.mock.calls[0][0].data.attach).toBe(
+      "https://cdn.example.com/pic.png",
+    );
+  });
+
+  it("still splits an externally-hosted image and caption on Instagram", async () => {
+    const { svc, client } = build("instagram");
+    await svc.sendInDbConversation(
+      workspaceId, "conv-db", "caption text", undefined, undefined, "ai",
+      { url: "https://cdn.example.com/pic.png", type: "image" },
+    );
+
+    expect(client.sendMessage).toHaveBeenCalledTimes(2);
+    expect(client.sendMessage.mock.calls[0]).toEqual([
+      "z-conv", "acc1", "", { url: "https://cdn.example.com/pic.png", type: "image" },
+    ]);
+    expect(client.sendMessage.mock.calls[1]).toEqual(["z-conv", "acc1", "caption text"]);
   });
 });

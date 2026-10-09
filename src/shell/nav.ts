@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconCampaign, IconUsers,
   IconChart, IconTemplate, IconTeam, IconCog, IconCal, IconGlobe,
-  IconLayers, IconBolt, IconAttach, IconBot,
+  IconLayers, IconBolt, IconAttach, IconBot, IconFlow,
 } from "@/icons";
 
 interface NavItem {
@@ -31,6 +31,7 @@ export const NAV: NavEntry[] = [
   { id: "social",      label: "Social",      ar: "السوشيال",      Icon: IconGlobe },
   { id: "campaigns",   label: "Campaigns",   ar: "الحملات",       Icon: IconCampaign },
   { id: "pipeline",    label: "Pipeline",    ar: "خط الأنابيب",   Icon: IconLayers },
+  { id: "workflows",   label: "Workflows",   ar: "الأتمتة",       Icon: IconFlow },
   { id: "contacts",    label: "Contacts",    ar: "جهات الاتصال",  Icon: IconUsers },
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
   { section: "Manage" },
@@ -50,6 +51,7 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   social:      { en: "Social media",    ar: "وسائل التواصل" },
   campaigns:   { en: "Campaigns",       ar: "الحملات" },
   pipeline:    { en: "Sales pipeline",  ar: "مسار المبيعات" },
+  workflows:   { en: "Workflows",       ar: "الأتمتة" },
   contacts:    { en: "Contacts",        ar: "جهات الاتصال" },
   analytics:   { en: "Analytics",       ar: "التحليلات" },
   templates:   { en: "Templates",       ar: "القوالب" },

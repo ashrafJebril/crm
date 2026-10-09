@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { WorkspaceInterceptor } from "./common/workspace.interceptor";
 import { ScheduleModule } from "@nestjs/schedule";
+import { EventEmitterModule } from "@nestjs/event-emitter";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { HealthModule } from "./health/health.module";
@@ -24,10 +25,13 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
+import { WorkflowsModule } from "./workflows/workflows.module";
+import { McpServerModule } from "./mcp-server/mcp-server.module";
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    EventEmitterModule.forRoot(),
     PrismaModule,
     AuthModule,
     HealthModule,
@@ -41,7 +45,9 @@ import { TagsModule } from "./tags/tags.module";
     CampaignsModule,
     DashboardModule,
     IntegrationsModule,
+    McpServerModule,
     TicketsModule,
+    WorkflowsModule,
     WorkspacesModule,
     NotesModule,
     MediaModule,

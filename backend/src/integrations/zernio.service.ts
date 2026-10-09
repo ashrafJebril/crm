@@ -3,13 +3,16 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { LAgentService } from "./l-agent.service";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -49,6 +52,7 @@ export class ZernioService {
     private readonly client: ZernioClient,
     private readonly pipelineAutomation: PipelineAutomationService,
     private readonly lAgent: LAgentService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -671,6 +675,7 @@ export class ZernioService {
     mediaId?: string,
     publicBaseUrl?: string,
     from: "human" | "ai" = "human",
+    externalAttachment?: { url: string; type: "image" },
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -682,8 +687,11 @@ export class ZernioService {
     // attachmentType contract. Spaces-stored media resolves to a signed
     // Spaces URL (fetchable from anywhere — no tunnel/PUBLIC_BASE_URL
     // dependency); only legacy local-disk media still needs publicBaseUrl.
-    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined;
-    if (mediaId) {
+    // An AI-sourced image already has a public URL of its own — it skips the
+    // CRM Media store entirely rather than being re-hosted there.
+    let attachment: { url: string; type: "image" | "video" | "audio" | "file" } | undefined =
+      externalAttachment;
+    if (!attachment && mediaId) {
       const row = await this.media.get(workspaceId, mediaId);
       let url: string;
       if (row.storageKind === "spaces") {
@@ -762,8 +770,9 @@ export class ZernioService {
         from,
         body: message,
         t,
-        // Frontend convention: attach carries our Media id for outbound sends.
-        attach: mediaId ?? null,
+        // Frontend convention: attach carries either our Media id, or — for
+        // an AI-sourced image — the external URL directly.
+        attach: mediaId ?? externalAttachment?.url ?? null,
         metaMessageId: id,
       },
     });
@@ -1271,6 +1280,15 @@ export class ZernioService {
         channel,
         text || undefined,
       );
+      this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType: "message_received",
+        payload: {
+          contact: { id: contact.id, name: contact.name },
+          conversation: { id: conv.id, channel },
+          message: { body: text },
+        },
+      } satisfies WorkflowTriggerEvent);
     }
   }
 
@@ -1316,24 +1334,47 @@ export class ZernioService {
     inbound: string,
   ): void {
     void (async () => {
-      const answer = await this.lAgent.ask(workspaceId, {
+      const result = await this.lAgent.ask(workspaceId, {
         externalId: conversationId,
         message: inbound,
       });
-      if (!answer) return;
+      if (!result) return;
 
       // sendInDbConversation both delivers the reply and stores the single
       // Message row (with real delivery metadata) plus the conversation
       // preview update — tagged "ai" so the thread still reads as the
       // agent's own turn instead of a staff reply.
-      await this.sendInDbConversation(
-        workspaceId,
-        conversationId,
-        answer,
-        undefined,
-        undefined,
-        "ai",
-      );
+      try {
+        await this.sendInDbConversation(
+          workspaceId,
+          conversationId,
+          result.answer,
+          undefined,
+          undefined,
+          "ai",
+          result.imageUrl ? { url: result.imageUrl, type: "image" } : undefined,
+        );
+      } catch (err) {
+        // l validates the image URL before it ever reaches us, but the
+        // channel itself can still reject it (hotlink-blocking CDN, expired
+        // signed URL, a size/format l allows but the channel doesn't). A
+        // bad image should only cost the image — never the text answer the
+        // agent already produced — so retry once without the attachment.
+        if (!result.imageUrl) throw err;
+        this.log.warn(
+          `l auto-reply image failed to send for conversation ${conversationId}, retrying text-only`,
+          err instanceof Error ? err.stack : String(err),
+        );
+        await this.sendInDbConversation(
+          workspaceId,
+          conversationId,
+          result.answer,
+          undefined,
+          undefined,
+          "ai",
+          undefined,
+        );
+      }
     })().catch((err) => {
       this.log.error(
         `l auto-reply failed for conversation ${conversationId}`,

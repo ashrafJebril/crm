@@ -9,6 +9,7 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   social: lazy(() => import("@/screens/Social")),
   campaigns: lazy(() => import("@/screens/Campaigns")),
   pipeline: lazy(() => import("@/screens/pipeline/PipelinePage")),
+  workflows: lazy(() => import("@/screens/workflows/WorkflowsPage")),
   contacts: lazy(() => import("@/screens/Contacts")),
   analytics: lazy(() => import("@/screens/Analytics")),
   templates: lazy(() => import("@/screens/Templates")),
