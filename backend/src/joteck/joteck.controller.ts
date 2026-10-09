@@ -16,6 +16,9 @@ import { ProvisionClientDto } from "../admin/admin.dto";
 interface JoteckWorkspacePatch {
   active?: boolean;
   enabledModules?: string[];
+  lWorkspaceId?: string | null;
+  lEndpointId?: string | null;
+  lEndpointSecret?: string | null;
 }
 
 /**
@@ -47,6 +50,11 @@ export class JoteckController {
   @Get("workspaces/:id/stats")
   stats(@Param("id") id: string) {
     return this.svc.stats(id);
+  }
+
+  @Post("workspaces/:id/agent-setup")
+  agentSetup(@Param("id") id: string) {
+    return this.svc.setupAgent(id);
   }
 
   @Patch("workspaces/:id")

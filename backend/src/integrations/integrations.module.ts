@@ -15,6 +15,7 @@ import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { LWebhooksController } from "./l-webhooks.controller";
 import { LWebhooksService } from "./l-webhooks.service";
 import { LAgentService } from "./l-agent.service";
+import { LAgentSetupService } from "./l-agent-setup.service";
 import { LConfigController } from "./l-config.controller";
 import { LJoteckClient } from "./l-joteck.client";
 import { LAgentResolverService } from "./l-agent-resolver.service";
@@ -56,8 +57,9 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LKnowledgeService,
     LToolsService,
     LMcpService,
+    LAgentSetupService,
     McpTokenService,
   ],
-  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, LAgentService, McpTokenService],
+  exports: [FacebookService, InstagramService, WhatsAppService, ZernioService, LAgentService, LAgentSetupService, McpTokenService],
 })
 export class IntegrationsModule {}
