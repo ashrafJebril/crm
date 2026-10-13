@@ -8,6 +8,7 @@ import { API_BASE, tokenStore } from "@/api/client";
 import { markEmbedded, notifyOpenerConnected, postToParent } from "@/embed/embed";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import { applySkin, storedSkin } from "@/embed/skin";
+import { setEmbedVisible } from "@/embed/visibility";
 import { consumeEmbedFragment } from "@/embed/fragment";
 import "./styles/index.css";
 
@@ -41,6 +42,7 @@ const fragment = (function () {
         /* localStorage may be unavailable in privacy mode */
       }
     },
+    setVisible: setEmbedVisible,
     replaceState: (url) => window.history.replaceState(null, "", url),
   });
 })();

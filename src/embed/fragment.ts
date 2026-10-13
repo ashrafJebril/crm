@@ -11,6 +11,7 @@ export interface FragmentDeps {
   storedSkin(): HostSkin | null;
   mergeTheme(theme: "dark" | "light"): void;
   replaceState(url: string): void;
+  setVisible(visible: boolean): void;
 }
 
 export interface FragmentResult {
@@ -53,6 +54,9 @@ export function consumeEmbedFragment(
   const route = framed && routeParam && (VALID_ROUTES as ReadonlySet<string>).has(routeParam) ? routeParam : null;
   const scrubEmbed = () =>
     deps.replaceState(`${loc.pathname}${loc.search}${route ? `#/${route}` : ""}`);
+  // Preloaded hidden by the host: start not-visible (embed only, same gate as route).
+  const hidden = framed && hashParams.get("hidden") === "1";
+  if (hidden) deps.setVisible(false);
   if (!loc.hash || loc.hash.length < 2) return result;
   const tmsso = hashParams.get("tmsso");
   if (tmsso && framed) {
@@ -64,7 +68,7 @@ export function consumeEmbedFragment(
   const token = hashParams.get("token");
   const theme = hashParams.get("theme");
   if (!token || token === "undefined" || token === "null") {
-    if (framed && (skinInHash || route)) scrubEmbed();
+    if (framed && (skinInHash || route || hidden)) scrubEmbed();
     return result;
   }
   deps.setToken(token);

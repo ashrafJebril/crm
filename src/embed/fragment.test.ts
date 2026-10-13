@@ -16,6 +16,7 @@ function deps(stored: unknown = null) {
     storedSkin: vi.fn(() => stored),
     mergeTheme: vi.fn(),
     replaceState: vi.fn(),
+    setVisible: vi.fn(),
   } as unknown as FragmentDeps & Record<string, ReturnType<typeof vi.fn>>;
 }
 const loc = (search: string, hash: string) => ({ pathname: "/", search, hash });
@@ -97,6 +98,24 @@ describe("consumeEmbedFragment", () => {
       consumeEmbedFragment(loc("", "#token=t1&route=inbox"), topWin, d);
       expect(d.setToken).toHaveBeenCalledWith("t1");
       expect(d.replaceState).toHaveBeenCalledWith("/");
+    });
+  });
+  describe("hidden param", () => {
+    it("framed hidden=1 starts hidden and is scrubbed", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&route=inbox&hidden=1"), framedWin, d);
+      expect(d.setVisible).toHaveBeenCalledWith(false);
+      expect(d.replaceState).toHaveBeenCalledWith("/?embed=1#/inbox");
+    });
+    it("framed without hidden does not hide", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc"), framedWin, d);
+      expect(d.setVisible).not.toHaveBeenCalled();
+    });
+    it("top-level ignores hidden", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&hidden=1"), topWin, d);
+      expect(d.setVisible).not.toHaveBeenCalled();
     });
   });
 });

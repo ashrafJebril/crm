@@ -12,6 +12,7 @@ import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
 import { authScreen, isEmbedded, parseInbound, postToParent } from "@/embed/embed";
+import { setEmbedVisible } from "@/embed/visibility";
 import { invalidateIntegrations, refreshAfterConnect } from "@/embed/connected";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import type { RouteId } from "@/lib/types";
@@ -95,6 +96,8 @@ function EmbedBridge({ route, setRoute }: { route: RouteId; setRoute: (r: RouteI
       if (!msg) return;
       if (msg.type === "kewy:navigate") {
         if (VALID_ROUTES.has(msg.route as RouteId)) setRoute(msg.route as RouteId);
+      } else if (msg.type === "kewy:visibility") {
+        setEmbedVisible(msg.visible);
       } else {
         toast("Account connected");
         void refreshAfterConnect(msg.provider, { invalidate: () => invalidateIntegrations(qc) });

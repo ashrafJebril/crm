@@ -11,6 +11,7 @@ export type EmbedOutbound =
 
 export type EmbedInbound =
   | { type: "kewy:navigate"; route: string }
+  | { type: "kewy:visibility"; visible: boolean }
   | { type: "kewy:connected"; provider: string };
 
 // In-memory flag so embed mode survives sessionStorage being unavailable
@@ -101,11 +102,15 @@ export function parseInbound(
   e: MessageEvent,
   allowed: string[] = allowedParentOrigins(),
 ): EmbedInbound | null {
-  const d = e.data as { type?: unknown; route?: unknown; provider?: unknown } | null;
+  const d = e.data as { type?: unknown; route?: unknown; provider?: unknown; visible?: unknown } | null;
   if (!d || typeof d !== "object") return null;
   if (d.type === "kewy:navigate") {
     if (e.source !== window.parent || !isAllowedParent(e.origin, allowed)) return null;
     return typeof d.route === "string" ? { type: "kewy:navigate", route: d.route } : null;
+  }
+  if (d.type === "kewy:visibility") {
+    if (e.source !== window.parent || !isAllowedParent(e.origin, allowed)) return null;
+    return typeof d.visible === "boolean" ? { type: "kewy:visibility", visible: d.visible } : null;
   }
   if (d.type === "kewy:connected") {
     if (e.origin !== window.location.origin) return null;
