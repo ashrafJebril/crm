@@ -67,4 +67,36 @@ describe("consumeEmbedFragment", () => {
     expect(d.applySkin).not.toHaveBeenCalled();
     expect(d.markEmbedded).not.toHaveBeenCalled();
   });
+  describe("route param", () => {
+    it("framed tmsso + route=inbox lands on #/inbox", () => {
+      const d = deps();
+      const r = consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&route=inbox"), framedWin, d);
+      expect(r.pendingTiremallSso).toBe("abc");
+      expect(d.replaceState).toHaveBeenCalledTimes(1);
+      expect(d.replaceState).toHaveBeenCalledWith("/?embed=1#/inbox");
+    });
+    it("skin only + route=social lands on #/social", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", skinHash("route=social&")), framedWin, d);
+      expect(d.replaceState).toHaveBeenCalledWith("/?embed=1#/social");
+    });
+    it("invalid routes leave no hash", () => {
+      for (const bad of ["#/../x", "evil", ""]) {
+        const d = deps();
+        consumeEmbedFragment(loc("?embed=1", `#tmsso=abc&route=${encodeURIComponent(bad)}`), framedWin, d);
+        expect(d.replaceState).toHaveBeenCalledWith("/?embed=1");
+      }
+    });
+    it("top-level ?embed=1 ignores route", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&route=inbox"), topWin, d);
+      expect(d.replaceState).not.toHaveBeenCalled();
+    });
+    it("hjz #token path is unaffected by route", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("", "#token=t1&route=inbox"), topWin, d);
+      expect(d.setToken).toHaveBeenCalledWith("t1");
+      expect(d.replaceState).toHaveBeenCalledWith("/");
+    });
+  });
 });
