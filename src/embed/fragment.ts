@@ -1,4 +1,5 @@
 import { connectCallbackProvider, shouldConsumeTiremallSso } from "./embed";
+import { VALID_ROUTES } from "../router";
 import { skinFromLocation, type HostSkin } from "./skin";
 
 export interface FragmentDeps {
@@ -10,6 +11,7 @@ export interface FragmentDeps {
   storedSkin(): HostSkin | null;
   mergeTheme(theme: "dark" | "light"): void;
   replaceState(url: string): void;
+  setVisible(visible: boolean): void;
 }
 
 export interface FragmentResult {
@@ -46,18 +48,27 @@ export function consumeEmbedFragment(
     result.closingAsPopup = true;
     return result;
   }
+  // Embed-only deep link: land directly on the requested screen so the
+  // Dashboard never loads first. Only honoured when framed AND a known route.
+  const routeParam = hashParams.get("route");
+  const route = framed && routeParam && (VALID_ROUTES as ReadonlySet<string>).has(routeParam) ? routeParam : null;
+  const scrubEmbed = () =>
+    deps.replaceState(`${loc.pathname}${loc.search}${route ? `#/${route}` : ""}`);
+  // Preloaded hidden by the host: start not-visible (embed only, same gate as route).
+  const hidden = framed && hashParams.get("hidden") === "1";
+  if (hidden) deps.setVisible(false);
   if (!loc.hash || loc.hash.length < 2) return result;
   const tmsso = hashParams.get("tmsso");
   if (tmsso && framed) {
     result.pendingTiremallSso = tmsso;
     deps.clearToken();
-    scrub();
+    scrubEmbed();
     return result;
   }
   const token = hashParams.get("token");
   const theme = hashParams.get("theme");
   if (!token || token === "undefined" || token === "null") {
-    if (framed && skinInHash) scrub();
+    if (framed && (skinInHash || route || hidden)) scrubEmbed();
     return result;
   }
   deps.setToken(token);

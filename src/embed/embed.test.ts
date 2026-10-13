@@ -33,6 +33,19 @@ describe("isAllowedParent", () => {
   });
 });
 
+describe("parseInbound visibility", () => {
+  const m = (visible: unknown) => ({ type: "kewy:visibility", visible });
+  it("accepts boolean from allowed parent", () => {
+    expect(parseInbound(ev({ data: m(true) }), A)).toEqual({ type: "kewy:visibility", visible: true });
+    expect(parseInbound(ev({ data: m(false) }), A)).toEqual({ type: "kewy:visibility", visible: false });
+  });
+  it("rejects bad origin, source, non-boolean", () => {
+    expect(parseInbound(ev({ data: m(true), origin: "https://evil.com" }), A)).toBeNull();
+    expect(parseInbound(ev({ data: m(true), source: {} }), A)).toBeNull();
+    expect(parseInbound(ev({ data: m("yes") }), A)).toBeNull();
+  });
+});
+
 describe("parseInbound", () => {
   it("accepts navigate from allowed parent", () => {
     expect(parseInbound(ev({ data: { type: "kewy:navigate", route: "inbox" } }), A)).toEqual({

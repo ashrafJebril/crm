@@ -37,6 +37,7 @@ import {
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
+import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
@@ -2622,6 +2623,8 @@ function InboxImpl() {
   const tx = makeTx(t.lang);
   const [filter, setFilter] = useState<FilterId>("all");
   const [activeId, setActiveId] = useState<string | null>(null);
+  // A hidden (preloaded) embed must not auto-select or mark anything read.
+  const embedVisible = useEmbedVisible();
   const [channels, setChannels] = useState<Set<ConvChannel>>(
     () => new Set<ConvChannel>(CHANNELS),
   );
@@ -2833,11 +2836,10 @@ function InboxImpl() {
 
   // Auto-select first conversation when list loads.
   useEffect(() => {
-    if (activeId !== null) return;
-    if (conversations.length > 0) {
+    if (shouldAutoSelect(embedVisible, activeId, conversations)) {
       setActiveId(conversations[0]!.id);
     }
-  }, [conversations, activeId]);
+  }, [conversations, activeId, embedVisible]);
 
   // Auto-fade the "Ticket #N created" banner: visible for 2.4s, then fade,
   // then unmount entirely.

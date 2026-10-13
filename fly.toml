@@ -18,22 +18,23 @@ primary_region = "fra"
     # Comma-separated origins allowed to embed/talk to the CRM (Tiremall admin,
     # served at https://tiremalliraq.com/admin/). BUILD-TIME: baked into the
     # bundle, so changing it requires a redeploy (fly deploy rebuilds).
-    VITE_EMBED_PARENT_ORIGINS = "https://tiremalliraq.com"
+    VITE_EMBED_PARENT_ORIGINS = "https://tiremalliraq.com,https://demo.tiremalliraq.com"
 
 # RUNTIME env for nginx (envsubst into the CSP frame-ancestors header at
 # container start) — can be changed without rebuilding the bundle, but must
 # list the same origin(s) as VITE_EMBED_PARENT_ORIGINS above or the browser
 # refuses to render the CRM inside the Tiremall admin iframe.
 [env]
-  FRAME_ANCESTORS = "'self' https://tiremalliraq.com"
+  FRAME_ANCESTORS = "'self' https://tiremalliraq.com https://demo.tiremalliraq.com"
 
 [http_service]
   internal_port = 8080
   force_https = true
   auto_start_machines = true
-  # Static assets only — safe to scale to zero between requests.
+  # Keep one machine warm so the embedded CRM never pays a cold start in the
+  # Tiremall admin iframe (with min 1, auto_stop only affects extra machines).
   auto_stop_machines = "stop"
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ["app"]
 
   [http_service.concurrency]

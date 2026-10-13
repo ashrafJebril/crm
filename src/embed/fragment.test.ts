@@ -16,6 +16,7 @@ function deps(stored: unknown = null) {
     storedSkin: vi.fn(() => stored),
     mergeTheme: vi.fn(),
     replaceState: vi.fn(),
+    setVisible: vi.fn(),
   } as unknown as FragmentDeps & Record<string, ReturnType<typeof vi.fn>>;
 }
 const loc = (search: string, hash: string) => ({ pathname: "/", search, hash });
@@ -66,5 +67,55 @@ describe("consumeEmbedFragment", () => {
     consumeEmbedFragment(loc("", skinHash()), framedWin, d);
     expect(d.applySkin).not.toHaveBeenCalled();
     expect(d.markEmbedded).not.toHaveBeenCalled();
+  });
+  describe("route param", () => {
+    it("framed tmsso + route=inbox lands on #/inbox", () => {
+      const d = deps();
+      const r = consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&route=inbox"), framedWin, d);
+      expect(r.pendingTiremallSso).toBe("abc");
+      expect(d.replaceState).toHaveBeenCalledTimes(1);
+      expect(d.replaceState).toHaveBeenCalledWith("/?embed=1#/inbox");
+    });
+    it("skin only + route=social lands on #/social", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", skinHash("route=social&")), framedWin, d);
+      expect(d.replaceState).toHaveBeenCalledWith("/?embed=1#/social");
+    });
+    it("invalid routes leave no hash", () => {
+      for (const bad of ["#/../x", "evil", ""]) {
+        const d = deps();
+        consumeEmbedFragment(loc("?embed=1", `#tmsso=abc&route=${encodeURIComponent(bad)}`), framedWin, d);
+        expect(d.replaceState).toHaveBeenCalledWith("/?embed=1");
+      }
+    });
+    it("top-level ?embed=1 ignores route", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&route=inbox"), topWin, d);
+      expect(d.replaceState).not.toHaveBeenCalled();
+    });
+    it("hjz #token path is unaffected by route", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("", "#token=t1&route=inbox"), topWin, d);
+      expect(d.setToken).toHaveBeenCalledWith("t1");
+      expect(d.replaceState).toHaveBeenCalledWith("/");
+    });
+  });
+  describe("hidden param", () => {
+    it("framed hidden=1 starts hidden and is scrubbed", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&route=inbox&hidden=1"), framedWin, d);
+      expect(d.setVisible).toHaveBeenCalledWith(false);
+      expect(d.replaceState).toHaveBeenCalledWith("/?embed=1#/inbox");
+    });
+    it("framed without hidden does not hide", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc"), framedWin, d);
+      expect(d.setVisible).not.toHaveBeenCalled();
+    });
+    it("top-level ignores hidden", () => {
+      const d = deps();
+      consumeEmbedFragment(loc("?embed=1", "#tmsso=abc&hidden=1"), topWin, d);
+      expect(d.setVisible).not.toHaveBeenCalled();
+    });
   });
 });
