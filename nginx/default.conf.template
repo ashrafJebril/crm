@@ -20,6 +20,8 @@ server {
 
   location = /index.html {
     add_header Cache-Control "no-cache";
+    # add_header is not inherited once a location sets its own, so repeat the CSP.
+    add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
   }
 
   # SPA fallback — client-side routes are not files on disk.
