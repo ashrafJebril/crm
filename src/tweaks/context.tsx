@@ -7,6 +7,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { isEmbedded } from "@/embed/embed";
+import { storedSkin } from "@/embed/skin";
 import type { Tweaks } from "@/lib/types";
 
 const DEFAULTS: Tweaks = {
@@ -24,13 +26,20 @@ function load(): Tweaks {
   if (typeof localStorage === "undefined") return DEFAULTS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULTS;
+    if (!raw) return withHostTheme(DEFAULTS);
     // Always start with the sidebar expanded — the user opted out of the
     // collapsed layout and the Tweaks UI that toggled it is hidden.
-    return { ...DEFAULTS, ...JSON.parse(raw), collapsed: false };
+    return withHostTheme({ ...DEFAULTS, ...JSON.parse(raw), collapsed: false });
   } catch {
     return DEFAULTS;
   }
+}
+
+// Embedded with a host skin: the host's mode wins, in memory only.
+function withHostTheme(t: Tweaks): Tweaks {
+  if (!isEmbedded()) return t;
+  const mode = storedSkin()?.mode;
+  return mode ? { ...t, theme: mode } : t;
 }
 
 type SetTweak = <K extends keyof Tweaks>(key: K, value: Tweaks[K]) => void;
@@ -60,7 +69,14 @@ export function TweaksProvider({ children }: { children: ReactNode }) {
   // Persist
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
+      let out = t;
+      if (isEmbedded() && storedSkin()?.mode) {
+        // Don't persist the host-forced theme into the standalone CRM's prefs.
+        const raw = localStorage.getItem(STORAGE_KEY);
+        const prevTheme = raw ? (JSON.parse(raw) as Partial<Tweaks>).theme : undefined;
+        out = { ...t, theme: prevTheme ?? DEFAULTS.theme };
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
     } catch {
       /* ignore quota / privacy errors */
     }

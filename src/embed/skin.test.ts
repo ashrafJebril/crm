@@ -49,9 +49,15 @@ describe("skinToCssVars", () => {
     expect(v["--accent-ring"]).toBe("color-mix(in srgb, #c9a55a 35%, transparent)");
     expect(v["--font-sans"]).toBe("Inter");
     expect(v["--font-display"]).toBe("Inter");
-    expect(["--ink-2", "--ink-3", "--ink-4"].every((k) => v[k] === "#999")).toBe(true);
+    expect(v["--ink-2"]).toBe("#999");
+    expect(v["--ink-3"]).toBe("color-mix(in srgb, #999 80%, transparent)");
+    expect(v["--ink-4"]).toBe("color-mix(in srgb, #999 60%, transparent)");
+    expect(v["--r"]).toBe("8px");
+    expect(v["--r-md"]).toBe("8px");
+    expect(v["--r-xl"]).toBe("calc(8px * 2.5)");
+    expect(v["--bubble-out"]).toBe("color-mix(in srgb, #c9a55a 18%, transparent)");
+    expect(v["--bubble-out-line"]).toBe("color-mix(in srgb, #c9a55a 45%, transparent)");
     expect(v["--bg"]).toBeUndefined();
-    expect(Object.keys(v).some((k) => k.includes("radius"))).toBe(false);
   });
   it("css text only uses allowlisted var names", () => {
     const css = skinToCss({
@@ -62,10 +68,16 @@ describe("skinToCssVars", () => {
     const allowed = new Set([
       "--bg", "--bg-1", "--bg-2", "--bg-3", "--bg-elev", "--line", "--line-soft", "--ink", "--ink-1",
       "--ink-2", "--ink-3", "--ink-4", "--accent", "--accent-soft", "--accent-ring", "--accent-ink",
-      "--font-sans", "--font-display",
+      "--font-sans", "--font-display", "--bubble-out", "--bubble-out-line", "--bubble-out-ink", "--ix-green-strong",
+      "--r", "--r-xs", "--r-sm", "--r-md", "--r-lg", "--r-xl",
     ]);
     expect(names.length).toBeGreaterThan(0);
     names.forEach((n) => expect(allowed.has(n)).toBe(true));
+    expect(css).toContain(':root[data-embed="1"][data-theme] .inbox-v2');
+    expect(css).toContain(".ix-display { font-family: var(--font-display); }");
+    expect(css).toContain("--r-md: 8px;");
+    expect(css).toContain("--bubble-out: #c9a55a;");
+    expect(css).toContain("--bubble-out-ink: #000;");
     expect(css.startsWith(':root[data-embed="1"], :root[data-embed="1"][data-theme]')).toBe(true);
   });
 });
@@ -94,8 +106,27 @@ describe("applySkin", () => {
     expect(appended[0].id).toBe("host-skin");
     expect(appended[0].textContent).toContain("--bg: #fff;");
     expect(attrs["data-theme"]).toBe("light");
-    expect(JSON.parse(store["aram.tweaks.v1"])).toEqual({ accent: "green", theme: "light" });
+    expect(JSON.parse(store["aram.tweaks.v1"])).toEqual({ accent: "green" });
     expect(JSON.parse(store["aram.skin.v1"])).toEqual({ mode: "light", bg: "#fff" });
+  });
+});
+
+describe("validation tightening", () => {
+  it("rejects malformed colors and odd quotes", () => {
+    expect(parseSkin(enc({ bg: "#12345" }))).toBeNull();
+    expect(parseSkin(enc({ bg: "rgb(1,2)" }))).toBeNull();
+    expect(parseSkin(enc({ bg: "rgb(1 2 3 4)" }))).toBeNull();
+    expect(parseSkin(enc({ bg: "rgba(1, 2, 3, 0.5)" }))).toEqual({ bg: "rgba(1, 2, 3, 0.5)" });
+    expect(parseSkin(enc({ font: "Inter, 'Segoe" }))).toBeNull();
+    expect(parseSkin(enc({ font: 'Inter, "Segoe' }))).toBeNull();
+  });
+  it("keeps every key of the admin's ADMIN_SKIN", () => {
+    const admin = {
+      mode: "light", font: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      bg: "#f8fafc", surface: "#ffffff", line: "#e2e8f0", ink: "#0f172a", muted: "#64748b",
+      accent: "#3b82f6", accentInk: "#ffffff", radius: "10px",
+    };
+    expect(parseSkin(enc(admin))).toEqual(admin);
   });
 });
 
