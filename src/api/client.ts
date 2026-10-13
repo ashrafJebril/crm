@@ -23,14 +23,24 @@ export class ApiError extends Error {
   }
 }
 
+// In-memory copy of the session token. Inside a cross-origin iframe (Tiremall
+// embed) browsers that block third-party storage (Chrome Incognito, blocked
+// 3P cookies) throw on — or silently drop — localStorage access. Falling back
+// to this copy keeps an embedded session alive for the life of the page.
+let memoryToken: string | null = null;
+
 export const tokenStore = {
   get(): string | null {
-    try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+    let stored: string | null = null;
+    try { stored = localStorage.getItem(TOKEN_KEY); } catch { /* blocked */ }
+    return stored ?? memoryToken;
   },
   set(token: string): void {
+    memoryToken = token;
     try { localStorage.setItem(TOKEN_KEY, token); } catch { /* ignore */ }
   },
   clear(): void {
+    memoryToken = null;
     try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
   },
 };

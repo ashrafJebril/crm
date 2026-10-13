@@ -24,6 +24,8 @@ import { LToolsService } from "./l-tools.service";
 import { LMcpService } from "./l-mcp.service";
 import { McpTokenController } from "./mcp-token.controller";
 import { McpTokenService } from "./mcp-token.service";
+import { TiremallWebhooksController } from "./tiremall-webhooks.controller";
+import { TiremallWebhooksService } from "./tiremall-webhooks.service";
 import { AiBridgeService } from "./ai-bridge.service";
 import { AiReplyController } from "./ai-reply.controller";
 import { MediaModule } from "../media/media.module";
@@ -43,6 +45,7 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LWebhooksController,
     LConfigController,
     McpTokenController,
+    TiremallWebhooksController,
     // Inert until KEWY_AI_URL + KEWY_AI_WEBHOOK_SECRET are set: without them
     // AiBridgeService reports unconfigured and every signature check fails.
     AiReplyController,
@@ -64,6 +67,7 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LMcpService,
     LAgentSetupService,
     McpTokenService,
+    TiremallWebhooksService,
     AiBridgeService,
   ],
   exports: [

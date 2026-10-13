@@ -4,6 +4,9 @@ server {
   root /usr/share/nginx/html;
   index index.html;
 
+  # Which origins may frame this app (Tiremall admin embeds the CRM).
+  add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
+
   gzip on;
   gzip_types text/css application/javascript application/json image/svg+xml;
   gzip_min_length 1024;
@@ -17,6 +20,8 @@ server {
 
   location = /index.html {
     add_header Cache-Control "no-cache";
+    # add_header is not inherited once a location sets its own, so repeat the CSP.
+    add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
   }
 
   # SPA fallback — client-side routes are not files on disk.
