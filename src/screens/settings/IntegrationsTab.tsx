@@ -8,7 +8,7 @@ import { Badge } from "@/components/Badge";
 import { IconGlobe, IconCheck, IconX } from "@/icons";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 import { ZernioCard } from "./ZernioCard";
-import { notifyOpenerConnected, openConnectWindow } from "@/embed/embed";
+import { useConnectFlow } from "@/embed/useConnectFlow";
 
 // Facebook/Instagram now connect through Zernio (ZernioCard) instead of our own
 // Meta app — no App Review, no Tester enrollment. The legacy Meta-app cards are
@@ -569,6 +569,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
   const [status, setStatus] = useState<string | null>(null);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const connect = useConnectFlow();
 
   const disconnectMut = useMutation<Record<string, never>, { ok: true }>(() =>
     api.delete("/integrations/facebook/disconnect"),
@@ -585,7 +586,6 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
     const fb = sp.get("fb");
     if (!fb) return;
     if (fb === "connected") {
-      if (notifyOpenerConnected("facebook")) return;
       setStatus(tx("Facebook connected.", "تم الاتصال بفيسبوك."));
       statusQ.refetch();
       window.setTimeout(() => setStatus(null), 2400);
@@ -606,8 +606,10 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
     setOauthError(null);
     setStarting(true);
     try {
-      const { url } = await api.get<{ url: string }>("/integrations/facebook/oauth/start");
-      openConnectWindow(url);
+      await connect(async () => {
+        const { url } = await api.get<{ url: string }>("/integrations/facebook/oauth/start");
+        return url;
+      });
       setStarting(false);
     } catch (e) {
       setOauthError((e as Error).message);

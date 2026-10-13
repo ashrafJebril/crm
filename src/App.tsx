@@ -12,6 +12,7 @@ import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
 import { authScreen, isEmbedded, parseInbound, postToParent } from "@/embed/embed";
+import { invalidateIntegrations } from "@/embed/useConnectFlow";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import type { RouteId } from "@/lib/types";
 import { VALID_ROUTES } from "@/router";
@@ -95,11 +96,7 @@ function EmbedBridge({ route, setRoute }: { route: RouteId; setRoute: (r: RouteI
       if (msg.type === "kewy:navigate") {
         if (VALID_ROUTES.has(msg.route as RouteId)) setRoute(msg.route as RouteId);
       } else {
-        void qc.invalidateQueries({
-          predicate: (q) =>
-            typeof q.queryKey[0] === "string" &&
-            (q.queryKey[0] as string).startsWith("/integrations"),
-        });
+        invalidateIntegrations(qc);
         toast("Account connected");
       }
     };

@@ -3,7 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { makeTx } from "@/lib/tx";
 import { useTweaks } from "@/tweaks/context";
-import { notifyOpenerConnected } from "@/embed/embed";
 import { useToast } from "./Toast";
 
 interface SyncResult {
@@ -51,8 +50,6 @@ export function ZernioRedirectCapture() {
     );
     if (params.get("zernio") !== "connected") return;
     done.current = true;
-    // Popup connect (embed mode): hand off to the opener, which refreshes itself.
-    if (notifyOpenerConnected("zernio")) return;
 
     const tx = makeTx(t.lang);
     const platform = (params.get("platform") ?? "").toLowerCase();

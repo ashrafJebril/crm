@@ -5,7 +5,7 @@ import App from "./App";
 import { TweaksProvider } from "@/tweaks/context";
 import { AuthProvider } from "@/auth/context";
 import { API_BASE, tokenStore } from "@/api/client";
-import { markEmbedded, notifyOpenerConnected, postToParent } from "@/embed/embed";
+import { connectCallbackProvider, markEmbedded, notifyOpenerConnected, postToParent } from "@/embed/embed";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import "./styles/index.css";
 
@@ -19,14 +19,19 @@ import "./styles/index.css";
 // token. It is NOT a session — it is exchanged for one via the backend before
 // React mounts (see bootstrap below).
 let pendingTiremallSso: string | null = null;
+let closingAsPopup = false;
 
 (function consumeSsoFragment() {
   if (typeof window === "undefined") return;
   const qs = new URLSearchParams(window.location.search);
   if (qs.get("embed") === "1") markEmbedded();
-  // Facebook OAuth lands on a non-hash path; if we are the connect popup, tell
-  // the opener and close before anything else renders.
-  if (qs.get("fb") === "connected") notifyOpenerConnected("facebook");
+  // Connect popup: if this load is a Zernio/Facebook callback and we have an
+  // opener, tell it and close. The app must not mount (popup has no session).
+  const cb = connectCallbackProvider(window.location);
+  if (cb && notifyOpenerConnected(cb)) {
+    closingAsPopup = true;
+    return;
+  }
   const hash = window.location.hash;
   if (!hash || hash.length < 2) return;
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
@@ -116,7 +121,9 @@ async function exchangeTiremallSso(token: string): Promise<boolean> {
   }
 }
 
-if (pendingTiremallSso) {
+if (closingAsPopup) {
+  // window.close() issued; render nothing.
+} else if (pendingTiremallSso) {
   void exchangeTiremallSso(pendingTiremallSso).then((ok) => {
     if (ok) {
       mount();

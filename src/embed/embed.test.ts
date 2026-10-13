@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, notifyOpenerConnected, openConnectWindow, parseInbound, postToParent } from "./embed";
+import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, notifyOpenerConnected, parseInbound, postToParent } from "./embed";
 
 const parent = {};
 const A = ["https://a.com"];
@@ -131,26 +131,95 @@ describe("postToParent", () => {
   });
 });
 
-describe("openConnectWindow", () => {
-  it("opens a popup when embedded", () => {
-    const open = vi.fn(() => ({}));
-    const location = { origin: "https://crm.example", href: "" };
-    vi.stubGlobal("window", { parent, location, open });
-    vi.stubGlobal("sessionStorage", { getItem: () => "1", setItem: () => {} });
-    openConnectWindow("https://p.example/auth");
-    expect(open).toHaveBeenCalledWith("https://p.example/auth", "kewy-connect", "width=600,height=750");
-    expect(location.href).toBe("");
-  });
-  it("assigns location when not embedded", async () => {
-    vi.resetModules(); // markEmbedded() in earlier tests latches a module-level flag
-    const { openConnectWindow } = await import("./embed");
-    const open = vi.fn();
-    const location = { origin: "https://crm.example", href: "" };
-    vi.stubGlobal("window", { parent, location, open });
+describe("connect popup (embedded)", () => {
+  const setup = async (open: unknown) => {
+    vi.resetModules();
+    vi.stubGlobal("window", { parent, location: { origin: "https://crm.example", href: "" }, open });
     vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {} });
-    openConnectWindow("https://p.example/auth");
-    expect(open).not.toHaveBeenCalled();
-    expect(location.href).toBe("https://p.example/auth");
+    const m = await import("./embed");
+    m.markEmbedded();
+    return m;
+  };
+
+  it("opens the popup synchronously, before the fetch resolves", async () => {
+    const open = vi.fn(() => ({}));
+    const m = await setup(open);
+    const order: string[] = [];
+    let resolveFetch!: (u: string) => void;
+    const fetchP = new Promise<string>((r) => (resolveFetch = r));
+    const run = (async () => {
+      const h = m.beginConnectWindow();
+      order.push("opened");
+      await fetchP;
+      order.push("fetched");
+      return h;
+    })();
+    expect(open).toHaveBeenCalledWith("about:blank", "kewy-connect", "width=600,height=750");
+    expect(order).toEqual(["opened"]);
+    resolveFetch("x");
+    await run;
+    expect(order).toEqual(["opened", "fetched"]);
+  });
+
+  it("null handle: no top navigation", async () => {
+    const m = await setup(vi.fn(() => null));
+    expect(m.beginConnectWindow()).toBeNull();
+    expect((window as unknown as { location: { href: string } }).location.href).toBe("");
+  });
+
+  it("navigate sets the handle location; abort closes it", async () => {
+    const m = await setup(vi.fn());
+    const h = { location: { href: "" }, close: vi.fn() } as unknown as Window;
+    m.navigateConnectWindow(h, "https://p.example/auth");
+    expect(h.location.href).toBe("https://p.example/auth");
+    m.abortConnectWindow(h);
+    expect(h.close).toHaveBeenCalled();
+  });
+
+  it("closed-poll fires onClosed exactly once", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = await setup(vi.fn());
+      const h = { closed: false } as unknown as { closed: boolean };
+      const onClosed = vi.fn();
+      m.watchConnectWindow(h as unknown as Window, onClosed);
+      vi.advanceTimersByTime(3000);
+      expect(onClosed).not.toHaveBeenCalled();
+      h.closed = true;
+      vi.advanceTimersByTime(5000);
+      expect(onClosed).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("poll gives up after maxMs", async () => {
+    vi.useFakeTimers();
+    try {
+      const m = await setup(vi.fn());
+      const onClosed = vi.fn();
+      const h = { closed: false } as unknown as Window;
+      m.watchConnectWindow(h, onClosed, 1000, 5000);
+      vi.advanceTimersByTime(6000);
+      (h as unknown as { closed: boolean }).closed = true;
+      vi.advanceTimersByTime(5000);
+      expect(onClosed).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("connectCallbackProvider", () => {
+  it("recognizes fb and zernio callbacks only", async () => {
+    const { connectCallbackProvider: f } = await import("./embed");
+    expect(f({ search: "?fb=connected", hash: "" })).toBe("facebook");
+    expect(f({ search: "", hash: "#/settings?zernio=connected&platform=facebook" })).toBe("zernio");
+    expect(f({ search: "", hash: "#settings?zernio=connected" })).toBe("zernio");
+    expect(f({ search: "?fb=error", hash: "" })).toBeNull();
+    expect(f({ search: "", hash: "#/dashboard?zernio=connected" })).toBeNull();
+    expect(f({ search: "", hash: "#/settings" })).toBeNull();
+    expect(f({ search: "?embed=1", hash: "" })).toBeNull();
   });
 });
 

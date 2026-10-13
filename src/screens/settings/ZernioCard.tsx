@@ -3,7 +3,7 @@ import { useFetch } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
 import { IconGlobe, IconX } from "@/icons";
-import { openConnectWindow } from "@/embed/embed";
+import { useConnectFlow } from "@/embed/useConnectFlow";
 import { SettingsCard, StatusToast, ErrorRow } from "./form";
 
 interface ZernioAccount {
@@ -70,6 +70,7 @@ interface ZernioCardProps {
  */
 export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
   const statusQ = useFetch<ZernioStatus>("/integrations/zernio/status");
+  const connect = useConnectFlow();
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,10 +92,12 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
     setError(null);
     setBusy(platform);
     try {
-      const { authUrl } = await api.get<{ authUrl: string }>(
-        `/integrations/zernio/connect/${platform}`,
-      );
-      openConnectWindow(authUrl);
+      await connect(async () => {
+        const { authUrl } = await api.get<{ authUrl: string }>(
+          `/integrations/zernio/connect/${platform}`,
+        );
+        return authUrl;
+      });
       setBusy(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start the connect flow");

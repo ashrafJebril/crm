@@ -102,23 +102,71 @@ export function parseInbound(
 
 export const CONNECT_WINDOW_NAME = "kewy-connect";
 
+export type ConnectHandle = Window;
+
 /**
- * Start an OAuth/connect flow. Inside the iframe the provider page cannot be
- * framed, so it opens in a popup; the popup tells the opener when it is done
- * (see notifyOpenerConnected). Outside the iframe it is a plain redirect.
+ * Embedded only: open the connect popup SYNCHRONOUSLY inside the click handler
+ * (before any await) so popup blockers allow it. Returns null if blocked.
  */
-export function openConnectWindow(url: string): void {
-  if (!isEmbedded()) {
-    window.location.href = url;
-    return;
-  }
-  const w = window.open(url, CONNECT_WINDOW_NAME, "width=600,height=750");
-  if (w) return;
+export function beginConnectWindow(): ConnectHandle | null {
+  return window.open("about:blank", CONNECT_WINDOW_NAME, "width=600,height=750");
+}
+
+export function navigateConnectWindow(handle: ConnectHandle, url: string): void {
+  handle.location.href = url;
+}
+
+export function abortConnectWindow(handle: ConnectHandle): void {
   try {
-    window.top!.location.href = url;
+    handle.close();
   } catch {
-    window.alert("Allow pop-ups to connect accounts");
+    /* ignore */
   }
+}
+
+/**
+ * Fallback for when COOP severs window.opener: poll the popup handle and call
+ * onClosed once it closes. Stops after maxMs. Returns a stop function.
+ */
+export function watchConnectWindow(
+  handle: ConnectHandle,
+  onClosed: () => void,
+  intervalMs = 1000,
+  maxMs = 10 * 60_000,
+): () => void {
+  const started = Date.now();
+  const timer = setInterval(() => {
+    let closed = false;
+    try {
+      closed = handle.closed;
+    } catch {
+      closed = true;
+    }
+    if (closed) {
+      clearInterval(timer);
+      onClosed();
+    } else if (Date.now() - started >= maxMs) {
+      clearInterval(timer);
+    }
+  }, intervalMs);
+  return () => clearInterval(timer);
+}
+
+/** Which connect callback (if any) is this page load? Pure, for boot-time use. */
+export function connectCallbackProvider(loc: {
+  search: string;
+  hash: string;
+}): "facebook" | "zernio" | null {
+  if (new URLSearchParams(loc.search).get("fb") === "connected") return "facebook";
+  const h = loc.hash.replace(/^#/, "");
+  const q = h.indexOf("?");
+  if (q >= 0) {
+    const route = h.slice(0, q).replace(/^\/+/, "");
+    if (route === "settings" && new URLSearchParams(h.slice(q + 1)).get("zernio") === "connected") {
+      return "zernio";
+    }
+  }
+  return null;
 }
 
 /** Called in the popup after a completed connect. True means the popup is closing. */
