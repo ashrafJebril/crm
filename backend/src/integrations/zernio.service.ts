@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import { randomBytes } from "crypto";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
@@ -65,12 +67,52 @@ export class ZernioService {
     if (!ws) throw new NotFoundException("Workspace not found");
     if (ws.zernioProfileId) return ws.zernioProfileId;
 
-    const { id } = await this.client.createProfile(ws.name, `tkana workspace ${ws.id}`);
-    await this.prisma.workspace.update({
-      where: { id: workspaceId },
+    // Zernio profile names are unique per API key (shared by every workspace
+    // and environment), so derive a readable, unique name from the workspace id.
+    const suffix = ` · ${ws.id.slice(-6)}`;
+    const cleanName = (ws.name ?? "").trim();
+    const fit = (reserve: number) =>
+      cleanName.slice(0, 60 - reserve).trim() || "Workspace";
+    const base = `${fit(suffix.length)}${suffix}`;
+    const description = `tkana workspace ${ws.id}`;
+
+    let id: string;
+    try {
+      ({ id } = await this.client.createProfile(base, description));
+    } catch (e) {
+      if (!ZernioService.isNameConflict(e)) throw e;
+      // Retry once with a random suffix. Never look the profile up by name:
+      // that could attach another tenant's social accounts.
+      ({ id } = await this.client.createProfile(
+        `${fit(suffix.length * 2)}${suffix} · ${randomBytes(3).toString("hex")}`,
+        description,
+      ));
+    }
+
+    // Only claim the slot if still empty, so a concurrent request can't be
+    // overwritten by an orphan profile.
+    const { count } = await this.prisma.workspace.updateMany({
+      where: { id: workspaceId, zernioProfileId: null },
       data: { zernioProfileId: id },
     });
+    if (count === 0) {
+      const current = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { zernioProfileId: true },
+      });
+      // Edge: if the workspace was deleted mid-request there is no stored id,
+      // so we fall through and return the unsaved id (nothing to attach it to).
+      if (current?.zernioProfileId) {
+        this.log.warn(`Zernio profile ${id} is orphaned (workspace profile was set concurrently)`);
+        return current.zernioProfileId;
+      }
+    }
     return id;
+  }
+
+  private static isNameConflict(e: unknown): boolean {
+    if (!(e instanceof HttpException)) return false;
+    return e.getStatus() === 409 || /already exists/i.test(e.message);
   }
 
   private async getProfileId(workspaceId: string): Promise<string | null> {
