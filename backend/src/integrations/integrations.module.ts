@@ -12,6 +12,8 @@ import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
 import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
+import { TiremallWebhooksController } from "./tiremall-webhooks.controller";
+import { TiremallWebhooksService } from "./tiremall-webhooks.service";
 import { AiBridgeService } from "./ai-bridge.service";
 import { AiReplyController } from "./ai-reply.controller";
 import { MediaModule } from "../media/media.module";
@@ -29,6 +31,7 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioController,
     MetaWebhooksController,
     HjzWebhooksController,
+    TiremallWebhooksController,
     // Inert until KEWY_AI_URL + KEWY_AI_WEBHOOK_SECRET are set: without them
     // AiBridgeService reports unconfigured and every signature check fails.
     AiReplyController,
@@ -41,6 +44,7 @@ import { TicketsModule } from "../tickets/tickets.module";
     ZernioClient,
     MetaWebhooksService,
     HjzWebhooksService,
+    TiremallWebhooksService,
     AiBridgeService,
   ],
   exports: [
