@@ -20,7 +20,7 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   admin: lazy(() => import("@/screens/Admin")),
 };
 
-const VALID = new Set<RouteId>(Object.keys(screens) as RouteId[]);
+export const VALID_ROUTES = new Set<RouteId>(Object.keys(screens) as RouteId[]);
 
 const parseHash = (): RouteId => {
   // The hash can carry a query string — hosted OAuth flows send the customer
@@ -28,7 +28,7 @@ const parseHash = (): RouteId => {
   // alone, otherwise the whole string misses VALID and we'd strand them on the
   // dashboard instead of the Settings page they started from.
   const id = window.location.hash.replace(/^#\/?/, "").split("?")[0];
-  return VALID.has(id as RouteId) ? (id as RouteId) : "dashboard";
+  return VALID_ROUTES.has(id as RouteId) ? (id as RouteId) : "dashboard";
 };
 
 export function useRoute(): [RouteId, (r: RouteId) => void] {
