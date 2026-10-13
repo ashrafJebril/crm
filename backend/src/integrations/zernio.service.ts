@@ -70,7 +70,10 @@ export class ZernioService {
     // Zernio profile names are unique per API key (shared by every workspace
     // and environment), so derive a readable, unique name from the workspace id.
     const suffix = ` · ${ws.id.slice(-6)}`;
-    const base = `${(ws.name ?? "").trim().slice(0, 60 - suffix.length).trim() || "Workspace"}${suffix}`;
+    const cleanName = (ws.name ?? "").trim();
+    const fit = (reserve: number) =>
+      cleanName.slice(0, 60 - reserve).trim() || "Workspace";
+    const base = `${fit(suffix.length)}${suffix}`;
     const description = `tkana workspace ${ws.id}`;
 
     let id: string;
@@ -81,7 +84,7 @@ export class ZernioService {
       // Retry once with a random suffix. Never look the profile up by name:
       // that could attach another tenant's social accounts.
       ({ id } = await this.client.createProfile(
-        `${base} · ${randomBytes(3).toString("hex")}`,
+        `${fit(suffix.length * 2)}${suffix} · ${randomBytes(3).toString("hex")}`,
         description,
       ));
     }
@@ -97,6 +100,8 @@ export class ZernioService {
         where: { id: workspaceId },
         select: { zernioProfileId: true },
       });
+      // Edge: if the workspace was deleted mid-request there is no stored id,
+      // so we fall through and return the unsaved id (nothing to attach it to).
       if (current?.zernioProfileId) {
         this.log.warn(`Zernio profile ${id} is orphaned (workspace profile was set concurrently)`);
         return current.zernioProfileId;

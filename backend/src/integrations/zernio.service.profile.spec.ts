@@ -51,6 +51,16 @@ describe("ZernioService.ensureProfile", () => {
     expect(empty.client.createProfile.mock.calls[0][0]).toBe(`Workspace · ${WS_ID.slice(-6)}`);
   });
 
+  it("keeps the retry name within 60 chars for very long workspace names", async () => {
+    const { svc, client } = build(null, "y".repeat(200));
+    client.createProfile.mockRejectedValueOnce(conflict());
+    await svc.ensureProfile(WS_ID);
+    const [first, second] = client.createProfile.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(first.length).toBeLessThanOrEqual(60);
+    expect(second.length).toBeLessThanOrEqual(60);
+    expect(second).toMatch(/ · [0-9a-f]{6}$/);
+  });
+
   it("returns an existing profile id without calling Zernio", async () => {
     const { svc, client, prisma } = build("existing");
     await expect(svc.ensureProfile(WS_ID)).resolves.toBe("existing");
@@ -66,7 +76,9 @@ describe("ZernioService.ensureProfile", () => {
     const [first, second] = client.createProfile.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(second).not.toBe(first);
     expect(second.startsWith(`${first} · `)).toBe(true);
-    expect(second.length).toBeLessThanOrEqual(70);
+    expect(second).toMatch(/ · [0-9a-f]{6}$/);
+    expect(first.length).toBeLessThanOrEqual(60);
+    expect(second.length).toBeLessThanOrEqual(60);
   });
 
   it("propagates a second 'already exists' error", async () => {
