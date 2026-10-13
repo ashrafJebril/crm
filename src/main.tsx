@@ -7,6 +7,7 @@ import { AuthProvider } from "@/auth/context";
 import { API_BASE, tokenStore } from "@/api/client";
 import { connectCallbackProvider, markEmbedded, notifyOpenerConnected, postToParent, shouldConsumeTiremallSso } from "@/embed/embed";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
+import { applySkin, skinFromLocation, storedSkin } from "@/embed/skin";
 import "./styles/index.css";
 
 // HJZ SSO landing — when /marketing/* opens this app via the launcher, the
@@ -24,7 +25,16 @@ let closingAsPopup = false;
 (function consumeSsoFragment() {
   if (typeof window === "undefined") return;
   const qs = new URLSearchParams(window.location.search);
-  if (qs.get("embed") === "1") markEmbedded();
+  const isEmbedLoad = qs.get("embed") === "1";
+  if (isEmbedLoad) markEmbedded();
+  // Host skin (embed only): adopt the parent's look before first paint, or
+  // restore the one applied earlier in this session on reload.
+  let skinInHash = false;
+  if (isEmbedLoad) {
+    skinInHash = new URLSearchParams(window.location.hash.replace(/^#/, "")).has("skin");
+    const effective = skinFromLocation(window.location, true) ?? (skinInHash ? null : storedSkin());
+    if (effective) applySkin(effective);
+  }
   // Connect popup: if this load is a Zernio/Facebook callback and we have an
   // opener, tell it and close. The app must not mount (popup has no session).
   const cb = connectCallbackProvider(window.location);
@@ -50,7 +60,13 @@ let closingAsPopup = false;
   const theme = params.get("theme");
   // Reject the literal string "undefined" — happens if the upstream forgot to
   // include `accessToken` on the SSO exchange response. Treat as no token.
-  if (!token || token === "undefined" || token === "null") return;
+  if (!token || token === "undefined" || token === "null") {
+    if (skinInHash) {
+      const { pathname, search } = window.location;
+      window.history.replaceState(null, "", `${pathname}${search}`);
+    }
+    return;
+  }
   tokenStore.set(token);
   // Inherit hjz's light/dark choice. TweaksProvider reads localStorage
   // synchronously in its initializer, so we merge into the stored object
