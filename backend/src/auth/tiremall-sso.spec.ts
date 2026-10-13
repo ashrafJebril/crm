@@ -153,4 +153,67 @@ describe("TiremallSsoService.exchange", () => {
       makeService(prisma).exchange({ token: sign(claims()) }),
     ).rejects.toThrow(ForbiddenException);
   });
+
+  it("falls back to a synthetic email when the claim email is already taken", async () => {
+    const prisma = makePrisma();
+    prisma.raw.user.upsert = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError("dup", {
+          code: "P2002",
+          clientVersion: "5",
+          meta: { target: ["email"] },
+        }),
+      )
+      .mockResolvedValueOnce({
+        id: "u2", email: "tiremall_7@sso.local", name: "Ashraf A",
+        role: "Agent", initials: "AA", color: "150",
+      });
+    const res = await makeService(prisma).exchange({ token: sign(claims()) });
+    const calls = prisma.raw.user.upsert.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0].create.email).toBe("a@tiremall.iq");
+    expect(calls[1][0].where).toEqual({ tiremallUserId: "7" });
+    expect(calls[1][0].create.email).toBe("tiremall_7@sso.local");
+    expect(res.user.email).toBe("tiremall_7@sso.local");
+  });
+
+  it("does not swallow other unique violations on user create", async () => {
+    const prisma = makePrisma();
+    prisma.raw.user.upsert = jest.fn().mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("dup", {
+        code: "P2002",
+        clientVersion: "5",
+        meta: { target: ["tiremallUserId"] },
+      }),
+    );
+    await expect(
+      makeService(prisma).exchange({ token: sign(claims()) }),
+    ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+  });
+
+  it.each([
+    ["JWT_SECRET"],
+    ["HJZ_JWT_ACCESS_SECRET"],
+  ])("refuses to run when the secret equals %s", async (name) => {
+    const saved = process.env[name];
+    process.env[name] = SECRET;
+    try {
+      await expect(makeService().exchange({ token: sign(claims()) })).rejects.toThrow(
+        /misconfigured/,
+      );
+    } finally {
+      if (saved === undefined) delete process.env[name];
+      else process.env[name] = saved;
+    }
+  });
+
+  it("uses a synthetic email when absent and lowercases a mixed-case one", async () => {
+    const p1 = makePrisma();
+    await makeService(p1).exchange({ token: sign(claims({ email: undefined })) });
+    expect(p1.raw.user.upsert.mock.calls[0][0].create.email).toBe("tiremall_7@sso.local");
+    const p2 = makePrisma();
+    await makeService(p2).exchange({ token: sign(claims({ email: "Mixed@TireMall.IQ" })) });
+    expect(p2.raw.user.upsert.mock.calls[0][0].create.email).toBe("mixed@tiremall.iq");
+  });
 });

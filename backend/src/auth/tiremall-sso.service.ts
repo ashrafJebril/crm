@@ -42,6 +42,17 @@ export class TiremallSsoService {
     if (!secret) {
       throw new ForbiddenException("Tiremall SSO is not configured");
     }
+    // A shared secret would let a crm/hjz-signed token be replayed here (and
+    // vice versa). Refuse rather than run with a reused key.
+    if (
+      secret === process.env.JWT_SECRET ||
+      secret === process.env.HJZ_JWT_ACCESS_SECRET
+    ) {
+      this.logger.error(
+        "TIREMALL_SSO_SECRET must not equal JWT_SECRET or HJZ_JWT_ACCESS_SECRET",
+      );
+      throw new ForbiddenException("Tiremall SSO is misconfigured");
+    }
 
     let claims: TiremallClaims;
     try {
@@ -94,19 +105,40 @@ export class TiremallSsoService {
     }
 
     const safeName = claims.name ?? "Tiremall User";
-    const user = await this.prisma.raw.user.upsert({
-      where: { tiremallUserId: claims.sub },
-      update: claims.name ? { name: safeName, initials: initialsOf(safeName) } : {},
-      create: {
-        tiremallUserId: claims.sub,
-        email: (claims.email ?? `tiremall_${claims.sub}@sso.local`).toLowerCase(),
-        name: safeName,
-        initials: initialsOf(safeName),
-        role: "Agent",
-        color: "150",
-        // password stays NULL — Tiremall-provisioned users have no local password.
-      },
-    });
+    const upsertUser = (email: string) =>
+      this.prisma.raw.user.upsert({
+        where: { tiremallUserId: claims.sub },
+        update: claims.name ? { name: safeName, initials: initialsOf(safeName) } : {},
+        create: {
+          tiremallUserId: claims.sub,
+          email: email.toLowerCase(),
+          name: safeName,
+          initials: initialsOf(safeName),
+          role: "Agent",
+          color: "150",
+          // password stays NULL — Tiremall-provisioned users have no local password.
+        },
+      });
+    const syntheticEmail = `tiremall_${claims.sub}@sso.local`;
+    let user;
+    try {
+      user = await upsertUser(claims.email ?? syntheticEmail);
+    } catch (cause) {
+      const target = (cause as { meta?: { target?: unknown } })?.meta?.target;
+      const emailTaken =
+        cause instanceof Prisma.PrismaClientKnownRequestError &&
+        cause.code === "P2002" &&
+        (Array.isArray(target)
+          ? target.some((t) => String(t).includes("email"))
+          : String(target ?? "").includes("email"));
+      if (!emailTaken || !claims.email) throw cause;
+      // The email belongs to a different crm user. Never link to or modify
+      // that account; provision a separate Tiremall identity instead.
+      this.logger.warn(
+        `tiremall sso: claim email already used by another crm user; using synthetic email for ${claims.sub}`,
+      );
+      user = await upsertUser(syntheticEmail);
+    }
 
     const memberRole = mapTiremallRole(claims.role);
     await this.prisma.raw.workspaceMember.upsert({
