@@ -90,3 +90,10 @@ export class KewySsoExchangeDto {
   @IsNotEmpty()
   token!: string;
 }
+
+export class TiremallSsoExchangeDto {
+  /** The short-lived HS256 handoff token minted by the Tiremall backend. */
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+}

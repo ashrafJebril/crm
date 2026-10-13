@@ -42,6 +42,9 @@ model User {
   // Distinct from externalId above, which belongs to the hjz bridge.
   kewyAccountId String? @unique
 
+  // Tiremall admin user id (SSO). Distinct from externalId/kewyAccountId on purpose.
+  tiremallUserId String? @unique
+
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
 
@@ -486,6 +489,10 @@ model Workspace {
   // tenant id for the hjz SSO bridge. Reusing it here would silently fuse hjz
   // tenants with Kewy workspaces. Do not "consolidate" these two fields.
   kewyWorkspaceId String? @unique
+
+  // Tiremall tenant marker (SSO) — the one fixed Tiremall workspace. Distinct
+  // from externalTenantId/kewyWorkspaceId on purpose; do not consolidate.
+  tiremallTenantId String? @unique
 
   // JOTECK admin — module flag list ("inbox", "campaigns", …). NULL = all
   // modules enabled (backwards compatible). When set, route guards consult
