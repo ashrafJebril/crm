@@ -15,6 +15,13 @@ primary_region = "fra"
   [build.args]
     VITE_API_URL = "https://api-marketing.kewy.ai/api"
     VITE_WA_APP_ID = "1245753357432458"
+    # Comma-separated origins allowed to embed/talk to the CRM (Tiremall admin). Set in production.
+    VITE_EMBED_PARENT_ORIGINS = ""
+
+# Runtime env for nginx (envsubst into the CSP frame-ancestors header).
+# Production adds the Tiremall admin origin, e.g. "'self' https://admin.tiremall.example".
+[env]
+  FRAME_ANCESTORS = "'self'"
 
 [http_service]
   internal_port = 8080

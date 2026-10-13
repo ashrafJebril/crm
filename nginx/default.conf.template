@@ -4,6 +4,9 @@ server {
   root /usr/share/nginx/html;
   index index.html;
 
+  # Which origins may frame this app (Tiremall admin embeds the CRM).
+  add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
+
   gzip on;
   gzip_types text/css application/javascript application/json image/svg+xml;
   gzip_min_length 1024;

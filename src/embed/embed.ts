@@ -99,3 +99,33 @@ export function parseInbound(
   }
   return null;
 }
+
+export const CONNECT_WINDOW_NAME = "kewy-connect";
+
+/**
+ * Start an OAuth/connect flow. Inside the iframe the provider page cannot be
+ * framed, so it opens in a popup; the popup tells the opener when it is done
+ * (see notifyOpenerConnected). Outside the iframe it is a plain redirect.
+ */
+export function openConnectWindow(url: string): void {
+  if (!isEmbedded()) {
+    window.location.href = url;
+    return;
+  }
+  const w = window.open(url, CONNECT_WINDOW_NAME, "width=600,height=750");
+  if (w) return;
+  try {
+    window.top!.location.href = url;
+  } catch {
+    window.alert("Allow pop-ups to connect accounts");
+  }
+}
+
+/** Called in the popup after a completed connect. True means the popup is closing. */
+export function notifyOpenerConnected(provider: string): boolean {
+  if (typeof window === "undefined") return false;
+  if (!window.opener || window.name !== CONNECT_WINDOW_NAME) return false;
+  window.opener.postMessage({ type: "kewy:connected", provider }, window.location.origin);
+  window.close();
+  return true;
+}

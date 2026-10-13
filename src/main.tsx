@@ -5,7 +5,7 @@ import App from "./App";
 import { TweaksProvider } from "@/tweaks/context";
 import { AuthProvider } from "@/auth/context";
 import { API_BASE, tokenStore } from "@/api/client";
-import { markEmbedded, postToParent } from "@/embed/embed";
+import { markEmbedded, notifyOpenerConnected, postToParent } from "@/embed/embed";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import "./styles/index.css";
 
@@ -22,7 +22,11 @@ let pendingTiremallSso: string | null = null;
 
 (function consumeSsoFragment() {
   if (typeof window === "undefined") return;
-  if (new URLSearchParams(window.location.search).get("embed") === "1") markEmbedded();
+  const qs = new URLSearchParams(window.location.search);
+  if (qs.get("embed") === "1") markEmbedded();
+  // Facebook OAuth lands on a non-hash path; if we are the connect popup, tell
+  // the opener and close before anything else renders.
+  if (qs.get("fb") === "connected") notifyOpenerConnected("facebook");
   const hash = window.location.hash;
   if (!hash || hash.length < 2) return;
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);

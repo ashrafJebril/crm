@@ -3,6 +3,7 @@ import { useFetch } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
 import { IconGlobe, IconX } from "@/icons";
+import { openConnectWindow } from "@/embed/embed";
 import { SettingsCard, StatusToast, ErrorRow } from "./form";
 
 interface ZernioAccount {
@@ -93,7 +94,8 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
       const { authUrl } = await api.get<{ authUrl: string }>(
         `/integrations/zernio/connect/${platform}`,
       );
-      window.location.href = authUrl;
+      openConnectWindow(authUrl);
+      setBusy(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start the connect flow");
       setBusy(null);

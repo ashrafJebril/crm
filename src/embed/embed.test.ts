@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, parseInbound, postToParent } from "./embed";
+import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, notifyOpenerConnected, openConnectWindow, parseInbound, postToParent } from "./embed";
 
 const parent = {};
 const A = ["https://a.com"];
@@ -128,5 +128,43 @@ describe("postToParent", () => {
     postToParent({ type: "kewy:ready" });
     expect(post).toHaveBeenLastCalledWith({ type: "kewy:ready" }, "https://a.com");
     for (const c of post.mock.calls) expect(c[1]).not.toBe("*");
+  });
+});
+
+describe("openConnectWindow", () => {
+  it("opens a popup when embedded", () => {
+    const open = vi.fn(() => ({}));
+    const location = { origin: "https://crm.example", href: "" };
+    vi.stubGlobal("window", { parent, location, open });
+    vi.stubGlobal("sessionStorage", { getItem: () => "1", setItem: () => {} });
+    openConnectWindow("https://p.example/auth");
+    expect(open).toHaveBeenCalledWith("https://p.example/auth", "kewy-connect", "width=600,height=750");
+    expect(location.href).toBe("");
+  });
+  it("assigns location when not embedded", async () => {
+    vi.resetModules(); // markEmbedded() in earlier tests latches a module-level flag
+    const { openConnectWindow } = await import("./embed");
+    const open = vi.fn();
+    const location = { origin: "https://crm.example", href: "" };
+    vi.stubGlobal("window", { parent, location, open });
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {} });
+    openConnectWindow("https://p.example/auth");
+    expect(open).not.toHaveBeenCalled();
+    expect(location.href).toBe("https://p.example/auth");
+  });
+});
+
+describe("notifyOpenerConnected", () => {
+  it("posts to opener and closes in the connect popup", () => {
+    const postMessage = vi.fn();
+    const close = vi.fn();
+    vi.stubGlobal("window", { name: "kewy-connect", opener: { postMessage }, close, location: { origin: "https://crm.example" } });
+    expect(notifyOpenerConnected("zernio")).toBe(true);
+    expect(postMessage).toHaveBeenCalledWith({ type: "kewy:connected", provider: "zernio" }, "https://crm.example");
+    expect(close).toHaveBeenCalled();
+  });
+  it("does nothing without opener or wrong window name", () => {
+    vi.stubGlobal("window", { name: "", opener: null, close: vi.fn(), location: { origin: "x" } });
+    expect(notifyOpenerConnected("zernio")).toBe(false);
   });
 });

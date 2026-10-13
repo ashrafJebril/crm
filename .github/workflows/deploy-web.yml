@@ -11,7 +11,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "Dockerfile"
-      - "nginx.conf"
+      - "nginx/**"
       - "fly.toml"
       - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
