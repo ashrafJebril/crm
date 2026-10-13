@@ -47,6 +47,20 @@ export function markEmbedded(): void {
   if (typeof document !== "undefined") document.documentElement.dataset.embed = "1";
 }
 
+/**
+ * A `#tmsso` fragment is only honoured when this load is an embed (`?embed=1`)
+ * AND actually framed. A top-level page carrying `#tmsso` is ignored entirely:
+ * no exchange, and the existing session is left untouched.
+ */
+export function shouldConsumeTiremallSso(search: string, win: Window): boolean {
+  if (new URLSearchParams(search).get("embed") !== "1") return false;
+  try {
+    return win.parent !== win;
+  } catch {
+    return true; // cross-origin parent access threw -> we are framed
+  }
+}
+
 export function allowedParentOrigins(
   raw: string | undefined = import.meta.env.VITE_EMBED_PARENT_ORIGINS as string | undefined,
 ): string[] {

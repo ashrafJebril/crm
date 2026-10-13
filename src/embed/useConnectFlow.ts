@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/Toast";
 import {
   abortConnectWindow,
@@ -9,12 +9,9 @@ import {
   watchConnectWindow,
 } from "./embed";
 
-export function invalidateIntegrations(qc: QueryClient): void {
-  void qc.invalidateQueries({
-    predicate: (q) =>
-      typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/integrations"),
-  });
-}
+import { invalidateIntegrations } from "./connected";
+
+export { invalidateIntegrations };
 
 /**
  * Runs a connect flow. `getUrl` performs the API call. Embedded: popup is opened

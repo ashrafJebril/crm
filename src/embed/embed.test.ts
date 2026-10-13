@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, notifyOpenerConnected, parseInbound, postToParent } from "./embed";
+import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, notifyOpenerConnected, parseInbound, postToParent, shouldConsumeTiremallSso } from "./embed";
 
 const parent = {};
 const A = ["https://a.com"];
@@ -235,5 +235,22 @@ describe("notifyOpenerConnected", () => {
   it("does nothing without opener or wrong window name", () => {
     vi.stubGlobal("window", { name: "", opener: null, close: vi.fn(), location: { origin: "x" } });
     expect(notifyOpenerConnected("zernio")).toBe(false);
+  });
+});
+
+describe("shouldConsumeTiremallSso", () => {
+  const self = {} as Window;
+  const parentWin = {} as Window;
+  it("only when ?embed=1 AND framed", () => {
+    expect(shouldConsumeTiremallSso("?embed=1", { parent: parentWin } as unknown as Window)).toBe(true);
+  });
+  it("ignored when not framed", () => {
+    const w = { parent: self } as unknown as Window & { parent: Window };
+    (w as { parent: unknown }).parent = w;
+    expect(shouldConsumeTiremallSso("?embed=1", w)).toBe(false);
+  });
+  it("ignored without ?embed=1", () => {
+    expect(shouldConsumeTiremallSso("", { parent: parentWin } as unknown as Window)).toBe(false);
+    expect(shouldConsumeTiremallSso("?embed=0", { parent: parentWin } as unknown as Window)).toBe(false);
   });
 });

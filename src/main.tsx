@@ -5,7 +5,7 @@ import App from "./App";
 import { TweaksProvider } from "@/tweaks/context";
 import { AuthProvider } from "@/auth/context";
 import { API_BASE, tokenStore } from "@/api/client";
-import { connectCallbackProvider, markEmbedded, notifyOpenerConnected, postToParent } from "@/embed/embed";
+import { connectCallbackProvider, markEmbedded, notifyOpenerConnected, postToParent, shouldConsumeTiremallSso } from "@/embed/embed";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import "./styles/index.css";
 
@@ -36,7 +36,9 @@ let closingAsPopup = false;
   if (!hash || hash.length < 2) return;
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const tmsso = params.get("tmsso");
-  if (tmsso) {
+  // Only an actual embed (?embed=1 inside a frame) may consume #tmsso. A
+  // top-level page with #tmsso is ignored: no exchange, session untouched.
+  if (tmsso && shouldConsumeTiremallSso(window.location.search, window)) {
     pendingTiremallSso = tmsso;
     // Drop any stale session so a failed exchange can't fall back to it.
     tokenStore.clear();
