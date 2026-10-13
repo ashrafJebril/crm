@@ -11,7 +11,7 @@ import { ZernioRedirectCapture } from "@/components/ZernioRedirectCapture";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
-import { isEmbedded, parseInbound, postToParent } from "@/embed/embed";
+import { authScreen, isEmbedded, parseInbound, postToParent } from "@/embed/embed";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import type { RouteId } from "@/lib/types";
 import { VALID_ROUTES } from "@/router";
@@ -41,10 +41,10 @@ export default function App() {
   }
 
   const embedded = isEmbedded();
+  const screen = authScreen(status, embedded);
 
-  if (status === "anonymous") {
-    return embedded ? <EmbedAnonymous /> : <Login />;
-  }
+  if (screen === "embed-failed") return <EmbedAnonymous />;
+  if (screen === "login") return <Login />;
 
   if (embedded) {
     return (
@@ -105,7 +105,7 @@ function EmbedBridge({ route, setRoute }: { route: RouteId; setRoute: (r: RouteI
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  });
+  }, [qc, toast, setRoute]);
 
   return null;
 }

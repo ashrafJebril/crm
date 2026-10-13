@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { allowedParentOrigins, isAllowedParent, parseInbound } from "./embed";
+import { allowedParentOrigins, authScreen, isAllowedParent, isEmbedded, markEmbedded, parseInbound, postToParent } from "./embed";
 
 const parent = {};
 const A = ["https://a.com"];
@@ -55,5 +55,78 @@ describe("parseInbound", () => {
     const data = { type: "kewy:connected", provider: "instagram" };
     expect(parseInbound(ev({ origin: "https://crm.example", source: {}, data }), A)).toEqual(data);
     expect(parseInbound(ev({ origin: "https://a.com", data }), A)).toBeNull();
+  });
+});
+
+describe("authScreen", () => {
+  it("embedded+anonymous never yields login", () => {
+    expect(authScreen("anonymous", true)).toBe("embed-failed");
+    expect(authScreen("anonymous", false)).toBe("login");
+    expect(authScreen("loading", true)).toBe("loading");
+    expect(authScreen("loading", false)).toBe("loading");
+    expect(authScreen("authenticated", true)).toBe("app");
+    expect(authScreen("authenticated", false)).toBe("app");
+  });
+});
+
+describe("isEmbedded", () => {
+  it("stays true after markEmbedded even if sessionStorage throws", () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => { throw new Error("blocked"); },
+      setItem: () => { throw new Error("blocked"); },
+    });
+    markEmbedded();
+    expect(isEmbedded()).toBe(true);
+  });
+});
+
+describe("postToParent", () => {
+  const post = vi.fn();
+  const setup = (o: { parent?: unknown; ancestor?: string; referrer?: string; env?: string }) => {
+    const par = o.parent ?? { postMessage: post };
+    const win: Record<string, unknown> = {
+      parent: par,
+      location: { origin: "https://crm.example", ancestorOrigins: o.ancestor ? [o.ancestor] : undefined },
+    };
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", { referrer: o.referrer ?? "", documentElement: { dataset: {} } });
+    vi.stubGlobal("sessionStorage", { getItem: () => "1", setItem: () => {} });
+    vi.stubEnv("VITE_EMBED_PARENT_ORIGINS", o.env ?? "https://a.com,https://b.com");
+    return win;
+  };
+  beforeEach(() => post.mockClear());
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("no call when not embedded", async () => {
+    setup({});
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {} });
+    vi.resetModules();
+    const fresh = await import("./embed");
+    expect(fresh.isEmbedded()).toBe(false);
+    fresh.postToParent({ type: "kewy:ready" });
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("no call when not framed", () => {
+    const win = setup({});
+    win.parent = win;
+    postToParent({ type: "kewy:ready" });
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("no call when no allowed origins", () => {
+    setup({ env: "" });
+    postToParent({ type: "kewy:ready" });
+    expect(post).not.toHaveBeenCalled();
+  });
+  it("prefers ancestorOrigins, then referrer, then first allowed; never *", () => {
+    setup({ ancestor: "https://b.com", referrer: "https://a.com/x" });
+    postToParent({ type: "kewy:ready" });
+    expect(post).toHaveBeenLastCalledWith({ type: "kewy:ready" }, "https://b.com");
+    setup({ ancestor: "https://evil.com", referrer: "https://b.com/x" });
+    postToParent({ type: "kewy:ready" });
+    expect(post).toHaveBeenLastCalledWith({ type: "kewy:ready" }, "https://b.com");
+    setup({ ancestor: "https://evil.com", referrer: "https://evil2.com/x" });
+    postToParent({ type: "kewy:ready" });
+    expect(post).toHaveBeenLastCalledWith({ type: "kewy:ready" }, "https://a.com");
+    for (const c of post.mock.calls) expect(c[1]).not.toBe("*");
   });
 });

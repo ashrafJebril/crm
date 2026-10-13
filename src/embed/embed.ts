@@ -13,7 +13,12 @@ export type EmbedInbound =
   | { type: "kewy:navigate"; route: string }
   | { type: "kewy:connected"; provider: string };
 
+// In-memory flag so embed mode survives sessionStorage being unavailable
+// (otherwise the Login form could render inside the iframe).
+let embedded = false;
+
 export function isEmbedded(): boolean {
+  if (embedded) return true;
   try {
     return sessionStorage.getItem(EMBED_KEY) === "1";
   } catch {
@@ -21,7 +26,19 @@ export function isEmbedded(): boolean {
   }
 }
 
+export type AuthScreen = "loading" | "login" | "embed-failed" | "app";
+
+export function authScreen(
+  status: "loading" | "anonymous" | "authenticated",
+  embedded: boolean,
+): AuthScreen {
+  if (status === "loading") return "loading";
+  if (status === "anonymous") return embedded ? "embed-failed" : "login";
+  return "app";
+}
+
 export function markEmbedded(): void {
+  embedded = true;
   try {
     sessionStorage.setItem(EMBED_KEY, "1");
   } catch {
@@ -54,8 +71,14 @@ function referrerOrigin(): string | null {
 export function postToParent(msg: EmbedOutbound): void {
   if (typeof window === "undefined" || !isEmbedded() || window.parent === window) return;
   const allowed = allowedParentOrigins();
+  const anc = window.location.ancestorOrigins?.[0];
   const ref = referrerOrigin();
-  const target = ref && isAllowedParent(ref, allowed) ? ref : allowed[0];
+  const target =
+    anc && isAllowedParent(anc, allowed)
+      ? anc
+      : ref && isAllowedParent(ref, allowed)
+        ? ref
+        : allowed[0];
   if (!target) return;
   window.parent.postMessage(msg, target);
 }
