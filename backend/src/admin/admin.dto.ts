@@ -1,4 +1,36 @@
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from "class-validator";
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  ValidateBy,
+  ValidationOptions,
+} from "class-validator";
+
+/** A bcrypt hash as produced by bcryptjs: `$2a$`/`$2b$`/`$2y$`, a 2-digit cost,
+ *  `$`, then 53 chars of bcrypt base64 (22 salt + 31 hash). */
+export const BCRYPT_HASH_RE = /^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/;
+
+/** Fails when the sibling property `other` is also present on the object. */
+function NotWith(other: string, options?: ValidationOptions): PropertyDecorator {
+  return ValidateBy(
+    {
+      name: "notWith",
+      constraints: [other],
+      validator: {
+        validate: (value, args) =>
+          value === undefined ||
+          (args?.object as Record<string, unknown>)[other] === undefined,
+        defaultMessage: (args) =>
+          `${args?.property} and ${other} cannot both be provided`,
+      },
+    },
+    options,
+  );
+}
 
 const PLAN_VALUES = ["free", "starter", "growth", "pro"] as const;
 
@@ -54,6 +86,15 @@ export class ProvisionClientDto {
   @IsString()
   @MinLength(6)
   ownerPassword?: string;
+
+  // Kewy single-password: the owner keeps their Kewy password across products,
+  // so Kewy sends the bcrypt hash (bcryptjs, cost 10) and we store it verbatim
+  // — the plaintext never reaches crm. Mutually exclusive with ownerPassword.
+  @IsOptional()
+  @IsString()
+  @Matches(BCRYPT_HASH_RE, { message: "ownerPasswordHash must be a bcrypt hash" })
+  @NotWith("ownerPassword")
+  ownerPasswordHash?: string;
 
   @IsOptional()
   @IsString()

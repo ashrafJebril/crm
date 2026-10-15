@@ -1,4 +1,9 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
@@ -162,6 +167,13 @@ export class AdminService {
    * customer can change it later via Settings → Profile.
    */
   async provisionClient(dto: ProvisionClientDto) {
+    // Also enforced by the DTO; repeated here for non-HTTP callers.
+    if (dto.ownerPassword !== undefined && dto.ownerPasswordHash !== undefined) {
+      throw new BadRequestException(
+        "ownerPassword and ownerPasswordHash cannot both be provided",
+      );
+    }
+
     // Idempotency: Kewy retries a provision whose response it never saw (a
     // timeout after the write succeeded). Returning the existing workspace
     // instead of creating a second one is what makes that retry safe.
@@ -214,9 +226,14 @@ export class AdminService {
     // No password when Kewy provisions: that owner arrives by SSO handoff and
     // never needs a local one. `User.password` is already nullable for exactly
     // this reason (the hjz bridge relies on it too).
-    const hashed = dto.ownerPassword
-      ? await bcrypt.hash(dto.ownerPassword, 10)
-      : null;
+    // Kewy single-password: an `ownerPasswordHash` is already a bcrypt hash of
+    // the owner's Kewy password and is stored verbatim (no re-hash), so the same
+    // password works here. The DTO guarantees its format.
+    const hashed = dto.ownerPasswordHash
+      ? dto.ownerPasswordHash
+      : dto.ownerPassword
+        ? await bcrypt.hash(dto.ownerPassword, 10)
+        : null;
 
     return this.prisma.raw.$transaction(async (tx) => {
       const user = existing
