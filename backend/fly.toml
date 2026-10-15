@@ -31,7 +31,10 @@ primary_region = "fra"
   # instagram controllers all read PUBLIC_BASE_URL first).
   PUBLIC_BASE_URL = "https://api-marketing.kewy.ai"
   FRONTEND_PUBLIC_URL = "https://marketing.kewy.ai"
-  CORS_ORIGIN = "https://marketing.kewy.ai"
+  # Kewy Service's web app (hjz) calls /auth/sso/exchange from its sidebar
+  # Marketing launcher, so its origins (dev, prod Fly hostname, custom domain)
+  # must be allowed alongside the Marketing app itself.
+  CORS_ORIGIN = "https://marketing.kewy.ai,https://manarah-web-dev.fly.dev,https://manarah-web.fly.dev,https://services.kewy.ai"
   # Frontend origin the Kapso embedded-signup and Zernio connect flows redirect
   # back to after the hosted OAuth step.
   APP_PUBLIC_URL = "https://marketing.kewy.ai"
