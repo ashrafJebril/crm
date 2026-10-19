@@ -1,6 +1,6 @@
 import { Test } from "@nestjs/testing";
 import * as bcrypt from "bcryptjs";
-import { McpTokenService } from "./mcp-token.service";
+import { McpTokenService, mcpEndpointUrl } from "./mcp-token.service";
 import { PrismaService } from "../prisma/prisma.service";
 
 describe("McpTokenService", () => {
@@ -75,5 +75,43 @@ describe("McpTokenService", () => {
     const otherHash = await bcrypt.hash("mcp_deadbeef1234_othersecret", 10);
     prisma.workspace.findUnique.mockResolvedValue({ id: "ws1", mcpTokenHash: otherHash });
     await expect(svc.findWorkspaceByToken("mcp_deadbeef1234_wrongsecret")).resolves.toBeNull();
+  });
+});
+
+describe("mcpEndpointUrl", () => {
+  const saved = {
+    mcp: process.env.CRM_MCP_PUBLIC_URL,
+    backend: process.env.BACKEND_PUBLIC_URL,
+    env: process.env.NODE_ENV,
+  };
+  const restore = (k: string, v: string | undefined) => {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  };
+  afterEach(() => {
+    restore("CRM_MCP_PUBLIC_URL", saved.mcp);
+    restore("BACKEND_PUBLIC_URL", saved.backend);
+    restore("NODE_ENV", saved.env);
+  });
+
+  it("prefers CRM_MCP_PUBLIC_URL and trims a trailing slash", () => {
+    process.env.CRM_MCP_PUBLIC_URL = "https://api-marketing.kewy.ai/";
+    process.env.BACKEND_PUBLIC_URL = "https://other.example.com";
+    expect(mcpEndpointUrl()).toBe("https://api-marketing.kewy.ai/api/mcp/v1");
+  });
+
+  it("falls back to BACKEND_PUBLIC_URL", () => {
+    delete process.env.CRM_MCP_PUBLIC_URL;
+    process.env.BACKEND_PUBLIC_URL = "https://api-marketing.kewy.ai";
+    expect(mcpEndpointUrl()).toBe("https://api-marketing.kewy.ai/api/mcp/v1");
+  });
+
+  it("uses localhost only outside production", () => {
+    delete process.env.CRM_MCP_PUBLIC_URL;
+    delete process.env.BACKEND_PUBLIC_URL;
+    process.env.NODE_ENV = "development";
+    expect(mcpEndpointUrl()).toBe("http://localhost:4100/api/mcp/v1");
+    process.env.NODE_ENV = "production";
+    expect(() => mcpEndpointUrl()).toThrow("CRM_MCP_PUBLIC_URL is not configured");
   });
 });
