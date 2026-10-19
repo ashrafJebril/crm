@@ -35,8 +35,7 @@ export class McpTokenService {
       where: { id: workspaceId },
       data: { mcpTokenPrefix: prefix, mcpTokenHash, mcpTokenCreatedAt: new Date() },
     });
-    const base = process.env.BACKEND_PUBLIC_URL ?? "http://localhost:4100";
-    return { token, endpointUrl: `${base}/api/mcp/v1` };
+    return { token, endpointUrl: mcpEndpointUrl() };
   }
 
   async revoke(workspaceId: string): Promise<void> {
@@ -59,4 +58,23 @@ export class McpTokenService {
     const ok = await bcrypt.compare(token, ws.mcpTokenHash);
     return ok ? ws.id : null;
   }
+}
+
+/**
+ * The URL Kewy AI (and anyone handed a token) calls this CRM's MCP server on.
+ *
+ * CRM_MCP_PUBLIC_URL is a Fly secret on kewy-marketing-api, set apart from
+ * BACKEND_PUBLIC_URL so the MCP can move behind its own host without touching
+ * media/webhook URLs; BACKEND_PUBLIC_URL stays as the fallback. The localhost
+ * default is for local development only: registering it with Kewy AI in
+ * production would leave the agent with tools it can never reach.
+ */
+export function mcpEndpointUrl(): string {
+  const configured =
+    process.env.CRM_MCP_PUBLIC_URL?.trim() || process.env.BACKEND_PUBLIC_URL?.trim();
+  if (!configured && process.env.NODE_ENV === "production") {
+    throw new Error("CRM_MCP_PUBLIC_URL is not configured");
+  }
+  const base = configured || "http://localhost:4100";
+  return `${base.replace(/\/$/, "")}/api/mcp/v1`;
 }
