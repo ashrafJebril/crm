@@ -1298,7 +1298,25 @@ function SidePanel({
                 {tx("Reminder sent", "تم تذكير")}
               </Badge>
             )}
+            {appt.hjzSyncError ? (
+              <span title={appt.hjzSyncError}>
+                <Badge kind="warn">{tx("Not in HJZ", "غير موجود في HJZ")}</Badge>
+              </span>
+            ) : appt.hjzSyncPending ? (
+              <Badge kind="info">{tx("Syncing to HJZ", "جارٍ المزامنة مع HJZ")}</Badge>
+            ) : appt.hjzAppointmentId ? (
+              <Badge kind="ok">
+                <IconCheck w={10} />
+                {tx("In HJZ", "في HJZ")}
+              </Badge>
+            ) : null}
           </div>
+          {appt.hjzSyncError && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--ink-3)" }}>
+              {tx("HJZ didn't accept this booking: ", "لم يقبل HJZ هذا الحجز: ")}
+              <span className="mono">{appt.hjzSyncError}</span>
+            </div>
+          )}
         </div>
 
         <div
