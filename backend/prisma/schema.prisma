@@ -72,6 +72,14 @@ model Contact {
   externalSource String? // "facebook" | "instagram" | "tiktok"
   externalId     String?
 
+  // Link to the HJZ client when the workspace is connected to an HJZ tenant
+  // (Workspace.externalTenantId). Separate from externalSource/externalId,
+  // which a WhatsApp/FB/IG contact already uses for its channel identity.
+  hjzClientId      String?
+  // Last attempt to create this contact in HJZ — the sync sweep retries
+  // failed pushes after a back-off instead of hammering HJZ every minute.
+  hjzSyncAttemptAt DateTime?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceContacts", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -85,6 +93,7 @@ model Contact {
   updatedAt DateTime @updatedAt
 
   @@unique([workspaceId, externalSource, externalId])
+  @@unique([workspaceId, hjzClientId])
   @@index([workspaceId])
 }
 

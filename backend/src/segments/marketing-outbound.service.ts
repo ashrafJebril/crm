@@ -1,14 +1,22 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { hjzWebhookUrl, postToHjz } from "../hjz-sync/hjz-api";
+import { SegmentsService } from "./segments.service";
+
+/** Segments the CRM owns and pushes to HJZ; "hjz" ones are HJZ's own mirrors. */
+const PUSHED_ORIGINS = new Set(["crm", "manual"]);
 
 @Injectable()
 export class MarketingOutboundService {
   private readonly logger = new Logger(MarketingOutboundService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly segments: SegmentsService,
+  ) {}
 
   isConfigured(): boolean {
-    return !!(process.env.HJZ_OUTBOUND_URL && process.env.HJZ_WEBHOOK_SECRET);
+    return hjzWebhookUrl("segments") !== null;
   }
 
   async emitSegmentUpserted(workspaceId: string, segmentId: string): Promise<boolean> {
@@ -20,27 +28,19 @@ export class MarketingOutboundService {
     }
     const seg = await this.prisma.segment.findFirst({ where: { id: segmentId, workspaceId } });
     if (!seg) return false;
-    if (seg.origin !== "crm") {
-      this.logger.debug(`segment ${segmentId} origin=${seg.origin} — only crm-origin gets emitted`);
+    if (!PUSHED_ORIGINS.has(seg.origin)) {
+      this.logger.debug(`segment ${segmentId} origin=${seg.origin} — hjz mirrors are never echoed back`);
       return false;
     }
-    let filter: any = {};
-    try {
-      const parsed = JSON.parse(seg.filter || "{}");
-      if (parsed && typeof parsed === "object") filter = parsed;
-    } catch {
-      /* malformed filter — treat as empty, no rows match */
-    }
+    const filter = seg.origin === "crm" ? this.segments.parseFilter(seg.filter) : {};
+    // Same audience resolution as the contacts list (filter for crm, members
+    // for manual), restricted to contacts linked to an hjz client.
+    const audience = await this.segments.resolveContactWhere(workspaceId, seg.id);
     const contacts = await this.prisma.contact.findMany({
-      where: {
-        workspaceId,
-        externalSource: "hjz",
-        externalId: { not: null },
-        ...this.where(filter),
-      },
-      select: { externalId: true },
+      where: { AND: [audience, { hjzClientId: { not: null } }] },
+      select: { hjzClientId: true },
     });
-    const hjzClientIds = contacts.map((c: { externalId: string | null }) => c.externalId).filter((x: string | null): x is string => !!x);
+    const hjzClientIds = contacts.map((c) => c.hjzClientId).filter((x): x is string => !!x);
     const payload = {
       event: "segment.upserted",
       segment: {
@@ -61,8 +61,8 @@ export class MarketingOutboundService {
     // upsert path so any future caller (scheduler, admin route) gets the
     // same protection.
     const seg = await this.prisma.segment.findFirst({ where: { id: segmentId, workspaceId } });
-    if (seg && seg.origin !== 'crm') {
-      this.logger.debug(`segment ${segmentId} origin=${seg.origin} — only crm-origin deletes are emitted`);
+    if (seg && !PUSHED_ORIGINS.has(seg.origin)) {
+      this.logger.debug(`segment ${segmentId} origin=${seg.origin} — hjz mirror deletes are never emitted`);
       return false;
     }
     // Note: if seg is null (already hard-deleted by the time we get here),
@@ -82,7 +82,7 @@ export class MarketingOutboundService {
   }> {
     if (!this.isConfigured()) return { total: 0, sent: 0, failed: 0, skipped: 0, configured: false };
     const segs = await this.prisma.segment.findMany({
-      where: { workspaceId, origin: 'crm' },
+      where: { workspaceId, origin: { in: [...PUSHED_ORIGINS] } },
       select: { id: true },
     });
     let sent = 0; let failed = 0; let skipped = 0;
@@ -99,14 +99,8 @@ export class MarketingOutboundService {
   }
 
   private async post(payload: unknown): Promise<boolean> {
-    const url = process.env.HJZ_OUTBOUND_URL!;
-    const secret = process.env.HJZ_WEBHOOK_SECRET!;
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-marketing-secret": secret },
-        body: JSON.stringify(payload),
-      });
+      const res = await postToHjz("segments", payload);
       if (!res.ok) this.logger.warn(`hjz outbound failed -> HTTP ${res.status}`);
       return res.ok;
     } catch (e: unknown) {
@@ -115,18 +109,7 @@ export class MarketingOutboundService {
     }
   }
 
-  private where(f: Record<string, unknown>) {
-    const w: Record<string, unknown> = {};
-    if (Array.isArray(f?.lifecycle) && f.lifecycle.length) w.lifecycle = { in: f.lifecycle };
-    if (Array.isArray(f?.industry) && f.industry.length)   w.industry  = { in: f.industry };
-    if (Array.isArray(f?.source) && f.source.length)       w.source    = { in: f.source };
-    if (typeof f?.search === "string" && f.search.trim())  w.name      = { contains: f.search.trim(), mode: "insensitive" };
-    if (f?.hasPhone === true)  w.phone = { not: null };
-    if (f?.hasPhone === false) w.phone = null;
-    return w;
-  }
-
-  private summarizeFilter(f: Record<string, unknown>): string | null {
+  private summarizeFilter(f: Record<string, any>): string | null {
     const parts: string[] = [];
     if (Array.isArray(f?.lifecycle) && f.lifecycle.length) parts.push(`lifecycle in [${(f.lifecycle as string[]).join(", ")}]`);
     if (Array.isArray(f?.source) && f.source.length)       parts.push(`source in [${(f.source as string[]).join(", ")}]`);

@@ -54,22 +54,11 @@ export class HjzWebhooksService {
       },
     });
 
-    // Look up by the existing composite unique (workspaceId, externalSource,
-    // externalId) — the same key the FB/IG integration uses.
-    const existing = await this.prisma.contact.findUnique({
-      where: {
-        workspaceId_externalSource_externalId: {
-          workspaceId: workspace.id,
-          externalSource: HjzWebhooksService.SOURCE,
-          externalId: client.id,
-        },
-      },
-      select: { id: true },
-    });
+    const existing = await this.findLinkedContact(workspace.id, client.id, client.phone);
 
-    // Deletion (event or implicit via deletedAt) → soft-flip lifecycle to
-    // "churned". Linked conversations/tickets remain valid.
-    if (event === "client.deleted" || client.deletedAt) {
+    // Deletion (event or implicit via deletedAt) or a consent opt-out →
+    // soft-flip lifecycle to "churned". Linked conversations/tickets remain valid.
+    if (event === "client.deleted" || event === "client.opted_out" || client.deletedAt) {
       if (existing) {
         await this.prisma.contact.update({
           where: { id: existing.id },
@@ -83,23 +72,40 @@ export class HjzWebhooksService {
     }
 
     const tagsJson = JSON.stringify(client.tags ?? []);
-    const data = {
-      workspaceId: workspace.id,
-      externalSource: HjzWebhooksService.SOURCE,
-      externalId: client.id,
-      name: client.name,
-      phone: client.phone ?? null,
-      industry: "—",
-      lifecycle: client.blocked ? "blocked" : "customer",
-      source: HjzWebhooksService.SOURCE,
-      tags: tagsJson,
-      lastSeen: "now",
-    };
 
-    if (existing) {
-      await this.prisma.contact.update({ where: { id: existing.id }, data });
+    if (existing && existing.externalSource !== HjzWebhooksService.SOURCE) {
+      // A CRM-born contact linked to this client (pushed from here, or matched
+      // by phone): hjz owns name/phone/tags, but the CRM keeps its own source,
+      // industry and lifecycle — only a block in hjz carries over.
+      await this.prisma.contact.update({
+        where: { id: existing.id },
+        data: {
+          hjzClientId: client.id,
+          name: client.name,
+          phone: client.phone ?? null,
+          tags: tagsJson,
+          ...(client.blocked ? { lifecycle: "blocked" } : {}),
+        },
+      });
     } else {
-      await this.prisma.contact.create({ data });
+      const data = {
+        workspaceId: workspace.id,
+        externalSource: HjzWebhooksService.SOURCE,
+        externalId: client.id,
+        hjzClientId: client.id,
+        name: client.name,
+        phone: client.phone ?? null,
+        industry: "—",
+        lifecycle: client.blocked ? "blocked" : "customer",
+        source: HjzWebhooksService.SOURCE,
+        tags: tagsJson,
+        lastSeen: "now",
+      };
+      if (existing) {
+        await this.prisma.contact.update({ where: { id: existing.id }, data });
+      } else {
+        await this.prisma.contact.create({ data });
+      }
     }
 
     this.logger.debug(
@@ -112,16 +118,14 @@ export class HjzWebhooksService {
   async handleSegment(body: HjzSegmentWebhookDto): Promise<{ ok: true }> {
     const { event, segment } = body;
 
-    // Resolve (or lazily create) the workspace mirror for this hjz tenant.
-    const workspace = await this.prisma.workspace.upsert({
+    // Segments only mirror into a workspace that already exists — hjz pushes
+    // every tenant's segments nightly, and a tenant with no CRM presence (no
+    // SSO login, no synced client) must not get a workspace created for it.
+    const workspace = await this.prisma.workspace.findUnique({
       where: { externalTenantId: segment.tenantId },
-      update: {},
-      create: {
-        name: `HJZ ${segment.tenantId.slice(0, 8)}`,
-        slug: await this.allocateSlug(`hjz-${segment.tenantId}`),
-        externalTenantId: segment.tenantId,
-      },
+      select: { id: true },
     });
+    if (!workspace) return { ok: true };
 
     if (event === "segment.deleted") {
       const existing = await this.prisma.segment.findFirst({
@@ -175,8 +179,7 @@ export class HjzWebhooksService {
     const contacts = await this.prisma.contact.findMany({
       where: {
         workspaceId: workspace.id,
-        externalSource: HjzWebhooksService.SOURCE,
-        externalId: { in: clientIds },
+        hjzClientId: { in: clientIds },
       },
       select: { id: true },
     });
@@ -192,6 +195,30 @@ export class HjzWebhooksService {
       `hjz segment ${segment.id} → ${existing ? "updated" : "created"} in workspace ${workspace.id}`,
     );
     return { ok: true };
+  }
+
+  /**
+   * The contact this hjz client maps to: its link (hjzClientId), the legacy
+   * webhook key for rows written before the link column, and finally an
+   * unlinked contact with the same phone — so a customer who already exists
+   * in the CRM is linked, not duplicated.
+   */
+  private async findLinkedContact(workspaceId: string, clientId: string, phone?: string | null) {
+    const select = { id: true, externalSource: true } as const;
+    return (
+      (await this.prisma.contact.findFirst({ where: { workspaceId, hjzClientId: clientId }, select })) ??
+      (await this.prisma.contact.findFirst({
+        where: { workspaceId, externalSource: HjzWebhooksService.SOURCE, externalId: clientId },
+        select,
+      })) ??
+      (phone
+        ? await this.prisma.contact.findFirst({
+            where: { workspaceId, hjzClientId: null, phone },
+            orderBy: { createdAt: "asc" },
+            select,
+          })
+        : null)
+    );
   }
 
   /** Mirror of WorkspacesService slug allocation — guarantees a unique slug. */
