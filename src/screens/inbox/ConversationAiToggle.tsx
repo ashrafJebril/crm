@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { makeTx } from "@/lib/tx";
 import type { Lang } from "@/lib/types";
@@ -32,6 +32,11 @@ export function ConversationAiToggle({
   const [busy, setBusy] = useState(false);
   const [on, setOn] = useState(enabled);
   const [paused, setPaused] = useState<string | null>(pausedAt ?? null);
+
+  // Follow the server: a reply sent from the Inbox pauses the AI there, and the
+  // refreshed conversation must show it without reopening the thread.
+  useEffect(() => setOn(enabled), [enabled]);
+  useEffect(() => setPaused(pausedAt ?? null), [pausedAt]);
 
   async function toggle() {
     if (busy) return;
