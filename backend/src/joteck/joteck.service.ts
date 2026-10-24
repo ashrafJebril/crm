@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AdminService } from "../admin/admin.service";
 import type { ProvisionClientDto } from "../admin/admin.dto";
@@ -118,6 +118,7 @@ export class JoteckService {
     id: string,
     body: {
       active?: boolean;
+      plan?: string;
       enabledModules?: string[];
       lWorkspaceId?: string | null;
       lEndpointId?: string | null;
@@ -153,6 +154,13 @@ export class JoteckService {
     }
     if (Array.isArray(body.enabledModules)) {
       data.enabledModules = body.enabledModules;
+    }
+    // Kewy pushes the name of the workspace's package (tier) whenever an admin
+    // changes it, so the plan shown in the CRM follows Kewy.
+    if (typeof body.plan === "string") {
+      const plan = body.plan.trim();
+      if (!plan || plan.length > 60) throw new BadRequestException("plan must be 1-60 characters");
+      data.plan = plan;
     }
     const updated = await this.prisma.raw.workspace.update({
       where: { id },

@@ -15,6 +15,8 @@ import { ProvisionClientDto } from "../admin/admin.dto";
 
 interface JoteckWorkspacePatch {
   active?: boolean;
+  /** The Kewy package (tier) name, e.g. "Ultimate" — kept as Workspace.plan. */
+  plan?: string;
   enabledModules?: string[];
   lWorkspaceId?: string | null;
   lEndpointId?: string | null;
