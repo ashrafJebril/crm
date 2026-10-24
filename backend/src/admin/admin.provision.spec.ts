@@ -87,8 +87,12 @@ describe("AdminService.provisionClient password handling", () => {
         $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
       },
     };
-    const svc = new AdminService(prisma as never, {} as never);
-    return { svc, tx };
+    const kewySync = {
+      userCreated: jest.fn().mockResolvedValue(undefined),
+      backfill: jest.fn(),
+    };
+    const svc = new AdminService(prisma as never, {} as never, kewySync as never);
+    return { svc, tx, kewySync };
   }
 
   it("stores ownerPasswordHash verbatim (no re-hash)", async () => {
@@ -134,5 +138,29 @@ describe("AdminService.provisionClient password handling", () => {
     const { svc, tx } = setup({ id: "u1", email: base.ownerEmail, password: null, kewyAccountId: null });
     await svc.provisionClient({ ...base, ownerPasswordHash: KEWY_HASH } as ProvisionClientDto);
     expect(tx.user.update.mock.calls[0][0].data.password).toBe(KEWY_HASH);
+  });
+
+  it("mirrors a new owner to Kewy as a password write", async () => {
+    const { svc, kewySync } = setup();
+    await svc.provisionClient({ ...base, ownerPasswordHash: KEWY_HASH } as ProvisionClientDto);
+    expect(kewySync.userCreated).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "u1", email: base.ownerEmail, password: KEWY_HASH }),
+    );
+    expect(kewySync.backfill).not.toHaveBeenCalled();
+  });
+
+  it("only backfills an existing owner whose password was left alone", async () => {
+    const { svc, kewySync } = setup({ id: "u1", email: base.ownerEmail, password: "$2a$10$existing", kewyAccountId: null });
+    await svc.provisionClient({ ...base, ownerPasswordHash: KEWY_HASH } as ProvisionClientDto);
+    expect(kewySync.userCreated).not.toHaveBeenCalled();
+    expect(kewySync.backfill).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the provision when the strict Kewy write fails", async () => {
+    const { svc, kewySync } = setup();
+    kewySync.userCreated.mockRejectedValueOnce(new Error("kewy down"));
+    await expect(
+      svc.provisionClient({ ...base, ownerPassword: "secret123" } as ProvisionClientDto),
+    ).rejects.toThrow("kewy down");
   });
 });
