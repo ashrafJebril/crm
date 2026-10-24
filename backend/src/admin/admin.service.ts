@@ -7,6 +7,7 @@ import {
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
+import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import type { JwtPayload } from "../auth/auth.guard";
 import { seedWorkspaceDefaults } from "../workspaces/workspace-defaults";
 import { ProvisionClientDto, SuspendWorkspaceDto, UpdateWorkspaceAdminDto } from "./admin.dto";
@@ -33,6 +34,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly kewySync: KewyIdentitySync,
   ) {}
 
   async listWorkspaces() {
@@ -235,54 +237,66 @@ export class AdminService {
         ? await bcrypt.hash(dto.ownerPassword, 10)
         : null;
 
-    return this.prisma.raw.$transaction(async (tx) => {
-      const user = existing
-        ? await tx.user.update({
-            where: { id: existing.id },
-            // Only ever fill in a missing link; never overwrite an existing
-            // password or rename a user because a provision call said so.
-            data: {
-              kewyAccountId: existing.kewyAccountId ?? dto.kewyAccountId ?? null,
-              ...(existing.password === null && hashed ? { password: hashed } : {}),
-            },
-          })
-        : await tx.user.create({
-            data: {
-              email: dto.ownerEmail,
-              name: dto.ownerName,
-              password: hashed,
-              kewyAccountId: dto.kewyAccountId ?? null,
-              role: "Owner",
-              initials: initialsOf(dto.ownerName),
-              color: "210",
-              status: "offline",
-            },
-          });
+    return this.prisma.raw.$transaction(
+      async (tx) => {
+        const user = existing
+          ? await tx.user.update({
+              where: { id: existing.id },
+              // Only ever fill in a missing link; never overwrite an existing
+              // password or rename a user because a provision call said so.
+              data: {
+                kewyAccountId: existing.kewyAccountId ?? dto.kewyAccountId ?? null,
+                ...(existing.password === null && hashed ? { password: hashed } : {}),
+              },
+            })
+          : await tx.user.create({
+              data: {
+                email: dto.ownerEmail,
+                name: dto.ownerName,
+                password: hashed,
+                kewyAccountId: dto.kewyAccountId ?? null,
+                role: "Owner",
+                initials: initialsOf(dto.ownerName),
+                color: "210",
+                status: "offline",
+              },
+            });
 
-      const ws = await tx.workspace.create({
-        data: {
-          name: dto.workspaceName,
-          slug,
-          timezone: dto.timezone ?? "Asia/Riyadh",
-          lang: dto.lang ?? "ar",
-          kewyWorkspaceId: dto.kewyWorkspaceId ?? null,
-          lWorkspaceId: dto.lWorkspaceId ?? null,
-        },
-      });
+        const ws = await tx.workspace.create({
+          data: {
+            name: dto.workspaceName,
+            slug,
+            timezone: dto.timezone ?? "Asia/Riyadh",
+            lang: dto.lang ?? "ar",
+            kewyWorkspaceId: dto.kewyWorkspaceId ?? null,
+            lWorkspaceId: dto.lWorkspaceId ?? null,
+          },
+        });
 
-      await tx.workspaceMember.create({
-        data: { userId: user.id, workspaceId: ws.id, role: "owner" },
-      });
+        await tx.workspaceMember.create({
+          data: { userId: user.id, workspaceId: ws.id, role: "owner" },
+        });
 
-      // Default pipeline + stages + smart groups, inside the same transaction
-      // so a client is never provisioned half-configured.
-      await seedWorkspaceDefaults(tx, ws.id);
+        // Default pipeline + stages + smart groups, inside the same transaction
+        // so a client is never provisioned half-configured.
+        await seedWorkspaceDefaults(tx, ws.id);
 
-      return {
-        workspace: { id: ws.id, name: ws.name, slug: ws.slug },
-        user: { id: user.id, email: user.email, name: user.name },
-      };
-    });
+        // Mirror to Kewy last, inside the transaction: under a strict
+        // AUTH_SOURCE a failed password write rolls the whole provision back.
+        // A new owner, or one who just gained a password, is a password write;
+        // otherwise this is a best-effort backfill.
+        const gainedPassword = !existing || (existing.password === null && hashed !== null);
+        if (gainedPassword) await this.kewySync.userCreated(user);
+        else this.kewySync.backfill(user);
+
+        return {
+          workspace: { id: ws.id, name: ws.name, slug: ws.slug },
+          user: { id: user.id, email: user.email, name: user.name },
+        };
+      },
+      // Room for the Kewy call (5s timeout) on top of the seeding.
+      { timeout: 15_000 },
+    );
   }
 
   async listUsers() {

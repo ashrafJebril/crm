@@ -11,14 +11,25 @@ import {
 import { Public } from "./public.decorator";
 import type { JwtPayload } from "./auth.guard";
 
+/**
+ * The end user's IP, forwarded to Kewy's per-IP login limit. On Fly the edge
+ * proxy sets Fly-Client-IP (and overwrites any client-supplied value); off Fly
+ * this falls back to the socket address.
+ */
+function clientIp(req: Request): string | undefined {
+  const fly = req.headers["fly-client-ip"];
+  const ip = (Array.isArray(fly) ? fly[0] : fly)?.trim() || req.ip || undefined;
+  return ip || undefined;
+}
+
 @Controller("auth")
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
   @Post("login")
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto);
+  login(@Body() dto: LoginDto, @Req() req: Request) {
+    return this.auth.login(dto, clientIp(req));
   }
 
   @Public()

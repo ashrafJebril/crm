@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
+import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import { seedWorkspaceDefaults } from "./workspace-defaults";
 import {
   AddMemberDto,
@@ -34,7 +35,10 @@ function toSlug(name: string): string {
 
 @Injectable()
 export class WorkspacesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly kewySync: KewyIdentitySync,
+  ) {}
 
   async listForUser(userId: string) {
     // Hide suspended workspaces from the switcher dropdown — a suspended
@@ -168,6 +172,10 @@ export class WorkspacesService {
           status: "offline",
         },
       });
+      const created = user;
+      await this.kewySync.userCreated(created, () =>
+        this.prisma.user.delete({ where: { id: created.id } }),
+      );
       provisionedPassword = dto.password;
     } else if (dto.password) {
       // User row already existed (e.g. previously removed-then-re-added). If
@@ -182,6 +190,8 @@ export class WorkspacesService {
       });
       if (otherMemberships === 0) {
         const hashed = await bcrypt.hash(dto.password, 10);
+        // Set by the inviter, not the user: crm-only in Kewy (see passwordReset).
+        await this.kewySync.passwordReset(user, hashed);
         await this.prisma.user.update({
           where: { id: user.id },
           data: { password: hashed },
@@ -253,6 +263,8 @@ export class WorkspacesService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
     const hashed = await bcrypt.hash(dto.password, 10);
+    // Kewy first so a strict failure leaves the local password unchanged.
+    await this.kewySync.passwordReset(user, hashed);
     await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
     return {
       ok: true,
@@ -266,6 +278,8 @@ export class WorkspacesService {
       where: { userId_workspaceId: { userId, workspaceId } },
     });
     if (!m) throw new NotFoundException("Member not found");
+    // Only the membership goes; the crm User (and so its Kewy identity) stays.
+    // Kewy resolves tenants from workspaces, so there is nothing to sync here.
     await this.prisma.workspaceMember.delete({ where: { id: m.id } });
     return { ok: true };
   }

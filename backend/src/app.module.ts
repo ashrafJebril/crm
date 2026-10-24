@@ -4,6 +4,7 @@ import { WorkspaceInterceptor } from "./common/workspace.interceptor";
 import { ScheduleModule } from "@nestjs/schedule";
 import { EventEmitterModule } from "@nestjs/event-emitter";
 import { PrismaModule } from "./prisma/prisma.module";
+import { KewyIdentityModule } from "./kewy-identity/kewy-identity.module";
 import { AuthModule } from "./auth/auth.module";
 import { HealthModule } from "./health/health.module";
 import { ContactsModule } from "./contacts/contacts.module";
@@ -35,6 +36,7 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot(),
     PrismaModule,
+    KewyIdentityModule,
     AuthModule,
     HealthModule,
     SegmentsModule,
