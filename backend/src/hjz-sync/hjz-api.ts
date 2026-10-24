@@ -3,7 +3,9 @@
  * (e.g. http://127.0.0.1:3030/api/v1). Older deployments only set
  * HJZ_OUTBOUND_URL to the full segments route, so the base is derived from it.
  */
-export function hjzWebhookUrl(kind: "clients" | "segments"): string | null {
+export type HjzWebhookKind = "clients" | "segments" | "appointments";
+
+export function hjzWebhookUrl(kind: HjzWebhookKind): string | null {
   const base =
     process.env.HJZ_API_URL?.trim().replace(/\/+$/, "") ||
     process.env.HJZ_OUTBOUND_URL?.trim().replace(/\/webhooks\/marketing\/segments\/?$/, "");
@@ -12,7 +14,7 @@ export function hjzWebhookUrl(kind: "clients" | "segments"): string | null {
 }
 
 export async function postToHjz(
-  kind: "clients" | "segments",
+  kind: HjzWebhookKind,
   payload: unknown,
 ): Promise<{ ok: boolean; status: number; body: unknown }> {
   const url = hjzWebhookUrl(kind);

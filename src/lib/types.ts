@@ -263,6 +263,10 @@ export interface Appointment {
   note?: string;
   noteAr?: string;
   reminderSent?: boolean;
+  // Mirror in HJZ (connected workspaces only).
+  hjzAppointmentId?: string | null;
+  hjzSyncPending?: boolean;
+  hjzSyncError?: string | null;
 }
 
 export interface Campaign {

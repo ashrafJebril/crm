@@ -183,6 +183,15 @@ model Appointment {
   noteAr       String?
   reminderSent Boolean  @default(false)
 
+  // Mirror in HJZ when the workspace is connected (Workspace.externalTenantId).
+  // Every change sets hjzSyncPending; HjzAppointmentSyncService pushes it and
+  // a one-minute sweep retries. hjzSyncError is the last refusal, shown on
+  // the booking (e.g. no HJZ service with this name).
+  hjzAppointmentId String?
+  hjzSyncPending   Boolean   @default(false)
+  hjzSyncAttemptAt DateTime?
+  hjzSyncError     String?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -194,6 +203,7 @@ model Appointment {
   @@index([contactId])
   @@index([startAt])
   @@index([workspaceId])
+  @@index([hjzSyncPending])
 }
 
 model Template {
