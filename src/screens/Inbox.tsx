@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
+import { ResolutionBadge } from "./inbox/ResolutionBadge";
 import { Modal } from "@/components/Modal";
 import { ConvRowSkeleton, MessageSkeleton } from "@/components/Skeleton";
 import { NotesPanel } from "@/components/NotesPanel";
@@ -1366,6 +1367,7 @@ function ConversationPane({
             >
               {CHANNEL_LABEL[conv.channel]}
             </span>
+            <ResolutionBadge conv={conv} lang={lang} />
             <span className="ix-online">
               <span className="dot" />
               {tx("Online", "متصل")}

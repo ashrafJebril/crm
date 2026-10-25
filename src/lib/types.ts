@@ -237,6 +237,12 @@ export interface Conversation {
   intent: string;
   confidence: number;
   escalated?: boolean;
+  /** Conversation resolution (Kewy AI, once the thread went quiet). */
+  resolutionStatus?: "resolved" | "closed" | "open" | null;
+  resolution?: string | null;
+  resolutionIssue?: "complaint" | "escalation" | "none" | null;
+  resolutionSummary?: string | null;
+  resolvedAt?: string | null;
   messages?: Message[];
   // WhatsApp-only: backend populates these when channel === "whatsapp".
   lastInboundAt?: string | null;
