@@ -120,6 +120,27 @@ model Conversation {
   /// clearing it hands the thread back to the AI.
   aiPausedAt DateTime?
 
+  /// Conversation resolution — judged by Kewy AI (l) once the thread has been
+  /// quiet past the idle window (ConversationResolutionService). Kept apart
+  /// from `status`, which stays a human decision: nothing reopens a closed
+  /// thread, so the AI never closes one. Cleared when the customer writes again.
+  /// resolutionStatus: "resolved" (genuine) | "closed" (ended unresolved) | "open" (still live).
+  resolutionStatus     String?
+  /// resolved | customer_requested | abandoned | no_response | spam | duplicate | transferred
+  resolution           String?
+  /// complaint | escalation | none — a complaint/escalation opens a Support ticket.
+  resolutionIssue      String?
+  resolutionConfidence Float?
+  resolutionSentiment  String?
+  resolutionSummary    String?
+  resolutionRationale  String?
+  resolvedAt           DateTime?
+  /// The sweep's claim + "judged up to here" marker: due again only once a
+  /// message newer than this arrives (or a failed attempt is retried).
+  resolutionCheckedAt  DateTime?
+  resolutionAttempts   Int       @default(0)
+  resolutionError      String?
+
   // Provider-side conversation id (currently Zernio's). Lets replies address
   // the provider conversation directly instead of re-listing every send.
   externalId String?
@@ -165,6 +186,8 @@ model Message {
   createdAt DateTime @default(now())
 
   @@index([conversationId])
+  @@index([conversationId, createdAt])
+  @@index([createdAt])
   @@index([workspaceId])
   @@index([metaMessageId])
 }
