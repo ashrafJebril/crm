@@ -4,6 +4,11 @@ const DAY_MS = 86_400_000;
 export type BillingState = "ok" | "due" | "ended";
 export const BILLING_STATES: readonly BillingState[] = ["ok", "due", "ended"];
 
+/** The clock value that is exactly at the lock threshold. */
+export function lockedClock(now: Date): Date {
+  return new Date(now.getTime() - PAYMENT_GRACE_DAYS * DAY_MS);
+}
+
 /** Locked once the payment clock is at least PAYMENT_GRACE_DAYS old. */
 export function isPaymentLocked(paymentDueSince: Date | null, now: Date): boolean {
   if (!paymentDueSince) return false;
@@ -26,7 +31,7 @@ export function applyBillingState(
     case "due":
       return current ?? now;
     case "ended": {
-      const backdated = new Date(now.getTime() - PAYMENT_GRACE_DAYS * DAY_MS);
+      const backdated = lockedClock(now);
       return current && current.getTime() <= backdated.getTime() ? current : backdated;
     }
   }

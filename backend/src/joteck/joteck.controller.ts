@@ -72,6 +72,7 @@ export class JoteckController {
     if (!body || !BILLING_STATES.includes(body.state as BillingState)) {
       throw new BadRequestException("state must be one of ok, due, ended");
     }
-    return this.svc.setBillingState(id, body.state as BillingState, body.reason);
+    const reason = typeof body.reason === "string" ? body.reason : undefined;
+    return this.svc.setBillingState(id, body.state as BillingState, reason);
   }
 }
