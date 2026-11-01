@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -305,5 +306,39 @@ describe("AuthService.changePassword dual-write", () => {
       svc.changePassword("u1", { currentPassword: "kewy-password", newPassword: "new-secret" }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(kewy.authenticate).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuthService.login: payment lock", () => {
+  const lockedWs = { ...workspace, id: "wl", paymentDueSince: new Date(Date.now() - 10 * 86_400_000) };
+  const okWs = { ...workspace, id: "wok", paymentDueSince: null };
+
+  it("refuses login with PAYMENT_OVERDUE when every workspace is locked", async () => {
+    const { svc } = setup("local", localUser({ memberships: [{ role: "owner", workspace: lockedWs }] }));
+    const err = await svc.login(dto).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err.getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
+  });
+
+  it("defaults into the first unlocked workspace", async () => {
+    const { svc } = setup(
+      "local",
+      localUser({
+        memberships: [
+          { role: "owner", workspace: lockedWs },
+          { role: "owner", workspace: okWs },
+        ],
+      }),
+    );
+    const res = await svc.login(dto);
+    expect(res.activeWorkspaceId).toBe("wok");
+  });
+
+  it("lets a super-admin into a locked workspace", async () => {
+    const { svc } = setup(
+      "local",
+      localUser({ isSuperAdmin: true, memberships: [{ role: "owner", workspace: lockedWs }] }),
+    );
+    expect((await svc.login(dto)).activeWorkspaceId).toBe("wl");
   });
 });

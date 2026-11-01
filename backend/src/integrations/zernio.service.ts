@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { randomBytes } from "crypto";
 import { EventEmitter2 } from "@nestjs/event-emitter";
+import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
@@ -57,6 +58,7 @@ export class ZernioService {
     private readonly lAgent: LAgentService,
     private readonly aiBridge: AiBridgeService,
     @Optional() private readonly events?: EventEmitter2,
+    @Optional() private readonly paymentLock?: PaymentLockService,
   ) {}
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -1535,6 +1537,9 @@ export class ZernioService {
     inbound: string,
   ): void {
     void (async () => {
+      // Locked workspaces get no automatic replies. The inbound message is
+      // already stored; a failed lookup rejects into the catch below (no send).
+      if (await this.paymentLock?.isLocked(workspaceId)) return;
       const result = await this.lAgent.ask(workspaceId, {
         externalId: conversationId,
         message: inbound,

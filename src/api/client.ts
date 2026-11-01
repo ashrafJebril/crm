@@ -1,3 +1,5 @@
+import { PAYMENT_OVERDUE } from "@/lib/paymentLock";
+
 // Tiny typed fetch wrapper. Reads JWT from localStorage and attaches it.
 // Throws ApiError on non-2xx so hooks can show error states.
 
@@ -55,6 +57,13 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn;
 }
 
+// Global "payment overdue" hook: any 403 { code: "PAYMENT_OVERDUE" } (including
+// login and the SSO exchange) lets AuthProvider swap in the lock screen.
+let onPaymentOverdue: (() => void) | null = null;
+export function setPaymentOverdueHandler(fn: (() => void) | null): void {
+  onPaymentOverdue = fn;
+}
+
 interface RequestOpts {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
@@ -108,6 +117,7 @@ function errorFromBody(data: unknown, status: number): ApiError {
         ? (data as { message: string[] }).message.join(", ")
         : `HTTP ${status}`;
   const code = isObject(data) && typeof data.code === "string" ? data.code : undefined;
+  if (status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
   return new ApiError(message, status, code);
 }
 

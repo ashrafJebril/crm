@@ -67,3 +67,33 @@ describe("tokenStore with working localStorage", () => {
     expect(store.get()).toBeNull();
   });
 });
+
+describe("PAYMENT_OVERDUE responses", () => {
+  const respond = (status: number, body: unknown) =>
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status }));
+
+  async function load() {
+    vi.resetModules();
+    return import("./client");
+  }
+
+  it("fires the handler on a 403 PAYMENT_OVERDUE and still throws an ApiError with the code", async () => {
+    const { api, setPaymentOverdueHandler, ApiError } = await load();
+    const handler = vi.fn();
+    setPaymentOverdueHandler(handler);
+    respond(403, { statusCode: 403, code: "PAYMENT_OVERDUE", message: "locked" });
+    const err = await api.get("/x").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as InstanceType<typeof ApiError>).code).toBe("PAYMENT_OVERDUE");
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire for other 403s", async () => {
+    const { api, setPaymentOverdueHandler } = await load();
+    const handler = vi.fn();
+    setPaymentOverdueHandler(handler);
+    respond(403, { statusCode: 403, message: "nope" });
+    await api.get("/x").catch(() => undefined);
+    expect(handler).not.toHaveBeenCalled();
+  });
+});

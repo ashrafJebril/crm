@@ -10,6 +10,8 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
+import { isPaymentLocked } from "../billing/payment-lock";
+import { paymentOverdue } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { authSource } from "../kewy-identity/auth-source";
 import {
@@ -189,6 +191,7 @@ export class AuthService {
         timezone: string;
         lang: string;
         plan: string;
+        paymentDueSince?: Date | null;
       };
     }[];
   }) {
@@ -225,7 +228,15 @@ export class AuthService {
     // (downstream routes use @CurrentWorkspace which 401s if absent). Users
     // with multiple workspaces can switch from the topbar — that re-mints the
     // JWT via /auth/switch-workspace.
-    return this.issue(user, memberships[0].id, memberships);
+    // Land in a workspace that is not payment-locked. Only when every one is
+    // locked is the login refused (super-admins are exempt, as at the guard).
+    const now = new Date();
+    const open = user.isSuperAdmin
+      ? user.memberships
+      : user.memberships.filter((m) => !isPaymentLocked(m.workspace.paymentDueSince ?? null, now));
+    if (open.length === 0) throw paymentOverdue();
+    const home = open[0].workspace.id;
+    return this.issue(user, home, memberships);
   }
 
   async register(dto: RegisterDto) {
@@ -261,6 +272,13 @@ export class AuthService {
   async switchWorkspace(userId: string, dto: SwitchWorkspaceDto) {
     await this.workspaces.requireMember(userId, dto.workspaceId);
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    if (!user.isSuperAdmin) {
+      const ws = await this.prisma.raw.workspace.findUnique({
+        where: { id: dto.workspaceId },
+        select: { paymentDueSince: true },
+      });
+      if (ws && isPaymentLocked(ws.paymentDueSince, new Date())) throw paymentOverdue();
+    }
     const memberships = await this.workspaces.listForUser(userId);
     return this.issue(user, dto.workspaceId, memberships);
   }

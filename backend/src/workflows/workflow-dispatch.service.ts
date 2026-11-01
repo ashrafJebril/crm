@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { Prisma } from "@prisma/client";
+import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "./workflow-events";
 import { initialCursor, StepGraph } from "./workflow-steps";
@@ -19,11 +20,14 @@ export class WorkflowDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runner: WorkflowRunnerService,
+    private readonly paymentLock: PaymentLockService,
   ) {}
 
   @OnEvent(WORKFLOW_TRIGGER_EVENT)
   async handleTrigger(evt: WorkflowTriggerEvent): Promise<void> {
     try {
+      // No new runs while locked (a lookup failure lands in the catch below).
+      if (await this.paymentLock.isLocked(evt.workspaceId)) return;
       const workflows = await this.prisma.workflow.findMany({
         where: { workspaceId: evt.workspaceId, triggerType: evt.triggerType, status: "active" },
       });

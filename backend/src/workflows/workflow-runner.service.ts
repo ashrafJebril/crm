@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AskAgentExecutor } from "./executors/ask-agent.executor";
 import { SendWhatsappExecutor } from "./executors/send-whatsapp.executor";
@@ -25,6 +26,7 @@ export class WorkflowRunnerService {
     private readonly sendWhatsapp: SendWhatsappExecutor,
     private readonly askAgent: AskAgentExecutor,
     private readonly updateData: UpdateDataExecutor,
+    private readonly paymentLock: PaymentLockService,
   ) {}
 
   async run(runId: string): Promise<void> {
@@ -72,6 +74,22 @@ export class WorkflowRunnerService {
           continue;
         }
 
+        if (step.type === "send_whatsapp" && (await this.sendsBlocked(run.workspaceId))) {
+          // Park, do not fail: same step, same context, due now. The poller
+          // skips it while the workspace is locked and resumes it afterwards.
+          await this.prisma.workflowRun.update({
+            where: { id: runId },
+            data: {
+              status: "waiting",
+              cursor: { stepId: step.id } satisfies StoredCursor,
+              resumeAt: new Date(),
+              context: context as unknown as Prisma.InputJsonValue,
+              result: result as unknown as Prisma.InputJsonValue,
+            },
+          });
+          return;
+        }
+
         const output = await this.executeAction(run.workspaceId, step, context);
         result[step.id] = output;
         context = { ...context, steps: { ...context.steps, [step.id]: output } };
@@ -99,6 +117,16 @@ export class WorkflowRunnerService {
           result: result as unknown as Prisma.InputJsonValue,
         },
       });
+    }
+  }
+
+  /** Locked, or the lookup failed: either way the message must not go out. */
+  private async sendsBlocked(workspaceId: string): Promise<boolean> {
+    try {
+      return await this.paymentLock.isLocked(workspaceId);
+    } catch (e) {
+      this.log.warn(`payment lock lookup failed for ${workspaceId}: ${(e as Error).message}`);
+      return true;
     }
   }
 

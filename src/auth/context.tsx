@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, setUnauthorizedHandler, tokenStore } from "@/api/client";
+import { api, setPaymentOverdueHandler, setUnauthorizedHandler, tokenStore } from "@/api/client";
 import { disconnectSocket } from "@/api/realtime";
 import type { Workspace } from "@/lib/types";
 
@@ -36,6 +36,8 @@ interface AuthContextValue {
   /** True when the current JWT is an impersonation session (super-admin
    *  entered another tenant's workspace). UI surfaces a banner + offers exit. */
   impersonating: boolean;
+  /** True once any request was refused with PAYMENT_OVERDUE; cleared on logout. */
+  paymentOverdue: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (input: {
     email: string;
@@ -82,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<"loading" | "anonymous" | "authenticated">(
     "loading",
   );
+  const [paymentOverdue, setPaymentOverdue] = useState(false);
   const [impersonating, setImpersonating] = useState<boolean>(
     () => readImpersonatingFromToken(),
   );
@@ -171,6 +174,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setWorkspaces([]);
     setActiveWorkspace(null);
     setImpersonating(false);
+    setPaymentOverdue(false);
     setStatus("anonymous");
   }, []);
 
@@ -181,6 +185,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(() => logout());
     return () => setUnauthorizedHandler(null);
   }, [logout]);
+
+  useEffect(() => {
+    setPaymentOverdueHandler(() => setPaymentOverdue(true));
+    return () => setPaymentOverdueHandler(null);
+  }, []);
 
   const switchWorkspace = useCallback(async (workspaceId: string) => {
     const resp = await api.post<LoginResponse>("/auth/switch-workspace", {
@@ -216,13 +225,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeWorkspace,
       status,
       impersonating,
+      paymentOverdue,
       login,
       register,
       logout,
       switchWorkspace,
       createWorkspace,
     }),
-    [user, workspaces, activeWorkspace, status, impersonating, login, register, logout, switchWorkspace, createWorkspace],
+    [user, workspaces, activeWorkspace, status, impersonating, paymentOverdue, login, register, logout, switchWorkspace, createWorkspace],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
