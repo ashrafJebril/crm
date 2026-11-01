@@ -1,11 +1,13 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AdminService } from "../admin/admin.service";
 import type { ProvisionClientDto } from "../admin/admin.dto";
+import { BillingState, applyBillingState } from "../billing/payment-lock";
 import { LAgentSetupService } from "../integrations/l-agent-setup.service";
 
 @Injectable()
 export class JoteckService {
+  private readonly logger = new Logger(JoteckService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly admin: AdminService,
@@ -112,6 +114,22 @@ export class JoteckService {
       members,
       active: !w.suspendedAt,
     };
+  }
+
+  /** Kewy payment state. Touches paymentDueSince only, never suspendedAt. */
+  async setBillingState(id: string, state: BillingState, reason?: string) {
+    const w = await this.prisma.raw.workspace.findUnique({
+      where: { id },
+      select: { paymentDueSince: true },
+    });
+    if (!w) throw new NotFoundException("Workspace not found");
+    const next = applyBillingState(w.paymentDueSince, state, new Date());
+    await this.prisma.raw.workspace.update({
+      where: { id },
+      data: { paymentDueSince: next },
+    });
+    this.logger.log(`billing-state ${id} -> ${state}${reason ? ` (${reason})` : ""}`);
+    return { paymentDueSince: next ? next.toISOString() : null };
   }
 
   async patchWorkspace(
