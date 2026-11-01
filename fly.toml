@@ -19,9 +19,8 @@ primary_region = "fra"
     # served at https://tiremalliraq.com/admin/). BUILD-TIME: baked into the
     # bundle, so changing it requires a redeploy (fly deploy rebuilds).
     VITE_EMBED_PARENT_ORIGINS = "https://tiremalliraq.com,https://demo.tiremalliraq.com"
-    # Kewy billing page linked from the "workspace locked" screen. BUILD-TIME.
-    # Empty = the screen shows its message with no link. Set before relying on it.
-    VITE_KEWY_BILLING_URL = ""
+    # Kewy billing page (full URL) linked from the "workspace locked" screen. BUILD-TIME.
+    VITE_KEWY_BILLING_URL = "https://kewy.ai/billing"
 
 # RUNTIME env for nginx (envsubst into the CSP frame-ancestors header at
 # container start) — can be changed without rebuilding the bundle, but must
