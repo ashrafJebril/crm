@@ -7,6 +7,7 @@ import {
   WebSocketServer,
 } from "@nestjs/websockets";
 import { Server, Socket } from "socket.io";
+import { PaymentLockService } from "../billing/payment-lock.service";
 import type { JwtPayload } from "../auth/auth.guard";
 
 /** Returns the room name a workspace's sockets join. */
@@ -29,7 +30,10 @@ export class RealtimeGateway
 
   private readonly logger = new Logger(RealtimeGateway.name);
 
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly paymentLock: PaymentLockService,
+  ) {}
 
   async handleConnection(client: Socket): Promise<void> {
     const token =
@@ -42,6 +46,17 @@ export class RealtimeGateway
     try {
       const payload = await this.jwt.verifyAsync<JwtPayload>(token);
       if (!payload.workspaceId) {
+        client.disconnect();
+        return;
+      }
+      // Locked workspaces get no live feed. Support sessions are exempt. A
+      // lookup failure lands in the catch below and disconnects (fail closed).
+      // Sockets already open when a lock lands stay until they reconnect.
+      if (
+        !payload.isSuperAdmin &&
+        !payload.impersonating &&
+        (await this.paymentLock.isLocked(payload.workspaceId))
+      ) {
         client.disconnect();
         return;
       }

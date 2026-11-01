@@ -96,6 +96,17 @@ describe("AiReplyController — 24h window re-check", () => {
     expect(res).toMatchObject({ delivered: false, reason: "payment_overdue" });
   });
 
+  it("checks the lock before escalating or writing a shadow message", async () => {
+    const { ctrl, created } = build({ lastInboundAgoMs: 2 * HOUR, locked: true });
+    for (const over of [{ send: false }, { escalate: true }]) {
+      const p = payload(over);
+      const { sig, req } = signed(p);
+      const res = await ctrl.reply(req, sig, p as never);
+      expect(res).toEqual({ delivered: false, reason: "payment_overdue" });
+    }
+    expect(created).toHaveLength(0);
+  });
+
   it("SENDS when the customer messaged 2 hours ago — window open", async () => {
     const { ctrl, sent } = build({ lastInboundAgoMs: 2 * HOUR });
     const p = payload();

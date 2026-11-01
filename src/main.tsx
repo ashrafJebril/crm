@@ -6,6 +6,8 @@ import { TweaksProvider } from "@/tweaks/context";
 import { AuthProvider } from "@/auth/context";
 import { API_BASE, tokenStore } from "@/api/client";
 import { markEmbedded, notifyOpenerConnected, postToParent } from "@/embed/embed";
+import { exchangeTiremallSso } from "@/auth/tiremallSso";
+import { markBootPaymentOverdue } from "@/lib/paymentLock";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import { applySkin, storedSkin } from "@/embed/skin";
 import { setEmbedVisible } from "@/embed/visibility";
@@ -82,29 +84,18 @@ function mount() {
   );
 }
 
-async function exchangeTiremallSso(token: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${API_BASE}/auth/sso/tiremall`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    if (!res.ok) return false;
-    const json = (await res.json()) as { accessToken?: string };
-    if (!json.accessToken) return false;
-    tokenStore.set(json.accessToken);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 if (closingAsPopup) {
   // window.close() issued; render nothing.
 } else if (pendingTiremallSso) {
-  void exchangeTiremallSso(pendingTiremallSso).then((ok) => {
-    if (ok) {
+  void exchangeTiremallSso(pendingTiremallSso, API_BASE).then((r) => {
+    if (r.kind === "ok") {
+      tokenStore.set(r.accessToken);
       mount();
+    } else if (r.kind === "payment_overdue") {
+      // Show the lock screen, and still tell the parent the sign-in failed.
+      markBootPaymentOverdue();
+      mount();
+      postToParent({ type: "kewy:sso-failed" });
     } else {
       root.render(<EmbedSignInFailed />);
       postToParent({ type: "kewy:sso-failed" });

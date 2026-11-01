@@ -14,3 +14,9 @@ export function billingLink(
     return undefined;
   }
 }
+
+// Set before React mounts (e.g. a refused embed SSO exchange) so AuthProvider
+// starts on the lock screen.
+let bootOverdue = false;
+export const markBootPaymentOverdue = (): void => { bootOverdue = true; };
+export const bootPaymentOverdue = (): boolean => bootOverdue;

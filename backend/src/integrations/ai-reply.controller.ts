@@ -97,6 +97,13 @@ export class AiReplyController {
     });
     if (!conv) throw new BadRequestException("Conversation not found");
 
+    // Checked before anything is written (escalation, shadow draft, send): a
+    // payment-locked workspace gets no outgoing messages. Nothing is stored
+    // or sent; a failed lookup throws (500) rather than letting the send through.
+    if (await this.paymentLock?.isLocked(workspaceId)) {
+      return { delivered: false, reason: "payment_overdue" };
+    }
+
     // A human replying takes the thread; the agent's in-flight turn loses.
     // Checked here rather than only at dispatch because the agent may have
     // been thinking for several seconds while staff started typing.
@@ -144,12 +151,6 @@ export class AiReplyController {
         shadow: true,
       });
       return { delivered: false, reason: "shadow_mode", logged: true };
-    }
-
-    // A payment-locked workspace gets no outgoing messages. Nothing is stored
-    // or sent; a failed lookup throws (500) rather than letting the send through.
-    if (await this.paymentLock?.isLocked(workspaceId)) {
-      return { delivered: false, reason: "payment_overdue" };
     }
 
     // Re-check the 24-hour window at SEND time, not at receive time.

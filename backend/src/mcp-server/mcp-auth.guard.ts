@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import type { JwtPayload } from "../auth/auth.guard";
+import { PaymentLockService, paymentOverdue } from "../billing/payment-lock.service";
 import { McpTokenService } from "../integrations/mcp-token.service";
 
 /**
@@ -11,7 +12,10 @@ import { McpTokenService } from "../integrations/mcp-token.service";
  */
 @Injectable()
 export class McpAuthGuard implements CanActivate {
-  constructor(private readonly tokens: McpTokenService) {}
+  constructor(
+    private readonly tokens: McpTokenService,
+    private readonly paymentLock: PaymentLockService,
+  ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<Request & { user?: JwtPayload }>();
@@ -23,6 +27,8 @@ export class McpAuthGuard implements CanActivate {
     if (!workspaceId) {
       throw new UnauthorizedException("Invalid or revoked MCP token");
     }
+    // A failed lookup propagates (fail closed); never silently unlock.
+    if (await this.paymentLock.isLocked(workspaceId)) throw paymentOverdue();
     req.user = { sub: "mcp-server", email: "", role: "admin", workspaceId };
     return true;
   }

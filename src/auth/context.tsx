@@ -9,6 +9,7 @@ import {
 } from "react";
 import { api, setPaymentOverdueHandler, setUnauthorizedHandler, tokenStore } from "@/api/client";
 import { disconnectSocket } from "@/api/realtime";
+import { bootPaymentOverdue } from "@/lib/paymentLock";
 import type { Workspace } from "@/lib/types";
 
 export interface AuthUser {
@@ -84,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<"loading" | "anonymous" | "authenticated">(
     "loading",
   );
-  const [paymentOverdue, setPaymentOverdue] = useState(false);
+  const [paymentOverdue, setPaymentOverdue] = useState(() => bootPaymentOverdue());
   const [impersonating, setImpersonating] = useState<boolean>(
     () => readImpersonatingFromToken(),
   );
@@ -194,7 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchWorkspace = useCallback(async (workspaceId: string) => {
     const resp = await api.post<LoginResponse>("/auth/switch-workspace", {
       workspaceId,
-    });
+    }, { localPaymentError: true });
     tokenStore.set(resp.token);
     setUser(resp.user);
     setWorkspaces(resp.workspaces);

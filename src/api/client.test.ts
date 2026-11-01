@@ -96,4 +96,16 @@ describe("PAYMENT_OVERDUE responses", () => {
     await api.get("/x").catch(() => undefined);
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it("does not fire the global handler when the caller handles it itself", async () => {
+    const { api, setPaymentOverdueHandler, ApiError } = await load();
+    const handler = vi.fn();
+    setPaymentOverdueHandler(handler);
+    respond(403, { statusCode: 403, code: "PAYMENT_OVERDUE", message: "locked" });
+    const err = await api
+      .post("/auth/switch-workspace", { workspaceId: "w" }, { localPaymentError: true })
+      .catch((e: unknown) => e);
+    expect((err as InstanceType<typeof ApiError>).code).toBe("PAYMENT_OVERDUE");
+    expect(handler).not.toHaveBeenCalled();
+  });
 });

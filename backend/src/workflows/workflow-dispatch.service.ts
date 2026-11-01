@@ -26,20 +26,31 @@ export class WorkflowDispatchService {
   @OnEvent(WORKFLOW_TRIGGER_EVENT)
   async handleTrigger(evt: WorkflowTriggerEvent): Promise<void> {
     try {
-      // No new runs while locked (a lookup failure lands in the catch below).
-      if (await this.paymentLock.isLocked(evt.workspaceId)) return;
       const workflows = await this.prisma.workflow.findMany({
         where: { workspaceId: evt.workspaceId, triggerType: evt.triggerType, status: "active" },
       });
       for (const wf of workflows) {
         if (!this.matchesTriggerConfig(wf, evt.payload)) continue;
-        await this.startRun(wf, evt.payload, false);
+        await this.startTriggeredRun(wf, evt.payload);
       }
     } catch (e) {
       this.log.warn(
         `workflow dispatch failed trigger=${evt.triggerType} ws=${evt.workspaceId}: ${(e as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Start a run for a real trigger (event, webhook). A locked workspace gets
+   * no run at all (null), so nothing parks to send on unlock. A failed lock
+   * lookup rejects: fail closed.
+   */
+  async startTriggeredRun(
+    workflow: DispatchableWorkflow,
+    triggerPayload: Record<string, unknown>,
+  ): Promise<{ id: string } | null> {
+    if (await this.paymentLock.isLocked(workflow.workspaceId)) return null;
+    return this.startRun(workflow, triggerPayload, false);
   }
 
   async startRun(

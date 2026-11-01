@@ -68,6 +68,8 @@ interface RequestOpts {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
+  /** The caller shows a PAYMENT_OVERDUE refusal itself (e.g. a refused workspace switch); do not swap in the global lock screen. */
+  localPaymentError?: boolean;
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
@@ -94,7 +96,7 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   const raw = await res.text();
   const data: unknown = raw ? safeJson(raw) : undefined;
 
-  if (!res.ok) throw errorFromBody(data, res.status);
+  if (!res.ok) throw errorFromBody(data, res.status, !opts.localPaymentError);
   return data as T;
 }
 
@@ -109,7 +111,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 // branch. Handles both the legacy { message } / { message: string[] } bodies
 // and the ads endpoints' flat { code, message } bodies (code is just ignored
 // when absent, so nothing else breaks).
-function errorFromBody(data: unknown, status: number): ApiError {
+function errorFromBody(data: unknown, status: number, notifyLock = true): ApiError {
   const message =
     isObject(data) && typeof data.message === "string"
       ? data.message
@@ -117,7 +119,7 @@ function errorFromBody(data: unknown, status: number): ApiError {
         ? (data as { message: string[] }).message.join(", ")
         : `HTTP ${status}`;
   const code = isObject(data) && typeof data.code === "string" ? data.code : undefined;
-  if (status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
+  if (notifyLock && status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
   return new ApiError(message, status, code);
 }
 
@@ -201,7 +203,8 @@ async function postStream<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   get:        <T,>(path: string, signal?: AbortSignal) => request<T>(path, { method: "GET", signal }),
-  post:       <T,>(path: string, body?: unknown) => request<T>(path, { method: "POST", body }),
+  post:       <T,>(path: string, body?: unknown, o?: { localPaymentError?: boolean }) =>
+    request<T>(path, { method: "POST", body, localPaymentError: o?.localPaymentError }),
   patch:      <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
   delete:     <T,>(path: string) => request<T>(path, { method: "DELETE" }),
   postStream: <T,>(path: string, body?: unknown) => postStream<T>(path, body),

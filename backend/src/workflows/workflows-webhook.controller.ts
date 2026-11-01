@@ -21,7 +21,8 @@ export class WorkflowsWebhookController {
     if (!workflow || workflow.status !== "active") {
       return { ok: true, skipped: true };
     }
-    await this.dispatch.startRun(workflow, body, false);
-    return { ok: true };
+    // Dropped while the workspace is payment-locked; 200 so senders do not retry.
+    const run = await this.dispatch.startTriggeredRun(workflow, body);
+    return run ? { ok: true } : { ok: true, skipped: true };
   }
 }

@@ -41,6 +41,24 @@ describe("WorkflowDispatchService", () => {
     expect(prisma.workflowRun.create).not.toHaveBeenCalled();
   });
 
+  describe("startTriggeredRun (shared by events and webhooks)", () => {
+    it("creates no run for a locked workspace and returns null", async () => {
+      isLocked.mockResolvedValue(true);
+      expect(await svc.startTriggeredRun(workflow(), {})).toBeNull();
+      expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects (fail closed) when the lookup throws", async () => {
+      isLocked.mockRejectedValue(new Error("db"));
+      await expect(svc.startTriggeredRun(workflow(), {})).rejects.toThrow("db");
+      expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+    });
+
+    it("starts the run when unlocked", async () => {
+      expect(await svc.startTriggeredRun(workflow(), {})).toEqual({ id: "run1" });
+    });
+  });
+
   it("creates and runs a WorkflowRun for each matching active workflow", async () => {
     await svc.handleTrigger({
       workspaceId: "ws1",
