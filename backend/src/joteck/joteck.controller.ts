@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -11,6 +12,7 @@ import {
 import { JoteckGuard } from "./joteck.guard";
 import { Public } from "../auth/public.decorator";
 import { JoteckService } from "./joteck.service";
+import { BILLING_STATES, BillingState } from "../billing/payment-lock";
 import { ProvisionClientDto } from "../admin/admin.dto";
 
 interface JoteckWorkspacePatch {
@@ -62,5 +64,17 @@ export class JoteckController {
   @Patch("workspaces/:id")
   patch(@Param("id") id: string, @Body() body: JoteckWorkspacePatch) {
     return this.svc.patchWorkspace(id, body);
+  }
+
+  @Post("workspaces/:id/billing-state")
+  billingState(
+    @Param("id") id: string,
+    @Body() body: { state?: string; reason?: string },
+  ) {
+    if (!body || !BILLING_STATES.includes(body.state as BillingState)) {
+      throw new BadRequestException("state must be one of ok, due, ended");
+    }
+    const reason = typeof body.reason === "string" ? body.reason : undefined;
+    return this.svc.setBillingState(id, body.state as BillingState, reason);
   }
 }

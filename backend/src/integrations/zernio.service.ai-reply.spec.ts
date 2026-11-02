@@ -18,7 +18,7 @@ const inbound = {
 function build(
   conversation: Record<string, unknown>,
   ask: jest.Mock,
-  opts: { bridgeConfigured?: boolean; workspace?: Record<string, unknown> | null } = {},
+  opts: { bridgeConfigured?: boolean; locked?: boolean; workspace?: Record<string, unknown> | null } = {},
 ) {
   const prisma: any = {
     integration: {
@@ -49,6 +49,8 @@ function build(
     { onInboundMessage: jest.fn(), onOutboundReply: jest.fn() } as never,
     { ask, enabled: true } as never,
     { isConfigured: () => opts.bridgeConfigured === true, notifyInbound } as never,
+    undefined,
+    { isLocked: jest.fn(async () => opts.locked === true) } as never,
   );
   const send = jest
     .spyOn(svc as never as { sendInDbConversation: () => Promise<unknown> }, "sendInDbConversation")
@@ -84,6 +86,20 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       "ai",
       undefined,
     );
+  });
+
+  it("does not ask or send for a payment-locked workspace, but still stores the message", async () => {
+    const ask = jest.fn().mockResolvedValue({ answer: "hi" });
+    const { svc, send, prisma } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask, {
+      locked: true,
+    });
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    expect(prisma.message.create).toHaveBeenCalled();
+    expect(ask).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("stays silent on a thread that has not opted in", async () => {

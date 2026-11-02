@@ -216,4 +216,21 @@ describe("TiremallSsoService.exchange", () => {
     await makeService(p2).exchange({ token: sign(claims({ email: "Mixed@TireMall.IQ" })) });
     expect(p2.raw.user.upsert.mock.calls[0][0].create.email).toBe("mixed@tiremall.iq");
   });
+
+  it("refuses a session for a payment-locked workspace with PAYMENT_OVERDUE", async () => {
+    const prisma = makePrisma({
+      workspace: {
+        upsert: jest.fn().mockResolvedValue({
+          id: "ws1", suspendedAt: null, paymentDueSince: new Date(Date.now() - 10 * 86_400_000),
+        }),
+        update: jest.fn().mockResolvedValue({
+          id: "ws1", suspendedAt: null, paymentDueSince: new Date(Date.now() - 10 * 86_400_000),
+        }),
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+    });
+    const err = await makeService(prisma).exchange({ token: sign(claims()) }).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err.getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
+  });
 });

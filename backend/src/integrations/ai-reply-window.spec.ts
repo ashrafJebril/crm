@@ -14,7 +14,7 @@ describe("AiReplyController — 24h window re-check", () => {
   const SECRET = "test-secret";
   const HOUR = 60 * 60 * 1000;
 
-  function build(opts: { lastInboundAgoMs: number | null; channel?: string }) {
+  function build(opts: { lastInboundAgoMs: number | null; channel?: string; locked?: boolean }) {
     const created: any[] = [];
     const sent: any[] = [];
     const prisma = {
@@ -60,6 +60,7 @@ describe("AiReplyController — 24h window re-check", () => {
       realtime,
       pipeline,
       { sendInDbConversation: jest.fn() } as unknown as ZernioService,
+      { isLocked: jest.fn(async () => opts.locked === true) } as never,
     );
     return { ctrl, created, sent, whatsapp };
   }
@@ -83,6 +84,27 @@ describe("AiReplyController — 24h window re-check", () => {
 
   beforeEach(() => {
     process.env.KEWY_AI_WEBHOOK_SECRET = SECRET;
+  });
+
+  it("does NOT deliver for a payment-locked workspace", async () => {
+    const { ctrl, sent, created } = build({ lastInboundAgoMs: 2 * HOUR, locked: true });
+    const p = payload();
+    const { sig, req } = signed(p);
+    const res = await ctrl.reply(req, sig, p as never);
+    expect(sent).toHaveLength(0);
+    expect(created).toHaveLength(0);
+    expect(res).toMatchObject({ delivered: false, reason: "payment_overdue" });
+  });
+
+  it("checks the lock before escalating or writing a shadow message", async () => {
+    const { ctrl, created } = build({ lastInboundAgoMs: 2 * HOUR, locked: true });
+    for (const over of [{ send: false }, { escalate: true }]) {
+      const p = payload(over);
+      const { sig, req } = signed(p);
+      const res = await ctrl.reply(req, sig, p as never);
+      expect(res).toEqual({ delivered: false, reason: "payment_overdue" });
+    }
+    expect(created).toHaveLength(0);
   });
 
   it("SENDS when the customer messaged 2 hours ago — window open", async () => {

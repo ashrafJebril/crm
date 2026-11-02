@@ -10,6 +10,7 @@ import { ToastProvider, useToast } from "@/components/Toast";
 import { ZernioRedirectCapture } from "@/components/ZernioRedirectCapture";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
+import { PaymentLocked } from "@/auth/PaymentLocked";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
 import { authScreen, isEmbedded, parseInbound, postToParent } from "@/embed/embed";
 import { setEmbedVisible } from "@/embed/visibility";
@@ -21,7 +22,7 @@ import { VALID_ROUTES } from "@/router";
 export default function App() {
   const { t } = useTweaks();
   const [route, setRoute] = useRoute();
-  const { status } = useAuth();
+  const { status, paymentOverdue } = useAuth();
 
   if (status === "loading") {
     return (
@@ -41,6 +42,8 @@ export default function App() {
       </div>
     );
   }
+
+  if (paymentOverdue) return <PaymentLocked />;
 
   const embedded = isEmbedded();
   const screen = authScreen(status, embedded);

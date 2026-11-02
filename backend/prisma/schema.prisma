@@ -570,6 +570,10 @@ model Workspace {
   // visible in the admin portal.
   suspendedAt DateTime?
 
+  // Kewy billing: when payment first became due. NULL = paid up. Independent of
+  // suspendedAt (admin suspension); locked once older than PAYMENT_GRACE_DAYS.
+  paymentDueSince DateTime?
+
   // HJZ SSO bridge — set on Workspaces that mirror an hjz tenant so we can
   // resolve `hjz tid → tkana workspace` idempotently across SSO exchanges
   // and client-sync webhooks. Nullable so existing standalone workspaces

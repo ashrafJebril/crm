@@ -9,6 +9,7 @@ describe("WorkflowRunPollerScheduler", () => {
   };
   let runner: { run: jest.Mock };
   let dispatch: { startRun: jest.Mock };
+  let isLocked: jest.Mock;
   let scheduler: WorkflowRunPollerScheduler;
 
   beforeEach(() => {
@@ -21,17 +22,23 @@ describe("WorkflowRunPollerScheduler", () => {
     };
     runner = { run: jest.fn().mockResolvedValue(undefined) };
     dispatch = { startRun: jest.fn().mockResolvedValue({ id: "run1" }) };
-    scheduler = new WorkflowRunPollerScheduler(prisma as never, runner as never, dispatch as never);
+    isLocked = jest.fn().mockResolvedValue(false);
+    scheduler = new WorkflowRunPollerScheduler(
+      prisma as never,
+      runner as never,
+      dispatch as never,
+      { isLocked } as never,
+    );
     (parseExpression as jest.Mock).mockReset();
   });
 
   describe("resumeDueRuns", () => {
     it("resumes every waiting run whose resumeAt has passed", async () => {
-      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1" }, { id: "run2" }]);
+      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1", workspaceId: "ws1" }, { id: "run2", workspaceId: "ws1" }]);
       await scheduler.resumeDueRuns();
       expect(prisma.workflowRun.findMany).toHaveBeenCalledWith({
         where: { status: "waiting", resumeAt: { lte: expect.any(Date) } },
-        select: { id: true },
+        select: { id: true, workspaceId: true },
       });
       expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith({
         where: { id: "run1", status: "waiting" },
@@ -42,19 +49,74 @@ describe("WorkflowRunPollerScheduler", () => {
     });
 
     it("keeps resuming the rest of the batch if one run's resume throws", async () => {
-      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1" }, { id: "run2" }]);
+      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1", workspaceId: "ws1" }, { id: "run2", workspaceId: "ws1" }]);
       runner.run.mockRejectedValueOnce(new Error("boom"));
       await expect(scheduler.resumeDueRuns()).resolves.toBeUndefined();
       expect(runner.run).toHaveBeenCalledWith("run2");
     });
 
     it("skips a run that another poller tick already claimed (updateMany matches zero rows)", async () => {
-      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1" }, { id: "run2" }]);
+      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1", workspaceId: "ws1" }, { id: "run2", workspaceId: "ws1" }]);
       prisma.workflowRun.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
       await scheduler.resumeDueRuns();
       expect(runner.run).not.toHaveBeenCalledWith("run1");
       expect(runner.run).toHaveBeenCalledWith("run2");
       expect(runner.run).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("payment lock: resumeDueRuns", () => {
+    it("leaves a locked workspace's run waiting: no claim, no run, no failure", async () => {
+      prisma.workflowRun.findMany.mockResolvedValue([
+        { id: "run1", workspaceId: "locked" },
+        { id: "run2", workspaceId: "ok" },
+      ]);
+      isLocked.mockImplementation(async (ws: string) => ws === "locked");
+      await scheduler.resumeDueRuns();
+      expect(prisma.workflowRun.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith({
+        where: { id: "run2", status: "waiting" },
+        data: { status: "running" },
+      });
+      expect(runner.run).toHaveBeenCalledTimes(1);
+      expect(runner.run).toHaveBeenCalledWith("run2");
+    });
+
+    it("resumes the same run once the workspace is cleared", async () => {
+      prisma.workflowRun.findMany.mockResolvedValue([{ id: "run1", workspaceId: "w" }]);
+      isLocked.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      await scheduler.resumeDueRuns();
+      expect(runner.run).not.toHaveBeenCalled();
+      await scheduler.resumeDueRuns();
+      expect(runner.run).toHaveBeenCalledWith("run1");
+    });
+
+    it("skips (fail closed) when the lock lookup throws, and carries on", async () => {
+      prisma.workflowRun.findMany.mockResolvedValue([
+        { id: "run1", workspaceId: "a" },
+        { id: "run2", workspaceId: "b" },
+      ]);
+      isLocked.mockRejectedValueOnce(new Error("db")).mockResolvedValueOnce(false);
+      await scheduler.resumeDueRuns();
+      expect(runner.run).toHaveBeenCalledTimes(1);
+      expect(runner.run).toHaveBeenCalledWith("run2");
+    });
+  });
+
+  describe("payment lock: fireDueSchedules", () => {
+    it("consumes the occurrence without starting a run for a locked workspace", async () => {
+      const occurrence = new Date("2026-09-15T09:00:00Z");
+      prisma.workflow.findMany.mockResolvedValue([
+        { id: "wf1", workspaceId: "ws1", triggerConfig: { cron: "0 9 * * *" }, lastScheduledAt: null },
+      ]);
+      (parseExpression as jest.Mock).mockReturnValue({ prev: () => ({ toDate: () => occurrence }) });
+      isLocked.mockResolvedValue(true);
+      await scheduler.fireDueSchedules();
+      expect(dispatch.startRun).not.toHaveBeenCalled();
+      expect(prisma.workflow.update).toHaveBeenCalledWith({
+        where: { id: "wf1" },
+        data: { lastScheduledAt: occurrence },
+      });
     });
   });
 

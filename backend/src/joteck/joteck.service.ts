@@ -1,11 +1,13 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AdminService } from "../admin/admin.service";
 import type { ProvisionClientDto } from "../admin/admin.dto";
+import { BillingState, lockedClock } from "../billing/payment-lock";
 import { LAgentSetupService } from "../integrations/l-agent-setup.service";
 
 @Injectable()
 export class JoteckService {
+  private readonly logger = new Logger(JoteckService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly admin: AdminService,
@@ -112,6 +114,41 @@ export class JoteckService {
       members,
       active: !w.suspendedAt,
     };
+  }
+
+  /**
+   * Kewy payment state. Touches paymentDueSince only, never suspendedAt.
+   * Writes are conditional so concurrent calls cannot lose the first failure
+   * time or undo an `ended` backdate; a zero updateMany count is normal.
+   */
+  async setBillingState(id: string, state: BillingState, reason?: unknown) {
+    const ws = this.prisma.raw.workspace;
+    const exists = await ws.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) throw new NotFoundException("Workspace not found");
+    const now = new Date();
+    if (state === "ok") {
+      await ws.update({ where: { id }, data: { paymentDueSince: null } });
+    } else if (state === "due") {
+      await ws.updateMany({
+        where: { id, paymentDueSince: null },
+        data: { paymentDueSince: now },
+      });
+    } else {
+      const backdated = lockedClock(now);
+      await ws.updateMany({
+        where: {
+          id,
+          OR: [{ paymentDueSince: null }, { paymentDueSince: { gt: backdated } }],
+        },
+        data: { paymentDueSince: backdated },
+      });
+    }
+    const cleanReason =
+      typeof reason === "string" ? reason.replace(/[\r\n]+/g, " ").slice(0, 200) : "";
+    this.logger.log(`billing-state ${id} -> ${state}${cleanReason ? ` (${cleanReason})` : ""}`);
+    const after = await ws.findUnique({ where: { id }, select: { paymentDueSince: true } });
+    const since = after?.paymentDueSince ?? null;
+    return { paymentDueSince: since ? since.toISOString() : null };
   }
 
   async patchWorkspace(

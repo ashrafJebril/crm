@@ -5,6 +5,7 @@ describe("WorkflowRunnerService", () => {
   let sendWhatsapp: { execute: jest.Mock };
   let askAgent: { execute: jest.Mock };
   let updateData: { execute: jest.Mock };
+  let isLocked: jest.Mock;
   let runner: WorkflowRunnerService;
 
   const baseRun = (over: Record<string, unknown> = {}) => ({
@@ -17,6 +18,7 @@ describe("WorkflowRunnerService", () => {
   });
 
   beforeEach(() => {
+    isLocked = jest.fn().mockResolvedValue(false);
     prisma = {
       workflowRun: {
         findUniqueOrThrow: jest.fn(),
@@ -31,7 +33,47 @@ describe("WorkflowRunnerService", () => {
       sendWhatsapp as never,
       askAgent as never,
       updateData as never,
+      { isLocked } as never,
     );
+  });
+
+  describe("payment lock", () => {
+    const sendRun = () =>
+      baseRun({
+        cursor: { stepId: "s1" },
+        stepsSnapshot: {
+          entry: "s1",
+          steps: { s1: { id: "s1", type: "send_whatsapp", config: { message: "hi" } } },
+        },
+      });
+
+    it("parks the run waiting at the send step instead of sending or failing", async () => {
+      isLocked.mockResolvedValue(true);
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(sendRun());
+      await runner.run("run1");
+      expect(sendWhatsapp.execute).not.toHaveBeenCalled();
+      const data = prisma.workflowRun.update.mock.calls[0][0].data;
+      expect(data.status).toBe("waiting");
+      expect(data.cursor).toEqual({ stepId: "s1" });
+      expect(data.resumeAt).toBeInstanceOf(Date);
+      expect(data.status).not.toBe("failed");
+      expect(data.error).toBeUndefined();
+      expect(data.completedAt).toBeUndefined();
+    });
+
+    it("parks (does not fail) when the lock lookup throws", async () => {
+      isLocked.mockRejectedValue(new Error("db"));
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(sendRun());
+      await runner.run("run1");
+      expect(sendWhatsapp.execute).not.toHaveBeenCalled();
+      expect(prisma.workflowRun.update.mock.calls[0][0].data.status).toBe("waiting");
+    });
+
+    it("sends when the workspace is not locked", async () => {
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(sendRun());
+      await runner.run("run1");
+      expect(sendWhatsapp.execute).toHaveBeenCalled();
+    });
   });
 
   it("completes immediately for an empty graph", async () => {

@@ -1,4 +1,4 @@
-import { ExecutionContext, UnauthorizedException } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { McpAuthGuard } from "./mcp-auth.guard";
 import { McpTokenService } from "../integrations/mcp-token.service";
 
@@ -8,11 +8,13 @@ function contextFor(req: Record<string, unknown>): ExecutionContext {
 
 describe("McpAuthGuard", () => {
   let tokens: { findWorkspaceByToken: jest.Mock };
+  let isLocked: jest.Mock;
   let guard: McpAuthGuard;
 
   beforeEach(() => {
     tokens = { findWorkspaceByToken: jest.fn() };
-    guard = new McpAuthGuard(tokens as unknown as McpTokenService);
+    isLocked = jest.fn().mockResolvedValue(false);
+    guard = new McpAuthGuard(tokens as unknown as McpTokenService, { isLocked } as never);
   });
 
   it("attaches workspaceId to req.user for a valid token", async () => {
@@ -38,5 +40,22 @@ describe("McpAuthGuard", () => {
     tokens.findWorkspaceByToken.mockResolvedValue(null);
     const req = { headers: { authorization: "Bearer mcp_bad_token" } };
     await expect(guard.canActivate(contextFor(req))).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("refuses a payment-locked workspace with 403 PAYMENT_OVERDUE", async () => {
+    tokens.findWorkspaceByToken.mockResolvedValue("ws1");
+    isLocked.mockResolvedValue(true);
+    const req = { headers: { authorization: "Bearer mcp_abc_def" } };
+    const err = await guard.canActivate(contextFor(req)).catch((e) => e);
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(err.getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
+    expect(isLocked).toHaveBeenCalledWith("ws1");
+  });
+
+  it("fails closed when the lock lookup throws", async () => {
+    tokens.findWorkspaceByToken.mockResolvedValue("ws1");
+    isLocked.mockRejectedValue(new Error("db"));
+    const req = { headers: { authorization: "Bearer mcp_abc_def" } };
+    await expect(guard.canActivate(contextFor(req))).rejects.toThrow("db");
   });
 });

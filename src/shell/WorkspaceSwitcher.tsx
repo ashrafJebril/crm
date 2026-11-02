@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/auth/context";
 import { useTweaks } from "@/tweaks/context";
+import { ApiError } from "@/api/client";
+import { PAYMENT_OVERDUE } from "@/lib/paymentLock";
 import { makeTx } from "@/lib/tx";
 import { IconCheck, IconPlus, IconChevDown } from "@/icons";
 
@@ -56,7 +58,14 @@ export function WorkspaceSwitcher() {
       setOpen(false);
       reset();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Switch failed");
+      setError(
+        e instanceof ApiError && e.code === PAYMENT_OVERDUE
+          ? tx(
+              "This workspace is locked because payment is overdue.",
+              "مساحة العمل هذه مقفلة بسبب تأخر الدفع.",
+            )
+          : e instanceof Error ? e.message : "Switch failed",
+      );
     } finally {
       setBusy(false);
     }

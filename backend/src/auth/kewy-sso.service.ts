@@ -1,3 +1,5 @@
+import { isPaymentLocked } from "../billing/payment-lock";
+import { paymentOverdue } from "../billing/payment-lock.service";
 import {
   ForbiddenException,
   Injectable,
@@ -121,6 +123,8 @@ export class KewySsoService {
     if (workspace.suspendedAt) {
       throw new ForbiddenException("This workspace is suspended");
     }
+    // `workspace` is the row just read, so no cache is involved here.
+    if (isPaymentLocked(workspace.paymentDueSince, new Date())) throw paymentOverdue();
 
     const safeName = claims.name ?? "Kewy User";
     const user = await this.prisma.raw.user.upsert({

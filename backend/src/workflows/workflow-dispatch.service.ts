@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { Prisma } from "@prisma/client";
+import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "./workflow-events";
 import { initialCursor, StepGraph } from "./workflow-steps";
@@ -19,6 +20,7 @@ export class WorkflowDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly runner: WorkflowRunnerService,
+    private readonly paymentLock: PaymentLockService,
   ) {}
 
   @OnEvent(WORKFLOW_TRIGGER_EVENT)
@@ -29,13 +31,26 @@ export class WorkflowDispatchService {
       });
       for (const wf of workflows) {
         if (!this.matchesTriggerConfig(wf, evt.payload)) continue;
-        await this.startRun(wf, evt.payload, false);
+        await this.startTriggeredRun(wf, evt.payload);
       }
     } catch (e) {
       this.log.warn(
         `workflow dispatch failed trigger=${evt.triggerType} ws=${evt.workspaceId}: ${(e as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Start a run for a real trigger (event, webhook). A locked workspace gets
+   * no run at all (null), so nothing parks to send on unlock. A failed lock
+   * lookup rejects: fail closed.
+   */
+  async startTriggeredRun(
+    workflow: DispatchableWorkflow,
+    triggerPayload: Record<string, unknown>,
+  ): Promise<{ id: string } | null> {
+    if (await this.paymentLock.isLocked(workflow.workspaceId)) return null;
+    return this.startRun(workflow, triggerPayload, false);
   }
 
   async startRun(

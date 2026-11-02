@@ -6,6 +6,7 @@ describe("WorkflowDispatchService", () => {
     workflowRun: { create: jest.Mock };
   };
   let runner: { run: jest.Mock };
+  let isLocked: jest.Mock;
   let svc: WorkflowDispatchService;
 
   const workflow = (over: Record<string, unknown> = {}) => ({
@@ -23,7 +24,39 @@ describe("WorkflowDispatchService", () => {
       workflowRun: { create: jest.fn().mockResolvedValue({ id: "run1" }) },
     };
     runner = { run: jest.fn().mockResolvedValue(undefined) };
-    svc = new WorkflowDispatchService(prisma as never, runner as never);
+    isLocked = jest.fn().mockResolvedValue(false);
+    svc = new WorkflowDispatchService(prisma as never, runner as never, { isLocked } as never);
+  });
+
+  it("starts no run for a payment-locked workspace", async () => {
+    isLocked.mockResolvedValue(true);
+    await svc.handleTrigger({ workspaceId: "ws1", triggerType: "contact_created", payload: {} });
+    expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("starts no run when the lock lookup throws (fail closed)", async () => {
+    isLocked.mockRejectedValue(new Error("db"));
+    await svc.handleTrigger({ workspaceId: "ws1", triggerType: "contact_created", payload: {} });
+    expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+  });
+
+  describe("startTriggeredRun (shared by events and webhooks)", () => {
+    it("creates no run for a locked workspace and returns null", async () => {
+      isLocked.mockResolvedValue(true);
+      expect(await svc.startTriggeredRun(workflow(), {})).toBeNull();
+      expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects (fail closed) when the lookup throws", async () => {
+      isLocked.mockRejectedValue(new Error("db"));
+      await expect(svc.startTriggeredRun(workflow(), {})).rejects.toThrow("db");
+      expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+    });
+
+    it("starts the run when unlocked", async () => {
+      expect(await svc.startTriggeredRun(workflow(), {})).toEqual({ id: "run1" });
+    });
   });
 
   it("creates and runs a WorkflowRun for each matching active workflow", async () => {

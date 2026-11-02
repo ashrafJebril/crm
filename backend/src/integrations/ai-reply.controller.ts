@@ -4,12 +4,14 @@ import {
   Controller,
   ForbiddenException,
   Headers,
+  Optional,
   Post,
   RawBodyRequest,
   Req,
 } from "@nestjs/common";
 import type { Request } from "express";
 import { Public } from "../auth/public.decorator";
+import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { WhatsAppService } from "./whatsapp.service";
@@ -37,6 +39,7 @@ export class AiReplyController {
     private readonly realtime: RealtimeService,
     private readonly pipelineAutomation: PipelineAutomationService,
     private readonly zernio: ZernioService,
+    @Optional() private readonly paymentLock?: PaymentLockService,
   ) {}
 
   /**
@@ -93,6 +96,13 @@ export class AiReplyController {
       select: { id: true, contactId: true, aiEnabled: true, aiPausedAt: true, channel: true },
     });
     if (!conv) throw new BadRequestException("Conversation not found");
+
+    // Checked before anything is written (escalation, shadow draft, send): a
+    // payment-locked workspace gets no outgoing messages. Nothing is stored
+    // or sent; a failed lookup throws (500) rather than letting the send through.
+    if (await this.paymentLock?.isLocked(workspaceId)) {
+      return { delivered: false, reason: "payment_overdue" };
+    }
 
     // A human replying takes the thread; the agent's in-flight turn loses.
     // Checked here rather than only at dispatch because the agent may have
