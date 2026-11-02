@@ -44,7 +44,7 @@ describe("HjzWebhooksService.handleSegment — upsert", () => {
     prisma = {
       workspace: {
         upsert: jest.fn().mockResolvedValue({ id: "ws-1", externalTenantId: "hjz-tenant-segs" }),
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue({ id: "ws-1" }),
       },
       contact: {
         findMany: jest.fn().mockResolvedValue([{ id: "cid-a" }, { id: "cid-b" }]),
@@ -83,9 +83,15 @@ describe("HjzWebhooksService.handleSegment — upsert", () => {
       },
     });
 
-    // workspace resolved
-    expect(prisma.workspace.upsert).toHaveBeenCalledWith(
+    // workspace resolved (never lazily created for segments)
+    expect(prisma.workspace.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { externalTenantId: "hjz-tenant-segs" } }),
+    );
+    expect(prisma.workspace.upsert).not.toHaveBeenCalled();
+
+    // hjz client ids resolve through the link column
+    expect(prisma.contact.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workspaceId: "ws-1", hjzClientId: { in: ["c-a", "c-b"] } } }),
     );
 
     // segment created (no existing)
@@ -127,7 +133,7 @@ describe("HjzWebhooksService.handleSegment — re-upsert shrinks membership", ()
     prisma = {
       workspace: {
         upsert: jest.fn().mockResolvedValue({ id: "ws-1", externalTenantId: "hjz-tenant-segs" }),
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue({ id: "ws-1" }),
       },
       contact: {
         findMany: jest.fn().mockResolvedValue([{ id: "cid-a" }]),
@@ -186,7 +192,7 @@ describe("HjzWebhooksService.handleSegment — zero-membership upsert", () => {
     prisma = {
       workspace: {
         upsert: jest.fn().mockResolvedValue({ id: "ws-1", externalTenantId: "hjz-tenant-segs" }),
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue({ id: "ws-1" }),
       },
       contact: {
         findMany: jest.fn().mockResolvedValue([]),
@@ -244,7 +250,7 @@ describe("HjzWebhooksService.handleSegment — delete", () => {
     prisma = {
       workspace: {
         upsert: jest.fn().mockResolvedValue({ id: "ws-1", externalTenantId: "hjz-tenant-segs" }),
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue({ id: "ws-1" }),
       },
       contact: { findMany: jest.fn() },
       segment: {
@@ -277,5 +283,29 @@ describe("HjzWebhooksService.handleSegment — delete", () => {
     );
     expect(prisma.segment.delete).toHaveBeenCalledWith({ where: { id: segmentId } });
     expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("HjzWebhooksService.handleSegment — unknown tenant", () => {
+  it("does nothing when no workspace mirrors the tenant", async () => {
+    const prisma: any = {
+      workspace: { upsert: jest.fn(), findUnique: jest.fn().mockResolvedValue(null) },
+      segment: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() },
+      contact: { findMany: jest.fn() },
+      segmentMember: { deleteMany: jest.fn(), createMany: jest.fn() },
+    };
+    const moduleRef = await Test.createTestingModule({
+      providers: [HjzWebhooksService, { provide: PrismaService, useValue: prisma }],
+    }).compile();
+    const svc = moduleRef.get(HjzWebhooksService);
+
+    const result = await svc.handleSegment({
+      event: "segment.upserted",
+      segment: { id: "s", tenantId: "t-unknown", name: "X", clientIds: [] },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(prisma.workspace.upsert).not.toHaveBeenCalled();
+    expect(prisma.segment.create).not.toHaveBeenCalled();
   });
 });

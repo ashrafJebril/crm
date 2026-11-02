@@ -6,6 +6,7 @@ import { useFetch } from "@/api/useFetch";
 import { NAV, isSection, type NavEntry } from "./nav";
 import { Avatar } from "@/components/Avatar";
 import { BrandLogo } from "@/components/BrandLogo";
+import { HjzLink } from "./HjzLink";
 import { IconBell, IconChevDown, IconSearch } from "@/icons";
 
 interface SidebarProps {
@@ -112,6 +113,8 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
           );
         })}
       </nav>
+
+      <HjzLink />
 
       <div className="side-foot">
         <Avatar name={user?.name ?? "?"} color={user?.color ?? "150"} />

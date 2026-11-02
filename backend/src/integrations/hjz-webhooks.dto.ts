@@ -20,11 +20,16 @@ export class HjzClientPayloadDto {
   @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
   @IsOptional() @IsBoolean() blocked?: boolean;
   @IsOptional() @IsString() deletedAt?: string | null;
+  // Sent by hjz with every event; the global pipe forbids unknown fields, so
+  // they must be declared even though only the opt-out event acts on them.
+  @IsOptional() @IsBoolean() acceptsMarketingEmail?: boolean;
+  @IsOptional() @IsBoolean() acceptsMarketingWhatsapp?: boolean;
 }
 
 export class HjzClientWebhookDto {
-  @IsIn(["client.upserted", "client.deleted"])
-  event!: "client.upserted" | "client.deleted";
+  // client.opted_out: the client withdrew marketing consent in hjz (no contact data attached).
+  @IsIn(["client.upserted", "client.deleted", "client.opted_out"])
+  event!: "client.upserted" | "client.deleted" | "client.opted_out";
 
   @ValidateNested()
   @Type(() => HjzClientPayloadDto)

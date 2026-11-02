@@ -17,6 +17,7 @@ import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { TicketsModule } from "./tickets/tickets.module";
+import { ResolutionModule } from "./resolution/resolution.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotesModule } from "./notes/notes.module";
 import { MediaModule } from "./media/media.module";
@@ -53,6 +54,7 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
     IntegrationsModule,
     McpServerModule,
     TicketsModule,
+    ResolutionModule,
     WorkflowsModule,
     WorkspacesModule,
     NotesModule,

@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { AiHandoffService } from "./ai-handoff.service";
 import { WhatsAppService } from "./whatsapp.service";
 import { MetaWebhookSignatureGuard } from "../common/meta-webhook-signature.guard";
 import {
@@ -23,7 +24,10 @@ import { Public } from "../auth/public.decorator";
 
 @Controller()
 export class WhatsAppController {
-  constructor(private readonly wa: WhatsAppService) {}
+  constructor(
+    private readonly wa: WhatsAppService,
+    private readonly handoff: AiHandoffService,
+  ) {}
 
   // ── Tenant-scoped endpoints ─────────────────────────────────────────────
   @Get("integrations/whatsapp/status")
@@ -74,32 +78,36 @@ export class WhatsAppController {
   }
 
   @Post("integrations/whatsapp/conversations/:conversationId/send")
-  sendInConversation(
+  async sendInConversation(
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: SendWhatsAppDto,
   ) {
-    return this.wa.sendInConversation(
+    const res = await this.wa.sendInConversation(
       workspaceId,
       conversationId,
       dto.message,
       dto.mediaId,
     );
+    await this.handoff.humanReplied(workspaceId, conversationId);
+    return res;
   }
 
   @Post("integrations/whatsapp/conversations/:conversationId/send-template")
-  sendTemplateInConversation(
+  async sendTemplateInConversation(
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: SendWhatsAppTemplateDto,
   ) {
-    return this.wa.sendTemplateInConversation(
+    const res = await this.wa.sendTemplateInConversation(
       workspaceId,
       conversationId,
       dto.name,
       dto.language,
       dto.variables ?? [],
     );
+    await this.handoff.humanReplied(workspaceId, conversationId);
+    return res;
   }
 
   // ── Public webhook (Meta calls these) ───────────────────────────────────

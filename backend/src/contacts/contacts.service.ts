@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { SegmentsService } from "../segments/segments.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { HjzClientSyncService } from "../hjz-sync/hjz-client-sync.service";
 
 interface ContactRow {
   id: string;
@@ -48,6 +49,7 @@ export class ContactsService {
     private readonly prisma: PrismaService,
     private readonly segments: SegmentsService,
     @Optional() private readonly events?: EventEmitter2,
+    @Optional() private readonly hjzSync?: HjzClientSyncService,
   ) {}
 
   async list(workspaceId: string, opts: { segmentId?: string } = {}) {
@@ -173,6 +175,8 @@ export class ContactsService {
       triggerType: "contact_created",
       payload: { contact: shaped },
     } satisfies WorkflowTriggerEvent);
+    // Connected to HJZ → create the customer there now (the sweep retries).
+    void this.hjzSync?.pushContact(row.id);
     return shaped;
   }
 

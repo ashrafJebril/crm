@@ -72,6 +72,14 @@ model Contact {
   externalSource String? // "facebook" | "instagram" | "tiktok"
   externalId     String?
 
+  // Link to the HJZ client when the workspace is connected to an HJZ tenant
+  // (Workspace.externalTenantId). Separate from externalSource/externalId,
+  // which a WhatsApp/FB/IG contact already uses for its channel identity.
+  hjzClientId      String?
+  // Last attempt to create this contact in HJZ — the sync sweep retries
+  // failed pushes after a back-off instead of hammering HJZ every minute.
+  hjzSyncAttemptAt DateTime?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceContacts", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -85,6 +93,7 @@ model Contact {
   updatedAt DateTime @updatedAt
 
   @@unique([workspaceId, externalSource, externalId])
+  @@unique([workspaceId, hjzClientId])
   @@index([workspaceId])
 }
 
@@ -110,6 +119,27 @@ model Conversation {
   /// while this is present so staff and the bot can't talk over each other;
   /// clearing it hands the thread back to the AI.
   aiPausedAt DateTime?
+
+  /// Conversation resolution — judged by Kewy AI (l) once the thread has been
+  /// quiet past the idle window (ConversationResolutionService). Kept apart
+  /// from `status`, which stays a human decision: nothing reopens a closed
+  /// thread, so the AI never closes one. Cleared when the customer writes again.
+  /// resolutionStatus: "resolved" (genuine) | "closed" (ended unresolved) | "open" (still live).
+  resolutionStatus     String?
+  /// resolved | customer_requested | abandoned | no_response | spam | duplicate | transferred
+  resolution           String?
+  /// complaint | escalation | none — a complaint/escalation opens a Support ticket.
+  resolutionIssue      String?
+  resolutionConfidence Float?
+  resolutionSentiment  String?
+  resolutionSummary    String?
+  resolutionRationale  String?
+  resolvedAt           DateTime?
+  /// The sweep's claim + "judged up to here" marker: due again only once a
+  /// message newer than this arrives (or a failed attempt is retried).
+  resolutionCheckedAt  DateTime?
+  resolutionAttempts   Int       @default(0)
+  resolutionError      String?
 
   // Provider-side conversation id (currently Zernio's). Lets replies address
   // the provider conversation directly instead of re-listing every send.
@@ -156,6 +186,8 @@ model Message {
   createdAt DateTime @default(now())
 
   @@index([conversationId])
+  @@index([conversationId, createdAt])
+  @@index([createdAt])
   @@index([workspaceId])
   @@index([metaMessageId])
 }
@@ -174,6 +206,15 @@ model Appointment {
   noteAr       String?
   reminderSent Boolean  @default(false)
 
+  // Mirror in HJZ when the workspace is connected (Workspace.externalTenantId).
+  // Every change sets hjzSyncPending; HjzAppointmentSyncService pushes it and
+  // a one-minute sweep retries. hjzSyncError is the last refusal, shown on
+  // the booking (e.g. no HJZ service with this name).
+  hjzAppointmentId String?
+  hjzSyncPending   Boolean   @default(false)
+  hjzSyncAttemptAt DateTime?
+  hjzSyncError     String?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -185,6 +226,7 @@ model Appointment {
   @@index([contactId])
   @@index([startAt])
   @@index([workspaceId])
+  @@index([hjzSyncPending])
 }
 
 model Template {

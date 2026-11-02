@@ -1,11 +1,15 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { AiHandoffService } from "./ai-handoff.service";
 import { InstagramService } from "./instagram.service";
 import { EditIgCaptionDto, PublishToIgDto } from "./instagram.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("integrations/instagram")
 export class InstagramController {
-  constructor(private readonly svc: InstagramService) {}
+  constructor(
+    private readonly svc: InstagramService,
+    private readonly handoff: AiHandoffService,
+  ) {}
 
   @Get("status")
   status(@CurrentWorkspace() workspaceId: string) {
@@ -45,17 +49,19 @@ export class InstagramController {
   }
 
   @Post("conversations/:conversationId/send")
-  send(
+  async send(
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: { message: string; mediaId?: string },
   ) {
-    return this.svc.sendInConversation(
+    const res = await this.svc.sendInConversation(
       workspaceId,
       conversationId,
       dto.message,
       dto.mediaId,
     );
+    await this.handoff.humanReplied(workspaceId, conversationId);
+    return res;
   }
 
   @Get("posts")

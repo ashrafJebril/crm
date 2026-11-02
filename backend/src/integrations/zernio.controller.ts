@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { IsArray, IsOptional, IsString } from "class-validator";
+import { AiHandoffService } from "./ai-handoff.service";
 import { ZernioService } from "./zernio.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { Public } from "../auth/public.decorator";
@@ -50,7 +51,10 @@ class ZernioPostCommentDto {
 
 @Controller()
 export class ZernioController {
-  constructor(private readonly zernio: ZernioService) {}
+  constructor(
+    private readonly zernio: ZernioService,
+    private readonly handoff: AiHandoffService,
+  ) {}
 
   // ── Tenant-scoped ────────────────────────────────────────────────────────
   @Get("integrations/zernio/status")
@@ -146,29 +150,33 @@ export class ZernioController {
   }
 
   @Post("integrations/zernio/db-conversations/:id/send")
-  sendInDbConversation(
+  async sendInDbConversation(
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: ZernioDbSendDto,
   ) {
     const publicBase =
       process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL ?? "http://localhost:3001";
-    return this.zernio.sendInDbConversation(workspaceId, id, dto.message, dto.mediaId, publicBase);
+    const res = await this.zernio.sendInDbConversation(workspaceId, id, dto.message, dto.mediaId, publicBase);
+    await this.handoff.humanReplied(workspaceId, id);
+    return res;
   }
 
   @Post("integrations/zernio/db-conversations/:id/send-template")
-  sendTemplateInDbConversation(
+  async sendTemplateInDbConversation(
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: ZernioDbSendTemplateDto,
   ) {
-    return this.zernio.sendTemplateInDbConversation(
+    const res = await this.zernio.sendTemplateInDbConversation(
       workspaceId,
       id,
       dto.name,
       dto.language,
       dto.variables ?? [],
     );
+    await this.handoff.humanReplied(workspaceId, id);
+    return res;
   }
 
   @Delete("integrations/zernio/:platform")

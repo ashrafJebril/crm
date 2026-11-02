@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AiHandoffService } from "./ai-handoff.service";
 import { FacebookController } from "./facebook.controller";
 import { FacebookService } from "./facebook.service";
 import { InstagramController } from "./instagram.controller";
@@ -69,6 +70,7 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     McpTokenService,
     TiremallWebhooksService,
     AiBridgeService,
+    AiHandoffService,
   ],
   exports: [
     FacebookService,
