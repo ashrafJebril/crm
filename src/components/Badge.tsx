@@ -17,4 +17,4 @@ export const Badge = ({ kind = "", dot, children }: BadgeProps) => (
 );
 
 export const statusKind = (s: Campaign["status"]): BadgeKind =>
-  ({ running: "ok", scheduled: "info", draft: "", completed: "", paused: "warn" } as const)[s] ?? "";
+  ({ running: "ok", scheduled: "info", draft: "", completed: "", paused: "warn", failed: "bad", cancelled: "" } as const)[s] ?? "";

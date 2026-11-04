@@ -20,8 +20,6 @@ export type RouteId =
   | "media"
   | "pipeline"
   | "campaigns"
-  | "automations"
-  | "ads"
   | "contacts"
   | "workflows"
   | "analytics"
@@ -278,7 +276,8 @@ export interface Appointment {
 export interface Campaign {
   id: string;
   name: string;
-  status: "running" | "scheduled" | "draft" | "completed" | "paused";
+  /** "paused" only exists on rows from before campaigns could really send. */
+  status: "running" | "scheduled" | "draft" | "completed" | "failed" | "cancelled" | "paused";
   audience: string;
   recipients: number;
   sent: number;
@@ -290,6 +289,24 @@ export interface Campaign {
   schedule: string;
   segmentId: string | null;
   templateId: string | null;
+  zernioBroadcastId?: string | null;
+  scheduledAt?: string | null;
+  launchedAt?: string | null;
+  failed?: number;
+  skipped?: number;
+  lastError?: string | null;
+}
+
+/** Value for one template placeholder in a campaign broadcast. */
+export type CampaignVariable =
+  | { field: "name" | "phone" }
+  | { field: "custom"; customValue: string };
+
+export interface CampaignPreview {
+  total: number;
+  reachable: number;
+  skipped: { noPhone: number; optedOut: number; duplicate: number };
+  estimate: { usd: number; unpriced: number };
 }
 
 export interface Intent {
@@ -495,7 +512,9 @@ export type WorkflowTriggerType =
   | "ticket_created"
   | "ticket_stage_changed"
   | "schedule"
-  | "webhook";
+  | "webhook"
+  | "appointment_completed"
+  | "sale_completed";
 
 export type WorkflowStatus = "draft" | "active";
 
@@ -513,6 +532,13 @@ export interface WorkflowAiConditionConfig {
 
 export interface WorkflowSendWhatsappConfig {
   message: string;
+}
+
+/** Approved Meta template; `variables` fill its {{1}}, {{2}}… in order. */
+export interface WorkflowSendWhatsappTemplateConfig {
+  name: string;
+  language: string;
+  variables: string[];
 }
 
 export interface WorkflowAskAgentConfig {
@@ -558,6 +584,11 @@ export interface WorkflowSendWhatsappStep extends WorkflowBaseStep {
   config: WorkflowSendWhatsappConfig;
 }
 
+export interface WorkflowSendWhatsappTemplateStep extends WorkflowBaseStep {
+  type: "send_whatsapp_template";
+  config: WorkflowSendWhatsappTemplateConfig;
+}
+
 export interface WorkflowAskAgentStep extends WorkflowBaseStep {
   type: "ask_agent";
   config: WorkflowAskAgentConfig;
@@ -577,6 +608,7 @@ export type WorkflowStep =
   | WorkflowConditionStep
   | WorkflowAiConditionStep
   | WorkflowSendWhatsappStep
+  | WorkflowSendWhatsappTemplateStep
   | WorkflowAskAgentStep
   | WorkflowUpdateDataStep
   | WorkflowDelayStep;

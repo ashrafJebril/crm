@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
+import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { LAgentService } from "./l-agent.service";
@@ -45,9 +46,14 @@ export function phoneFromParticipantId(
   return /^[0-9]{8,15}$/.test(digits) ? `+${digits}` : null;
 }
 
+/** How long a workspace's live Zernio account list is reused by status(). */
+const HEALTH_TTL_MS = 5 * 60_000;
+
 @Injectable()
 export class ZernioService {
   private readonly log = new Logger(ZernioService.name);
+  /** profileId → Zernio's account list (null = Zernio unreachable), for status(). */
+  private readonly healthCache = new Map<string, { at: number; accounts: ZernioAccount[] | null }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -169,6 +175,7 @@ export class ZernioService {
     if (!profileId) return { connected: [] };
 
     const accounts = await this.client.listAccounts(profileId);
+    this.healthCache.set(profileId, { at: Date.now(), accounts });
     const byPlatform = new Map<string, ZernioAccount[]>();
     for (const a of accounts) {
       if (!a.platform || !a._id) continue;
@@ -179,7 +186,9 @@ export class ZernioService {
 
     const connected: Array<{ platform: string; accountId: string; name: string | null }> = [];
     for (const [platform, list] of byPlatform) {
-      const primary = list[0];
+      // After a reconnect Zernio can still list the revoked account first;
+      // link the one that works.
+      const primary = list.find((a) => accountHealth(a).health === "ok") ?? list[0];
       const name = primary.displayName ?? primary.username ?? primary.name ?? null;
       const raw = JSON.stringify({
         zernioAccountId: primary._id,
@@ -223,16 +232,39 @@ export class ZernioService {
     const rows = await this.prisma.integration.findMany({
       where: { workspaceId, provider: "zernio" },
     });
+    const profileId = await this.getProfileId(workspaceId);
+    // Our rows only say what was connected; Zernio says whether it still works.
+    const live = profileId && this.client.isConfigured() ? await this.liveAccounts(profileId) : null;
     return {
       configured: this.client.isConfigured(),
-      profileConnected: !!(await this.getProfileId(workspaceId)),
-      accounts: rows.map((r) => ({
-        platform: r.platform,
-        accountId: r.pageId,
-        name: r.pageName,
-        connectedAt: r.updatedAt,
-      })),
+      profileConnected: !!profileId,
+      accounts: rows.map((r) => {
+        const h = live ? accountHealth(live.find((a) => a._id === r.pageId)) : null;
+        return {
+          platform: r.platform,
+          accountId: r.pageId,
+          name: r.pageName,
+          connectedAt: r.updatedAt,
+          health: h?.health ?? ("unknown" as const),
+          healthReason: h?.reason ?? null,
+        };
+      }),
     };
+  }
+
+  /** Zernio's account list, cached briefly; null when Zernio can't be reached. */
+  private async liveAccounts(profileId: string): Promise<ZernioAccount[] | null> {
+    const hit = this.healthCache.get(profileId);
+    if (hit && Date.now() - hit.at < HEALTH_TTL_MS) return hit.accounts;
+    let accounts: ZernioAccount[] | null;
+    try {
+      accounts = await this.client.listAccounts(profileId);
+    } catch (e) {
+      this.log.warn(`account health check failed for profile ${profileId}: ${(e as Error).message}`);
+      accounts = null;
+    }
+    this.healthCache.set(profileId, { at: Date.now(), accounts });
+    return accounts;
   }
 
   async whatsappNumbers(workspaceId: string) {
@@ -638,6 +670,7 @@ export class ZernioService {
     });
     if (!integ) return { ok: true, removed: false };
     await this.prisma.integration.delete({ where: { id: integ.id } });
+    this.healthCache.clear();
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
     return { ok: true, removed: true };
   }

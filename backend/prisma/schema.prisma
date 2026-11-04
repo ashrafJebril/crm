@@ -453,7 +453,7 @@ model Integration {
 model Campaign {
   id          String   @id @default(cuid())
   name        String
-  status      String   // running | scheduled | draft | completed | paused
+  status      String   // draft | scheduled | running | completed | failed | cancelled (legacy: paused)
   audience    String
   recipients  Int      @default(0)
   sent        Int      @default(0)
@@ -468,6 +468,18 @@ model Campaign {
   // will use. Plain ids (no FK) — the send engine arrives in Tier 2.
   segmentId  String?
   templateId String?
+
+  // Sending happens as a Zernio WhatsApp broadcast (see CampaignSendService).
+  zernioBroadcastId String?
+  scheduledAt       DateTime?
+  /// Value for each template placeholder {{1}}, {{2}}…: a contact field or a literal.
+  variableMapping   Json?
+  failed            Int       @default(0)
+  /// Audience members left out at launch (no usable phone, opted out).
+  skipped           Int       @default(0)
+  lastError         String?
+  launchedAt        DateTime?
+  statsSyncedAt     DateTime?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)

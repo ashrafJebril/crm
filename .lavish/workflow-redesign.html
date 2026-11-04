@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflows builder redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+/* ── Kewy tokens (copied from src/styles/tokens.css) ───────────────────── */
+:root {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", monospace;
+  --font-display: "Instrument Serif", "Geist", serif;
+  --accent: #C9A55A; --accent-ink: #0A0A0C;
+  --accent-soft: rgba(201,165,90,.14); --accent-ring: rgba(201,165,90,.35);
+  --ok: #52A882; --warn: #D4884A; --bad: #D05555; --info: #5A8FD4;
+  --r-xs: 4px; --r-sm: 6px; --r: 8px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px;
+}
+:root, [data-theme="dark"] {
+  --bg: #0A0A0C; --bg-1: #141418; --bg-2: #1A1A22; --bg-3: #1E1E26; --bg-elev: #1E1E26;
+  --line: #28282F; --line-soft: rgba(40,40,47,.6);
+  --ink: #F0EBE1; --ink-1: #D5C9B7; --ink-2: #A89E8E; --ink-3: #807666; --ink-4: #5A5650;
+  --shadow: 0 8px 24px -8px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+  --shadow-lg: 0 24px 48px -16px rgba(0,0,0,.6);
+  --grid: rgba(40,40,47,.7);
+}
+[data-theme="light"] {
+  --bg: #FFFFFF; --bg-1: #F7F7F8; --bg-2: #EFEFF1; --bg-3: #FFFFFF; --bg-elev: #FFFFFF;
+  --line: #E4E4E7; --line-soft: #EDEDF0;
+  --ink: #0F0F12; --ink-1: #3A3A40; --ink-2: #5F5F66; --ink-3: #757580; --ink-4: #8E8E94;
+  --accent-ink: #0F0F12; --accent-soft: rgba(201,165,90,.12); --accent-ring: rgba(201,165,90,.3);
+  --shadow: 0 8px 24px -10px rgba(15,15,18,.12), 0 2px 6px rgba(15,15,18,.06);
+  --shadow-lg: 0 24px 48px -16px rgba(15,15,18,.16);
+  --grid: #E4E4E7;
+}
+
+/* ── Layout safety ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+:where(.grid, .flex, [style*="display: grid"], [style*="display:grid"], [style*="display: flex"], [style*="display:flex"]) > * { min-width: 0; }
+:where(p, h1, h2, h3, h4, li, td, th, .badge) { overflow-wrap: anywhere; }
+img, svg { max-width: 100%; }
+
+html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--ink-3); }
+
+/* ── App primitives (mirroring src/styles/app.css) ─────────────────────── */
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: var(--r);
+  border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--bg-3); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-1); }
+.btn.ghost:hover { background: var(--bg-2); color: var(--ink); }
+.btn.danger { color: var(--bad); }
+.btn.sm { height: 26px; padding: 0 8px; font-size: 12px; }
+.btn.icon { width: 32px; padding: 0; justify-content: center; }
+.card { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-lg); }
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 11px;
+  font-family: var(--font-mono); border: 1px solid var(--line); color: var(--ink-2); background: var(--bg-2); white-space: nowrap; }
+.badge.accent { color: var(--accent); border-color: var(--accent-ring); background: var(--accent-soft); }
+.badge.ok { color: var(--ok); border-color: rgba(82,168,130,.35); background: rgba(82,168,130,.1); }
+.badge.warn { color: var(--warn); border-color: rgba(212,136,74,.35); background: rgba(212,136,74,.1); }
+.badge.bad { color: var(--bad); border-color: rgba(208,85,85,.35); background: rgba(208,85,85,.1); }
+.tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r); }
+.tab { height: 26px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink-2); font-size: 12px; font-weight: 500; cursor: pointer; }
+.tab.active { background: var(--bg-3); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+.input { height: 34px; padding: 0 10px; border-radius: var(--r); border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-size: 13px; width: 100%; }
+textarea.input { height: auto; min-height: 92px; padding: 9px 10px; resize: vertical; line-height: 1.5; }
+.chip { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: var(--r-xs); font-family: var(--font-mono); font-size: 11px;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-ring); }
+
+/* ── Document ──────────────────────────────────────────────────────────── */
+.doc { max-width: 1240px; margin: 0 auto; padding: 40px 20px 80px; }
+.eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(34px, 5vw, 52px); line-height: 1.05; margin: 10px 0 14px; letter-spacing: -.01em; }
+h1 em { color: var(--accent); }
+h2 { font-family: var(--font-display); font-weight: 400; font-size: 30px; margin: 0 0 6px; }
+h3 { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+.lede { font-size: 16px; color: var(--ink-1); max-width: 760px; margin: 0; }
+section.block { margin-top: 64px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; border-bottom: 1px solid var(--line-soft); padding-bottom: 12px; }
+.section-head p { margin: 0; color: var(--ink-2); max-width: 640px; }
+.num { font-family: var(--font-mono); color: var(--ink-4); font-size: 13px; margin-inline-end: 10px; }
+.meta-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+
+/* Today */
+.today { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.shot { position: relative; border-radius: var(--r-lg); overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.shot img { display: block; width: 100%; height: auto; }
+.pin { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: var(--bad); color: #fff; font: 600 11px/22px var(--font-mono);
+  text-align: center; box-shadow: 0 0 0 3px rgba(208,85,85,.3); transform: translate(-50%, -50%); }
+.problems { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.problems li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; padding: 11px 12px; border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-1); }
+.problems .pid { width: 22px; height: 22px; border-radius: 50%; background: rgba(208,85,85,.14); color: var(--bad); font: 600 11px/22px var(--font-mono); text-align: center; }
+.problems b { font-weight: 600; display: block; font-size: 13.5px; }
+.problems span { color: var(--ink-2); font-size: 13px; }
+.problems code { font-family: var(--font-mono); font-size: 12px; color: var(--ink-1); background: var(--bg-2); padding: 1px 5px; border-radius: var(--r-xs); }
+
+/* Options */
+.options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.opt { padding: 18px; display: grid; gap: 14px; align-content: start; position: relative; }
+.opt.rec { border-color: var(--accent-ring); box-shadow: 0 0 0 1px var(--accent-ring), var(--shadow); }
+.opt .thumb { height: 150px; border-radius: var(--r-md); background: var(--bg); border: 1px solid var(--line-soft); display: grid; place-items: center; overflow: hidden;
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 14px 14px; }
+.opt .thumb svg { width: 100%; height: 100%; }
+.opt h3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 16px; }
+.opt p { margin: 0; color: var(--ink-2); font-size: 13px; }
+.tradeoffs { display: grid; gap: 6px; font-size: 12.5px; }
+.tradeoffs div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; }
+.tradeoffs dt { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); padding-top: 2px; }
+.tradeoffs dd { margin: 0; color: var(--ink-1); }
+.tradeoffs .cost dd { color: var(--warn); }
+
+/* ── Mockup ────────────────────────────────────────────────────────────── */
+.mock-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.mock { border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; background: var(--bg); box-shadow: var(--shadow-lg); }
+.mk-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); background: var(--bg); flex-wrap: wrap; }
+.mk-name { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 220px; }
+.mk-name input { background: transparent; border: 1px solid transparent; border-radius: var(--r-sm); padding: 4px 6px; font-size: 16px; font-weight: 600; min-width: 0; width: 100%; max-width: 320px; }
+.mk-name input:hover { border-color: var(--line); }
+.mk-name input:focus { outline: none; border-color: var(--accent-ring); background: var(--bg-1); }
+.unsaved { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.unsaved::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.mk-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mk-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; min-height: 640px; }
+.canvas { position: relative; overflow: auto; padding: 28px 24px 60px; background-color: var(--bg);
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 18px 18px; }
+.canvas-tools { position: absolute; top: 12px; inset-inline-end: 12px; display: flex; gap: 6px; z-index: 3; }
+.canvas-tools .tabs { background: var(--bg-1); }
+.flow { display: flex; flex-direction: column; align-items: center; min-width: 600px; }
+
+.node { width: 300px; background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--r-md); padding: 11px 12px; cursor: pointer;
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 10px; align-items: start; text-align: start; transition: border-color .12s, box-shadow .12s; position: relative; }
+.node:hover { border-color: var(--ink-4); }
+.node.selected { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+.node.trigger { border-style: solid; background: linear-gradient(180deg, var(--accent-soft), transparent 70%), var(--bg-1); }
+.node.invalid { border-color: rgba(212,136,74,.6); }
+.n-ico { width: 32px; height: 32px; border-radius: var(--r); display: grid; place-items: center; }
+.n-ico svg { width: 16px; height: 16px; }
+.k-trigger { background: var(--accent-soft); color: var(--accent); }
+.k-msg { background: rgba(82,168,130,.13); color: var(--ok); }
+.k-ai { background: rgba(160,120,220,.15); color: #B596E8; }
+.k-logic { background: rgba(90,143,212,.14); color: var(--info); }
+.k-data { background: rgba(212,136,74,.13); color: var(--warn); }
+.n-kind { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.n-title { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-top: 1px; }
+.n-sum { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.n-sum .chip { height: 17px; font-size: 10.5px; }
+.n-warn { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 11.5px; color: var(--warn); }
+.n-more { opacity: 0; transition: opacity .12s; }
+.node:hover .n-more, .node.selected .n-more { opacity: 1; }
+
+.edge { width: 2px; height: 22px; background: var(--line); position: relative; }
+.add-slot { position: relative; display: flex; flex-direction: column; align-items: center; }
+.plus { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg-1); color: var(--ink-2); display: grid; place-items: center;
+  cursor: pointer; padding: 0; transition: all .12s; }
+.plus:hover, .plus[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); transform: scale(1.1); }
+.plus svg { width: 12px; height: 12px; }
+.end-add { display: flex; align-items: center; gap: 8px; padding: 0 12px; height: 30px; border-radius: 999px; border: 1px dashed var(--line); background: var(--bg-1);
+  color: var(--ink-2); font-size: 12px; cursor: pointer; }
+.end-add:hover { border-color: var(--accent); color: var(--accent); }
+.end-cap { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); padding: 4px 10px; border: 1px solid var(--line-soft); border-radius: 999px; background: var(--bg); }
+
+.split { width: 600px; height: 34px; display: block; }
+.split path { stroke: var(--line); fill: none; stroke-width: 2; }
+.lanes { display: grid; grid-template-columns: 300px 300px; column-gap: 0; width: 600px; justify-items: center; }
+.lane { display: flex; flex-direction: column; align-items: center; width: 300px; }
+.lane .node { width: 270px; }
+.lane-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-bottom: 2px; }
+.lane-label.yes { color: var(--ok); background: rgba(82,168,130,.12); border: 1px solid rgba(82,168,130,.3); }
+.lane-label.no { color: var(--ink-2); background: var(--bg-2); border: 1px solid var(--line); }
+
+/* Picker */
+.picker { position: absolute; top: calc(100% + 6px); inset-inline-start: 50%; transform: translateX(-50%); width: 340px; z-index: 20; background: var(--bg-elev);
+  border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); padding: 8px; display: none; text-align: start; }
+.picker.open { display: block; }
+.picker .p-search { margin: 2px 2px 8px; }
+.p-group { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 8px 8px 4px; }
+.p-item { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: center; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--r);
+  background: transparent; cursor: pointer; text-align: start; }
+.p-item:hover, .p-item:focus-visible { background: var(--bg-2); outline: none; }
+.p-item .n-ico { width: 30px; height: 30px; }
+.p-item b { display: block; font-size: 13px; font-weight: 600; }
+.p-item small { display: block; font-size: 12px; color: var(--ink-3); }
+
+/* Inspector */
+.inspector { border-inline-start: 1px solid var(--line-soft); background: var(--bg-1); display: flex; flex-direction: column; min-width: 0; }
+.ins-head { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 16px; border-bottom: 1px solid var(--line-soft); }
+.ins-head .n-ico { width: 36px; height: 36px; }
+.ins-head h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.ins-head p { margin: 0; font-size: 12px; color: var(--ink-3); }
+.ins-body { padding: 16px; display: grid; gap: 16px; align-content: start; flex: 1; }
+.ins-foot { padding: 12px 16px; border-top: 1px solid var(--line-soft); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.hint { font-size: 12px; color: var(--ink-3); margin: 0; }
+.vars { display: flex; gap: 6px; flex-wrap: wrap; }
+.vars .chip { cursor: pointer; }
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.callout { display: flex; gap: 8px; padding: 10px 12px; border-radius: var(--r); font-size: 12.5px; }
+.callout.warn { background: rgba(212,136,74,.1); color: var(--warn); border: 1px solid rgba(212,136,74,.3); }
+.callout.info { background: var(--bg-2); color: var(--ink-2); border: 1px solid var(--line-soft); }
+.preview { border-radius: var(--r-md); padding: 12px; background: var(--bg); border: 1px solid var(--line-soft); }
+.bubble { max-width: 90%; margin-inline-start: auto; padding: 8px 11px; border-radius: 12px 12px 4px 12px; background: rgba(201,165,90,.18); border: 1px solid rgba(201,165,90,.45); font-size: 13px; }
+
+.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0; transition: all .2s; pointer-events: none; z-index: 50;
+  background: var(--bg-elev); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow-lg); }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Mapping table */
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--r-lg); background: var(--bg-1); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: start; padding: 11px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 500; background: var(--bg-2); }
+tr:last-child td { border-bottom: 0; }
+td.pcell { white-space: nowrap; }
+td .files { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
+
+/* Questions */
+.qs { display: grid; gap: 16px; }
+.q { padding: 18px; }
+.q legend { font-size: 15px; font-weight: 600; padding: 0; margin-bottom: 4px; }
+.q fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.q .qsub { color: var(--ink-2); font-size: 13px; margin: 0 0 8px; }
+.choice { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--r-md);
+  background: var(--bg); cursor: pointer; }
+.choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.choice input { margin: 3px 0 0; accent-color: var(--accent); }
+.choice b { font-weight: 600; font-size: 13.5px; }
+.choice span { display: block; color: var(--ink-2); font-size: 12.5px; }
+.q-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.q-status { font-size: 12px; color: var(--ok); font-family: var(--font-mono); }
+.choices-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+@media (max-width: 1000px) {
+  .today, .options { grid-template-columns: minmax(0, 1fr); }
+  .mk-body { grid-template-columns: minmax(0, 1fr); }
+  .inspector { border-inline-start: 0; border-top: 1px solid var(--line-soft); }
+  .choices-2 { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+</head>
+<body>
+<main class="doc">
+
+<header>
+  <div class="eyebrow">Kewy CRM · Workflows · Redesign proposal</div>
+  <h1>Make the workflow builder <em>readable at a glance</em></h1>
+  <p class="lede">Today you have to click every step to find out what a workflow does. This proposal turns the builder into a vertical flow: each step shows what it does, you can add a step anywhere, and the settings panel only appears once you've picked a step. It uses the existing step types, triggers and data model, so the backend doesn't change.</p>
+  <div class="meta-row">
+    <span class="badge accent">Frontend only</span>
+    <span class="badge">Same WorkflowStepGraph</span>
+    <span class="badge">6 step types · 6 triggers</span>
+    <span class="badge">EN / AR (RTL)</span>
+    <span class="badge">Design source: src/styles/tokens.css</span>
+  </div>
+</header>
+
+<!-- ── 1. Today ─────────────────────────────────────────────────────────── -->
+<section class="block" id="today">
+  <div class="section-head">
+    <h2><span class="num">01</span>What's wrong today</h2>
+    <p>Your screenshot, with each problem pinned. Every point comes from <code class="mono">WorkflowBuilder.tsx</code>, <code class="mono">StepCard.tsx</code> and <code class="mono">AddStepButton.tsx</code>.</p>
+  </div>
+  <div class="today">
+    <figure class="shot" style="margin:0">
+      <img src="current-builder.png" alt="Current Workflows builder: Back link, Workflow name field, Trigger dropdown set to New contact, an Add step dropdown, and an empty right panel saying Select a step to configure it.">
+      <span class="pin" style="left:18.6%;top:7.2%">1</span>
+      <span class="pin" style="left:30%;top:14.2%">2</span>
+      <span class="pin" style="left:16%;top:17.3%">3</span>
+      <span class="pin" style="left:62%;top:12.2%">5</span>
+      <span class="pin" style="left:95%;top:7.2%">7</span>
+      <figcaption class="muted" style="position:absolute;inset-inline-start:10px;bottom:10px;font-size:11.5px;background:var(--bg-1);border:1px solid var(--line);border-radius:var(--r-sm);padding:3px 8px">Problems 4 and 6 only show once steps exist</figcaption>
+    </figure>
+    <ol class="problems">
+      <li><span class="pid">1</span><div><b>The header looks unfinished</b><span>Back, Save, Activate, Test and the Builder/Executions toggle are bare <code>&lt;button&gt;</code>s, not the app's <code>.btn</code> and <code>.tabs</code> styles. Activate and Test only appear after the first save, and nothing tells you that.</span></div></li>
+      <li><span class="pid">2</span><div><b>The trigger looks like a form field</b><span>It's a full-width <code>&lt;select&gt;</code> with nothing connecting it to the steps, so the screen doesn't read as "when X happens, do Y".</span></div></li>
+      <li><span class="pid">3</span><div><b>"Add step" is a native dropdown</b><span>No icons, no descriptions, no grouping. You can't tell what "AI Condition" or "Ask AI Agent" does before adding it.</span></div></li>
+      <li><span class="pid">4</span><div><b>Step cards only show their type</b><span>A card says "Send WhatsApp" but not what it sends. You have to click every card to understand the workflow.</span></div></li>
+      <li><span class="pid">5</span><div><b>The settings panel takes most of the screen</b><span>It covers 55% of the width but stays empty until you select a step. Once you do, its heading is the raw type id (<code>send_whatsapp</code>).</span></div></li>
+      <li><span class="pid">6</span><div><b>You can only edit at the end</b><span>Steps can only be added or deleted at the tail. To change step 2 of 5, you delete steps 5, 4 and 3 first. Branches are THEN/ELSE columns squeezed into the left 45%.</span></div></li>
+      <li><span class="pid">7</span><div><b>No feedback</b><span>No confirmation after saving, no "unsaved changes" indicator, and no warning on half-filled steps. Errors appear only as one line of red text under the header.</span></div></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ── 2. Directions ────────────────────────────────────────────────────── -->
+<section class="block" id="directions">
+  <div class="section-head">
+    <h2><span class="num">02</span>Three directions</h2>
+    <p>All three keep the current data model (<code class="mono">entry</code> + <code class="mono">next</code> / <code class="mono">thenNext</code> / <code class="mono">elseNext</code>). They differ in layout and in how much work they are.</p>
+  </div>
+  <div class="options">
+    <article class="card opt rec" data-option="A">
+      <div class="thumb" aria-hidden="true">
+        <svg viewBox="0 0 220 150">
+          <g fill="none" stroke="var(--line)" stroke-width="1.5">
+            <path d="M110 30v14M110 62v14M110 94v8H62v10M110 102h48v10"/>
+          </g>
+          <rect x="70" y="12" width="80" height="18" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <rect x="70" y="44" width="80" height="18" rx="4" fill="var(--bg-2)" stroke="var(--line)"/>
+          <rect x="70" y="76" width="80" height="18" rx="4" fill="var(--bg-2)" stroke="var(--info)"/>
+          <rect x="28" y="112" width="68" height="18" rx="4" fill="var(--bg-2)" stroke="var(--line)"/>
+          <rect x="124" y="112" width="68" height="18" rx="4" fill="var(--bg-2)" stroke="var(--line)"/>
+          <circle cx="110" cy="37" r="4" fill="var(--bg-1)" stroke="var(--accent)"/>
+          <rect x="170" y="10" width="44" height="130" rx="4" fill="var(--bg-1)" stroke="var(--line)" stroke-dasharray="3 3"/>
+        </svg>
+      </div>
+      <h3>A · Vertical flow + settings panel <span class="badge accent">Recommended</span></h3>
+      <p>Steps go top to bottom from the trigger, with a <b>+</b> between every pair. A condition splits into Yes/No lanes. Clicking a step opens its settings in a right-hand panel.</p>
+      <dl class="tradeoffs">
+        <div><dt>Fits</dt><dd>Your graph shape: mostly straight lines with occasional yes/no splits. Familiar from HubSpot, Klaviyo and Zapier.</dd></div>
+        <div><dt>Gains</dt><dd>Fixes all 7 problems. Readable without clicking. Reuses the existing config forms.</dd></div>
+        <div class="cost"><dt>Cost</dt><dd>About 3–4 days. Rewrites WorkflowBuilder, StepCard and AddStepButton, and adds insert/delete-anywhere logic to the graph.</dd></div>
+      </dl>
+    </article>
+
+    <article class="card opt" data-option="B">
+      <div class="thumb" aria-hidden="true">
+        <svg viewBox="0 0 220 150">
+          <g fill="none" stroke="var(--line)" stroke-width="1.5">
+            <path d="M58 36C90 36 80 70 112 70M150 70c20 0 10-36 34-36M150 76c20 0 10 40 34 40M58 40c20 0 10 70 40 76"/>
+          </g>
+          <rect x="14" y="27" width="44" height="18" rx="4" fill="var(--accent-soft)" stroke="var(--accent)"/>
+          <rect x="112" y="61" width="38" height="18" rx="4" fill="var(--bg-2)" stroke="var(--info)"/>
+          <rect x="184" y="25" width="30" height="18" rx="4" fill="var(--bg-2)" stroke="var(--line)"/>
+          <rect x="184" y="107" width="30" height="18" rx="4" fill="var(--bg-2)" stroke="var(--line)"/>
+          <rect x="98" y="107" width="40" height="18" rx="4" fill="var(--bg-2)" stroke="var(--line)"/>
+          <g fill="var(--bg-1)" stroke="var(--line)"><rect x="8" y="118" width="16" height="16" rx="3"/><rect x="26" y="118" width="16" height="16" rx="3"/></g>
+        </svg>
+      </div>
+      <h3>B · Free-form canvas (n8n-style)</h3>
+      <p>Drag steps anywhere, draw connections, zoom and pan, with a minimap.</p>
+      <dl class="tradeoffs">
+        <div><dt>Fits</dt><dd>Complex graphs with merges, loops and many outputs, which the data model doesn't support today.</dd></div>
+        <div><dt>Gains</dt><dd>Looks powerful. Leaves room for future step types.</dd></div>
+        <div class="cost"><dt>Cost</dt><dd>2–3 weeks and a new dependency such as React Flow. Saved layout positions would need a schema change. Harder for non-technical users and on small screens, and the canvas needs RTL work.</dd></div>
+      </dl>
+    </article>
+
+    <article class="card opt" data-option="C">
+      <div class="thumb" aria-hidden="true">
+        <svg viewBox="0 0 220 150">
+          <g fill="var(--bg-2)" stroke="var(--line)">
+            <rect x="30" y="16" width="160" height="22" rx="5" stroke="var(--accent)" fill="var(--accent-soft)"/>
+            <rect x="30" y="46" width="160" height="22" rx="5"/>
+            <rect x="30" y="76" width="160" height="22" rx="5"/>
+            <rect x="46" y="104" width="144" height="18" rx="5"/>
+            <rect x="46" y="126" width="144" height="18" rx="5"/>
+          </g>
+          <g fill="var(--ink-4)"><rect x="40" y="25" width="50" height="4" rx="2"/><rect x="40" y="55" width="70" height="4" rx="2"/><rect x="40" y="85" width="60" height="4" rx="2"/></g>
+        </svg>
+      </div>
+      <h3>C · Restyle the current list</h3>
+      <p>Keep today's layout, but apply the app's styles: styled cards with summaries, a proper step menu, and the settings panel shown below the selected card.</p>
+      <dl class="tradeoffs">
+        <div><dt>Fits</dt><dd>A quick fix while the bigger redesign waits.</dd></div>
+        <div><dt>Gains</dt><dd>About 1 day. Fixes problems 1, 3, 4 and 7.</dd></div>
+        <div class="cost"><dt>Cost</dt><dd>Branches still read poorly and you still can't add in the middle (problems 2, 5 and 6 stay). You'd probably redo it later.</dd></div>
+      </dl>
+    </article>
+  </div>
+</section>
+
+<!-- ── 3. Mockup ────────────────────────────────────────────────────────── -->
+<section class="block" id="mockup">
+  <div class="section-head">
+    <h2><span class="num">03</span>Direction A, clickable</h2>
+    <p>Click any step to open its settings. Click a <b>+</b> to open the step picker. Annotate anything you'd change.</p>
+  </div>
+
+  <div class="mock-toolbar">
+    <span class="muted" style="font-size:12.5px">Example: <b style="color:var(--ink-1)">Welcome new leads</b>. A new contact gets a welcome message if they're a lead, and a tag otherwise.</span>
+    <div class="tabs" role="tablist" aria-label="Theme">
+      <button class="tab active" role="tab" aria-selected="true" data-theme-btn="dark">Dark</button>
+      <button class="tab" role="tab" aria-selected="false" data-theme-btn="light">Light</button>
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mk-head">
+      <button class="btn icon ghost" aria-label="Back to workflows">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3 5 8l5 5"/></svg>
+      </button>
+      <div class="mk-name">
+        <input value="Welcome new leads" aria-label="Workflow name">
+        <span class="badge">Draft</span>
+        <span class="unsaved">Unsaved changes</span>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Builder view">
+        <button class="tab active" role="tab" aria-selected="true">Builder</button>
+        <button class="tab" role="tab" aria-selected="false">Runs <span class="mono muted" style="font-size:11px">· 12</span></button>
+      </div>
+      <div class="mk-actions">
+        <span class="badge warn" title="Activate stays disabled until every step is complete">
+          <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor"><path d="M8 1.5 15 14H1L8 1.5Zm-.75 4.5v4h1.5V6h-1.5Zm0 5.25v1.5h1.5v-1.5h-1.5Z"/></svg>
+          1 step needs attention
+        </span>
+        <button class="btn" data-demo="test">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M4 2.5v11l9-5.5-9-5.5Z"/></svg>Test
+        </button>
+        <button class="btn" data-demo="save">Save</button>
+        <button class="btn primary" data-demo="activate" aria-disabled="true" style="opacity:.55;cursor:not-allowed">Activate</button>
+      </div>
+    </div>
+
+    <div class="mk-body">
+      <div class="canvas" id="canvas">
+        <div class="canvas-tools">
+          <div class="tabs" aria-label="Zoom">
+            <button class="tab" aria-label="Zoom out">−</button>
+            <button class="tab active">100%</button>
+            <button class="tab" aria-label="Zoom in">+</button>
+          </div>
+        </div>
+        <div class="flow" id="flow"><!-- rendered by script --></div>
+      </div>
+
+      <aside class="inspector" id="inspector" aria-live="polite"><!-- rendered by script --></aside>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;padding:14px 16px;display:grid;gap:6px">
+    <h3 style="margin:0">Details the mockup shows</h3>
+    <ul style="margin:0;padding-inline-start:18px;color:var(--ink-2);font-size:13px;display:grid;gap:4px">
+      <li>Each step's colour and icon match its group: Messages (green), AI (violet), Logic (blue), CRM data (orange).</li>
+      <li>Each card shows a one-line summary built from its settings, e.g. "Lifecycle is Lead" or "Hi {contact.name}…".</li>
+      <li>An incomplete step gets an orange border and a reason. The header counts these and keeps <b>Activate</b> disabled until they're fixed.</li>
+      <li>The settings panel has a readable title, the same form fields as today, a WhatsApp message preview, and "Delete step" for any step. Deleting a middle step reconnects its neighbours.</li>
+      <li>The layout uses logical properties (<code class="mono">inline-start</code>), so Arabic mirrors the panel and lanes, as the Automations wizard already does.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ── 4. Mapping ───────────────────────────────────────────────────────── -->
+<section class="block" id="mapping">
+  <div class="section-head">
+    <h2><span class="num">04</span>How each problem gets fixed</h2>
+    <p>The work for direction A, mapped to the problems in section 01.</p>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Problem</th><th>Change</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td class="pcell"><span class="badge bad">1</span> Header</td><td>Use <code class="mono">.btn</code> / <code class="mono">.tabs</code>, add a status badge and an editable name. Always show Test and Activate, disabled with a tooltip until the workflow is saved.</td><td class="files">WorkflowBuilder.tsx</td></tr>
+        <tr><td class="pcell"><span class="badge bad">2</span> Trigger</td><td>Make the trigger the first card in the flow, with a summary ("Any source", "Daily 09:00 · Asia/Amman"). Its settings open in the panel.</td><td class="files">new TriggerNode · TriggerConfigFields.tsx (reused)</td></tr>
+        <tr><td class="pcell"><span class="badge bad">3</span> Add step</td><td>A grouped picker with search, icons and one-line descriptions, opened from any <b>+</b>.</td><td class="files">AddStepButton.tsx → StepPicker.tsx</td></tr>
+        <tr><td class="pcell"><span class="badge bad">4</span> Cards</td><td>Add icon, group, title and a summary built from the step's settings. Extract a <code class="mono">summarizeStep(step, tx)</code> helper with unit tests.</td><td class="files">StepCard.tsx · new stepMeta.ts</td></tr>
+        <tr><td class="pcell"><span class="badge bad">5</span> Settings panel</td><td>360px panel with a readable title, description and footer actions. The flow takes the rest of the width.</td><td class="files">new StepInspector.tsx · config/*.tsx (reused)</td></tr>
+        <tr><td class="pcell"><span class="badge bad">6</span> Editing</td><td>Insert-after and delete-anywhere on the graph (pure functions plus tests). Branches render as two lanes joined by an SVG connector.</td><td class="files">new graph.ts · WorkflowBuilder.tsx</td></tr>
+        <tr><td class="pcell"><span class="badge bad">7</span> Feedback</td><td>Per-step validation, an "unsaved changes" indicator, a toast after saving, a confirm prompt when leaving with unsaved changes, and errors shown on the step that caused them.</td><td class="files">new validateStep · useToast (existing)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ── 5. Decisions ─────────────────────────────────────────────────────── -->
+<section class="block" id="decisions">
+  <div class="section-head">
+    <h2><span class="num">05</span>Your call</h2>
+    <p>Pick your answers and queue each one, then press <b>Send to Agent</b>. Comments on any part of the page also reach me.</p>
+  </div>
+  <div class="qs">
+
+    <form class="card q" data-lavish-question="direction" onsubmit="event.preventDefault(); const v = new FormData(this).get('direction'); if (!v) return; window.lavish?.queuePrompt('Workflows redesign: go with direction ' + v + '.', { tag: 'choice', text: 'Direction: ' + v, element: this, queueKey: 'direction', data: { question: 'direction', answer: v } }); this.querySelector('.q-status').textContent = 'Queued: ' + v;">
+      <fieldset>
+        <legend>1 · Which direction?</legend>
+        <p class="qsub">This decides how big the build is.</p>
+        <label class="choice"><input type="radio" name="direction" value="A · Vertical flow + settings panel" checked><div><b>A · Vertical flow + settings panel</b><span>Recommended. About 3–4 days, fixes all 7 problems.</span></div></label>
+        <label class="choice"><input type="radio" name="direction" value="B · Free-form canvas"><div><b>B · Free-form canvas</b><span>2–3 weeks, adds a dependency and a schema change.</span></div></label>
+        <label class="choice"><input type="radio" name="direction" value="C · Restyle the current list"><div><b>C · Restyle the current list</b><span>About 1 day, a quick fix.</span></div></label>
+      </fieldset>
+      <div class="q-actions"><button class="btn primary" type="submit">Queue answer</button><span class="q-status" role="status"></span></div>
+    </form>
+
+    <form class="card q" data-lavish-question="scope" onsubmit="event.preventDefault(); const v = [...this.querySelectorAll('input[name=scope]:checked')].map(i => i.value); if (!v.length) return; window.lavish?.queuePrompt('Workflows redesign: include these in the first pass: ' + v.join('; ') + '.', { tag: 'choice', text: 'Scope: ' + v.length + ' items', element: this, queueKey: 'scope', data: { question: 'scope', answer: v } }); this.querySelector('.q-status').textContent = 'Queued: ' + v.length + ' items';">
+      <fieldset>
+        <legend>2 · What goes in the first pass?</legend>
+        <p class="qsub">Untick anything you'd rather do later.</p>
+        <div class="choices-2">
+          <label class="choice"><input type="checkbox" name="scope" value="Visual restyle (header, cards, panel)" checked><div><b>Visual restyle</b><span>Header, cards, settings panel</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="Step summaries on cards" checked><div><b>Step summaries</b><span>Read the flow without clicking</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="Grouped step picker" checked><div><b>Grouped step picker</b><span>Icons, descriptions, search</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="Insert and delete anywhere" checked><div><b>Insert and delete anywhere</b><span>Edit the middle of a flow</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="Validation + save feedback" checked><div><b>Validation + save feedback</b><span>Warnings, unsaved indicator, toast</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="WhatsApp message preview"><div><b>WhatsApp preview</b><span>Chat bubble in the settings panel</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="Zoom controls on the canvas"><div><b>Zoom controls</b><span>Useful for long flows</span></div></label>
+          <label class="choice"><input type="checkbox" name="scope" value="Redesign the Workflows list page too"><div><b>The list page too</b><span>Cards with trigger and run stats</span></div></label>
+        </div>
+      </fieldset>
+      <div class="q-actions"><button class="btn primary" type="submit">Queue answer</button><span class="q-status" role="status"></span></div>
+    </form>
+
+    <form class="card q" data-lavish-question="automations-overlap" onsubmit="event.preventDefault(); const v = new FormData(this).get('overlap'); if (!v) return; window.lavish?.queuePrompt('Workflows vs Automations: ' + v + '.', { tag: 'choice', text: 'Overlap: ' + v, element: this, queueKey: 'overlap', data: { question: 'automations-overlap', answer: v } }); this.querySelector('.q-status').textContent = 'Queued';">
+      <fieldset>
+        <legend>3 · Workflows and Automations overlap</legend>
+        <p class="qsub">Both build "trigger, then steps" flows. The Automations section just got a 3-step guided wizard. This decides whether the two should look alike.</p>
+        <label class="choice"><input type="radio" name="overlap" value="Keep both separate; Workflows is the advanced builder" checked><div><b>Keep both</b><span>Automations is the simple wizard, Workflows is the advanced builder. Share icons and step colours.</span></div></label>
+        <label class="choice"><input type="radio" name="overlap" value="Plan to merge them later into one builder"><div><b>Merge later</b><span>Design A with a later merge in mind (one builder with a "simple" mode).</span></div></label>
+        <label class="choice"><input type="radio" name="overlap" value="Not sure yet; ignore for now"><div><b>Not sure yet</b><span>Redesign Workflows on its own for now.</span></div></label>
+      </fieldset>
+      <div class="q-actions"><button class="btn primary" type="submit">Queue answer</button><span class="q-status" role="status"></span></div>
+    </form>
+
+    <div class="card q" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span class="muted" style="font-size:13px">Opened this file directly instead of in Lavish?</span>
+      <button class="btn" type="button" onclick="(async (btn) => {
+        const qs = [...document.querySelectorAll('[data-lavish-question]')];
+        const status = btn.parentElement.querySelector('[data-lavish-copy-all-status]');
+        const out = [];
+        for (const q of qs) {
+          const key = q.getAttribute('data-lavish-question');
+          const lines = [];
+          for (const el of q.querySelectorAll('input:checked')) lines.push('  ' + el.name + ': ' + el.value);
+          if (lines.length) out.push(key + ':\n' + lines.join('\n'));
+        }
+        const text = out.join('\n\n');
+        try { await navigator.clipboard.writeText(text); status.textContent = 'Answers copied. Paste them into the chat.'; }
+        catch { status.textContent = 'Clipboard unavailable.'; }
+      })(this)">Copy all answers</button>
+      <span data-lavish-copy-all-status role="status" aria-live="polite" class="q-status"></span>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(() => {
+  const I = {
+    bolt: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M9 1 3 9h4l-1 6 6-8H8l1-6Z"/></svg>',
+    msg: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>',
+    ai: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 9.3 5.2 13 6.5 9.3 7.8 8 11.5 6.7 7.8 3 6.5l3.7-1.3L8 1.5Zm4.5 8 .6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6.6-1.6Z"/></svg>',
+    split: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v4M8 6 4 10v4M8 6l4 4v4"/></svg>',
+    clock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>',
+    tag: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2.5h5.5l6 6-5 5-6-6z"/><circle cx="5" cy="5.5" r="1" fill="currentColor"/></svg>',
+    plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3v10M3 8h10"/></svg>',
+    dots: '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><circle cx="3" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="13" cy="8" r="1.3"/></svg>',
+    warn: '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M8 1.5 15 14H1L8 1.5Zm-.75 4.5v4h1.5V6h-1.5Zm0 5.25v1.5h1.5v-1.5h-1.5Z"/></svg>',
+  };
+  const KIND = {
+    trigger: { cls: 'k-trigger', icon: I.bolt, group: 'Trigger' },
+    send_whatsapp: { cls: 'k-msg', icon: I.msg, group: 'Message' },
+    ask_agent: { cls: 'k-ai', icon: I.ai, group: 'AI' },
+    ai_condition: { cls: 'k-ai', icon: I.split, group: 'AI · Branch' },
+    condition: { cls: 'k-logic', icon: I.split, group: 'Logic · Branch' },
+    delay: { cls: 'k-logic', icon: I.clock, group: 'Logic' },
+    update_data: { cls: 'k-data', icon: I.tag, group: 'CRM data' },
+  };
+  const chip = (t) => `<span class="chip">{${t}}</span>`;
+
+  const steps = {
+    trigger: { kind: 'trigger', title: 'New contact', sum: 'Any source · any channel',
+      body: `<div class="field"><label>When this happens</label><select class="input"><option>New contact</option><option>Message received</option><option>Ticket created</option><option>Ticket stage changed</option><option>Schedule</option><option>Webhook</option></select></div>
+             <p class="hint">Runs once for every contact created in this workspace, by hand, by import or from a channel.</p>
+             <div class="callout info">Step messages can use variables like ${chip('contact.name')} and ${chip('contact.phone')} from this trigger.</div>` },
+    s1: { kind: 'delay', title: 'Wait 1 hour', sum: 'Then continue',
+      body: `<div class="row2"><div class="field"><label>Wait for</label><input class="input" value="1"></div><div class="field"><label>Unit</label><select class="input"><option>minutes</option><option selected>hours</option><option>days</option></select></div></div>
+             <p class="hint">The run pauses and shows as <span class="badge">waiting</span> under Runs.</p>` },
+    s2: { kind: 'condition', title: 'Is the contact a lead?', sum: 'Lifecycle equals “Lead”',
+      body: `<div class="field"><label>Field</label><select class="input"><option>Contact · Lifecycle</option><option>Contact · Source</option><option>Contact · Industry</option><option>Message · Text</option></select></div>
+             <div class="row2"><div class="field"><label>Operator</label><select class="input"><option>equals</option><option>not equals</option><option>contains</option><option>does not contain</option></select></div><div class="field"><label>Value</label><input class="input" value="Lead"></div></div>
+             <p class="hint">Replaces today's free-text <code class="mono">trigger.contact.lifecycle</code> path with a field list built from the trigger's variables.</p>` },
+    y1: { kind: 'send_whatsapp', title: 'Send WhatsApp', sumHtml: `Hi ${chip('contact.name')}, thanks for…`,
+      body: `<div class="field"><label>Message</label><textarea class="input">Hi {contact.name}, thanks for reaching out to Samemha! A member of our team will message you shortly.</textarea></div>
+             <div class="vars"><span class="hint" style="align-self:center">Insert:</span>${chip('contact.name')}${chip('contact.phone')}${chip('workspace.name')}</div>
+             <div class="field"><label>Preview</label><div class="preview"><div class="bubble">Hi Lina, thanks for reaching out to Samemha! A member of our team will message you shortly.</div></div></div>
+             <div class="callout info">WhatsApp only lets you send free-form messages within 24 hours of the customer's last message. Outside that window, use a template.</div>` },
+    y2: { kind: 'ask_agent', title: 'Ask AI agent', sum: 'Qualify the lead from the chat',
+      body: `<div class="field"><label>Prompt</label><textarea class="input">Read the conversation with {contact.name} and decide if they're ready for a sales call. Reply with a one-line reason.</textarea></div>
+             <p class="hint">Later steps can use the reply as ${chip('steps.y2.reply')}.</p>` },
+    n1: { kind: 'update_data', title: 'Add tag', sum: 'cold-lead',
+      body: `<div class="field"><label>What to do</label><select class="input"><option selected>Add a tag</option><option>Remove a tag</option><option>Move ticket to a stage</option><option>Update a contact field</option></select></div>
+             <div class="field"><label>Tag</label><input class="input" value="cold-lead"></div>` },
+    n2: { kind: 'send_whatsapp', title: 'Send WhatsApp', sum: 'No message yet', invalid: 'Message is empty',
+      body: `<div class="callout warn">${I.warn}<span>This step needs a message before the workflow can be activated.</span></div>
+             <div class="field"><label>Message</label><textarea class="input" placeholder="Type your message… use { to insert a variable"></textarea></div>
+             <div class="vars"><span class="hint" style="align-self:center">Insert:</span>${chip('contact.name')}${chip('contact.phone')}</div>` },
+  };
+  const order = ['trigger', 's1', 's2', 'y1', 'y2', 'n1', 'n2'];
+
+  const node = (id) => {
+    const s = steps[id], k = KIND[s.kind];
+    return `<button type="button" class="node ${s.kind === 'trigger' ? 'trigger' : ''} ${s.invalid ? 'invalid' : ''}" data-node="${id}" aria-label="${k.group}: ${s.title}">
+      <span class="n-ico ${k.cls}">${k.icon}</span>
+      <span><span class="n-kind">${s.kind === 'trigger' ? 'When' : k.group}</span><span class="n-title" style="display:block">${s.title}</span>
+        <span class="n-sum" style="display:block">${s.sumHtml || s.sum}</span>
+        ${s.invalid ? `<span class="n-warn">${I.warn}${s.invalid}</span>` : ''}</span>
+      <span class="n-more muted">${I.dots}</span></button>`;
+  };
+  const slot = (key) => `<div class="add-slot"><div class="edge"></div><button type="button" class="plus" data-slot="${key}" aria-label="Add a step here" aria-expanded="false">${I.plus}</button>${picker(key)}<div class="edge"></div></div>`;
+  const picker = (key) => `<div class="picker" data-picker="${key}" role="menu">
+      <input class="input p-search" placeholder="Search steps…" aria-label="Search steps">
+      <div class="p-group">Messages</div>
+      ${pItem('send_whatsapp', 'Send WhatsApp', 'Message the contact, with variables')}
+      ${pItem('ask_agent', 'Ask AI agent', 'Have Kewy AI draft, answer or decide')}
+      <div class="p-group">Logic</div>
+      ${pItem('condition', 'Condition', 'Split into Yes / No by a field value')}
+      ${pItem('ai_condition', 'AI condition', 'Split by a yes/no question to the AI')}
+      ${pItem('delay', 'Delay', 'Wait minutes, hours or days')}
+      <div class="p-group">CRM data</div>
+      ${pItem('update_data', 'Update CRM data', 'Tag, move a ticket stage, edit a field')}
+    </div>`;
+  const pItem = (kind, t, d) => `<button type="button" class="p-item" role="menuitem" data-pick="${kind}"><span class="n-ico ${KIND[kind].cls}">${KIND[kind].icon}</span><span><b>${t}</b><small>${d}</small></span></button>`;
+  const endCap = (key) => `<div class="add-slot"><div class="edge"></div><button type="button" class="end-add" data-slot="${key}" aria-expanded="false">${I.plus.replace('<svg', '<svg width="12" height="12"')}Add step</button>${picker(key)}<div class="edge" style="height:14px"></div><span class="end-cap">End</span></div>`;
+
+  document.getElementById('flow').innerHTML = `
+    ${node('trigger')}${slot('a')}${node('s1')}${slot('b')}${node('s2')}
+    <svg class="split" viewBox="0 0 600 34" preserveAspectRatio="none" aria-hidden="true"><path d="M300 0v12M150 34V22q0-10 10-10h280q10 0 10 10v12"/></svg>
+    <div class="lanes">
+      <div class="lane"><span class="lane-label yes">Yes</span><div class="edge" style="height:10px"></div>${node('y1')}${slot('c')}${node('y2')}${endCap('d')}</div>
+      <div class="lane"><span class="lane-label no">No</span><div class="edge" style="height:10px"></div>${node('n1')}${slot('e')}${node('n2')}${endCap('f')}</div>
+    </div>`;
+
+  const ins = document.getElementById('inspector');
+  function select(id) {
+    document.querySelectorAll('.node').forEach(n => n.classList.toggle('selected', n.dataset.node === id));
+    const s = steps[id], k = KIND[s.kind], idx = order.indexOf(id);
+    ins.innerHTML = `
+      <div class="ins-head"><span class="n-ico ${k.cls}">${k.icon}</span>
+        <div><h4>${s.kind === 'trigger' ? 'Trigger · ' + s.title : s.title}</h4><p>${s.kind === 'trigger' ? 'What starts this workflow' : k.group + ' · step ' + idx + ' of ' + (order.length - 1)}</p></div>
+        <button class="btn icon ghost sm" aria-label="Close panel" data-close>✕</button></div>
+      <div class="ins-body">${s.body}</div>
+      <div class="ins-foot">${s.kind === 'trigger' ? '<span class="hint">The trigger can be changed but not deleted.</span>' :
+        '<button class="btn sm ghost danger" data-demo="delete">Delete step</button><button class="btn sm" data-demo="dup">Duplicate</button>'}</div>`;
+  }
+  function empty() {
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('selected'));
+    ins.innerHTML = `<div class="ins-body" style="place-content:center;text-align:center;gap:8px">
+      <div class="n-ico k-trigger" style="margin:0 auto">${I.bolt}</div><h4 style="margin:0">Select a step</h4>
+      <p class="hint">Click a card to edit it, or a <b>+</b> to add a step.</p></div>`;
+  }
+
+  const toastEl = document.getElementById('toast'); let tt;
+  const toast = (m) => { toastEl.textContent = m; toastEl.classList.add('show'); clearTimeout(tt); tt = setTimeout(() => toastEl.classList.remove('show'), 2400); };
+  const closePickers = () => document.querySelectorAll('.picker.open').forEach(p => { p.classList.remove('open'); p.parentElement.querySelector('[data-slot]')?.setAttribute('aria-expanded', 'false'); });
+
+  document.addEventListener('click', (e) => {
+    const n = e.target.closest('[data-node]'); if (n) { closePickers(); select(n.dataset.node); return; }
+    const sl = e.target.closest('[data-slot]');
+    if (sl) { const p = sl.parentElement.querySelector('.picker'); const was = p.classList.contains('open'); closePickers();
+      if (!was) { p.classList.add('open'); sl.setAttribute('aria-expanded', 'true'); p.querySelector('input')?.focus(); } return; }
+    const pk = e.target.closest('[data-pick]'); if (pk) { closePickers(); toast('Mockup: this would insert a "' + pk.querySelector('b').textContent + '" step here and select it.'); return; }
+    if (e.target.closest('[data-close]')) { empty(); return; }
+    const d = e.target.closest('[data-demo]');
+    if (d) { const m = { save: 'Saved · all changes stored', test: 'Opens the Test modal with a sample contact', activate: 'Disabled until “Message is empty” is fixed', delete: 'Deletes this step and reconnects the steps around it', dup: 'Copies this step below itself' }; toast(m[d.dataset.demo]); return; }
+    const tb = e.target.closest('[data-theme-btn]');
+    if (tb) { document.documentElement.dataset.theme = tb.dataset.themeBtn; document.querySelectorAll('[data-theme-btn]').forEach(b => { b.classList.toggle('active', b === tb); b.setAttribute('aria-selected', b === tb); }); return; }
+    if (!e.target.closest('.picker')) closePickers();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePickers(); });
+
+  select('s2');
+})();
+</script>
+</body>
+</html>

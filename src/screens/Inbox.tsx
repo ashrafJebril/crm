@@ -68,6 +68,9 @@ function dayLabel(
 type ConversationDetail = Conversation & { messages: Message[] };
 
 const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "l"];
+/** Channels offered as filter toggles. TikTok is hidden until we support it;
+ *  it stays in CHANNELS so the default filter never hides a conversation. */
+const FILTER_CHANNELS = CHANNELS.filter((ch) => ch !== "tiktok");
 
 /** Channel brand colors — used for the filter-pill dots and the solid channel
  *  tag in the thread header (per the Samemha Inbox v2 mock). */
@@ -988,7 +991,7 @@ function InboxList({
           ))}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
-          {CHANNELS.map((ch) => {
+          {FILTER_CHANNELS.map((ch) => {
             const active = channels.has(ch);
             return (
               <button

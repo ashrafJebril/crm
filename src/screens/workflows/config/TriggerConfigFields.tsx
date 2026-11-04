@@ -1,7 +1,6 @@
 import type { Tx } from "@/lib/tx";
-import { useFetch } from "@/api/useFetch";
 import { API_BASE } from "@/api/client";
-import type { Pipeline, WorkflowTriggerType } from "@/lib/types";
+import type { WorkflowTriggerType } from "@/lib/types";
 
 export function TriggerConfigFields({
   triggerType,
@@ -9,6 +8,7 @@ export function TriggerConfigFields({
   onChange,
   workflowId,
   webhookSecret,
+  stageOptions,
   tx,
 }: {
   triggerType: WorkflowTriggerType;
@@ -16,24 +16,23 @@ export function TriggerConfigFields({
   onChange: (config: Record<string, unknown>) => void;
   workflowId: string | null;
   webhookSecret: string | null;
+  stageOptions: Array<{ id: string; label: string }>;
   tx: Tx;
 }) {
-  const { data: pipelines } = useFetch<Pipeline[]>(triggerType === "ticket_stage_changed" ? "/pipelines" : null);
-
   if (triggerType === "ticket_stage_changed") {
-    const stages = (pipelines ?? []).flatMap((p) => p.stages.map((s) => ({ id: s.id, label: `${p.name} / ${s.label}` })));
     return (
-      <div style={{ marginTop: 8 }}>
-        <label style={{ fontSize: 12, color: "var(--ink-3)" }}>
+      <div className="wf-field">
+        <label className="wf-label" htmlFor="wf-trg-stage">
           {tx("Only for this stage (optional)", "لهذه المرحلة فقط (اختياري)")}
         </label>
         <select
+          id="wf-trg-stage"
+          className="wf-input"
           value={(triggerConfig.stageId as string) ?? ""}
           onChange={(e) => onChange({ ...triggerConfig, stageId: e.target.value || undefined })}
-          style={{ display: "block", width: "100%", marginTop: 4 }}
         >
           <option value="">{tx("Any stage", "أي مرحلة")}</option>
-          {stages.map((s) => (
+          {stageOptions.map((s) => (
             <option key={s.id} value={s.id}>
               {s.label}
             </option>
@@ -45,72 +44,79 @@ export function TriggerConfigFields({
 
   if (triggerType === "schedule") {
     return (
-      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div>
-          <label style={{ fontSize: 12, color: "var(--ink-3)" }}>
+      <>
+        <div className="wf-field">
+          <label className="wf-label" htmlFor="wf-trg-cron">
             {tx("Cron expression", "تعبير كرون")}
           </label>
           <input
+            id="wf-trg-cron"
+            className="wf-input mono"
+            dir="ltr"
             value={(triggerConfig.cron as string) ?? ""}
             onChange={(e) => onChange({ ...triggerConfig, cron: e.target.value })}
             placeholder="0 9 * * *"
-            style={{ display: "block", width: "100%", marginTop: 4 }}
           />
-          <p className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-            {tx("e.g. \"0 9 * * *\" runs every day at 9am.", "مثال: \"0 9 * * *\" يعمل كل يوم الساعة 9 صباحًا.")}
+          <p className="wf-hint">
+            {tx("e.g. “0 9 * * *” runs every day at 9am.", "مثال: «0 9 * * *» يعمل كل يوم الساعة 9 صباحًا.")}
           </p>
         </div>
-        <div>
-          <label style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Timezone", "المنطقة الزمنية")}</label>
+        <div className="wf-field">
+          <label className="wf-label" htmlFor="wf-trg-tz">
+            {tx("Timezone", "المنطقة الزمنية")}
+          </label>
           <input
+            id="wf-trg-tz"
+            className="wf-input"
+            dir="ltr"
             value={(triggerConfig.timezone as string) ?? "Asia/Riyadh"}
             onChange={(e) => onChange({ ...triggerConfig, timezone: e.target.value })}
-            style={{ display: "block", width: "100%", marginTop: 4 }}
           />
         </div>
-      </div>
+      </>
     );
   }
 
   if (triggerType === "webhook") {
     if (!workflowId || !webhookSecret) {
       return (
-        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+        <div className="wf-callout info">
           {tx(
             "The webhook URL and secret will appear here after you save this workflow for the first time.",
             "سيظهر رابط الويبهوك والمفتاح السري هنا بعد حفظ هذه الأتمتة لأول مرة.",
           )}
-        </p>
+        </div>
       );
     }
     const url = `${API_BASE}/webhooks/workflows/${workflowId}`;
     return (
-      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div>
-          <label style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Webhook URL", "رابط الويبهوك")}</label>
-          <input
-            readOnly
-            value={url}
-            onFocus={(e) => e.currentTarget.select()}
-            style={{ display: "block", width: "100%", marginTop: 4 }}
-          />
+      <>
+        <div className="wf-field">
+          <label className="wf-label" htmlFor="wf-trg-url">
+            {tx("Webhook URL", "رابط الويبهوك")}
+          </label>
+          <input id="wf-trg-url" className="wf-input" dir="ltr" readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
         </div>
-        <div>
-          <label style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Secret", "المفتاح السري")}</label>
+        <div className="wf-field">
+          <label className="wf-label" htmlFor="wf-trg-secret">
+            {tx("Secret", "المفتاح السري")}
+          </label>
           <input
+            id="wf-trg-secret"
+            className="wf-input"
+            dir="ltr"
             readOnly
             value={webhookSecret}
             onFocus={(e) => e.currentTarget.select()}
-            style={{ display: "block", width: "100%", marginTop: 4, fontFamily: "monospace" }}
           />
         </div>
-        <p className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+        <p className="wf-hint">
           {tx(
             "Sign requests with an X-Workflow-Signature header: hex-encoded HMAC-SHA256 of the raw request body, keyed with this secret.",
             "وقّع الطلبات برأس X-Workflow-Signature: قيمة HMAC-SHA256 بترميز hex لجسم الطلب الخام، باستخدام هذا المفتاح السري.",
           )}
         </p>
-      </div>
+      </>
     );
   }
 

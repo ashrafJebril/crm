@@ -4,6 +4,7 @@ import type { Tx } from "@/lib/tx";
 import type { WorkflowRun } from "@/lib/types";
 import { Badge } from "@/components/Badge";
 import type { BadgeKind } from "@/components/Badge";
+import { STEP_META } from "./stepMeta";
 
 const STATUS_KIND: Record<WorkflowRun["status"], BadgeKind> = {
   running: "info",
@@ -11,6 +12,14 @@ const STATUS_KIND: Record<WorkflowRun["status"], BadgeKind> = {
   completed: "ok",
   failed: "bad",
   cancelled: "",
+};
+
+const STATUS_LABEL: Record<WorkflowRun["status"], [string, string]> = {
+  running: ["running", "قيد التشغيل"],
+  waiting: ["waiting", "في الانتظار"],
+  completed: ["completed", "مكتمل"],
+  failed: ["failed", "فشل"],
+  cancelled: ["cancelled", "ملغى"],
 };
 
 export function ExecutionsTab({
@@ -52,7 +61,7 @@ export function ExecutionsTab({
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <Badge kind={STATUS_KIND[r.status]}>{r.status}</Badge>
+              <Badge kind={STATUS_KIND[r.status]}>{tx(...STATUS_LABEL[r.status])}</Badge>
               {r.isTest && (
                 <span className="muted" style={{ fontSize: 11 }}>
                   {tx("test", "اختبار")}
@@ -79,7 +88,8 @@ export function ExecutionsTab({
             {Object.entries(selected.stepsSnapshot.steps).map(([stepId, step]) => (
               <div key={stepId} style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 600 }}>
-                  {step.type} ({stepId})
+                  {tx(STEP_META[step.type].en, STEP_META[step.type].ar)}{" "}
+                  <span className="mono muted" style={{ fontWeight: 400 }}>({stepId})</span>
                 </div>
                 <pre style={{ background: "var(--bg-1)", padding: 8, borderRadius: 6, fontSize: 11 }}>
                   {JSON.stringify(selected.result[stepId] ?? null, null, 2)}

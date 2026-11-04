@@ -14,6 +14,17 @@ export interface SendWhatsappConfig {
   message: string;
 }
 
+/**
+ * An approved Meta template, the only message WhatsApp accepts outside the
+ * 24-hour customer-service window. `variables` fill the body's {{1}}, {{2}}…
+ * in order and may themselves contain workflow {{variable}} tokens.
+ */
+export interface SendWhatsappTemplateConfig {
+  name: string;
+  language: string;
+  variables: string[];
+}
+
 export interface AskAgentConfig {
   prompt: string;
 }
@@ -57,6 +68,11 @@ export interface SendWhatsappStep extends BaseStep {
   config: SendWhatsappConfig;
 }
 
+export interface SendWhatsappTemplateStep extends BaseStep {
+  type: "send_whatsapp_template";
+  config: SendWhatsappTemplateConfig;
+}
+
 export interface AskAgentStep extends BaseStep {
   type: "ask_agent";
   config: AskAgentConfig;
@@ -76,6 +92,7 @@ export type Step =
   | ConditionStep
   | AiConditionStep
   | SendWhatsappStep
+  | SendWhatsappTemplateStep
   | AskAgentStep
   | UpdateDataStep
   | DelayStep;
@@ -97,6 +114,7 @@ const STEP_TYPES = [
   "condition",
   "ai_condition",
   "send_whatsapp",
+  "send_whatsapp_template",
   "ask_agent",
   "update_data",
   "delay",
@@ -140,6 +158,17 @@ function validateConfig(type: Step["type"], config: unknown, strict: boolean): v
     case "send_whatsapp":
       requireNonEmptyString(config.message, "send_whatsapp.message", strict);
       return;
+    case "send_whatsapp_template": {
+      requireNonEmptyString(config.name, "send_whatsapp_template.name", strict);
+      requireNonEmptyString(config.language, "send_whatsapp_template.language", strict);
+      if (!Array.isArray(config.variables) || config.variables.some((v) => typeof v !== "string")) {
+        throw new Error("send_whatsapp_template.variables must be an array of strings");
+      }
+      if (strict && config.variables.some((v) => v.trim().length === 0)) {
+        throw new Error("send_whatsapp_template.variables must all be filled in");
+      }
+      return;
+    }
     case "ask_agent":
       requireNonEmptyString(config.prompt, "ask_agent.prompt", strict);
       return;

@@ -52,7 +52,6 @@ const CHANNEL_ORDER: ConvChannel[] = [
   "whatsapp",
   "instagram",
   "facebook",
-  "tiktok",
   "webchat",
   "l",
 ];

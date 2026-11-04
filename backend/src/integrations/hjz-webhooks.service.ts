@@ -1,7 +1,12 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, Logger, Optional } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import type { HjzClientWebhookDto, HjzSegmentWebhookDto } from "./hjz-webhooks.dto";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import type { HjzClientWebhookDto, HjzSaleWebhookDto, HjzSegmentWebhookDto } from "./hjz-webhooks.dto";
+
+/** Meta caps template variables; leave room for the rest of the message. */
+const MAX_ITEMS_TEXT = 600;
 
 /**
  * Inbound client-sync webhook from hjz-v2.
@@ -22,7 +27,64 @@ export class HjzWebhooksService {
   private readonly logger = new Logger(HjzWebhooksService.name);
   private static readonly SOURCE = "hjz";
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly events?: EventEmitter2,
+  ) {}
+
+  /**
+   * A completed (fully paid) hjz sale → `sale_completed` workflows, so the
+   * customer can get a WhatsApp receipt or thank-you.
+   *
+   * Only tenants that already have a CRM workspace and clients that already
+   * map to a contact are handled; anything else is acknowledged and skipped
+   * (200, never an error) so hjz doesn't retry forever. hjz may redeliver, so
+   * a sale that already started real runs is ignored.
+   */
+  async handleSale(body: HjzSaleWebhookDto): Promise<{ ok: true; matched: boolean; reason?: string; duplicate?: boolean }> {
+    const { sale } = body;
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { externalTenantId: sale.tenantId },
+      select: { id: true },
+    });
+    if (!workspace) return { ok: true, matched: false, reason: "unknown tenant" };
+    if (!sale.client) return { ok: true, matched: false, reason: "no client" };
+
+    const contact = await this.findLinkedContact(workspace.id, sale.client.id, sale.client.phone);
+    if (!contact) {
+      this.logger.log(`sale ${sale.id}: hjz client ${sale.client.id} has no CRM contact, skipping`);
+      return { ok: true, matched: false, reason: "unknown client" };
+    }
+
+    const already = await this.prisma.workflowRun.findFirst({
+      where: { workspaceId: workspace.id, isTest: false, context: { path: ["trigger", "sale", "id"], equals: sale.id } },
+      select: { id: true },
+    });
+    if (already) return { ok: true, matched: true, duplicate: true };
+
+    let itemsText = sale.items.map((i) => `${i.name} ×${i.quantity} (${i.total})`).join(" · ");
+    if (itemsText.length > MAX_ITEMS_TEXT) itemsText = `${itemsText.slice(0, MAX_ITEMS_TEXT - 1).trimEnd()}…`;
+
+    this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+      workspaceId: workspace.id,
+      triggerType: "sale_completed",
+      payload: {
+        contact: { id: contact.id, name: contact.name, phone: contact.phone },
+        sale: {
+          id: sale.id,
+          receiptNumber: sale.receiptNumber ?? (sale.number !== undefined ? String(sale.number) : sale.id),
+          total: sale.total,
+          paid: sale.paid ?? sale.total,
+          currency: sale.currency ?? "",
+          date: sale.saleDate ?? "",
+          branch: sale.branchName ?? "",
+          itemCount: sale.items.length,
+          itemsText,
+        },
+      },
+    } satisfies WorkflowTriggerEvent);
+    return { ok: true, matched: true };
+  }
 
   /** Constant-time compare of the shared webhook secret. */
   verifySecret(provided: string | undefined): void {
@@ -204,7 +266,7 @@ export class HjzWebhooksService {
    * in the CRM is linked, not duplicated.
    */
   private async findLinkedContact(workspaceId: string, clientId: string, phone?: string | null) {
-    const select = { id: true, externalSource: true } as const;
+    const select = { id: true, externalSource: true, name: true, phone: true } as const;
     return (
       (await this.prisma.contact.findFirst({ where: { workspaceId, hjzClientId: clientId }, select })) ??
       (await this.prisma.contact.findFirst({

@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
 import { PhotoSlot } from "@/components/PhotoSlot";
 import { CommentSkeleton, PostCardSkeleton } from "@/components/Skeleton";
+import { feedState, isFeedPending, type FeedState } from "./social/feedState";
 import {
   IconBolt,
   IconCheckCircle,
@@ -145,7 +146,8 @@ function PlatformMark({ platform, size = 18 }: PlatformMarkProps) {
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
-const PLATFORMS: SocialPlatform[] = ["facebook", "instagram", "tiktok"];
+// TikTok stays in the SocialPlatform type but is hidden until we support it.
+const PLATFORMS: SocialPlatform[] = ["facebook", "instagram"];
 
 function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -268,11 +270,32 @@ function SocialImpl() {
   }
   const igConnected = !!zernioAccount("instagram");
   const igUsername = zernioAccount("instagram")?.name ?? undefined;
-  const isIgLive = platform === "instagram" && igConnected;
 
   const liveIgQ = useFetch<LiveIgPost[]>(
     igConnected ? "/integrations/zernio/posts?platform=instagram" : null,
   );
+
+  // Until the status request answers, connection is unknown, not "off" —
+  // otherwise every cold load flashes "not connected" and 0 posts.
+  const statusLoaded = zernioStatusQ.data !== null;
+  const fbFeed = feedState({
+    statusLoaded,
+    statusError: zernioStatusQ.error,
+    connected: fbConnected,
+    postsLoaded: liveFbQ.data !== null,
+    postsError: liveFbQ.error,
+  });
+  const igFeed = feedState({
+    statusLoaded,
+    statusError: zernioStatusQ.error,
+    connected: igConnected,
+    postsLoaded: liveIgQ.data !== null,
+    postsError: liveIgQ.error,
+  });
+  const feedFor = (p: SocialPlatform): FeedState =>
+    p === "facebook" ? fbFeed : p === "instagram" ? igFeed : "ready";
+  const currentFeed = feedFor(platform);
+  const feedPending = isFeedPending(currentFeed);
 
   const liveIgPostIds = useMemo<Set<string>>(() => {
     const s = new Set<string>();
@@ -624,7 +647,9 @@ function SocialImpl() {
           >
             <PlatformMark platform={p} size={16} />
             <span>{PLATFORM_LABEL[p]}</span>
-            <span className="count">{platformCounts[p]}</span>
+            <span className="count" aria-busy={isFeedPending(feedFor(p))}>
+              {isFeedPending(feedFor(p)) ? "…" : platformCounts[p]}
+            </span>
           </button>
         ))}
       </div>
@@ -711,7 +736,7 @@ function SocialImpl() {
               </span>
             )}
             <span className="mono muted" style={{ fontSize: 11 }}>
-              {feed.length} {tx("posts", "منشور")}
+              {feedPending ? tx("loading…", "تحميل…") : `${feed.length} ${tx("posts", "منشور")}`}
             </span>
           </div>
           {platform === "facebook" && (
@@ -720,27 +745,31 @@ function SocialImpl() {
                 padding: "8px 16px",
                 borderBottom: "1px solid var(--line-soft)",
                 fontSize: 11.5,
-                color: fbConnected ? "var(--ink-2)" : "var(--ink-3)",
-                background: fbConnected ? "var(--bg-1)" : "var(--bg-2)",
+                color: fbConnected || fbFeed === "checking" ? "var(--ink-2)" : "var(--ink-3)",
+                background: fbConnected || fbFeed === "checking" ? "var(--bg-1)" : "var(--bg-2)",
               }}
             >
-              {fbConnected
-                ? tx(
-                    `Showing real posts from ${fbPageName ?? "your page"} on Facebook`,
-                    `منشورات حقيقية من ${fbPageName ?? "صفحتك"} على فيسبوك`,
-                  )
-                : tx(
-                    "Facebook isn't connected — connect it in Settings → Integrations",
-                    "فيسبوك غير مرتبط — اربطه من الإعدادات ← التكاملات",
-                  )}
+              {fbFeed === "checking"
+                ? tx("Checking your Facebook connection…", "جارٍ التحقق من ربط فيسبوك…")
+                : fbFeed === "status-error"
+                  ? tx("Couldn't check the Facebook connection", "تعذّر التحقق من ربط فيسبوك")
+                  : fbConnected
+                    ? tx(
+                        `Showing real posts from ${fbPageName ?? "your page"} on Facebook`,
+                        `منشورات حقيقية من ${fbPageName ?? "صفحتك"} على فيسبوك`,
+                      )
+                    : tx(
+                        "Facebook isn't connected — connect it in Settings → Integrations",
+                        "فيسبوك غير مرتبط — اربطه من الإعدادات ← التكاملات",
+                      )}
               {liveFbQ.loading && (
                 <span className="mono muted" style={{ marginInlineStart: 8 }}>
                   · {tx("loading…", "تحميل…")}
                 </span>
               )}
-              {liveFbQ.error && (
+              {(liveFbQ.error || (fbFeed === "status-error" && zernioStatusQ.error)) && (
                 <span style={{ color: "var(--bad)", marginInlineStart: 8 }}>
-                  · {liveFbQ.error}
+                  · {liveFbQ.error ?? zernioStatusQ.error}
                 </span>
               )}
             </div>
@@ -755,7 +784,7 @@ function SocialImpl() {
               gap: 12,
             }}
           >
-            {((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+            {feedPending &&
             feed.length === 0 ? (
               <div
                 aria-label={tx("Loading posts", "جارٍ تحميل المنشورات")}
@@ -766,7 +795,7 @@ function SocialImpl() {
                 ))}
               </div>
             ) : null}
-            {!((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+            {!feedPending &&
               feed.length === 0 && (
                 <div
                   style={{
@@ -781,7 +810,11 @@ function SocialImpl() {
                   }}
                 >
                   <div style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
-                    {platform === "facebook" && !fbConnected
+                    {currentFeed === "status-error"
+                      ? tx("Couldn't check your connections", "تعذّر التحقق من الربط")
+                      : currentFeed === "posts-error"
+                        ? tx("Couldn't load posts", "تعذّر تحميل المنشورات")
+                        : platform === "facebook" && !fbConnected
                       ? tx("Facebook isn't connected yet", "فيسبوك غير مرتبط")
                       : platform === "facebook"
                         ? tx("No posts on this page yet", "لا توجد منشورات على هذه الصفحة")
@@ -792,7 +825,9 @@ function SocialImpl() {
                             : tx("TikTok coming soon", "تيك توك قريبًا")}
                   </div>
                   <div className="mono" style={{ fontSize: 11 }}>
-                    {platform === "facebook" && !fbConnected
+                    {currentFeed === "status-error" || currentFeed === "posts-error"
+                      ? tx("Refresh the page to try again.", "حدّث الصفحة للمحاولة مجددًا.")
+                      : platform === "facebook" && !fbConnected
                       ? tx(
                           "Settings → Integrations → Connect Facebook",
                           "الإعدادات ← التكاملات ← اربط فيسبوك",
@@ -809,7 +844,7 @@ function SocialImpl() {
                 </div>
               )}
             {!(
-              ((isFbLive && liveFbQ.loading) || (isIgLive && liveIgQ.loading)) &&
+              feedPending &&
               feed.length === 0
             ) &&
               feed.map((post) => {
@@ -1355,7 +1390,7 @@ function SocialImpl() {
                 fontSize: 13,
               }}
             >
-              <span>{tx("Select a post", "اختر منشورًا")}</span>
+              <span>{feedPending ? tx("Loading…", "جارٍ التحميل…") : tx("Select a post", "اختر منشورًا")}</span>
             </div>
           )}
         </div>

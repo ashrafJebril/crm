@@ -70,7 +70,7 @@ export const PERMS: PermArea[] = [
   { area: "AI Agents",   caps: ["View", "Edit prompt", "Deploy",        "Delete"]  },
   { area: "Campaigns",   caps: ["View", "Create",      "Send",          "Delete"]  },
   { area: "Contacts",    caps: ["View", "Edit",        "Export",        "Delete"]  },
-  { area: "Automations", caps: ["View", "Edit",        "Activate",      "Delete"]  },
+  { area: "Workflows",   caps: ["View", "Edit",        "Activate",      "Delete"]  },
   { area: "Settings",    caps: ["View", "Edit",        "Integrations",  "Billing"] },
 ];
 

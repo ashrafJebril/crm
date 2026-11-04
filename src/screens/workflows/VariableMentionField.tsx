@@ -25,14 +25,14 @@ function serializeDoc(doc: JSONContent): string {
 
 const TOKEN_PATTERN = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
 
-function parseTemplate(template: string): JSONContent {
+function parseTemplate(template: string, labels: Map<string, string> = new Map()): JSONContent {
   const content: JSONContent[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   TOKEN_PATTERN.lastIndex = 0;
   while ((match = TOKEN_PATTERN.exec(template))) {
     if (match.index > lastIndex) content.push({ type: "text", text: template.slice(lastIndex, match.index) });
-    content.push({ type: "mention", attrs: { id: match[1], label: match[1] } });
+    content.push({ type: "mention", attrs: { id: match[1], label: labels.get(match[1]) ?? match[1] } });
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < template.length) content.push({ type: "text", text: template.slice(lastIndex) });
@@ -62,11 +62,17 @@ export function VariableMentionField({
   onChange,
   variables,
   placeholder,
+  hint = "Type \"{{\" to insert a variable.",
+  insertLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
   variables: VariableOption[];
   placeholder?: string;
+  /** Help line under the field. */
+  hint?: string;
+  /** When set, renders a row of clickable variable chips with this label. */
+  insertLabel?: string;
 }) {
   const suggestion = useMemo<Partial<SuggestionOptions>>(
     () => ({
@@ -125,13 +131,14 @@ export function VariableMentionField({
         ],
       }),
     ],
-    content: parseTemplate(value),
+    // Show saved {{path}} tokens with their friendly label, not the raw path.
+    content: parseTemplate(value, new Map(variables.map((v) => [v.path, v.label]))),
     onUpdate: ({ editor: e }) => onChange(serializeDoc(e.getJSON())),
   });
 
   useEffect(() => {
     if (editor && serializeDoc(editor.getJSON()) !== value) {
-      editor.commands.setContent(parseTemplate(value));
+      editor.commands.setContent(parseTemplate(value, new Map(variables.map((v) => [v.path, v.label]))));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -144,8 +151,31 @@ export function VariableMentionField({
           {placeholder}
         </p>
       )}
+      {insertLabel && variables.length > 0 && (
+        <div className="wf-vars" style={{ marginTop: 8 }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {insertLabel}
+          </span>
+          {variables.map((v) => (
+            <button
+              key={v.path}
+              type="button"
+              className="wf-var-btn"
+              onClick={() =>
+                editor
+                  ?.chain()
+                  .focus()
+                  .insertContent([{ type: "mention", attrs: { id: v.path, label: v.label } }, { type: "text", text: " " }])
+                  .run()
+              }
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+      )}
       <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-        {"Type \"{{\" to insert a variable."}
+        {hint}
       </p>
     </div>
   );

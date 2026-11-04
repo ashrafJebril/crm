@@ -7,6 +7,9 @@ export const TRIGGER_TYPES = [
   "ticket_stage_changed",
   "schedule",
   "webhook",
+  "appointment_completed",
+  // Sent by connected systems (hjz-v2) through /webhooks/hjz/sales.
+  "sale_completed",
 ] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
 

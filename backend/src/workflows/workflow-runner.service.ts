@@ -4,12 +4,14 @@ import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AskAgentExecutor } from "./executors/ask-agent.executor";
 import { SendWhatsappExecutor } from "./executors/send-whatsapp.executor";
+import { SendWhatsappTemplateExecutor } from "./executors/send-whatsapp-template.executor";
 import { UpdateDataExecutor } from "./executors/update-data.executor";
 import { evaluateCondition, interpretYesNo } from "./workflow-condition";
 import {
   AskAgentStep,
   DelayConfig,
   SendWhatsappStep,
+  SendWhatsappTemplateStep,
   Step,
   StepGraph,
   StoredCursor,
@@ -27,6 +29,7 @@ export class WorkflowRunnerService {
     private readonly askAgent: AskAgentExecutor,
     private readonly updateData: UpdateDataExecutor,
     private readonly paymentLock: PaymentLockService,
+    private readonly sendWhatsappTemplate: SendWhatsappTemplateExecutor,
   ) {}
 
   async run(runId: string): Promise<void> {
@@ -74,7 +77,8 @@ export class WorkflowRunnerService {
           continue;
         }
 
-        if (step.type === "send_whatsapp" && (await this.sendsBlocked(run.workspaceId))) {
+        const isSend = step.type === "send_whatsapp" || step.type === "send_whatsapp_template";
+        if (isSend && (await this.sendsBlocked(run.workspaceId))) {
           // Park, do not fail: same step, same context, due now. The poller
           // skips it while the workspace is locked and resumes it afterwards.
           await this.prisma.workflowRun.update({
@@ -132,12 +136,14 @@ export class WorkflowRunnerService {
 
   private async executeAction(
     workspaceId: string,
-    step: SendWhatsappStep | AskAgentStep | UpdateDataStep,
+    step: SendWhatsappStep | SendWhatsappTemplateStep | AskAgentStep | UpdateDataStep,
     context: RunContext,
   ): Promise<Record<string, unknown>> {
     switch (step.type) {
       case "send_whatsapp":
         return this.sendWhatsapp.execute(workspaceId, step.config, context);
+      case "send_whatsapp_template":
+        return this.sendWhatsappTemplate.execute(workspaceId, step.config, context);
       case "ask_agent":
         return this.askAgent.execute(workspaceId, step.config, context);
       case "update_data":
