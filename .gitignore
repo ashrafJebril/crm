@@ -26,3 +26,6 @@ dist-ssr
 *.log
 build_stderr.txt
 build_stdout.txt
+
+# Design review artifacts (Lavish)
+.lavish/
