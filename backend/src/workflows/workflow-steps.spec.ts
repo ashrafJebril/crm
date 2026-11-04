@@ -62,6 +62,38 @@ describe("validateStepGraph", () => {
   });
 });
 
+describe("send_whatsapp_template steps", () => {
+  const graphWith = (config: unknown) => ({
+    entry: "t1",
+    steps: { t1: { id: "t1", type: "send_whatsapp_template", config } },
+  });
+
+  it("accepts a complete template step", () => {
+    const raw = graphWith({ name: "receipt", language: "en", variables: ["{{trigger.contact.name}}", "R-12"] });
+    expect(validateStepGraph(raw)).toEqual(raw);
+  });
+
+  it("lets a draft save with the template not picked yet", () => {
+    expect(() => validateStepGraph(graphWith({ name: "", language: "", variables: [] }), { strict: false })).not.toThrow();
+  });
+
+  it("refuses to activate without a template", () => {
+    expect(() => validateStepGraph(graphWith({ name: "", language: "en", variables: [] }))).toThrow(/name/);
+  });
+
+  it("refuses to activate with an empty variable", () => {
+    expect(() => validateStepGraph(graphWith({ name: "receipt", language: "en", variables: ["x", " "] }))).toThrow(
+      /variables/,
+    );
+  });
+
+  it("rejects variables that are not strings, even in a draft", () => {
+    expect(() =>
+      validateStepGraph(graphWith({ name: "receipt", language: "en", variables: [1] }), { strict: false }),
+    ).toThrow(/variables/);
+  });
+});
+
 describe("initialCursor", () => {
   it("points at the graph's entry step", () => {
     expect(initialCursor({ entry: "s1", steps: {} })).toEqual({ stepId: "s1" });

@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
+import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { HjzAppointmentSyncService } from "../hjz-sync/hjz-appointment-sync.service";
 import { CreateAppointmentDto, UpdateAppointmentDto } from "./appointments.dto";
 
@@ -9,6 +11,7 @@ export class AppointmentsService {
     private readonly prisma: PrismaService,
     // Connected to HJZ → every booking change is mirrored there (no-op otherwise).
     @Optional() private readonly hjzSync?: HjzAppointmentSyncService,
+    @Optional() private readonly events?: EventEmitter2,
   ) {}
 
   list(workspaceId: string, opts: { from?: string; to?: string; status?: string; limit?: number } = {}) {
@@ -43,15 +46,36 @@ export class AppointmentsService {
   }
 
   async update(workspaceId: string, id: string, dto: UpdateAppointmentDto) {
-    await this.get(workspaceId, id);
-    const row = await this.prisma.appointment.update({
+    const existing = await this.get(workspaceId, id);
+    const updated = await this.prisma.appointment.update({
       where: { id },
       data: {
         ...dto,
         startAt: dto.startAt ? new Date(dto.startAt) : undefined,
       },
+      include: { contact: { select: { id: true, name: true, phone: true } } },
     });
+    const { contact, ...row } = updated;
     void this.hjzSync?.changed(row.id);
+    // Only the transition into "completed" counts, so editing a finished
+    // booking never re-sends a thank-you.
+    if (existing.status !== "completed" && row.status === "completed") {
+      this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType: "appointment_completed",
+        payload: {
+          appointment: {
+            id: row.id,
+            contactId: row.contactId,
+            service: row.service,
+            serviceAr: row.serviceAr,
+            startAt: row.startAt.toISOString(),
+            durationMin: row.durationMin,
+          },
+          contact,
+        },
+      } satisfies WorkflowTriggerEvent);
+    }
     return row;
   }
 

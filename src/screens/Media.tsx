@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -389,62 +390,6 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * <img> tags don't send Authorization headers. We fetch the binary via
- * fetch() with the bearer token, then render it as a blob URL.
- */
-function AuthorizedImage({
-  url,
-  alt,
-  token,
-}: {
-  url: string;
-  alt: string;
-  token: string | null;
-}) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let objectUrl: string | null = null;
-
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.blob();
-      })
-      .then((b) => {
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(b);
-        setSrc(objectUrl);
-      })
-      .catch(() => {
-        /* leave src null */
-      });
-
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [url, token]);
-
-  if (!src) {
-    return <div className="mono muted" style={{ fontSize: 11 }}>…</div>;
-  }
-  return (
-    <img
-      src={src}
-      alt={alt}
-      style={{
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-        display: "block",
-      }}
-    />
   );
 }
 

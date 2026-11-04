@@ -11,6 +11,9 @@ interface ZernioAccount {
   accountId: string | null;
   name: string | null;
   connectedAt?: string;
+  /** Live check against Zernio: "reconnect" when Meta revoked access or the sign-in expired. */
+  health?: "ok" | "reconnect" | "unknown";
+  healthReason?: string | null;
 }
 interface ZernioStatus {
   configured: boolean;
@@ -37,22 +40,9 @@ const PLATFORMS: PlatformDef[] = [
     color: "#E1306C",
   },
   {
-    key: "tiktok",
-    label: "TikTok",
-    color: "#010101",
-    note: (tx) => tx("Publishing only (no DMs/comments via Zernio).", "النشر فقط (بدون رسائل/تعليقات عبر Zernio)."),
-  },
-  {
     key: "whatsapp",
     label: "WhatsApp",
     color: "#25D366",
-  },
-  {
-    key: "snapchat",
-    label: "Snapchat",
-    color: "#FFFC00",
-    beta: true,
-    note: (tx) => tx("In beta at Zernio — not yet available.", "قيد التجربة في Zernio — غير متاح بعد."),
   },
 ];
 
@@ -125,8 +115,8 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
     <SettingsCard
       title={tx("Social accounts via Zernio", "حسابات التواصل عبر Zernio")}
       description={tx(
-        "Connect Facebook, Instagram, TikTok and WhatsApp with one click — the customer just authenticates, no Meta App Review or token needed.",
-        "اربط فيسبوك وإنستغرام وتيك توك وواتساب بنقرة واحدة — يوثّق العميل فقط، بدون مراجعة تطبيق Meta أو رمز.",
+        "Connect Facebook, Instagram and WhatsApp with one click — the customer just authenticates, no Meta App Review or token needed.",
+        "اربط فيسبوك وإنستغرام وواتساب بنقرة واحدة — يوثّق العميل فقط، بدون مراجعة تطبيق Meta أو رمز.",
       )}
     >
       {notConfigured && (
@@ -142,6 +132,8 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
         {PLATFORMS.map((p) => {
           const acc = accountFor(p.key);
           const connected = !!acc;
+          // Connected here, but Zernio says it no longer works (e.g. Meta revoked it).
+          const needsReconnect = connected && acc?.health === "reconnect";
           const rowBusy = busy === p.key;
           return (
             <div
@@ -163,7 +155,7 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
                   background: p.color,
                   display: "grid",
                   placeItems: "center",
-                  color: p.key === "snapchat" ? "#000" : "#fff",
+                  color: "#fff",
                   flexShrink: 0,
                 }}
               >
@@ -178,8 +170,34 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
                       ? p.note(tx)
                       : tx("Not connected", "غير متصل")}
                 </div>
+                {needsReconnect && (
+                  <div role="alert" style={{ fontSize: 11.5, color: "var(--bad)", marginTop: 4, lineHeight: 1.45 }}>
+                    {acc?.healthReason ?? tx("This connection stopped working. Connect it again.", "توقف هذا الربط عن العمل. اربطه مجددًا.")}
+                  </div>
+                )}
+                {p.key === "whatsapp" && (
+                  <div style={{ fontSize: 11.5, color: "var(--ink-2)", marginTop: 4, lineHeight: 1.45 }}>
+                    {tx(
+                      "Meta bills WhatsApp template messages (campaigns, receipts) to your own WhatsApp Business account. Add a card in ",
+                      "تحتسب ميتا رسائل قوالب واتساب (الحملات والإيصالات) على حساب واتساب للأعمال الخاص بك. أضف بطاقة في ",
+                    )}
+                    <a
+                      href="https://business.facebook.com/billing_hub/payment_settings"
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "var(--accent)" }}
+                    >
+                      {tx("Meta Business Suite → Billing", "Meta Business Suite ← الفوترة")}
+                    </a>
+                    {tx(", or Meta stops delivering them.", "، وإلا ستتوقف ميتا عن تسليمها.")}
+                  </div>
+                )}
               </div>
-              {connected ? (
+              {needsReconnect ? (
+                <Badge kind="bad" dot>
+                  {tx("Reconnect", "أعد الربط")}
+                </Badge>
+              ) : connected ? (
                 <Badge kind="ok" dot>
                   {tx("Live", "حي")}
                 </Badge>
@@ -189,7 +207,12 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
                 <Badge kind="">{tx("Off", "غير مفعل")}</Badge>
               )}
               {canEdit && (
-                <div style={{ flexShrink: 0 }}>
+                <div style={{ flexShrink: 0, display: "flex", gap: 6 }}>
+                  {needsReconnect && (
+                    <button type="button" className="btn primary sm" onClick={() => onConnect(p.key)} disabled={rowBusy}>
+                      {rowBusy ? tx("Opening…", "جارٍ الفتح…") : tx("Reconnect", "أعد الربط")}
+                    </button>
+                  )}
                   {connected ? (
                     <button
                       type="button"

@@ -5,6 +5,7 @@ describe("WorkflowRunnerService", () => {
   let sendWhatsapp: { execute: jest.Mock };
   let askAgent: { execute: jest.Mock };
   let updateData: { execute: jest.Mock };
+  let sendTemplate: { execute: jest.Mock };
   let isLocked: jest.Mock;
   let runner: WorkflowRunnerService;
 
@@ -28,13 +29,43 @@ describe("WorkflowRunnerService", () => {
     sendWhatsapp = { execute: jest.fn().mockResolvedValue({ ok: true, id: "m1" }) };
     askAgent = { execute: jest.fn().mockResolvedValue({ answer: "yes" }) };
     updateData = { execute: jest.fn().mockResolvedValue({ tags: ["vip"] }) };
+    sendTemplate = { execute: jest.fn().mockResolvedValue({ ok: true, id: "t1", conversationId: "conv1" }) };
     runner = new WorkflowRunnerService(
       prisma as never,
       sendWhatsapp as never,
       askAgent as never,
       updateData as never,
       { isLocked } as never,
+      sendTemplate as never,
     );
+  });
+
+  describe("send_whatsapp_template", () => {
+    const templateRun = () =>
+      baseRun({
+        cursor: { stepId: "t1" },
+        stepsSnapshot: {
+          entry: "t1",
+          steps: { t1: { id: "t1", type: "send_whatsapp_template", config: { name: "receipt", language: "en", variables: ["x"] } } },
+        },
+      });
+
+    it("runs the template executor and records its output", async () => {
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(templateRun());
+      await runner.run("run1");
+      expect(sendTemplate.execute).toHaveBeenCalledWith("ws1", { name: "receipt", language: "en", variables: ["x"] }, expect.anything());
+      const done = prisma.workflowRun.update.mock.calls.at(-1)[0].data;
+      expect(done.status).toBe("completed");
+      expect(done.result.t1).toEqual({ ok: true, id: "t1", conversationId: "conv1" });
+    });
+
+    it("parks instead of sending while the workspace is payment-locked", async () => {
+      isLocked.mockResolvedValue(true);
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(templateRun());
+      await runner.run("run1");
+      expect(sendTemplate.execute).not.toHaveBeenCalled();
+      expect(prisma.workflowRun.update.mock.calls[0][0].data.status).toBe("waiting");
+    });
   });
 
   describe("payment lock", () => {

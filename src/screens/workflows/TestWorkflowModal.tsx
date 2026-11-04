@@ -3,17 +3,52 @@ import { Modal } from "@/components/Modal";
 import { useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import type { Tx } from "@/lib/tx";
+import type { WorkflowTriggerType } from "@/lib/types";
+
+/** Starter payloads shaped like what each trigger delivers as `trigger.*`. */
+const SAMPLE_PAYLOAD: Record<WorkflowTriggerType, Record<string, unknown>> = {
+  contact_created: { contact: { id: "", name: "Lina", phone: "", lifecycle: "lead" } },
+  message_received: {
+    contact: { id: "", name: "Lina" },
+    message: { body: "Hi, is this still available?" },
+    conversation: { id: "", channel: "whatsapp" },
+  },
+  ticket_created: { ticket: { id: "", title: "Order not delivered", number: 1 } },
+  ticket_stage_changed: { ticket: { id: "", title: "Order not delivered", stageId: "" } },
+  schedule: {},
+  webhook: {},
+  appointment_completed: {
+    appointment: { id: "", contactId: "", service: "Haircut", serviceAr: "قص شعر", startAt: "", durationMin: 30 },
+    contact: { id: "", name: "Lina", phone: "" },
+  },
+  sale_completed: {
+    contact: { id: "", name: "Lina", phone: "" },
+    sale: {
+      id: "test-sale",
+      receiptNumber: "SAL-1042",
+      total: "25.00",
+      paid: "25.00",
+      currency: "JOD",
+      date: "",
+      branch: "Abdoun",
+      itemCount: 2,
+      itemsText: "Haircut ×1 (15.00) · Beard trim ×1 (10.00)",
+    },
+  },
+};
 
 export function TestWorkflowModal({
   workflowId,
+  triggerType,
   onClose,
   tx,
 }: {
   workflowId: string;
+  triggerType: WorkflowTriggerType;
   onClose: () => void;
   tx: Tx;
 }) {
-  const [payloadText, setPayloadText] = useState('{\n  "contact": { "id": "", "name": "" }\n}');
+  const [payloadText, setPayloadText] = useState(() => JSON.stringify(SAMPLE_PAYLOAD[triggerType], null, 2));
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ runId: string } | null>(null);
 
@@ -42,10 +77,13 @@ export function TestWorkflowModal({
         )}
       </p>
       <textarea
+        className="wf-input mono"
+        dir="ltr"
         rows={10}
         value={payloadText}
         onChange={(e) => setPayloadText(e.target.value)}
-        style={{ width: "100%", fontFamily: "var(--font-mono)", fontSize: 12 }}
+        aria-label={tx("Trigger payload (JSON)", "بيانات المُشغّل (JSON)")}
+        style={{ fontSize: 12 }}
       />
       {error && <div style={{ color: "var(--bad)", marginTop: 8 }}>{error}</div>}
       {result && (
@@ -55,10 +93,10 @@ export function TestWorkflowModal({
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-        <button type="button" onClick={onClose}>
+        <button type="button" className="btn" onClick={onClose}>
           {tx("Close", "إغلاق")}
         </button>
-        <button type="button" onClick={onRun}>
+        <button type="button" className="btn primary" onClick={onRun} disabled={testMut.loading}>
           {tx("Run test", "تشغيل الاختبار")}
         </button>
       </div>

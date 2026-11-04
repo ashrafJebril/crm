@@ -15,8 +15,8 @@ interface PhonePreviewProps {
 }
 
 /**
- * WhatsApp-style phone mockup used by the Campaigns wizard and the
- * Automations wizard. Sticky so it stays in view while the form scrolls.
+ * WhatsApp-style phone mockup used by the Campaigns wizard.
+ * Sticky so it stays in view while the form scrolls.
  */
 export function PhonePreview({ body, buttons = [], tx, dir, caption, footer }: PhonePreviewProps) {
   return (

@@ -588,6 +588,105 @@ export class ZernioClient {
 
   // ─── HTTP core ───────────────────────────────────────────────────────────
 
+  // ─── WhatsApp broadcasts (Campaigns) ─────────────────────────────────────
+  //
+  // Flow: import the audience as contacts (so `{{1}} = name` personalises),
+  // create a draft with the template + variable mapping, add recipients by
+  // phone, then send or schedule. Paths per docs.zernio.com/broadcasts.
+
+  /** Upsert up to 1,000 contacts with a WhatsApp channel. Duplicates are skipped. */
+  async bulkCreateContacts(
+    profileId: string,
+    accountId: string,
+    contacts: Array<{ name: string; platformIdentifier: string }>,
+  ): Promise<{ created: number; skipped: number; errors: number }> {
+    const res = await this.request<{ created?: number; skipped?: number; errors?: unknown[] }>(
+      "POST",
+      "/contacts/bulk",
+      { body: { profileId, accountId, platform: "whatsapp", contacts } },
+    );
+    return { created: res.created ?? 0, skipped: res.skipped ?? 0, errors: res.errors?.length ?? 0 };
+  }
+
+  /**
+   * Create a draft WhatsApp broadcast. `variables[i]` fills template
+   * placeholder {{i+1}} for every recipient: a contact field Zernio resolves
+   * per recipient, or one literal value for everyone.
+   */
+  async createWhatsAppBroadcast(input: {
+    profileId: string;
+    accountId: string;
+    name: string;
+    template: { name: string; language: string };
+    variables: ZernioBroadcastVariable[];
+  }): Promise<string> {
+    const template: Record<string, unknown> = { name: input.template.name, language: input.template.language };
+    // Absent, not empty: Meta rejects an empty parameters list.
+    if (input.variables.length > 0) {
+      template.components = [
+        { type: "body", parameters: input.variables.map((_, i) => ({ type: "text", text: `{{${i + 1}}}` })) },
+      ];
+      template.variableMapping = Object.fromEntries(input.variables.map((v, i) => [String(i + 1), v]));
+    }
+    const res = await this.request<{ broadcast?: { id?: string; _id?: string } }>("POST", "/broadcasts", {
+      body: {
+        profileId: input.profileId,
+        accountId: input.accountId,
+        platform: "whatsapp",
+        name: input.name,
+        template,
+      },
+    });
+    const id = res.broadcast?.id ?? res.broadcast?._id;
+    if (!id) throw new HttpException("Zernio did not return a broadcast id", 502);
+    return id;
+  }
+
+  /** Add up to 100 E.164 phones; unseen numbers become contacts. */
+  async addBroadcastRecipients(broadcastId: string, phones: string[]): Promise<{ added: number; skipped: number }> {
+    const res = await this.request<{ added?: number; skipped?: number }>(
+      "POST",
+      `/broadcasts/${encodeURIComponent(broadcastId)}/recipients`,
+      { body: { phones } },
+    );
+    return { added: res.added ?? 0, skipped: res.skipped ?? 0 };
+  }
+
+  async sendBroadcast(broadcastId: string): Promise<void> {
+    await this.request("POST", `/broadcasts/${encodeURIComponent(broadcastId)}/send`, {});
+  }
+
+  async scheduleBroadcast(broadcastId: string, scheduledAt: string): Promise<void> {
+    await this.request("POST", `/broadcasts/${encodeURIComponent(broadcastId)}/schedule`, { body: { scheduledAt } });
+  }
+
+  /** Stops a scheduled or in-progress broadcast; already-sent messages stay sent. */
+  async cancelBroadcast(broadcastId: string): Promise<void> {
+    await this.request("POST", `/broadcasts/${encodeURIComponent(broadcastId)}/cancel`, {});
+  }
+
+  async getBroadcast(broadcastId: string): Promise<ZernioBroadcastStats> {
+    const res = await this.request<{
+      broadcast?: {
+        status?: string;
+        recipientCount?: number;
+        sentCount?: number;
+        deliveredCount?: number;
+        readCount?: number;
+        failedCount?: number;
+      };
+    }>("GET", `/broadcasts/${encodeURIComponent(broadcastId)}`, {});
+    const b = res.broadcast ?? {};
+    return {
+      status: b.status ?? "draft",
+      recipientCount: b.recipientCount ?? 0,
+      sent: b.sentCount ?? 0,
+      delivered: b.deliveredCount ?? 0,
+      read: b.readCount ?? 0,
+      failed: b.failedCount ?? 0,
+    };
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -636,6 +735,14 @@ export class ZernioClient {
           : {};
       const errMsg = String(errObj.error ?? errObj.message ?? `Zernio error ${res.status}`);
       this.log.warn(`Zernio ${method} ${redactUrl(url.toString())} -> ${res.status} ${errMsg}`);
+      // Zernio answers this when Meta has revoked the connected WhatsApp
+      // number; say what to do instead of echoing its internal wording.
+      if (/whatsapp account not found/i.test(errMsg)) {
+        throw new HttpException(
+          "Your WhatsApp connection was removed by Meta. Reconnect WhatsApp in Settings → Integrations, then try again.",
+          400,
+        );
+      }
       // Surface client errors (4xx) as-is; collapse upstream 5xx to 502.
       throw new HttpException(errMsg, res.status >= 500 ? 502 : res.status);
     }
@@ -653,6 +760,8 @@ export interface ZernioAccount {
   name?: string;
   platformStatus?: string;
   isActive?: boolean;
+  /** Zernio's own flag that the account's sign-in has to be redone. */
+  needsReconnection?: boolean;
   metadata?: unknown;
 }
 
@@ -866,4 +975,19 @@ export interface ZernioWhatsAppNumbers {
     template?: { name?: string };
     isSandbox?: boolean;
   };
+}
+
+/** One template placeholder's value in a broadcast. */
+export type ZernioBroadcastVariable =
+  | { field: "name" | "phone" | "email" | "company" }
+  | { field: "custom"; customValue: string };
+
+export interface ZernioBroadcastStats {
+  /** draft | scheduled | sending | completed | failed | cancelled */
+  status: string;
+  recipientCount: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
 }

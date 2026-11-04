@@ -114,19 +114,15 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
     zernioStatusQ.data?.accounts?.find((a) => a.platform === p);
   const fbConnected = !!accountFor("facebook");
   const igConnected = !!accountFor("instagram");
-  const tiktokConnected = !!accountFor("tiktok");
   const fbReady = fbConnected && selectedChannels.includes("facebook");
   const igReady = igConnected && selectedChannels.includes("instagram");
-  const tiktokReady = tiktokConnected && selectedChannels.includes("tiktok");
-  // Instagram and TikTok require media; text-only posts aren't accepted there.
+  // Instagram requires media; text-only posts aren't accepted there.
   const igRequiresImage = selectedChannels.includes("instagram") && !selectedMediaId;
-  const tiktokRequiresMedia = selectedChannels.includes("tiktok") && !selectedMediaId;
   const canPost =
     content.trim().length > 0 &&
     selectedChannels.length > 0 &&
-    (fbReady || igReady || tiktokReady) &&
+    (fbReady || igReady) &&
     !igRequiresImage &&
-    !tiktokRequiresMedia &&
     !publishMut.loading;
 
   const onPost = async () => {
@@ -233,8 +229,6 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                 fbPageName={accountFor("facebook")?.name ?? undefined}
                 igConnected={igConnected}
                 igUsername={accountFor("instagram")?.name ?? undefined}
-                tiktokConnected={tiktokConnected}
-                tiktokName={accountFor("tiktok")?.name ?? undefined}
                 selected={selectedChannels}
                 onToggle={(ch) => {
                   setSelectedChannels((prev) =>
@@ -369,7 +363,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
               {tx("Post preview", "معاينة المنشور")}
             </div>
             <div style={{ marginBottom: 10, display: "flex", gap: 6 }}>
-              {(["all", "facebook", "instagram", "tiktok"] as const).map((tab) => (
+              {(["all", "facebook", "instagram"] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -417,18 +411,6 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
                 />
               )}
 
-            {(previewTab === "all" || previewTab === "tiktok") &&
-              selectedChannels.includes("tiktok") && (
-                <div style={{ marginTop: 14 }}>
-                  <FbPreviewCard
-                    pageName={accountFor("tiktok")?.name ?? activeWorkspace?.name ?? "TikTok"}
-                    content={content}
-                    hasMedia={!!selectedMediaId}
-                    mediaPreview={selectedPreview}
-                  />
-                </div>
-              )}
-
             {!selectedChannels.length && (
               <div className="mono muted" style={{ fontSize: 11, padding: 12 }}>
                 {tx("Select at least one channel.", "اختر قناة واحدة على الأقل.")}
@@ -470,7 +452,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
           }}
         >
           <span style={{ flex: 1, fontSize: 11, color: "var(--ink-3)" }}>
-            {!fbConnected && !igConnected && !tiktokConnected &&
+            {!fbConnected && !igConnected &&
               tx(
                 "No channels connected — connect from Settings → Integrations.",
                 "لا توجد قنوات متصلة — اربطها من الإعدادات.",
@@ -507,8 +489,6 @@ interface ChannelChipsProps {
   fbPageName: string | undefined;
   igConnected: boolean;
   igUsername: string | undefined;
-  tiktokConnected: boolean;
-  tiktokName: string | undefined;
   selected: PublishChannel[];
   onToggle: (ch: PublishChannel) => void;
   tx: (en: string, ar: string) => string;
@@ -519,8 +499,6 @@ function ChannelChips({
   fbPageName,
   igConnected,
   igUsername,
-  tiktokConnected,
-  tiktokName,
   selected,
   onToggle,
   tx,
@@ -580,12 +558,6 @@ function ChannelChips({
         `Instagram${igConnected && igUsername ? ` · @${igUsername}` : ""}`,
         igConnected,
         "#E1306C",
-      )}
-      {renderChip(
-        "tiktok",
-        `TikTok${tiktokConnected && tiktokName ? ` · ${tiktokName}` : ""}`,
-        tiktokConnected,
-        "#010101",
       )}
     </div>
   );

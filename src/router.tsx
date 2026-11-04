@@ -8,8 +8,6 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   calendar: lazy(() => import("@/screens/Calendar")),
   social: lazy(() => import("@/screens/Social")),
   campaigns: lazy(() => import("@/screens/Campaigns")),
-  automations: lazy(() => import("@/screens/automations/AutomationsPage")),
-  ads: lazy(() => import("@/screens/ads/AdsAssistant")),
   pipeline: lazy(() => import("@/screens/pipeline/PipelinePage")),
   workflows: lazy(() => import("@/screens/workflows/WorkflowsPage")),
   contacts: lazy(() => import("@/screens/Contacts")),
@@ -29,7 +27,9 @@ const parseHash = (): RouteId => {
   // back to `#/settings?zernio=connected&platform=…`. Match on the route part
   // alone, otherwise the whole string misses VALID and we'd strand them on the
   // dashboard instead of the Settings page they started from.
-  const id = window.location.hash.replace(/^#\/?/, "").split("?")[0];
+  const raw = window.location.hash.replace(/^#\/?/, "").split("?")[0];
+  // The old Automations screen was folded into Workflows; keep its links working.
+  const id = raw === "automations" ? "workflows" : raw;
   return VALID_ROUTES.has(id as RouteId) ? (id as RouteId) : "dashboard";
 };
 
@@ -37,7 +37,17 @@ export function useRoute(): [RouteId, (r: RouteId) => void] {
   const [route, setRouteState] = useState<RouteId>(parseHash);
 
   useEffect(() => {
-    const onHash = () => setRouteState(parseHash());
+    // Rewrite the retired #/automations URL so the address bar matches the screen.
+    const normalize = () => {
+      if (/^#\/?automations(\?|$)/.test(window.location.hash)) {
+        window.history.replaceState(null, "", window.location.hash.replace(/^#\/?automations/, "#/workflows"));
+      }
+    };
+    normalize();
+    const onHash = () => {
+      normalize();
+      setRouteState(parseHash());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);

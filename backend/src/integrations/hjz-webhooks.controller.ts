@@ -1,6 +1,6 @@
 import { Body, Controller, Headers, HttpCode, Post } from "@nestjs/common";
 import { Public } from "../auth/public.decorator";
-import { HjzClientWebhookDto, HjzSegmentWebhookDto } from "./hjz-webhooks.dto";
+import { HjzClientWebhookDto, HjzSaleWebhookDto, HjzSegmentWebhookDto } from "./hjz-webhooks.dto";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
 
 /**
@@ -32,5 +32,16 @@ export class HjzWebhooksController {
   ) {
     this.svc.verifySecret(secret);
     return this.svc.handleSegment(body);
+  }
+
+  @Public()
+  @Post("sales")
+  @HttpCode(200)
+  sales(
+    @Headers("x-marketing-secret") secret: string | undefined,
+    @Body() body: HjzSaleWebhookDto,
+  ) {
+    this.svc.verifySecret(secret);
+    return this.svc.handleSale(body);
   }
 }

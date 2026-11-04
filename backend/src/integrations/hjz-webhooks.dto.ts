@@ -3,6 +3,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsNumber,
   IsOptional,
   IsString,
   MinLength,
@@ -56,4 +57,53 @@ export class HjzSegmentWebhookDto {
   @ValidateNested()
   @Type(() => HjzSegmentPayloadDto)
   segment!: HjzSegmentPayloadDto;
+}
+
+// ---------------------------------------------------------------------------
+// Sale webhook DTOs — hjz-v2 sends `sale.completed` when a sale is fully paid.
+// Money is decimal-as-string ("25.00"), exactly as hjz stores it.
+// ---------------------------------------------------------------------------
+
+export class HjzSaleClientDto {
+  @IsString() @MinLength(1) id!: string;
+  @IsOptional() @IsString() name?: string | null;
+  @IsOptional() @IsString() phone?: string | null;
+}
+
+export class HjzSaleItemDto {
+  @IsString() @MinLength(1) name!: string;
+  @IsNumber() quantity!: number;
+  @IsString() total!: string;
+}
+
+export class HjzSalePayloadDto {
+  @IsString() @MinLength(1) id!: string;
+  @IsString() @MinLength(1) tenantId!: string;
+  /** Branch receipt prefix + number, e.g. "SAL-1042". */
+  @IsOptional() @IsString() receiptNumber?: string;
+  @IsOptional() @IsNumber() number?: number;
+  @IsString() total!: string;
+  @IsOptional() @IsString() paid?: string;
+  @IsOptional() @IsString() currency?: string;
+  @IsOptional() @IsString() saleDate?: string;
+  @IsOptional() @IsString() branchName?: string | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => HjzSaleClientDto)
+  client?: HjzSaleClientDto | null;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => HjzSaleItemDto)
+  items!: HjzSaleItemDto[];
+}
+
+export class HjzSaleWebhookDto {
+  @IsIn(["sale.completed"])
+  event!: "sale.completed";
+
+  @ValidateNested()
+  @Type(() => HjzSalePayloadDto)
+  sale!: HjzSalePayloadDto;
 }

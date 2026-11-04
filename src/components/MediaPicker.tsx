@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { useFetch } from "@/api/useFetch";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
@@ -225,58 +226,11 @@ function PickerTile({ m, onPick }: { m: Media; onPick: () => void }) {
         e.currentTarget.style.borderColor = "var(--line-soft)";
       }}
     >
-      <PickerImage url={url} alt={m.fileName} token={token} />
+      <AuthorizedImage url={url} alt={m.fileName} token={token} retryable={false} />
     </button>
   );
 }
 
-function PickerImage({
-  url,
-  alt,
-  token,
-}: {
-  url: string;
-  alt: string;
-  token: string | null;
-}) {
-  const [src, setSrc] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    let objectUrl: string | null = null;
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.blob();
-      })
-      .then((b) => {
-        if (cancelled) return;
-        objectUrl = URL.createObjectURL(b);
-        setSrc(objectUrl);
-      })
-      .catch(() => {
-        /* leave src null */
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [url, token]);
-  if (!src) {
-    return <span className="mono muted" style={{ fontSize: 10 }}>…</span>;
-  }
-  return (
-    <img
-      src={src}
-      alt={alt}
-      style={{
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-        display: "block",
-      }}
-    />
-  );
-}
 
 // Avoid unused-import warning for `api` (used elsewhere in module patterns).
 void api;
