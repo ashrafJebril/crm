@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   Logger,
@@ -8,11 +10,16 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret, encryptSecret } from "../common/token-crypto";
+import { techProviderEnabled, whatsappApp } from "../common/meta-app";
+import { randomInt } from "node:crypto";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { AiBridgeService } from "./ai-bridge.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
+
+/** Internal connect input: popup connects don't use a per-row verify token. */
+type WaConnectInput = Omit<ConnectWhatsAppDto, "verifyToken"> & { verifyToken?: string };
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -133,15 +140,22 @@ export class WhatsAppService {
     code: string,
     phoneNumberId: string,
     wabaId: string,
+    metaUserId?: string,
   ) {
-    const appId = process.env.META_APP_ID_WA ?? process.env.META_APP_ID;
-    const appSecret = process.env.META_APP_SECRET_WA ?? process.env.META_APP_SECRET;
-    if (!appId || !appSecret) {
-      throw new BadRequestException(
-        "META_APP_ID_WA / META_APP_SECRET_WA not configured for WhatsApp app",
-      );
+    // Popup connect is a Tech Provider feature — refuse until Meta approves us
+    // and the owner flips META_TECH_PROVIDER_ENABLED.
+    if (!techProviderEnabled()) {
+      throw new ForbiddenException("Connect with Meta is not enabled yet");
     }
+    const { appId, appSecret } = whatsappApp();
+    if (!appId || !appSecret) {
+      throw new BadRequestException("META_APP_ID / META_APP_SECRET not configured");
+    }
+    await this.assertNotZernio(workspaceId);
 
+    // Embedded Signup codes are exchanged WITHOUT a redirect_uri (the popup
+    // flow has none). The result is a business-integration system-user token
+    // scoped to the WABA the customer just picked.
     const tokenUrl =
       `${GRAPH}/oauth/access_token?client_id=${appId}` +
       `&client_secret=${appSecret}` +
@@ -154,16 +168,68 @@ export class WhatsAppService {
     if (!tokenRes.access_token) {
       throw new BadRequestException("Meta did not return an access token");
     }
+    const token = tokenRes.access_token;
 
-    // Generate a verify token now — used when we configure webhooks later.
-    const verifyToken = `aram-wa-${Math.random().toString(36).slice(2, 10)}`;
+    // Register the number on the Cloud API. Required before it can send or
+    // receive; a number that's already registered just errors and we move on.
+    const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const registered = await this.registerPhone(phoneNumberId, token, pin);
 
-    return this.connect(workspaceId, {
-      phoneNumberId,
-      wabaId,
-      accessToken: tokenRes.access_token,
-      verifyToken,
+    const result = await this.connect(
+      workspaceId,
+      { phoneNumberId, wabaId, accessToken: token },
+      {
+        connectedVia: "embedded_signup",
+        metaUserId: metaUserId ?? null,
+        // Only keep the PIN if WE set it; Meta requires it to re-register or
+        // migrate the number later.
+        registrationPin: registered.ok ? encryptSecret(pin) : null,
+      },
+    );
+    return {
+      ...result,
+      phoneRegistered: registered.ok,
+      phoneRegisterError: registered.ok ? undefined : registered.error,
+    };
+  }
+
+  /** POST /{phone-number-id}/register — best-effort, never fails the connect. */
+  private async registerPhone(
+    phoneNumberId: string,
+    token: string,
+    pin: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      const res = await this.graphPost<{ success?: boolean }>(
+        `/${phoneNumberId}/register`,
+        token,
+        { messaging_product: "whatsapp", pin },
+      );
+      return res?.success === false
+        ? { ok: false, error: "Register returned success=false" }
+        : { ok: true };
+    } catch (e) {
+      const msg = (e as Error).message;
+      this.log.warn(`register failed for phone=${phoneNumberId} (may already be registered): ${msg}`);
+      return { ok: false, error: msg };
+    }
+  }
+
+  /**
+   * A workspace has one WhatsApp row. If Zernio owns it, a Meta connect would
+   * overwrite it and break Zernio sends/campaigns — refuse instead. Moving a
+   * Zernio customer over is a separate migration.
+   */
+  private async assertNotZernio(workspaceId: string) {
+    const row = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "whatsapp", provider: "zernio" },
+      select: { id: true },
     });
+    if (row) {
+      throw new ConflictException(
+        "WhatsApp is connected through Zernio for this workspace. Disconnect it there first.",
+      );
+    }
   }
 
   /**
@@ -229,8 +295,7 @@ export class WhatsAppService {
     // it. debug_token's granular_scopes carries the WABA id under
     // `whatsapp_business_management` / `whatsapp_business_messaging`'s
     // target_ids array.
-    const appId = process.env.META_APP_ID_WA ?? process.env.META_APP_ID;
-    const appSecret = process.env.META_APP_SECRET_WA ?? process.env.META_APP_SECRET;
+    const { appId, appSecret } = whatsappApp();
     if (appId && appSecret) {
       interface GranularScope {
         scope: string;
@@ -365,7 +430,12 @@ export class WhatsAppService {
     };
   }
 
-  async connect(workspaceId: string, dto: ConnectWhatsAppDto) {
+  async connect(
+    workspaceId: string,
+    dto: WaConnectInput,
+    extraRaw: Record<string, unknown> = {},
+  ) {
+    await this.assertNotZernio(workspaceId);
     // Validate the credentials by fetching the phone-number record from Meta.
     const info = await this.graphGet<WaPhoneInfo>(
       `/${dto.phoneNumberId}?fields=id,display_phone_number,verified_name`,
@@ -388,6 +458,7 @@ export class WhatsAppService {
       scopes: null,
       expiresAt: null,
       raw: JSON.stringify({
+        ...extraRaw,
         wabaId: dto.wabaId,
         verifyToken: dto.verifyToken,
         displayPhoneNumber: info.display_phone_number ?? null,
@@ -803,6 +874,10 @@ export class WhatsAppService {
    */
   async verifyWebhook(mode: string, token: string, challenge: string) {
     if (mode !== "subscribe") throw new BadRequestException("Bad mode");
+    // Single-app setup: one verify token from env, pasted once in the Meta
+    // dashboard. Per-row tokens below keep legacy setups working.
+    const envToken = process.env.META_VERIFY_TOKEN;
+    if (envToken && token === envToken) return challenge;
     const rows = await this.prisma.integration.findMany({
       where: { platform: "whatsapp" },
     });

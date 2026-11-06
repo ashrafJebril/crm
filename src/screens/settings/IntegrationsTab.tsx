@@ -10,6 +10,8 @@ import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 import { ZernioCard } from "./ZernioCard";
 import { McpAccessCard } from "./McpAccessCard";
 import { useConnectFlow } from "@/embed/useConnectFlow";
+import { WhatsAppPopupConnect, useMetaConfig } from "./MetaConnect";
+import { popupAvailable } from "./metaConnectLogic";
 
 // Facebook/Instagram now connect through Zernio (ZernioCard) instead of our own
 // Meta app — no App Review, no Tester enrollment. The legacy Meta-app cards are
@@ -33,14 +35,18 @@ export function IntegrationsTab() {
   // changes so each card refetches /integrations/*/status for the new tenant
   // instead of showing the previous workspace's connected state.
   const wsKey = activeWorkspace?.id ?? "none";
+  // Tech Provider: once the switch is on, our own Meta FB/IG cards come back
+  // for workspaces that don't already have Facebook through Zernio.
+  const metaCfg = useMetaConfig();
+  const showMetaFb = SHOW_META_LEGACY || popupAvailable(metaCfg.data, "facebook");
 
   return (
     <>
       <ZernioCard key={`zernio-${wsKey}`} tx={tx} canEdit={canEdit} />
 
       {/* Legacy Meta-app FB/IG cards — dormant, kept for rollback (see flag). */}
-      {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />}
-      {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
+      {showMetaFb && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />}
+      {showMetaFb && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
       {/* WhatsApp connects through Zernio, like Facebook and Instagram. */}
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
@@ -67,20 +73,6 @@ interface WhatsAppCardProps {
   canEdit: boolean;
 }
 
-// Augment window with the Facebook SDK shape we use for Embedded Signup.
-declare global {
-  interface Window {
-    FB?: {
-      init: (opts: { appId: string; cookie?: boolean; xfbml?: boolean; version: string }) => void;
-      login: (
-        cb: (resp: { authResponse?: { code?: string; accessToken?: string } | null }) => void,
-        opts: { config_id: string; response_type: string; override_default_response_type: boolean; extras?: object },
-      ) => void;
-    };
-    fbAsyncInit?: () => void;
-  }
-}
-
 function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
   const statusQ = useFetch<WaStatus>("/integrations/whatsapp/status");
   const [showForm, setShowForm] = useState(false);
@@ -89,7 +81,7 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
   const [accessToken, setAccessToken] = useState("");
   const [verifyToken, setVerifyToken] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  const [esError] = useState<string | null>(null);
+  const metaCfg = useMetaConfig();
 
   const connectMut = useMutation<
     {
@@ -115,53 +107,6 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
   );
 
   const connected = statusQ.data?.connected === true;
-
-  // Initialize Facebook SDK once (the script tag is in index.html).
-  useEffect(() => {
-    const appId = import.meta.env.VITE_WA_APP_ID as string | undefined;
-    if (!appId) return;
-    const init = () => {
-      if (window.FB) {
-        window.FB.init({
-          appId,
-          cookie: true,
-          xfbml: true,
-          version: "v21.0",
-        });
-      }
-    };
-    if (window.FB) {
-      init();
-    } else {
-      window.fbAsyncInit = init;
-    }
-  }, []);
-
-  // Listen for Embedded Signup window.message events to capture phone_number_id + waba_id.
-  const wasigRef = useState<{ phoneNumberId?: string; wabaId?: string }>({})[0];
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (
-        event.origin !== "https://www.facebook.com" &&
-        event.origin !== "https://web.facebook.com"
-      ) {
-        return;
-      }
-      try {
-        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (data?.type === "WA_EMBEDDED_SIGNUP") {
-          if (data.event === "FINISH" || data.event === "FINISH_ONLY_WABA") {
-            wasigRef.phoneNumberId = data.data?.phone_number_id;
-            wasigRef.wabaId = data.data?.waba_id;
-          }
-        }
-      } catch {
-        /* not JSON */
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [wasigRef]);
 
   const onConnect = async () => {
     await connectMut.mutate({
@@ -362,6 +307,20 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Tech Provider popup connect — hidden until the switch is on
+                    and never offered over a Zernio connection. Token paste
+                    below stays as the backup. */}
+                {popupAvailable(metaCfg.data, "whatsapp") && metaCfg.data && (
+                  <WhatsAppPopupConnect
+                    cfg={metaCfg.data}
+                    tx={tx}
+                    onConnected={() => {
+                      statusQ.refetch();
+                      setStatus(tx("WhatsApp connected.", "تم الاتصال بواتساب."));
+                      window.setTimeout(() => setStatus(null), 2400);
+                    }}
+                  />
+                )}
                 <div style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.5 }}>
                   <div style={{ fontWeight: 500, color: "var(--ink-1)", marginBottom: 4 }}>
                     {tx(
@@ -431,7 +390,7 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
                   />
                 </Field>
 
-                <ErrorRow message={connectByTokenMut.error ?? esError} />
+                <ErrorRow message={connectByTokenMut.error} />
 
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   <button
