@@ -29,6 +29,28 @@ export class ConnectWhatsAppDto {
   displayPhoneNumber?: string;
 }
 
+/** Result of Meta's Embedded Signup popup (code from FB.login, ids from the
+ *  WA_EMBEDDED_SIGNUP window message, userID from authResponse). */
+export class EmbeddedSignupDto {
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phoneNumberId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  wabaId!: string;
+
+  // App-scoped Facebook user id of whoever completed the popup. Lets the
+  // deauthorize / data-deletion callbacks find this connection.
+  @IsOptional()
+  @IsString()
+  metaUserId?: string;
+}
+
 export class ConnectByTokenDto {
   @IsString()
   @MinLength(20, { message: "Token looks too short to be a Meta access token" })

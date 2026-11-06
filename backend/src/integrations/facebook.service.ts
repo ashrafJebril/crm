@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   HttpException,
   Injectable,
   Logger,
@@ -97,7 +98,22 @@ export class FacebookService {
     };
   }
 
-  async connect(workspaceId: string, rawToken: string) {
+  async connect(
+    workspaceId: string,
+    rawToken: string,
+    opts: { connectedVia?: "oauth" | "login_for_business" | "token" } = {},
+  ) {
+    // A workspace has one facebook row; if Zernio owns it, creating ours would
+    // collide on @@unique([workspaceId, platform]) — fail with a clear message.
+    const zernioRow = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "facebook", provider: "zernio" },
+      select: { id: true },
+    });
+    if (zernioRow) {
+      throw new ConflictException(
+        "Facebook is connected through Zernio for this workspace. Disconnect it there first.",
+      );
+    }
     // Validate the token + get a label.  /me works for both User and Page tokens.
     const me = await this.graphGet<FbMe>("/me?fields=id,name", rawToken);
     if (!me?.id) throw new BadRequestException("Token did not resolve to anything");
@@ -106,6 +122,9 @@ export class FacebookService {
     let pageName: string;
     let pageToken: string;
     const candidates: Array<{ id: string; name: string; access_token: string }> = [];
+    // App-scoped user id of whoever logged in — only meaningful for a User
+    // token. The deauthorize / data-deletion callbacks match on it.
+    let metaUserId: string | null = null;
 
     // Try /me/accounts — works only on User tokens. If it returns pages, this
     // is a User token; pick the first/best page. If it 400s or returns empty,
@@ -129,6 +148,7 @@ export class FacebookService {
         return score(b) - score(a);
       });
       const pick = ranked[0];
+      metaUserId = me.id;
       pageId = pick.id;
       pageName = pick.name;
       pageToken = pick.access_token;
@@ -168,7 +188,12 @@ export class FacebookService {
       accessToken: encryptSecret(finalToken),
       scopes: null,
       expiresAt,
-      raw: JSON.stringify({ me, candidates: candidates.map((c) => ({ id: c.id, name: c.name })) }),
+      raw: JSON.stringify({
+        me,
+        metaUserId,
+        connectedVia: opts.connectedVia ?? (metaUserId ? "oauth" : "token"),
+        candidates: candidates.map((c) => ({ id: c.id, name: c.name })),
+      }),
     };
 
     const existing = await this.find(workspaceId);
@@ -182,7 +207,7 @@ export class FacebookService {
     await this.subscribePageToApp(pageId, finalToken);
 
     // Best-effort IG discovery — never fails the FB connect even if IG is missing.
-    const ig = await this.maybeDiscoverIg(workspaceId, pageId, finalToken, expiresAt);
+    const ig = await this.maybeDiscoverIg(workspaceId, pageId, finalToken, expiresAt, metaUserId);
 
     return {
       connected: true,
@@ -715,6 +740,7 @@ export class FacebookService {
     pageId: string,
     pageToken: string,
     expiresAt: Date | null,
+    metaUserId: string | null = null,
   ): Promise<{ igUserId: string; igUsername: string } | null> {
     let res: { instagram_business_account?: { id: string } } | null = null;
     try {
@@ -743,6 +769,11 @@ export class FacebookService {
     const existing = await this.prisma.integration.findFirst({
       where: { workspaceId, platform: "instagram" },
     });
+    // Never overwrite a Zernio-owned Instagram connection with our Page token.
+    if (existing?.provider === "zernio") {
+      this.log.log(`IG discovery: workspace ${workspaceId} has Instagram via Zernio — leaving it`);
+      return null;
+    }
     const data = {
       platform: "instagram",
       pageId: igId,
@@ -750,7 +781,7 @@ export class FacebookService {
       accessToken: encryptSecret(pageToken),
       scopes: null,
       expiresAt,
-      raw: JSON.stringify({ linkedFbPageId: pageId }),
+      raw: JSON.stringify({ linkedFbPageId: pageId, metaUserId }),
     };
     if (existing) {
       await this.prisma.integration.update({ where: { id: existing.id }, data });
