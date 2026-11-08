@@ -19,6 +19,7 @@ const SCOPED_MODELS = new Set([
   "Note",
   "Notification",
   "NotificationPreference",
+  "Role",
   "Media",
   "Segment",
   "Tag",

@@ -798,6 +798,7 @@ model Workspace {
   kapsoCustomerId String?
 
   members WorkspaceMember[]
+  roles   Role[]            @relation("WorkspaceRoles")
 
   contacts          Contact[]          @relation("WorkspaceContacts")
   conversations     Conversation[]     @relation("WorkspaceConversations")
@@ -839,9 +840,13 @@ model WorkspaceMember {
   // Workspace-scoped role, separate from User.role (which is a system-level
   // legacy field). Values: "owner" | "admin" | "agent" | "viewer".
   role        String
+  // SP-25: the member's Role. NULL falls back to the workspace's system role
+  // whose key equals the legacy `role` string above (kept for deployed code).
+  roleId      String?
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  roleRef   Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -849,6 +854,29 @@ model WorkspaceMember {
   @@unique([userId, workspaceId])
   @@index([workspaceId])
   @@index([userId])
+  @@index([roleId])
+}
+
+// SP-25: a workspace role — a resource × action permission matrix plus a
+// conversation visibility. System roles (key = owner|admin|agent|viewer) are
+// seeded per workspace; custom roles have key = NULL.
+model Role {
+  id                     String   @id @default(cuid())
+  workspaceId            String
+  key                    String?  // owner | admin | agent | viewer for system roles; NULL for custom
+  name                   String
+  nameAr                 String
+  isSystem               Boolean  @default(false)
+  permissions            Json     // { [resource]: Action[] }
+  conversationVisibility String   @default("all") // "all" | "assigned"
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  workspace Workspace         @relation("WorkspaceRoles", fields: [workspaceId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+
+  @@unique([workspaceId, key])
+  @@unique([workspaceId, name])
 }
 
 // ─── Media library ────────────────────────────────────────────────────────
