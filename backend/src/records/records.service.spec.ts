@@ -36,8 +36,8 @@ describe("RecordsService", () => {
   it("contact: fields and links (conversations, open tickets, upcoming bookings)", async () => {
     prisma.contact.findFirst.mockResolvedValue(contactRow);
     prisma.conversation.findMany.mockResolvedValue([{ id: "v1", channel: "whatsapp" }]);
-    prisma.ticket.findMany.mockResolvedValue([{ id: "t1", number: 12, title: "Refund", stage: { label: "New" } }]);
-    prisma.appointment.findMany.mockResolvedValue([{ id: "b1", service: "Cut", startAt: created }]);
+    prisma.ticket.findMany.mockResolvedValue([{ id: "t1", number: 12, title: "Refund", stage: { label: "New", labelAr: "جديد" } }]);
+    prisma.appointment.findMany.mockResolvedValue([{ id: "b1", service: "Cut", serviceAr: "قص", startAt: created }]);
     const r = await svc.get(WS, ME, "contact", "c1");
     expect(r).toMatchObject({ kind: "contact", id: "c1", title: "Layla", subtitle: "+966500" });
     expect(r.fields).toEqual([
@@ -50,8 +50,8 @@ describe("RecordsService", () => {
     ]);
     expect(r.links).toEqual([
       { kind: "conversation", id: "v1", title: "Layla", subtitle: "whatsapp" },
-      { kind: "ticket", id: "t1", title: "#12 · Refund", subtitle: "New" },
-      { kind: "booking", id: "b1", title: "Cut", subtitle: created.toISOString() },
+      { kind: "ticket", id: "t1", title: "#12 · Refund", subtitle: "New", subtitleAr: "جديد" },
+      { kind: "booking", id: "b1", title: "Cut", titleAr: "قص", subtitle: created.toISOString() },
     ]);
     const tq = prisma.ticket.findMany.mock.calls[0][0];
     expect(tq.where).toMatchObject({ closedAt: null, workspaceId: WS });
@@ -63,7 +63,7 @@ describe("RecordsService", () => {
 
   it("conversation: fields, contact and ticket links", async () => {
     prisma.conversation.findFirst.mockResolvedValue({
-      id: "v1", channel: "whatsapp", status: "human", escalated: true, lastAt: "2m",
+      id: "v1", channel: "whatsapp", status: "human", escalated: true, lastAt: "2m", updatedAt: created,
       contact: { id: "c1", name: "Layla", phone: null }, assignee: { name: "Omar" },
     });
     prisma.ticket.findMany.mockResolvedValue([{ id: "t1", number: 3, title: "X", stage: { label: "Won" } }]);
@@ -75,6 +75,7 @@ describe("RecordsService", () => {
       { key: "assignee", value: "Omar" },
       { key: "escalated", value: true },
       { key: "lastAt", value: "2m" },
+      { key: "updatedAt", value: created.toISOString() },
     ]);
     expect(r.links.map((l) => `${l.kind}:${l.id}`)).toEqual(["contact:c1", "ticket:t1"]);
     expect(prisma.ticket.findMany.mock.calls[0][0].where).toMatchObject({ conversationId: "v1" });
@@ -83,7 +84,7 @@ describe("RecordsService", () => {
   it("ticket: fields, contact and DB-conversation links", async () => {
     prisma.ticket.findFirst.mockResolvedValue({
       id: "t1", number: 12, title: "Refund", value: 250, ownerId: "u9", conversationId: "v1", createdAt: created,
-      pipeline: { name: "Retail" }, stage: { label: "New" }, contact: { id: "c1", name: "Layla", phone: "+9665" },
+      pipeline: { name: "Retail" }, stage: { label: "New", labelAr: "جديد" }, contact: { id: "c1", name: "Layla", phone: "+9665" },
     });
     prisma.conversation.findFirst.mockResolvedValue({ id: "v1", channel: "instagram" });
     const r = await svc.get(WS, ME, "ticket", "t1");
@@ -92,6 +93,7 @@ describe("RecordsService", () => {
       { key: "number", value: 12 },
       { key: "pipeline", value: "Retail" },
       { key: "stage", value: "New" },
+      { key: "stageAr", value: "جديد" },
       { key: "value", value: 250 },
       { key: "owner", value: "Sara" },
       { key: "createdAt", value: created.toISOString() },
@@ -121,18 +123,29 @@ describe("RecordsService", () => {
 
   it("booking: fields and contact link", async () => {
     prisma.appointment.findFirst.mockResolvedValue({
-      id: "b1", service: "Cut", startAt: created, status: "confirmed", staffId: "u2",
+      id: "b1", service: "Cut", serviceAr: "قص", startAt: created, status: "confirmed", staffId: "u2",
       contact: { id: "c1", name: "Layla", phone: null },
     });
     const r = await svc.get(WS, ME, "booking", "b1");
-    expect(r).toMatchObject({ kind: "booking", title: "Cut", subtitle: "Layla" });
+    expect(r).toMatchObject({ kind: "booking", title: "Cut", titleAr: "قص", subtitle: "Layla" });
     expect(r.fields).toEqual([
       { key: "service", value: "Cut" },
+      { key: "serviceAr", value: "قص" },
       { key: "start", value: created.toISOString() },
       { key: "status", value: "confirmed" },
       { key: "staff", value: "Sara" },
     ]);
     expect(r.links).toEqual([{ kind: "contact", id: "c1", title: "Layla" }]);
+  });
+
+  it("Arabic keys are omitted/null when no Arabic value exists", async () => {
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: "b1", service: "Cut", serviceAr: "", startAt: created, status: "confirmed", staffId: null,
+      contact: { id: "c1", name: "Layla", phone: null },
+    });
+    const r = await svc.get(WS, ME, "booking", "b1");
+    expect(r).not.toHaveProperty("titleAr");
+    expect(r.fields).toContainEqual({ key: "serviceAr", value: null });
   });
 
   it("campaign: fields and no links", async () => {

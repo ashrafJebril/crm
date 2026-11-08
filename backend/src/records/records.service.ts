@@ -16,13 +16,17 @@ export interface RecordLink {
   kind: RecordKind;
   id: string;
   title: string;
+  titleAr?: string;
   subtitle?: string;
+  subtitleAr?: string;
 }
 export interface RecordSummary {
   kind: RecordKind;
   id: string;
   title: string;
+  titleAr?: string;
   subtitle?: string;
+  subtitleAr?: string;
   fields: RecordField[];
   links: RecordLink[];
 }
@@ -126,22 +130,24 @@ export class RecordsService {
         where: { contactId: id, workspaceId, closedAt: null },
         orderBy: { createdAt: "desc" },
         take: LINK_LIMIT,
-        select: { id: true, number: true, title: true, stage: { select: { label: true } } },
+        select: { id: true, number: true, title: true, stage: { select: { label: true, labelAr: true } } },
       }),
       this.prisma.appointment.findMany({
         where: { contactId: id, workspaceId, startAt: { gte: new Date() }, status: { not: "cancelled" } },
         orderBy: { startAt: "asc" },
         take: LINK_LIMIT,
-        select: { id: true, service: true, startAt: true },
+        select: { id: true, service: true, serviceAr: true, startAt: true },
       }),
     ]);
     const links: RecordLink[] = [
       ...convs.map((v): RecordLink => ({ kind: "conversation", id: v.id, title: c.name, subtitle: v.channel })),
       ...tickets.map((t): RecordLink => ({
         kind: "ticket", id: t.id, title: `#${t.number} · ${t.title}`, subtitle: t.stage?.label,
+        ...(t.stage?.labelAr ? { subtitleAr: t.stage.labelAr } : {}),
       })),
       ...bookings.map((b): RecordLink => ({
         kind: "booking", id: b.id, title: b.service, subtitle: b.startAt.toISOString(),
+        ...(b.serviceAr ? { titleAr: b.serviceAr } : {}),
       })),
     ];
     return {
@@ -174,7 +180,7 @@ export class RecordsService {
       where: { conversationId: id, workspaceId },
       orderBy: { createdAt: "desc" },
       take: LINK_LIMIT,
-      select: { id: true, number: true, title: true, stage: { select: { label: true } } },
+      select: { id: true, number: true, title: true, stage: { select: { label: true, labelAr: true } } },
     });
     const links: RecordLink[] = [
       {
@@ -183,6 +189,7 @@ export class RecordsService {
       },
       ...tickets.map((t): RecordLink => ({
         kind: "ticket", id: t.id, title: `#${t.number} · ${t.title}`, subtitle: t.stage?.label,
+        ...(t.stage?.labelAr ? { subtitleAr: t.stage.labelAr } : {}),
       })),
     ];
     return {
@@ -196,6 +203,7 @@ export class RecordsService {
         { key: "assignee", value: v.assignee?.name ?? null },
         { key: "escalated", value: v.escalated },
         { key: "lastAt", value: v.lastAt },
+        { key: "updatedAt", value: iso(v.updatedAt) },
       ],
       links: await this.filterLinks(workspaceId, viewer, links),
     };
@@ -206,7 +214,7 @@ export class RecordsService {
       where: { id, workspaceId },
       include: {
         pipeline: { select: { name: true } },
-        stage: { select: { label: true } },
+        stage: { select: { label: true, labelAr: true } },
         contact: { select: { id: true, name: true, phone: true } },
       },
     });
@@ -235,6 +243,7 @@ export class RecordsService {
         { key: "number", value: t.number },
         { key: "pipeline", value: t.pipeline?.name ?? null },
         { key: "stage", value: t.stage?.label ?? null },
+        { key: "stageAr", value: t.stage?.labelAr ?? null },
         { key: "value", value: t.value ?? null },
         { key: "owner", value: owner },
         { key: "createdAt", value: iso(t.createdAt) },
@@ -254,9 +263,11 @@ export class RecordsService {
       kind: "booking",
       id: b.id,
       title: b.service,
+      ...(b.serviceAr ? { titleAr: b.serviceAr } : {}),
       subtitle: b.contact.name,
       fields: [
         { key: "service", value: b.service },
+        { key: "serviceAr", value: b.serviceAr || null },
         { key: "start", value: iso(b.startAt) },
         { key: "status", value: b.status },
         { key: "staff", value: staff },
