@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { ContactsExportService, EXPORT_PAGE_SIZE, csvCell } from "./contacts-export.service";
+import { ContactsExportService, EXPORT_PAGE_SIZE, csvCell, unescapeFormulaCell } from "./contacts-export.service";
 import { buildContactWhere, parseContactFilter } from "./contact-filter";
 import { SegmentsService } from "../segments/segments.service";
 
@@ -87,7 +87,7 @@ describe("ContactsExportService", () => {
       "id,firstName,lastName,name,phone,email,lifecycle,tags,owner,source,industry,marketingOptOut,notALead,createdAt,Budget,VIP?",
     );
     expect(lines[1]).toBe(
-      'c000001,Name,1,Name 1,,,lead,"VIP, Riyadh, KSA",Owner One,manual,,false,false,2026-01-01T00:00:00.000Z,5000,',
+      'c000001,Name,1,Name 1,,,lead,"VIP, Riyadh, KSA",o@x.io,manual,,false,false,2026-01-01T00:00:00.000Z,5000,',
     );
     expect(job.filename).toMatch(/^contacts-\d{4}-\d{2}-\d{2}\.csv$/);
     // Defs: non-archived, ordered, workspace-scoped.
@@ -160,5 +160,24 @@ describe("ContactsExportService", () => {
     expect(prisma.customFieldValue.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { contactId: { in: ["c000001", "c000002"] }, defId: { in: ["d1"] } } }),
     );
+  });
+});
+
+describe("formula neutralisation", () => {
+  it("prefixes = + - @ tab CR with an apostrophe before quoting", () => {
+    expect(csvCell("=SUM(A1)")).toBe("'=SUM(A1)");
+    expect(csvCell("+971501234567")).toBe("'+971501234567");
+    expect(csvCell("-VIP")).toBe("'-VIP");
+    expect(csvCell("@x")).toBe("'@x");
+    expect(csvCell("	x")).toBe("'	x");
+    expect(csvCell('=A1,"b"')).toBe(`"'=A1,""b"""`);
+    expect(csvCell("safe=1")).toBe("safe=1");
+  });
+  it("unescapeFormulaCell only strips before a trigger char", () => {
+    expect(unescapeFormulaCell("'=A1")).toBe("=A1");
+    expect(unescapeFormulaCell("'+9")).toBe("+9");
+    expect(unescapeFormulaCell("'hello")).toBe("'hello");
+    expect(unescapeFormulaCell("'")).toBe("'");
+    expect(unescapeFormulaCell("=A1")).toBe("=A1");
   });
 });

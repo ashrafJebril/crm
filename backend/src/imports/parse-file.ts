@@ -1,4 +1,5 @@
 import * as ExcelJS from "exceljs";
+import { unescapeFormulaCell } from "../contacts/csv-formula";
 
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export const MAX_IMPORT_ROWS = 50_000;
@@ -184,7 +185,7 @@ function shape(table: SourceRow[]): ParsedFile {
   const headerIdx = table.findIndex((r) => !isBlank(r));
   if (headerIdx < 0) throw new ImportFileError("imports.file_empty");
 
-  const rawHeaders = table[headerIdx].cells.map((h) => h.trim());
+  const rawHeaders = table[headerIdx].cells.map((h) => unescapeFormulaCell(h.trim()));
   // Columns with no header are ignored (their data too).
   const keep: number[] = [];
   rawHeaders.forEach((h, i) => {
@@ -218,7 +219,7 @@ function shape(table: SourceRow[]): ParsedFile {
     const src = table[r];
     if (isBlank(src)) continue;
     if (rows.length >= MAX_IMPORT_ROWS) throw new ImportFileError("imports.file_too_large");
-    rows.push(keep.map((i) => (src.cells[i] ?? "").trim()));
+    rows.push(keep.map((i) => unescapeFormulaCell((src.cells[i] ?? "").trim())));
     rowNumbers.push(src.n);
   }
   if (rows.length === 0) throw new ImportFileError("imports.file_empty");

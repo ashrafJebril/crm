@@ -27,7 +27,7 @@ describe("contacts CSV Arabic round-trip", () => {
       },
       {
         id: "c2",
-        name: "سارة",
+        name: "=HYPERLINK(\"http://evil\",\"سارة\")",
         firstName: null,
         lastName: null,
         email: null,
@@ -41,7 +41,7 @@ describe("contacts CSV Arabic round-trip", () => {
         source: "manual",
         value: null,
         lastSeen: "",
-        tags: "[]",
+        tags: JSON.stringify(["-VIP", "@عميل", "+tag"]),
         convs: 0,
       },
     ];
@@ -57,7 +57,8 @@ describe("contacts CSV Arabic round-trip", () => {
     const job = await svc.prepare("ws1", {});
     const parts: string[] = [];
     await job.run({ aborted: () => false, write: (c) => void parts.push(c) });
-    const buf = Buffer.from(parts.join(""), "utf8");
+    const text = parts.join("");
+    const buf = Buffer.from(text, "utf8");
     expect([...buf.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
 
     const parsed = await parseFile(buf, "contacts.csv");
@@ -69,13 +70,15 @@ describe("contacts CSV Arabic round-trip", () => {
     expect(r1[col("lastName")]).toBe("الأحمد");
     expect(r1[col("industry")]).toBe("عقارات");
     expect(r1[col("source")]).toBe("واتساب");
-    expect(r1[col("owner")]).toBe("أحمد المدير");
+    expect(r1[col("owner")]).toBe("a@x.io");
     expect(r1[col("tags")]).toBe('عميل مميز, الرياض، السعودية, قال "مرحبا", a,b');
     expect(r1[col("phone")]).toBe("+966501234567");
     expect(r1[col("notALead")]).toBe("true");
     expect(r1[col("ملاحظات\nالعميل")]).toBe('سطر 1\nسطر 2, "اقتباس"');
-    expect(r2[col("name")]).toBe("سارة");
-    expect(r2[col("firstName")]).toBe("سارة");
+    expect(r2[col("name")]).toBe('=HYPERLINK("http://evil","سارة")');
+    expect(r2[col("tags")]).toBe("-VIP, @عميل, +tag");
+    expect(text).toContain("'=HYPERLINK(");
+    expect(text).toContain("'+966501234567");
     expect(r2[col("marketingOptOut")]).toBe("true");
   });
 });

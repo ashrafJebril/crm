@@ -153,3 +153,12 @@ describe("parseFile", () => {
     expect(await keyOf(parseFile(buf("not a zip"), "a.xlsx"))).toBe("imports.file_invalid");
   });
 });
+
+describe("parseFile formula-escape round trip", () => {
+  it("strips the export's leading apostrophe before = + - @ only", async () => {
+    const csv = ["name,phone,note", "'=SUM(A1),'+971501234567,'-VIP", "'plain,'@x,'it's"].join("\n");
+    const p = await parseFile(buf(csv), "a.csv");
+    expect(p.rows[0]).toEqual(["=SUM(A1)", "+971501234567", "-VIP"]);
+    expect(p.rows[1]).toEqual(["'plain", "@x", "'it's"]);
+  });
+});

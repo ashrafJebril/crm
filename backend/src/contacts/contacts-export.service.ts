@@ -4,6 +4,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SegmentsService } from "../segments/segments.service";
 import { buildContactWhere, type ContactListFilter } from "./contact-filter";
 import { effectiveNameParts } from "./contact-name";
+import { escapeFormulaCell } from "./csv-formula";
+
+export { escapeFormulaCell, unescapeFormulaCell } from "./csv-formula";
 
 export const EXPORT_PAGE_SIZE = 1000;
 export const EXPORT_IDS_CAP = 10_000;
@@ -40,7 +43,7 @@ export interface PreparedExport {
 
 /** RFC4180: quote when the cell holds a comma, quote, CR or LF. */
 export function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? "" : String(v);
+  const s = escapeFormulaCell(v === null || v === undefined ? "" : String(v));
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -93,9 +96,9 @@ export class ContactsExportService {
 
     const members = await this.prisma.workspaceMember.findMany({
       where: { workspaceId },
-      select: { userId: true, user: { select: { name: true, email: true } } },
+      select: { userId: true, user: { select: { email: true } } },
     });
-    const owners = new Map(members.map((m) => [m.userId, m.user?.name || m.user?.email || ""]));
+    const owners = new Map(members.map((m) => [m.userId, m.user?.email ?? ""]));
 
     const header = csvLine([...BASE_COLUMNS, ...defs.map((d) => d.label)]);
     const filename = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
