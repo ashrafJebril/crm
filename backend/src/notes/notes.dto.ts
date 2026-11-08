@@ -14,6 +14,10 @@ export class CreateNoteDto {
   ticketId?: string;
 
   @IsString()
+  @IsOptional()
+  parentId?: string;
+
+  @IsString()
   @MinLength(1)
   body!: string;
 }

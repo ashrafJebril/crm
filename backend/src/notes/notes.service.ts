@@ -1,30 +1,96 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateNoteDto, UpdateNoteDto } from "./notes.dto";
+import { NotificationsService } from "../notifications/notifications.service";
+import { canOpenRecord } from "../notifications/record-access";
+import { parseMentions, renderMentions } from "./mentions";
+
+export type MentionWarning = { userId: string; reason: "not_a_member" | "no_access" };
+
+const SEEN_SELECT = { select: { userId: true, seenAt: true } };
+const LIST_INCLUDE = {
+  seenBy: SEEN_SELECT,
+  replies: {
+    orderBy: { createdAt: "asc" as const },
+    include: { seenBy: SEEN_SELECT },
+  },
+};
 
 @Injectable()
 export class NotesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  /** Top-level notes (newest first), each with replies (oldest first) and seenBy. */
+  private list(workspaceId: string, where: Record<string, string>) {
+    return this.prisma.note.findMany({
+      where: { workspaceId, ...where, parentId: null },
+      orderBy: { createdAt: "desc" },
+      include: LIST_INCLUDE,
+    });
+  }
+
+  /**
+   * Resolve mentions in `body`: members only, each checked through
+   * canOpenRecord. Notifies the members not in `alreadyMentioned` (and not the
+   * author) who can open the record; the rest are reported as warnings.
+   */
+  private async processMentions(
+    workspaceId: string,
+    note: { conversationId: string | null; ticketId: string | null; contactId: string },
+    body: string,
+    authorUserId: string | null,
+    alreadyMentioned: string[],
+  ) {
+    const parsed = parseMentions(body);
+    const warnings: MentionWarning[] = [];
+    if (parsed.length === 0) return { memberIds: [] as string[], warnings };
+    const members = await this.prisma.workspaceMember.findMany({
+      where: { workspaceId, userId: { in: parsed } },
+      select: { userId: true },
+    });
+    const memberSet = new Set(members.map((m) => m.userId));
+    const memberIds = parsed.filter((id) => memberSet.has(id));
+    for (const id of parsed) {
+      if (!memberSet.has(id)) warnings.push({ userId: id, reason: "not_a_member" });
+    }
+
+    const [kind, recordId] = note.conversationId
+      ? (["conversation", note.conversationId] as const)
+      : note.ticketId
+        ? (["ticket", note.ticketId] as const)
+        : (["contact", note.contactId] as const);
+    const toNotify: string[] = [];
+    for (const id of memberIds) {
+      if (id === authorUserId || alreadyMentioned.includes(id)) continue;
+      if (await canOpenRecord(this.prisma, workspaceId, id, kind, recordId)) toNotify.push(id);
+      else warnings.push({ userId: id, reason: "no_access" });
+    }
+    if (toNotify.length > 0) {
+      await this.notifications.notify(workspaceId, toNotify, {
+        type: "mention",
+        title: "mention.note",
+        body: JSON.stringify({ excerpt: renderMentions(body).slice(0, 120) }),
+        recordKind: kind,
+        recordId,
+        actorId: authorUserId ?? undefined,
+      });
+    }
+    return { memberIds, warnings };
+  }
 
   listForContact(workspaceId: string, contactId: string) {
-    return this.prisma.note.findMany({
-      where: { workspaceId, contactId },
-      orderBy: { createdAt: "desc" },
-    });
+    return this.list(workspaceId, { contactId });
   }
 
   listForConversation(workspaceId: string, conversationId: string) {
-    return this.prisma.note.findMany({
-      where: { workspaceId, conversationId },
-      orderBy: { createdAt: "desc" },
-    });
+    return this.list(workspaceId, { conversationId });
   }
 
   listForTicket(workspaceId: string, ticketId: string) {
-    return this.prisma.note.findMany({
-      where: { workspaceId, ticketId },
-      orderBy: { createdAt: "desc" },
-    });
+    return this.list(workspaceId, { ticketId });
   }
 
   async get(workspaceId: string, id: string) {
@@ -38,24 +104,68 @@ export class NotesService {
       where: { id: dto.contactId, workspaceId },
     });
     if (!contact) throw new NotFoundException("Contact not found");
-    return this.prisma.note.create({
+    if (dto.parentId) {
+      const parent = await this.prisma.note.findFirst({
+        where: { id: dto.parentId, workspaceId },
+      });
+      if (!parent || parent.contactId !== dto.contactId || parent.parentId) {
+        throw new BadRequestException("replies are one level");
+      }
+    }
+    const conversationId = dto.conversationId ?? null;
+    const ticketId = dto.ticketId ?? null;
+    const { memberIds, warnings } = await this.processMentions(
+      workspaceId,
+      { conversationId, ticketId, contactId: dto.contactId },
+      dto.body,
+      authorUserId,
+      [],
+    );
+    const note = await this.prisma.note.create({
       data: {
         workspaceId,
         contactId: dto.contactId,
-        conversationId: dto.conversationId ?? null,
-        ticketId: dto.ticketId ?? null,
+        conversationId,
+        ticketId,
         body: dto.body,
         authorUserId,
+        parentId: dto.parentId ?? null,
+        mentions: memberIds,
       },
     });
+    return { ...note, warnings };
   }
 
-  async update(workspaceId: string, id: string, dto: UpdateNoteDto) {
-    await this.get(workspaceId, id);
-    return this.prisma.note.update({
+  async update(
+    workspaceId: string,
+    id: string,
+    dto: UpdateNoteDto,
+    actorUserId: string | null = null,
+  ) {
+    const existing = await this.get(workspaceId, id);
+    const { memberIds, warnings } = await this.processMentions(
+      workspaceId,
+      existing,
+      dto.body,
+      actorUserId,
+      existing.mentions ?? [],
+    );
+    const note = await this.prisma.note.update({
       where: { id },
-      data: { body: dto.body },
+      data: { body: dto.body, mentions: memberIds },
     });
+    return { ...note, warnings };
+  }
+
+  /** Idempotent read mark. The note is workspace-verified first (NoteSeen is unscoped). */
+  async markSeen(workspaceId: string, id: string, userId: string) {
+    await this.get(workspaceId, id);
+    await this.prisma.noteSeen.upsert({
+      where: { noteId_userId: { noteId: id, userId } },
+      create: { noteId: id, userId },
+      update: {},
+    });
+    return { ok: true };
   }
 
   async remove(workspaceId: string, id: string) {

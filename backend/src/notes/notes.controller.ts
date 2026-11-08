@@ -13,7 +13,7 @@ import type { Request } from "express";
 import { NotesService } from "./notes.service";
 import { CreateNoteDto, UpdateNoteDto } from "./notes.dto";
 import type { JwtPayload } from "../auth/auth.guard";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentUserId, CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("notes")
 export class NotesController {
@@ -46,8 +46,18 @@ export class NotesController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: UpdateNoteDto,
+    @CurrentUserId() userId: string,
   ) {
-    return this.svc.update(workspaceId, id, dto);
+    return this.svc.update(workspaceId, id, dto, userId);
+  }
+
+  @Post(":id/seen")
+  seen(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentUserId() userId: string,
+  ) {
+    return this.svc.markSeen(workspaceId, id, userId);
   }
 
   @Delete(":id")
