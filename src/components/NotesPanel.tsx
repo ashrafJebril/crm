@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
 import { makeTx, type Tx } from "@/lib/tx";
@@ -9,12 +9,10 @@ import { IconPlus, IconMore } from "@/icons";
 import { Skeleton } from "./Skeleton";
 import { MentionInput, useMentionDraft } from "./MentionInput";
 import { MentionText } from "./MentionText";
+import { useSeenOnView } from "@/lib/useSeenOnView";
 import type { Note, NoteWarning, TeamMember } from "@/lib/types";
 
 type NoteWithWarnings = Note & { warnings?: NoteWarning[] };
-
-/** Notes already reported as seen this session (one POST per note). */
-const seenSent = new Set<string>();
 
 interface Props {
   /** Required to create new notes (and to list when scope="contact"). */
@@ -49,25 +47,6 @@ function warningText(tx: Tx, name: string, reason: NoteWarning["reason"]): strin
         `${name} can't open this record and wasn't notified`,
         `${name} لا يملك صلاحية فتح هذا السجل ولم يتم إشعاره`,
       );
-}
-
-/** Reports a note as seen once it scrolls into view (throttled per note per session). */
-function useSeenOnView(noteId: string, skip: boolean) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || skip || seenSent.has(noteId)) return;
-    if (typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((entries) => {
-      if (!entries.some((e) => e.isIntersecting) || seenSent.has(noteId)) return;
-      seenSent.add(noteId);
-      io.disconnect();
-      api.post(`/notes/${noteId}/seen`, {}).catch(() => seenSent.delete(noteId));
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [noteId, skip]);
-  return ref;
 }
 
 function SeenBy({ note, team, selfId, tx }: { note: Note; team: Map<string, TeamMember>; selfId?: string; tx: Tx }) {
@@ -239,7 +218,7 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
   };
 
   const submit = async () => {
-    const body = draft.serialize();
+    const body = draft.serialize(teamQ.data ?? []);
     if (!body || !contactId) return;
     const res = await createNote.mutate({
       contactId,
@@ -252,7 +231,7 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
   };
 
   const submitReply = async () => {
-    const body = replyDraft.serialize();
+    const body = replyDraft.serialize(teamQ.data ?? []);
     if (!body || !contactId || !replyTo) return;
     const res = await createNote.mutate({
       contactId,

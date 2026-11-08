@@ -23,7 +23,10 @@ export function useMentionDraft() {
     picked,
     pick: (m: { id: string; name: string }) =>
       setPicked((p) => (p.some((x) => x.id === m.id) ? p : [...p, { id: m.id, name: m.name }])),
-    serialize: () => serializeMentions(text.trim(), picked),
+    /** `members` (the team) lets a hand-typed full "@Name" still become a mention;
+     *  picked members take precedence on duplicate names (they come last). */
+    serialize: (members: Array<{ id: string; name: string }> = []) =>
+      serializeMentions(text.trim(), [...members, ...picked]),
     reset: () => {
       setText("");
       setPicked([]);

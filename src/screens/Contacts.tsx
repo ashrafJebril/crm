@@ -470,7 +470,7 @@ function ContactsImpl() {
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [openContactId, setOpenContactId] = useState<string | null>(null);
   // Deep link from a notification: `#/contacts?open=<contactId>`.
-  useOpenParam(setOpenContactId);
+  useOpenParam("contacts", setOpenContactId);
 
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [showSegmentManager, setShowSegmentManager] = useState(false);

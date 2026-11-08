@@ -95,3 +95,13 @@ describe("mergeByTime", () => {
     expect(mergeByTime(msgs, notes).map((x) => x.id)).toEqual(["m1", "m2", "n1", "m3", "n2"]);
   });
 });
+
+describe("serializeMentions with team fallback", () => {
+  it("serializes hand-typed full names, picked winning duplicates", () => {
+    const team = [{ id: "t1", name: "محمد أحمد" }, { id: "t2", name: "Sam Lee" }, { id: "t3", name: "Sam Lee" }];
+    const picked = [{ id: "t2", name: "Sam Lee" }];
+    expect(serializeMentions("@محمد أحمد و @Sam Lee", [...team, ...picked])).toBe(
+      "@[محمد أحمد](user:t1) و @[Sam Lee](user:t2)",
+    );
+  });
+});

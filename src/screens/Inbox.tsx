@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useOpenParam } from "@/lib/useOpenParam";
+import { openParamForRoute, useOpenParam } from "@/lib/useOpenParam";
 import { InlineNote } from "@/components/InlineNote";
 import { mergeByTime } from "@/lib/mentions";
 import { useTweaks } from "@/tweaks/context";
@@ -1566,7 +1566,7 @@ function ConversationPane({
             const prevLabel = prev?.createdAt ? dayLabel(prev.createdAt, lang, tx) : "";
             const isNote = "authorUserId" in m;
             return (
-              <Fragment key={isNote ? `note-${m.id}` : `${conv.id}-${i}`}>
+              <Fragment key={isNote ? `note-${m.id}` : `msg-${m.metaMessageId ?? `${m.createdAt ?? ""}|${m.from}|${i}`}`}>
                 {label && label !== prevLabel && (
                   <div className="day-divider">
                     <span>{label}</span>
@@ -1575,6 +1575,7 @@ function ConversationPane({
                 {isNote ? (
                   <InlineNote
                     note={m}
+                    isOwn={!!user && m.authorUserId === (user as { id?: string }).id}
                     authorName={authorName(m.authorUserId)}
                     label={tx("Internal note", "ملاحظة داخلية")}
                     timeLabel={m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
@@ -2757,9 +2758,12 @@ function InboxImpl() {
     }
   };
   const [search, setSearch] = useState<string>("");
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // A notification deep link is read synchronously so auto-select never overrides it.
+  const [activeId, setActiveId] = useState<string | null>(() =>
+    openParamForRoute(window.location.hash, "inbox"),
+  );
   // Deep link from a notification: `#/inbox?open=<conversationId>`.
-  useOpenParam(setActiveId);
+  useOpenParam("inbox", setActiveId);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
   const [channels, setChannels] = useState<Set<ConvChannel>>(

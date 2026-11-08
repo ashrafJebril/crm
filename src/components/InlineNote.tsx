@@ -1,4 +1,5 @@
 import { MentionText } from "./MentionText";
+import { useSeenOnView } from "@/lib/useSeenOnView";
 import type { Note } from "@/lib/types";
 
 /** An internal note rendered inside a conversation thread. Visually distinct
@@ -9,14 +10,18 @@ export function InlineNote({
   authorName,
   label,
   timeLabel,
+  isOwn,
 }: {
   note: Note;
   authorName?: string;
   label: string;
   timeLabel: string;
+  isOwn?: boolean;
 }) {
+  const ref = useSeenOnView(note.id, !!isOwn);
   return (
     <div
+      ref={ref}
       role="note"
       style={{
         alignSelf: "center",

@@ -43,7 +43,7 @@ export default function PipelinePage() {
   const [showNew, setShowNew] = useState(false);
   // Deep link from a notification: `#/pipeline?open=<ticketId>`.
   const [deepTicketId, setDeepTicketId] = useState<string | null>(null);
-  useOpenParam(setDeepTicketId);
+  useOpenParam("pipeline", setDeepTicketId);
 
   // Keyboard shortcuts: N = new, / = search focus, Esc = close drawer/modal
   useEffect(() => {
