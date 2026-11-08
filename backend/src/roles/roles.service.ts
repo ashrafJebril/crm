@@ -60,7 +60,7 @@ export class RolesService {
 
   async create(workspaceId: string, dto: CreateRoleDto, actor: Actor) {
     const permissions = validatePermissions(dto.permissions);
-    await this.permissions.assertCanGrant(workspaceId, actor, permissions);
+    await this.permissions.assertCanGrant(workspaceId, actor, permissions, dto.conversationVisibility ?? "all");
     await this.assertNameFree(workspaceId, dto.name);
     const role = await this.prisma.role.create({
       data: {
@@ -82,10 +82,10 @@ export class RolesService {
       throw new BadRequestException("The Owner role cannot be modified");
     }
     const data: Prisma.RoleUpdateInput = {};
-    if (dto.permissions !== undefined) {
-      const permissions = validatePermissions(dto.permissions);
-      await this.permissions.assertCanGrant(workspaceId, actor, permissions);
-      data.permissions = permissions as Prisma.InputJsonValue;
+    if (dto.permissions !== undefined || dto.conversationVisibility !== undefined) {
+      const permissions = dto.permissions !== undefined ? validatePermissions(dto.permissions) : {};
+      await this.permissions.assertCanGrant(workspaceId, actor, permissions, dto.conversationVisibility);
+      if (dto.permissions !== undefined) data.permissions = permissions as Prisma.InputJsonValue;
     }
     if (dto.name !== undefined && dto.name.trim() !== role.name) {
       await this.assertNameFree(workspaceId, dto.name, id);

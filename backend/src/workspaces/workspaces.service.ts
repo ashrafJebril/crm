@@ -22,6 +22,13 @@ import {
   WorkspaceRole,
 } from "./workspaces.dto";
 
+interface Target {
+  legacyRole: string;
+  roleId: string | null;
+  permissions: PermissionsJson;
+  visibility?: "all" | "assigned";
+}
+
 function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "U";
@@ -239,7 +246,7 @@ export class WorkspacesService {
   private async resolveTarget(
     workspaceId: string,
     dto: { role?: string; roleId?: string },
-  ): Promise<{ legacyRole: string; roleId: string | null; permissions: PermissionsJson }> {
+  ): Promise<Target> {
     if (dto.role && dto.roleId) throw new BadRequestException("Send role or roleId, not both");
     if (dto.roleId) {
       const role = await this.prisma.role.findFirst({ where: { id: dto.roleId, workspaceId } });
@@ -248,6 +255,7 @@ export class WorkspacesService {
         legacyRole: role.isSystem && role.key ? role.key : "agent",
         roleId: role.id,
         permissions: sanitizePermissions(role.permissions),
+        visibility: role.conversationVisibility === "assigned" ? "assigned" : "all",
       };
     }
     if (dto.role) {
@@ -258,6 +266,7 @@ export class WorkspacesService {
         legacyRole: dto.role,
         roleId: row?.id ?? null,
         permissions: row ? sanitizePermissions(row.permissions) : {},
+        visibility: row ? (row.conversationVisibility === "assigned" ? "assigned" : "all") : undefined,
       };
     }
     throw new BadRequestException("role or roleId is required");
@@ -268,12 +277,12 @@ export class WorkspacesService {
   private async authorizeAssignment(
     workspaceId: string,
     actor: Actor,
-    target: { legacyRole: string; permissions: PermissionsJson },
+    target: Target,
   ) {
     if (target.legacyRole === "owner") {
       await this.permissions.assertOwner(workspaceId, actor, "Only an owner can assign the owner role");
     }
-    await this.permissions.assertCanGrant(workspaceId, actor, target.permissions);
+    await this.permissions.assertCanGrant(workspaceId, actor, target.permissions, target.visibility);
   }
 
   /** Member row of THIS workspace (explicit post-check: never trust a row
@@ -294,7 +303,7 @@ export class WorkspacesService {
     actor: Actor,
   ) {
     // Last-owner check and write share one serializable transaction.
-    const updated = await this.prisma.$transaction(
+    const updated = await this.serializable(() => this.prisma.$transaction(
       async (tx) => {
         const m = await this.findMember(tx, workspaceId, userId);
         const target = await this.resolveTarget(workspaceId, dto);
@@ -309,9 +318,21 @@ export class WorkspacesService {
         });
       },
       { isolationLevel: "Serializable" },
-    );
+    ));
     this.permissions.invalidate(workspaceId, userId);
     return updated;
+  }
+
+  /** Maps a Postgres serialization failure (Prisma P2034) to a retryable 409. */
+  private async serializable<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (e) {
+      if ((e as { code?: string })?.code === "P2034") {
+        throw new ConflictException("Another change happened at the same time — try again");
+      }
+      throw e;
+    }
   }
 
   /** The workspace must keep at least one member whose effective role is owner. */
@@ -371,7 +392,7 @@ export class WorkspacesService {
   }
 
   async removeMember(workspaceId: string, userId: string, actor: Actor) {
-    await this.prisma.$transaction(
+    await this.serializable(() => this.prisma.$transaction(
       async (tx) => {
         const m = await this.findMember(tx, workspaceId, userId);
         if (isEffectiveOwner(m)) {
@@ -383,7 +404,7 @@ export class WorkspacesService {
         await tx.workspaceMember.delete({ where: { id: m.id } });
       },
       { isolationLevel: "Serializable" },
-    );
+    ));
     this.permissions.invalidate(workspaceId, userId);
     return { ok: true };
   }

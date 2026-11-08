@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { WorkspacesService } from "./workspaces.service";
 import { PermissionService, type Actor, type EffectiveRole } from "../permissions/permission.service";
 import { SYSTEM_ROLES } from "../permissions/system-roles";
@@ -214,6 +214,36 @@ describe("WorkspacesService member roles (SP-25)", () => {
         svc.inviteByEmail("ws1", { email: "a@b.co", role: "admin" }, adminActor),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.workspaceMember.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("visibility cannot be widened", () => {
+    const assigned: Actor = { userId: "asg" };
+    beforeEach(() => {
+      effective.mockResolvedValue({ ...effOf("owner"), conversationVisibility: "assigned" });
+      prisma.workspaceMember.findUnique.mockResolvedValue(mem({ role: "agent", roleId: null, roleRef: null }));
+    });
+
+    it("an assigned-only caller cannot assign a role whose visibility is all", async () => {
+      prisma.role.findFirst.mockResolvedValue({ ...custom, permissions: {}, conversationVisibility: "all" });
+      const err: any = await svc.updateMemberRole("ws1", "u1", { roleId: "r_custom" }, assigned).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.message).toBe("Cannot grant permissions you don't have");
+    });
+
+    it("an assigned-only caller may assign an assigned role", async () => {
+      prisma.role.findFirst.mockResolvedValue({ ...custom, permissions: {}, conversationVisibility: "assigned" });
+      await expect(svc.updateMemberRole("ws1", "u1", { roleId: "r_custom" }, assigned)).resolves.toBeDefined();
+    });
+  });
+
+  describe("serialization failures", () => {
+    it("P2034 on role change or removal -> 409 try again", async () => {
+      prisma.$transaction.mockRejectedValue(Object.assign(new Error("tx"), { code: "P2034" }));
+      await expect(svc.updateMemberRole("ws1", "u1", { role: "agent" }, owner)).rejects.toBeInstanceOf(ConflictException);
+      const err: any = await svc.removeMember("ws1", "u1", owner).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toMatch(/try again/);
     });
   });
 

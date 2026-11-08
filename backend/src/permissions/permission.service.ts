@@ -122,7 +122,12 @@ export class PermissionService {
 
   /** 403 unless the actor already holds every permission in `perms`
    *  ("you cannot grant more than you hold"). */
-  async assertCanGrant(workspaceId: string, actor: Actor, perms: PermissionsJson): Promise<void> {
+  async assertCanGrant(
+    workspaceId: string,
+    actor: Actor,
+    perms: PermissionsJson,
+    visibility?: ConversationVisibility,
+  ): Promise<void> {
     if (actor.isSuperAdmin) return;
     const wanted = flattenPermissions(perms);
     if (actor.impersonating) {
@@ -131,6 +136,8 @@ export class PermissionService {
     }
     const eff = await this.effective(workspaceId, actor.userId);
     if (wanted.some((p) => !this.can(eff, p))) throw cannotGrant();
+    // Conversation visibility cannot be widened beyond the caller's own.
+    if (visibility === "all" && eff?.conversationVisibility !== "all") throw cannotGrant();
   }
 
   /** 403 unless the actor is an effective owner (or a bypass session). */

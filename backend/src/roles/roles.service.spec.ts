@@ -164,6 +164,27 @@ describe("RolesService", () => {
       await expect(real.update("ws1", "r1", { nameAr: "z" }, actor)).resolves.toBeDefined();
     });
 
+    it("assigned-only caller cannot create a role with visibility all (default) or PATCH it to all", async () => {
+      effective.mockResolvedValue({ ...eff({ contacts: ["view"] }), conversationVisibility: "assigned" });
+      await expect(
+        real.create("ws1", { name: "x", nameAr: "y", permissions: { contacts: ["view"] } }, actor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        real.create("ws1", { name: "x", nameAr: "y", permissions: {}, conversationVisibility: "all" }, actor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        real.create("ws1", { name: "x", nameAr: "y", permissions: {}, conversationVisibility: "assigned" }, actor),
+      ).resolves.toBeDefined();
+      prisma.role.findFirst.mockResolvedValue(row({}));
+      await expect(
+        real.update("ws1", "r1", { conversationVisibility: "all" }, actor),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.role.update).not.toHaveBeenCalled();
+      await expect(
+        real.update("ws1", "r1", { conversationVisibility: "assigned" }, actor),
+      ).resolves.toBeDefined();
+    });
+
     it("super-admin bypasses; impersonation cannot grant billing.* or campaigns.manage", async () => {
       effective.mockResolvedValue(eff({}));
       await expect(
