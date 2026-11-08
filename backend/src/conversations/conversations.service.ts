@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { LOutboundService } from "../integrations/l-outbound.service";
@@ -31,6 +36,7 @@ export class ConversationsService {
     const convs = await this.prisma.conversation.findMany({
       where: { workspaceId },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+      include: { labels: { select: { labelId: true } } },
     });
 
     // 24-hour customer-service window state for WhatsApp conversations only.
@@ -58,7 +64,8 @@ export class ConversationsService {
 
     const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
     const now = Date.now();
-    return convs.map((c) => {
+    return convs.map(({ labels, ...rest }) => {
+      const c = { ...rest, labelIds: labels.map((l) => l.labelId) };
       if (c.channel !== "whatsapp") return c;
       const lastInboundAt = lastInboundByConv.get(c.id) ?? null;
       const waWindowOpen = lastInboundAt
@@ -71,9 +78,24 @@ export class ConversationsService {
   async get(workspaceId: string, id: string) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id, workspaceId },
-      include: { messages: { orderBy: { createdAt: "asc" } } },
+      include: {
+        messages: { orderBy: { createdAt: "asc" } },
+        labels: { select: { labelId: true } },
+      },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
+    return this.withWindow(conv);
+  }
+
+  private withWindow<
+    T extends {
+      channel: string;
+      messages: { from: string; createdAt: Date }[];
+      labels: { labelId: string }[];
+    },
+  >(full: T) {
+    const { labels, ...rest } = full;
+    const conv = { ...rest, labelIds: labels.map((l) => l.labelId) };
 
     if (conv.channel === "whatsapp") {
       // Walk messages backwards for the most recent inbound. Avoids a second
@@ -110,10 +132,63 @@ export class ConversationsService {
   }
 
   async update(workspaceId: string, id: string, dto: UpdateConversationDto) {
-    await this.get(workspaceId, id);
-    const conv = await this.prisma.conversation.update({ where: { id }, data: dto });
-    this.emitActivity(workspaceId, conv.channel, conv.id);
-    return conv;
+    const row = await this.prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      include: { labels: { select: { labelId: true } } },
+    });
+    if (!row) throw new NotFoundException("Conversation not found");
+    if (dto.version !== undefined && dto.version !== row.version) {
+      throw this.conflict(row);
+    }
+
+    if (typeof dto.assigneeId === "string") {
+      const member = await this.prisma.workspaceMember.findFirst({
+        where: { workspaceId, userId: dto.assigneeId },
+      });
+      if (!member) throw new BadRequestException("assignee is not a member");
+    }
+
+    const { version: _version, escalateReason, ...fields } = dto;
+    const data: Record<string, unknown> = { ...fields };
+    if (dto.escalated === true) {
+      if (!escalateReason || !escalateReason.trim()) {
+        throw new BadRequestException("escalateReason is required to escalate");
+      }
+      data.escalateReason = escalateReason.trim();
+    } else if (dto.escalated === false) {
+      data.escalateReason = null;
+    }
+    if (dto.status !== undefined && dto.status !== row.status) {
+      data.statusChangedAt = new Date();
+    }
+    data.version = { increment: 1 };
+
+    const res = await this.prisma.conversation.updateMany({
+      where: { id, workspaceId, version: row.version },
+      data,
+    });
+    const fresh = await this.prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      include: { labels: { select: { labelId: true } } },
+    });
+    if (res.count === 0 || !fresh) {
+      if (!fresh) throw new NotFoundException("Conversation not found");
+      throw this.conflict(fresh);
+    }
+    this.emitActivity(workspaceId, fresh.channel, fresh.id);
+    return this.mapLabels(fresh);
+  }
+
+  private mapLabels<T extends { labels: { labelId: string }[] }>(c: T) {
+    const { labels, ...rest } = c;
+    return { ...rest, labelIds: labels.map((l) => l.labelId) };
+  }
+
+  private conflict(current: { labels: { labelId: string }[] }) {
+    return new ConflictException({
+      message: "Conversation changed",
+      current: this.mapLabels(current),
+    });
   }
 
   async markRead(workspaceId: string, id: string) {

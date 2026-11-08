@@ -1,14 +1,17 @@
 import {
   IsBoolean,
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
+  ValidateIf,
 } from "class-validator";
 
 const CHANNELS = ["whatsapp", "instagram", "facebook", "tiktok", "webchat"] as const;
-const STATUSES = ["human", "closed", "spam"] as const;
+export const STATUSES = ["human", "pending_customer", "resolved", "closed", "spam"] as const;
 const FROMS = ["them", "human"] as const;
 
 export class CreateConversationDto {
@@ -30,6 +33,9 @@ export class UpdateConversationDto {
   @IsOptional() @IsBoolean() escalated?: boolean;
   @IsOptional() @IsNumber() unread?: number;
   @IsOptional() @IsBoolean() aiEnabled?: boolean;
+  @IsOptional() @ValidateIf((_o, v) => v !== null) @IsString() assigneeId?: string | null;
+  @IsOptional() @IsString() @MaxLength(500) escalateReason?: string;
+  @IsOptional() @IsInt() version?: number;
 }
 
 export class CreateMessageDto {
