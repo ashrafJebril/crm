@@ -10,6 +10,8 @@ describe("arabicServerMessage", () => {
     "Switch to this workspace first",
     "You can't change a member with more access than you",
     "Only the author can change this note",
+    "Another change happened at the same time — try again",
+    "Another change happened at the same time - try again",
   ];
   it.each(cases)("maps %s to Arabic", (m) => {
     const ar = arabicServerMessage(m);

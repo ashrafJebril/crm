@@ -49,6 +49,8 @@ const PLATFORMS: PlatformDef[] = [
 interface ZernioCardProps {
   tx: Tx;
   canConnect: boolean;
+  /** channels.view: may see the connection health alert. */
+  canView?: boolean;
   canDisconnect: boolean;
 }
 
@@ -59,7 +61,7 @@ interface ZernioCardProps {
  * Integration row on the backend; the redirect back is reconciled by
  * ZernioRedirectCapture (POST /integrations/zernio/sync).
  */
-export function ZernioCard({ tx, canConnect, canDisconnect }: ZernioCardProps) {
+export function ZernioCard({ tx, canConnect, canView = false, canDisconnect }: ZernioCardProps) {
   const statusQ = useFetch<ZernioStatus>("/integrations/zernio/status");
   const connect = useConnectFlow();
   const [busy, setBusy] = useState<string | null>(null);
@@ -171,7 +173,7 @@ export function ZernioCard({ tx, canConnect, canDisconnect }: ZernioCardProps) {
                       ? p.note(tx)
                       : tx("Not connected", "غير متصل")}
                 </div>
-                {needsReconnect && canConnect && (
+                {needsReconnect && (canView || canConnect) && (
                   <div role="alert" style={{ fontSize: 11.5, color: "var(--bad)", marginTop: 4, lineHeight: 1.45 }}>
                     {acc?.healthReason ?? tx("This connection stopped working. Connect it again.", "توقف هذا الربط عن العمل. اربطه مجددًا.")}
                   </div>
@@ -209,7 +211,7 @@ export function ZernioCard({ tx, canConnect, canDisconnect }: ZernioCardProps) {
               )}
               {(canConnect || canDisconnect) && (
                 <div style={{ flexShrink: 0, display: "flex", gap: 6 }}>
-                  {needsReconnect && (
+                  {needsReconnect && canConnect && (
                     <button type="button" className="btn primary sm" onClick={() => onConnect(p.key)} disabled={rowBusy}>
                       {rowBusy ? tx("Opening…", "جارٍ الفتح…") : tx("Reconnect", "أعد الربط")}
                     </button>

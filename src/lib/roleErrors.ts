@@ -13,6 +13,10 @@ const EXACT_AR: Record<string, string> = {
   "Role is assigned to members": "هذا الدور مسند إلى أعضاء. انقلهم إلى دور آخر أولاً.",
   "A role with this name already exists": "يوجد دور بهذا الاسم بالفعل",
   "Role not found": "الدور غير موجود",
+  "Another change happened at the same time — try again":
+    "حدث تغيير آخر في الوقت نفسه — حاول مرة أخرى",
+  "Another change happened at the same time - try again":
+    "حدث تغيير آخر في الوقت نفسه — حاول مرة أخرى",
   "Missing permission": "ليست لديك صلاحية للقيام بذلك",
 };
 

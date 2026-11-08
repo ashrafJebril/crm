@@ -32,6 +32,7 @@ export function IntegrationsTab() {
   const { can } = usePermissions();
   const canEdit = can("channels.update");
   const canConnect = can("channels.create");
+  const canView = can("channels.view");
   const canDisconnect = can("channels.delete");
   const canCreateKey = can("api_keys.create");
   const canDeleteKey = can("api_keys.delete");
@@ -42,7 +43,7 @@ export function IntegrationsTab() {
 
   return (
     <>
-      <ZernioCard key={`zernio-${wsKey}`} tx={tx} canConnect={canConnect} canDisconnect={canDisconnect} />
+      <ZernioCard key={`zernio-${wsKey}`} tx={tx} canConnect={canConnect} canView={canView} canDisconnect={canDisconnect} />
 
       {/* Legacy Meta-app FB/IG cards — dormant, kept for rollback (see flag). */}
       {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} canConnect={canConnect} canDisconnect={canDisconnect} />}
