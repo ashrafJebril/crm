@@ -345,6 +345,10 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "DELETE /integrations/zernio/:platform": "channels.delete",
 
   // ── Members & workspace settings ──────────────────────────────────────
+  "GET /roles": "roles.view",
+  "POST /roles": "roles.create",
+  "PATCH /roles/:id": "roles.update",
+  "DELETE /roles/:id": "roles.delete",
   "GET /team": "members.view",
   "GET /workspaces/:id/members": "members.view",
   "POST /workspaces/:id/members": "members.create",

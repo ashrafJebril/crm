@@ -66,9 +66,16 @@ export class InviteByEmailDto {
   password?: string;
 }
 
+/** Either a legacy system role string or a roleId (system or custom). */
 export class UpdateMemberRoleDto {
+  @IsOptional()
   @IsIn(WORKSPACE_ROLES as unknown as string[])
-  role!: WorkspaceRole;
+  role?: WorkspaceRole;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  roleId?: string;
 }
 
 export class ResetMemberPasswordDto {

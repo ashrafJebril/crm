@@ -35,6 +35,7 @@ import { AdsModule } from "./ads/ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
 import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
 import { PermissionsModule } from "./permissions/permissions.module";
+import { RolesModule } from "./roles/roles.module";
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { PermissionsModule } from "./permissions/permissions.module";
     AuthModule,
     // PermissionGuard is an APP_GUARD registered in AuthModule (after AuthGuard).
     PermissionsModule,
+    RolesModule,
     HealthModule,
     SegmentsModule,
     TagsModule,
