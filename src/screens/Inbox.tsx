@@ -1,5 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useOpenParam } from "@/lib/useOpenParam";
+import { InlineNote } from "@/components/InlineNote";
+import { mergeByTime } from "@/lib/mentions";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
@@ -28,6 +30,7 @@ import {
   type Contact,
   type ConversationLabel,
   type TeamMember,
+  type Note,
   type ConvChannel,
   type Conversation,
   type Lang,
@@ -1368,6 +1371,21 @@ function ConversationPane({
   // live customer conversations and read as though the AI had answered them.
   const messages: Message[] = conv.messages;
 
+  // Internal notes for this thread, shown inline between the messages. Same URL
+  // as the NotesPanel composer below, so React Query shares the cache and a new
+  // note appears here after the panel's refetch.
+  const threadNotesQ = useFetch<Note[]>(
+    conv.id ? `/notes?conversationId=${encodeURIComponent(conv.id)}` : null,
+  );
+  const teamQ = useFetch<TeamMember[]>("/team");
+  const authorName = (id: string | null) =>
+    id ? (teamQ.data ?? []).find((m) => m.id === id)?.name : undefined;
+  const threadNotes = useMemo(
+    () => (threadNotesQ.data ?? []).flatMap((n) => [n, ...(n.replies ?? [])]),
+    [threadNotesQ.data],
+  );
+  const timeline = useMemo(() => mergeByTime(messages, threadNotes), [messages, threadNotes]);
+
   const handleSend = () => {
     const body = draft.trim();
     // Allow sending if there's text OR an image attachment.
@@ -1542,18 +1560,28 @@ function ConversationPane({
             {tx("No messages in this thread yet.", "لا توجد رسائل في هذه المحادثة بعد.")}
           </div>
         ) : (
-          messages.map((m, i) => {
+          timeline.map((m, i) => {
             const label = m.createdAt ? dayLabel(m.createdAt, lang, tx) : "";
-            const prev = i > 0 ? messages[i - 1] : null;
+            const prev = i > 0 ? timeline[i - 1] : null;
             const prevLabel = prev?.createdAt ? dayLabel(prev.createdAt, lang, tx) : "";
+            const isNote = "authorUserId" in m;
             return (
-              <Fragment key={`${conv.id}-${i}`}>
+              <Fragment key={isNote ? `note-${m.id}` : `${conv.id}-${i}`}>
                 {label && label !== prevLabel && (
                   <div className="day-divider">
                     <span>{label}</span>
                   </div>
                 )}
-                <Bubble m={m} />
+                {isNote ? (
+                  <InlineNote
+                    note={m}
+                    authorName={authorName(m.authorUserId)}
+                    label={tx("Internal note", "ملاحظة داخلية")}
+                    timeLabel={m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                  />
+                ) : (
+                  <Bubble m={m} />
+                )}
               </Fragment>
             );
           })

@@ -1,11 +1,20 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
-import { makeTx } from "@/lib/tx";
+import { useAuth } from "@/auth/context";
+import { makeTx, type Tx } from "@/lib/tx";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
+import { renderMentionParts } from "@/lib/mentions";
 import { IconPlus, IconMore } from "@/icons";
 import { Skeleton } from "./Skeleton";
-import type { Note } from "@/lib/types";
+import { MentionInput, useMentionDraft } from "./MentionInput";
+import { MentionText } from "./MentionText";
+import type { Note, NoteWarning, TeamMember } from "@/lib/types";
+
+type NoteWithWarnings = Note & { warnings?: NoteWarning[] };
+
+/** Notes already reported as seen this session (one POST per note). */
+const seenSent = new Set<string>();
 
 interface Props {
   /** Required to create new notes (and to list when scope="contact"). */
@@ -30,9 +39,167 @@ function fmt(iso: string): string {
   return new Date(t).toLocaleDateString();
 }
 
+function warningText(tx: Tx, name: string, reason: NoteWarning["reason"]): string {
+  return reason === "not_a_member"
+    ? tx(
+        `${name} isn't in this workspace and wasn't notified`,
+        `${name} ليس عضوًا في مساحة العمل ولم يتم إشعاره`,
+      )
+    : tx(
+        `${name} can't open this record and wasn't notified`,
+        `${name} لا يملك صلاحية فتح هذا السجل ولم يتم إشعاره`,
+      );
+}
+
+/** Reports a note as seen once it scrolls into view (throttled per note per session). */
+function useSeenOnView(noteId: string, skip: boolean) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || skip || seenSent.has(noteId)) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting) || seenSent.has(noteId)) return;
+      seenSent.add(noteId);
+      io.disconnect();
+      api.post(`/notes/${noteId}/seen`, {}).catch(() => seenSent.delete(noteId));
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [noteId, skip]);
+  return ref;
+}
+
+function SeenBy({ note, team, selfId, tx }: { note: Note; team: Map<string, TeamMember>; selfId?: string; tx: Tx }) {
+  const others = (note.seenBy ?? []).filter((s) => s.userId !== note.authorUserId && s.userId !== selfId);
+  if (others.length === 0) return null;
+  const shown = others.slice(0, 4);
+  const names = others.map((s) => team.get(s.userId)?.name ?? "?").join(", ");
+  return (
+    <span
+      title={`${tx("Seen by", "شوهدت بواسطة")} ${names}`}
+      aria-label={`${tx("Seen by", "شوهدت بواسطة")} ${names}`}
+      style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
+    >
+      <span>{tx("Seen by", "شوهدت بواسطة")}</span>
+      {shown.map((s) => {
+        const m = team.get(s.userId);
+        return (
+          <span
+            key={s.userId}
+            aria-hidden
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: 999,
+              background: m?.color || "var(--bg-3)",
+              color: "#fff",
+              fontSize: 8,
+              display: "grid",
+              placeItems: "center",
+            }}
+          >
+            {m?.initials ?? "?"}
+          </span>
+        );
+      })}
+      {others.length > shown.length && <span>+{others.length - shown.length}</span>}
+    </span>
+  );
+}
+
+function NoteCard({
+  note,
+  scope,
+  team,
+  selfId,
+  tx,
+  isReply,
+  onReply,
+  onDelete,
+  deleting,
+}: {
+  note: Note;
+  scope: Props["scope"];
+  team: Map<string, TeamMember>;
+  selfId?: string;
+  tx: Tx;
+  isReply?: boolean;
+  onReply?: () => void;
+  onDelete: () => void;
+  deleting: boolean;
+}) {
+  const ref = useSeenOnView(note.id, note.authorUserId === selfId);
+  const author = note.authorUserId ? team.get(note.authorUserId)?.name : undefined;
+  return (
+    <div
+      ref={ref}
+      style={{
+        border: "1px solid var(--line-soft)",
+        background: "var(--bg-1)",
+        borderRadius: 8,
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        marginInlineStart: isReply ? 18 : 0,
+      }}
+    >
+      {author && (
+        <div dir="auto" style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-2)" }}>
+          {author}
+        </div>
+      )}
+      <div style={{ fontSize: 13, lineHeight: 1.4, color: "var(--ink-1)" }}>
+        <MentionText body={note.body} />
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: 8,
+          fontSize: 10,
+          color: "var(--ink-3)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <span>{fmt(note.createdAt)}</span>
+        {scope === "contact" && note.conversationId && (
+          <span title={note.conversationId}>· {tx("from chat", "من المحادثة")}</span>
+        )}
+        {onReply && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            style={{ padding: "0 4px", color: "var(--ink-3)" }}
+            onClick={onReply}
+          >
+            {tx("Reply", "رد")}
+          </button>
+        )}
+        <SeenBy note={note} team={team} selfId={selfId} tx={tx} />
+        <button
+          type="button"
+          className="btn ghost sm"
+          style={{ marginInlineStart: "auto", padding: "0 4px", color: "var(--ink-3)" }}
+          disabled={deleting}
+          onClick={onDelete}
+          aria-label={tx("Delete note", "حذف الملاحظة")}
+          title={tx("Delete", "حذف")}
+        >
+          <IconMore w={11} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
+  const { user } = useAuth();
+  const selfId = (user as { id?: string } | null)?.id;
 
   const listPath =
     scope === "conversation" && conversationId
@@ -42,26 +209,65 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
         : null;
 
   const listQ = useFetch<Note[]>(listPath);
+  const teamQ = useFetch<TeamMember[]>("/team");
+  const team = useMemo(() => new Map((teamQ.data ?? []).map((m) => [m.id, m])), [teamQ.data]);
 
   const createNote = useMutation<
-    { contactId: string; conversationId?: string; body: string },
-    Note
-  >((input) => api.post<Note>("/notes", input));
+    { contactId: string; conversationId?: string; parentId?: string; body: string },
+    NoteWithWarnings
+  >((input) => api.post<NoteWithWarnings>("/notes", input));
 
   const deleteNote = useMutation<{ id: string }, { ok: true }>((input) =>
     api.delete<{ ok: true }>(`/notes/${input.id}`),
   );
 
-  const [draft, setDraft] = useState("");
+  const draft = useMentionDraft();
+  const replyDraft = useMentionDraft();
+  const [replyTo, setReplyTo] = useState<Note | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+
+  const showWarnings = (body: string, ws: NoteWarning[] | undefined) => {
+    if (!ws || ws.length === 0) {
+      setWarnings([]);
+      return;
+    }
+    const names = new Map<string, string>();
+    for (const p of renderMentionParts(body)) if ("mention" in p) names.set(p.mention.id, p.mention.name);
+    setWarnings(
+      ws.map((w) => warningText(tx, names.get(w.userId) ?? team.get(w.userId)?.name ?? "—", w.reason)),
+    );
+  };
+
   const submit = async () => {
-    const body = draft.trim();
+    const body = draft.serialize();
     if (!body || !contactId) return;
-    await createNote.mutate({
+    const res = await createNote.mutate({
       contactId,
       conversationId: scope === "conversation" ? conversationId : undefined,
       body,
     });
-    setDraft("");
+    showWarnings(body, res.warnings);
+    draft.reset();
+    listQ.refetch();
+  };
+
+  const submitReply = async () => {
+    const body = replyDraft.serialize();
+    if (!body || !contactId || !replyTo) return;
+    const res = await createNote.mutate({
+      contactId,
+      conversationId: replyTo.conversationId ?? undefined,
+      parentId: replyTo.id,
+      body,
+    });
+    showWarnings(body, res.warnings);
+    replyDraft.reset();
+    setReplyTo(null);
+    listQ.refetch();
+  };
+
+  const remove = async (id: string) => {
+    await deleteNote.mutate({ id });
     listQ.refetch();
   };
 
@@ -76,56 +282,57 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
     );
   }
 
+  const composer = (
+    d: typeof draft,
+    onSubmit: () => void,
+    placeholder: string,
+    addLabel: string,
+    autoFocus?: boolean,
+  ) => (
+    <div
+      style={{
+        display: "flex",
+        gap: 6,
+        alignItems: "flex-start",
+        padding: 10,
+        border: "1px solid var(--line-soft)",
+        borderRadius: 8,
+        background: "var(--bg)",
+      }}
+    >
+      <MentionInput draft={d} placeholder={placeholder} autoFocus={autoFocus} onSubmit={onSubmit} />
+      <button
+        className="btn primary sm"
+        type="button"
+        onClick={onSubmit}
+        disabled={createNote.loading || d.text.trim().length === 0}
+        aria-label={addLabel}
+      >
+        <IconPlus w={12} />
+      </button>
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div
-        style={{
-          display: "flex",
-          gap: 6,
-          alignItems: "flex-start",
-          padding: 10,
-          border: "1px solid var(--line-soft)",
-          borderRadius: 8,
-          background: "var(--bg)",
-        }}
-      >
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-          placeholder={tx("Add an internal note…", "أضف ملاحظة داخلية…")}
-          rows={2}
-          style={{
-            flex: 1,
-            minHeight: 36,
-            resize: "vertical",
-            border: 0,
-            outline: 0,
-            background: "transparent",
-            color: "inherit",
-            fontSize: 13,
-            fontFamily: "inherit",
-            lineHeight: 1.4,
-          }}
-        />
-        <button
-          className="btn primary sm"
-          type="button"
-          onClick={submit}
-          disabled={createNote.loading || draft.trim().length === 0}
-          aria-label={tx("Add note", "إضافة ملاحظة")}
-        >
-          <IconPlus w={12} />
-        </button>
-      </div>
+      {composer(
+        draft,
+        submit,
+        tx("Add an internal note… (@ to mention)", "أضف ملاحظة داخلية… (@ للإشارة)"),
+        tx("Add note", "إضافة ملاحظة"),
+      )}
       {createNote.error && (
         <div style={{ color: "var(--bad)", fontSize: 11 }}>
           {createNote.error}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div role="status" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {warnings.map((w, i) => (
+            <div key={i} dir="auto" style={{ color: "var(--warn)", fontSize: 11 }}>
+              {w}
+            </div>
+          ))}
         </div>
       )}
 
@@ -143,63 +350,44 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
       )}
 
       {(listQ.data ?? []).map((n) => (
-        <div
-          key={n.id}
-          style={{
-            border: "1px solid var(--line-soft)",
-            background: "var(--bg-1)",
-            borderRadius: 8,
-            padding: "8px 10px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 13,
-              lineHeight: 1.4,
-              whiteSpace: "pre-wrap",
-              color: "var(--ink-1)",
+        <div key={n.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <NoteCard
+            note={n}
+            scope={scope}
+            team={team}
+            selfId={selfId}
+            tx={tx}
+            onReply={() => {
+              replyDraft.reset();
+              setReplyTo(replyTo?.id === n.id ? null : n);
             }}
-          >
-            {n.body}
-          </div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 10,
-              color: "var(--ink-3)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            <span>{fmt(n.createdAt)}</span>
-            {scope === "contact" && n.conversationId && (
-              <span title={n.conversationId}>
-                · {tx("from chat", "من المحادثة")}
-              </span>
-            )}
-            <button
-              type="button"
-              className="btn ghost sm"
-              style={{
-                marginInlineStart: "auto",
-                padding: "0 4px",
-                color: "var(--ink-3)",
-              }}
-              disabled={deleteNote.loading}
-              onClick={async () => {
-                await deleteNote.mutate({ id: n.id });
-                listQ.refetch();
-              }}
-              aria-label={tx("Delete note", "حذف الملاحظة")}
-              title={tx("Delete", "حذف")}
-            >
-              <IconMore w={11} />
-            </button>
-          </div>
+            onDelete={() => void remove(n.id)}
+            deleting={deleteNote.loading}
+          />
+          {(n.replies ?? []).map((r) => (
+            <NoteCard
+              key={r.id}
+              note={r}
+              scope={scope}
+              team={team}
+              selfId={selfId}
+              tx={tx}
+              isReply
+              onDelete={() => void remove(r.id)}
+              deleting={deleteNote.loading}
+            />
+          ))}
+          {replyTo?.id === n.id && (
+            <div style={{ marginInlineStart: 18 }}>
+              {composer(
+                replyDraft,
+                submitReply,
+                tx("Write a reply…", "اكتب ردًا…"),
+                tx("Send reply", "إرسال الرد"),
+                true,
+              )}
+            </div>
+          )}
         </div>
       ))}
     </div>
