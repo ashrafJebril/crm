@@ -3,7 +3,8 @@ import { ContactsService } from "./contacts.service";
 import { ContactsBulkService } from "./contacts-bulk.service";
 import { parseContactFilter } from "./contact-filter";
 import { BulkContactsDto, CreateContactDto, UpdateContactDto } from "./contacts.dto";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import type { Viewer } from "../permissions/visibility";
 import { assertRequestPermission, type PermissionRequest } from "../permissions/permission.guard";
 
 @Controller("contacts")
@@ -59,8 +60,8 @@ export class ContactsController {
   }
 
   @Get(":id/summary")
-  summary(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.svc.summary(workspaceId, id);
+  summary(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @CurrentViewer() viewer: Viewer) {
+    return this.svc.summary(workspaceId, id, viewer);
   }
 
   @Get(":id/tickets")

@@ -1,8 +1,9 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { flattenPermissions, sanitizePermissions, type Permission, type PermissionsJson } from "./catalog";
 import { blockedForImpersonation } from "./impersonation";
+import { visibleConversationWhere, type Viewer } from "./visibility";
 import { SYSTEM_ROLES, SYSTEM_ROLE_KEYS, type ConversationVisibility } from "./system-roles";
 
 export interface EffectiveRole {
@@ -108,6 +109,41 @@ export class PermissionService {
 
   can(eff: EffectiveRole | null | undefined, permission: Permission | string): boolean {
     return !!eff && hasPermission(eff.permissions, permission);
+  }
+
+  /**
+   * The Prisma filter limiting which conversations `viewer` may see. No viewer
+   * (internal system caller) or a bypass session: unfiltered. A viewer with no
+   * member row fails closed (matches nothing).
+   */
+  async conversationScope(workspaceId: string, viewer?: Viewer | null): Promise<Prisma.ConversationWhereInput> {
+    if (!viewer || viewer.bypass) return {};
+    const eff = await this.effective(workspaceId, viewer.userId);
+    if (!eff) return { id: { in: [] } };
+    return visibleConversationWhere(eff, viewer.userId);
+  }
+
+  /** 404 when `conversationId` exists in the workspace but is hidden from
+   *  `viewer`. Unfiltered viewers return without a query (callers keep their
+   *  own not-found handling). */
+  async assertConversationVisible(
+    workspaceId: string,
+    conversationId: string,
+    viewer?: Viewer | null,
+  ): Promise<void> {
+    const scope = await this.conversationScope(workspaceId, viewer);
+    if (Object.keys(scope).length === 0) return;
+    const row = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId, ...scope },
+      select: { id: true },
+    });
+    if (!row) throw new NotFoundException("Conversation not found");
+  }
+
+  /** Does `viewer` hold `permission`? No viewer or a bypass session: yes. */
+  async viewerCan(workspaceId: string, viewer: Viewer | null | undefined, permission: Permission | string): Promise<boolean> {
+    if (!viewer || viewer.bypass) return true;
+    return this.can(await this.effective(workspaceId, viewer.userId), permission);
   }
 
   /** Drops cached roles for one member, or for the whole workspace. */

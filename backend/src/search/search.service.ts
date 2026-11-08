@@ -1,6 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 
 interface ContactHit {
   id: string;
@@ -55,28 +57,52 @@ function buildTsQuery(raw: string): string | null {
 
 @Injectable()
 export class SearchService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly perm?: PermissionService,
+  ) {}
+
+  /** What the requesting member may see in results. No viewer (internal
+   *  caller) or a bypass session sees everything. */
+  private async access(workspaceId: string, viewer?: Viewer) {
+    if (!this.perm || !viewer || viewer.bypass) {
+      return { contacts: true, conversations: true, tickets: true, assigneeId: null as string | null };
+    }
+    const [contacts, conversations, tickets, scope] = await Promise.all([
+      this.perm.viewerCan(workspaceId, viewer, "contacts.view"),
+      this.perm.viewerCan(workspaceId, viewer, "conversations.view"),
+      this.perm.viewerCan(workspaceId, viewer, "tickets.view"),
+      this.perm.conversationScope(workspaceId, viewer),
+    ]);
+    // "assigned" visibility = only conversations assigned to the viewer.
+    const assigneeId = typeof scope.assigneeId === "string" ? scope.assigneeId : null;
+    // A scope that is neither empty nor assigneeId (non-member) matches nothing.
+    const closed = Object.keys(scope).length > 0 && assigneeId === null;
+    return { contacts, conversations: conversations && !closed, tickets, assigneeId };
+  }
 
   async search(
     workspaceId: string,
     rawQuery: string,
     limit: number,
+    viewer?: Viewer,
   ): Promise<SearchResults> {
     const q = rawQuery.trim();
     const empty: SearchResults = { contacts: [], conversations: [], tickets: [] };
     if (q.length === 0) return empty;
+    const acc = await this.access(workspaceId, viewer);
 
     const tsq = buildTsQuery(q);
     if (!tsq) {
       // Fallback for very short queries (< 2 alphanum chars): ILIKE on names.
-      return this.ilikeFallback(workspaceId, q, limit);
+      return acc.contacts ? this.ilikeFallback(workspaceId, q, limit) : empty;
     }
 
     // Run all three queries in parallel — each independently scoped + ranked.
     const [contacts, conversations, tickets] = await Promise.all([
-      this.searchContacts(workspaceId, tsq, limit),
-      this.searchConversations(workspaceId, tsq, limit),
-      this.searchTickets(workspaceId, tsq, limit),
+      acc.contacts ? this.searchContacts(workspaceId, tsq, limit) : Promise.resolve([] as ContactHit[]),
+      acc.conversations ? this.searchConversations(workspaceId, tsq, limit, acc.assigneeId) : Promise.resolve([] as ConversationHit[]),
+      acc.tickets ? this.searchTickets(workspaceId, tsq, limit) : Promise.resolve([] as TicketHit[]),
     ]);
 
     return { contacts, conversations, tickets };
@@ -107,7 +133,11 @@ export class SearchService {
     workspaceId: string,
     tsq: string,
     limit: number,
+    assigneeId: string | null = null,
   ): Promise<ConversationHit[]> {
+    const onlyAssigned = assigneeId
+      ? Prisma.sql`AND conv."assigneeId" = ${assigneeId}`
+      : Prisma.empty;
     return this.prisma.$queryRaw<ConversationHit[]>`
       SELECT
         conv."id",
@@ -120,6 +150,7 @@ export class SearchService {
       JOIN "Contact" contact ON contact."id" = conv."contactId"
       WHERE conv."workspaceId" = ${workspaceId}
         AND conv."searchVector" @@ to_tsquery('simple', ${tsq})
+        ${onlyAssigned}
       ORDER BY ts_rank(conv."searchVector", to_tsquery('simple', ${tsq})) DESC,
                conv."updatedAt" DESC
       LIMIT ${Prisma.sql`${limit}`}

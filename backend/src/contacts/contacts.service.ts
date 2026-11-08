@@ -10,6 +10,8 @@ import { isEmail } from "class-validator";
 import { effectiveNameParts, joinName, normalizeDigits, normalizeLifecycle, splitName } from "./contact-name";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { SegmentsService } from "../segments/segments.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
@@ -76,6 +78,7 @@ export class ContactsService {
     private readonly segments: SegmentsService,
     @Optional() private readonly events?: EventEmitter2,
     @Optional() private readonly hjzSync?: HjzClientSyncService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   async list(workspaceId: string, opts: { segmentId?: string } = {}) {
@@ -231,13 +234,15 @@ export class ContactsService {
    * Aggregated contact profile for the contacts drawer — stats + recent
    * activity in one round-trip so the drawer doesn't fire 4 separate GETs.
    */
-  async summary(workspaceId: string, id: string) {
+  async summary(workspaceId: string, id: string, viewer?: Viewer) {
     const contact = await this.get(workspaceId, id);
+    // Only conversations the member may see feed the drawer and its counts.
+    const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
 
     const [allConvs, allTicketsCount, recentTickets, totalMessages, totalNotes, totalAppointments] =
       await Promise.all([
         this.prisma.conversation.findMany({
-          where: { contactId: id, workspaceId },
+          where: { contactId: id, workspaceId, ...scope },
           orderBy: { updatedAt: "desc" },
         }),
         this.prisma.ticket.count({ where: { contactId: id, workspaceId } }),
@@ -248,7 +253,7 @@ export class ContactsService {
           include: { stage: true },
         }),
         this.prisma.message.count({
-          where: { workspaceId, conversation: { contactId: id } },
+          where: { workspaceId, conversation: { contactId: id, ...scope } },
         }),
         this.prisma.note.count({ where: { contactId: id, workspaceId } }),
         this.prisma.appointment.count({ where: { contactId: id, workspaceId } }),

@@ -8,6 +8,8 @@ import {
   Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { LOutboundService } from "../integrations/l-outbound.service";
@@ -26,7 +28,14 @@ export class ConversationsService {
     private readonly realtime: RealtimeService,
     private readonly lOutbound: LOutboundService,
     @Optional() private readonly notifications?: NotificationsService,
+    // Absent only in unit tests; the module is @Global in the app.
+    @Optional() private readonly perm?: PermissionService,
   ) {}
+
+  /** Which conversations `viewer` may see. No viewer = internal caller. */
+  private scope(workspaceId: string, viewer?: Viewer): Promise<Prisma.ConversationWhereInput> {
+    return this.perm ? this.perm.conversationScope(workspaceId, viewer) : Promise.resolve({});
+  }
 
   private emitActivity(
     workspaceId: string,
@@ -39,9 +48,10 @@ export class ConversationsService {
     });
   }
 
-  async list(workspaceId: string) {
+  async list(workspaceId: string, viewer?: Viewer) {
+    const scope = await this.scope(workspaceId, viewer);
     const convs = await this.prisma.conversation.findMany({
-      where: { workspaceId },
+      where: { workspaceId, ...scope },
       orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
       include: { labels: { select: { labelId: true } } },
     });
@@ -82,9 +92,10 @@ export class ConversationsService {
     });
   }
 
-  async get(workspaceId: string, id: string) {
+  async get(workspaceId: string, id: string, viewer?: Viewer) {
+    const scope = await this.scope(workspaceId, viewer);
     const conv = await this.prisma.conversation.findFirst({
-      where: { id, workspaceId },
+      where: { id, workspaceId, ...scope },
       include: {
         messages: { orderBy: { createdAt: "asc" } },
         labels: { select: { labelId: true } },
@@ -143,9 +154,11 @@ export class ConversationsService {
     id: string,
     dto: UpdateConversationDto,
     actorId?: string,
+    viewer?: Viewer,
   ) {
+    const scope = await this.scope(workspaceId, viewer);
     const row = await this.prisma.conversation.findFirst({
-      where: { id, workspaceId },
+      where: { id, workspaceId, ...scope },
       include: { labels: { select: { labelId: true } } },
     });
     if (!row) throw new NotFoundException("Conversation not found");
@@ -251,8 +264,8 @@ export class ConversationsService {
     });
   }
 
-  async markRead(workspaceId: string, id: string) {
-    const conv = await this.get(workspaceId, id);
+  async markRead(workspaceId: string, id: string, viewer?: Viewer) {
+    const conv = await this.get(workspaceId, id, viewer);
     // Raw UPDATE on purpose: the list orders by updatedAt, and Prisma's
     // @updatedAt bumps on every model-level update — so opening a thread
     // (mark-read) would hoist it to the top. Reading must not reorder.
@@ -263,15 +276,15 @@ export class ConversationsService {
     return { ...conv, unread: 0 };
   }
 
-  async remove(workspaceId: string, id: string) {
-    const existing = await this.get(workspaceId, id);
+  async remove(workspaceId: string, id: string, viewer?: Viewer) {
+    const existing = await this.get(workspaceId, id, viewer);
     await this.prisma.conversation.delete({ where: { id } });
     this.emitActivity(workspaceId, existing.channel, id);
     return { ok: true };
   }
 
-  async listMessages(workspaceId: string, conversationId: string) {
-    await this.get(workspaceId, conversationId);
+  async listMessages(workspaceId: string, conversationId: string, viewer?: Viewer) {
+    await this.get(workspaceId, conversationId, viewer);
     return this.prisma.message.findMany({
       where: { conversationId, workspaceId },
       orderBy: { createdAt: "asc" },
@@ -289,8 +302,9 @@ export class ConversationsService {
     workspaceId: string,
     conversationId: string,
     enabled: boolean,
+    viewer?: Viewer,
   ) {
-    await this.get(workspaceId, conversationId); // 404s if not in this workspace
+    await this.get(workspaceId, conversationId, viewer); // 404s if not in this workspace
     return await this.prisma.conversation.update({
       where: { id: conversationId },
       data: { aiEnabled: enabled, aiPausedAt: null },
@@ -302,8 +316,9 @@ export class ConversationsService {
     workspaceId: string,
     conversationId: string,
     dto: CreateMessageDto,
+    viewer?: Viewer,
   ) {
-    const conv = await this.get(workspaceId, conversationId);
+    const conv = await this.get(workspaceId, conversationId, viewer);
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const message = await this.prisma.message.create({

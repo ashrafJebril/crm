@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Optional,
   Param,
   Post,
   Query,
@@ -19,7 +20,9 @@ import {
   SendWhatsAppTemplateDto,
   TestSendWhatsAppDto,
 } from "./whatsapp.dto";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 
 @Controller()
@@ -27,6 +30,7 @@ export class WhatsAppController {
   constructor(
     private readonly wa: WhatsAppService,
     private readonly handoff: AiHandoffService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   // ── Tenant-scoped endpoints ─────────────────────────────────────────────
@@ -82,7 +86,10 @@ export class WhatsAppController {
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: SendWhatsAppDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    // Hidden conversation -> 404 before anything is sent.
+    await this.perm?.assertConversationVisible(workspaceId, conversationId, viewer);
     const res = await this.wa.sendInConversation(
       workspaceId,
       conversationId,
@@ -98,7 +105,9 @@ export class WhatsAppController {
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: SendWhatsAppTemplateDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertConversationVisible(workspaceId, conversationId, viewer);
     const res = await this.wa.sendTemplateInConversation(
       workspaceId,
       conversationId,

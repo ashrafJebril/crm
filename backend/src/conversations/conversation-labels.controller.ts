@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from "@nestjs/common";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import type { Viewer } from "../permissions/visibility";
 import { ConversationLabelsService } from "./conversation-labels.service";
 import {
   CreateConversationLabelDto,
@@ -40,7 +41,8 @@ export class ConversationLabelsController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: SetConversationLabelsDto,
+    @CurrentViewer() viewer: Viewer,
   ) {
-    return this.svc.setForConversation(workspaceId, id, dto.labelIds);
+    return this.svc.setForConversation(workspaceId, id, dto.labelIds, viewer);
   }
 }

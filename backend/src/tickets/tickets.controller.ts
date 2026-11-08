@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Optional,
   Param,
   Patch,
   Post,
@@ -17,11 +18,16 @@ import {
   MoveTicketDto,
   UpdateTicketDto,
 } from "./tickets.dto";
-import { CurrentUserId, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentUserId, CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 
 @Controller()
 export class TicketsController {
-  constructor(private readonly svc: TicketsService) {}
+  constructor(
+    private readonly svc: TicketsService,
+    @Optional() private readonly perm?: PermissionService,
+  ) {}
 
   // ── Pipelines ──────────────────────────────────────────────────────────
   @Get("pipelines")
@@ -63,12 +69,15 @@ export class TicketsController {
   }
 
   @Post("tickets/from-conversation/:conversationId")
-  createFromConversation(
+  async createFromConversation(
     @CurrentWorkspace() workspaceId: string,
     @CurrentUserId() userId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: CreateFromConversationDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    // Hidden conversation -> 404, not a ticket seeded from it.
+    await this.perm?.assertConversationVisible(workspaceId, conversationId, viewer);
     return this.svc.createFromConversation(workspaceId, conversationId, dto, userId);
   }
 

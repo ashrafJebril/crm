@@ -1,5 +1,7 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { RealtimeService } from "../realtime/realtime.service";
 import {
   CreateConversationLabelDto,
@@ -13,6 +15,7 @@ export class ConversationLabelsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   async list(workspaceId: string) {
@@ -63,10 +66,11 @@ export class ConversationLabelsService {
     return { ok: true, unlinked };
   }
 
-  async setForConversation(workspaceId: string, conversationId: string, labelIds: string[]) {
+  async setForConversation(workspaceId: string, conversationId: string, labelIds: string[], viewer?: Viewer) {
     const ids = [...new Set(labelIds)];
+    const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
     const conv = await this.prisma.conversation.findFirst({
-      where: { id: conversationId, workspaceId },
+      where: { id: conversationId, workspaceId, ...scope },
       select: { id: true, channel: true, updatedAt: true },
     });
     if (!conv) throw new NotFoundException("Conversation not found");

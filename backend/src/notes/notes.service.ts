@@ -1,5 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { CreateNoteDto, UpdateNoteDto } from "./notes.dto";
 import { NotificationsService } from "../notifications/notifications.service";
 import { canOpenRecord } from "../notifications/record-access";
@@ -21,7 +23,25 @@ export class NotesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
+
+  /** 404 when `conversationId` is a DB conversation hidden from `viewer`.
+   *  (conversationId may also be an opaque FB thread id: no row, no block.) */
+  private async assertConversationVisible(
+    workspaceId: string,
+    conversationId: string | null | undefined,
+    viewer?: Viewer,
+  ) {
+    if (!this.perm || !conversationId) return;
+    const scope = await this.perm.conversationScope(workspaceId, viewer);
+    if (Object.keys(scope).length === 0) return;
+    const [visible, exists] = await Promise.all([
+      this.prisma.conversation.findFirst({ where: { id: conversationId, workspaceId, ...scope }, select: { id: true } }),
+      this.prisma.conversation.findFirst({ where: { id: conversationId, workspaceId }, select: { id: true } }),
+    ]);
+    if (exists && !visible) throw new NotFoundException("Conversation not found");
+  }
 
   /** Top-level notes (newest first), each with replies (oldest first) and seenBy. */
   private list(workspaceId: string, where: Record<string, string>) {
@@ -84,7 +104,7 @@ export class NotesService {
     const toNotify: string[] = [];
     for (const id of memberIds) {
       if (id === authorUserId || alreadyMentioned.includes(id)) continue;
-      if (await canOpenRecord(this.prisma, workspaceId, id, kind, recordId)) toNotify.push(id);
+      if (await canOpenRecord(this.prisma, workspaceId, id, kind, recordId, this.perm)) toNotify.push(id);
       else warnings.push({ userId: id, reason: "no_access" });
     }
     // Deferred so callers notify only after the note write succeeded.
@@ -121,7 +141,8 @@ export class NotesService {
     return this.list(workspaceId, { contactId });
   }
 
-  listForConversation(workspaceId: string, conversationId: string) {
+  async listForConversation(workspaceId: string, conversationId: string, viewer?: Viewer) {
+    await this.assertConversationVisible(workspaceId, conversationId, viewer);
     return this.list(workspaceId, { conversationId });
   }
 
@@ -129,13 +150,16 @@ export class NotesService {
     return this.list(workspaceId, { ticketId });
   }
 
-  async get(workspaceId: string, id: string) {
+  async get(workspaceId: string, id: string, viewer?: Viewer) {
     const row = await this.prisma.note.findFirst({ where: { id, workspaceId } });
     if (!row) throw new NotFoundException("Note not found");
+    // A note on a hidden conversation is as hidden as the conversation.
+    await this.assertConversationVisible(workspaceId, row.conversationId, viewer);
     return row;
   }
 
-  async create(workspaceId: string, dto: CreateNoteDto, authorUserId: string | null) {
+  async create(workspaceId: string, dto: CreateNoteDto, authorUserId: string | null, viewer?: Viewer) {
+    await this.assertConversationVisible(workspaceId, dto.conversationId, viewer);
     const contact = await this.prisma.contact.findFirst({
       where: { id: dto.contactId, workspaceId },
     });
@@ -185,8 +209,9 @@ export class NotesService {
     id: string,
     dto: UpdateNoteDto,
     actorUserId: string | null = null,
+    viewer?: Viewer,
   ) {
-    const existing = await this.get(workspaceId, id);
+    const existing = await this.get(workspaceId, id, viewer);
     const { memberIds, warnings, send } = await this.processMentions(
       workspaceId,
       existing,
@@ -203,8 +228,8 @@ export class NotesService {
   }
 
   /** Idempotent read mark. The note is workspace-verified first (NoteSeen is unscoped). */
-  async markSeen(workspaceId: string, id: string, userId: string) {
-    await this.get(workspaceId, id);
+  async markSeen(workspaceId: string, id: string, userId: string, viewer?: Viewer) {
+    await this.get(workspaceId, id, viewer);
     await this.prisma.noteSeen.upsert({
       where: { noteId_userId: { noteId: id, userId } },
       create: { noteId: id, userId },
@@ -213,8 +238,8 @@ export class NotesService {
     return { ok: true };
   }
 
-  async remove(workspaceId: string, id: string) {
-    await this.get(workspaceId, id);
+  async remove(workspaceId: string, id: string, viewer?: Viewer) {
+    await this.get(workspaceId, id, viewer);
     await this.prisma.note.delete({ where: { id } });
     return { ok: true };
   }

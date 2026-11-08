@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  Optional,
   Param,
   Post,
   Query,
@@ -12,7 +13,9 @@ import {
 import { IsArray, IsOptional, IsString } from "class-validator";
 import { AiHandoffService } from "./ai-handoff.service";
 import { ZernioService } from "./zernio.service";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 import { ZernioWebhookSignatureGuard } from "../common/zernio-webhook-signature.guard";
 
@@ -54,6 +57,7 @@ export class ZernioController {
   constructor(
     private readonly zernio: ZernioService,
     private readonly handoff: AiHandoffService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   // ── Tenant-scoped ────────────────────────────────────────────────────────
@@ -154,7 +158,10 @@ export class ZernioController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: ZernioDbSendDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    // Hidden conversation -> 404 before anything is sent.
+    await this.perm?.assertConversationVisible(workspaceId, id, viewer);
     const publicBase =
       process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL ?? "http://localhost:3001";
     const res = await this.zernio.sendInDbConversation(workspaceId, id, dto.message, dto.mediaId, publicBase);
@@ -167,7 +174,9 @@ export class ZernioController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: ZernioDbSendTemplateDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertConversationVisible(workspaceId, id, viewer);
     const res = await this.zernio.sendTemplateInDbConversation(
       workspaceId,
       id,

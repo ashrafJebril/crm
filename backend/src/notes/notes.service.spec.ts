@@ -84,7 +84,7 @@ describe("NotesService", () => {
     prisma.workspaceMember.findMany.mockResolvedValue([{ userId: "u2" }]);
     const res = await svc.create("ws", { contactId: "c1", conversationId: "t_123", body: "@[A](user:u2)" }, "me");
     expect(res.warnings).toEqual([]);
-    expect(canOpen).toHaveBeenCalledWith(prisma, "ws", "u2", "contact", "c1");
+    expect(canOpen).toHaveBeenCalledWith(prisma, "ws", "u2", "contact", "c1", undefined);
     expect(notifications.notify.mock.calls[0][2]).toMatchObject({ recordKind: "contact", recordId: "c1" });
   });
 
