@@ -40,7 +40,7 @@ describe("rewriteFilterTagName", () => {
 
 describe("TagsService", () => {
   let tx: {
-    tag: { update: jest.Mock; delete: jest.Mock };
+    tag: { update: jest.Mock; delete: jest.Mock; deleteMany: jest.Mock };
     contact: { update: jest.Mock };
     segment: { findMany: jest.Mock; update: jest.Mock };
     $executeRaw: jest.Mock;
@@ -62,6 +62,9 @@ describe("TagsService", () => {
       tag: {
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t1", name: "VIP", color: "90", ...data })),
         delete: jest.fn().mockResolvedValue({}),
+        deleteMany: jest.fn().mockImplementation(({ where }) =>
+          Promise.resolve({ count: where.id.in.length }),
+        ),
       },
       contact: { update: jest.fn().mockResolvedValue({}) },
       segment: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
@@ -178,6 +181,69 @@ describe("TagsService", () => {
     expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
     expect(tx.tag.delete).toHaveBeenCalledWith({ where: { id: "t1" } });
     expect(res).toEqual({ ok: true, contactsUpdated: 2 });
+  });
+
+  describe("merge", () => {
+    const tags = [
+      { id: "a", name: "VIP", color: "90" },
+      { id: "b", name: "Gold", color: "30" },
+      { id: "into", name: "Premium", color: "60" },
+    ];
+    beforeEach(() => {
+      prisma.tag.findMany.mockResolvedValue(tags);
+    });
+
+    it("merge rewrites exact elements only (VIP≠VIPER)", async () => {
+      tx.$executeRaw.mockResolvedValue(2);
+      const res = await svc.merge("ws1", ["a", "b"], "into");
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+      const call = tx.$executeRaw.mock.calls[0];
+      const sql = (call[0] as string[]).join("?");
+      expect(sql).toContain("jsonb_agg(DISTINCT");
+      expect(sql).toContain('"tags"::jsonb ?');
+      expect(sql).not.toContain("LIKE");
+      expect(call.slice(1)).toEqual(["VIP", "Premium", "ws1", "VIP"]);
+      expect(tx.$executeRaw.mock.calls[1].slice(1)).toEqual(["Gold", "Premium", "ws1", "Gold"]);
+      expect(tx.tag.delete).not.toHaveBeenCalled();
+      expect(res).toEqual({ contactsUpdated: 4, segmentsUpdated: 0, removed: 2 });
+    });
+
+    it("merge rewrites segment filters", async () => {
+      tx.segment.findMany.mockResolvedValue([
+        { id: "s1", filter: JSON.stringify({ tagsAny: ["VIP", "Premium"] }) },
+        { id: "s2", filter: JSON.stringify({ tagsAll: ["VIPER"] }) },
+      ]);
+      const res = await svc.merge("ws1", ["a"], "into");
+      expect(tx.segment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { workspaceId: "ws1", origin: "crm" } }),
+      );
+      expect(tx.segment.update).toHaveBeenCalledTimes(1);
+      expect(tx.segment.update).toHaveBeenCalledWith({
+        where: { id: "s1" },
+        data: { filter: JSON.stringify({ tagsAny: ["Premium"] }) },
+      });
+      expect(tx.tag.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ["a"] }, workspaceId: "ws1" },
+      });
+      expect(res.segmentsUpdated).toBe(1);
+      expect(res.removed).toBe(1);
+    });
+
+    it("into in from → 400", async () => {
+      await expect(svc.merge("ws1", ["a", "into"], "into")).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("foreign tag → 404", async () => {
+      prisma.tag.findMany.mockResolvedValue([tags[0], tags[2]]); // "b" not in workspace
+      await expect(svc.merge("ws1", ["a", "b"], "into")).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
   });
 
   it("assign validates that all contactIds belong to the workspace", async () => {

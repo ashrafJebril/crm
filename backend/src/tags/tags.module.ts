@@ -12,7 +12,7 @@ import {
   Patch,
   Post,
 } from "@nestjs/common";
-import { IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 import { Transform } from "class-transformer";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -42,6 +42,11 @@ class CreateTagDto {
 class UpdateTagDto {
   @TrimName @IsOptional() @IsString() @IsNotEmpty() @MaxLength(40) name?: string;
   @IsOptional() @IsString() @MaxLength(16) color?: string;
+}
+
+class MergeTagsDto {
+  @IsArray() @ArrayNotEmpty() @ArrayUnique() @IsString({ each: true }) fromIds!: string[];
+  @IsString() @IsNotEmpty() intoId!: string;
 }
 
 class AssignTagsDto {
@@ -91,6 +96,10 @@ export function rewriteFilterTagName(
   }
   return changed ? JSON.stringify(filter) : null;
 }
+
+/** The transaction-client surface the shared rewrite helpers need (the app's
+ *  extended Prisma client's tx isn't assignable to Prisma.TransactionClient). */
+type TagTx = Pick<PrismaService, "$executeRaw" | "segment">;
 
 @Injectable()
 export class TagsService {
@@ -165,37 +174,100 @@ export class TagsService {
       let contactsUpdated = 0;
       let segmentsUpdated = 0;
       if (renaming) {
-        // Exact-element rename inside the JSON string arrays — "VIP" must never
-        // touch "VIPER" (jsonb element equality, not substring). DISTINCT
-        // dedupes the legitimate case where a contact carried BOTH names (names
-        // enter Contact.tags outside the catalog too, e.g. the Inbox tag
-        // editor); element order in the array is not contractual.
-        contactsUpdated = await tx.$executeRaw`
-          UPDATE "Contact"
-          SET "tags" = (
-            SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN e = ${tag.name} THEN ${newName} ELSE e END), '[]'::jsonb)::text
-            FROM jsonb_array_elements_text("tags"::jsonb) e
-          )
-          WHERE "workspaceId" = ${workspaceId} AND "tags"::jsonb ? ${tag.name}
-        `;
-        // Saved crm segments store tag NAMES in their filter JSON; without this
-        // a renamed tag silently makes every smart segment match nothing.
-        const segments = await tx.segment.findMany({
-          where: { workspaceId, origin: "crm" },
-          select: { id: true, filter: true },
-        });
-        for (const s of segments) {
-          const next = rewriteFilterTagName(s.filter, tag.name, newName);
-          if (next === null) continue;
-          await tx.segment.update({ where: { id: s.id }, data: { filter: next } });
-          segmentsUpdated += 1;
-        }
+        contactsUpdated = await this.renameOnContacts(tx, workspaceId, tag.name, newName);
+        segmentsUpdated = await this.renameInSegments(tx, workspaceId, [
+          [tag.name, newName],
+        ]);
       }
       const updated = await tx.tag.update({
         where: { id },
         data: { name: newName, color: dto.color ?? undefined },
       });
       return { tag: updated, contactsUpdated, segmentsUpdated };
+    });
+  }
+
+  /** Exact-element rename inside the JSON string arrays — "VIP" must never
+   *  touch "VIPER" (jsonb element equality, not substring). DISTINCT dedupes the
+   *  legitimate case where a contact carried BOTH names (names enter
+   *  Contact.tags outside the catalog too, e.g. the Inbox tag editor); element
+   *  order in the array is not contractual. */
+  private renameOnContacts(
+    tx: TagTx,
+    workspaceId: string,
+    from: string,
+    to: string,
+  ): Promise<number> {
+    return tx.$executeRaw`
+      UPDATE "Contact"
+      SET "tags" = (
+        SELECT COALESCE(jsonb_agg(DISTINCT CASE WHEN e = ${from} THEN ${to} ELSE e END), '[]'::jsonb)::text
+        FROM jsonb_array_elements_text("tags"::jsonb) e
+      )
+      WHERE "workspaceId" = ${workspaceId} AND "tags"::jsonb ? ${from}
+    `;
+  }
+
+  /** Saved crm segments store tag NAMES in their filter JSON; without this a
+   *  renamed/merged tag silently makes every smart segment match nothing.
+   *  Applies the (from, to) pairs in order; returns segments actually written. */
+  private async renameInSegments(
+    tx: TagTx,
+    workspaceId: string,
+    pairs: [string, string][],
+  ): Promise<number> {
+    const segments = await tx.segment.findMany({
+      where: { workspaceId, origin: "crm" },
+      select: { id: true, filter: true },
+    });
+    let updated = 0;
+    for (const s of segments) {
+      let filter = s.filter;
+      let changed = false;
+      for (const [from, to] of pairs) {
+        const next = rewriteFilterTagName(filter, from, to);
+        if (next === null) continue;
+        filter = next;
+        changed = true;
+      }
+      if (!changed) continue;
+      await tx.segment.update({ where: { id: s.id }, data: { filter } });
+      updated += 1;
+    }
+    return updated;
+  }
+
+  /** Fold `fromIds` into `intoId`: contacts and saved filters are rewritten to
+   *  the target name, then the source catalog rows are deleted — one transaction. */
+  async merge(workspaceId: string, fromIds: string[], intoId: string) {
+    const from = [...new Set(fromIds)];
+    if (from.length === 0) throw new BadRequestException("fromIds cannot be empty");
+    if (from.includes(intoId)) {
+      throw new BadRequestException("Target tag cannot be one of the merged tags");
+    }
+    const rows = await this.prisma.tag.findMany({
+      where: { workspaceId, id: { in: [...from, intoId] } },
+    });
+    const byId = new Map(rows.map((t) => [t.id, t]));
+    const into = byId.get(intoId);
+    if (!into || from.some((id) => !byId.has(id))) {
+      throw new NotFoundException("Tag not found");
+    }
+    const sources = from.map((id) => byId.get(id)!);
+    return this.prisma.$transaction(async (tx) => {
+      let contactsUpdated = 0;
+      for (const src of sources) {
+        contactsUpdated += await this.renameOnContacts(tx, workspaceId, src.name, into.name);
+      }
+      const segmentsUpdated = await this.renameInSegments(
+        tx,
+        workspaceId,
+        sources.map((src): [string, string] => [src.name, into.name]),
+      );
+      const { count } = await tx.tag.deleteMany({
+        where: { id: { in: from }, workspaceId },
+      });
+      return { contactsUpdated, segmentsUpdated, removed: count };
     });
   }
 
@@ -285,6 +357,11 @@ class TagsController {
   @Delete(":id")
   remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     return this.svc.remove(workspaceId, id);
+  }
+
+  @Post("merge")
+  merge(@CurrentWorkspace() workspaceId: string, @Body() dto: MergeTagsDto) {
+    return this.svc.merge(workspaceId, dto.fromIds, dto.intoId);
   }
 
   @Post("assign")
