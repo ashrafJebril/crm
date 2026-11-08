@@ -219,7 +219,7 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
           <div style={{ fontSize: 13, color: "var(--ink-2)" }}>
             {tx("Merge these tags:", "دمج هذه الوسوم:")}{" "}
             {sources.map((t, i) => (
-              <span key={t.id} dir="auto" style={{ fontWeight: 600 }}>{i > 0 ? "، " : ""}{t.name} ({t.usageCount})</span>
+              <span key={t.id} dir="auto" style={{ fontWeight: 600 }}>{i > 0 ? tx(", ", "، ") : ""}{t.name} ({t.usageCount})</span>
             ))}
           </div>
           <label className="mono" style={{ fontSize: 11, textTransform: "uppercase", color: "var(--ink-3)", display: "grid", gap: 4 }}>

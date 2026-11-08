@@ -4,14 +4,7 @@ import { useFetch } from "@/api/useFetch";
 import type { Tx } from "@/lib/tx";
 import type { Contact, TeamMember } from "@/lib/types";
 import { CARD, FIELD_INPUT, FIELD_LABEL, STATUS_ERROR } from "./drawerStyles";
-
-const LIFECYCLES = ["Lead", "Customer", "Churned", "Patient"];
-const LIFECYCLE_AR: Record<string, string> = {
-  Lead: "محتمل",
-  Customer: "عميل",
-  Churned: "متوقف",
-  Patient: "مريض",
-};
+import { lifecycleLabel, lifecycleOptions, normalizeLifecycle } from "./lifecycle";
 
 interface Props {
   tx: Tx;
@@ -38,7 +31,7 @@ function draftOf(c: Contact): Draft {
     phone: c.phone,
     email: c.email ?? "",
     ownerId: c.ownerId ?? "",
-    lifecycle: c.lifecycle,
+    lifecycle: normalizeLifecycle(c.lifecycle),
     marketingOptOut: c.marketingOptOut ?? false,
     notALead: c.notALead ?? false,
   };
@@ -98,11 +91,8 @@ export function ContactDetailsForm({ tx, contact, onSaved }: Props) {
     }
   };
 
-  const lifecycleOptions =
-    LIFECYCLES.includes(draft.lifecycle) || !draft.lifecycle
-      ? LIFECYCLES
-      : [draft.lifecycle, ...LIFECYCLES];
-  const lifecycleLabel = (l: string): string => (l in LIFECYCLE_AR ? tx(l, LIFECYCLE_AR[l]) : l);
+  const lifecycleOpts = lifecycleOptions(draft.lifecycle);
+  const lifecycleText = (l: string): string => lifecycleLabel(tx, l);
 
   if (!editing) {
     return (
@@ -227,9 +217,9 @@ export function ContactDetailsForm({ tx, contact, onSaved }: Props) {
             onChange={(e) => set("lifecycle", e.target.value)}
           >
             {!draft.lifecycle && <option value="">—</option>}
-            {lifecycleOptions.map((l) => (
+            {lifecycleOpts.map((l) => (
               <option key={l} value={l} dir="auto">
-                {lifecycleLabel(l)}
+                {lifecycleText(l)}
               </option>
             ))}
           </select>

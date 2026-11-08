@@ -203,7 +203,8 @@ function FieldConditions({ tx, lang, defs, filter, onChange }: { tx: Tx; lang: L
   const describe = (c: FieldFilter) => {
     const d = defs.find((x) => x.id === c.defId);
     const name = d ? fieldName(d, lang) : "?";
-    return `${name} ${opLabel(tx, c.op)}${c.value !== undefined ? ` ${c.value}` : ""}`;
+    const v = c.value === undefined ? "" : d?.type === "boolean" ? (c.value === "true" ? tx("Yes", "نعم") : tx("No", "لا")) : c.value;
+    return `${name} ${opLabel(tx, c.op)}${v ? ` ${v}` : ""}`;
   };
 
   return (

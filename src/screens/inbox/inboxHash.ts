@@ -18,18 +18,16 @@ export function decodeFilter(s: string | null | undefined): InboxFilter {
   if (!s) return EMPTY_FILTER;
   const o = decodeJson(s) as Record<string, any> | null;
   if (!o || typeof o !== "object" || Array.isArray(o)) return EMPTY_FILTER;
-  {
-    return {
-      bucket: BUCKETS.has(o.bucket) ? o.bucket : "all",
-      assigneeIds: strs(o.assigneeIds),
-      labelIds: strs(o.labelIds),
-      tags: strs(o.tags),
-      lifecycles: strs(o.lifecycles),
-      from: typeof o.from === "string" && o.from ? o.from : undefined,
-      to: typeof o.to === "string" && o.to ? o.to : undefined,
-      escalatedOnly: o.escalatedOnly === true,
-    };
-  }
+  return {
+    bucket: BUCKETS.has(o.bucket) ? o.bucket : "all",
+    assigneeIds: strs(o.assigneeIds),
+    labelIds: strs(o.labelIds),
+    tags: strs(o.tags),
+    lifecycles: strs(o.lifecycles),
+    from: typeof o.from === "string" && o.from ? o.from : undefined,
+    to: typeof o.to === "string" && o.to ? o.to : undefined,
+    escalatedOnly: o.escalatedOnly === true,
+  };
 }
 
 export function readFilterFromHash(hash: string): InboxFilter {

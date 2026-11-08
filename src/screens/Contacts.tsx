@@ -1,6 +1,7 @@
 import {
   memo,
   useEffect,
+  useRef,
   useMemo,
   useState,
   type CSSProperties,
@@ -28,7 +29,7 @@ import { NewContactModal } from "./contacts/NewContactModal";
 import { ContactFilterBar } from "./contacts/ContactFilterBar";
 import { BulkBar, type BulkAction } from "./contacts/BulkBar";
 import {
-  decodeContactFilter, encodeContactFilter, isEmptyFilter, toQuery,
+  decodeContactFilter, encodeContactFilter, isEmptyFilter, isSelectAllCurrent, pruneFieldFilters, toQuery,
   type ContactFilter,
 } from "./contacts/contactFilter";
 
@@ -483,8 +484,13 @@ function ContactsImpl() {
   const filterQuery = toQuery(filter, filterExtras).toString();
   // Any change to what's being listed starts again from the first page.
   useEffect(() => setPage(1), [filterQuery, pageSize]);
+  const queryRef = useRef(filterQuery);
+  queryRef.current = filterQuery;
+  // Bumped on every manual selection change so a late select-all response can be discarded.
+  const selVersionRef = useRef(0);
   // A selection (esp. "all matching") belongs to the listing it was made on.
   useEffect(() => {
+    selVersionRef.current++;
     setSelected(new Set<string>());
     setTruncated(false);
   }, [filterQuery]);
@@ -519,6 +525,13 @@ function ContactsImpl() {
   const teamQ = useFetch<TeamMember[]>("/team");
   const pipelinesQ = useFetch<Pipeline[]>("/pipelines");
   const fieldDefsQ = useFetch<CustomFieldDef[]>("/custom-fields");
+  // A stale `cf` in the hash may reference deleted fields; the API would 404 on every load.
+  useEffect(() => {
+    if (!fieldDefsQ.data) return;
+    const pruned = pruneFieldFilters(filter, new Set(fieldDefsQ.data.filter((d) => !d.archivedAt).map((d) => d.id)));
+    if (pruned !== filter) setFilter(pruned);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldDefsQ.data, filter]);
   const tagsQ = useFetch<TagRow[]>("/tags");
   const tagColorByName = useMemo(
     () => new Map((tagsQ.data ?? []).map((t) => [t.name, t.color])),
@@ -546,6 +559,7 @@ function ContactsImpl() {
   const [bulkTagging, setBulkTagging] = useState(false);
 
   const onSelect = (next: Set<string>) => {
+    selVersionRef.current++;
     setSelected(next);
     setTruncated(false);
   };
@@ -561,10 +575,11 @@ function ContactsImpl() {
     const run = async () => {
       try {
         const ids = Array.from(selected);
+        let removed = ids.length;
         if (mode === "add") {
           await api.post<{ contactsUpdated: number }>("/tags/assign", { contactIds: ids, add: names });
         } else {
-          await api.post<BulkResult>("/contacts/bulk", { ids, op: "removeTags", names });
+          removed = (await api.post<BulkResult>("/contacts/bulk", { ids, op: "removeTags", names })).affected;
         }
         setBulkTagMode(null);
         setSelected(new Set<string>());
@@ -573,7 +588,7 @@ function ContactsImpl() {
         showStatus(
           mode === "add"
             ? tx(`Tagged ${ids.length} contact${ids.length === 1 ? "" : "s"}.`, `تم وسم ${ids.length} جهة.`)
-            : tx(`Removed tags from ${ids.length} contact${ids.length === 1 ? "" : "s"}.`, `تمت إزالة الوسوم من ${ids.length} جهة.`),
+            : tx(`Removed tags from ${removed} contact${removed === 1 ? "" : "s"}.`, `تمت إزالة الوسوم من ${removed} جهة.`),
         );
       } catch (err) {
         showStatus(err instanceof Error ? err.message : tx("Tag failed.", "فشل الوسم."));
@@ -588,9 +603,12 @@ function ContactsImpl() {
     if (selectingAll) return;
     setSelectingAll(true);
     setBulkError(null);
+    const start = { query: filterQuery, selectionVersion: selVersionRef.current };
     api
-      .get<{ ids: string[]; total: number; truncated: boolean }>(`/contacts/ids?${toQuery(filter, filterExtras).toString()}`)
+      .get<{ ids: string[]; total: number; truncated: boolean }>(`/contacts/ids?${filterQuery}`)
       .then((r) => {
+        // Ignore a response for a listing/selection that has since changed.
+        if (!isSelectAllCurrent(start, { query: queryRef.current, selectionVersion: selVersionRef.current })) return;
         setSelected(new Set(r.ids));
         setTruncated(r.truncated);
       })

@@ -35,7 +35,7 @@ export function NewContactModal({ tx, onClose, onCreated }: Props) {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [ownerId, setOwnerId] = useState("");
-  const [lifecycle, setLifecycle] = useState("Lead");
+  const [lifecycle, setLifecycle] = useState("lead");
   const [tags, setTags] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);

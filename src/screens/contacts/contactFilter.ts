@@ -75,27 +75,6 @@ export function toQuery(f: ContactFilter, extras: FilterExtras = {}): URLSearchP
   return p;
 }
 
-/** The `filter` object for POST /contacts/bulk (same keys, JSON-typed). */
-export function toBulkFilter(f: ContactFilter, extras: FilterExtras = {}): Record<string, unknown> {
-  const o: Record<string, unknown> = {};
-  if (extras.q) o.q = extras.q;
-  if (extras.segmentId) o.segmentId = extras.segmentId;
-  if (f.lifecycle.length) o.lifecycle = f.lifecycle;
-  if (f.tags.length) {
-    o.tags = f.tags;
-    if (f.tagMode === "all") o.tagMode = "all";
-  }
-  if (f.ownerId) o.ownerId = f.ownerId;
-  if (f.pipelineId) {
-    o.pipelineId = f.pipelineId;
-    if (f.stageId) o.stageId = f.stageId;
-  }
-  if (f.optOut !== null) o.optOut = f.optOut;
-  if (f.notALead !== null) o.notALead = f.notALead;
-  if (f.fields.length) o.fields = cleanFields(f.fields);
-  return o;
-}
-
 /** Number of active facets (each custom-field condition counts). */
 export function activeCount(f: ContactFilter): number {
   return (
@@ -107,6 +86,21 @@ export function activeCount(f: ContactFilter): number {
     (f.notALead !== null ? 1 : 0) +
     f.fields.length
   );
+}
+
+/** True when a select-all response (started with `start`) still belongs to the current
+ *  listing and an untouched selection; otherwise it must be discarded. */
+export function isSelectAllCurrent(
+  start: { query: string; selectionVersion: number },
+  now: { query: string; selectionVersion: number },
+): boolean {
+  return start.query === now.query && start.selectionVersion === now.selectionVersion;
+}
+
+/** Drops field conditions whose definition is not in `defIds` (deleted/archived/foreign). */
+export function pruneFieldFilters(f: ContactFilter, defIds: Set<string>): ContactFilter {
+  const fields = f.fields.filter((x) => defIds.has(x.defId));
+  return fields.length === f.fields.length ? f : { ...f, fields };
 }
 
 export const isEmptyFilter = (f: ContactFilter) => activeCount(f) === 0;

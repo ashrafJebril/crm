@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  EMPTY_CONTACT_FILTER, activeCount, decodeContactFilter, encodeContactFilter, opsForType, toBulkFilter, toQuery,
+  EMPTY_CONTACT_FILTER, activeCount, decodeContactFilter, encodeContactFilter, isSelectAllCurrent, opsForType, pruneFieldFilters, toQuery,
   type ContactFilter,
 } from "./contactFilter";
 
@@ -42,19 +42,6 @@ describe("toQuery", () => {
   });
 });
 
-describe("toBulkFilter", () => {
-  it("uses JSON-typed keys", () => {
-    expect(
-      toBulkFilter(f({ lifecycle: ["lead"], tags: ["a"], tagMode: "all", optOut: true, ownerId: "none", fields: [{ defId: "d", op: "unset" }] }), { q: "x" }),
-    ).toEqual({
-      q: "x", lifecycle: ["lead"], tags: ["a"], tagMode: "all", ownerId: "none", optOut: true, fields: [{ defId: "d", op: "unset" }],
-    });
-  });
-  it("is empty for empty", () => {
-    expect(toBulkFilter(EMPTY_CONTACT_FILTER)).toEqual({});
-  });
-});
-
 describe("activeCount", () => {
   it("counts each active facet; each field filter counts", () => {
     expect(activeCount(EMPTY_CONTACT_FILTER)).toBe(0);
@@ -82,5 +69,21 @@ describe("hash encoding", () => {
   it("sanitises garbage", () => {
     expect(decodeContactFilter("%%%")).toEqual(EMPTY_CONTACT_FILTER);
     expect(decodeContactFilter(encodeContactFilter({ lifecycle: "x", optOut: "yes", fields: [{ op: "zzz" }] } as never))).toEqual(EMPTY_CONTACT_FILTER);
+  });
+});
+
+describe("isSelectAllCurrent", () => {
+  it("accepts only an unchanged query and selection", () => {
+    expect(isSelectAllCurrent({ query: "a=1", selectionVersion: 3 }, { query: "a=1", selectionVersion: 3 })).toBe(true);
+    expect(isSelectAllCurrent({ query: "a=1", selectionVersion: 3 }, { query: "a=2", selectionVersion: 3 })).toBe(false);
+    expect(isSelectAllCurrent({ query: "a=1", selectionVersion: 3 }, { query: "a=1", selectionVersion: 4 })).toBe(false);
+  });
+});
+
+describe("pruneFieldFilters", () => {
+  it("removes conditions on unknown defs and keeps identity when nothing changes", () => {
+    const x = f({ fields: [{ defId: "a", op: "set" }, { defId: "gone", op: "set" }] });
+    expect(pruneFieldFilters(x, new Set(["a"])).fields).toEqual([{ defId: "a", op: "set" }]);
+    expect(pruneFieldFilters(x, new Set(["a", "gone"]))).toBe(x);
   });
 });
