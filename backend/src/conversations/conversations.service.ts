@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import {
   BadRequestException,
   ConflictException,
@@ -137,31 +138,40 @@ export class ConversationsService {
       include: { labels: { select: { labelId: true } } },
     });
     if (!row) throw new NotFoundException("Conversation not found");
-    if (dto.version !== undefined && dto.version !== row.version) {
-      throw this.conflict(row);
-    }
-
-    if (typeof dto.assigneeId === "string") {
-      const member = await this.prisma.workspaceMember.findFirst({
-        where: { workspaceId, userId: dto.assigneeId },
-      });
-      if (!member) throw new BadRequestException("assignee is not a member");
-    }
-
-    const { version: _version, escalateReason, ...fields } = dto;
-    const data: Record<string, unknown> = { ...fields };
+    // Pure input validation first: no lookups or version checks before it.
+    const data: Prisma.ConversationUncheckedUpdateManyInput = {};
+    if (dto.status !== undefined) data.status = dto.status;
+    if (dto.pinned !== undefined) data.pinned = dto.pinned;
+    if (dto.unread !== undefined) data.unread = dto.unread;
+    if (dto.aiEnabled !== undefined) data.aiEnabled = dto.aiEnabled;
+    if (dto.assigneeId !== undefined) data.assigneeId = dto.assigneeId;
     if (dto.escalated === true) {
-      if (!escalateReason || !escalateReason.trim()) {
+      const given = dto.escalateReason?.trim();
+      const kept = row.escalated ? row.escalateReason?.trim() : undefined;
+      const reason = given || kept;
+      if (!reason) {
         throw new BadRequestException("escalateReason is required to escalate");
       }
-      data.escalateReason = escalateReason.trim();
+      data.escalated = true;
+      data.escalateReason = reason;
     } else if (dto.escalated === false) {
+      data.escalated = false;
       data.escalateReason = null;
     }
     if (dto.status !== undefined && dto.status !== row.status) {
       data.statusChangedAt = new Date();
     }
     data.version = { increment: 1 };
+
+    if (dto.version !== undefined && dto.version !== row.version) {
+      throw this.conflict(row);
+    }
+    if (typeof dto.assigneeId === "string") {
+      const member = await this.prisma.workspaceMember.findFirst({
+        where: { workspaceId, userId: dto.assigneeId },
+      });
+      if (!member) throw new BadRequestException("assignee is not a member");
+    }
 
     const res = await this.prisma.conversation.updateMany({
       where: { id, workspaceId, version: row.version },
@@ -171,10 +181,8 @@ export class ConversationsService {
       where: { id, workspaceId },
       include: { labels: { select: { labelId: true } } },
     });
-    if (res.count === 0 || !fresh) {
-      if (!fresh) throw new NotFoundException("Conversation not found");
-      throw this.conflict(fresh);
-    }
+    if (!fresh) throw new NotFoundException("Conversation not found");
+    if (res.count === 0) throw this.conflict(fresh);
     this.emitActivity(workspaceId, fresh.channel, fresh.id);
     return this.mapLabels(fresh);
   }

@@ -106,6 +106,25 @@ describe("ConversationsService.update", () => {
     expect(dataOf().escalateReason).toBe("angry");
   });
 
+  it("validates escalation before the version check and assignee lookup", async () => {
+    prisma.workspaceMember.findFirst.mockResolvedValue(null);
+    const err = await svc
+      .update("ws1", "cv1", { escalated: true, assigneeId: "x", version: 1 })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.message).toMatch(/escalateReason/);
+    expect(prisma.workspaceMember.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("re-escalating an escalated thread keeps its reason", async () => {
+    prisma.conversation.findFirst.mockResolvedValue(
+      baseRow({ escalated: true, escalateReason: "angry" }),
+    );
+    await svc.update("ws1", "cv1", { escalated: true });
+    expect(dataOf().escalated).toBe(true);
+    expect(dataOf().escalateReason).toBe("angry");
+  });
+
   it("de-escalating clears the reason", async () => {
     await svc.update("ws1", "cv1", { escalated: false });
     expect(dataOf().escalated).toBe(false);
