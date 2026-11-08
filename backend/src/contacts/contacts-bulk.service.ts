@@ -6,7 +6,11 @@ import { TagsService } from "../tags/tags.module";
 import { TicketsService } from "../tickets/tickets.service";
 import { ContactsService } from "./contacts.service";
 import { parseContactFilter } from "./contact-filter";
-import { BULK_OPS, type BulkContactsDto } from "./contacts.dto";
+import { BULK_IDS_CAP, BULK_OPS, type BulkContactsDto } from "./contacts.dto";
+
+export { BULK_IDS_CAP };
+/** Each new ticket can start automations — keep one click from firing thousands. */
+export const PIPELINE_BULK_CAP = 500;
 
 export interface BulkResult {
   affected: number;
@@ -31,6 +35,11 @@ export class ContactsBulkService {
       throw new BadRequestException("Provide exactly one of ids or filter");
     }
     if (!BULK_OPS.includes(dto.op)) throw new BadRequestException("Unknown bulk op");
+    // Deleting by a filter is too easy to get wrong; the UI always sends ids.
+    if (dto.op === "delete" && dto.ids === undefined) throw new BadRequestException("Delete needs explicit ids");
+    if (dto.ids !== undefined && dto.ids.length > BULK_IDS_CAP) {
+      throw new BadRequestException(`At most ${BULK_IDS_CAP} contacts per bulk action`);
+    }
 
     let ids: string[];
     let truncated: boolean | undefined;
@@ -109,6 +118,13 @@ export class ContactsBulkService {
     const pipeline = await this.prisma.pipeline.findFirst({ where: { id: dto.pipelineId, workspaceId } });
     if (!pipeline) throw new NotFoundException("Pipeline not found");
     if (!ids.length) return { affected: 0, created: 0, skipped: 0 };
+    if (ids.length > PIPELINE_BULK_CAP) {
+      // Bilingual like the tags API's conflict message; the UI disables the
+      // action above the cap, so this is only the server-side backstop.
+      throw new BadRequestException(
+        "Add up to 500 contacts to a pipeline at a time. — أضف حتى ٥٠٠ جهة اتصال إلى المسار في كل مرة.",
+      );
+    }
     let stageId = dto.stageId;
     if (!stageId) {
       const first = await this.prisma.ticketStage.findFirst({

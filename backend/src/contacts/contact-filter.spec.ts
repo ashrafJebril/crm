@@ -25,6 +25,18 @@ describe("parseContactFilter", () => {
     });
   });
 
+  it("parses tags sent as a JSON array, so a tag may contain a comma", () => {
+    expect(parseContactFilter({ tags: JSON.stringify(["Riyadh, KSA", "VIP"]) }).tags).toEqual(["Riyadh, KSA", "VIP"]);
+    // Comma-separated stays supported for old links.
+    expect(parseContactFilter({ tags: "Riyadh,VIP" }).tags).toEqual(["Riyadh", "VIP"]);
+    // A JSON body may still send a real array.
+    expect(parseContactFilter({ tags: ["a, b"] }).tags).toEqual(["a, b"]);
+  });
+
+  it.each([[{ tags: "[not json" }], [{ tags: '[1,2]' }]])("rejects malformed JSON tags %j with 400", (q) => {
+    expect(() => parseContactFilter(q)).toThrow(BadRequestException);
+  });
+
   it("accepts raw (already-decoded) JSON for fields", () => {
     expect(parseContactFilter({ fields: '[{"defId":"d1","op":"set"}]' }).fields).toEqual([
       { defId: "d1", op: "set" },

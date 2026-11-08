@@ -1,5 +1,6 @@
 import { Transform } from "class-transformer";
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -63,9 +64,12 @@ export const BULK_OPS = [
 ] as const;
 export type BulkOp = (typeof BULK_OPS)[number];
 
+/** Select-all resolves at most this many ids (matches SELECT_ALL_CAP). */
+export const BULK_IDS_CAP = 10_000;
+
 /** Flat body for POST /contacts/bulk; the service checks op-specific fields. */
 export class BulkContactsDto {
-  @IsOptional() @IsArray() @IsString({ each: true }) ids?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(BULK_IDS_CAP) @IsString({ each: true }) ids?: string[];
   /** Shared ContactListFilter (same keys as the query params, JSON-typed). */
   @IsOptional() @IsObject() filter?: Record<string, unknown>;
   @IsIn(BULK_OPS as unknown as string[]) op!: BulkOp;

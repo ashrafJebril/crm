@@ -42,6 +42,25 @@ function list(v: unknown): string[] | undefined {
   return out.length ? out : undefined;
 }
 
+/**
+ * Tags may contain commas, so the UI sends them as a JSON array string
+ * (`["Riyadh, KSA","VIP"]`). A value not starting with "[" is the legacy
+ * comma-separated form.
+ */
+function tagList(v: unknown): string[] | undefined {
+  if (typeof v === "string" && v.trimStart().startsWith("[")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      throw new BadRequestException("tags must be a JSON array of strings");
+    }
+    if (!Array.isArray(parsed)) throw new BadRequestException("tags must be a JSON array of strings");
+    return list(parsed);
+  }
+  return list(v);
+}
+
 function bool(v: unknown, key: string): boolean | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   if (v === true || v === "true") return true;
@@ -89,7 +108,8 @@ function fieldFilters(v: unknown): ContactFieldFilter[] | undefined {
 
 /**
  * Normalise a raw filter (query params or a JSON body) into ContactListFilter.
- * Query format: arrays comma-separated (lifecycle, tags); `fields` is a
+ * Query format: lifecycle comma-separated; tags a JSON array string (or the
+ * legacy comma-separated form); `fields` is a
  * URL-encoded JSON array; booleans "true"/"false". Invalid -> 400.
  */
 export function parseContactFilter(raw: Record<string, unknown> | undefined | null): ContactListFilter {
@@ -101,7 +121,7 @@ export function parseContactFilter(raw: Record<string, unknown> | undefined | nu
   if (segmentId) f.segmentId = segmentId;
   const lifecycle = list(r.lifecycle);
   if (lifecycle) f.lifecycle = lifecycle;
-  const tags = list(r.tags);
+  const tags = tagList(r.tags);
   if (tags) f.tags = tags;
   if (r.tagMode !== undefined && r.tagMode !== "") {
     if (r.tagMode !== "any" && r.tagMode !== "all") throw new BadRequestException("tagMode must be any or all");

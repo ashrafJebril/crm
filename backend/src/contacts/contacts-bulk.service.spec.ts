@@ -1,5 +1,8 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
-import { ContactsBulkService } from "./contacts-bulk.service";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { BULK_IDS_CAP, ContactsBulkService, PIPELINE_BULK_CAP } from "./contacts-bulk.service";
+import { BulkContactsDto } from "./contacts.dto";
 
 describe("ContactsBulkService", () => {
   let prisma: any;
@@ -170,5 +173,45 @@ describe("ContactsBulkService", () => {
     const res = await svc.run("ws1", { ids: ["a", "b", "c"], op: "delete", force: true });
     expect(prisma.contact.deleteMany).toHaveBeenCalledWith({ where: { workspaceId: "ws1", id: { in: ["a", "b", "c"] } } });
     expect(res).toEqual({ affected: 3 });
+  });
+
+  it("more than 10 000 ids -> 400, before any lookup", async () => {
+    const ids = Array.from({ length: BULK_IDS_CAP + 1 }, (_, i) => `c${i}`);
+    await expect(svc.run("ws1", { ids, op: "setOptOut", value: true })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.contact.findMany).not.toHaveBeenCalled();
+  });
+
+  it("BulkContactsDto rejects more than 10 000 ids at validation", async () => {
+    const tooMany = plainToInstance(BulkContactsDto, {
+      op: "setOptOut",
+      value: true,
+      ids: Array.from({ length: BULK_IDS_CAP + 1 }, (_, i) => `c${i}`),
+    });
+    expect((await validate(tooMany)).map((e) => e.property)).toContain("ids");
+    const ok = plainToInstance(BulkContactsDto, { op: "setOptOut", value: true, ids: ["a"] });
+    expect(await validate(ok)).toEqual([]);
+  });
+
+  it("addToPipeline over 500 contacts -> 400 and creates nothing", async () => {
+    const ids = Array.from({ length: PIPELINE_BULK_CAP + 1 }, (_, i) => `c${i}`);
+    await expect(svc.run("ws1", { ids, op: "addToPipeline", pipelineId: "p1" })).rejects.toThrow(
+      "Add up to 500 contacts to a pipeline at a time.",
+    );
+    contacts.listIds.mockResolvedValue({ ids, total: ids.length, truncated: false });
+    await expect(svc.run("ws1", { filter: {}, op: "addToPipeline", pipelineId: "p1" })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(tickets.createTicket).not.toHaveBeenCalled();
+    // Exactly 500 is allowed.
+    tickets.createTicket.mockClear();
+    await svc.run("ws1", { ids: ids.slice(0, PIPELINE_BULK_CAP), op: "addToPipeline", pipelineId: "p1" });
+    expect(tickets.createTicket).toHaveBeenCalledTimes(PIPELINE_BULK_CAP);
+  });
+
+  it("delete in filter mode -> 400 (delete needs explicit ids)", async () => {
+    contacts.listIds.mockResolvedValue({ ids: ["a"], total: 1, truncated: false });
+    await expect(svc.run("ws1", { filter: {}, op: "delete", force: true })).rejects.toThrow("Delete needs explicit ids");
+    expect(contacts.listIds).not.toHaveBeenCalled();
+    expect(prisma.contact.deleteMany).not.toHaveBeenCalled();
   });
 });

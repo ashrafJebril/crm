@@ -34,10 +34,11 @@ export class MarketingOutboundService {
     }
     const filter = seg.origin === "crm" ? this.segments.parseFilter(seg.filter) : {};
     // Same audience resolution as the contacts list (filter for crm, members
-    // for manual), restricted to contacts linked to an hjz client.
+    // for manual), restricted to contacts linked to an hjz client who have not
+    // opted out of marketing.
     const audience = await this.segments.resolveContactWhere(workspaceId, seg.id);
     const contacts = await this.prisma.contact.findMany({
-      where: { AND: [audience, { hjzClientId: { not: null } }] },
+      where: { AND: [audience, { hjzClientId: { not: null } }, { marketingOptOut: false }] },
       select: { hjzClientId: true },
     });
     const hjzClientIds = contacts.map((c) => c.hjzClientId).filter((x): x is string => !!x);

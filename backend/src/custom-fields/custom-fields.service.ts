@@ -30,7 +30,8 @@ function cleanOptions(options: unknown): string[] {
  *  - set / unset (all types): fieldValues some / none for the defId.
  *  - text:    eq (Json equals), contains (Json string_contains; CASE-SENSITIVE, Prisma
  *             has no `mode` for Json filters).
- *  - select:  eq only.      - boolean: eq only ("true"/"false").
+ *  - select:  eq only.      - boolean: eq only ("true"/"false"); "false" also
+ *             matches contacts with no value row.
  *  - number:  eq, gt, lt (Json comparison; value parsed after normalizeDigits).
  *  - date:    eq, gt, lt (jsonb string comparison; ISO dates sort lexically).
  * An unsupported operator for the type throws BadRequestException.
@@ -60,8 +61,9 @@ export function fieldWhere(
     case "boolean":
       if (op !== "eq") throw bad();
       if (value !== "true" && value !== "false") throw new BadRequestException("invalid boolean");
-      return some({ equals: value === "true" });
-      throw bad();
+      if (value === "true") return some({ equals: true });
+      // "is No" includes contacts with no value row (an unticked checkbox).
+      return { OR: [some({ equals: false }), { fieldValues: { none: { defId } } }] };
     case "number": {
       const n = Number(normalizeDigits(value));
       if (!Number.isFinite(n)) throw new BadRequestException("invalid number");

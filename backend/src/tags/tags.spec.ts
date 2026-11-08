@@ -41,9 +41,10 @@ describe("rewriteFilterTagName", () => {
 describe("TagsService", () => {
   let tx: {
     tag: { update: jest.Mock; delete: jest.Mock; deleteMany: jest.Mock };
-    contact: { update: jest.Mock };
+    contact: { update: jest.Mock; updateMany: jest.Mock };
     segment: { findMany: jest.Mock; update: jest.Mock };
     $executeRaw: jest.Mock;
+    $queryRaw: jest.Mock;
   };
   let prisma: {
     tag: { findMany: jest.Mock; findFirst: jest.Mock; create: jest.Mock; update: jest.Mock; delete: jest.Mock };
@@ -66,9 +67,10 @@ describe("TagsService", () => {
           Promise.resolve({ count: where.id.in.length }),
         ),
       },
-      contact: { update: jest.fn().mockResolvedValue({}) },
+      contact: { update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
       segment: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
       $executeRaw: jest.fn().mockResolvedValue(0),
+      $queryRaw: jest.fn().mockResolvedValue([]),
     };
     prisma = {
       tag: {
@@ -85,7 +87,7 @@ describe("TagsService", () => {
       $queryRaw: jest.fn().mockResolvedValue([]),
       $executeRaw: jest.fn().mockResolvedValue(0),
       // Interactive-transaction shape: hand the callback a tx client.
-      $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
+      $transaction: jest.fn((fn: (t: unknown) => unknown, _opts?: unknown) => fn(tx)),
     };
     svc = new TagsService(prisma as never);
   });
@@ -253,16 +255,86 @@ describe("TagsService", () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("assign writes every contact through a single transaction", async () => {
-    prisma.contact.findMany.mockResolvedValue([
-      { id: "c1", tags: "[]" },
-      { id: "c2", tags: '["Pro"]' },
-    ]);
-    prisma.tag.findFirst.mockResolvedValue({ id: "t1", name: "VIP", color: "90" });
-    const res = await svc.assign("ws1", { contactIds: ["c1", "c2"], add: ["VIP"] });
-    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.contact.update).toHaveBeenCalledTimes(2);
-    expect(prisma.contact.update).not.toHaveBeenCalled();
-    expect(res).toEqual({ contactsUpdated: 2 });
+  describe("assign (set-based)", () => {
+    const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join("?");
+
+    it("runs one UPDATE per added name inside one transaction with a 30s timeout", async () => {
+      prisma.contact.findMany.mockResolvedValue([
+        { id: "c1", tags: "[]" },
+        { id: "c2", tags: '["Pro"]' },
+      ]);
+      prisma.tag.findFirst.mockResolvedValue({ id: "t1", name: "VIP", color: "90" });
+      tx.$queryRaw
+        .mockResolvedValueOnce([{ id: "c1" }, { id: "c2" }]) // VIP
+        .mockResolvedValueOnce([{ id: "c1" }]); // Hot
+      const res = await svc.assign("ws1", { contactIds: ["c1", "c2"], add: ["VIP", "Hot"] });
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction.mock.calls[0][1]).toEqual({ timeout: 30000 });
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+      const [first] = tx.$queryRaw.mock.calls;
+      const sql = sqlOf(first);
+      expect(sql).toContain('UPDATE "Contact"');
+      expect(sql).toContain("= ANY(");
+      expect(sql).toContain('NOT ("tags"::jsonb ?');
+      expect(sql).toContain("RETURNING");
+      expect(first).toContainEqual(["c1", "c2"]);
+      expect(first).toContain("ws1");
+      expect(first).toContain("VIP");
+      // No per-contact writes.
+      expect(tx.contact.update).not.toHaveBeenCalled();
+      expect(prisma.contact.update).not.toHaveBeenCalled();
+      // Distinct contacts changed, not name-updates summed.
+      expect(res).toEqual({ contactsUpdated: 2 });
+    });
+
+    it("runs one UPDATE per removed name that filters the element out", async () => {
+      prisma.contact.findMany.mockResolvedValue([{ id: "c1", tags: '["VIP","Pro"]' }]);
+      tx.$queryRaw.mockResolvedValueOnce([{ id: "c1" }]);
+      const res = await svc.assign("ws1", { contactIds: ["c1"], remove: ["VIP"] });
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      const sql = sqlOf(tx.$queryRaw.mock.calls[0]);
+      expect(sql).toContain("jsonb_array_elements");
+      expect(sql).toContain('"tags"::jsonb ?');
+      expect(sql).not.toContain("NOT (");
+      expect(tx.$queryRaw.mock.calls[0]).toContain("VIP");
+      expect(prisma.tag.create).not.toHaveBeenCalled();
+      expect(res).toEqual({ contactsUpdated: 1 });
+    });
+
+    it("removes before adding, so a name in both lists ends up present", async () => {
+      prisma.contact.findMany.mockResolvedValue([{ id: "c1", tags: '["VIP"]' }]);
+      prisma.tag.findFirst.mockResolvedValue({ id: "t1", name: "VIP", color: "90" });
+      await svc.assign("ws1", { contactIds: ["c1"], add: ["VIP"], remove: ["VIP"] });
+      const sqls = tx.$queryRaw.mock.calls.map(sqlOf);
+      expect(sqls[0]).toContain("jsonb_array_elements");
+      expect(sqls[1]).toContain("NOT (");
+    });
+
+    it("never casts a malformed tags row: it is reset to the added names instead of 500ing", async () => {
+      prisma.contact.findMany.mockResolvedValue([
+        { id: "c1", tags: "[]" },
+        { id: "bad", tags: "{not json" },
+        { id: "obj", tags: '{"a":1}' },
+      ]);
+      prisma.tag.findFirst.mockResolvedValue({ id: "t1", name: "VIP", color: "90" });
+      tx.$queryRaw.mockResolvedValueOnce([{ id: "c1" }]);
+      tx.contact.updateMany.mockResolvedValueOnce({ count: 2 });
+      const res = await svc.assign("ws1", { contactIds: ["c1", "bad", "obj"], add: ["VIP"] });
+      // SQL only ever sees the rows whose tags parsed as a JSON array.
+      expect(tx.$queryRaw.mock.calls[0]).toContainEqual(["c1"]);
+      expect(tx.contact.updateMany).toHaveBeenCalledWith({
+        where: { workspaceId: "ws1", id: { in: ["bad", "obj"] } },
+        data: { tags: JSON.stringify(["VIP"]) },
+      });
+      expect(res).toEqual({ contactsUpdated: 3 });
+    });
+
+    it("leaves malformed rows alone on a remove-only call", async () => {
+      prisma.contact.findMany.mockResolvedValue([{ id: "bad", tags: "nope" }]);
+      const res = await svc.assign("ws1", { contactIds: ["bad"], remove: ["VIP"] });
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+      expect(tx.contact.updateMany).not.toHaveBeenCalled();
+      expect(res).toEqual({ contactsUpdated: 0 });
+    });
   });
 });

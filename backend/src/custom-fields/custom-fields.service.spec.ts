@@ -183,7 +183,10 @@ describe("CustomFieldsService", () => {
     expect(fieldWhere({ id: "d", type: "date" }, "set")).toEqual({ fieldValues: { some: { defId: "d" } } });
     expect(fieldWhere({ id: "d", type: "text" }, "unset")).toEqual({ fieldValues: { none: { defId: "d" } } });
     expect(() => fieldWhere({ id: "d", type: "boolean" }, "eq", "yes")).toThrow(BadRequestException);
-    expect(fieldWhere({ id: "d", type: "boolean" }, "eq", "false")).toEqual(w({ equals: false }));
+    // "is No" also matches contacts that never got a value row.
+    expect(fieldWhere({ id: "d", type: "boolean" }, "eq", "false")).toEqual({
+      OR: [w({ equals: false }), { fieldValues: { none: { defId: "d" } } }],
+    });
     expect(() => fieldWhere({ id: "d", type: "boolean" }, "gt", "1")).toThrow(BadRequestException);
     expect(() => fieldWhere({ id: "d", type: "number" }, "gt", "abc")).toThrow(BadRequestException);
   });

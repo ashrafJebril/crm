@@ -288,7 +288,22 @@ export class TagsService {
     });
   }
 
-  /** Bulk add/remove tag names on contacts; unknown names quick-create. */
+  /**
+   * Bulk add/remove tag names on contacts; unknown names quick-create.
+   *
+   * Set-based so select-all (up to 10 000 contacts) stays a handful of
+   * statements: one UPDATE per removed name, then one per added name, all in
+   * one transaction (all-or-nothing, spec §4). `contactsUpdated` counts
+   * DISTINCT contacts whose tags changed (RETURNING ids, unioned).
+   *
+   * Malformed rows: `tags` is TEXT, and `"tags"::jsonb` throws on invalid JSON,
+   * which would 500 the whole batch. The ids are classified in JS from the
+   * validation read we already do: only rows whose tags parse as a JSON array
+   * ever reach the jsonb SQL, and that SQL guards the cast with a CASE on the
+   * id so Postgres cannot evaluate it for any other row. Malformed rows are
+   * treated as an empty list, as before: an add resets them to the added names
+   * (one updateMany), a remove leaves them untouched.
+   */
   async assign(
     workspaceId: string,
     input: { contactIds: string[]; add?: string[]; remove?: string[] },
@@ -301,33 +316,67 @@ export class TagsService {
     if (found.length !== ids.length) {
       throw new NotFoundException("One or more contacts not found in this workspace");
     }
-    const add = (input.add ?? []).map((n) => n.trim()).filter(Boolean);
-    const remove = new Set((input.remove ?? []).map((n) => n.trim()).filter(Boolean));
+    const add = [...new Set((input.add ?? []).map((n) => n.trim()).filter(Boolean))];
+    const remove = [...new Set((input.remove ?? []).map((n) => n.trim()).filter(Boolean))];
     for (const name of add) await this.create(workspaceId, name);
-    // Spec §4 wants bulk tagging to be all-or-nothing: a failure on contact N
-    // must not leave contacts 1..N-1 tagged with the client seeing an error.
-    const contactsUpdated = await this.prisma.$transaction(async (tx) => {
-      let n = 0;
-      for (const c of found) {
-        let tags: string[];
-        try {
-          const parsed = JSON.parse(c.tags);
-          tags = Array.isArray(parsed) ? parsed : [];
-        } catch {
-          tags = [];
-        }
-        const next = [...new Set([...tags.filter((t) => !remove.has(t)), ...add])];
-        if (JSON.stringify(next) !== JSON.stringify(tags)) {
-          await tx.contact.update({
-            where: { id: c.id },
-            data: { tags: JSON.stringify(next) },
-          });
-          n += 1;
-        }
+
+    const valid: string[] = [];
+    const malformed: string[] = [];
+    for (const c of found) {
+      let ok = false;
+      try {
+        ok = Array.isArray(JSON.parse(c.tags));
+      } catch {
+        ok = false;
       }
-      return n;
-    });
-    return { contactsUpdated };
+      (ok ? valid : malformed).push(c.id);
+    }
+
+    const changed = await this.prisma.$transaction(
+      async (tx) => {
+        const touched = new Set<string>();
+        const collect = (rows: { id: string }[]) => rows.forEach((r) => touched.add(r.id));
+        if (valid.length) {
+          for (const name of remove) {
+            collect(
+              await tx.$queryRaw<{ id: string }[]>`
+                UPDATE "Contact"
+                SET "tags" = (
+                  SELECT COALESCE(jsonb_agg(t.e ORDER BY t.i), '[]'::jsonb)::text
+                  FROM jsonb_array_elements("tags"::jsonb) WITH ORDINALITY AS t(e, i)
+                  WHERE t.e <> to_jsonb(${name}::text)
+                )
+                WHERE "id" = ANY(${valid}::text[]) AND "workspaceId" = ${workspaceId}
+                  AND CASE WHEN "id" = ANY(${valid}::text[]) THEN ("tags"::jsonb ? ${name}) ELSE false END
+                RETURNING "id"
+              `,
+            );
+          }
+          for (const name of add) {
+            collect(
+              await tx.$queryRaw<{ id: string }[]>`
+                UPDATE "Contact"
+                SET "tags" = ("tags"::jsonb || jsonb_build_array(${name}::text))::text
+                WHERE "id" = ANY(${valid}::text[]) AND "workspaceId" = ${workspaceId}
+                  AND CASE WHEN "id" = ANY(${valid}::text[]) THEN NOT ("tags"::jsonb ? ${name}) ELSE false END
+                RETURNING "id"
+              `,
+            );
+          }
+        }
+        let resetCount = 0;
+        if (malformed.length && add.length) {
+          const r = await tx.contact.updateMany({
+            where: { workspaceId, id: { in: malformed } },
+            data: { tags: JSON.stringify(add) },
+          });
+          resetCount = r.count;
+        }
+        return touched.size + resetCount;
+      },
+      { timeout: 30000 },
+    );
+    return { contactsUpdated: changed };
   }
 }
 
