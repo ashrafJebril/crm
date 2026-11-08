@@ -6,6 +6,7 @@ const SCOPED_MODELS = new Set([
   "Contact",
   "Conversation",
   "ConversationLabel",
+  "CustomFieldDef",
   "Message",
   "Appointment",
   "Template",

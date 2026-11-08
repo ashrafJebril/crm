@@ -48,6 +48,7 @@ model User {
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
   assignedConversations Conversation[] @relation("ConversationAssignee")
+  ownedContacts Contact[] @relation("ContactOwner")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -90,12 +91,58 @@ model Contact {
   notes         Note[]
   segmentMembers SegmentMember[]
 
+  // Structured name (name stays the display name), email, owner, consent.
+  firstName       String?
+  lastName        String?
+  email           String?
+  marketingOptOut Boolean @default(false)
+  notALead        Boolean @default(false)
+  ownerId         String?
+  owner           User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  fieldValues     CustomFieldValue[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([workspaceId, externalSource, externalId])
   @@unique([workspaceId, hjzClientId])
   @@index([workspaceId])
+  @@index([workspaceId, email])
+  @@index([workspaceId, ownerId])
+}
+
+model CustomFieldDef {
+  id          String    @id @default(cuid())
+  workspaceId String
+  entity      String    @default("contact")
+  key         String
+  label       String
+  labelAr     String
+  /// text | number | date | select | boolean
+  type        String
+  options     Json?
+  order       Int       @default(0)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace          @relation("WorkspaceCustomFieldDefs", fields: [workspaceId], references: [id], onDelete: Cascade)
+  values    CustomFieldValue[]
+
+  @@unique([workspaceId, entity, key])
+  @@index([workspaceId])
+}
+
+model CustomFieldValue {
+  defId     String
+  contactId String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  def     CustomFieldDef @relation(fields: [defId], references: [id], onDelete: Cascade)
+  contact Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([defId, contactId])
+  @@index([contactId])
 }
 
 model Conversation {
@@ -698,6 +745,7 @@ model Workspace {
   contacts          Contact[]          @relation("WorkspaceContacts")
   conversations     Conversation[]     @relation("WorkspaceConversations")
   conversationLabels ConversationLabel[] @relation("WorkspaceConversationLabels")
+  customFieldDefs   CustomFieldDef[]   @relation("WorkspaceCustomFieldDefs")
   messages          Message[]          @relation("WorkspaceMessages")
   appointments      Appointment[]      @relation("WorkspaceAppointments")
   templates         Template[]         @relation("WorkspaceTemplates")
