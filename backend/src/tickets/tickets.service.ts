@@ -131,7 +131,7 @@ export class TicketsService {
     }
   }
 
-  async createTicket(workspaceId: string, dto: CreateTicketDto) {
+  async createTicket(workspaceId: string, dto: CreateTicketDto, actorId?: string) {
     // Validate pipeline and stage and that the stage belongs to the pipeline.
     const stage = await this.prisma.ticketStage.findFirst({
       where: { id: dto.stageId, workspaceId },
@@ -208,6 +208,10 @@ export class TicketsService {
 
     this.realtime.emitToWorkspace(workspaceId, "ticket.created", { ticket });
 
+    if (dto.ownerId && dto.ownerId !== actorId) {
+      await this.notifyTicketOwner(workspaceId, dto.ownerId, ticket.id, ticket.title, actorId);
+    }
+
     this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
       workspaceId,
       triggerType: "ticket_created",
@@ -268,24 +272,41 @@ export class TicketsService {
     if (
       typeof dto.ownerId === "string" &&
       dto.ownerId !== existing.ownerId &&
-      dto.ownerId !== actorId &&
-      this.notifications
+      dto.ownerId !== actorId
     ) {
-      try {
-        await this.notifications.notify(workspaceId, [dto.ownerId], {
-          type: "assignment",
-          title: "assignment.ticket",
-          body: JSON.stringify({ ticketTitle: updated.title }),
-          recordKind: "ticket",
-          recordId: id,
-          actorId,
-        });
-      } catch (err) {
-        this.logger.warn(`owner notification failed: ${(err as Error)?.message}`);
-      }
+      await this.notifyTicketOwner(workspaceId, dto.ownerId, id, updated.title, actorId);
     }
 
     return updated;
+  }
+
+  /** Best-effort: a notification problem must never fail the ticket write. */
+  private async notifyTicketOwner(
+    workspaceId: string,
+    ownerId: string,
+    ticketId: string,
+    ticketTitle: string,
+    actorId?: string,
+  ): Promise<void> {
+    if (!this.notifications) return;
+    try {
+      const actor = actorId
+        ? await this.prisma.user.findUnique({ where: { id: actorId }, select: { name: true } })
+        : null;
+      await this.notifications.notify(workspaceId, [ownerId], {
+        type: "assignment",
+        title: "assignment.ticket",
+        body: JSON.stringify({
+          ticketTitle,
+          ...(actor?.name ? { actorName: actor.name } : {}),
+        }),
+        recordKind: "ticket",
+        recordId: ticketId,
+        actorId,
+      });
+    } catch (err) {
+      this.logger.warn(`owner notification failed: ${(err as Error)?.message}`);
+    }
   }
 
   async moveTicket(workspaceId: string, id: string, dto: MoveTicketDto) {
@@ -363,22 +384,27 @@ export class TicketsService {
       value?: number;
       ownerId?: string;
     },
+    actorId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
 
-    return this.createTicket(workspaceId, {
-      pipelineId: dto.pipelineId,
-      stageId: dto.stageId,
-      contactId: conv.contactId,
-      conversationId,
-      title: dto.title,
-      description: dto.description,
-      value: dto.value,
-      ownerId: dto.ownerId,
-    });
+    return this.createTicket(
+      workspaceId,
+      {
+        pipelineId: dto.pipelineId,
+        stageId: dto.stageId,
+        contactId: conv.contactId,
+        conversationId,
+        title: dto.title,
+        description: dto.description,
+        value: dto.value,
+        ownerId: dto.ownerId,
+      },
+      actorId,
+    );
   }
 
   async addNote(workspaceId: string, id: string, dto: AddNoteDto) {

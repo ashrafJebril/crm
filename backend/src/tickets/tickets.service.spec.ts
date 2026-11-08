@@ -230,6 +230,7 @@ describe("TicketsService.updateTicket owner notifications", () => {
       },
       workspaceMember: { findFirst: jest.fn().mockResolvedValue({ userId: "u_2" }) },
       ticketActivity: { create: jest.fn().mockResolvedValue({}) },
+      user: { findUnique: jest.fn().mockResolvedValue({ name: "Sara" }) },
     };
     notifications = { notify: jest.fn().mockResolvedValue(1) };
     const moduleRef = await Test.createTestingModule({
@@ -248,7 +249,7 @@ describe("TicketsService.updateTicket owner notifications", () => {
     expect(notifications.notify).toHaveBeenCalledWith("ws_1", ["u_2"], {
       type: "assignment",
       title: "assignment.ticket",
-      body: JSON.stringify({ ticketTitle: "طلب عرض سعر" }),
+      body: JSON.stringify({ ticketTitle: "طلب عرض سعر", actorName: "Sara" }),
       recordKind: "ticket",
       recordId: "tk_1",
       actorId: "actor",
@@ -261,5 +262,61 @@ describe("TicketsService.updateTicket owner notifications", () => {
     await svc.updateTicket("ws_1", "tk_1", { ownerId: null as never }, "actor");
     await svc.updateTicket("ws_1", "tk_1", { title: "x" }, "actor");
     expect(notifications.notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("TicketsService.createTicket owner notifications", () => {
+  let svc: TicketsService;
+  let prisma: any;
+  let notifications: { notify: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = {
+      ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st", pipelineId: "pl", key: "new" }) },
+      contact: { findFirst: jest.fn().mockResolvedValue({ id: "c1" }) },
+      conversation: { findFirst: jest.fn() },
+      workspaceMember: { findFirst: jest.fn().mockResolvedValue({ id: "m" }) },
+      ticket: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: "tk_9", title: "Quote", ownerId: "u_2" }),
+      },
+      ticketActivity: { create: jest.fn().mockResolvedValue({}) },
+      user: { findUnique: jest.fn().mockResolvedValue({ name: "Sara" }) },
+    };
+    notifications = { notify: jest.fn().mockResolvedValue(1) };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        TicketsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RealtimeService, useValue: { emitToWorkspace: jest.fn() } },
+        { provide: NotificationsService, useValue: notifications },
+      ],
+    }).compile();
+    svc = moduleRef.get(TicketsService);
+  });
+
+  const dto = { pipelineId: "pl", stageId: "st", contactId: "c1", title: "Quote", ownerId: "u_2" };
+
+  it("notifies an owner other than the creator with the assignment.ticket key", async () => {
+    await svc.createTicket("ws_1", dto, "actor");
+    expect(notifications.notify).toHaveBeenCalledWith("ws_1", ["u_2"], {
+      type: "assignment",
+      title: "assignment.ticket",
+      body: JSON.stringify({ ticketTitle: "Quote", actorName: "Sara" }),
+      recordKind: "ticket",
+      recordId: "tk_9",
+      actorId: "actor",
+    });
+  });
+
+  it("does not notify when the creator owns it or there is no owner", async () => {
+    await svc.createTicket("ws_1", dto, "u_2");
+    await svc.createTicket("ws_1", { ...dto, ownerId: undefined }, "actor");
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
+  it("a failing notification never fails the create", async () => {
+    notifications.notify.mockRejectedValue(new Error("boom"));
+    await expect(svc.createTicket("ws_1", dto, "actor")).resolves.toMatchObject({ id: "tk_9" });
   });
 });

@@ -1,4 +1,17 @@
-import { parseMentions, renderMentions } from "./mentions";
+import { excerptOf, parseMentions, renderMentions } from "./mentions";
+
+describe("excerptOf", () => {
+  it("returns short text unchanged", () => {
+    expect(excerptOf("hello")).toBe("hello");
+  });
+  it("never cuts an emoji or combined sequence at the limit", () => {
+    const family = "👨‍👩‍👧"; // one grapheme, several code points
+    const text = "a".repeat(119) + family + "tail";
+    expect(excerptOf(text)).toBe("a".repeat(119) + family);
+    const astral = "b".repeat(119) + "😀" + "x";
+    expect(excerptOf(astral)).toBe("b".repeat(119) + "😀");
+  });
+});
 
 describe("mentions", () => {
   it("parseMentions handles Arabic names and dedupes", () => {

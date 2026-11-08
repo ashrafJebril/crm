@@ -54,17 +54,22 @@ export class TicketsController {
   }
 
   @Post("tickets")
-  createTicket(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateTicketDto) {
-    return this.svc.createTicket(workspaceId, dto);
+  createTicket(
+    @CurrentWorkspace() workspaceId: string,
+    @CurrentUserId() userId: string,
+    @Body() dto: CreateTicketDto,
+  ) {
+    return this.svc.createTicket(workspaceId, dto, userId);
   }
 
   @Post("tickets/from-conversation/:conversationId")
   createFromConversation(
     @CurrentWorkspace() workspaceId: string,
+    @CurrentUserId() userId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: CreateFromConversationDto,
   ) {
-    return this.svc.createFromConversation(workspaceId, conversationId, dto);
+    return this.svc.createFromConversation(workspaceId, conversationId, dto, userId);
   }
 
   @Patch("tickets/:id")

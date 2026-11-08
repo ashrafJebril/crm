@@ -22,6 +22,7 @@ describe("NotesService", () => {
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "n1", ...data })),
       },
       workspaceMember: { findMany: jest.fn().mockResolvedValue([]) },
+      user: { findUnique: jest.fn().mockResolvedValue({ name: "Sara" }) },
       noteSeen: { upsert: jest.fn().mockResolvedValue({}) },
     };
     notifications = { notify: jest.fn().mockResolvedValue(1) };
@@ -74,7 +75,7 @@ describe("NotesService", () => {
       recordId: "t1",
       actorId: "me",
     });
-    expect(JSON.parse(payload.body)).toEqual({ excerpt: "@محمد @Me @محمد" });
+    expect(JSON.parse(payload.body)).toEqual({ excerpt: "@محمد @Me @محمد", actorName: "Sara" });
     expect(res.warnings).toEqual([]);
     expect(res.mentions).toEqual(["u2", "me"]);
   });

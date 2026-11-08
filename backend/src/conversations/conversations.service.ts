@@ -220,10 +220,16 @@ export class ConversationsService {
         where: { id: conv.contactId, workspaceId },
         select: { name: true },
       });
+      const actor = actorId
+        ? await this.prisma.user.findUnique({ where: { id: actorId }, select: { name: true } })
+        : null;
       await this.notifications.notify(workspaceId, [assigneeId], {
         type: "assignment",
         title: "assignment.conversation",
-        body: JSON.stringify({ contactName: contact?.name ?? "" }),
+        body: JSON.stringify({
+          contactName: contact?.name ?? "",
+          ...(actor?.name ? { actorName: actor.name } : {}),
+        }),
         recordKind: "conversation",
         recordId: conv.id,
         actorId,

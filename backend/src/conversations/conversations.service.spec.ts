@@ -151,6 +151,7 @@ describe("ConversationsService.update", () => {
     beforeEach(() => {
       notifications = { notify: jest.fn().mockResolvedValue(1) };
       (prisma as any).contact = { findFirst: jest.fn().mockResolvedValue({ name: "محمد أحمد" }) };
+      (prisma as any).user = { findUnique: jest.fn().mockResolvedValue({ name: "Sara" }) };
       prisma.conversation.findFirst.mockResolvedValue(baseRow({ contactId: "c1" }));
       nsvc = new ConversationsService(
         prisma as never,
@@ -166,7 +167,7 @@ describe("ConversationsService.update", () => {
       expect(notifications.notify).toHaveBeenCalledWith("ws1", ["u2"], {
         type: "assignment",
         title: "assignment.conversation",
-        body: JSON.stringify({ contactName: "محمد أحمد" }),
+        body: JSON.stringify({ contactName: "محمد أحمد", actorName: "Sara" }),
         recordKind: "conversation",
         recordId: "cv1",
         actorId: "actor",

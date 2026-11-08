@@ -14,3 +14,13 @@ export function parseMentions(body: string): string[] {
 export function renderMentions(body: string): string {
   return body.replace(new RegExp(MENTION_RE.source, "g"), "@$1");
 }
+
+/** First `max` user-perceived characters (grapheme clusters), so an emoji or
+ *  combined sequence is never cut in half. */
+export function excerptOf(text: string, max = 120): string {
+  const Seg = (Intl as { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  const units = Seg
+    ? Array.from(new Seg(undefined, { granularity: "grapheme" }).segment(text), (s) => s.segment)
+    : Array.from(text);
+  return units.length <= max ? text : units.slice(0, max).join("");
+}

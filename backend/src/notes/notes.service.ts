@@ -3,7 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateNoteDto, UpdateNoteDto } from "./notes.dto";
 import { NotificationsService } from "../notifications/notifications.service";
 import { canOpenRecord } from "../notifications/record-access";
-import { parseMentions, renderMentions } from "./mentions";
+import { excerptOf, parseMentions, renderMentions } from "./mentions";
 
 export type MentionWarning = { userId: string; reason: "not_a_member" | "no_access" };
 
@@ -90,10 +90,25 @@ export class NotesService {
     // Deferred so callers notify only after the note write succeeded.
     const send = async () => {
       if (toNotify.length === 0) return;
+      let actorName: string | undefined;
+      if (authorUserId) {
+        try {
+          const actor = await this.prisma.user.findUnique({
+            where: { id: authorUserId },
+            select: { name: true },
+          });
+          actorName = actor?.name || undefined;
+        } catch {
+          /* the name is a nicety; never block the mention */
+        }
+      }
       await this.notifications.notify(workspaceId, toNotify, {
         type: "mention",
         title: "mention.note",
-        body: JSON.stringify({ excerpt: renderMentions(body).slice(0, 120) }),
+        body: JSON.stringify({
+          excerpt: excerptOf(renderMentions(body)),
+          ...(actorName ? { actorName } : {}),
+        }),
         recordKind: kind,
         recordId,
         actorId: authorUserId ?? undefined,
