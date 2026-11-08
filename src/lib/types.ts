@@ -179,6 +179,14 @@ export interface TeamMember {
   role: string;
   initials: string;
   color: string;
+  email?: string;
+}
+
+export interface ConversationLabel {
+  id: string;
+  name: string;
+  color: "ink" | "info" | "ok" | "warn" | "bad" | "accent" | "human";
+  count: number;
 }
 
 export interface Contact {
@@ -231,7 +239,13 @@ export interface Conversation {
   lastFrom: "them" | "human" | "ai";
   preview: string;
   channel: ConvChannel;
-  status: "human" | "closed" | "spam";
+  status: "human" | "pending_customer" | "resolved" | "closed" | "spam";
+  assigneeId?: string | null;
+  version?: number;
+  escalateReason?: string | null;
+  statusChangedAt?: string | null;
+  labelIds?: string[];
+  updatedAt?: string;
   intent: string;
   confidence: number;
   escalated?: boolean;
