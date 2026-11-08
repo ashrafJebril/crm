@@ -59,6 +59,8 @@ UPDATE "Contact" SET "firstName" = split_part(trim(name), ' ', 1),
   "lastName" = NULLIF(trim(substr(trim(name), length(split_part(trim(name), ' ', 1)) + 1)), '')
 WHERE "firstName" IS NULL;
 
--- Lower-case the built-in lifecycle values once (idempotent); the API lower-cases them on write.
-UPDATE "Contact" SET lifecycle = lower(lifecycle)
-WHERE lower(lifecycle) IN ('lead','customer','churned','patient','blocked') AND lifecycle <> lower(lifecycle);
+-- Lifecycle values are NOT lower-cased here on purpose: saved segments in the
+-- currently deployed app match lifecycle case-sensitively, so rewriting rows
+-- before this code ships would empty those segments. The new code compares
+-- case-insensitively and lower-cases on write; normalise existing rows after
+-- deploy with backend/scripts/normalize-lifecycle.sql.
