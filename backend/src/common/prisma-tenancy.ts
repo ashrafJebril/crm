@@ -5,6 +5,7 @@ import { getWorkspaceContext } from "./workspace-context";
 const SCOPED_MODELS = new Set([
   "Contact",
   "Conversation",
+  "ConversationLabel",
   "Message",
   "Appointment",
   "Template",

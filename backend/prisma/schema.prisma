@@ -47,6 +47,7 @@ model User {
 
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
+  assignedConversations Conversation[] @relation("ConversationAssignee")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -149,6 +150,15 @@ model Conversation {
   // l agent id — set for conversations created by an l agent
   lAgentId String?
 
+  /// Conversation ownership — the agent responsible for the thread (null = unassigned).
+  assigneeId      String?
+  assignee        User?     @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  /// Optimistic-concurrency counter, bumped on every ownership/status change.
+  version         Int       @default(0)
+  escalateReason  String?
+  statusChangedAt DateTime?
+  labels          ConversationLabelLink[]
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -161,6 +171,34 @@ model Conversation {
   @@index([contactId])
   @@index([workspaceId])
   @@index([lConversationId])
+  @@index([workspaceId, assigneeId])
+}
+
+model ConversationLabel {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  /// ink | info | ok | warn | bad | accent | human
+  color       String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace               @relation("WorkspaceConversationLabels", fields: [workspaceId], references: [id], onDelete: Cascade)
+  links     ConversationLabelLink[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model ConversationLabelLink {
+  conversationId String
+  labelId        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  label        ConversationLabel @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, labelId])
+  @@index([labelId])
 }
 
 model Message {
@@ -659,6 +697,7 @@ model Workspace {
 
   contacts          Contact[]          @relation("WorkspaceContacts")
   conversations     Conversation[]     @relation("WorkspaceConversations")
+  conversationLabels ConversationLabel[] @relation("WorkspaceConversationLabels")
   messages          Message[]          @relation("WorkspaceMessages")
   appointments      Appointment[]      @relation("WorkspaceAppointments")
   templates         Template[]         @relation("WorkspaceTemplates")
