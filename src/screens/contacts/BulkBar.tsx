@@ -34,6 +34,9 @@ interface Props {
   onAction: (a: BulkAction) => void;
 }
 
+/** Server cap for "Add to pipeline" (each new ticket can start automations). */
+export const PIPELINE_BULK_CAP = 500;
+
 const FIELD: CSSProperties = {
   height: 30, padding: "0 8px", borderRadius: 6, border: "1px solid var(--line-soft)",
   background: "var(--bg-1)", color: "var(--ink)", fontSize: 12.5, fontFamily: "inherit", width: "100%",
@@ -48,6 +51,11 @@ export function BulkBar(p: Props) {
   const pipeline = p.pipelines.find((x) => x.id === pipelineId);
   const showSelectAll = p.pageAllSelected && p.totalMatching > p.count && !p.selectingAll && !p.truncated;
   const nameOf = (a: string, b: string | null | undefined) => (lang === "ar" ? b || a : a);
+  const overPipelineCap = p.count > PIPELINE_BULK_CAP;
+  const pipelineCapMsg = tx(
+    "Add to pipeline works on up to 500 contacts at a time.",
+    "الإضافة إلى المسار متاحة لـ ٥٠٠ جهة اتصال كحد أقصى في كل مرة.",
+  );
 
   return (
     <div
@@ -81,6 +89,7 @@ export function BulkBar(p: Props) {
       <button type="button" className="btn ghost sm" onClick={p.onClear}>{tx("Clear", "مسح")}</button>
       <span style={{ flex: 1 }} />
       {p.error && <span role="alert" style={{ fontSize: 11, color: "var(--bad)" }}>{p.error}</span>}
+      {overPipelineCap && <span role="note" className="muted" style={{ fontSize: 11 }}>{pipelineCapMsg}</span>}
 
       <button type="button" className="btn sm" disabled={p.busy} onClick={p.onTag}>
         <IconTag w={12} /> {tx("Tag", "وسم")}
@@ -89,8 +98,8 @@ export function BulkBar(p: Props) {
         {tx("Remove tag", "إزالة وسم")}
       </button>
 
-      <Popover role="dialog" disabled={p.busy} ariaLabel={tx("Set owner", "تعيين المالك")} triggerClassName="btn sm" panelStyle={PANEL}
-        trigger={tx("Set owner", "تعيين المالك")}>
+      <Popover role="dialog" disabled={p.busy} ariaLabel={tx("Set owner", "تعيين المسؤول")} triggerClassName="btn sm" panelStyle={PANEL}
+        trigger={tx("Set owner", "تعيين المسؤول")}>
         {(close) => (
           <div style={{ display: "grid", gap: 2 }}>
             {[{ id: null as string | null, name: tx("Unassigned", "غير مسند") }, ...p.team.map((m) => ({ id: m.id as string | null, name: m.name }))].map((o) => (
@@ -103,7 +112,8 @@ export function BulkBar(p: Props) {
         )}
       </Popover>
 
-      <Popover role="dialog" disabled={p.busy} ariaLabel={tx("Add to pipeline", "إضافة إلى مسار")} triggerClassName="btn sm" panelStyle={PANEL}
+      <Popover role="dialog" disabled={p.busy || overPipelineCap} ariaLabel={tx("Add to pipeline", "إضافة إلى مسار")} triggerClassName="btn sm" panelStyle={PANEL}
+        title={overPipelineCap ? pipelineCapMsg : undefined}
         trigger={tx("Add to pipeline", "إضافة إلى مسار")}>
         {(close) => (
           <div style={{ display: "grid", gap: 8 }}>
@@ -130,7 +140,7 @@ export function BulkBar(p: Props) {
       </Popover>
 
       <Popover role="dialog" disabled={p.busy} ariaLabel={tx("More actions", "المزيد")} triggerClassName="btn sm" panelStyle={PANEL}
-        trigger={tx("Marketing & lead", "التسويق والعملاء")}>
+        trigger={tx("Marketing & lead", "التسويق والعملاء المحتملون")}>
         {(close) => {
           const run = (a: BulkAction) => () => { close(); p.onAction(a); };
           return (
@@ -142,10 +152,10 @@ export function BulkBar(p: Props) {
                 {tx("Opt in", "إعادة الاشتراك")}
               </button>
               <button type="button" className="btn ghost sm" style={{ justifyContent: "flex-start" }} onClick={run({ op: "setNotALead", value: true })}>
-                {tx("Mark not a lead", "تعليم كغير محتمل")}
+                {tx("Mark not a lead", "تعليم كغير عميل محتمل")}
               </button>
               <button type="button" className="btn ghost sm" style={{ justifyContent: "flex-start" }} onClick={run({ op: "setNotALead", value: false })}>
-                {tx("Mark as lead", "تعليم كمحتمل")}
+                {tx("Mark as lead", "تعليم كعميل محتمل")}
               </button>
             </div>
           );

@@ -162,7 +162,7 @@ function CreateGroupModal({
   );
   const HUES = ["0", "30", "60", "90", "120", "150", "180", "210", "240", "270", "300", "330"];
   return (
-    <Modal onClose={createMut.loading ? () => {} : onClose} width={420} label="New group" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <Modal onClose={createMut.loading ? () => {} : onClose} width={420} label={tx("New group", "مجموعة جديدة")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <h3 style={{ margin: 0, fontSize: 15 }}>{tx("New group", "مجموعة جديدة")}</h3>
       <input
         autoFocus
@@ -184,7 +184,7 @@ function CreateGroupModal({
             key={h}
             type="button"
             onClick={() => setColor(h)}
-            aria-label={`hue ${h}`}
+            aria-label={tx(`Colour ${h}`, `اللون ${h}`)}
             style={{
               width: 22, height: 22, borderRadius: "50%", cursor: "pointer",
               background: `hsl(${h} 70% 45%)`,
@@ -264,7 +264,7 @@ function GroupMembersModal({
   const busy = addMut.loading || removeMut.loading;
 
   return (
-    <Modal onClose={busy ? () => {} : onClose} width={520} label="Group members" panelStyle={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: "80vh" }}>
+    <Modal onClose={busy ? () => {} : onClose} width={520} label={tx("Group members", "أعضاء المجموعة")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: "80vh" }}>
       <h3 style={{ margin: 0, fontSize: 15 }}>
         {name} <span className="mono muted" style={{ fontSize: 11 }}>· {(membersQ.data ?? []).length} {tx("members", "عضو")}</span>
       </h3>

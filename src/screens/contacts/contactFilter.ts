@@ -61,7 +61,8 @@ export function toQuery(f: ContactFilter, extras: FilterExtras = {}): URLSearchP
   if (extras.segmentId) p.set("segmentId", extras.segmentId);
   if (f.lifecycle.length) p.set("lifecycle", f.lifecycle.join(","));
   if (f.tags.length) {
-    p.set("tags", f.tags.join(","));
+    // JSON, not commas: a tag name may itself contain a comma.
+    p.set("tags", JSON.stringify(f.tags));
     if (f.tagMode === "all") p.set("tagMode", "all");
   }
   if (f.ownerId) p.set("ownerId", f.ownerId);

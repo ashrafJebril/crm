@@ -10,12 +10,18 @@ describe("toQuery", () => {
   it("is empty for the empty filter", () => {
     expect(toQuery(EMPTY_CONTACT_FILTER).toString()).toBe("");
   });
-  it("joins lifecycle and tags with commas and sets tagMode only when 'all'", () => {
+  it("joins lifecycle with commas, sends tags as a JSON array, tagMode only when 'all'", () => {
     const q = toQuery(f({ lifecycle: ["lead", "customer"], tags: ["VIP", "Hot"], tagMode: "all" }));
     expect(q.get("lifecycle")).toBe("lead,customer");
-    expect(q.get("tags")).toBe("VIP,Hot");
+    expect(q.get("tags")).toBe('["VIP","Hot"]');
     expect(q.get("tagMode")).toBe("all");
     expect(toQuery(f({ tags: ["VIP"] })).has("tagMode")).toBe(false);
+  });
+  it("keeps a tag that contains a comma whole", () => {
+    const q = toQuery(f({ tags: ["Riyadh, KSA", "VIP"] }));
+    expect(JSON.parse(q.get("tags")!)).toEqual(["Riyadh, KSA", "VIP"]);
+    // Survives URL encoding round-trip.
+    expect(new URLSearchParams(q.toString()).get("tags")).toBe('["Riyadh, KSA","VIP"]');
   });
   it("owner: id or none", () => {
     expect(toQuery(f({ ownerId: "u1" })).get("ownerId")).toBe("u1");

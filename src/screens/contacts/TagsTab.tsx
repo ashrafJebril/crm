@@ -192,14 +192,14 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       </div>
 
       {colorFor && (
-        <Modal onClose={() => setColorFor(null)} width={300} label="Tag color" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Modal onClose={() => setColorFor(null)} width={300} label={tx("Tag color", "لون الوسم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 style={{ margin: 0, fontSize: 14 }}>{colorFor.name}</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {HUES.map((h) => (
               <button
                 key={h}
                 type="button"
-                aria-label={`hue ${h}`}
+                aria-label={tx(`Colour ${h}`, `اللون ${h}`)}
                 onClick={() => {
                   void updateMut.mutate({ id: colorFor.id, color: h }).then(() => {
                     setColorFor(null);
@@ -214,7 +214,7 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       )}
 
       {merging && (
-        <Modal onClose={mergeBusy ? () => {} : closeMerge} width={420} label="Merge tags" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Modal onClose={mergeBusy ? () => {} : closeMerge} width={420} label={tx("Merge tags", "دمج الوسوم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Merge tags", "دمج الوسوم")}</h3>
           <div style={{ fontSize: 13, color: "var(--ink-2)" }}>
             {tx("Merge these tags:", "دمج هذه الوسوم:")}{" "}
@@ -255,7 +255,7 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       )}
 
       {deleting && (
-        <Modal onClose={deleteMut.loading ? () => {} : () => setDeleting(null)} width={380} label="Delete tag" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Modal onClose={deleteMut.loading ? () => {} : () => setDeleting(null)} width={380} label={tx("Delete tag", "حذف الوسم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Delete this tag?", "حذف هذا الوسم؟")}</h3>
           <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
             {tx(

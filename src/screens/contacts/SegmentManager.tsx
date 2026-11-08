@@ -177,7 +177,7 @@ export function SegmentManager({
     <Modal
       onClose={onClose}
       width={820}
-      label="Segments"
+      label={ar ? "الشرائح" : "Segments"}
       panelStyle={{
         padding: 0,
         display: "grid",

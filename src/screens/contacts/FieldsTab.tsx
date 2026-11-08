@@ -142,7 +142,7 @@ export function FieldsTab({ tx, lang, onChanged }: Props) {
       )}
 
       {deleting && (
-        <Modal onClose={busy ? () => {} : () => setDeleting(null)} width={400} label="Delete field" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Modal onClose={busy ? () => {} : () => setDeleting(null)} width={400} label={tx("Delete field", "حذف الحقل")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Delete this field?", "حذف هذا الحقل؟")}</h3>
           <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
             {deleting.valueCount === null ? (
@@ -208,7 +208,7 @@ function FieldForm({ tx, def, onClose, onSaved }: { tx: Tx; def: CustomFieldDef 
 
   const lbl: CSSProperties = { fontSize: 11, textTransform: "uppercase", color: "var(--ink-3)", display: "grid", gap: 4 };
   return (
-    <Modal onClose={saving ? () => {} : onClose} width={420} label={def ? "Edit field" : "New field"} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <Modal onClose={saving ? () => {} : onClose} width={420} label={def ? tx("Edit field", "تعديل الحقل") : tx("New field", "حقل جديد")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <h3 style={{ margin: 0, fontSize: 15 }}>{def ? tx("Edit field", "تعديل الحقل") : tx("New field", "حقل جديد")}</h3>
       <label className="mono" style={lbl}>
         {tx("Label (English)", "الاسم (إنجليزي)")}

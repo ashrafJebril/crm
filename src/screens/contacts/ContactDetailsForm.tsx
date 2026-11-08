@@ -112,7 +112,7 @@ export function ContactDetailsForm({ tx, contact, onSaved }: Props) {
           </dd>
           <dt className="muted">{tx("Owner", "المسؤول")}</dt>
           <dd style={{ margin: 0 }} dir="auto">
-            {contact.ownerId ? (owner?.name ?? "…") : tx("Unassigned", "غير معيّن")}
+            {contact.ownerId ? (owner?.name ?? "…") : tx("Unassigned", "غير مسند")}
           </dd>
         </dl>
         <button type="button" className="btn sm" style={{ marginTop: 10 }} onClick={start}>
@@ -194,7 +194,7 @@ export function ContactDetailsForm({ tx, contact, onSaved }: Props) {
             value={draft.ownerId}
             onChange={(e) => set("ownerId", e.target.value)}
           >
-            <option value="">{tx("Unassigned", "غير معيّن")}</option>
+            <option value="">{tx("Unassigned", "غير مسند")}</option>
             {team.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}

@@ -87,7 +87,7 @@ export function NewContactModal({ tx, onClose, onCreated }: Props) {
   };
 
   return (
-    <Modal onClose={onClose} width={480} label="New contact">
+    <Modal onClose={onClose} width={480} label={tx("New contact", "جهة اتصال جديدة")}>
       <form onSubmit={onSubmit}>
         <h3 style={{ margin: 0, fontSize: 16 }}>{tx("New contact", "جهة جديدة")}</h3>
         <p style={{ margin: "4px 0 8px", color: "var(--ink-2)", fontSize: 13 }}>
@@ -109,7 +109,7 @@ export function NewContactModal({ tx, onClose, onCreated }: Props) {
         <input className="input" dir="ltr" type="email" style={INPUT} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
-            <label className="mono" style={LABEL}>{tx("Owner", "المالك")}</label>
+            <label className="mono" style={LABEL}>{tx("Owner", "المسؤول")}</label>
             <select style={INPUT} value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
               <option value="">{tx("Unassigned", "غير مسند")}</option>
               {(teamQ.data ?? []).map((m) => (

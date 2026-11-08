@@ -27,7 +27,7 @@ import { TagsTab } from "./contacts/TagsTab";
 import { FieldsTab } from "./contacts/FieldsTab";
 import { NewContactModal } from "./contacts/NewContactModal";
 import { ContactFilterBar } from "./contacts/ContactFilterBar";
-import { BulkBar, type BulkAction } from "./contacts/BulkBar";
+import { BulkBar, PIPELINE_BULK_CAP, type BulkAction } from "./contacts/BulkBar";
 import {
   decodeContactFilter, encodeContactFilter, isEmptyFilter, isSelectAllCurrent, pruneFieldFilters, toQuery,
   type ContactFilter,
@@ -465,6 +465,7 @@ function ContactsImpl() {
   const [deleteDialog, setDeleteDialog] = useState<
     null | { stage: "confirm" } | { stage: "blocked"; blocked: string[]; deleted: number }
   >(null);
+  const [pipelineConfirm, setPipelineConfirm] = useState<Extract<BulkAction, { op: "addToPipeline" }> | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [openContactId, setOpenContactId] = useState<string | null>(null);
 
@@ -486,13 +487,18 @@ function ContactsImpl() {
   useEffect(() => setPage(1), [filterQuery, pageSize]);
   const queryRef = useRef(filterQuery);
   queryRef.current = filterQuery;
-  // Bumped on every manual selection change so a late select-all response can be discarded.
+  // Bumped on every selection change so a late select-all response can be discarded.
   const selVersionRef = useRef(0);
+  /** The only way the selection changes: bumps the version so an in-flight select-all can't overwrite it. */
+  const setSelection = (next: Set<string>, nextTruncated = false) => {
+    selVersionRef.current++;
+    setSelected(next);
+    setTruncated(nextTruncated);
+  };
   // A selection (esp. "all matching") belongs to the listing it was made on.
   useEffect(() => {
-    selVersionRef.current++;
-    setSelected(new Set<string>());
-    setTruncated(false);
+    setSelection(new Set<string>());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterQuery]);
 
   const pageParams = toQuery(filter, filterExtras);
@@ -558,14 +564,8 @@ function ContactsImpl() {
   const [bulkTagMode, setBulkTagMode] = useState<"add" | "remove" | null>(null);
   const [bulkTagging, setBulkTagging] = useState(false);
 
-  const onSelect = (next: Set<string>) => {
-    selVersionRef.current++;
-    setSelected(next);
-    setTruncated(false);
-  };
-
   const applyBulkTags = (names: string[]) => {
-    if (selected.size === 0 || bulkTagging || !bulkTagMode) return;
+    if (selected.size === 0 || bulkTagging || selectingAll || !bulkTagMode) return;
     if (names.length === 0) {
       setBulkTagMode(null);
       return;
@@ -582,7 +582,7 @@ function ContactsImpl() {
           removed = (await api.post<BulkResult>("/contacts/bulk", { ids, op: "removeTags", names })).affected;
         }
         setBulkTagMode(null);
-        setSelected(new Set<string>());
+        setSelection(new Set<string>());
         refetch();
         tagsQ.refetch();
         showStatus(
@@ -609,26 +609,35 @@ function ContactsImpl() {
       .then((r) => {
         // Ignore a response for a listing/selection that has since changed.
         if (!isSelectAllCurrent(start, { query: queryRef.current, selectionVersion: selVersionRef.current })) return;
-        setSelected(new Set(r.ids));
-        setTruncated(r.truncated);
+        setSelection(new Set(r.ids), r.truncated);
       })
       .catch((err) => setBulkError(err instanceof Error ? err.message : tx("Request failed", "فشل الطلب")))
       .finally(() => setSelectingAll(false));
   };
 
   const handleBulkAction = (a: BulkAction) => {
-    if (selected.size === 0 || bulkBusy) return;
+    if (selected.size === 0 || bulkBusy || selectingAll) return;
     if (a.op === "removeTags") {
       setBulkTagMode("remove");
       return;
     }
+    if (a.op === "addToPipeline") {
+      // Each new ticket can start automations: confirm first, and never above the cap.
+      if (selected.size > PIPELINE_BULK_CAP) return;
+      setPipelineConfirm(a);
+      return;
+    }
+    runBulkAction(a);
+  };
+
+  const runBulkAction = (a: BulkAction) => {
+    if (selected.size === 0 || bulkBusy || selectingAll) return;
     setBulkBusy(true);
     setBulkError(null);
     api
       .post<BulkResult>("/contacts/bulk", { ids: Array.from(selected), ...a })
       .then((res) => {
-        setSelected(new Set<string>());
-        setTruncated(false);
+        setSelection(new Set<string>());
         refetch();
         if (a.op === "addToGroup") refetchSegments();
         showStatus(
@@ -638,11 +647,14 @@ function ContactsImpl() {
         );
       })
       .catch((err) => setBulkError(err instanceof Error ? err.message : tx("Request failed", "فشل الطلب")))
-      .finally(() => setBulkBusy(false));
+      .finally(() => {
+        setBulkBusy(false);
+        setPipelineConfirm(null);
+      });
   };
 
   const runDelete = (ids: string[], force: boolean) => {
-    if (ids.length === 0 || bulkDeleting) return;
+    if (ids.length === 0 || bulkDeleting || selectingAll) return;
     setBulkDeleting(true);
     setBulkError(null);
     api
@@ -650,8 +662,7 @@ function ContactsImpl() {
       .then((res) => {
         const blocked = res.blocked ?? [];
         // Keep only the blocked contacts selected so "Delete anyway" can target them.
-        setSelected(new Set(blocked));
-        setTruncated(false);
+        setSelection(new Set(blocked));
         refetch();
         if (blocked.length > 0) {
           setDeleteDialog({ stage: "blocked", blocked, deleted: res.affected });
@@ -675,7 +686,7 @@ function ContactsImpl() {
           statsQ.data
             ? tx(
                 `${statsQ.data.total.toLocaleString()} contacts · ${statsQ.data.leads.toLocaleString()} leads · ${statsQ.data.customers.toLocaleString()} customers`,
-                `${statsQ.data.total.toLocaleString("ar")} جهة · ${statsQ.data.leads.toLocaleString("ar")} محتمل · ${statsQ.data.customers.toLocaleString("ar")} عميل`,
+                `${statsQ.data.total.toLocaleString("ar")} جهة · ${statsQ.data.leads.toLocaleString("ar")} عميل محتمل · ${statsQ.data.customers.toLocaleString("ar")} عميل`,
               )
             : tx("Loading…", "جارٍ التحميل…")
         }
@@ -855,13 +866,13 @@ function ContactsImpl() {
             pageAllSelected={contacts.length > 0 && contacts.every((c) => selected.has(c.id))}
             selectingAll={selectingAll}
             truncated={truncated}
-            busy={bulkBusy || bulkDeleting}
+            busy={bulkBusy || bulkDeleting || selectingAll}
             team={teamQ.data ?? []}
             pipelines={pipelinesQ.data ?? []}
             manualGroups={manualGroups}
             error={bulkError}
             onSelectAllMatching={selectAllMatching}
-            onClear={() => onSelect(new Set<string>())}
+            onClear={() => setSelection(new Set<string>())}
             onTag={() => setBulkTagMode("add")}
             onRemoveTag={() => setBulkTagMode("remove")}
             onDelete={() => setDeleteDialog({ stage: "confirm" })}
@@ -873,7 +884,7 @@ function ContactsImpl() {
             tx={tx}
             contacts={contacts}
             selected={selected}
-            setSelected={onSelect}
+            setSelected={(next) => setSelection(next)}
             onOpenContact={setOpenContactId}
             tagColorByName={tagColorByName}
           />
@@ -943,11 +954,25 @@ function ContactsImpl() {
         />
       )}
 
+      {pipelineConfirm && (
+        <PipelineConfirmModal
+          tx={tx}
+          count={selected.size}
+          pipelineName={(() => {
+            const pl = (pipelinesQ.data ?? []).find((x) => x.id === pipelineConfirm.pipelineId);
+            return pl ? (t.lang === "ar" ? pl.nameAr || pl.name : pl.name) : "";
+          })()}
+          busy={bulkBusy}
+          onCancel={() => setPipelineConfirm(null)}
+          onConfirm={() => runBulkAction(pipelineConfirm)}
+        />
+      )}
+
       {deleteDialog && (
         <Modal
           onClose={bulkDeleting ? () => {} : () => setDeleteDialog(null)}
           width={420}
-          label="Delete contacts"
+          label={tx("Delete contacts", "حذف جهات الاتصال")}
           panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
         >
           {deleteDialog.stage === "confirm" ? (
@@ -955,8 +980,8 @@ function ContactsImpl() {
               <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Delete selected contacts?", "حذف جهات الاتصال المحددة؟")}</h3>
               <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
                 {tx(
-                  `${selected.size.toLocaleString()} contact(s) will be deleted. Contacts with linked tickets or deals are skipped unless you choose to delete them anyway.`,
-                  `سيتم حذف ${selected.size.toLocaleString("ar")} جهة. تُتخطى الجهات المرتبطة بتذاكر أو صفقات ما لم تختر حذفها رغم ذلك.`,
+                  `${selected.size.toLocaleString()} contact(s) will be deleted, along with their conversations. Contacts with linked tickets or bookings are skipped unless you choose to delete them anyway.`,
+                  `سيتم حذف ${selected.size.toLocaleString("ar")} جهة مع محادثاتها. تُتخطى الجهات المرتبطة بتذاكر أو حجوزات ما لم تختر حذفها رغم ذلك.`,
                 )}
               </div>
             </>
@@ -965,8 +990,8 @@ function ContactsImpl() {
               <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Some contacts were not deleted", "لم تُحذف بعض الجهات")}</h3>
               <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
                 {tx(
-                  `Deleted ${deleteDialog.deleted}. ${deleteDialog.blocked.length} contact(s) are linked to tickets or deals and were kept. Delete them anyway? Their linked records are removed too. This cannot be undone.`,
-                  `تم حذف ${deleteDialog.deleted}. ${deleteDialog.blocked.length} جهة مرتبطة بتذاكر أو صفقات وتم الإبقاء عليها. هل تريد حذفها رغم ذلك؟ ستُحذف سجلاتها المرتبطة أيضًا. لا يمكن التراجع.`,
+                  `Deleted ${deleteDialog.deleted}. ${deleteDialog.blocked.length} contact(s) are linked to tickets or bookings and were kept. Delete them anyway? Their conversations and linked records are removed too. This cannot be undone.`,
+                  `تم حذف ${deleteDialog.deleted}. ${deleteDialog.blocked.length} جهة مرتبطة بتذاكر أو حجوزات وتم الإبقاء عليها. هل تريد حذفها رغم ذلك؟ ستُحذف محادثاتها وسجلاتها المرتبطة أيضًا. لا يمكن التراجع.`,
                 )}
               </div>
             </>
@@ -1076,6 +1101,38 @@ function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps)
   );
 }
 
+/* ─── Add-to-pipeline confirm ────────────────────────────────────────── */
+
+function PipelineConfirmModal({ tx, count, pipelineName, busy, onCancel, onConfirm }: {
+  tx: Tx;
+  count: number;
+  pipelineName: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  // The pipeline name is user text: isolate it so its direction can't scramble the sentence.
+  const [before, after] = tx(
+    `Create ${count.toLocaleString()} tickets in {p}? Each new ticket can start automations.`,
+    `إنشاء ${count.toLocaleString("ar")} تذكرة في {p}؟ قد تبدأ كل تذكرة جديدة عمليات أتمتة.`,
+  ).split("{p}");
+  return (
+    <Modal onClose={busy ? () => {} : onCancel} width={420} label={tx("Add to pipeline", "إضافة إلى مسار")}
+      panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Add to pipeline", "إضافة إلى مسار")}</h3>
+      <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+        {before}<bdi dir="auto">{pipelineName}</bdi>{after}
+      </div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>{tx("Cancel", "إلغاء")}</button>
+        <button type="button" className="btn primary" disabled={busy} onClick={onConfirm}>
+          {busy ? tx("Creating…", "جارٍ الإنشاء…") : tx("Create tickets", "إنشاء التذاكر")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /* ─── Bulk tag modal ─────────────────────────────────────────────────── */
 
 interface BulkTagModalProps {
@@ -1127,7 +1184,7 @@ function BulkTagModal({ tx, mode, count, saving, tags, onClose, onApply }: BulkT
         };
 
   return (
-    <Modal onClose={onClose} width={420} label={mode === "add" ? "Add tags" : "Remove tags"} panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <Modal onClose={onClose} width={420} label={mode === "add" ? tx("Add tags", "إضافة وسوم") : tx("Remove tags", "إزالة وسوم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 600 }}>
             {mode === "add" ? tx("Add tags", "إضافة وسوم") : tx("Remove tags", "إزالة وسوم")}

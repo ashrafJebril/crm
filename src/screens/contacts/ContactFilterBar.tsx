@@ -69,7 +69,7 @@ export function ContactFilterBar({ tx, lang, filter, onChange, tags, team, pipel
     filter.ownerId === "none" ? tx("Unassigned", "غير مسند") : team.find((m) => m.id === filter.ownerId)?.name;
   const yn = (v: boolean | null) => (v === null ? "" : v ? tx("Yes", "نعم") : tx("No", "لا"));
   const ownerOptions: { id: string | null; name: string }[] = [
-    { id: null, name: tx("Any owner", "أي مالك") },
+    { id: null, name: tx("Any owner", "أي مسؤول") },
     { id: "none", name: tx("Unassigned", "غير مسند") },
     ...team.map((m) => ({ id: m.id, name: m.name })),
   ];
@@ -112,8 +112,8 @@ export function ContactFilterBar({ tx, lang, filter, onChange, tags, team, pipel
         )}
       </Popover>
 
-      <Popover role="dialog" ariaLabel={tx("Owner", "المالك")} triggerClassName={chipClass(!!filter.ownerId)} panelStyle={PANEL}
-        trigger={<span dir="auto">{tx("Owner", "المالك")}{filter.ownerId && ` · ${ownerName ?? "…"}`}</span>}>
+      <Popover role="dialog" ariaLabel={tx("Owner", "المسؤول")} triggerClassName={chipClass(!!filter.ownerId)} panelStyle={PANEL}
+        trigger={<span dir="auto">{tx("Owner", "المسؤول")}{filter.ownerId && ` · ${ownerName ?? "…"}`}</span>}>
         {(close) => (
           <div style={{ display: "grid", gap: 2 }}>
             {ownerOptions.map((o) => (
