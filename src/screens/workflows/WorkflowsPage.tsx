@@ -3,6 +3,7 @@ import { memo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { useFetch } from "@/api/useFetch";
+import { usePermissions } from "@/auth/usePermissions";
 import { PageHeader } from "@/components/PageHeader";
 import { IconPlus } from "@/icons";
 import type { Pipeline, Workflow, WorkflowStepGraph, WorkflowStepType } from "@/lib/types";
@@ -97,6 +98,7 @@ function TemplateCard({ tpl, onUse, tx }: { tpl: WorkflowTemplate; onUse: () => 
 function WorkflowsPageImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
+  const { can } = usePermissions();
   const { data, loading, refetch } = useFetch<Workflow[]>("/workflows");
   const pipelinesQ = useFetch<Pipeline[]>("/pipelines");
   const workflows = data ?? [];
@@ -131,7 +133,13 @@ function WorkflowsPageImpl() {
           "أتمتة ما يحدث عند وقوع حدث متعلق بجهة اتصال أو رسالة أو تذكرة.",
         )}
         actions={
-          <button type="button" className="btn primary" onClick={() => setOpen({ kind: "blank" })}>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!can("workflows.create")}
+            title={can("workflows.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}
+            onClick={() => setOpen({ kind: "blank" })}
+          >
             <IconPlus w={14} />
             {tx("New workflow", "أتمتة جديدة")}
           </button>

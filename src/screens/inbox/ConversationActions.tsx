@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { makeTx } from "@/lib/tx";
 import type { Conversation, Lang, TeamMember } from "@/lib/types";
 import { statusLabels } from "./boardLogic";
@@ -88,10 +89,16 @@ export function ConversationActions({
 }) {
   const tx = makeTx(lang);
   const { user } = useAuth();
+  const { can } = usePermissions();
+  // Loading counts as denied, so nothing flashes enabled.
+  const canUpdate = can("conversations.update");
   const live = isLiveThreadId(conv.id);
-  const disabledTip = live
-    ? tx("Available for WhatsApp and synced threads", "متاح لواتساب والمحادثات المتزامنة")
-    : undefined;
+  const blocked = live || !canUpdate;
+  const disabledTip = !canUpdate
+    ? tx(NO_PERMISSION_EN, NO_PERMISSION_AR)
+    : live
+      ? tx("Available for WhatsApp and synced threads", "متاح لواتساب والمحادثات المتزامنة")
+      : undefined;
   const teamQ = useFetch<TeamMember[]>(live ? null : "/team");
   const team = teamQ.data ?? [];
   const { patch: patchConv, busy, note, setNote, escalateError, setEscalateError } =
@@ -113,7 +120,7 @@ export function ConversationActions({
 
   return (
     <>
-      <Menu label={assignLabel} disabled={live || busy} title={disabledTip}>
+      <Menu label={assignLabel} disabled={blocked || busy} title={disabledTip}>
         {(close) => (
           <>
             {user && (
@@ -151,7 +158,7 @@ export function ConversationActions({
           </>
         )}
       </Menu>
-      <Menu label={statusLabel[conv.status] ?? conv.status} disabled={live || busy} title={disabledTip}>
+      <Menu label={statusLabel[conv.status] ?? conv.status} disabled={blocked || busy} title={disabledTip}>
         {(close) => (
           <>
             {reopen && (
@@ -183,7 +190,7 @@ export function ConversationActions({
         conversationId={conv.id}
         labelIds={conv.labelIds ?? []}
         lang={lang}
-        disabled={live}
+        disabled={blocked}
         disabledReason={disabledTip}
         onChanged={onChanged}
         onError={setNote}
@@ -191,7 +198,7 @@ export function ConversationActions({
       <span title={disabledTip} style={{ display: "inline-flex" }}>
         <button
           className="btn"
-          disabled={live || busy}
+          disabled={blocked || busy}
           onClick={() => void patch({ pinned: !conv.pinned })}
         >
           {conv.pinned ? tx("Unpin", "إلغاء التثبيت") : tx("Pin", "تثبيت")}
@@ -200,7 +207,7 @@ export function ConversationActions({
       <span title={disabledTip} style={{ display: "inline-flex" }}>
         <button
           className="btn"
-          disabled={live || busy}
+          disabled={blocked || busy}
           style={conv.escalated ? { borderColor: "var(--bad)", color: "var(--bad)" } : undefined}
           onClick={() => (conv.escalated
               ? void patch({ escalated: false })

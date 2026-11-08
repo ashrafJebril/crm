@@ -1,7 +1,7 @@
 import { memo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
-import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { useFetch } from "@/api/useFetch";
 import { PageHeader } from "@/components/PageHeader";
 import { KnowledgeTab } from "./kewy-agent/KnowledgeTab";
@@ -17,8 +17,10 @@ interface LStatus {
 function KewyAgentImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { activeWorkspace } = useAuth();
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const { can } = usePermissions();
+  const canEditKnowledge = can("knowledge.create");
+  const canEditTools = can("agent.update");
+  const canEditMcp = can("connectors.update");
   const [tab, setTab] = useState<Tab>("knowledge");
 
   const statusQ = useFetch<LStatus>("/integrations/l/status");
@@ -78,9 +80,9 @@ function KewyAgentImpl() {
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-            {tab === "knowledge" && <KnowledgeTab tx={tx} canEdit={canEdit} />}
-            {tab === "tools" && <ToolsTab tx={tx} canEdit={canEdit} />}
-            {tab === "mcp" && <McpServersTab tx={tx} canEdit={canEdit} />}
+            {tab === "knowledge" && <KnowledgeTab tx={tx} canEdit={canEditKnowledge} />}
+            {tab === "tools" && <ToolsTab tx={tx} canEdit={canEditTools} />}
+            {tab === "mcp" && <McpServersTab tx={tx} canEdit={canEditMcp} />}
           </div>
         </>
       )}

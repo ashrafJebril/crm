@@ -15,6 +15,7 @@ import { MoveStageMenu } from "./MoveStageMenu";
 import { TicketCardOverlay } from "./TicketCard";
 import { stageColor } from "./stageColors";
 import { useMoveTicket } from "./hooks/useTicketMutations";
+import { usePermissions } from "@/auth/usePermissions";
 import { LostReasonModal } from "./LostReasonModal";
 import type { Pipeline, Ticket, TicketStage, Lang } from "@/lib/types";
 
@@ -69,6 +70,7 @@ export function PipelineBoard({
   }, []);
 
   const move = useMoveTicket();
+  const canMove = usePermissions().can("tickets.update");
 
   // 6px activation distance so a quick click on the card still fires onClick
   // (drawer) instead of starting a drag.
@@ -77,7 +79,7 @@ export function PipelineBoard({
   );
 
   const doMove = (ticket: Ticket, toStage: TicketStage) => {
-    if (toStage.id === ticket.stageId) return;
+    if (!canMove || toStage.id === ticket.stageId) return;
     if (toStage.isTerminal && !toStage.isWon) {
       setPendingLost({ ticket, toStage });
       return;

@@ -3,6 +3,7 @@ import type { Tx } from "@/lib/tx";
 import type { Lang, Pipeline, Segment, TeamMember } from "@/lib/types";
 import { IconArchive, IconTag } from "@/icons";
 import { Popover } from "../inbox/Popover";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 
 export type BulkAction =
   | { op: "removeTags" }
@@ -46,6 +47,11 @@ const PANEL: CSSProperties = { insetInlineEnd: "auto", insetInlineStart: 0, minW
 /** Bulk actions for the selected contacts, plus the "select all n matching" affordance. */
 export function BulkBar(p: Props) {
   const { tx, lang } = p;
+  const { can } = usePermissions();
+  const canUpdate = can("contacts.update");
+  const canDelete = can("contacts.delete");
+  const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
+  const updTitle = canUpdate ? undefined : noPerm;
   const [pipelineId, setPipelineId] = useState("");
   const [stageId, setStageId] = useState("");
   const pipeline = p.pipelines.find((x) => x.id === pipelineId);
@@ -91,14 +97,14 @@ export function BulkBar(p: Props) {
       {p.error && <span role="alert" style={{ fontSize: 11, color: "var(--bad)" }}>{p.error}</span>}
       {overPipelineCap && <span role="note" className="muted" style={{ fontSize: 11 }}>{pipelineCapMsg}</span>}
 
-      <button type="button" className="btn sm" disabled={p.busy} onClick={p.onTag}>
+      <button type="button" className="btn sm" disabled={p.busy || !canUpdate} title={updTitle} onClick={p.onTag}>
         <IconTag w={12} /> {tx("Tag", "وسم")}
       </button>
-      <button type="button" className="btn sm" disabled={p.busy} onClick={p.onRemoveTag}>
+      <button type="button" className="btn sm" disabled={p.busy || !canUpdate} title={updTitle} onClick={p.onRemoveTag}>
         {tx("Remove tag", "إزالة وسم")}
       </button>
 
-      <Popover role="dialog" disabled={p.busy} ariaLabel={tx("Set owner", "تعيين المسؤول")} triggerClassName="btn sm" panelStyle={PANEL}
+      <Popover role="dialog" disabled={p.busy || !canUpdate} title={updTitle} ariaLabel={tx("Set owner", "تعيين المسؤول")} triggerClassName="btn sm" panelStyle={PANEL}
         trigger={tx("Set owner", "تعيين المسؤول")}>
         {(close) => (
           <div style={{ display: "grid", gap: 2 }}>
@@ -113,7 +119,7 @@ export function BulkBar(p: Props) {
       </Popover>
 
       <Popover role="dialog" disabled={p.busy || overPipelineCap} ariaLabel={tx("Add to pipeline", "إضافة إلى مسار")} triggerClassName="btn sm" panelStyle={PANEL}
-        title={overPipelineCap ? pipelineCapMsg : undefined}
+        title={!canUpdate ? noPerm : overPipelineCap ? pipelineCapMsg : undefined}
         trigger={tx("Add to pipeline", "إضافة إلى مسار")}>
         {(close) => (
           <div style={{ display: "grid", gap: 8 }}>
@@ -139,7 +145,7 @@ export function BulkBar(p: Props) {
         )}
       </Popover>
 
-      <Popover role="dialog" disabled={p.busy} ariaLabel={tx("More actions", "المزيد")} triggerClassName="btn sm" panelStyle={PANEL}
+      <Popover role="dialog" disabled={p.busy || !canUpdate} title={updTitle} ariaLabel={tx("More actions", "المزيد")} triggerClassName="btn sm" panelStyle={PANEL}
         trigger={tx("Marketing & lead", "التسويق والعملاء المحتملون")}>
         {(close) => {
           const run = (a: BulkAction) => () => { close(); p.onAction(a); };
@@ -164,7 +170,8 @@ export function BulkBar(p: Props) {
 
       <select
         aria-label={tx("Add to group", "أضف إلى مجموعة")}
-        disabled={p.busy}
+        disabled={p.busy || !canUpdate}
+        title={updTitle}
         value=""
         onChange={(e) => {
           const id = e.target.value;
@@ -178,7 +185,7 @@ export function BulkBar(p: Props) {
         ))}
       </select>
 
-      <button type="button" className="btn sm" disabled={p.busy} onClick={p.onDelete}>
+      <button type="button" className="btn sm" disabled={p.busy || !canDelete} title={canDelete ? undefined : noPerm} onClick={p.onDelete}>
         <IconArchive w={12} /> {tx("Delete", "حذف")}
       </button>
     </div>

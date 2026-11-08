@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
@@ -120,7 +121,7 @@ export function AiKnowledgeTab() {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
 
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const canEdit = usePermissions().can("knowledge.update");
 
   const listQ = useFetch<{ docs: AiKnowledgeDoc[] }>("/ai/knowledge/docs");
   const statusQ = useFetch<{ configured: boolean }>("/ai/knowledge/status");

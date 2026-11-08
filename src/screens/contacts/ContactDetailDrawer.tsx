@@ -10,6 +10,7 @@ import { ContactDetailsForm } from "./ContactDetailsForm";
 import { ContactRecords } from "./ContactRecords";
 import { CustomFieldsCard } from "./CustomFieldsCard";
 import { DeleteContactDialog } from "./DeleteContactDialog";
+import { usePermissions } from "@/auth/usePermissions";
 
 interface RecentConv {
   id: string;
@@ -66,6 +67,7 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const isAr = t.lang === "ar";
+  const { can } = usePermissions();
 
   const sumQ = useFetch<ContactSummary>(`/contacts/${contactId}/summary`);
   const s = sumQ.data;
@@ -457,7 +459,7 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
               </Section>
 
               <div style={{ marginTop: 24, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
-                <button type="button" className="btn danger" onClick={() => setDeleting(true)}>
+                <button type="button" className="btn danger" onClick={() => setDeleting(true)} disabled={!can("contacts.delete")} title={can("contacts.delete") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
                   {tx("Delete contact", "حذف جهة الاتصال")}
                 </button>
               </div>

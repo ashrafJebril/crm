@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type { Lang, Pipeline, TicketsDashboardSummary } from "@/lib/types";
 
 interface Props {
@@ -28,6 +29,8 @@ export function PipelineHeader({
   onNewTicket,
   owners,
 }: Props) {
+  const { can } = usePermissions();
+  const canCreate = can("tickets.create");
   const winRateColor =
     summary == null
       ? "var(--ink-2)"
@@ -144,7 +147,13 @@ export function PipelineHeader({
           ))}
         </select>
 
-        <button type="button" onClick={onNewTicket} style={btn}>
+        <button
+          type="button"
+          onClick={onNewTicket}
+          disabled={!canCreate}
+          title={canCreate ? undefined : lang === "ar" ? NO_PERMISSION_AR : NO_PERMISSION_EN}
+          style={{ ...btn, ...(canCreate ? null : { opacity: 0.5, cursor: "not-allowed" }) }}
+        >
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>{" "}
           {lang === "ar" ? "جديد" : "New"}
           <span

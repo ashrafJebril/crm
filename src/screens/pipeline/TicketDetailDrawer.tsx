@@ -9,6 +9,7 @@ import {
   useUpdateTicket,
 } from "./hooks/useTicketMutations";
 import { stageColor } from "./stageColors";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type {
   Lang,
   TicketActivity,
@@ -39,6 +40,10 @@ export function TicketDetailDrawer({
   const addNote = useAddNote();
   const update = useUpdateTicket();
   const del = useDeleteTicket();
+  const { can } = usePermissions();
+  const canUpdate = can("tickets.update");
+  const canDelete = can("tickets.delete");
+  const noPerm = lang === "ar" ? NO_PERMISSION_AR : NO_PERMISSION_EN;
 
   const [noteText, setNoteText] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -284,6 +289,8 @@ export function TicketDetailDrawer({
                 <input
                   type="number"
                   min="0"
+                  disabled={!canUpdate}
+                  title={canUpdate ? undefined : noPerm}
                   defaultValue={t.value ?? 0}
                   onBlur={(e) => {
                     const v = Number(e.target.value);
@@ -306,6 +313,7 @@ export function TicketDetailDrawer({
               <Section title={lang === "ar" ? "إضافة ملاحظة" : "Add note"}>
                 <textarea
                   rows={3}
+                  disabled={!canUpdate}
                   value={noteText}
                   onChange={(e) => setNoteText(e.target.value)}
                   placeholder={
@@ -317,7 +325,8 @@ export function TicketDetailDrawer({
                 />
                 <button
                   type="button"
-                  disabled={!noteText.trim() || addNote.isPending}
+                  disabled={!canUpdate || !noteText.trim() || addNote.isPending}
+                  title={canUpdate ? undefined : noPerm}
                   onClick={async () => {
                     await addNote.mutateAsync({
                       ticketId: t.id,
@@ -409,6 +418,8 @@ export function TicketDetailDrawer({
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
+                  disabled={!canDelete}
+                  title={canDelete ? undefined : noPerm}
                   style={{
                     ...ghostBtn,
                     color: "var(--bad, #ef4444)",

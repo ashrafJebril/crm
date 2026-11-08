@@ -12,6 +12,7 @@ import {
 import type { Campaign, CampaignPreview, CampaignVariable, Segment, Template } from "@/lib/types";
 import { mappingComplete, placeholderCount, renderCampaignPreview } from "./campaigns/campaignVars";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { usePermissions } from "@/auth/usePermissions";
 import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
 
@@ -471,7 +472,12 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         ? whenDate.toLocaleString()
         : tx("Pick a time", "اختر الوقت");
 
+  const { can } = usePermissions();
+  const mayLaunch = can("campaigns.manage");
+  const mayDraft = can("campaigns.create");
+  const noPerm = tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
   const canLaunch =
+    mayLaunch &&
     !!name.trim() &&
     selectedTemplate?.status === "approved" &&
     mappingComplete(mapping, varCount) &&
@@ -678,10 +684,10 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
             </button>
             {step === 4 ? (
               <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn" disabled={!name.trim() || busy} onClick={onSaveDraft}>
+                <button className="btn" disabled={!mayDraft || !name.trim() || busy} title={mayDraft ? undefined : noPerm} onClick={onSaveDraft}>
                   {tx("Save draft", "حفظ مسودة")}
                 </button>
-                <button className="btn primary" disabled={!canLaunch || busy} onClick={onLaunch}>
+                <button className="btn primary" disabled={!canLaunch || busy} title={mayLaunch ? undefined : noPerm} onClick={onLaunch}>
                   {busy
                     ? tx("Working…", "جارٍ التنفيذ…")
                     : scheduleChoice === "now"
@@ -726,6 +732,8 @@ function CampaignsImpl() {
   );
   const rate = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 1000) / 10}%` : "—");
 
+  const { can } = usePermissions();
+  const noPerm = tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
   const cancelCampaign = useMutation<{ id: string }, Campaign>(({ id }) =>
     api.post<Campaign>(`/campaigns/${id}/cancel`),
   );
@@ -805,7 +813,7 @@ function CampaignsImpl() {
         )}
         actions={
           <>
-            <button className="btn primary" onClick={() => setView("builder")}>
+            <button className="btn primary" disabled={!can("campaigns.create")} title={can("campaigns.create") ? undefined : noPerm} onClick={() => setView("builder")}>
               <IconPlus w={13} />
               {tx("New campaign", "حملة جديدة")}
             </button>
@@ -996,7 +1004,8 @@ function CampaignsImpl() {
                         {c.zernioBroadcastId && (
                           <button
                             className="btn ghost sm"
-                            disabled={refreshCampaign.loading}
+                            disabled={refreshCampaign.loading || !can("campaigns.update")}
+                            title={can("campaigns.update") ? undefined : noPerm}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleRefresh(c);
@@ -1008,7 +1017,8 @@ function CampaignsImpl() {
                         {(c.status === "running" || c.status === "scheduled") && c.zernioBroadcastId && (
                           <button
                             className="btn ghost sm danger"
-                            disabled={cancelCampaign.loading}
+                            disabled={cancelCampaign.loading || !can("campaigns.manage")}
+                            title={can("campaigns.manage") ? undefined : noPerm}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleCancel(c);
@@ -1020,11 +1030,13 @@ function CampaignsImpl() {
                         <button
                           className="btn ghost sm"
                           title={
-                            c.status === "running" || c.status === "scheduled"
-                              ? tx("Cancel it first", "ألغِها أولاً")
-                              : undefined
+                            !can("campaigns.delete")
+                              ? noPerm
+                              : c.status === "running" || c.status === "scheduled"
+                                ? tx("Cancel it first", "ألغِها أولاً")
+                                : undefined
                           }
-                          disabled={deleteCampaign.loading || c.status === "running" || c.status === "scheduled"}
+                          disabled={deleteCampaign.loading || !can("campaigns.delete") || c.status === "running" || c.status === "scheduled"}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDelete(c);

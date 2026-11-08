@@ -15,7 +15,7 @@ import { Badge, type BadgeKind } from "@/components/Badge";
 import { IconFilter, IconMore, IconPlus } from "@/icons";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
-import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { getHashParam, setHashParam } from "@/lib/hashState";
 import { useOpenParam } from "@/lib/useOpenParam";
 import { Pager } from "./contacts/Pager";
@@ -446,8 +446,8 @@ function ContactsImpl() {
   const [selected, setSelected] = useState<Set<string>>(new Set<string>());
   const [showNew, setShowNew] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const { activeWorkspace } = useAuth();
-  const canManageFields = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const { can } = usePermissions();
+  const canManageFields = can("settings.manage");
   const [filter, setFilterState] = useState<ContactFilter>(() =>
     decodeContactFilter(getHashParam(window.location.hash, "cf")),
   );
@@ -734,7 +734,7 @@ function ContactsImpl() {
                 {tx("Pipeline", "المسار")}
               </button>
             </div>
-            <button className="btn primary" onClick={() => setShowNew(true)}>
+            <button className="btn primary" onClick={() => setShowNew(true)} disabled={!can("contacts.create")} title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
               <IconPlus w={13} />
               {tx("New contact", "جهة جديدة")}
             </button>

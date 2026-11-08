@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { usePermissions } from "@/auth/usePermissions";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
 import { useToast } from "@/components/Toast";
@@ -92,6 +93,10 @@ export function WorkflowBuilder({
   const [pendingDelete, setPendingDelete] = useState<{ id: string; dropped: number } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [busy, setBusy] = useState(false);
+  const { can } = usePermissions();
+  const canEditWf = can("workflows.update");
+  const canSaveWf = id ? canEditWf : can("workflows.create");
+  const noPermTip = canEditWf ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
 
   useEffect(() => {
     if (!wfQ.data) return;
@@ -329,15 +334,15 @@ export function WorkflowBuilder({
                 : tx(`${issueCount} steps need attention`, `${issueCount} خطوات تحتاج إلى انتباه`)}
             </button>
           )}
-          <button type="button" className="btn" onClick={onTest} disabled={busy || !graph.entry}>
+          <button type="button" className="btn" onClick={onTest} disabled={busy || !graph.entry || !canEditWf} title={noPermTip}>
             <IconPlay w={12} />
             {tx("Test", "اختبار")}
           </button>
-          <button type="button" className="btn" onClick={() => save()} disabled={busy}>
+          <button type="button" className="btn" onClick={() => save()} disabled={busy || !canSaveWf} title={canSaveWf ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
             {tx("Save", "حفظ")}
           </button>
           {status === "active" ? (
-            <button type="button" className="btn" onClick={onDeactivate} disabled={busy}>
+            <button type="button" className="btn" onClick={onDeactivate} disabled={busy || !canEditWf} title={noPermTip}>
               {tx("Pause", "إيقاف")}
             </button>
           ) : (
@@ -345,8 +350,8 @@ export function WorkflowBuilder({
               type="button"
               className="btn primary"
               onClick={onActivate}
-              disabled={busy || activateBlocked}
-              title={activateTitle}
+              disabled={busy || activateBlocked || !canEditWf}
+              title={canEditWf ? activateTitle : noPermTip}
             >
               {tx("Activate", "تفعيل")}
             </button>

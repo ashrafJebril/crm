@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import type { Workspace } from "@/lib/types";
@@ -24,7 +25,7 @@ export function WorkspaceTab() {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
 
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const canEdit = usePermissions().can("settings.update");
 
   const [name, setName] = useState(activeWorkspace?.name ?? "");
   const [timezone, setTimezone] = useState(activeWorkspace?.timezone ?? "Asia/Riyadh");

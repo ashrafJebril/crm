@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
@@ -28,7 +29,9 @@ export function IntegrationsTab() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const { can } = usePermissions();
+  const canEdit = can("channels.update");
+  const canEditKeys = can("api_keys.update");
   // Force a remount of every integration card whenever the active workspace
   // changes so each card refetches /integrations/*/status for the new tenant
   // instead of showing the previous workspace's connected state.
@@ -45,7 +48,7 @@ export function IntegrationsTab() {
       {/* WhatsApp connects through Zernio, like Facebook and Instagram. */}
       <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
 
-      <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canEdit={canEdit} />
+      <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canEdit={canEditKeys} />
     </>
   );
 }

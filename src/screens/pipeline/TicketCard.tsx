@@ -1,6 +1,7 @@
 import { memo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useDraggable } from "@dnd-kit/core";
+import { usePermissions } from "@/auth/usePermissions";
 import { CSS } from "@dnd-kit/utilities";
 import { Avatar } from "@/components/Avatar";
 import { IconInbox } from "@/icons";
@@ -52,16 +53,18 @@ export const TicketCard = memo(function TicketCard({
   const t = ticket;
   const moveBtnRef = useRef<HTMLButtonElement | null>(null);
   const [hovered, setHovered] = useState(false);
+  const canMove = usePermissions().can("tickets.update");
 
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: t.id,
       data: { ticket: t },
+      disabled: !canMove,
     });
 
   const style: CSSProperties = {
     ...cardBase,
-    cursor: isDragging ? "grabbing" : "grab",
+    cursor: !canMove ? "pointer" : isDragging ? "grabbing" : "grab",
     transform: CSS.Translate.toString(transform),
     visibility: isDragging ? "hidden" : "visible",
     touchAction: "none",
@@ -143,7 +146,7 @@ export const TicketCard = memo(function TicketCard({
               <IconInbox w={13} />
             </button>
           ) : null}
-          {onOpenMoveMenu ? (
+          {onOpenMoveMenu && canMove ? (
             <button
               ref={moveBtnRef}
               type="button"
