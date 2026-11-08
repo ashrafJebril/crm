@@ -13,7 +13,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { SegmentsService } from "../segments/segments.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { buildContactWhere, type ContactListFilter } from "./contact-filter";
 import { HjzClientSyncService } from "../hjz-sync/hjz-client-sync.service";
+
+export const SELECT_ALL_CAP = 10_000;
 
 interface ContactRow {
   id: string;
@@ -91,23 +94,15 @@ export class ContactsService {
   }
 
   /**
-   * One page of contacts for the Contacts table: optional segment, server-side
-   * search on name or phone, newest first. `list` stays for callers that need
-   * everyone (audience pickers, group editors).
+   * One page of contacts for the Contacts table: the full shared filter
+   * (segment, search on name/phone/email, lifecycle, tags, owner, pipeline,
+   * consent flags, custom fields), newest first. `list` stays for callers that
+   * need everyone (audience pickers, group editors).
    */
-  async listPage(
-    workspaceId: string,
-    opts: { segmentId?: string; q?: string; page: number; pageSize: number },
-  ) {
+  async listPage(workspaceId: string, opts: ContactListFilter & { page: number; pageSize: number }) {
     const pageSize = Math.min(Math.max(Math.trunc(opts.pageSize) || 50, 1), 200);
     const page = Math.max(Math.trunc(opts.page) || 1, 1);
-    const base: Prisma.ContactWhereInput = opts.segmentId
-      ? await this.segments.resolveContactWhere(workspaceId, opts.segmentId)
-      : { workspaceId };
-    const q = opts.q?.trim();
-    const where: Prisma.ContactWhereInput = q
-      ? { AND: [base, { OR: [{ name: { contains: q, mode: "insensitive" } }, { phone: { contains: q } }] }] }
-      : base;
+    const where = await buildContactWhere(workspaceId, opts, this.filterDeps());
     const [rows, total] = await Promise.all([
       this.prisma.contact.findMany({
         where,
@@ -125,6 +120,69 @@ export class ContactsService {
       pageSize,
       pageCount: Math.max(1, Math.ceil(total / pageSize)),
     };
+  }
+
+  private filterDeps() {
+    return { prisma: this.prisma, segments: this.segments };
+  }
+
+  /** Ids matching a filter for "select all N" — capped at SELECT_ALL_CAP. */
+  async listIds(workspaceId: string, filter: ContactListFilter) {
+    const where = await buildContactWhere(workspaceId, filter, this.filterDeps());
+    const [rows, total] = await Promise.all([
+      this.prisma.contact.findMany({
+        where,
+        select: { id: true },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: SELECT_ALL_CAP,
+      }),
+      this.prisma.contact.count({ where }),
+    ]);
+    return { ids: rows.map((r) => r.id), total, truncated: total > SELECT_ALL_CAP };
+  }
+
+  private async assertContact(workspaceId: string, id: string) {
+    const c = await this.prisma.contact.findFirst({ where: { id, workspaceId }, select: { id: true } });
+    if (!c) throw new NotFoundException("Contact not found");
+  }
+
+  private paging(opts: { page: number; pageSize: number }) {
+    const pageSize = Math.min(Math.max(Math.trunc(opts.pageSize) || 20, 1), 50);
+    const page = Math.max(Math.trunc(opts.page) || 1, 1);
+    return { page, pageSize, skip: (page - 1) * pageSize };
+  }
+
+  async pagedTickets(workspaceId: string, contactId: string, opts: { page: number; pageSize: number }) {
+    await this.assertContact(workspaceId, contactId);
+    const { page, pageSize, skip } = this.paging(opts);
+    const where = { contactId, workspaceId };
+    const [items, total] = await Promise.all([
+      this.prisma.ticket.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: { stage: true },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.ticket.count({ where }),
+    ]);
+    return { items, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
+  }
+
+  async pagedAppointments(workspaceId: string, contactId: string, opts: { page: number; pageSize: number }) {
+    await this.assertContact(workspaceId, contactId);
+    const { page, pageSize, skip } = this.paging(opts);
+    const where = { contactId, workspaceId };
+    const [items, total] = await Promise.all([
+      this.prisma.appointment.findMany({
+        where,
+        orderBy: [{ startAt: "desc" }, { id: "desc" }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.appointment.count({ where }),
+    ]);
+    return { items, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
   /** Real numbers for the Contacts header. */

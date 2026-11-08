@@ -27,6 +27,7 @@ import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { SegmentsService, type SegmentFilter } from "./segments.service";
 import { MarketingOutboundService } from "./marketing-outbound.service";
 import { SegmentsSyncScheduler } from "./segments-sync.scheduler";
+import { addManualMembers, requireManualGroup } from "./segment-members";
 
 class SegmentFilterDto implements SegmentFilter {
   @IsOptional() @IsArray() @IsString({ each: true }) lifecycle?: string[];
@@ -170,14 +171,8 @@ export class SegmentsController {
     return { ok: true };
   }
 
-  /** Resolve a segment, asserting it's a manual group in this workspace. */
-  private async requireManual(workspaceId: string, id: string) {
-    const seg = await this.prisma.segment.findFirst({ where: { id, workspaceId } });
-    if (!seg) throw new NotFoundException("Segment not found");
-    if (seg.origin !== "manual") {
-      throw new BadRequestException("Members can only be managed on manual groups");
-    }
-    return seg;
+  private requireManual(workspaceId: string, id: string) {
+    return requireManualGroup(this.prisma, workspaceId, id);
   }
 
   @Post(":id/members")
@@ -186,21 +181,7 @@ export class SegmentsController {
     @Param("id") id: string,
     @Body() dto: AddMembersDto,
   ) {
-    await this.requireManual(workspaceId, id);
-    const ids = [...new Set(dto.contactIds)];
-    const found = await this.prisma.contact.findMany({
-      where: { workspaceId, id: { in: ids } },
-      select: { id: true },
-    });
-    if (found.length !== ids.length) {
-      throw new NotFoundException("One or more contacts not found in this workspace");
-    }
-    const res = await this.prisma.segmentMember.createMany({
-      data: ids.map((contactId) => ({ segmentId: id, contactId })),
-      skipDuplicates: true,
-    });
-    void this.outbound.emitSegmentUpserted(workspaceId, id);
-    return { added: res.count };
+    return addManualMembers(this.prisma, this.outbound, workspaceId, id, dto.contactIds);
   }
 
   @Delete(":id/members/:contactId")

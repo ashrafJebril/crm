@@ -3,8 +3,10 @@ import {
   IsArray,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   Min,
@@ -47,4 +49,31 @@ export class UpdateContactDto {
   @IsOptional() @IsString() lastSeen?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) tags?: string[];
   @IsOptional() @IsInt() @Min(0) convs?: number;
+}
+
+export const BULK_OPS = [
+  "addTags",
+  "removeTags",
+  "addToGroup",
+  "setOwner",
+  "setOptOut",
+  "setNotALead",
+  "addToPipeline",
+  "delete",
+] as const;
+export type BulkOp = (typeof BULK_OPS)[number];
+
+/** Flat body for POST /contacts/bulk; the service checks op-specific fields. */
+export class BulkContactsDto {
+  @IsOptional() @IsArray() @IsString({ each: true }) ids?: string[];
+  /** Shared ContactListFilter (same keys as the query params, JSON-typed). */
+  @IsOptional() @IsObject() filter?: Record<string, unknown>;
+  @IsIn(BULK_OPS as unknown as string[]) op!: BulkOp;
+  @IsOptional() @IsArray() @IsString({ each: true }) names?: string[];
+  @IsOptional() @IsString() segmentId?: string;
+  @IsOptional() @IsString() ownerId?: string | null;
+  @IsOptional() @IsBoolean() value?: boolean;
+  @IsOptional() @IsString() pipelineId?: string;
+  @IsOptional() @IsString() stageId?: string;
+  @IsOptional() @IsBoolean() force?: boolean;
 }

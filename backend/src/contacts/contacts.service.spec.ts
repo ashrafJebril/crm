@@ -184,12 +184,18 @@ describe("ContactsService.listPage", () => {
     expect(res.items.map((c) => c.id)).toEqual(["1", "2"]);
   });
 
-  it("searches name and phone on the server, case-insensitively", async () => {
+  it("searches name, phone and email on the server, case-insensitively", async () => {
     await svc.listPage("ws1", { q: "  lina ", page: 1, pageSize: 25 });
     expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({
+      workspaceId: "ws1",
       AND: [
-        { workspaceId: "ws1" },
-        { OR: [{ name: { contains: "lina", mode: "insensitive" } }, { phone: { contains: "lina" } }] },
+        {
+          OR: [
+            { name: { contains: "lina", mode: "insensitive" } },
+            { phone: { contains: "lina" } },
+            { email: { contains: "lina", mode: "insensitive" } },
+          ],
+        },
       ],
     });
     expect(prisma.contact.count.mock.calls[0][0].where).toEqual(prisma.contact.findMany.mock.calls[0][0].where);
@@ -200,7 +206,17 @@ describe("ContactsService.listPage", () => {
     await svc.listPage("ws1", { segmentId: "g1", page: 1, pageSize: 25 });
     expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({
       workspaceId: "ws1",
-      segmentMembers: { some: { segmentId: "g1" } },
+      AND: [{ workspaceId: "ws1", segmentMembers: { some: { segmentId: "g1" } } }],
+    });
+  });
+
+  it("accepts the full shared filter (lifecycle, owner, opt-out)", async () => {
+    await svc.listPage("ws1", { lifecycle: ["lead"], ownerId: "none", optOut: true, page: 1, pageSize: 25 });
+    expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({
+      workspaceId: "ws1",
+      lifecycle: { in: ["lead"] },
+      ownerId: null,
+      marketingOptOut: true,
     });
   });
 
@@ -345,5 +361,73 @@ describe("ContactsService — editing, owner, delete guard", () => {
     prisma.contact.findFirst.mockResolvedValue(null);
     await expect(svc.remove("ws2", "c1")).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.contact.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("ContactsService — select-all ids and paged records", () => {
+  let prisma: any;
+  let svc: ContactsService;
+
+  beforeEach(() => {
+    prisma = {
+      contact: {
+        findMany: jest.fn().mockResolvedValue([{ id: "a" }, { id: "b" }]),
+        count: jest.fn().mockResolvedValue(2),
+        findFirst: jest.fn().mockResolvedValue({ id: "c1" }),
+      },
+      segment: { findFirst: jest.fn() },
+      ticket: { findMany: jest.fn().mockResolvedValue([{ id: "t1" }]), count: jest.fn().mockResolvedValue(61) },
+      appointment: { findMany: jest.fn().mockResolvedValue([{ id: "ap1" }]), count: jest.fn().mockResolvedValue(3) },
+    };
+    svc = new ContactsService(prisma as never, new SegmentsService(prisma as never));
+  });
+
+  it("select-all ids honours filter", async () => {
+    const res = await svc.listIds("ws1", { lifecycle: ["lead"], ownerId: "u1" });
+    expect(res).toEqual({ ids: ["a", "b"], total: 2, truncated: false });
+    const arg = prisma.contact.findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ workspaceId: "ws1", lifecycle: { in: ["lead"] }, ownerId: "u1" });
+    expect(arg.select).toEqual({ id: true });
+    expect(prisma.contact.count.mock.calls[0][0].where).toEqual(arg.where);
+  });
+
+  it("select-all caps at 10000 and flags truncated", async () => {
+    prisma.contact.count.mockResolvedValue(25_000);
+    prisma.contact.findMany.mockResolvedValue(Array.from({ length: 10_000 }, (_, i) => ({ id: `c${i}` })));
+    const res = await svc.listIds("ws1", {});
+    expect(prisma.contact.findMany.mock.calls[0][0].take).toBe(10_000);
+    expect(res.ids).toHaveLength(10_000);
+    expect(res.total).toBe(25_000);
+    expect(res.truncated).toBe(true);
+  });
+
+  it("paged tickets for contact (newest first, pageSize capped at 50)", async () => {
+    const res = await svc.pagedTickets("ws1", "c1", { page: 2, pageSize: 500 });
+    expect(prisma.ticket.findMany).toHaveBeenCalledWith({
+      where: { contactId: "c1", workspaceId: "ws1" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      include: { stage: true },
+      skip: 50,
+      take: 50,
+    });
+    expect(res).toEqual({ items: [{ id: "t1" }], total: 61, page: 2, pageSize: 50, pageCount: 2 });
+  });
+
+  it("paged appointments for contact (newest first)", async () => {
+    const res = await svc.pagedAppointments("ws1", "c1", { page: 1, pageSize: 20 });
+    expect(prisma.appointment.findMany).toHaveBeenCalledWith({
+      where: { contactId: "c1", workspaceId: "ws1" },
+      orderBy: [{ startAt: "desc" }, { id: "desc" }],
+      skip: 0,
+      take: 20,
+    });
+    expect(res).toMatchObject({ total: 3, page: 1, pageSize: 20, pageCount: 1 });
+  });
+
+  it("foreign contact -> 404 for both record lists", async () => {
+    prisma.contact.findFirst.mockResolvedValue(null);
+    await expect(svc.pagedTickets("ws1", "other", { page: 1, pageSize: 10 })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.pagedAppointments("ws1", "other", { page: 1, pageSize: 10 })).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.contact.findFirst).toHaveBeenCalledWith({ where: { id: "other", workspaceId: "ws1" }, select: { id: true } });
   });
 });
