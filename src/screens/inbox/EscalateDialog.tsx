@@ -10,11 +10,14 @@ export function EscalateDialog({
   onClose,
   onConfirm,
   busy,
+  error,
 }: {
   open: boolean;
   onClose: () => void;
   onConfirm: (reason: string) => void;
   busy?: boolean;
+  /** Shown inside the dialog so a failed escalate is not hidden behind it. */
+  error?: string | null;
 }) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
@@ -44,6 +47,11 @@ export function EscalateDialog({
       <div style={{ fontSize: 11.5, color: "var(--ink-3)", textAlign: "end", marginTop: 4 }}>
         {reason.length}/{ESCALATE_REASON_MAX}
       </div>
+      {error && (
+        <div role="alert" style={{ fontSize: 12.5, color: "var(--bad)", marginTop: 8 }}>
+          {error}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
         <button className="btn" onClick={onClose} disabled={busy}>
           {tx("Cancel", "إلغاء")}

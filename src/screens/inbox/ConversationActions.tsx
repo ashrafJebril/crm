@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
@@ -28,23 +28,43 @@ function Menu({
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
   return (
     <div style={{ position: "relative" }}>
-      <button
-        className="btn"
-        disabled={disabled}
-        title={title}
-        aria-haspopup="true"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        {label} ▾
-      </button>
+      <span title={title} style={{ display: "inline-flex" }}>
+        <button
+          ref={triggerRef}
+          className="btn"
+          disabled={disabled}
+          aria-haspopup="true"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {label} ▾
+        </button>
+      </span>
       {open && !disabled && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
           <div
-            role="menu"
+            ref={panelRef}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                close();
+              } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const items = Array.from(panelRef.current?.querySelectorAll("button") ?? []);
+                const i = items.indexOf(document.activeElement as HTMLButtonElement);
+                const next = e.key === "ArrowDown" ? i + 1 : i - 1;
+                items[(next + items.length) % items.length]?.focus();
+              }
+            }}
             style={{
               position: "absolute",
               insetInlineEnd: 0,
@@ -60,7 +80,7 @@ function Menu({
               boxShadow: "0 8px 24px rgba(0,0,0,.18)",
             }}
           >
-            {children(() => setOpen(false))}
+            {children(close)}
           </div>
         </>
       )}
@@ -79,7 +99,6 @@ function Item({
 }) {
   return (
     <button
-      role="menuitem"
       className="btn ghost"
       onClick={onClick}
       style={{
@@ -108,7 +127,7 @@ export function ConversationActions({
   conv: Conversation;
   lang: Lang;
   /** Refetch the conversation list and the active conversation. */
-  onChanged: () => void;
+  onChanged: () => Promise<unknown> | void;
 }) {
   const tx = makeTx(lang);
   const { user } = useAuth();
@@ -121,6 +140,7 @@ export function ConversationActions({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [escalateOpen, setEscalateOpen] = useState(false);
+  const [escalateError, setEscalateError] = useState<string | null>(null);
 
   const statusLabel: Record<Status, string> = {
     human: tx("Open", "مفتوحة"),
@@ -130,31 +150,35 @@ export function ConversationActions({
     spam: tx("Spam", "مزعجة"),
   };
 
-  async function patch(body: Record<string, unknown>): Promise<boolean> {
-    if (busy) return false;
+  /** Resolves "ok", "conflict" or "error". busy stays set until the refetch
+   *  lands, so the next action always carries the fresh version. */
+  async function patch(body: Record<string, unknown>): Promise<"ok" | "conflict" | "error"> {
+    if (busy) return "error";
     setBusy(true);
     setNote(null);
+    setEscalateError(null);
     try {
       await api.patch(`/conversations/${conv.id}`, { ...body, version: conv.version ?? 0 });
-      onChanged();
-      return true;
+      await onChanged();
+      return "ok";
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        onChanged();
+        await Promise.resolve(onChanged()).catch(() => undefined);
         setNote(
           tx(
             "Someone else just changed this conversation — showing the latest.",
             "قام شخص آخر بتعديل هذه المحادثة للتو — نعرض أحدث نسخة.",
           ),
         );
-      } else {
-        setNote(
-          e instanceof ApiError && e.message
-            ? e.message
-            : tx("Couldn't update the conversation", "تعذّر تحديث المحادثة"),
-        );
+        return "conflict";
       }
-      return false;
+      const msg =
+        e instanceof ApiError && e.message
+          ? e.message
+          : tx("Couldn't update the conversation", "تعذّر تحديث المحادثة");
+      setNote(msg);
+      setEscalateError(msg);
+      return "error";
     } finally {
       setBusy(false);
     }
@@ -243,30 +267,36 @@ export function ConversationActions({
         onChanged={onChanged}
         onError={setNote}
       />
-      <button
-        className="btn"
-        disabled={live || busy}
-        title={disabledTip}
-        onClick={() => void patch({ pinned: !conv.pinned })}
-      >
-        {conv.pinned ? tx("Unpin", "إلغاء التثبيت") : tx("Pin", "تثبيت")}
-      </button>
-      <button
-        className="btn"
-        disabled={live || busy}
-        title={disabledTip}
-        style={conv.escalated ? { borderColor: "var(--bad)", color: "var(--bad)" } : undefined}
-        onClick={() => (conv.escalated ? void patch({ escalated: false }) : setEscalateOpen(true))}
-      >
-        {conv.escalated ? tx("De-escalate", "إلغاء التصعيد") : tx("Escalate", "تصعيد")}
-      </button>
+      <span title={disabledTip} style={{ display: "inline-flex" }}>
+        <button
+          className="btn"
+          disabled={live || busy}
+          onClick={() => void patch({ pinned: !conv.pinned })}
+        >
+          {conv.pinned ? tx("Unpin", "إلغاء التثبيت") : tx("Pin", "تثبيت")}
+        </button>
+      </span>
+      <span title={disabledTip} style={{ display: "inline-flex" }}>
+        <button
+          className="btn"
+          disabled={live || busy}
+          style={conv.escalated ? { borderColor: "var(--bad)", color: "var(--bad)" } : undefined}
+          onClick={() => (conv.escalated ? void patch({ escalated: false }) : setEscalateOpen(true))}
+        >
+          {conv.escalated ? tx("De-escalate", "إلغاء التصعيد") : tx("Escalate", "تصعيد")}
+        </button>
+      </span>
       <EscalateDialog
         open={escalateOpen}
         busy={busy}
-        onClose={() => setEscalateOpen(false)}
+        error={escalateError}
+        onClose={() => {
+          setEscalateOpen(false);
+          setEscalateError(null);
+        }}
         onConfirm={async (reason) => {
-          const ok = await patch({ escalated: true, escalateReason: reason });
-          if (ok) setEscalateOpen(false);
+          const res = await patch({ escalated: true, escalateReason: reason });
+          if (res !== "error") setEscalateOpen(false);
         }}
       />
       {note && (

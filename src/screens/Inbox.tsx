@@ -279,7 +279,7 @@ interface ConversationPaneProps {
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
-  onConversationChanged: () => void;
+  onConversationChanged: () => Promise<unknown>;
   messagesLoading: boolean;
   lang: Lang;
   tx: Tx;
@@ -1400,7 +1400,7 @@ function ConversationPane({
             pausedAt={conv.aiPausedAt ?? null}
             lang={lang}
           />
-          <ConversationActions conv={conv} lang={lang} onChanged={onConversationChanged} />
+          <ConversationActions key={conv.id} conv={conv} lang={lang} onChanged={onConversationChanged} />
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
@@ -3329,10 +3329,7 @@ function InboxImpl() {
             sendZernioDbTemplate.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
-          onConversationChanged={() => {
-            convsQ.refetch();
-            activeQ.refetch();
-          }}
+          onConversationChanged={() => Promise.all([convsQ.refetch(), activeQ.refetch()])}
           messagesLoading={
             activeIsFb
               ? fbMsgsQ.loading

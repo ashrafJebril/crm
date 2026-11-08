@@ -13,7 +13,7 @@ interface FetchState<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
   /** Patch the cached value without a network round-trip. Use for optimistic
    *  mutations — e.g. move a card to a new column instantly, then reconcile
    *  with the server response in the background. */
@@ -69,8 +69,8 @@ export function useFetch<T>(
     placeholderData: keepPreviousData,
   });
 
-  const refetch = useCallback(() => {
-    void q.refetch();
+  const refetch = useCallback(async () => {
+    await q.refetch();
   }, [q]);
 
   const setData = useCallback(

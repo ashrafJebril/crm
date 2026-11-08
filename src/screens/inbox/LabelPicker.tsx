@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { makeTx } from "@/lib/tx";
@@ -11,7 +11,7 @@ export const LABEL_COLOR_VAR: Record<ConversationLabel["color"], string> = {
   warn: "var(--warn)",
   bad: "var(--bad)",
   accent: "var(--accent)",
-  human: "var(--info)",
+  human: "var(--human)",
 };
 const COLORS = Object.keys(LABEL_COLOR_VAR) as ConversationLabel["color"][];
 
@@ -29,7 +29,7 @@ export function LabelPicker({
   lang: Lang;
   disabled?: boolean;
   disabledReason?: string;
-  onChanged: () => void;
+  onChanged: () => Promise<unknown> | void;
   onError: (msg: string) => void;
 }) {
   const tx = makeTx(lang);
@@ -39,12 +39,26 @@ export function LabelPicker({
   const [name, setName] = useState("");
   const [color, setColor] = useState<ConversationLabel["color"]>("info");
   const labels = labelsQ.data ?? [];
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const closePanel = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const colorName: Record<ConversationLabel["color"], string> = {
+    ink: tx("Grey", "رمادي"),
+    info: tx("Blue", "أزرق"),
+    ok: tx("Green", "أخضر"),
+    warn: tx("Amber", "كهرماني"),
+    bad: tx("Red", "أحمر"),
+    accent: tx("Accent", "لون التمييز"),
+    human: tx("Violet", "بنفسجي"),
+  };
 
   async function save(next: string[]) {
     setBusy(true);
     try {
       await api.put(`/conversations/${conversationId}/labels`, { labelIds: next });
-      onChanged();
+      await onChanged();
     } catch {
       onError(tx("Couldn't update labels", "تعذّر تحديث الوسوم"));
     } finally {
@@ -57,19 +71,32 @@ export function LabelPicker({
     if (!n || busy) return;
     setBusy(true);
     try {
-      const made = await api.post<ConversationLabel>("/conversation-labels", { name: n, color });
+      let made: ConversationLabel;
+      try {
+        made = await api.post<ConversationLabel>("/conversation-labels", { name: n, color });
+      } catch (e) {
+        onError(
+          e instanceof ApiError && e.status === 409
+            ? tx("A label with that name already exists", "يوجد وسم بهذا الاسم بالفعل")
+            : tx("Couldn't create label", "تعذّر إنشاء الوسم"),
+        );
+        return;
+      }
       setName("");
-      labelsQ.refetch();
-      await api.put(`/conversations/${conversationId}/labels`, {
-        labelIds: [...labelIds, made.id],
-      });
-      onChanged();
-    } catch (e) {
-      onError(
-        e instanceof ApiError && e.status === 409
-          ? tx("A label with that name already exists", "يوجد وسم بهذا الاسم بالفعل")
-          : tx("Couldn't create label", "تعذّر إنشاء الوسم"),
-      );
+      await labelsQ.refetch();
+      try {
+        await api.put(`/conversations/${conversationId}/labels`, {
+          labelIds: [...labelIds, made.id],
+        });
+        await onChanged();
+      } catch {
+        onError(
+          tx(
+            "Label created, but couldn't attach it",
+            "تم إنشاء الوسم، لكن تعذّر إرفاقه بالمحادثة",
+          ),
+        );
+      }
     } finally {
       setBusy(false);
     }
@@ -77,22 +104,31 @@ export function LabelPicker({
 
   return (
     <div style={{ position: "relative" }}>
+      <span title={disabled ? disabledReason : undefined} style={{ display: "inline-flex" }}>
       <button
+        ref={triggerRef}
         className="btn"
         disabled={disabled}
-        title={disabled ? disabledReason : undefined}
-        aria-haspopup="true"
+        aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         {tx("Labels", "الوسوم")}
         {labelIds.length > 0 ? ` (${labelIds.length})` : ""}
       </button>
+      </span>
       {open && !disabled && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
           <div
-            role="menu"
+            role="dialog"
+            aria-label={tx("Labels", "الوسوم")}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                closePanel();
+              }
+            }}
             style={{
               position: "absolute",
               insetInlineEnd: 0,
@@ -148,7 +184,8 @@ export function LabelPicker({
                   <button
                     key={c}
                     type="button"
-                    aria-label={c}
+                    aria-label={colorName[c]}
+                    title={colorName[c]}
                     aria-pressed={color === c}
                     onClick={() => setColor(c)}
                     style={{
