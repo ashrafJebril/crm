@@ -71,13 +71,18 @@ describe("system roles", () => {
   it("agent: matrix from Global Constraints", () => {
     const vcu = ["conversations", "contacts", "tickets", "bookings", "audiences", "campaigns", "templates", "workflows"];
     const v = ["pipelines", "knowledge", "agent", "channels", "reports", "members"];
+    const vcud = ["templates", "audiences", "bookings", "workflows"]; // final-review ruling: + delete
     for (const r of RESOURCES)
       for (const a of ACTIONS) {
-        const want = vcu.includes(r) ? ["view", "create", "update"].includes(a) : v.includes(r) ? a === "view" : false;
+        const want =
+          (vcu.includes(r) && ["view", "create", "update"].includes(a)) ||
+          (vcud.includes(r) && a === "delete") ||
+          (v.includes(r) && a === "view");
         expect([`${r}.${a}`, has("agent", r, a)]).toEqual([`${r}.${a}`, want]);
       }
     expect(has("agent", "contacts", "delete")).toBe(false);
     expect(has("agent", "tickets", "delete")).toBe(false);
+    expect(has("agent", "campaigns", "delete")).toBe(false);
   });
 
   it("viewer: view on everything except billing, api_keys, roles", () => {

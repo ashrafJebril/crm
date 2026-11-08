@@ -126,9 +126,39 @@ describe("system-role decision table", () => {
     expect(allowed("owner", key)).toBe(true);
   });
 
-  it.each(["DELETE /contacts/:id", "DELETE /tickets/:id", "DELETE /workflows/:id", "DELETE /templates/:id", "DELETE /campaigns/:id"])("agent cannot %s", (key) => {
+  it.each(["DELETE /contacts/:id", "DELETE /tickets/:id", "DELETE /campaigns/:id"])("agent cannot %s", (key) => {
     expect(allowed("agent", key)).toBe(false);
     expect(allowed("admin", key)).toBe(true);
+  });
+
+  // Final-review ruling (I3): agent matrix + route remaps.
+  it.each([
+    "DELETE /templates/:id",
+    "DELETE /segments/:id",
+    "DELETE /appointments/:id",
+    "DELETE /workflows/:id",
+    "POST /tags",
+    "PATCH /tags/:id",
+    "DELETE /tags/:id",
+    "POST /tags/merge",
+    "POST /conversation-labels",
+    "PATCH /conversation-labels/:id",
+    "DELETE /conversation-labels/:id",
+    "DELETE /media/:id",
+    "DELETE /social/scheduled/:id",
+  ])("agent can %s (viewer cannot)", (key) => {
+    expect(allowed("agent", key)).toBe(true);
+    expect(allowed("viewer", key)).toBe(false);
+  });
+
+  it("route remaps from the final review", () => {
+    for (const k of ["POST /tags", "PATCH /tags/:id", "DELETE /tags/:id", "POST /tags/merge"]) {
+      expect([k, ROUTE_PERMISSIONS[k]]).toEqual([k, "contacts.update"]);
+    }
+    for (const k of ["POST /conversation-labels", "PATCH /conversation-labels/:id", "DELETE /conversation-labels/:id", "DELETE /media/:id"]) {
+      expect([k, ROUTE_PERMISSIONS[k]]).toEqual([k, "conversations.update"]);
+    }
+    expect(ROUTE_PERMISSIONS["DELETE /social/scheduled/:id"]).toBe("campaigns.update");
   });
 
   it("viewer cannot mutate anything", () => {

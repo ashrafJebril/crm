@@ -229,7 +229,14 @@ describe("assigned-only conversation visibility: side doors", () => {
         svc().create(WS, { contactId: "ct", conversationId: MINE, body: "hi" } as never, ME, viewer),
       ).resolves.toBeDefined();
     });
-    it("an opaque (non-DB) conversationId is not blocked", async () => {
+    it("an opaque FB/IG thread's notes are hidden from an assigned-only viewer (provider-live ruling)", async () => {
+      for (const opaque of ["t_123", "ig:456"]) {
+        prisma.note.findMany.mockResolvedValue([{ id: "n", conversationId: opaque }]);
+        await expect(svc().listForConversation(WS, opaque, viewer)).resolves.toEqual([]);
+      }
+      await expect(svc().listForConversation(WS, "t_123", { userId: ME, bypass: true })).resolves.toHaveLength(1);
+    });
+    it("an opaque (non-DB) conversationId is not blocked on create", async () => {
       await expect(
         svc().create(WS, { contactId: "ct", conversationId: "fb-thread-1", body: "hi" } as never, ME, viewer),
       ).resolves.toBeDefined();
@@ -336,20 +343,21 @@ describe("assigned-only conversation visibility: side doors", () => {
     });
   });
 
-  describe("notes by contact/ticket hide notes of hidden conversations", () => {
+  describe("notes by contact/ticket hide notes of hidden and opaque conversations", () => {
     const svc = () => new NotesService(prisma, { notify: jest.fn() } as never, perm);
     const notes = [
       { id: "n-none", conversationId: NONE },
       { id: "n-mine", conversationId: MINE },
-      { id: "n-opaque", conversationId: "fb-thread" },
+      { id: "n-opaque", conversationId: "t_123" },
+      { id: "n-opaque-ig", conversationId: "ig:456" },
       { id: "n-plain", conversationId: null },
     ];
     it("listForContact and listForTicket", async () => {
       prisma.note.findMany.mockResolvedValue(notes);
       for (const res of [await svc().listForContact(WS, "ct", viewer), await svc().listForTicket(WS, "t1", viewer)]) {
-        expect(res.map((n: any) => n.id)).toEqual(["n-mine", "n-opaque", "n-plain"]);
+        expect(res.map((n: any) => n.id)).toEqual(["n-mine", "n-plain"]);
       }
-      expect((await svc().listForContact(WS, "ct")).length).toBe(4);
+      expect((await svc().listForContact(WS, "ct")).length).toBe(5);
     });
   });
 

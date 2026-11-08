@@ -29,6 +29,8 @@ const AGENT_WORK: readonly Resource[] = [
   "templates",
   "workflows",
 ];
+// Final-review ruling: agents may also delete these (their own work screens).
+const AGENT_DELETE: readonly Resource[] = ["templates", "audiences", "bookings", "workflows"];
 const AGENT_VIEW: readonly Resource[] = [
   "pipelines",
   "knowledge",
@@ -63,7 +65,11 @@ export const SYSTEM_ROLES: Record<SystemRoleKey, SystemRoleDef> = {
     name: "Agent",
     nameAr: "الموظف",
     permissions: matrix((r) =>
-      AGENT_WORK.includes(r) ? ["view", "create", "update"] : AGENT_VIEW.includes(r) ? ["view"] : [],
+      AGENT_WORK.includes(r)
+        ? ["view", "create", "update", ...(AGENT_DELETE.includes(r) ? (["delete"] as const) : [])]
+        : AGENT_VIEW.includes(r)
+          ? ["view"]
+          : [],
     ),
     conversationVisibility: "all",
   },

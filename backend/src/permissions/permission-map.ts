@@ -141,12 +141,13 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /conversations/:id/messages": "conversations.create",
   "PUT /conversations/:id/labels": "conversations.update",
   "GET /conversation-labels": "conversations.view",
-  // Agents create labels inline from the inbox label picker.
+  // Agents manage labels inline from the inbox label picker.
   "POST /conversation-labels": "conversations.update",
-  "PATCH /conversation-labels/:id": "conversations.manage",
-  "DELETE /conversation-labels/:id": "conversations.manage",
-  // Notes live on conversations/contacts/tickets; edit/delete stay
-  // author-checked in NotesService.
+  "PATCH /conversation-labels/:id": "conversations.update",
+  "DELETE /conversation-labels/:id": "conversations.update",
+  // Notes live on conversations/contacts/tickets. Edit/delete additionally
+  // require being the note's author, or holding conversations.manage
+  // (NotesService.assertCanChange), else 403.
   "GET /notes": "conversations.view",
   "POST /notes": "conversations.create",
   "PATCH /notes/:id": "conversations.update",
@@ -181,7 +182,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /media": "conversations.view",
   "GET /media/:id/file": "conversations.view",
   "POST /media/upload": "conversations.create",
-  "DELETE /media/:id": "conversations.delete",
+  "DELETE /media/:id": "conversations.update",
 
   // ── Contacts ──────────────────────────────────────────────────────────
   "GET /contacts": "contacts.view",
@@ -210,8 +211,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /tags": "contacts.update",
   "POST /tags/assign": "contacts.update",
   "PATCH /tags/:id": "contacts.update",
-  "DELETE /tags/:id": "contacts.delete",
-  "POST /tags/merge": "contacts.manage",
+  "DELETE /tags/:id": "contacts.update",
+  "POST /tags/merge": "contacts.update",
 
   // ── Tickets & pipelines ───────────────────────────────────────────────
   "GET /pipelines": "pipelines.view",
@@ -257,7 +258,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /social/publish": "campaigns.create",
   "GET /social/scheduled": "campaigns.view",
   "GET /social/analytics/overview": "reports.view",
-  "DELETE /social/scheduled/:id": "campaigns.delete",
+  "DELETE /social/scheduled/:id": "campaigns.update", // cancels a scheduled post
   "PATCH /social/scheduled/:id": "campaigns.update",
   "GET /integrations/facebook/posts": "campaigns.view",
   "POST /integrations/facebook/posts": "campaigns.create",

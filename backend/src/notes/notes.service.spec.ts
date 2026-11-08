@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { NotesService } from "./notes.service";
 import { canOpenRecord } from "../notifications/record-access";
 
@@ -159,5 +159,51 @@ describe("NotesService", () => {
     await expect(svc.markSeen("ws", "x", "u1")).rejects.toThrow(NotFoundException);
     expect(prisma.noteSeen.upsert).not.toHaveBeenCalled();
     await expect(svc.update("ws", "x", { body: "y" }, "me")).rejects.toThrow(NotFoundException);
+  });
+
+  describe("edit/delete: author only, unless conversations.manage", () => {
+    const MSG = "Only the author can change this note";
+    let viewerCan: jest.Mock;
+    let withPerm: NotesService;
+    beforeEach(() => {
+      prisma.note.findFirst.mockResolvedValue({
+        id: "n1", contactId: "c1", conversationId: null, ticketId: null, mentions: [], authorUserId: "author",
+      });
+      prisma.note.delete = jest.fn().mockResolvedValue({});
+      viewerCan = jest.fn().mockResolvedValue(false);
+      const perm = { conversationScope: jest.fn().mockResolvedValue({}), viewerCan };
+      withPerm = new NotesService(prisma, notifications as never, perm as never);
+    });
+
+    it("another member without conversations.manage -> 403 on edit and delete, nothing written", async () => {
+      const other = { userId: "other" };
+      const e1: any = await withPerm.update("ws", "n1", { body: "x" }, "other", other).catch((e) => e);
+      const e2: any = await withPerm.remove("ws", "n1", other).catch((e) => e);
+      for (const e of [e1, e2]) {
+        expect(e).toBeInstanceOf(ForbiddenException);
+        expect(e.message).toBe(MSG);
+      }
+      expect(viewerCan).toHaveBeenCalledWith("ws", other, "conversations.manage");
+      expect(prisma.note.update).not.toHaveBeenCalled();
+      expect(prisma.note.delete).not.toHaveBeenCalled();
+    });
+
+    it("the author may edit and delete", async () => {
+      const me = { userId: "author" };
+      await expect(withPerm.update("ws", "n1", { body: "x" }, "author", me)).resolves.toBeDefined();
+      await expect(withPerm.remove("ws", "n1", me)).resolves.toEqual({ ok: true });
+    });
+
+    it("a holder of conversations.manage may edit and delete anyone's note", async () => {
+      viewerCan.mockResolvedValue(true);
+      const mgr = { userId: "mgr" };
+      await expect(withPerm.update("ws", "n1", { body: "x" }, "mgr", mgr)).resolves.toBeDefined();
+      await expect(withPerm.remove("ws", "n1", mgr)).resolves.toEqual({ ok: true });
+    });
+
+    it("a note with no author (system) is manage-only", async () => {
+      prisma.note.findFirst.mockResolvedValue({ id: "n1", contactId: "c1", conversationId: null, ticketId: null, mentions: [], authorUserId: null });
+      await expect(withPerm.remove("ws", "n1", { userId: "x" })).rejects.toThrow(MSG);
+    });
   });
 });

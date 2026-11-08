@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
@@ -43,6 +43,16 @@ export class NotesService {
     if (exists && !visible) throw new NotFoundException("Conversation not found");
   }
 
+  /** Edit/delete: only the note's author, unless the actor holds
+   *  conversations.manage. Internal callers (no viewer) and bypass sessions
+   *  pass. A note with no author (system) is manage-only. */
+  private async assertCanChange(workspaceId: string, note: { authorUserId: string | null }, viewer?: Viewer) {
+    if (!viewer || viewer.bypass) return;
+    if (note.authorUserId && note.authorUserId === viewer.userId) return;
+    if (this.perm && (await this.perm.viewerCan(workspaceId, viewer, "conversations.manage"))) return;
+    throw new ForbiddenException("Only the author can change this note");
+  }
+
   /** Top-level notes (newest first), each with replies (oldest first) and seenBy. */
   private async list(workspaceId: string, where: Record<string, string>, viewer?: Viewer) {
     const notes = await this.prisma.note.findMany({
@@ -53,17 +63,18 @@ export class NotesService {
     if (!this.perm) return notes;
     const scope = await this.perm.conversationScope(workspaceId, viewer);
     if (Object.keys(scope).length === 0) return notes;
-    // Drop notes attached to a DB conversation the viewer cannot see. Opaque
-    // (non-DB) conversation ids and notes with no conversation stay.
+    // Restricted viewer: keep notes with no conversation and notes on a DB
+    // conversation they can see. Notes on a hidden conversation, or on an
+    // opaque provider thread id (FB "t_…", IG "ig:…" — no assignee, closed to
+    // assigned-only members by the provider-live ruling), are dropped.
     const ids = [...new Set(notes.map((n) => n.conversationId).filter((x): x is string => !!x))];
     if (ids.length === 0) return notes;
-    const [existing, visible] = await Promise.all([
-      this.prisma.conversation.findMany({ where: { id: { in: ids }, workspaceId }, select: { id: true } }),
-      this.prisma.conversation.findMany({ where: { id: { in: ids }, workspaceId, ...scope }, select: { id: true } }),
-    ]);
-    const exist = new Set(existing.map((c) => c.id));
+    const visible = await this.prisma.conversation.findMany({
+      where: { id: { in: ids }, workspaceId, ...scope },
+      select: { id: true },
+    });
     const vis = new Set(visible.map((c) => c.id));
-    return notes.filter((n) => !n.conversationId || !exist.has(n.conversationId) || vis.has(n.conversationId));
+    return notes.filter((n) => !n.conversationId || vis.has(n.conversationId));
   }
 
   /** conversation -> ticket -> contact, each only if it really exists in the workspace
@@ -157,7 +168,9 @@ export class NotesService {
 
   async listForConversation(workspaceId: string, conversationId: string, viewer?: Viewer) {
     await this.assertConversationVisible(workspaceId, conversationId, viewer);
-    return this.list(workspaceId, { conversationId });
+    // Opaque provider thread ids pass the check above (no DB row); the
+    // viewer filter in list() then hides them from restricted viewers.
+    return this.list(workspaceId, { conversationId }, viewer);
   }
 
   listForTicket(workspaceId: string, ticketId: string, viewer?: Viewer) {
@@ -226,6 +239,7 @@ export class NotesService {
     viewer?: Viewer,
   ) {
     const existing = await this.get(workspaceId, id, viewer);
+    await this.assertCanChange(workspaceId, existing, viewer);
     const { memberIds, warnings, send } = await this.processMentions(
       workspaceId,
       existing,
@@ -253,7 +267,8 @@ export class NotesService {
   }
 
   async remove(workspaceId: string, id: string, viewer?: Viewer) {
-    await this.get(workspaceId, id, viewer);
+    const existing = await this.get(workspaceId, id, viewer);
+    await this.assertCanChange(workspaceId, existing, viewer);
     await this.prisma.note.delete({ where: { id } });
     return { ok: true };
   }
