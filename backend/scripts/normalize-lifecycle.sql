@@ -11,18 +11,26 @@ WHERE lower(lifecycle) IN ('lead','customer','churned','patient','blocked')
 
 -- Segment.filter is JSON text such as {"lifecycle":["Lead","Customer"],...}.
 -- Lower-case only the built-in values inside the "lifecycle" array.
+-- Only rows whose filter is a JSON object are cast (pg_input_is_valid needs PG16,
+-- so pre-select candidates by shape in a CTE before any ::jsonb cast).
+WITH candidates AS (
+  SELECT id, filter::jsonb AS f
+  FROM "Segment"
+  WHERE origin = 'crm' AND filter ~ '^\s*\{.*\}\s*$' AND filter LIKE '%"lifecycle"%'
+)
 UPDATE "Segment" s SET filter = jsonb_set(
-    s.filter::jsonb,
+    c.f,
     '{lifecycle}',
     (SELECT COALESCE(jsonb_agg(
         CASE WHEN lower(v) IN ('lead','customer','churned','patient','blocked') THEN lower(v) ELSE v END
      ), '[]'::jsonb)
-     FROM jsonb_array_elements_text(s.filter::jsonb -> 'lifecycle') v)
+     FROM jsonb_array_elements_text(c.f -> 'lifecycle') v)
   )::text
-WHERE s.origin = 'crm'
-  AND jsonb_typeof(s.filter::jsonb -> 'lifecycle') = 'array'
+FROM candidates c
+WHERE s.id = c.id
+  AND jsonb_typeof(c.f -> 'lifecycle') = 'array'
   AND EXISTS (
-    SELECT 1 FROM jsonb_array_elements_text(s.filter::jsonb -> 'lifecycle') v
+    SELECT 1 FROM jsonb_array_elements_text(c.f -> 'lifecycle') v
     WHERE lower(v) IN ('lead','customer','churned','patient','blocked') AND v <> lower(v)
   );
 
