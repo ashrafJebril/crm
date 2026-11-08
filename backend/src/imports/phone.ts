@@ -31,15 +31,25 @@ export function normalizeImportPhone(
   defaultCountryCode?: string | null,
 ): string | null {
   if (!raw) return null;
-  let s = normalizeDigits(String(raw)).replace(/[^\d+]/g, "");
+  const input = normalizeDigits(String(raw));
+  if (/\p{L}/u.test(input)) return null; // "ext 12", words, etc.
+  let s = input.replace(/[^\d+]/g, "");
   if (!s) return null;
+  const cc = defaultCountryCode && /^\d+$/.test(defaultCountryCode) ? defaultCountryCode : null;
   if (s.startsWith("+")) s = s.slice(1);
   else if (s.startsWith("00")) s = s.slice(2);
   else if (s.startsWith("0")) {
-    if (!defaultCountryCode || !/^\d+$/.test(defaultCountryCode)) return null;
-    s = defaultCountryCode + s.replace(/^0+/, "");
-  } else return null;
+    if (!cc) return null;
+    s = cc + s.replace(/^0+/, "");
+  } else {
+    // Bare digits (e.g. a numeric spreadsheet cell): only when they already
+    // start with the default country code and are long enough to be full.
+    if (!cc || !s.startsWith(cc) || s.length < 11 || s.length > MAX_DIGITS) return null;
+  }
   if (!/^\d+$/.test(s)) return null;
+  if (s.startsWith("0")) return null; // no country code starts with 0
+  // Trunk zero kept after the country code (+971 0501234567): drop it.
+  if (cc && s.startsWith(cc + "0")) s = cc + s.slice(cc.length + 1);
   if (s.length < MIN_DIGITS || s.length > MAX_DIGITS) return null;
   return `+${s}`;
 }

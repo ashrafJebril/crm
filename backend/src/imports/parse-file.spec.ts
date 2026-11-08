@@ -1,5 +1,6 @@
 import * as ExcelJS from "exceljs";
 import { ImportFileError, parseFile } from "./parse-file";
+import { normalizeImportPhone } from "./phone";
 
 const buf = (s: string, bom = false) =>
   Buffer.from((bom ? "﻿" : "") + s, "utf8");
@@ -72,6 +73,51 @@ describe("parseFile", () => {
     const r = await parseFile(file, "a.xlsx");
     expect(r.headers).toEqual(["Name", "Phone", "Joined", "Value", "Link"]);
     expect(r.rows).toEqual([["Ali", "0501234567", "2026-01-15", "42", "x"]]);
+  });
+
+  it("reads numeric cells as digit strings that the phone normalizer accepts", async () => {
+    const r = await parseFile(await xlsx([["Phone"], [971501234567]]), "a.xlsx");
+    expect(r.rows).toEqual([["971501234567"]]);
+    expect(normalizeImportPhone(r.rows[0][0], "971")).toBe("+971501234567");
+  });
+
+  it("restores leading zeros from a zero-padded number format", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("S");
+    ws.addRow(["Phone"]);
+    ws.addRow([501234567]).getCell(1).numFmt = "0000000000";
+    const r = await parseFile(Buffer.from(await wb.xlsx.writeBuffer()), "a.xlsx");
+    expect(r.rows).toEqual([["0501234567"]]);
+  });
+
+  it("aborts an XLSX over 50 000 rows", async () => {
+    const rows: unknown[][] = [["n"]];
+    for (let i = 0; i < 50_001; i++) rows.push([i]);
+    expect(await keyOf(parseFile(await xlsx(rows), "a.xlsx"))).toBe("imports.file_too_large");
+  }, 60_000);
+
+  it("reports 1-based source row numbers (header and blank rows count)", async () => {
+    const r = await parseFile(buf(",\nname,phone\nAli,1\n,\nOmar,2\n"), "a.csv");
+    expect(r.rowNumbers).toEqual([3, 5]);
+    const x = await parseFile(await xlsx([["name"], ["a"], [], ["b"]]), "a.xlsx");
+    expect(x.rowNumbers).toEqual([2, 4]);
+  });
+
+  it("falls back to windows-1256 for non-UTF-8 CSV", async () => {
+    // "الاسم\nأحمد" in windows-1256
+    const bytes = Buffer.from([0xc7, 0xe1, 0xc7, 0xd3, 0xe3, 0x0a, 0xc3, 0xcd, 0xe3, 0xcf]);
+    const r = await parseFile(bytes, "a.csv");
+    expect(r.headers).toEqual(["الاسم"]);
+    expect(r.rows).toEqual([["أحمد"]]);
+  });
+
+  it("throws file_invalid for an unterminated quote", async () => {
+    expect(await keyOf(parseFile(buf('a,b\n"x,1\n'), "a.csv"))).toBe("imports.file_invalid");
+  });
+
+  it("keeps deduped headers unique when a suffixed name already exists", async () => {
+    const r = await parseFile(buf("a,a,a_2\n1,2,3"), "a.csv");
+    expect(r.headers).toEqual(["a", "a_3", "a_2"]);
   });
 
   it("throws file_empty for empty CSV and header-only files", async () => {

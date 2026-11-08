@@ -30,6 +30,25 @@ describe("normalizeImportPhone", () => {
     expect(normalizeImportPhone("+1234567890123456")).toBeNull();
   });
 
+  it("accepts bare digits that already start with the default country code", () => {
+    expect(normalizeImportPhone("971501234567", "971")).toBe("+971501234567");
+    expect(normalizeImportPhone("971501234567")).toBeNull();
+    expect(normalizeImportPhone("966501234567", "971")).toBeNull();
+  });
+
+  it("rejects a leading 0 after the prefix and drops a kept trunk zero", () => {
+    expect(normalizeImportPhone("+0501234567", "971")).toBeNull();
+    expect(normalizeImportPhone("000501234567", "971")).toBeNull();
+    expect(normalizeImportPhone("+971 0501234567", "971")).toBe("+971501234567");
+    expect(normalizeImportPhone("00971 0501234567", "971")).toBe("+971501234567");
+    expect(normalizeImportPhone("9710501234567", "971")).toBe("+971501234567");
+  });
+
+  it("rejects input containing letters", () => {
+    expect(normalizeImportPhone("0501234567 ext 12", "971")).toBeNull();
+    expect(normalizeImportPhone("+971501234567x", "971")).toBeNull();
+  });
+
   it("rejects a bare number with no prefix and no leading 0", () => {
     expect(normalizeImportPhone("501234567", "971")).toBeNull();
   });
