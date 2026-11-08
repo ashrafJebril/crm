@@ -5,7 +5,13 @@ import type { Tx } from "@/lib/tx";
 import type { Contact, TeamMember } from "@/lib/types";
 import { CARD, FIELD_INPUT, FIELD_LABEL, STATUS_ERROR } from "./drawerStyles";
 
-const LIFECYCLES = ["Lead", "Customer", "Patient"];
+const LIFECYCLES = ["Lead", "Customer", "Churned", "Patient"];
+const LIFECYCLE_AR: Record<string, string> = {
+  Lead: "محتمل",
+  Customer: "عميل",
+  Churned: "متوقف",
+  Patient: "مريض",
+};
 
 interface Props {
   tx: Tx;
@@ -96,6 +102,7 @@ export function ContactDetailsForm({ tx, contact, onSaved }: Props) {
     LIFECYCLES.includes(draft.lifecycle) || !draft.lifecycle
       ? LIFECYCLES
       : [draft.lifecycle, ...LIFECYCLES];
+  const lifecycleLabel = (l: string): string => (l in LIFECYCLE_AR ? tx(l, LIFECYCLE_AR[l]) : l);
 
   if (!editing) {
     return (
@@ -219,9 +226,10 @@ export function ContactDetailsForm({ tx, contact, onSaved }: Props) {
             value={draft.lifecycle}
             onChange={(e) => set("lifecycle", e.target.value)}
           >
+            {!draft.lifecycle && <option value="">—</option>}
             {lifecycleOptions.map((l) => (
-              <option key={l} value={l}>
-                {l}
+              <option key={l} value={l} dir="auto">
+                {lifecycleLabel(l)}
               </option>
             ))}
           </select>
