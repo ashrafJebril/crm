@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
@@ -6,6 +6,7 @@ import { makeTx } from "@/lib/tx";
 import type { Conversation, Lang, TeamMember } from "@/lib/types";
 import { EscalateDialog } from "./EscalateDialog";
 import { LabelPicker } from "./LabelPicker";
+import { Popover } from "./Popover";
 
 type Status = Conversation["status"];
 
@@ -16,6 +17,9 @@ export function isLiveThreadId(id: string): boolean {
 
 const STATUSES: Status[] = ["human", "pending_customer", "resolved", "closed", "spam"];
 
+const MENU_PANEL = { minWidth: 190, maxHeight: 320, padding: 4 };
+
+/** Thread-header action menu: a Popover with a labelled button trigger. */
 function Menu({
   label,
   disabled,
@@ -27,72 +31,16 @@ function Menu({
   title?: string;
   children: (close: () => void) => ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (open) panelRef.current?.querySelector<HTMLElement>("button")?.focus();
-  }, [open]);
-  const close = () => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
   return (
-    <div
-      style={{ position: "relative" }}
-      onKeyDown={(e) => {
-        if (open && e.key === "Escape") {
-          e.stopPropagation();
-          close();
-        }
-      }}
+    <Popover
+      trigger={`${label} ▾`}
+      triggerClassName="btn"
+      title={title}
+      disabled={disabled}
+      panelStyle={MENU_PANEL}
     >
-      <span title={title} style={{ display: "inline-flex" }}>
-        <button
-          ref={triggerRef}
-          className="btn"
-          disabled={disabled}
-          aria-haspopup="true"
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-        >
-          {label} ▾
-        </button>
-      </span>
-      {open && !disabled && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-          <div
-            ref={panelRef}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                e.preventDefault();
-                const items = Array.from(panelRef.current?.querySelectorAll("button") ?? []);
-                const i = items.indexOf(document.activeElement as HTMLButtonElement);
-                const next = e.key === "ArrowDown" ? i + 1 : i - 1;
-                items[(next + items.length) % items.length]?.focus();
-              }
-            }}
-            style={{
-              position: "absolute",
-              insetInlineEnd: 0,
-              top: "calc(100% + 4px)",
-              zIndex: 41,
-              minWidth: 190,
-              maxHeight: 320,
-              overflowY: "auto",
-              padding: 4,
-              background: "var(--bg-1)",
-              border: "1px solid var(--line-soft)",
-              borderRadius: 8,
-              boxShadow: "0 8px 24px rgba(0,0,0,.18)",
-            }}
-          >
-            {children(close)}
-          </div>
-        </>
-      )}
-    </div>
+      {children}
+    </Popover>
   );
 }
 

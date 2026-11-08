@@ -41,7 +41,7 @@ import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
 import {
-  bucketCounts, matchesFilter, needsAttention, sortConversations,
+  activeFilterCount, bucketCounts, EMPTY_FILTER, matchesFilter, needsAttention, sortConversations,
   type FilterCtx, type InboxBucket, type InboxFilter, type InboxSort,
 } from "./inbox/inboxFilters";
 import { readFilterFromHash, writeFilterToHash } from "./inbox/inboxHash";
@@ -1038,6 +1038,16 @@ function InboxList({
             <button className="btn sm ghost" onClick={onRetry}>
               {tx("Retry", "إعادة")}
             </button>
+          </div>
+        )}
+        {!loading && !error && visibleConvs.length === 0 && !q && (
+          <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
+            <div>{tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")}</div>
+            {(filter.bucket !== "all" || activeFilterCount(filter) > 0) && (
+              <button className="btn sm" style={{ marginTop: 8 }} onClick={() => setFilter(EMPTY_FILTER)}>
+                {tx("Clear filters", "مسح عوامل التصفية")}
+              </button>
+            )}
           </div>
         )}
         {!loading && (

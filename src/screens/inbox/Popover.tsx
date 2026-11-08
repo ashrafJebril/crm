@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 /** Toolbar popover: focuses the first control on open; Escape (from trigger or
  *  panel) closes and returns focus to the trigger. Same pattern as the thread menus. */
@@ -8,13 +8,20 @@ export function Popover({
   ariaLabel,
   role,
   badge,
+  disabled,
+  triggerClassName = "btn ghost icon sm",
+  panelStyle,
   children,
 }: {
   trigger: ReactNode;
-  title: string;
-  ariaLabel: string;
-  role: "menu" | "dialog";
+  title?: string;
+  ariaLabel?: string;
+  /** Omit for a plain action menu (aria-haspopup="true", no panel role). */
+  role?: "menu" | "dialog";
   badge?: number;
+  disabled?: boolean;
+  triggerClassName?: string;
+  panelStyle?: CSSProperties;
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -41,12 +48,13 @@ export function Popover({
         }
       }}
     >
+      <span title={title} style={{ display: "inline-flex" }}>
       <button
         ref={triggerRef}
-        className="btn ghost icon sm"
-        title={title}
-        aria-label={badge ? `${ariaLabel} (${badge})` : ariaLabel}
-        aria-haspopup={role}
+        className={triggerClassName}
+        disabled={disabled}
+        aria-label={ariaLabel && badge ? `${ariaLabel} (${badge})` : ariaLabel}
+        aria-haspopup={role ?? "true"}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         style={{ position: "relative" }}
@@ -74,15 +82,16 @@ export function Popover({
           </span>
         )}
       </button>
-      {open && (
+      </span>
+      {open && !disabled && (
         <>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          <div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
           <div
             ref={panelRef}
             role={role}
             aria-label={ariaLabel}
             onKeyDown={(e) => {
-              if (role === "menu" && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              if (role !== "dialog" && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
                 e.preventDefault();
                 const items = Array.from(panelRef.current?.querySelectorAll("button") ?? []);
                 const i = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -103,6 +112,7 @@ export function Popover({
               border: "1px solid var(--line-soft)",
               borderRadius: 8,
               boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+              ...panelStyle,
             }}
           >
             {children(close)}

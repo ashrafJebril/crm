@@ -53,7 +53,9 @@ export function useRoute(): [RouteId, (r: RouteId) => void] {
   }, []);
 
   const setRoute = (r: RouteId) => {
-    if (window.location.hash !== `#/${r}`) window.location.hash = `#/${r}`;
+    const h = window.location.hash;
+    // Re-selecting the current route keeps its query (e.g. the inbox filter).
+    if (h !== `#/${r}` && !h.startsWith(`#/${r}?`)) window.location.hash = `#/${r}`;
     setRouteState(r);
   };
 
