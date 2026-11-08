@@ -40,7 +40,7 @@ export class CampaignSendService {
   private audience(workspaceId: string, segmentId: string | null | undefined) {
     return this.prisma.contact.findMany({
       where: segmentId ? { workspaceId, segmentMembers: { some: { segmentId } } } : { workspaceId },
-      select: { name: true, phone: true, lifecycle: true },
+      select: { name: true, phone: true, lifecycle: true, marketingOptOut: true },
     });
   }
 

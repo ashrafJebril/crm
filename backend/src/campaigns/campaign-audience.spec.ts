@@ -42,6 +42,17 @@ describe("buildRecipients", () => {
   });
 });
 
+describe("buildRecipients marketing opt-out", () => {
+  it("opted-out contact is skipped by campaign send", () => {
+    const { recipients, skipped } = buildRecipients([
+      { name: "Lina", phone: "962790000001", lifecycle: "lead", marketingOptOut: true },
+      { name: "Omar", phone: "962790000002", lifecycle: "lead", marketingOptOut: false },
+    ]);
+    expect(recipients).toEqual([{ name: "Omar", phone: "+962790000002" }]);
+    expect(skipped.optedOut).toBe(1);
+  });
+});
+
 describe("estimateMetaCost", () => {
   it("prices each number at its country's marketing rate", () => {
     const est = estimateMetaCost(["+962790000001", "+962790000002", "+966501234567", "+447911123456"]);

@@ -52,7 +52,7 @@ describe("CampaignSendService", () => {
       const res = await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
       expect(prisma.contact.findMany).toHaveBeenCalledWith({
         where: { workspaceId: "ws1", segmentMembers: { some: { segmentId: "seg1" } } },
-        select: { name: true, phone: true, lifecycle: true },
+        select: { name: true, phone: true, lifecycle: true, marketingOptOut: true },
       });
       expect(zernio.bulkCreateContacts).toHaveBeenCalledWith("prof1", "acc1", [
         { name: "C0", platformIdentifier: "+962790000000" },

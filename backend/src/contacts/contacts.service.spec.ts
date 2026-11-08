@@ -1,4 +1,4 @@
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { ContactsService } from "./contacts.service";
 import { SegmentsService } from "../segments/segments.service";
 
@@ -141,6 +141,8 @@ describe("ContactsService.search", () => {
       {
         id: "c1", name: "Sara", phone: "", industry: "retail", lifecycle: "lead",
         source: "wa", value: "—", lastSeen: "2m", tags: [], convs: 0,
+        firstName: undefined, lastName: undefined, email: "", ownerId: undefined,
+        marketingOptOut: undefined, notALead: undefined, createdAt: undefined,
       },
     ]);
   });
@@ -228,5 +230,120 @@ describe("ContactsService.stats", () => {
     const svc = new ContactsService(prisma as never, new SegmentsService(prisma as never));
     expect(await svc.stats("ws1")).toEqual({ total: 48, leads: 30, customers: 12 });
     expect(prisma.contact.groupBy).toHaveBeenCalledWith({ by: ["lifecycle"], where: { workspaceId: "ws1" }, _count: { _all: true } });
+  });
+});
+
+describe("ContactsService — editing, owner, delete guard", () => {
+  const stored = {
+    id: "c1",
+    workspaceId: "ws1",
+    name: "Sara Khan",
+    firstName: "Sara",
+    lastName: "Khan",
+    email: null,
+    phone: null,
+    industry: "retail",
+    lifecycle: "lead",
+    source: "wa",
+    value: null,
+    lastSeen: "2m",
+    tags: "[]",
+    convs: 0,
+    ownerId: null,
+    marketingOptOut: false,
+    notALead: false,
+    createdAt: new Date("2026-01-01"),
+  };
+  let prisma: any;
+  let svc: ContactsService;
+
+  beforeEach(() => {
+    prisma = {
+      contact: {
+        findFirst: jest.fn().mockResolvedValue(stored),
+        update: jest.fn().mockImplementation(async ({ data }) => ({ ...stored, ...data })),
+        create: jest.fn().mockImplementation(async ({ data }) => ({ ...stored, ...data })),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      workspaceMember: { findFirst: jest.fn().mockResolvedValue({ id: "m1" }) },
+      ticket: { count: jest.fn().mockResolvedValue(0) },
+      appointment: { count: jest.fn().mockResolvedValue(0) },
+    };
+    svc = new ContactsService(prisma as never, {} as never);
+  });
+
+  const dataOf = () => prisma.contact.update.mock.calls[0][0].data;
+
+  it("update with firstName/lastName rewrites name", async () => {
+    await svc.update("ws1", "c1", { firstName: "Lina" });
+    expect(dataOf()).toMatchObject({ firstName: "Lina", name: "Lina Khan" });
+  });
+
+  it("update with only name splits into first/last", async () => {
+    const res = await svc.update("ws1", "c1", { name: "Omar Al Said" });
+    expect(dataOf()).toMatchObject({ name: "Omar Al Said", firstName: "Omar", lastName: "Al Said" });
+    expect(res.firstName).toBe("Omar");
+  });
+
+  it("empty resulting name → 400", async () => {
+    await expect(svc.update("ws1", "c1", { firstName: "", lastName: "" })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.update("ws1", "c1", { name: "  " })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.contact.update).not.toHaveBeenCalled();
+  });
+
+  it("email lower-cased; invalid email → 400", async () => {
+    const res = await svc.update("ws1", "c1", { email: "  Sara@Example.COM " });
+    expect(dataOf().email).toBe("sara@example.com");
+    expect(res.email).toBe("sara@example.com");
+    prisma.contact.update.mockClear();
+    await expect(svc.update("ws1", "c1", { email: "nope" })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.contact.update).not.toHaveBeenCalled();
+  });
+
+  it("normalizes Arabic-Indic digits in phone", async () => {
+    await svc.update("ws1", "c1", { phone: "٠٧٩٠٠٠" });
+    expect(dataOf().phone).toBe("079000");
+  });
+
+  it("owner not a member → 400", async () => {
+    prisma.workspaceMember.findFirst.mockResolvedValue(null);
+    await expect(svc.update("ws1", "c1", { ownerId: "u9" })).rejects.toThrow("owner is not a member");
+    expect(prisma.workspaceMember.findFirst).toHaveBeenCalledWith({ where: { workspaceId: "ws1", userId: "u9" } });
+  });
+
+  it("owner null unassigns without a membership lookup", async () => {
+    await svc.update("ws1", "c1", { ownerId: null });
+    expect(dataOf().ownerId).toBeNull();
+    expect(prisma.workspaceMember.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("create splits a lone name and joins first/last", async () => {
+    await svc.create("ws1", { name: "Ali Hassan", industry: "i", lifecycle: "lead", source: "s" } as never);
+    expect(prisma.contact.create.mock.calls[0][0].data).toMatchObject({ firstName: "Ali", lastName: "Hassan" });
+    prisma.contact.create.mockClear();
+    await svc.create("ws1", { firstName: "Ali", lastName: "Hassan", industry: "i", lifecycle: "lead", source: "s" } as never);
+    expect(prisma.contact.create.mock.calls[0][0].data).toMatchObject({ name: "Ali Hassan" });
+  });
+
+  it("delete with linked tickets → 409 with counts", async () => {
+    prisma.ticket.count.mockResolvedValue(2);
+    prisma.appointment.count.mockResolvedValue(1);
+    await expect(svc.remove("ws1", "c1")).rejects.toMatchObject({
+      status: 409,
+      response: { message: "Contact has linked records", linked: { tickets: 2, appointments: 1 } },
+    });
+    expect(prisma.contact.delete).not.toHaveBeenCalled();
+  });
+
+  it("delete force=1 deletes", async () => {
+    prisma.ticket.count.mockResolvedValue(2);
+    await expect(svc.remove("ws1", "c1", true)).resolves.toEqual({ ok: true });
+    expect(prisma.contact.delete).toHaveBeenCalledWith({ where: { id: "c1" } });
+  });
+
+  it("delete foreign contact → 404", async () => {
+    prisma.contact.findFirst.mockResolvedValue(null);
+    await expect(svc.remove("ws2", "c1")).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.contact.delete).not.toHaveBeenCalled();
   });
 });

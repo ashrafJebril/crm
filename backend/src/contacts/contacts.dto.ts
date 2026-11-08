@@ -1,5 +1,8 @@
+import { Transform } from "class-transformer";
 import {
   IsArray,
+  IsBoolean,
+  IsEmail,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -7,8 +10,17 @@ import {
   Min,
 } from "class-validator";
 
+const cleanEmail = ({ value }: { value: unknown }) =>
+  typeof value === "string" ? value.trim().toLowerCase() : value;
+
 export class CreateContactDto {
-  @IsString() @IsNotEmpty() name!: string;
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() firstName?: string;
+  @IsOptional() @IsString() lastName?: string;
+  @IsOptional() @Transform(cleanEmail) @IsEmail() email?: string;
+  @IsOptional() @IsString() ownerId?: string | null;
+  @IsOptional() @IsBoolean() marketingOptOut?: boolean;
+  @IsOptional() @IsBoolean() notALead?: boolean;
   @IsOptional() @IsString() phone?: string;
   @IsString() @IsNotEmpty() industry!: string;
   @IsString() @IsNotEmpty() lifecycle!: string;
@@ -21,6 +33,12 @@ export class CreateContactDto {
 
 export class UpdateContactDto {
   @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() firstName?: string;
+  @IsOptional() @IsString() lastName?: string;
+  @IsOptional() @Transform(cleanEmail) @IsEmail() email?: string;
+  @IsOptional() @IsString() ownerId?: string | null;
+  @IsOptional() @IsBoolean() marketingOptOut?: boolean;
+  @IsOptional() @IsBoolean() notALead?: boolean;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() industry?: string;
   @IsOptional() @IsString() lifecycle?: string;

@@ -24,6 +24,7 @@ export interface AudienceContact {
   name: string;
   phone: string | null;
   lifecycle: string;
+  marketingOptOut?: boolean;
 }
 
 export interface CampaignRecipient {
@@ -49,7 +50,7 @@ export function buildRecipients(contacts: AudienceContact[]): {
   const recipients: CampaignRecipient[] = [];
   const skipped: SkippedCounts = { noPhone: 0, optedOut: 0, duplicate: 0 };
   for (const c of contacts) {
-    if (c.lifecycle === "churned") {
+    if (c.lifecycle === "churned" || c.marketingOptOut === true) {
       skipped.optedOut++;
       continue;
     }

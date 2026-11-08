@@ -1,5 +1,13 @@
 import { Prisma } from "@prisma/client";
-import { Injectable, NotFoundException, Optional } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
+import { isEmail } from "class-validator";
+import { joinName, normalizeDigits, splitName } from "./contact-name";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
@@ -10,6 +18,13 @@ import { HjzClientSyncService } from "../hjz-sync/hjz-client-sync.service";
 interface ContactRow {
   id: string;
   name: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  ownerId: string | null;
+  marketingOptOut: boolean;
+  notALead: boolean;
+  createdAt: Date;
   phone: string | null;
   industry: string;
   lifecycle: string;
@@ -34,6 +49,13 @@ function parseTags(raw: string): string[] {
 const shape = (c: ContactRow) => ({
   id: c.id,
   name: c.name,
+  firstName: c.firstName,
+  lastName: c.lastName,
+  email: c.email ?? "",
+  ownerId: c.ownerId,
+  marketingOptOut: c.marketingOptOut,
+  notALead: c.notALead,
+  createdAt: c.createdAt,
   phone: c.phone ?? "",
   industry: c.industry,
   lifecycle: c.lifecycle,
@@ -211,12 +233,55 @@ export class ContactsService {
     };
   }
 
+  private async assertOwner(workspaceId: string, ownerId: string | null | undefined) {
+    if (typeof ownerId !== "string") return;
+    const member = await this.prisma.workspaceMember.findFirst({ where: { workspaceId, userId: ownerId } });
+    if (!member) throw new BadRequestException("owner is not a member");
+  }
+
+  private cleanEmail(email: string | null | undefined): string | null | undefined {
+    if (email === undefined || email === null) return email;
+    const e = email.trim().toLowerCase();
+    if (!e) return null;
+    if (!isEmail(e)) throw new BadRequestException("email must be an email");
+    return e;
+  }
+
+  /** Name/firstName/lastName stay in sync; '' counts as absent. */
+  private nameFields(
+    dto: { name?: string; firstName?: string; lastName?: string },
+    stored?: { firstName: string | null; lastName: string | null },
+  ): { name: string; firstName: string | null; lastName: string | null } | null {
+    if (dto.firstName !== undefined || dto.lastName !== undefined) {
+      const first = dto.firstName ?? stored?.firstName ?? "";
+      const last = dto.lastName ?? stored?.lastName ?? "";
+      const name = joinName(first, last);
+      if (!name) throw new BadRequestException("name is required");
+      return { name, firstName: first.trim() || null, lastName: last.trim() || null };
+    }
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException("name is required");
+      const { firstName, lastName } = splitName(name);
+      return { name, firstName, lastName };
+    }
+    return null;
+  }
+
   async create(workspaceId: string, dto: CreateContactDto) {
+    const names = this.nameFields(dto);
+    if (!names) throw new BadRequestException("name is required");
+    const email = this.cleanEmail(dto.email);
+    await this.assertOwner(workspaceId, dto.ownerId);
     const row = await this.prisma.contact.create({
       data: {
         workspaceId,
-        name: dto.name,
-        phone: dto.phone ?? null,
+        ...names,
+        email: email ?? null,
+        ownerId: dto.ownerId ?? null,
+        marketingOptOut: dto.marketingOptOut ?? false,
+        notALead: dto.notALead ?? false,
+        phone: dto.phone != null ? normalizeDigits(dto.phone) : null,
         industry: dto.industry,
         lifecycle: dto.lifecycle,
         source: dto.source,
@@ -238,19 +303,38 @@ export class ContactsService {
   }
 
   async update(workspaceId: string, id: string, dto: UpdateContactDto) {
-    await this.get(workspaceId, id);
+    const stored = await this.prisma.contact.findFirst({ where: { id, workspaceId } });
+    if (!stored) throw new NotFoundException("Contact not found");
+    const names = this.nameFields(dto, stored);
+    const email = this.cleanEmail(dto.email);
+    await this.assertOwner(workspaceId, dto.ownerId);
     const row = await this.prisma.contact.update({
       where: { id },
       data: {
         ...dto,
+        ...(names ?? {}),
+        email,
+        phone: dto.phone != null ? normalizeDigits(dto.phone) : dto.phone,
         tags: dto.tags !== undefined ? JSON.stringify(dto.tags) : undefined,
       },
     });
     return shape(row);
   }
 
-  async remove(workspaceId: string, id: string) {
+  async remove(workspaceId: string, id: string, force = false) {
     await this.get(workspaceId, id);
+    if (!force) {
+      const [tickets, appointments] = await Promise.all([
+        this.prisma.ticket.count({ where: { contactId: id, workspaceId } }),
+        this.prisma.appointment.count({ where: { contactId: id, workspaceId } }),
+      ]);
+      if (tickets > 0 || appointments > 0) {
+        throw new ConflictException({
+          message: "Contact has linked records",
+          linked: { tickets, appointments },
+        });
+      }
+    }
     await this.prisma.contact.delete({ where: { id } });
     return { ok: true };
   }

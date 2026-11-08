@@ -68,7 +68,8 @@ export class ContactsController {
   remove(
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
+    @Query("force") force?: string,
   ) {
-    return this.svc.remove(workspaceId, id);
+    return this.svc.remove(workspaceId, id, force === "1" || force === "true");
   }
 }
