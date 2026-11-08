@@ -20,6 +20,7 @@ const SCOPED_MODELS = new Set([
   "Notification",
   "NotificationPreference",
   "Role",
+  "ImportJob",
   "Media",
   "Segment",
   "Tag",

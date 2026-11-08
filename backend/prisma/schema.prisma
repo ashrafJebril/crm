@@ -799,6 +799,7 @@ model Workspace {
 
   members WorkspaceMember[]
   roles   Role[]            @relation("WorkspaceRoles")
+  importJobs ImportJob[]        @relation("WorkspaceImportJobs")
 
   contacts          Contact[]          @relation("WorkspaceContacts")
   conversations     Conversation[]     @relation("WorkspaceConversations")
@@ -877,6 +878,39 @@ model Role {
 
   @@unique([workspaceId, key])
   @@unique([workspaceId, name])
+}
+
+// SP-03: a contacts/audience file import. The uploaded file lives in Media
+// (fileMediaId, a plain reference like other media links). createdById is a plain
+// string rather than a User relation: it is an audit reference only, and a job
+// row must survive its creator being removed without an extra SetNull FK.
+model ImportJob {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  createdById     String
+  kind            String    // "contacts" | "audience"
+  status          String    @default("uploaded") // uploaded | previewed | running | done | failed | cancelled
+  fileMediaId     String
+  fileName        String
+  totalRows       Int
+  processed       Int       @default(0)
+  created         Int       @default(0)
+  updated         Int       @default(0)
+  skipped         Int       @default(0)
+  failed          Int       @default(0)
+  duplicateInFile Int       @default(0)
+  errors          Json      @default("[]")
+  mapping         Json?
+  options         Json?
+  heartbeatAt     DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  workspace Workspace @relation("WorkspaceImportJobs", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([status, heartbeatAt])
 }
 
 // ─── Media library ────────────────────────────────────────────────────────
