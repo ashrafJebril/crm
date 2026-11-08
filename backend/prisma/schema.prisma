@@ -49,6 +49,7 @@ model User {
   uploadedMedia Media[] @relation("UserMediaUploads")
   assignedConversations Conversation[] @relation("ConversationAssignee")
   ownedContacts Contact[] @relation("ContactOwner")
+  notifications Notification[] @relation("UserNotifications")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -637,12 +638,20 @@ model Note {
   ticketId       String?
   body           String
   authorUserId   String?  // FK to User.id, nullable for system-generated notes
+  // Threaded replies: a reply points at its parent note; deleting the parent
+  // deletes the thread.
+  parentId       String?
+  // User ids @mentioned in the body (deduped, validated against membership).
+  mentions       String[] @default([])
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceNotes", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
   ticket  Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  parent  Note?   @relation("NoteReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Note[]  @relation("NoteReplies")
+  seenBy  NoteSeen[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -651,6 +660,51 @@ model Note {
   @@index([conversationId])
   @@index([ticketId])
   @@index([workspaceId])
+  @@index([parentId])
+}
+
+// Read receipts for notes. No workspaceId: reach it only through a
+// workspace-verified Note.
+model NoteSeen {
+  noteId String
+  userId String
+  seenAt DateTime @default(now())
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, userId])
+  @@index([userId])
+}
+
+// In-app notification for one member. `title` holds a stable message key and
+// `body` JSON params, so the UI renders text in the reader's language.
+model Notification {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        String // assignment | mention | activity_due | connector_needs_attention | knowledge_source_failed | campaign_finished | import_finished
+  title       String
+  body        String?
+  recordKind  String? // contact | conversation | ticket | booking | campaign
+  recordId    String?
+  actorId     String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, readAt])
+  @@index([workspaceId, userId, createdAt])
+}
+
+model NotificationPreference {
+  workspaceId String
+  userId      String
+  type        String
+  inApp       Boolean @default(true)
+  sound       Boolean @default(true)
+
+  @@id([workspaceId, userId, type])
 }
 
 // ─── Workspaces (tenants) ─────────────────────────────────────────────────

@@ -30,6 +30,10 @@ export class PrismaService implements OnModuleDestroy {
   get conversationLabel() { return this.client.conversationLabel; }
   /** Not tenant-scoped: callers must verify conversation + label ownership first. */
   get conversationLabelLink() { return this.client.conversationLabelLink; }
+  get notification() { return this.client.notification; }
+  get notificationPreference() { return this.client.notificationPreference; }
+  /** Not tenant-scoped (no workspaceId): callers must verify the note belongs to the workspace first. */
+  get noteSeen() { return this.client.noteSeen; }
   get customFieldDef() { return this.client.customFieldDef; }
   /** Not tenant-scoped (no workspaceId): callers must verify contact + def ownership first. */
   get customFieldValue() { return this.client.customFieldValue; }
