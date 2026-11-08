@@ -3,6 +3,7 @@ import type { TagRow } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { IconPlus, IconTrash } from "@/icons";
 
 const HUES = ["0", "30", "60", "90", "120", "150", "180", "210", "240", "270", "300", "330"];
@@ -15,6 +16,9 @@ interface TagsTabProps {
 /** The tag catalog: colored chips with usage counts, inline rename, recolor,
  *  delete-with-impact. Contacts keep tag NAMES; this manages the metadata. */
 export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
+  // Tag delete and merge both map to contacts.update on the backend.
+  const canTagWrite = usePermissions().can("contacts.update");
+  const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const tagsQ = useFetch<TagRow[]>("/tags");
   const [newName, setNewName] = useState("");
   const [editing, setEditing] = useState<string | null>(null); // tag id
@@ -117,7 +121,7 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       {picked.size > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
           <span>{picked.size} {tx("selected", "محدد")}</span>
-          <button type="button" className="btn sm" onClick={() => { setMergeResult(null); setMerging(true); }}>
+          <button type="button" className="btn sm" disabled={!canTagWrite} title={canTagWrite ? undefined : noPerm} onClick={() => { setMergeResult(null); setMerging(true); }}>
             {tx("Merge into…", "دمج في…")}
           </button>
           <button type="button" className="btn ghost sm" onClick={() => setPicked(new Set())}>
@@ -184,7 +188,7 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)", fontVariantNumeric: "tabular-nums" }}>
               {t.usageCount} {tx("contacts", "جهة")}
             </span>
-            <button type="button" className="btn ghost icon sm" aria-label={tx("Delete tag", "حذف الوسم")} onClick={() => setDeleting(t)}>
+            <button type="button" className="btn ghost icon sm" aria-label={tx("Delete tag", "حذف الوسم")} disabled={!canTagWrite} title={canTagWrite ? undefined : noPerm} onClick={() => setDeleting(t)}>
               <IconTrash w={13} />
             </button>
           </div>

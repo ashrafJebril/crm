@@ -474,10 +474,12 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
 
   const { can } = usePermissions();
   const mayLaunch = can("campaigns.manage");
-  const mayDraft = can("campaigns.create");
+  // saveDraft() PATCHes an existing draft (campaigns.update) or POSTs a new one (campaigns.create).
+  const mayDraft = draftId ? can("campaigns.update") : can("campaigns.create");
   const noPerm = tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
   const canLaunch =
     mayLaunch &&
+    mayDraft &&
     !!name.trim() &&
     selectedTemplate?.status === "approved" &&
     mappingComplete(mapping, varCount) &&
@@ -687,7 +689,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
                 <button className="btn" disabled={!mayDraft || !name.trim() || busy} title={mayDraft ? undefined : noPerm} onClick={onSaveDraft}>
                   {tx("Save draft", "حفظ مسودة")}
                 </button>
-                <button className="btn primary" disabled={!canLaunch || busy} title={mayLaunch ? undefined : noPerm} onClick={onLaunch}>
+                <button className="btn primary" disabled={!canLaunch || busy} title={mayLaunch && mayDraft ? undefined : noPerm} onClick={onLaunch}>
                   {busy
                     ? tx("Working…", "جارٍ التنفيذ…")
                     : scheduleChoice === "now"

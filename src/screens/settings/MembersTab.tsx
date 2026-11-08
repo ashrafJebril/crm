@@ -10,6 +10,7 @@ import { api } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import type { WorkspaceRole } from "@/lib/types";
+import { arabicServerMessage, roleOptionsFromTeam, type RoleOption } from "@/lib/roleErrors";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 
 interface Member {
@@ -29,6 +30,13 @@ interface Member {
   };
 }
 
+interface TeamRow {
+  id: string;
+  roleId?: string | null;
+  roleName?: string;
+  roleNameAr?: string;
+}
+
 const ROLES: WorkspaceRole[] = ["owner", "admin", "agent", "viewer"];
 
 export function MembersTab() {
@@ -42,8 +50,20 @@ export function MembersTab() {
   const canEdit = can("members.update");
   const canRemove = can("members.delete");
   const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
-  const rolesQ = useFetch<RoleRow[]>(can("roles.view") ? "/roles" : null);
-  const roleOptions = rolesQ.data ?? [];
+  // /roles needs roles.view; a members.update holder may lack it. Try /roles
+  // for either permission and, if the server refuses (403), fall back to the
+  // distinct roles currently in use, read from /team (ungated, resolved
+  // roleId + roleName/roleNameAr per member).
+  const rolesQ = useFetch<RoleRow[]>(can("roles.view") || canEdit ? "/roles" : null);
+  const teamQ = useFetch<TeamRow[]>(wsId ? "/team" : null);
+  const teamRows = teamQ.data ?? [];
+  const roleOptions: RoleOption[] = rolesQ.data ?? roleOptionsFromTeam(teamRows);
+  const loc = (m: string | null | undefined): string | null => {
+    if (!m) return null;
+    const ar = arabicServerMessage(m);
+    return ar ? tx(m, ar) : m;
+  };
+  const teamByUser = new Map(teamRows.map((r) => [r.id, r]));
   const [roleError, setRoleError] = useState<string | null>(null);
 
   const listQ = useFetch<Member[]>(wsId ? `/workspaces/${wsId}/members` : null);
@@ -132,7 +152,7 @@ export function MembersTab() {
   };
 
   const onChangeRole = async (member: Member, roleId: string) => {
-    if (roleId === member.roleId) return;
+    if (roleId === (teamByUser.get(member.userId)?.roleId ?? member.roleId)) return;
     setRoleError(null);
     try {
       await updateRoleMut.mutate({ userId: member.userId, roleId });
@@ -142,6 +162,7 @@ export function MembersTab() {
       setRoleError(roleErrorMessage(e, tx));
     }
     listQ.refetch();
+    teamQ.refetch();
   };
 
   const onResetPwd = async (member: Member) => {
@@ -272,7 +293,7 @@ export function MembersTab() {
               ))}
             </select>
           </Field>
-          <ErrorRow message={inviteMut.error} />
+          <ErrorRow message={loc(inviteMut.error)} />
         </SettingsCard>
       )}
 
@@ -299,6 +320,8 @@ export function MembersTab() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {members.map((m) => {
               const isMe = m.userId === user?.id;
+              const teamRow = teamByUser.get(m.userId);
+              const resolvedRoleId = teamRow?.roleId ?? "";
               return (
                 <div
                   key={m.id}
@@ -326,13 +349,17 @@ export function MembersTab() {
                   {canEdit && !isMe ? (
                     <select
                       dir="auto"
-                      value={m.roleId ?? roleOptions.find((r) => r.key === m.role)?.id ?? ""}
+                      value={resolvedRoleId}
                       onChange={(e) => onChangeRole(m, e.target.value)}
-                      disabled={updateRoleMut.loading || roleOptions.length === 0}
+                      disabled={updateRoleMut.loading || roleOptions.length === 0 || !resolvedRoleId}
                       aria-label={tx("Role", "الدور")}
                       style={{ ...inputStyle, width: 160, height: 30 }}
                     >
-                      {roleOptions.length === 0 && <option value="">{m.role}</option>}
+                      {!roleOptions.some((r) => r.id === resolvedRoleId) && (
+                        <option value="">
+                          {t.lang === "ar" ? teamRow?.roleNameAr || m.role : teamRow?.roleName || m.role}
+                        </option>
+                      )}
                       {roleOptions.map((r) => (
                         <option key={r.id} value={r.id}>
                           {t.lang === "ar" ? r.nameAr || r.name : r.name}
@@ -340,7 +367,13 @@ export function MembersTab() {
                       ))}
                     </select>
                   ) : (
-                    <Badge kind="accent">{m.role}</Badge>
+                    <Badge kind="accent">
+                      <span dir="auto">
+                        {t.lang === "ar"
+                          ? teamRow?.roleNameAr || teamRow?.roleName || m.role
+                          : teamRow?.roleName || m.role}
+                      </span>
+                    </Badge>
                   )}
                   {!isMe && (
                     <>
@@ -379,7 +412,7 @@ export function MembersTab() {
         )}
         <ErrorRow
           message={
-            listQ.error ?? roleError ?? removeMut.error ?? resetPwdMut.error
+            loc(listQ.error) ?? roleError ?? loc(removeMut.error) ?? loc(resetPwdMut.error)
           }
         />
       </SettingsCard>

@@ -48,7 +48,8 @@ const PLATFORMS: PlatformDef[] = [
 
 interface ZernioCardProps {
   tx: Tx;
-  canEdit: boolean;
+  canConnect: boolean;
+  canDisconnect: boolean;
 }
 
 /**
@@ -58,7 +59,7 @@ interface ZernioCardProps {
  * Integration row on the backend; the redirect back is reconciled by
  * ZernioRedirectCapture (POST /integrations/zernio/sync).
  */
-export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
+export function ZernioCard({ tx, canConnect, canDisconnect }: ZernioCardProps) {
   const statusQ = useFetch<ZernioStatus>("/integrations/zernio/status");
   const connect = useConnectFlow();
   const [busy, setBusy] = useState<string | null>(null);
@@ -170,7 +171,7 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
                       ? p.note(tx)
                       : tx("Not connected", "غير متصل")}
                 </div>
-                {needsReconnect && (
+                {needsReconnect && canConnect && (
                   <div role="alert" style={{ fontSize: 11.5, color: "var(--bad)", marginTop: 4, lineHeight: 1.45 }}>
                     {acc?.healthReason ?? tx("This connection stopped working. Connect it again.", "توقف هذا الربط عن العمل. اربطه مجددًا.")}
                   </div>
@@ -206,7 +207,7 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
               ) : (
                 <Badge kind="">{tx("Off", "غير مفعل")}</Badge>
               )}
-              {canEdit && (
+              {(canConnect || canDisconnect) && (
                 <div style={{ flexShrink: 0, display: "flex", gap: 6 }}>
                   {needsReconnect && (
                     <button type="button" className="btn primary sm" onClick={() => onConnect(p.key)} disabled={rowBusy}>
@@ -214,7 +215,7 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
                     </button>
                   )}
                   {connected ? (
-                    <button
+                    canDisconnect && <button
                       type="button"
                       className="btn ghost sm"
                       onClick={() => onDisconnect(p.key)}
@@ -225,7 +226,7 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
                       {rowBusy ? tx("…", "…") : tx("Disconnect", "فصل")}
                     </button>
                   ) : (
-                    <button
+                    canConnect && <button
                       type="button"
                       className="btn primary sm"
                       onClick={() => onConnect(p.key)}
@@ -243,7 +244,7 @@ export function ZernioCard({ tx, canEdit }: ZernioCardProps) {
       </div>
 
       <ErrorRow message={error} />
-      {!canEdit && (
+      {!canConnect && (
         <div className="muted" style={{ fontSize: 11 }}>
           {tx(
             "Only owners and admins can connect integrations.",

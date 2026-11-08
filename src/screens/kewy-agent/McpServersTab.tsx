@@ -37,7 +37,7 @@ interface CreateServerInput {
   headers?: Record<string, string>;
 }
 
-export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
+export function McpServersTab({ tx, canEdit, canCreate, canDelete }: { tx: Tx; canEdit: boolean; canCreate: boolean; canDelete: boolean }) {
   const listQ = useFetch<LMcpServerList>("/integrations/l/mcp-servers");
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,7 +127,7 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
         "خوادم MCP عن بُعد يمكن لوكيلك استخدامها لأدوات إضافية.",
       )}
       footer={
-        canEdit && (
+        canCreate && (
           <button type="button" className="btn primary" onClick={() => setShowAdd(true)}>
             <IconPlus w={13} />
             {tx("Add server", "إضافة خادم")}
@@ -179,10 +179,12 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                     {tx("Test", "اختبار")}
                   </button>
                   <Toggle on={bound.has(server.id)} onChange={(on) => onToggle(server.id, on)} />
-                  <button type="button" className="btn ghost sm" onClick={() => onDelete(server.id)}>
-                    {tx("Delete", "حذف")}
-                  </button>
                 </>
+              )}
+              {canDelete && (
+                <button type="button" className="btn ghost sm" onClick={() => onDelete(server.id)}>
+                  {tx("Delete", "حذف")}
+                </button>
               )}
             </div>
             {result && (

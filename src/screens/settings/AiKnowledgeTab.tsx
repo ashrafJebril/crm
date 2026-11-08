@@ -121,7 +121,12 @@ export function AiKnowledgeTab() {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
 
-  const canEdit = usePermissions().can("knowledge.update");
+  const { can } = usePermissions();
+  // Match the backend routes: saving a doc (add or edit) is POST /ai/knowledge/docs
+  // (knowledge.create); delete is knowledge.delete; sync/settings are knowledge.update.
+  const canEdit = can("knowledge.update");
+  const canCreateDoc = can("knowledge.create");
+  const canDeleteDoc = can("knowledge.delete");
 
   const listQ = useFetch<{ docs: AiKnowledgeDoc[] }>("/ai/knowledge/docs");
   const statusQ = useFetch<{ configured: boolean }>("/ai/knowledge/status");
@@ -370,7 +375,7 @@ export function AiKnowledgeTab() {
             "أي شي بتكتبه هون، المساعد بيقدر يستخدمه لما يرد على الزباين على واتساب.",
           )}
           footer={
-            canEdit ? (
+            canCreateDoc ? (
               <button type="button" className="btn primary" onClick={() => setDraft(EMPTY_DRAFT)}>
                 {tx("Add knowledge", "أضف معلومة")}
               </button>
@@ -390,7 +395,8 @@ export function AiKnowledgeTab() {
                   key={d.id}
                   tx={tx}
                   doc={d}
-                  canEdit={canEdit}
+                  canEdit={canCreateDoc}
+                  canDelete={canDeleteDoc}
                   onView={() => setViewing(d)}
                   onEdit={() => setDraft({ id: d.id, title: d.title, kind: d.kind, body: d.body })}
                   onDelete={() => setPendingDelete(d)}
@@ -404,7 +410,7 @@ export function AiKnowledgeTab() {
 
       {viewing && <ViewCard tx={tx} doc={viewing} onClose={() => setViewing(null)} />}
 
-      {!draft && canEdit && (
+      {!draft && canCreateDoc && (
         <FileDropCard
           tx={tx}
           onExtracted={(drafts) => {
@@ -546,7 +552,7 @@ export function AiKnowledgeTab() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {syncedDocs.map((d) => (
-                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} onView={() => setViewing(d)} />
+                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} canDelete={false} onView={() => setViewing(d)} />
               ))}
             </div>
           )}
@@ -898,6 +904,7 @@ function DocRow({
   tx,
   doc,
   canEdit,
+  canDelete,
   onView,
   onEdit,
   onDelete,
@@ -905,6 +912,7 @@ function DocRow({
   tx: Tx;
   doc: AiKnowledgeDoc;
   canEdit: boolean;
+  canDelete: boolean;
   onView?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -952,7 +960,7 @@ function DocRow({
           {tx("Edit", "تعديل")}
         </button>
       )}
-      {canEdit && onDelete && (
+      {canDelete && onDelete && (
         <button
           type="button"
           className="btn ghost sm"

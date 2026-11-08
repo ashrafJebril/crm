@@ -19,6 +19,7 @@ import {
   type ConversationVisibility,
   type PermissionMatrix,
 } from "@/lib/permissions";
+import { arabicServerMessage, changedRoleFields } from "@/lib/roleErrors";
 import { inputStyle } from "./form";
 
 export interface RoleRow {
@@ -45,9 +46,27 @@ export function roleErrorMessage(e: unknown, tx: TxFn): string {
         `هذا الدور مسند إلى ${n} عضو. انقلهم إلى دور آخر أولاً.`,
       );
     }
-    return e.message;
+    const ar = arabicServerMessage(e.message);
+    return ar ? tx(e.message, ar) : e.message;
   }
   return tx("Request failed", "فشل الطلب");
+}
+
+/** True while the viewport is narrower than `px` (collapses the two-column grid). */
+function useNarrow(px: number): boolean {
+  const q = `(max-width: ${px - 1}px)`;
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.(q).matches === true,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia(q);
+    const on = () => setNarrow(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [q]);
+  return narrow;
 }
 
 export function RolesTab() {
@@ -59,6 +78,7 @@ export function RolesTab() {
   const canUpdate = can("roles.update");
   const canDelete = can("roles.delete");
   const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
+  const narrow = useNarrow(720);
 
   const rolesQ = useFetch<RoleRow[]>(canView ? "/roles" : null);
   const roles = rolesQ.data ?? [];
@@ -85,7 +105,7 @@ export function RolesTab() {
       style={{
         padding: 20,
         display: "grid",
-        gridTemplateColumns: "minmax(200px, 260px) minmax(0, 1fr)",
+        gridTemplateColumns: narrow ? "minmax(0, 1fr)" : "minmax(200px, 260px) minmax(0, 1fr)",
         gap: 16,
         alignItems: "start",
       }}
@@ -163,6 +183,7 @@ export function RolesTab() {
         <CreateRoleModal
           roles={roles}
           tx={tx}
+          lang={t.lang}
           onClose={() => setCreating(false)}
           onCreated={async (r) => {
             setCreating(false);
@@ -223,12 +244,21 @@ function RoleEditor({
     setError(null);
     setSaved(false);
     try {
-      await api.patch(`/roles/${role.id}`, {
-        name: name.trim(),
-        nameAr: nameAr.trim(),
-        permissions: matrix,
-        conversationVisibility: visibility,
-      });
+      const body = changedRoleFields(
+        {
+          name: role.name,
+          nameAr: role.nameAr,
+          permissions: role.permissions,
+          conversationVisibility: role.conversationVisibility,
+        },
+        {
+          name: name.trim(),
+          nameAr: nameAr.trim(),
+          permissions: matrix,
+          conversationVisibility: visibility,
+        },
+      );
+      await api.patch(`/roles/${role.id}`, body);
       setSaved(true);
       await onChanged();
     } catch (e) {
@@ -330,7 +360,10 @@ function RoleEditor({
                       type="checkbox"
                       disabled={readOnly}
                       checked={(matrix[r] ?? []).includes(a)}
-                      aria-label={`${RESOURCE_LABELS[r][0]} ${ACTION_LABELS[a][0]}`}
+                      aria-label={tx(
+                        `${RESOURCE_LABELS[r][0]} ${ACTION_LABELS[a][0]}`,
+                        `${RESOURCE_LABELS[r][1]} ${ACTION_LABELS[a][1]}`,
+                      )}
                       onChange={() => setMatrix((m) => toggleCell(m, r, a))}
                     />
                   </td>
@@ -408,11 +441,13 @@ function RoleEditor({
 function CreateRoleModal({
   roles,
   tx,
+  lang,
   onClose,
   onCreated,
 }: {
   roles: RoleRow[];
   tx: TxFn;
+  lang: string;
   onClose: () => void;
   onCreated: (r: RoleRow) => Promise<void>;
 }) {
@@ -462,7 +497,7 @@ function CreateRoleModal({
             <option value="">{tx("Empty (no access)", "فارغ (بدون صلاحيات)")}</option>
             {roles.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.name}
+                {lang === "ar" ? r.nameAr || r.name : r.name}
               </option>
             ))}
           </select>

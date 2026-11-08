@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { makeTx, type Tx } from "@/lib/tx";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
@@ -117,7 +118,7 @@ function NoteCard({
   tx: Tx;
   isReply?: boolean;
   onReply?: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   deleting: boolean;
 }) {
   const ref = useSeenOnView(note.id, note.authorUserId === selfId);
@@ -170,17 +171,19 @@ function NoteCard({
           </button>
         )}
         <SeenBy note={note} team={team} selfId={selfId} tx={tx} />
-        <button
-          type="button"
-          className="btn ghost sm"
-          style={{ marginInlineStart: "auto", padding: "0 4px", color: "var(--ink-3)" }}
-          disabled={deleting}
-          onClick={onDelete}
-          aria-label={tx("Delete note", "حذف الملاحظة")}
-          title={tx("Delete", "حذف")}
-        >
-          <IconMore w={11} />
-        </button>
+        {onDelete && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            style={{ marginInlineStart: "auto", padding: "0 4px", color: "var(--ink-3)" }}
+            disabled={deleting}
+            onClick={onDelete}
+            aria-label={tx("Delete note", "حذف الملاحظة")}
+            title={tx("Delete", "حذف")}
+          >
+            <IconMore w={11} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -191,6 +194,12 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
   const tx = makeTx(t.lang);
   const { user } = useAuth();
   const selfId = (user as { id?: string } | null)?.id;
+  const { can } = usePermissions();
+  // Backend: POST /notes = conversations.create; PATCH/DELETE = conversations.update,
+  // and only the author may change a note unless the caller has conversations.manage.
+  const canAdd = can("conversations.create");
+  const canEditAny = can("conversations.manage");
+  const canChange = can("conversations.update");
 
   const listPath =
     scope === "conversation" && conversationId
@@ -309,7 +318,8 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
         className="btn primary sm"
         type="button"
         onClick={onSubmit}
-        disabled={createNote.loading || d.text.trim().length === 0}
+        disabled={!canAdd || createNote.loading || d.text.trim().length === 0}
+        title={canAdd ? undefined : tx(NO_PERMISSION_EN, NO_PERMISSION_AR)}
         aria-label={addLabel}
       >
         <IconPlus w={12} />
@@ -365,7 +375,7 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
               replyDraft.reset();
               setReplyTo(replyTo?.id === n.id ? null : n);
             }}
-            onDelete={() => void remove(n.id)}
+            onDelete={canChange && (canEditAny || n.authorUserId === selfId) ? () => void remove(n.id) : undefined}
             deleting={deleteNote.loading}
           />
           {(n.replies ?? []).map((r) => (
@@ -377,7 +387,7 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
               selfId={selfId}
               tx={tx}
               isReply
-              onDelete={() => void remove(r.id)}
+              onDelete={canChange && (canEditAny || r.authorUserId === selfId) ? () => void remove(r.id) : undefined}
               deleting={deleteNote.loading}
             />
           ))}

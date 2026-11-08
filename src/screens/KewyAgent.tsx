@@ -80,9 +80,9 @@ function KewyAgentImpl() {
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-            {tab === "knowledge" && <KnowledgeTab tx={tx} canEdit={canEditKnowledge} />}
+            {tab === "knowledge" && <KnowledgeTab tx={tx} canEdit={canEditKnowledge} canDelete={can("knowledge.delete")} />}
             {tab === "tools" && <ToolsTab tx={tx} canEdit={canEditTools} />}
-            {tab === "mcp" && <McpServersTab tx={tx} canEdit={canEditMcp} />}
+            {tab === "mcp" && <McpServersTab tx={tx} canEdit={canEditMcp} canCreate={can("connectors.create")} canDelete={can("connectors.delete")} />}
           </div>
         </>
       )}

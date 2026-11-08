@@ -31,7 +31,10 @@ export function IntegrationsTab() {
   const { activeWorkspace } = useAuth();
   const { can } = usePermissions();
   const canEdit = can("channels.update");
-  const canEditKeys = can("api_keys.update");
+  const canConnect = can("channels.create");
+  const canDisconnect = can("channels.delete");
+  const canCreateKey = can("api_keys.create");
+  const canDeleteKey = can("api_keys.delete");
   // Force a remount of every integration card whenever the active workspace
   // changes so each card refetches /integrations/*/status for the new tenant
   // instead of showing the previous workspace's connected state.
@@ -39,16 +42,16 @@ export function IntegrationsTab() {
 
   return (
     <>
-      <ZernioCard key={`zernio-${wsKey}`} tx={tx} canEdit={canEdit} />
+      <ZernioCard key={`zernio-${wsKey}`} tx={tx} canConnect={canConnect} canDisconnect={canDisconnect} />
 
       {/* Legacy Meta-app FB/IG cards — dormant, kept for rollback (see flag). */}
-      {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} />}
+      {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} canConnect={canConnect} canDisconnect={canDisconnect} />}
       {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
       {/* WhatsApp connects through Zernio, like Facebook and Instagram. */}
-      <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canEdit={canEdit} />
+      <WhatsAppCard key={`wa-${wsKey}`} tx={tx} canConnect={canConnect} canDisconnect={canDisconnect} />
 
-      <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canEdit={canEditKeys} />
+      <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canCreate={canCreateKey} canDelete={canDeleteKey} />
     </>
   );
 }
@@ -67,7 +70,8 @@ interface WaStatus {
 
 interface WhatsAppCardProps {
   tx: (en: string, ar: string) => string;
-  canEdit: boolean;
+  canConnect: boolean;
+  canDisconnect: boolean;
 }
 
 // Augment window with the Facebook SDK shape we use for Embedded Signup.
@@ -84,7 +88,7 @@ declare global {
   }
 }
 
-function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
+function WhatsAppCard({ tx, canConnect, canDisconnect }: WhatsAppCardProps) {
   const statusQ = useFetch<WaStatus>("/integrations/whatsapp/status");
   const [showForm, setShowForm] = useState(false);
   const [phoneNumberId, setPhoneNumberId] = useState("");
@@ -267,7 +271,7 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
         </div>
 
         {/* Connect form */}
-        {!connected && canEdit && (
+        {!connected && canConnect && (
           <>
             {showForm ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -528,7 +532,7 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
                 {new Date(statusQ.data.lastFetchedAt).toLocaleString()}
               </div>
             )}
-            {canEdit && (
+            {canDisconnect && (
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
                 <button
                   type="button"
@@ -548,7 +552,7 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
           </div>
         )}
 
-        {!canEdit && !connected && (
+        {!canConnect && !connected && (
           <div className="muted" style={{ fontSize: 11 }}>
             {tx(
               "Only owners and admins can connect integrations.",
@@ -568,9 +572,11 @@ function WhatsAppCard({ tx, canEdit }: WhatsAppCardProps) {
 interface FacebookCardProps {
   tx: (en: string, ar: string) => string;
   canEdit: boolean;
+  canConnect: boolean;
+  canDisconnect: boolean;
 }
 
-function FacebookCard({ tx, canEdit }: FacebookCardProps) {
+function FacebookCard({ tx, canEdit, canConnect, canDisconnect }: FacebookCardProps) {
   const statusQ = useFetch<FbStatus>("/integrations/facebook/status");
   const [status, setStatus] = useState<string | null>(null);
   const [oauthError, setOauthError] = useState<string | null>(null);
@@ -691,7 +697,7 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
         </div>
 
         {/* Connect — single button that kicks off OAuth */}
-        {!connected && canEdit && (
+        {!connected && canConnect && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div className="muted" style={{ fontSize: 11 }}>
               {tx(
@@ -730,9 +736,9 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
                 {new Date(statusQ.data.lastFetchedAt).toLocaleString()}
               </div>
             )}
-            {canEdit && (
+            {(canEdit || canDisconnect) && (
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-                <button
+                {canEdit && (<button
                   type="button"
                   className="btn ghost sm"
                   onClick={async () => {
@@ -755,8 +761,8 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
                   {resubscribeMut.loading
                     ? tx("Subscribing…", "جارٍ…")
                     : tx("Resubscribe webhooks", "إعادة اشتراك الويبهوك")}
-                </button>
-                <button
+                </button>)}
+                {canDisconnect && (<button
                   type="button"
                   className="btn ghost"
                   onClick={onDisconnect}
@@ -767,14 +773,14 @@ function FacebookCard({ tx, canEdit }: FacebookCardProps) {
                   {disconnectMut.loading
                     ? tx("Disconnecting…", "جارٍ الفصل…")
                     : tx("Disconnect", "فصل")}
-                </button>
+                </button>)}
               </div>
             )}
             <ErrorRow message={disconnectMut.error ?? resubscribeMut.error} />
           </div>
         )}
 
-        {!canEdit && !connected && (
+        {!canConnect && !connected && (
           <div className="muted" style={{ fontSize: 11 }}>
             {tx(
               "Only owners and admins can connect integrations.",

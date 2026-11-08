@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { PageHeader } from "@/components/PageHeader";
 import { Modal } from "@/components/Modal";
 import { useFetch, useMutation } from "@/api/useFetch";
@@ -18,6 +19,8 @@ function formatBytes(n: number): string {
 function MediaImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
+  // DELETE /media/:id maps to conversations.update on the backend.
+  const canDeleteMedia = usePermissions().can("conversations.update");
 
   const listQ = useFetch<Media[]>("/media");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -171,7 +174,7 @@ function MediaImpl() {
           }}
         >
           {items.map((m) => (
-            <MediaTile key={m.id} m={m} onDelete={() => requestDelete(m)} />
+            <MediaTile key={m.id} m={m} canDelete={canDeleteMedia} onDelete={() => requestDelete(m)} />
           ))}
         </div>
       </div>
@@ -313,7 +316,7 @@ function DeleteConfirmDialog({
   );
 }
 
-function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
+function MediaTile({ m, onDelete, canDelete }: { m: Media; onDelete: () => void; canDelete: boolean }) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
 
@@ -375,8 +378,9 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
             type="button"
             className="btn ghost sm"
             onClick={onDelete}
+            disabled={!canDelete}
             aria-label={tx("Delete", "حذف")}
-            title={tx("Delete", "حذف")}
+            title={canDelete ? tx("Delete", "حذف") : tx(NO_PERMISSION_EN, NO_PERMISSION_AR)}
             style={{ padding: "0 6px", color: "var(--ink-3)" }}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = "var(--bad)";

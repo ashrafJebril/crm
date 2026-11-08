@@ -21,6 +21,7 @@ import {
 import { useFetch } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { Modal } from "@/components/Modal";
 import { TemplateEditor } from "./templates/TemplateEditor";
 import type { Template } from "@/lib/types";
@@ -274,6 +275,8 @@ function TemplatesImpl() {
   const { t } = useTweaks();
   const { toast } = useToast();
   const tx = makeTx(t.lang);
+  const { can } = usePermissions();
+  const canDeleteTpl = can("templates.delete");
   const isAr = t.lang === "ar";
 
   const [tab, setTab] = useState<Tab>("library");
@@ -622,6 +625,8 @@ function TemplatesImpl() {
                                 <RowMenuItem
                                   label={tx("Delete", "حذف")}
                                   destructive
+                                  disabled={!canDeleteTpl}
+                                  title={canDeleteTpl ? undefined : tx(NO_PERMISSION_EN, NO_PERMISSION_AR)}
                                   onClick={() => {
                                     setMenuFor(null);
                                     setConfirmDelete(raw);
@@ -806,16 +811,19 @@ function RowMenuItem({
   onClick,
   destructive,
   disabled,
+  title,
 }: {
   label: string;
   onClick: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       style={{
         display: "block",
         width: "100%",

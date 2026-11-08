@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type { Contact, Lang, Segment, SegmentFilter } from "@/lib/types";
 
 interface Props {
@@ -37,6 +38,7 @@ export function SegmentManager({
   onChanged,
 }: Props) {
   const ar = lang === "ar";
+  const canDeleteSegment = usePermissions().can("audiences.delete");
   const [draft, setDraft] = useState<DraftState>(EMPTY_DRAFT);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -298,7 +300,8 @@ export function SegmentManager({
             {draft.id && (
               <button
                 onClick={() => remove(draft.id!)}
-                disabled={busy}
+                disabled={busy || !canDeleteSegment}
+                title={canDeleteSegment ? undefined : ar ? NO_PERMISSION_AR : NO_PERMISSION_EN}
                 style={{
                   background: "transparent",
                   border: "1px solid var(--bad)",

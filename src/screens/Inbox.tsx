@@ -25,6 +25,7 @@ import { useFetch, useMutation } from "@/api/useFetch";
 import { uploadMedia } from "@/api/uploadMedia";
 import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import {
   CHANNEL_LABEL,
   type Contact,
@@ -1329,6 +1330,10 @@ function ConversationPane({
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
   const { user } = useAuth();
+  // Every send path (text, media, template) is POST .../messages|send|send-template,
+  // all mapped to conversations.create on the backend.
+  const canCompose = usePermissions().can("conversations.create");
+  const noPermCompose = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const [draft, setDraft] = useState<string>("");
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
@@ -1387,6 +1392,7 @@ function ConversationPane({
   const timeline = useMemo(() => mergeByTime(messages, threadNotes), [messages, threadNotes]);
 
   const handleSend = () => {
+    if (!canCompose) return;
     const body = draft.trim();
     // Allow sending if there's text OR an image attachment.
     if (!body && !attachedMedia) return;
@@ -1627,6 +1633,7 @@ function ConversationPane({
                 type="button"
                 className="ix-quick"
                 dir="auto"
+                disabled={!canCompose}
                 onClick={() => setDraft((d) => (d ? d : qr))}
               >
                 {qr}
@@ -1639,7 +1646,7 @@ function ConversationPane({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (waBlocked) return;
+              if (waBlocked || !canCompose) return;
               // Enter sends, Shift+Enter inserts a newline (standard chat UX).
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -1647,7 +1654,7 @@ function ConversationPane({
               }
             }}
             onPaste={(e) => {
-              if (waBlocked) return;
+              if (waBlocked || !canCompose) return;
               // Screenshots and copied images arrive as clipboard FILES; upload
               // straight to the attachment slot. Anything else (text, HTML)
               // falls through to the browser's normal paste.
@@ -1658,9 +1665,12 @@ function ConversationPane({
               e.preventDefault();
               void attachDirect(img);
             }}
-            disabled={waBlocked}
+            disabled={waBlocked || !canCompose}
+            title={canCompose ? undefined : noPermCompose}
             placeholder={
-              waBlocked
+              !canCompose
+                ? noPermCompose
+                : waBlocked
                 ? tx(
                     "Pick a template above to message outside the 24h window.",
                     "اختر قالبًا أعلاه للمراسلة خارج نافذة الـ٢٤ ساعة.",
@@ -1725,6 +1735,8 @@ function ConversationPane({
                 type="button"
                 className="btn primary sm"
                 onClick={() => setTemplatePickerOpen(true)}
+                disabled={!canCompose}
+                title={canCompose ? undefined : noPermCompose}
               >
                 {tx("Use template", "استخدم قالبًا")}
               </button>
@@ -1784,7 +1796,8 @@ function ConversationPane({
               type="button"
               className="btn ghost icon sm"
               onClick={() => setPickerOpen(true)}
-              title={tx("Attach image", "إرفاق صورة")}
+              disabled={!canCompose}
+              title={canCompose ? tx("Attach image", "إرفاق صورة") : noPermCompose}
               aria-label={tx("Attach image", "إرفاق صورة")}
               style={{
                 color: attachedMedia ? "var(--accent)" : undefined,
@@ -1807,7 +1820,9 @@ function ConversationPane({
             <button
               className="btn primary"
               onClick={handleSend}
+              title={canCompose ? undefined : noPermCompose}
               disabled={
+                !canCompose ||
                 sending ||
                 waBlocked ||
                 (draft.trim().length === 0 && !attachedMedia)
