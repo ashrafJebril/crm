@@ -1,12 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from "@nestjs/common";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
-import { WorkspaceRoles, WorkspaceRolesGuard } from "../common/workspace-roles.guard";
+import { RequirePermission } from "../permissions/require-permission.decorator";
 import { CustomFieldsService } from "./custom-fields.service";
 import { CreateCustomFieldDto, SetContactFieldsDto, UpdateCustomFieldDto } from "./custom-fields.dto";
 
 /**
- * Field definitions are workspace settings (owner/admin); field values on a
- * contact (`PUT contacts/:id/fields`) stay open to every member.
+ * Field definitions are workspace settings (settings.manage — owner/admin
+ * system roles); field values on a contact (`PUT contacts/:id/fields`) need
+ * contacts.update (route map).
  */
 @Controller()
 export class CustomFieldsController {
@@ -18,15 +19,13 @@ export class CustomFieldsController {
   }
 
   @Post("custom-fields")
-  @UseGuards(WorkspaceRolesGuard)
-  @WorkspaceRoles("owner", "admin")
+  @RequirePermission("settings", "manage")
   create(@CurrentWorkspace() ws: string, @Body() dto: CreateCustomFieldDto) {
     return this.svc.create(ws, dto);
   }
 
   @Patch("custom-fields/:id")
-  @UseGuards(WorkspaceRolesGuard)
-  @WorkspaceRoles("owner", "admin")
+  @RequirePermission("settings", "manage")
   update(@CurrentWorkspace() ws: string, @Param("id") id: string, @Body() dto: UpdateCustomFieldDto) {
     return this.svc.update(ws, id, dto);
   }
@@ -37,8 +36,7 @@ export class CustomFieldsController {
   }
 
   @Delete("custom-fields/:id")
-  @UseGuards(WorkspaceRolesGuard)
-  @WorkspaceRoles("owner", "admin")
+  @RequirePermission("settings", "manage")
   remove(@CurrentWorkspace() ws: string, @Param("id") id: string) {
     return this.svc.remove(ws, id);
   }

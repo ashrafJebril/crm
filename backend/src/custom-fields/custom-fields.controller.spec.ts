@@ -1,18 +1,17 @@
-import { GUARDS_METADATA } from "@nestjs/common/constants";
-import { WORKSPACE_ROLES_KEY, WorkspaceRolesGuard } from "../common/workspace-roles.guard";
+import { REQUIRE_PERMISSION_KEY } from "../permissions/require-permission.decorator";
 import { CustomFieldsController } from "./custom-fields.controller";
 
-describe("CustomFieldsController role guards", () => {
+describe("CustomFieldsController permissions", () => {
   const proto = CustomFieldsController.prototype as unknown as Record<string, object>;
-  const guards = (m: string) => Reflect.getMetadata(GUARDS_METADATA, proto[m]) as unknown[] | undefined;
-  const roles = (m: string) => Reflect.getMetadata(WORKSPACE_ROLES_KEY, proto[m]) as string[] | undefined;
+  const perm = (m: string) => Reflect.getMetadata(REQUIRE_PERMISSION_KEY, proto[m]) as string | undefined;
 
-  it.each(["create", "update", "remove"])("%s (definition write) is owner/admin only", (m) => {
-    expect(guards(m)).toContain(WorkspaceRolesGuard);
-    expect(roles(m)).toEqual(["owner", "admin"]);
+  // Was @WorkspaceRoles("owner","admin"); settings.manage is held by exactly
+  // the owner and admin system roles.
+  it.each(["create", "update", "remove"])("%s (definition write) requires settings.manage", (m) => {
+    expect(perm(m)).toBe("settings.manage");
   });
 
-  it.each(["list", "deletePreview", "getForContact", "setForContact"])("%s stays open to all members", (m) => {
-    expect(roles(m)).toBeUndefined();
+  it.each(["list", "deletePreview", "getForContact", "setForContact"])("%s has no handler override (route map decides)", (m) => {
+    expect(perm(m)).toBeUndefined();
   });
 });

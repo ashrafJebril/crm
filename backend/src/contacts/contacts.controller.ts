@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { ContactsService } from "./contacts.service";
 import { ContactsBulkService } from "./contacts-bulk.service";
 import { parseContactFilter } from "./contact-filter";
 import { BulkContactsDto, CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { assertRequestPermission, type PermissionRequest } from "../permissions/permission.guard";
 
 @Controller("contacts")
 export class ContactsController {
@@ -40,7 +41,10 @@ export class ContactsController {
   }
 
   @Post("bulk")
-  bulk(@CurrentWorkspace() workspaceId: string, @Body() dto: BulkContactsDto) {
+  bulk(@CurrentWorkspace() workspaceId: string, @Body() dto: BulkContactsDto, @Req() req: PermissionRequest) {
+    // The route needs contacts.update (permission map); a bulk delete must not
+    // be a side door around contacts.delete.
+    if (dto.op === "delete") assertRequestPermission(req, "contacts.delete");
     return this.bulkSvc.run(workspaceId, dto);
   }
 

@@ -34,6 +34,7 @@ import { McpServerModule } from "./mcp-server/mcp-server.module";
 import { AdsModule } from "./ads/ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
 import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
+import { PermissionsModule } from "./permissions/permissions.module";
 
 @Module({
   imports: [
@@ -43,6 +44,8 @@ import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
     KewyIdentityModule,
     BillingModule,
     AuthModule,
+    // PermissionGuard is an APP_GUARD registered in AuthModule (after AuthGuard).
+    PermissionsModule,
     HealthModule,
     SegmentsModule,
     TagsModule,

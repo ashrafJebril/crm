@@ -12,6 +12,8 @@ import { TiremallSsoController } from "./tiremall-sso.controller";
 import { TiremallSsoService } from "./tiremall-sso.service";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
 import { requireJwtSecret } from "../common/jwt-secret";
+import { PermissionsModule } from "../permissions/permissions.module";
+import { PermissionGuard } from "../permissions/permission.guard";
 
 @Module({
   imports: [
@@ -21,6 +23,7 @@ import { requireJwtSecret } from "../common/jwt-secret";
       signOptions: { expiresIn: "7d" },
     }),
     WorkspacesModule,
+    PermissionsModule,
   ],
   // HJZ SSO bridge controller is inert unless AUTH_MODE=sso (the service
   // rejects calls), so registering it standalone-side is harmless.
@@ -31,6 +34,10 @@ import { requireJwtSecret } from "../common/jwt-secret";
     KewySsoService,
     TiremallSsoService,
     { provide: APP_GUARD, useClass: AuthGuard },
+    // Must stay directly after AuthGuard: global guards run in registration
+    // order, and PermissionGuard needs the req.user AuthGuard sets. (An
+    // APP_GUARD in AppModule would run BEFORE this module's AuthGuard.)
+    { provide: APP_GUARD, useClass: PermissionGuard },
   ],
   exports: [AuthService],
 })
