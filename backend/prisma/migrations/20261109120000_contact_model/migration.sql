@@ -58,3 +58,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 UPDATE "Contact" SET "firstName" = split_part(trim(name), ' ', 1),
   "lastName" = NULLIF(trim(substr(trim(name), length(split_part(trim(name), ' ', 1)) + 1)), '')
 WHERE "firstName" IS NULL;
+
+-- Lower-case the built-in lifecycle values once (idempotent); the API lower-cases them on write.
+UPDATE "Contact" SET lifecycle = lower(lifecycle)
+WHERE lower(lifecycle) IN ('lead','customer','churned','patient','blocked') AND lifecycle <> lower(lifecycle);

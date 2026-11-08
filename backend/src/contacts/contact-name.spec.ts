@@ -15,4 +15,8 @@ describe("contact-name", () => {
   it("normalizeDigits maps Arabic-Indic and Persian digits", () => {
     expect(normalizeDigits("٠١٢٣٤٥٦٧٨٩ ۰۱۲۳۴۵۶۷۸۹ 5")).toBe("0123456789 0123456789 5");
   });
+  it("normalizeDigits maps the Arabic decimal mark to '.' and drops the thousands mark", () => {
+    expect(normalizeDigits("٤٥٫٥")).toBe("45.5");
+    expect(normalizeDigits("١٬٢٣٤")).toBe("1234");
+  });
 });

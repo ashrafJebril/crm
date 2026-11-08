@@ -29,7 +29,14 @@ export class SegmentsService {
   /** Resolve a SegmentFilter to a Prisma `where` clause, workspace-scoped. */
   buildWhere(workspaceId: string, f: SegmentFilter): Prisma.ContactWhereInput {
     const where: Prisma.ContactWhereInput = { workspaceId };
-    if (f.lifecycle && f.lifecycle.length > 0) where.lifecycle = { in: f.lifecycle };
+    const lifecycleClauses: Prisma.ContactWhereInput[] = [];
+    if (f.lifecycle && f.lifecycle.length > 0) {
+      // Known values are stored lower-case, but saved filters and legacy rows
+      // may be capitalised ("Lead") — match case-insensitively.
+      lifecycleClauses.push({
+        OR: f.lifecycle.map((v) => ({ lifecycle: { equals: v, mode: "insensitive" as const } })),
+      });
+    }
     if (f.industry && f.industry.length > 0) where.industry = { in: f.industry };
     if (f.source && f.source.length > 0) where.source = { in: f.source };
     if (f.search && f.search.trim().length > 0) {
@@ -60,8 +67,9 @@ export class SegmentsService {
         OR: f.tagsAny.map((t) => ({ tags: { contains: JSON.stringify(t) } })),
       });
     }
-    if (tagClauses.length > 0) {
-      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), ...tagClauses];
+    const andClauses = [...lifecycleClauses, ...tagClauses];
+    if (andClauses.length > 0) {
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), ...andClauses];
     }
     return where;
   }

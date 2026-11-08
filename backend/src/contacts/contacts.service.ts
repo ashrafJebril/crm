@@ -7,7 +7,7 @@ import {
   Optional,
 } from "@nestjs/common";
 import { isEmail } from "class-validator";
-import { joinName, normalizeDigits, splitName } from "./contact-name";
+import { effectiveNameParts, joinName, normalizeDigits, normalizeLifecycle, splitName } from "./contact-name";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
@@ -52,8 +52,8 @@ function parseTags(raw: string): string[] {
 const shape = (c: ContactRow) => ({
   id: c.id,
   name: c.name,
-  firstName: c.firstName,
-  lastName: c.lastName,
+  // Derived when the stored parts are missing/stale (integration-created rows).
+  ...effectiveNameParts(c),
   email: c.email ?? "",
   ownerId: c.ownerId,
   marketingOptOut: c.marketingOptOut,
@@ -308,11 +308,12 @@ export class ContactsService {
   /** Name/firstName/lastName stay in sync; '' counts as absent. */
   private nameFields(
     dto: { name?: string; firstName?: string; lastName?: string },
-    stored?: { firstName: string | null; lastName: string | null },
+    stored?: { name: string; firstName: string | null; lastName: string | null },
   ): { name: string; firstName: string | null; lastName: string | null } | null {
     if (dto.firstName !== undefined || dto.lastName !== undefined) {
-      const first = dto.firstName ?? stored?.firstName ?? "";
-      const last = dto.lastName ?? stored?.lastName ?? "";
+      const parts = stored ? effectiveNameParts(stored) : { firstName: null, lastName: null };
+      const first = dto.firstName ?? parts.firstName ?? "";
+      const last = dto.lastName ?? parts.lastName ?? "";
       const name = joinName(first, last);
       if (!name) throw new BadRequestException("name is required");
       return { name, firstName: first.trim() || null, lastName: last.trim() || null };
@@ -341,7 +342,7 @@ export class ContactsService {
         notALead: dto.notALead ?? false,
         phone: dto.phone != null ? normalizeDigits(dto.phone) : null,
         industry: dto.industry,
-        lifecycle: dto.lifecycle,
+        lifecycle: normalizeLifecycle(dto.lifecycle),
         source: dto.source,
         value: dto.value ?? null,
         lastSeen: dto.lastSeen ?? "just now",
@@ -371,6 +372,7 @@ export class ContactsService {
       data: {
         ...dto,
         ...(names ?? {}),
+        lifecycle: normalizeLifecycle(dto.lifecycle),
         email,
         phone: dto.phone != null ? normalizeDigits(dto.phone) : dto.phone,
         tags: dto.tags !== undefined ? JSON.stringify(dto.tags) : undefined,

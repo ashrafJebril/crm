@@ -73,7 +73,7 @@ describe("ContactsService.list — segment resolution by origin", () => {
     await svc.list("ws1", { segmentId: "s2" });
     const where = whereOf();
     expect(where.segmentMembers).toBeUndefined();
-    expect(where.lifecycle).toEqual({ in: ["lead"] });
+    expect(where.AND).toContainEqual({ OR: [{ lifecycle: { equals: "lead", mode: "insensitive" } }] });
     expect(where.workspaceId).toBe("ws1");
   });
 
@@ -141,7 +141,7 @@ describe("ContactsService.search", () => {
       {
         id: "c1", name: "Sara", phone: "", industry: "retail", lifecycle: "lead",
         source: "wa", value: "—", lastSeen: "2m", tags: [], convs: 0,
-        firstName: undefined, lastName: undefined, email: "", ownerId: undefined,
+        firstName: "Sara", lastName: null, email: "", ownerId: undefined,
         marketingOptOut: undefined, notALead: undefined, createdAt: undefined,
       },
     ]);
@@ -339,6 +339,61 @@ describe("ContactsService — editing, owner, delete guard", () => {
     prisma.contact.create.mockClear();
     await svc.create("ws1", { firstName: "Ali", lastName: "Hassan", industry: "i", lifecycle: "lead", source: "s" } as never);
     expect(prisma.contact.create.mock.calls[0][0].data).toMatchObject({ name: "Ali Hassan" });
+  });
+
+  it("PATCH lastName on a NULL-firstName contact keeps the first part", async () => {
+    // Integration-created contacts only carry `name`.
+    prisma.contact.findFirst.mockResolvedValue({ ...stored, name: "Sara Khan", firstName: null, lastName: null });
+    const res = await svc.update("ws1", "c1", { lastName: "Haddad" });
+    expect(dataOf()).toMatchObject({ name: "Sara Haddad", firstName: "Sara", lastName: "Haddad" });
+    expect(res.firstName).toBe("Sara");
+  });
+
+  it("stale parts (name changed elsewhere) are ignored", async () => {
+    // HJZ rewrote name without touching the parts.
+    prisma.contact.findFirst.mockResolvedValue({ ...stored, name: "Mona Saleh", firstName: "Sara", lastName: "Khan" });
+    await svc.update("ws1", "c1", { lastName: "Odeh" });
+    expect(dataOf()).toMatchObject({ name: "Mona Odeh", firstName: "Mona", lastName: "Odeh" });
+    prisma.contact.update.mockClear();
+    await svc.update("ws1", "c1", { firstName: "Rana" });
+    expect(dataOf()).toMatchObject({ name: "Rana Saleh", firstName: "Rana", lastName: "Saleh" });
+  });
+
+  it("firstName '' treated as absent", async () => {
+    prisma.contact.findFirst.mockResolvedValue({ ...stored, name: "Omar Al Said", firstName: "", lastName: "Al Said" });
+    await svc.update("ws1", "c1", { lastName: "Zein" });
+    expect(dataOf()).toMatchObject({ name: "Omar Zein", firstName: "Omar", lastName: "Zein" });
+  });
+
+  it("shape() derives first/last when stored parts are missing or stale", async () => {
+    prisma.contact.findFirst.mockResolvedValue({ ...stored, name: "Mona Saleh", firstName: null, lastName: null });
+    const a = await svc.get("ws1", "c1");
+    expect(a).toMatchObject({ name: "Mona Saleh", firstName: "Mona", lastName: "Saleh" });
+    prisma.contact.findFirst.mockResolvedValue({ ...stored, name: "Mona Saleh", firstName: "Sara", lastName: "Khan" });
+    const b = await svc.get("ws1", "c1");
+    expect(b).toMatchObject({ firstName: "Mona", lastName: "Saleh" });
+    prisma.contact.findFirst.mockResolvedValue(stored);
+    const c = await svc.get("ws1", "c1");
+    expect(c).toMatchObject({ firstName: "Sara", lastName: "Khan" });
+  });
+
+  it("lowercases known lifecycle values on create and update; leaves others alone", async () => {
+    await svc.create("ws1", { name: "Ali", industry: "i", lifecycle: "Lead", source: "s" } as never);
+    expect(prisma.contact.create.mock.calls[0][0].data.lifecycle).toBe("lead");
+    prisma.contact.create.mockClear();
+    await svc.create("ws1", { name: "Ali", industry: "i", lifecycle: "VIP Prospect", source: "s" } as never);
+    expect(prisma.contact.create.mock.calls[0][0].data.lifecycle).toBe("VIP Prospect");
+    await svc.update("ws1", "c1", { lifecycle: "CHURNED" });
+    expect(dataOf().lifecycle).toBe("churned");
+    prisma.contact.update.mockClear();
+    await svc.update("ws1", "c1", { lifecycle: "Blocked" });
+    expect(dataOf().lifecycle).toBe("blocked");
+    prisma.contact.update.mockClear();
+    await svc.update("ws1", "c1", { lifecycle: "Partner" });
+    expect(dataOf().lifecycle).toBe("Partner");
+    prisma.contact.update.mockClear();
+    await svc.update("ws1", "c1", { name: "X" });
+    expect(dataOf().lifecycle).toBeUndefined();
   });
 
   it("delete with linked tickets → 409 with counts", async () => {
