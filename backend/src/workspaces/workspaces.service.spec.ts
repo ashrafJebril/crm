@@ -361,3 +361,66 @@ describe("WorkspacesService member roles (SP-25)", () => {
     });
   });
 });
+
+describe("inviteByEmail never changes an existing user's password", () => {
+  let prisma: any;
+  let kewySync: any;
+  let svc: WorkspacesService;
+  const actor: Actor = { userId: "actor" };
+  const existingUser = { id: "u9", email: "a@b.co", name: "Ann", password: "old-hash" };
+
+  beforeEach(() => {
+    prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue(existingUser),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new", ...data })),
+        update: jest.fn(),
+        delete: jest.fn(),
+      },
+      workspaceMember: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(0),
+        create: jest.fn().mockResolvedValue({ id: "mem" }),
+      },
+    };
+    kewySync = { passwordReset: jest.fn(), userCreated: jest.fn().mockResolvedValue(undefined) };
+    const permissions = new PermissionService(prisma);
+    (permissions as any).effective = jest.fn().mockResolvedValue(effOf("owner"));
+    (permissions as any).systemRoleRow = jest
+      .fn()
+      .mockImplementation((_ws: string, role: string) => Promise.resolve(sys(role as never)));
+    svc = new WorkspacesService(prisma, kewySync, permissions);
+  });
+
+  it("invite of an existing member -> 409 and no password write", async () => {
+    prisma.workspaceMember.findUnique.mockResolvedValue({ id: "m" });
+    await expect(
+      svc.inviteByEmail("ws1", { email: "a@b.co", role: "agent", password: "hacked1" } as never, actor),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(kewySync.passwordReset).not.toHaveBeenCalled();
+    expect(prisma.workspaceMember.create).not.toHaveBeenCalled();
+  });
+
+  it("invite of an existing non-member user does not change their password", async () => {
+    const res = await svc.inviteByEmail("ws1", { email: "a@b.co", role: "agent", password: "hacked1" } as never, actor);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(kewySync.passwordReset).not.toHaveBeenCalled();
+    expect(prisma.workspaceMember.create).toHaveBeenCalled();
+    expect(res.tempPassword).toBeUndefined();
+    expect(res.created).toBe(false);
+  });
+
+  it("invite of a new user still sets the password", async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    const res = await svc.inviteByEmail(
+      "ws1",
+      { email: "n@b.co", role: "agent", name: "New", password: "secret12" } as never,
+      actor,
+    );
+    expect(prisma.user.create).toHaveBeenCalled();
+    expect(prisma.user.create.mock.calls[0][0].data.password).not.toBe("secret12");
+    expect(res.tempPassword).toBe("secret12");
+    expect(res.created).toBe(true);
+  });
+});

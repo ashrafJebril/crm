@@ -172,6 +172,16 @@ export class WorkspacesService {
     let user = await this.prisma.user.findUnique({ where: { email } });
     let provisionedPassword: string | undefined;
 
+    if (user) {
+      // Refuse before any write: an existing member is never touched.
+      const exists = await this.prisma.workspaceMember.findUnique({
+        where: { userId_workspaceId: { userId: user.id, workspaceId } },
+      });
+      if (exists) throw new ConflictException("Already a member");
+    }
+    // An existing user's password is NEVER changed by an invite (the supplied
+    // password is ignored); it only applies to brand-new accounts below.
+
     if (!user) {
       // Create new user with the supplied name + password
       if (!dto.name || !dto.password) {
@@ -196,33 +206,7 @@ export class WorkspacesService {
         this.prisma.user.delete({ where: { id: created.id } }),
       );
       provisionedPassword = dto.password;
-    } else if (dto.password) {
-      // User row already existed (e.g. previously removed-then-re-added). If
-      // they don't belong to any other workspace, treat this invite as a
-      // re-provision and apply the supplied password so the inviter's modal
-      // matches reality. Cross-tenant guard: if they're in another workspace,
-      // we can't safely reset — refuse to touch the password and just add the
-      // membership (caller can use the Reset password button if needed and
-      // the safety rail allows).
-      const otherMemberships = await this.prisma.workspaceMember.count({
-        where: { userId: user.id, workspaceId: { not: workspaceId } },
-      });
-      if (otherMemberships === 0) {
-        const hashed = await bcrypt.hash(dto.password, 10);
-        // Set by the inviter, not the user: crm-only in Kewy (see passwordReset).
-        await this.kewySync.passwordReset(user, hashed);
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { password: hashed },
-        });
-        provisionedPassword = dto.password;
-      }
     }
-
-    const exists = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId: user.id, workspaceId } },
-    });
-    if (exists) throw new ConflictException("Already a member");
 
     const roleId = target.roleId;
     const member = await this.prisma.workspaceMember.create({
