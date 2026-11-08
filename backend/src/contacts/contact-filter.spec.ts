@@ -86,7 +86,8 @@ describe("buildContactWhere", () => {
 
   it("lifecycle, optOut, notALead", async () => {
     const w = await build({ lifecycle: ["lead"], optOut: true, notALead: false } as never);
-    expect(w).toMatchObject({ lifecycle: { in: ["lead"] }, marketingOptOut: true, notALead: false });
+    expect(w).toMatchObject({ marketingOptOut: true, notALead: false });
+    expect(w.AND).toContainEqual({ OR: [{ lifecycle: { equals: "lead", mode: "insensitive" } }] });
   });
 
   it("ownerId none means unassigned; an id matches exactly", async () => {

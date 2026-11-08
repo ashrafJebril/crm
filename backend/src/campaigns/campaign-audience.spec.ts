@@ -42,6 +42,17 @@ describe("buildRecipients", () => {
   });
 });
 
+describe("buildRecipients churned casing", () => {
+  it("skips a legacy capitalised Churned contact", () => {
+    const { recipients, skipped } = buildRecipients([
+      { name: "Gone", phone: "962790000004", lifecycle: "Churned" },
+      { name: "Lina", phone: "962790000001", lifecycle: "lead" },
+    ]);
+    expect(recipients).toEqual([{ name: "Lina", phone: "+962790000001" }]);
+    expect(skipped.optedOut).toBe(1);
+  });
+});
+
 describe("buildRecipients marketing opt-out", () => {
   it("opted-out contact is skipped by campaign send", () => {
     const { recipients, skipped } = buildRecipients([

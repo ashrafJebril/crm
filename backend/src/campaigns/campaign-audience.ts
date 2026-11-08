@@ -50,7 +50,7 @@ export function buildRecipients(contacts: AudienceContact[]): {
   const recipients: CampaignRecipient[] = [];
   const skipped: SkippedCounts = { noPhone: 0, optedOut: 0, duplicate: 0 };
   for (const c of contacts) {
-    if (c.lifecycle === "churned" || c.marketingOptOut === true) {
+    if (c.lifecycle?.toLowerCase() === "churned" || c.marketingOptOut === true) {
       skipped.optedOut++;
       continue;
     }

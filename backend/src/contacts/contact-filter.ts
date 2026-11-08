@@ -155,7 +155,10 @@ export async function buildContactWhere(
       ],
     });
   }
-  if (f.lifecycle?.length) where.lifecycle = { in: f.lifecycle };
+  if (f.lifecycle?.length) {
+    // Stored values are lowercase, but legacy rows may be capitalised.
+    and.push({ OR: f.lifecycle.map((v) => ({ lifecycle: { equals: v, mode: "insensitive" as const } })) });
+  }
   if (f.tags?.length) {
     const needles = f.tags.map(tagNeedle);
     and.push(f.tagMode === "all" ? { AND: needles } : { OR: needles });

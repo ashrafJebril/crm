@@ -214,7 +214,7 @@ describe("ContactsService.listPage", () => {
     await svc.listPage("ws1", { lifecycle: ["lead"], ownerId: "none", optOut: true, page: 1, pageSize: 25 });
     expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({
       workspaceId: "ws1",
-      lifecycle: { in: ["lead"] },
+      AND: [{ OR: [{ lifecycle: { equals: "lead", mode: "insensitive" } }] }],
       ownerId: null,
       marketingOptOut: true,
     });
@@ -386,7 +386,11 @@ describe("ContactsService — select-all ids and paged records", () => {
     const res = await svc.listIds("ws1", { lifecycle: ["lead"], ownerId: "u1" });
     expect(res).toEqual({ ids: ["a", "b"], total: 2, truncated: false });
     const arg = prisma.contact.findMany.mock.calls[0][0];
-    expect(arg.where).toEqual({ workspaceId: "ws1", lifecycle: { in: ["lead"] }, ownerId: "u1" });
+    expect(arg.where).toEqual({
+      workspaceId: "ws1",
+      AND: [{ OR: [{ lifecycle: { equals: "lead", mode: "insensitive" } }] }],
+      ownerId: "u1",
+    });
     expect(arg.select).toEqual({ id: true });
     expect(prisma.contact.count.mock.calls[0][0].where).toEqual(arg.where);
   });
