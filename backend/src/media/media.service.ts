@@ -20,6 +20,12 @@ const ALLOWED_IMAGE = new Set([
   "image/webp",
 ]);
 const ALLOWED_VIDEO = new Set(["video/mp4", "video/quicktime"]);
+/** Import files live in media storage but are not library assets. */
+const ALLOWED_DOCUMENT = new Set([
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024; // 10 MB (import files)
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
 const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB — IG's ceiling; FB/TikTok allow more
 
@@ -33,7 +39,7 @@ export class MediaService {
 
   async list(workspaceId: string, viewer?: Viewer) {
     const rows = await this.prisma.media.findMany({
-      where: { workspaceId },
+      where: { workspaceId, mimeType: { notIn: [...ALLOWED_DOCUMENT] } },
       orderBy: { createdAt: "desc" },
       take: 200,
     });
@@ -237,6 +243,42 @@ export class MediaService {
         storedPath: key,
         storageKind: this.storage.kind,
         uploadedById: null,
+      },
+    });
+  }
+
+  /**
+   * Store an uploaded CSV/XLSX (contacts import). The row is kept out of the
+   * media library listing; read it back with readBuffer.
+   */
+  async ingestDocument(input: {
+    workspaceId: string;
+    buffer: Buffer;
+    mimeType: string;
+    fileName: string;
+    uploadedById: string;
+  }) {
+    if (!ALLOWED_DOCUMENT.has(input.mimeType)) {
+      throw new BadRequestException(`Unsupported file type: ${input.mimeType}`);
+    }
+    if (input.buffer.length > MAX_DOCUMENT_BYTES) {
+      throw new BadRequestException(`File too large (${input.buffer.length} bytes)`);
+    }
+    const { key } = await this.storage.put({
+      workspaceId: input.workspaceId,
+      buffer: input.buffer,
+      mimeType: input.mimeType,
+      originalFilename: input.fileName,
+    });
+    return this.prisma.media.create({
+      data: {
+        workspaceId: input.workspaceId,
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        sizeBytes: input.buffer.length,
+        storedPath: key,
+        storageKind: this.storage.kind,
+        uploadedById: input.uploadedById,
       },
     });
   }

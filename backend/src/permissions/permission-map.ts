@@ -201,6 +201,14 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "DELETE /contacts/:id": "contacts.delete",
   "GET /contacts/:id/fields": "contacts.view",
   "PUT /contacts/:id/fields": "contacts.update",
+  // Contacts import (SP-03). preview/run with updateExisting also need
+  // contacts.update, audience kind also audiences.create (ImportsService).
+  "POST /imports": "contacts.create",
+  "GET /imports": "contacts.view",
+  "GET /imports/:id": "contacts.view",
+  "POST /imports/:id/preview": "contacts.create",
+  "POST /imports/:id/run": "contacts.create",
+  "POST /imports/:id/cancel": "contacts.create",
   "GET /custom-fields": "contacts.view",
   "GET /custom-fields/:id/delete-preview": "settings.view",
   // Field definitions are workspace settings (were @WorkspaceRoles("owner","admin")).

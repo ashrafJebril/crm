@@ -83,7 +83,8 @@ export function fieldWhere(
   }
 }
 
-function validateValue(
+/** Pure per-type value validator (also used by contact import); throws BadRequestException. */
+export function validateValue(
   def: { type: string; options: unknown; key: string },
   v: unknown,
 ): Prisma.InputJsonValue {

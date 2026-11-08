@@ -11,6 +11,6 @@ import { HjzSyncModule } from "../hjz-sync/hjz-sync.module";
   imports: [SegmentsModule, HjzSyncModule, TagsModule, TicketsModule],
   controllers: [ContactsController],
   providers: [ContactsService, ContactsBulkService],
-  exports: [ContactsService],
+  exports: [ContactsService, ContactsBulkService],
 })
 export class ContactsModule {}

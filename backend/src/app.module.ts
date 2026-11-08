@@ -9,6 +9,7 @@ import { KewyIdentityModule } from "./kewy-identity/kewy-identity.module";
 import { AuthModule } from "./auth/auth.module";
 import { HealthModule } from "./health/health.module";
 import { ContactsModule } from "./contacts/contacts.module";
+import { ImportsModule } from "./imports/imports.module";
 import { ConversationsModule } from "./conversations/conversations.module";
 import { AppointmentsModule } from "./appointments/appointments.module";
 import { TemplatesModule } from "./templates/templates.module";
@@ -53,6 +54,7 @@ import { RolesModule } from "./roles/roles.module";
     SegmentsModule,
     TagsModule,
     ContactsModule,
+    ImportsModule,
     ConversationsModule,
     AppointmentsModule,
     TemplatesModule,
