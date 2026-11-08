@@ -7,6 +7,7 @@ import { ROUTE_PERMISSIONS, routesOf } from "./permission-map";
 import { ConversationsController } from "../conversations/conversations.controller";
 import { ConversationLabelsController } from "../conversations/conversation-labels.controller";
 import { NotesController } from "../notes/notes.controller";
+import { RecordsController } from "../records/records.controller";
 import { SearchController } from "../search/search.controller";
 import { DashboardController } from "../dashboard/dashboard.module";
 import { ContactsController } from "../contacts/contacts.controller";
@@ -68,6 +69,7 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["conversations", ConversationsController, ["list", "get", "update", "markRead", "remove", "messages", "setAi", "send"]],
   ["conversation-labels", ConversationLabelsController, ["setLabels"]],
   ["notes", NotesController, ["list", "create", "update", "seen", "remove"]],
+  ["records", RecordsController, ["get"]],
   ["search", SearchController, ["search"]],
   ["dashboard", DashboardController, ["summary"]],
   ["contacts", ContactsController, ["summary"]],

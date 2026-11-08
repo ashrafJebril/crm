@@ -81,6 +81,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /notifications/read": "authenticated",
   "GET /notifications/preferences": "authenticated",
   "PUT /notifications/preferences": "authenticated",
+  "GET /records/:kind/:id": "authenticated", // per-kind view permission + conversation visibility checked in RecordsService
   "GET /search": "authenticated", // results get visibility-filtered in SearchService (later task)
   "GET /hjz/link": "authenticated", // the caller's own HJZ link
   "POST /hjz/link": "authenticated",

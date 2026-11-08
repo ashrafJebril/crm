@@ -21,6 +21,7 @@ import { ResolutionModule } from "./resolution/resolution.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { NotesModule } from "./notes/notes.module";
+import { RecordsModule } from "./records/records.module";
 import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
 import { AdminModule } from "./admin/admin.module";
@@ -65,6 +66,7 @@ import { RolesModule } from "./roles/roles.module";
     WorkflowsModule,
     WorkspacesModule,
     NotesModule,
+    RecordsModule,
     NotificationsModule,
     MediaModule,
     SocialModule,
