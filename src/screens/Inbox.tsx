@@ -38,6 +38,7 @@ import {
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
+import { ConversationActions } from "./inbox/ConversationActions";
 import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
@@ -278,6 +279,7 @@ interface ConversationPaneProps {
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
+  onConversationChanged: () => void;
   messagesLoading: boolean;
   lang: Lang;
   tx: Tx;
@@ -1240,6 +1242,7 @@ function ConversationPane({
   sending,
   sendError,
   onConvertToTicket,
+  onConversationChanged,
   messagesLoading,
   lang,
   tx,
@@ -1390,13 +1393,14 @@ function ConversationPane({
             <span>{contact?.industry}</span>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <ConversationAiToggle
             conversationId={conv.id}
             enabled={conv.aiEnabled ?? false}
             pausedAt={conv.aiPausedAt ?? null}
             lang={lang}
           />
+          <ConversationActions conv={conv} lang={lang} onChanged={onConversationChanged} />
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
@@ -3325,6 +3329,10 @@ function InboxImpl() {
             sendZernioDbTemplate.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
+          onConversationChanged={() => {
+            convsQ.refetch();
+            activeQ.refetch();
+          }}
           messagesLoading={
             activeIsFb
               ? fbMsgsQ.loading

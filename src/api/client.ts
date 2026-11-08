@@ -65,7 +65,7 @@ export function setPaymentOverdueHandler(fn: (() => void) | null): void {
 }
 
 interface RequestOpts {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
   signal?: AbortSignal;
   /** The caller shows a PAYMENT_OVERDUE refusal itself (e.g. a refused workspace switch); do not swap in the global lock screen. */
@@ -206,6 +206,7 @@ export const api = {
   post:       <T,>(path: string, body?: unknown, o?: { localPaymentError?: boolean }) =>
     request<T>(path, { method: "POST", body, localPaymentError: o?.localPaymentError }),
   patch:      <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
+  put:        <T,>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
   delete:     <T,>(path: string) => request<T>(path, { method: "DELETE" }),
   postStream: <T,>(path: string, body?: unknown) => postStream<T>(path, body),
 };
