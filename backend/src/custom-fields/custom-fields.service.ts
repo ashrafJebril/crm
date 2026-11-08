@@ -58,7 +58,9 @@ export function fieldWhere(
       if (op === "eq") return some({ equals: value });
       throw bad();
     case "boolean":
-      if (op === "eq") return some({ equals: value === "true" });
+      if (op !== "eq") throw bad();
+      if (value !== "true" && value !== "false") throw new BadRequestException("invalid boolean");
+      return some({ equals: value === "true" });
       throw bad();
     case "number": {
       const n = Number(normalizeDigits(value));
@@ -157,8 +159,8 @@ export class CustomFieldsService {
   }
 
   private async getDef(workspaceId: string, id: string) {
-    const def = await this.prisma.customFieldDef.findFirst({ where: { id, workspaceId } });
-    if (!def) throw new NotFoundException("field not found");
+    const def = await this.prisma.customFieldDef.findFirst({ where: { id, workspaceId, archivedAt: null } });
+    if (!def) throw new NotFoundException("Field not found");
     return def;
   }
 

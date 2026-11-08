@@ -70,6 +70,23 @@ describe("CustomFieldsService", () => {
     await expect(svc.update(WS, "d1", { type: "number" })).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it("patch archived def → 404", async () => {
+    prisma.customFieldDef.findFirst.mockImplementation(async (a: any) =>
+      a.where?.archivedAt === null ? null : def({ archivedAt: new Date() }),
+    );
+    await expect(svc.update(WS, "d1", { label: "New" })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.deletePreview(WS, "d1")).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.customFieldDef.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("delete archived def → 404 and archivedAt unchanged", async () => {
+    prisma.customFieldDef.findFirst.mockImplementation(async (a: any) =>
+      a.where?.archivedAt === null ? null : def({ archivedAt: new Date() }),
+    );
+    await expect(svc.remove(WS, "d1")).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.customFieldDef.updateMany).not.toHaveBeenCalled();
+  });
+
   it("delete-custom-field-with-references archives and keeps values", async () => {
     prisma.customFieldDef.findFirst.mockResolvedValue(def());
     prisma.customFieldValue.count.mockResolvedValue(7);
@@ -133,12 +150,12 @@ describe("CustomFieldsService", () => {
     });
 
     it("archived def → 404 on put", async () => {
+      // Returns the (archived) def only if the query fails to exclude archived rows.
       prisma.customFieldDef.findMany.mockImplementation(async (a: any) =>
-        a.where?.archivedAt === null ? [] : [],
+        a.where?.archivedAt === null ? [] : [def({ archivedAt: new Date() })],
       );
       await expect(svc.setForContact(WS, "c1", { d1: "x" })).rejects.toBeInstanceOf(NotFoundException);
-      const q = prisma.customFieldDef.findMany.mock.calls[0][0];
-      expect(q.where).toMatchObject({ workspaceId: WS, archivedAt: null });
+      expect(prisma.customFieldValue.upsert).not.toHaveBeenCalled();
     });
 
     it("foreign contact → 404", async () => {
@@ -165,6 +182,8 @@ describe("CustomFieldsService", () => {
     expect(fieldWhere({ id: "d", type: "date" }, "eq", "2026-01-01")).toEqual(w({ equals: "2026-01-01" }));
     expect(fieldWhere({ id: "d", type: "date" }, "set")).toEqual({ fieldValues: { some: { defId: "d" } } });
     expect(fieldWhere({ id: "d", type: "text" }, "unset")).toEqual({ fieldValues: { none: { defId: "d" } } });
+    expect(() => fieldWhere({ id: "d", type: "boolean" }, "eq", "yes")).toThrow(BadRequestException);
+    expect(fieldWhere({ id: "d", type: "boolean" }, "eq", "false")).toEqual(w({ equals: false }));
     expect(() => fieldWhere({ id: "d", type: "boolean" }, "gt", "1")).toThrow(BadRequestException);
     expect(() => fieldWhere({ id: "d", type: "number" }, "gt", "abc")).toThrow(BadRequestException);
   });
