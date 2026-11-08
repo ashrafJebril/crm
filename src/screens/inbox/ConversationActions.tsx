@@ -3,6 +3,7 @@ import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
 import { makeTx } from "@/lib/tx";
 import type { Conversation, Lang, TeamMember } from "@/lib/types";
+import { statusLabels } from "./boardLogic";
 import { EscalateDialog } from "./EscalateDialog";
 import { LabelPicker } from "./LabelPicker";
 import { Popover } from "./Popover";
@@ -97,13 +98,7 @@ export function ConversationActions({
     useConversationPatch(tx, onChanged);
   const [escalateOpen, setEscalateOpen] = useState(false);
 
-  const statusLabel: Record<Status, string> = {
-    human: tx("Open", "مفتوحة"),
-    pending_customer: tx("Pending customer", "بانتظار العميل"),
-    resolved: tx("Resolved", "محلولة"),
-    closed: tx("Closed", "مغلقة"),
-    spam: tx("Spam", "مزعجة"),
-  };
+  const statusLabel = statusLabels(tx);
 
   const patch = (body: Record<string, unknown>) => patchConv(conv, body);
 
