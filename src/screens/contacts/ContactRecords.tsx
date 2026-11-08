@@ -63,7 +63,7 @@ export function ContactRecords({
   tx: Tx;
   lang: Lang;
   contactId: string;
-  onOpenTicket: () => void;
+  onOpenTicket: (ticketId: string) => void;
 }) {
   return (
     <>
@@ -80,7 +80,7 @@ export function ContactRecords({
             <button
               key={rt.id}
               type="button"
-              onClick={onOpenTicket}
+              onClick={() => onOpenTicket(rt.id)}
               style={{ ...ROW, width: "100%", textAlign: "start", cursor: "pointer", color: "var(--ink)", fontFamily: "inherit" }}
             >
               <span aria-hidden style={{ width: 3, height: 22, background: accent, borderRadius: 2, flex: "0 0 auto" }} />

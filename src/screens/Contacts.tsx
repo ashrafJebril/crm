@@ -559,6 +559,15 @@ function ContactsImpl() {
     if (fullQ.data) fullQ.refetch();
   };
 
+  // A contact edited or deleted from the record sheet: refetch the list behind it.
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
+  useEffect(() => {
+    const onChanged = () => refetchRef.current();
+    window.addEventListener("record:changed", onChanged);
+    return () => window.removeEventListener("record:changed", onChanged);
+  }, []);
+
   const showStatus = (msg: string) => {
     setStatusMsg(msg);
     window.setTimeout(() => setStatusMsg(null), 2000);

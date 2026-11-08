@@ -1,22 +1,31 @@
 import { describe, expect, it } from "vitest";
 import { recordHref } from "./recordLink";
+import { parseRecordParam } from "./recordParam";
 
 describe("recordHref", () => {
-  it("routes by kind with an open param", () => {
-    expect(recordHref("conversation", "c1")).toBe("#/inbox?open=c1");
-    expect(recordHref("ticket", "t1")).toBe("#/pipeline?open=t1");
-    expect(recordHref("contact", "p1")).toBe("#/contacts?open=p1");
+  it("opens the sheet on the current route for all five kinds", () => {
+    for (const kind of ["conversation", "ticket", "contact", "booking", "campaign"]) {
+      const href = recordHref(kind, "x1", "#/pipeline")!;
+      expect(href.startsWith("#/pipeline?")).toBe(true);
+      expect(parseRecordParam(href)).toEqual({ kind, id: "x1" });
+    }
   });
-  it("encodes ids", () => {
-    expect(recordHref("conversation", "t_a b")).toBe("#/inbox?open=t_a%20b");
+  it("preserves the current filters", () => {
+    const href = recordHref("contact", "p1", "#/inbox?f=AAA&cf=BBB")!;
+    expect(href).toContain("f=AAA");
+    expect(href).toContain("cf=BBB");
+    expect(parseRecordParam(href)).toEqual({ kind: "contact", id: "p1" });
   });
-  it("sends booking/campaign to their screens", () => {
-    expect(recordHref("booking", "b1")).toBe("#/calendar");
-    expect(recordHref("campaign", "m1")).toBe("#/campaigns");
+  it("replaces a record that is already open", () => {
+    expect(parseRecordParam(recordHref("ticket", "t9", "#/contacts?record=contact:a")!)).toEqual({ kind: "ticket", id: "t9" });
+  });
+  it("sends opaque thread ids to the inbox deep link", () => {
+    expect(recordHref("conversation", "t_a b", "#/contacts?cf=Z")).toBe("#/inbox?open=t_a%20b");
+    expect(recordHref("conversation", "ig:123", "#/contacts")).toBe("#/inbox?open=ig%3A123");
   });
   it("returns null for missing or unknown kinds", () => {
-    expect(recordHref(null, "x")).toBeNull();
-    expect(recordHref("contact", null)).toBeNull();
-    expect(recordHref("nope", "x")).toBeNull();
+    expect(recordHref(null, "x", "#/inbox")).toBeNull();
+    expect(recordHref("contact", null, "#/inbox")).toBeNull();
+    expect(recordHref("nope", "x", "#/inbox")).toBeNull();
   });
 });

@@ -11,6 +11,8 @@ import { ContactRecords } from "./ContactRecords";
 import { CustomFieldsCard } from "./CustomFieldsCard";
 import { DeleteContactDialog } from "./DeleteContactDialog";
 import { usePermissions } from "@/auth/usePermissions";
+import { openRecord } from "@/lib/openRecord";
+import { anotherModalOpen } from "@/lib/modalOpen";
 
 interface RecentConv {
   id: string;
@@ -32,6 +34,17 @@ interface ContactSummary {
     channels: Record<string, number>;
   };
   recentConversations: RecentConv[];
+}
+
+interface ContentProps {
+  contactId: string;
+  onClose: () => void;
+  /** Called after the contact was edited or deleted so the list can refresh. */
+  onChanged?: () => void;
+  /** After a delete completes; defaults to onClose. */
+  onDeleted?: () => void;
+  /** Inside the record sheet: the sheet frame supplies the header. */
+  embedded?: boolean;
 }
 
 interface Props {
@@ -63,7 +76,9 @@ function tagKind(tag: string): BadgeKind {
   return "";
 }
 
-export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
+/** The contact detail body (header, details, records, notes, delete). Shared by
+ *  the Contacts drawer and the universal record sheet. */
+export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted, embedded }: ContentProps) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const isAr = t.lang === "ar";
@@ -74,54 +89,13 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
   const c = s?.contact;
   const [deleting, setDeleting] = useState(false);
 
-  // Close on Esc.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // The delete dialog handles its own Escape.
-      if (e.key === "Escape" && !deleting) onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, deleting]);
 
-  const openInbox = (convId: string): void => {
-    window.location.hash = `#/inbox?conversation=${encodeURIComponent(convId)}`;
-    onClose();
-  };
-  const openPipeline = (): void => {
-    window.location.hash = "#/pipeline";
-    onClose();
-  };
+  // Links open the record in the sheet (pushing history) instead of leaving the screen.
+  const openConversation = (convId: string): void => openRecord("conversation", convId);
+  const openTicket = (ticketId: string): void => openRecord("ticket", ticketId);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="false"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 90,
-        display: "flex",
-        justifyContent: isAr ? "flex-start" : "flex-end",
-        background: "rgba(0,0,0,0.35)",
-        backdropFilter: "blur(2px)",
-      }}
-    >
-      <aside
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(460px, 94vw)",
-          height: "100%",
-          background: "var(--bg-1)",
-          borderLeft: isAr ? 0 : "1px solid var(--line)",
-          borderRight: isAr ? "1px solid var(--line)" : 0,
-          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
+    <>
         {sumQ.loading && !c ? (
           <div style={{ padding: 24, color: "var(--ink-3)", fontSize: 12 }}>
             {tx("Loading…", "جارٍ التحميل…")}
@@ -133,6 +107,7 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
         ) : (
           <>
             {/* ── Header ───────────────────────────────────────────────── */}
+            {!embedded && (
             <div
               style={{
                 padding: "16px 20px 14px",
@@ -239,6 +214,7 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
                 ×
               </button>
             </div>
+            )}
 
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ overflowY: "auto", flex: 1, padding: "14px 16px 24px" }}>
@@ -341,7 +317,7 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
                     <button
                       key={rc.id}
                       type="button"
-                      onClick={() => openInbox(rc.id)}
+                      onClick={() => openConversation(rc.id)}
                       style={{
                         display: "flex",
                         alignItems: "flex-start",
@@ -450,7 +426,7 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
                 tx={tx}
                 lang={t.lang}
                 contactId={c.id}
-                onOpenTicket={openPipeline}
+                onOpenTicket={openTicket}
               />
 
               {/* Notes */}
@@ -466,7 +442,6 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
             </div>
           </>
         )}
-      </aside>
       {deleting && c && (
         // Stop clicks inside the dialog from reaching the drawer backdrop's onClose.
         <div onClick={(e) => e.stopPropagation()}>
@@ -478,11 +453,59 @@ export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
           onDeleted={() => {
             setDeleting(false);
             onChanged?.();
-            onClose();
+            (onDeleted ?? onClose)();
           }}
         />
         </div>
       )}
+    </>
+  );
+}
+
+export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
+  const { t } = useTweaks();
+  const isAr = t.lang === "ar";
+
+  // Close on Esc, unless a dialog (delete confirm) or the record sheet is on top.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !anotherModalOpen(null)) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        display: "flex",
+        justifyContent: isAr ? "flex-start" : "flex-end",
+        background: "rgba(0,0,0,0.35)",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(460px, 94vw)",
+          height: "100%",
+          background: "var(--bg-1)",
+          borderLeft: isAr ? 0 : "1px solid var(--line)",
+          borderRight: isAr ? "1px solid var(--line)" : 0,
+          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <ContactDetailContent contactId={contactId} onClose={onClose} onChanged={onChanged} />
+      </aside>
     </div>
   );
 }

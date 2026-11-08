@@ -31,8 +31,9 @@ interface NotificationItem {
   name: string;
   preview: string;
   at: number; // epoch ms
-  /** Stored notifications deep-link here; conversation items go to the inbox. */
-  href?: string;
+  /** Resolved at click time so a record opens over the current screen; conversation
+   *  items go to the inbox. */
+  getHref?: () => string | null;
   /** Set for stored-notification toasts; a click marks it read. */
   storedId?: string;
 }
@@ -309,7 +310,7 @@ export function NotificationsBell(): React.ReactElement {
         name: txt.title,
         preview: txt.body ?? "",
         at: Date.now(),
-        href: recordHref(n.recordKind, n.recordId) ?? undefined,
+        getHref: () => recordHref(n.recordKind, n.recordId),
         storedId: n.id,
       };
       setToasts((prev) => [...prev, { id: item.id, item, dismissing: false }].slice(-MAX_VISIBLE_TOASTS));
@@ -910,7 +911,7 @@ export function NotificationsBell(): React.ReactElement {
                     onClick={(e) => {
                       // Don't navigate if the close button caught it.
                       if ((e.target as HTMLElement).closest(".close")) return;
-                      window.location.hash = tt.item.href ?? "#/inbox";
+                      window.location.hash = tt.item.getHref?.() ?? "#/inbox";
                       if (tt.item.storedId) markStoredRead(tt.item.storedId);
                       dismissToast(tt.id);
                     }}

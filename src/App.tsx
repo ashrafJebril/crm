@@ -12,6 +12,7 @@ import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
 import { PaymentLocked } from "@/auth/PaymentLocked";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
+import { RecordSheetHost } from "@/shell/RecordSheetHost";
 import { authScreen, isEmbedded, parseInbound, postToParent } from "@/embed/embed";
 import { setEmbedVisible } from "@/embed/visibility";
 import { invalidateIntegrations, refreshAfterConnect } from "@/embed/connected";
@@ -60,6 +61,7 @@ export default function App() {
           <main className="main">
             <ScreenSlot route={route} />
           </main>
+          <RecordSheetHost />
         </div>
       </ToastProvider>
     );
@@ -75,6 +77,7 @@ export default function App() {
           <Topbar route={route} />
           <ScreenSlot route={route} />
         </main>
+        <RecordSheetHost />
         <CommandPalette />
       </div>
     </ToastProvider>

@@ -6,6 +6,8 @@ import { PipelineHeader } from "./PipelineHeader";
 import { PipelineBoard } from "./PipelineBoard";
 import { TicketDetailDrawer } from "./TicketDetailDrawer";
 import { useOpenParam } from "@/lib/useOpenParam";
+import { openRecord } from "@/lib/openRecord";
+import { useQueryClient } from "@tanstack/react-query";
 import { NewTicketModal } from "./NewTicketModal";
 import { TEAM } from "@/data/team";
 import type { Ticket } from "@/lib/types";
@@ -36,6 +38,16 @@ export default function PipelinePage() {
 
   const { data: summary } = usePipelineSummary(pipelineId || null);
   useTicketRealtime(pipelineId || null);
+
+  // A record deleted or edited from the record sheet: refetch the board behind it.
+  const qc = useQueryClient();
+  useEffect(() => {
+    const onChanged = () => {
+      void qc.invalidateQueries({ queryKey: ["tickets"] });
+    };
+    window.addEventListener("record:changed", onChanged);
+    return () => window.removeEventListener("record:changed", onChanged);
+  }, [qc]);
 
   const [search, setSearch] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<string>("");
@@ -129,7 +141,7 @@ export default function PipelinePage() {
             setDeepTicketId(null);
           }}
           onOpenConversation={(cid) => {
-            window.location.hash = `#/inbox?open=${encodeURIComponent(cid)}`;
+            openRecord("conversation", cid);
           }}
         />
       ) : null}

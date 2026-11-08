@@ -25,13 +25,27 @@ interface Props {
   onClose: () => void;
   onOpenConversation: (conversationId: string) => void;
 }
+interface ContentProps {
+  ticketId: string;
+  lang: Lang;
+  onClose: () => void;
+  /** After a delete is submitted; defaults to onClose. */
+  onDeleted?: () => void;
+  onOpenConversation: (conversationId: string) => void;
+  /** Inside the record sheet: the sheet frame supplies number, title and close. */
+  embedded?: boolean;
+}
 
-export function TicketDetailDrawer({
+/** The ticket detail body (header, contact, value, activity, notes, delete).
+ *  Shared by the Pipeline drawer and the universal record sheet. */
+export function TicketDetailContent({
   ticketId,
   lang,
   onClose,
+  onDeleted,
   onOpenConversation,
-}: Props) {
+  embedded,
+}: ContentProps) {
   const q = useQuery<TicketDetail>({
     queryKey: qk.ticket(ticketId),
     queryFn: ({ signal }) => api.get<TicketDetail>(`/tickets/${ticketId}`, signal),
@@ -62,33 +76,7 @@ export function TicketDetailDrawer({
     : "var(--ink-3)";
 
   return (
-    <div
-      role="dialog"
-      aria-modal="false"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 90,
-        display: "flex",
-        justifyContent: lang === "ar" ? "flex-start" : "flex-end",
-        background: "rgba(0,0,0,0.35)",
-        backdropFilter: "blur(2px)",
-      }}
-    >
-      <aside
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(460px, 94vw)",
-          height: "100%",
-          background: "var(--bg-1)",
-          borderLeft: lang === "ar" ? 0 : "1px solid var(--line)",
-          borderRight: lang === "ar" ? "1px solid var(--line)" : 0,
-          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+    <>
         {q.isLoading ? (
           <div
             style={{
@@ -126,6 +114,7 @@ export function TicketDetailDrawer({
                   opacity: 0.85,
                 }}
               />
+              {!embedded && (<>
               <div
                 style={{
                   display: "flex",
@@ -147,7 +136,7 @@ export function TicketDetailDrawer({
                 </div>
                 <button
                   onClick={onClose}
-                  aria-label="Close"
+                  aria-label={lang === "ar" ? "إغلاق" : "Close"}
                   style={{
                     background: "transparent",
                     border: 0,
@@ -183,6 +172,7 @@ export function TicketDetailDrawer({
               >
                 {t.title}
               </h2>
+              </>)}
 
               <div
                 style={{
@@ -401,7 +391,7 @@ export function TicketDetailDrawer({
                         pipelineId: t.pipelineId,
                         stageId: t.stageId,
                       });
-                      onClose();
+                      (onDeleted ?? onClose)();
                     }}
                     style={{
                       ...ghostBtn,
@@ -442,6 +432,45 @@ export function TicketDetailDrawer({
             </div>
           </>
         )}
+    </>
+  );
+}
+
+export function TicketDetailDrawer({ ticketId, lang, onClose, onOpenConversation }: Props) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        display: "flex",
+        justifyContent: lang === "ar" ? "flex-start" : "flex-end",
+        background: "rgba(0,0,0,0.35)",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(460px, 94vw)",
+          height: "100%",
+          background: "var(--bg-1)",
+          borderLeft: lang === "ar" ? 0 : "1px solid var(--line)",
+          borderRight: lang === "ar" ? "1px solid var(--line)" : 0,
+          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <TicketDetailContent
+          ticketId={ticketId}
+          lang={lang}
+          onClose={onClose}
+          onOpenConversation={onOpenConversation}
+        />
       </aside>
     </div>
   );
