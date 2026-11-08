@@ -22,6 +22,7 @@ import {
 } from "@/icons";
 import { api } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { Pager } from "./contacts/Pager";
 import { Modal } from "@/components/Modal";
 import type { Contact, Segment, TagRow } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
@@ -32,6 +33,15 @@ import { TagsTab } from "./contacts/TagsTab";
 type ContactsTabId = "contacts" | "groups" | "tags";
 
 type View = "table" | "pipeline";
+
+/** One page of the contacts table from GET /contacts/page. */
+interface ContactsPage {
+  items: Contact[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}
 
 const INPUT_STYLE: CSSProperties = {
   height: 32,
@@ -701,11 +711,33 @@ function ContactsImpl() {
   const [showSegmentManager, setShowSegmentManager] = useState(false);
   const [search, setSearch] = useState("");
 
-  const contactsPath = activeSegmentId
-    ? `/contacts?segmentId=${activeSegmentId}`
-    : "/contacts";
-  const { data, loading, error, refetch } = useFetch<Contact[]>(contactsPath);
-  const allContacts = data ?? [];
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  // Search runs on the server; wait for a pause in typing before asking.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(id);
+  }, [search]);
+  // Any change to what's being listed starts again from the first page.
+  useEffect(() => setPage(1), [activeSegmentId, debouncedSearch, pageSize]);
+
+  const pageParams = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (activeSegmentId) pageParams.set("segmentId", activeSegmentId);
+  if (debouncedSearch) pageParams.set("q", debouncedSearch);
+  const {
+    data,
+    loading,
+    error,
+    refetch: refetchPage,
+  } = useFetch<ContactsPage>(`/contacts/page?${pageParams.toString()}`);
+  const contacts = data?.items ?? [];
+  // A delete can leave the current page empty; step back to the last one.
+  useEffect(() => {
+    if (data && page > data.pageCount) setPage(data.pageCount);
+  }, [data, page]);
+
+  const statsQ = useFetch<{ total: number; leads: number; customers: number }>("/contacts/stats");
 
   const {
     data: segmentsData,
@@ -723,18 +755,17 @@ function ContactsImpl() {
     [tagsQ.data],
   );
 
-  // Total count for the "All" chip — fetched once without a segment filter so
-  // the badge stays accurate even while a segment is active.
-  const { data: allRowsForCount } = useFetch<Contact[]>("/contacts");
-  const allCount = (allRowsForCount ?? []).length;
+  const allCount = statsQ.data?.total ?? 0;
+  // The group editor and segment manager pick from everyone, so only they
+  // load the full list, and only while open.
+  const fullQ = useFetch<Contact[]>(activeTab === "groups" || showSegmentManager ? "/contacts" : null);
+  const allContacts = fullQ.data ?? [];
 
-  // Local name-search applied on top of whatever the server returned (the
-  // segment filter already narrowed by lifecycle/tags/etc).
-  const contacts = useMemo(() => {
-    if (!search.trim()) return allContacts;
-    const q = search.trim().toLowerCase();
-    return allContacts.filter((c) => c.name.toLowerCase().includes(q));
-  }, [allContacts, search]);
+  const refetch = () => {
+    refetchPage();
+    statsQ.refetch();
+    if (fullQ.data) fullQ.refetch();
+  };
 
   const showStatus = (msg: string) => {
     setStatusMsg(msg);
@@ -835,10 +866,14 @@ function ContactsImpl() {
     <div style={{ overflowY: "auto", flex: 1 }}>
       <PageHeader
         title={tx("Contacts", "جهات الاتصال")}
-        subtitle={tx(
-          "12,408 contacts · 2,184 leads · 9,612 customers",
-          "١٢٬٤٠٨ جهة · ٢٬١٨٤ محتمل · ٩٬٦١٢ عميل",
-        )}
+        subtitle={
+          statsQ.data
+            ? tx(
+                `${statsQ.data.total.toLocaleString()} contacts · ${statsQ.data.leads.toLocaleString()} leads · ${statsQ.data.customers.toLocaleString()} customers`,
+                `${statsQ.data.total.toLocaleString("ar")} جهة · ${statsQ.data.leads.toLocaleString("ar")} محتمل · ${statsQ.data.customers.toLocaleString("ar")} عميل`,
+              )
+            : tx("Loading…", "جارٍ التحميل…")
+        }
         actions={
           <>
             <div
@@ -959,7 +994,7 @@ function ContactsImpl() {
           </div>
         )}
 
-        {error && !loading && (
+        {error && !loading && !data && (
           <div
             style={{
               padding: "10px 12px",
@@ -980,7 +1015,7 @@ function ContactsImpl() {
           </div>
         )}
 
-        {loading && (
+        {loading && !data && (
           <div
             className="muted"
             style={{
@@ -994,7 +1029,7 @@ function ContactsImpl() {
           </div>
         )}
 
-        {!loading && !error && view === "table" && (
+        {data && view === "table" && (
           <ContactsTable
             tx={tx}
             contacts={contacts}
@@ -1011,7 +1046,19 @@ function ContactsImpl() {
             lang={t.lang}
           />
         )}
-        {!loading && !error && view === "pipeline" && (
+        {data && view === "table" && (
+          <Pager
+            tx={tx}
+            page={data.page}
+            pageCount={data.pageCount}
+            pageSize={pageSize}
+            total={data.total}
+            onPage={setPage}
+            onPageSize={setPageSize}
+            busy={loading}
+          />
+        )}
+        {data && view === "pipeline" && (
           <Pipeline tx={tx} contacts={contacts} />
         )}
       </div>
@@ -1019,7 +1066,7 @@ function ContactsImpl() {
 
       {/* The member-add picker searches the FULL contact list, independent of
           whatever segment chip / name search is active on the Contacts tab. */}
-      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={allRowsForCount ?? allContacts} />}
+      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={allContacts} />}
       {activeTab === "tags" && (
         <TagsTab
           tx={tx}

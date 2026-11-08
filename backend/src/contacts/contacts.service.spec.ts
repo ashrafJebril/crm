@@ -145,3 +145,88 @@ describe("ContactsService.search", () => {
     ]);
   });
 });
+
+describe("ContactsService.listPage", () => {
+  const row = (id: string) => ({
+    id,
+    name: `C${id}`,
+    phone: null,
+    industry: "retail",
+    lifecycle: "lead",
+    source: "wa",
+    value: null,
+    lastSeen: "2m",
+    tags: "[]",
+    convs: 0,
+  });
+  let prisma: { contact: { findMany: jest.Mock; count: jest.Mock }; segment: { findFirst: jest.Mock } };
+  let svc: ContactsService;
+
+  beforeEach(() => {
+    prisma = {
+      contact: { findMany: jest.fn().mockResolvedValue([row("1"), row("2")]), count: jest.fn().mockResolvedValue(120) },
+      segment: { findFirst: jest.fn() },
+    };
+    svc = new ContactsService(prisma as never, new SegmentsService(prisma as never));
+  });
+
+  it("returns one page plus the total, newest first", async () => {
+    const res = await svc.listPage("ws1", { page: 2, pageSize: 50 });
+    expect(prisma.contact.findMany).toHaveBeenCalledWith({
+      where: { workspaceId: "ws1" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: 50,
+      take: 50,
+    });
+    expect(res).toMatchObject({ total: 120, page: 2, pageSize: 50, pageCount: 3 });
+    expect(res.items.map((c) => c.id)).toEqual(["1", "2"]);
+  });
+
+  it("searches name and phone on the server, case-insensitively", async () => {
+    await svc.listPage("ws1", { q: "  lina ", page: 1, pageSize: 25 });
+    expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({
+      AND: [
+        { workspaceId: "ws1" },
+        { OR: [{ name: { contains: "lina", mode: "insensitive" } }, { phone: { contains: "lina" } }] },
+      ],
+    });
+    expect(prisma.contact.count.mock.calls[0][0].where).toEqual(prisma.contact.findMany.mock.calls[0][0].where);
+  });
+
+  it("narrows to a segment's members", async () => {
+    prisma.segment.findFirst.mockResolvedValue({ id: "g1", origin: "manual", filter: "{}" });
+    await svc.listPage("ws1", { segmentId: "g1", page: 1, pageSize: 25 });
+    expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({
+      workspaceId: "ws1",
+      segmentMembers: { some: { segmentId: "g1" } },
+    });
+  });
+
+  it("clamps silly paging values", async () => {
+    await svc.listPage("ws1", { page: -3, pageSize: 10_000 });
+    expect(prisma.contact.findMany.mock.calls[0][0]).toMatchObject({ skip: 0, take: 200 });
+  });
+
+  it("reports a page count of 1 for an empty result", async () => {
+    prisma.contact.count.mockResolvedValue(0);
+    prisma.contact.findMany.mockResolvedValue([]);
+    expect((await svc.listPage("ws1", { page: 1, pageSize: 50 })).pageCount).toBe(1);
+  });
+});
+
+describe("ContactsService.stats", () => {
+  it("counts contacts, leads and customers for the header", async () => {
+    const prisma = {
+      contact: {
+        groupBy: jest.fn().mockResolvedValue([
+          { lifecycle: "lead", _count: { _all: 30 } },
+          { lifecycle: "Customer", _count: { _all: 12 } },
+          { lifecycle: "churned", _count: { _all: 6 } },
+        ]),
+      },
+    };
+    const svc = new ContactsService(prisma as never, new SegmentsService(prisma as never));
+    expect(await svc.stats("ws1")).toEqual({ total: 48, leads: 30, customers: 12 });
+    expect(prisma.contact.groupBy).toHaveBeenCalledWith({ by: ["lifecycle"], where: { workspaceId: "ws1" }, _count: { _all: true } });
+  });
+});

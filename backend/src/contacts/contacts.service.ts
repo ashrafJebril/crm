@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
@@ -65,6 +66,62 @@ export class ContactsService {
       orderBy: { createdAt: "desc" },
     });
     return rows.map(shape);
+  }
+
+  /**
+   * One page of contacts for the Contacts table: optional segment, server-side
+   * search on name or phone, newest first. `list` stays for callers that need
+   * everyone (audience pickers, group editors).
+   */
+  async listPage(
+    workspaceId: string,
+    opts: { segmentId?: string; q?: string; page: number; pageSize: number },
+  ) {
+    const pageSize = Math.min(Math.max(Math.trunc(opts.pageSize) || 50, 1), 200);
+    const page = Math.max(Math.trunc(opts.page) || 1, 1);
+    const base: Prisma.ContactWhereInput = opts.segmentId
+      ? await this.segments.resolveContactWhere(workspaceId, opts.segmentId)
+      : { workspaceId };
+    const q = opts.q?.trim();
+    const where: Prisma.ContactWhereInput = q
+      ? { AND: [base, { OR: [{ name: { contains: q, mode: "insensitive" } }, { phone: { contains: q } }] }] }
+      : base;
+    const [rows, total] = await Promise.all([
+      this.prisma.contact.findMany({
+        where,
+        // id breaks createdAt ties so rows never repeat or vanish between pages.
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.contact.count({ where }),
+    ]);
+    return {
+      items: rows.map(shape),
+      total,
+      page,
+      pageSize,
+      pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
+  /** Real numbers for the Contacts header. */
+  async stats(workspaceId: string) {
+    const groups = await this.prisma.contact.groupBy({
+      by: ["lifecycle"],
+      where: { workspaceId },
+      _count: { _all: true },
+    });
+    let total = 0;
+    let leads = 0;
+    let customers = 0;
+    for (const g of groups) {
+      total += g._count._all;
+      const lc = g.lifecycle.toLowerCase();
+      if (lc === "lead") leads += g._count._all;
+      if (lc === "customer") customers += g._count._all;
+    }
+    return { total, leads, customers };
   }
 
   async get(workspaceId: string, id: string) {
