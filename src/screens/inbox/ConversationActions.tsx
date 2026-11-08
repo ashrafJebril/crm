@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
 import { makeTx } from "@/lib/tx";
@@ -7,6 +6,7 @@ import type { Conversation, Lang, TeamMember } from "@/lib/types";
 import { EscalateDialog } from "./EscalateDialog";
 import { LabelPicker } from "./LabelPicker";
 import { Popover } from "./Popover";
+import { useConversationPatch } from "./useConversationPatch";
 
 type Status = Conversation["status"];
 
@@ -93,10 +93,9 @@ export function ConversationActions({
     : undefined;
   const teamQ = useFetch<TeamMember[]>(live ? null : "/team");
   const team = teamQ.data ?? [];
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const { patch: patchConv, busy, note, setNote, escalateError, setEscalateError } =
+    useConversationPatch(tx, onChanged);
   const [escalateOpen, setEscalateOpen] = useState(false);
-  const [escalateError, setEscalateError] = useState<string | null>(null);
 
   const statusLabel: Record<Status, string> = {
     human: tx("Open", "مفتوحة"),
@@ -106,42 +105,7 @@ export function ConversationActions({
     spam: tx("Spam", "مزعجة"),
   };
 
-  /** Resolves "ok", "conflict" or "error". busy stays set until the refetch
-   *  lands, so the next action always carries the fresh version. */
-  async function patch(
-    body: Record<string, unknown>,
-  ): Promise<"ok" | "conflict" | "error"> {
-    const isEscalate = body.escalated === true;
-    if (busy) return "error";
-    setBusy(true);
-    setNote(null);
-    setEscalateError(null);
-    try {
-      await api.patch(`/conversations/${conv.id}`, { ...body, version: conv.version ?? 0 });
-      await onChanged();
-      return "ok";
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        await Promise.resolve(onChanged()).catch(() => undefined);
-        setNote(
-          tx(
-            "Someone else just changed this conversation — showing the latest.",
-            "قام شخص آخر بتعديل هذه المحادثة للتو — نعرض أحدث نسخة.",
-          ),
-        );
-        return "conflict";
-      }
-      const msg =
-        e instanceof ApiError && e.message
-          ? e.message
-          : tx("Couldn't update the conversation", "تعذّر تحديث المحادثة");
-      setNote(msg);
-      if (isEscalate) setEscalateError(msg);
-      return "error";
-    } finally {
-      setBusy(false);
-    }
-  }
+  const patch = (body: Record<string, unknown>) => patchConv(conv, body);
 
   const assignee = team.find((m) => m.id === conv.assigneeId);
   const assignLabel = conv.assigneeId

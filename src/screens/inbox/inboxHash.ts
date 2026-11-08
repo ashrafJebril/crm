@@ -1,4 +1,4 @@
-import { EMPTY_FILTER, type InboxFilter } from "./inboxFilters";
+import { EMPTY_FILTER, type InboxFilter, type InboxView } from "./inboxFilters";
 
 const strs = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -49,6 +49,23 @@ export function writeFilterToHash(hash: string, f: InboxFilter): string {
   const { path, params } = split(hash);
   if (encodeFilter(f) === encodeFilter(decodeFilter(null))) params.delete("f");
   else params.set("f", encodeFilter(f));
+  const q = params.toString();
+  return q ? `${path}?${q}` : path;
+}
+
+const VIEWS = new Set<InboxView>(["list", "table", "board"]);
+
+/** Reads `v=`; anything but table/board is "list". */
+export function readViewFromHash(hash: string): InboxView {
+  const v = split(hash).params.get("v");
+  return VIEWS.has(v as InboxView) ? (v as InboxView) : "list";
+}
+
+/** Returns the hash with `v=` set (removed for "list"); other params are kept. */
+export function writeViewToHash(hash: string, v: InboxView): string {
+  const { path, params } = split(hash);
+  if (v === "list") params.delete("v");
+  else params.set("v", v);
   const q = params.toString();
   return q ? `${path}?${q}` : path;
 }

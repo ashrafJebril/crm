@@ -41,10 +41,13 @@ import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
 import {
-  activeFilterCount, bucketCounts, EMPTY_FILTER, matchesFilter, needsAttention, sortConversations,
+  activeFilterCount, bucketCounts, type InboxView, EMPTY_FILTER, matchesFilter, needsAttention, sortConversations,
   type FilterCtx, type InboxBucket, type InboxFilter, type InboxSort,
 } from "./inbox/inboxFilters";
-import { readFilterFromHash, writeFilterToHash } from "./inbox/inboxHash";
+import { readFilterFromHash, readViewFromHash, writeFilterToHash, writeViewToHash } from "./inbox/inboxHash";
+import { AddFilteredToGroup } from "./inbox/AddFilteredToGroup";
+import { InboxBoard } from "./inbox/InboxBoard";
+import { InboxTable } from "./inbox/InboxTable";
 import { InboxFilterMenu } from "./inbox/InboxFilterMenu";
 import { InboxSortMenu } from "./inbox/InboxSortMenu";
 import { TriageStrip } from "./inbox/TriageStrip";
@@ -264,10 +267,14 @@ interface InboxListProps {
   labels: ConversationLabel[];
   channels: Set<ConvChannel>;
   toggleChannel: (c: ConvChannel) => void;
-  convs: Conversation[];
   allConvs: Conversation[];
   activeId: string | null;
   setActiveId: (id: string) => void;
+  view: InboxView;
+  setView: (v: InboxView) => void;
+  search: string;
+  setSearch: (s: string) => void;
+  visibleConvs: Conversation[];
   contactById: Map<string, Contact>;
   loading: boolean;
   error: string | null;
@@ -902,10 +909,14 @@ function InboxList({
   labels,
   channels,
   toggleChannel,
-  convs,
   allConvs,
   activeId,
   setActiveId,
+  view,
+  setView,
+  search,
+  setSearch,
+  visibleConvs,
   contactById,
   loading,
   error,
@@ -917,13 +928,7 @@ function InboxList({
 
   // During the unified initial load the skeleton stands in for the rows —
   // rendering partial rows underneath would reintroduce per-channel pop-in.
-  const [search, setSearch] = useState<string>("");
   const q = search.trim().toLowerCase();
-  const visibleConvs = (loading ? [] : convs).filter((c) => {
-    if (!q) return true;
-    const name = contactById.get(c.contactId)?.name ?? "";
-    return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
-  });
 
   // Per-channel totals for the channel filter pills.
   const channelCounts = useMemo(() => {
@@ -975,6 +980,25 @@ function InboxList({
             <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} tx={tx} />
             <InboxSortMenu sort={sort} onChange={setSort} tx={tx} />
           </div>
+        </div>
+        <div
+          role="group"
+          aria-label={tx("View", "العرض")}
+          style={{ display: "flex", gap: 4, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}
+        >
+          {(["list", "table", "board"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={`btn sm${view === v ? " primary" : ""}`}
+              aria-pressed={view === v}
+              onClick={() => setView(v)}
+            >
+              {v === "list" ? tx("List", "قائمة") : v === "table" ? tx("Table", "جدول") : tx("Board", "لوحة")}
+            </button>
+          ))}
+          <span style={{ flex: 1 }} />
+          <AddFilteredToGroup convs={visibleConvs} tx={tx} lang={tx("en", "ar") as Lang} />
         </div>
         <input
           className="ix-search"
@@ -2691,6 +2715,15 @@ function InboxImpl() {
       window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
     }
   };
+  const [view, setViewState] = useState<InboxView>(() => readViewFromHash(window.location.hash));
+  const setView = (v: InboxView) => {
+    setViewState(v);
+    const next = writeViewToHash(window.location.hash, v);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  const [search, setSearch] = useState<string>("");
   const [activeId, setActiveId] = useState<string | null>(null);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
@@ -2982,6 +3015,20 @@ function InboxImpl() {
     if (channels.size === 0) return list;
     return list.filter((c) => channels.has(c.channel));
   }, [filter, sort, filterCtx, channels, conversations]);
+
+  // Search narrows the filtered list; every view (list/table/board) and
+  // "Add to group" share this exact list.
+  const visibleConvs = useMemo<Conversation[]>(() => {
+    if (initialLoading) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return filtered;
+    return filtered.filter((c) => {
+      const name = contactById.get(c.contactId)?.name ?? "";
+      return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
+    });
+  }, [filtered, search, contactById, initialLoading]);
+  const teamById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
+  const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
 
   // ─── Mutations ────────────────────────────────────────────────────────
   interface SendInput {
@@ -3330,10 +3377,14 @@ function InboxImpl() {
           labels={labels}
           channels={channels}
           toggleChannel={toggleChannel}
-          convs={filtered}
           allConvs={conversations}
           activeId={activeId}
           setActiveId={setActiveId}
+          view={view}
+          setView={setView}
+          search={search}
+          setSearch={setSearch}
+          visibleConvs={visibleConvs}
           contactById={contactById}
           loading={initialLoading}
           error={convsQ.error ?? fbConvsQ.error ?? igConvsQ.error}
@@ -3347,7 +3398,38 @@ function InboxImpl() {
           tx={tx}
         />
       </div>
-      {active ? (
+      {view === "table" || view === "board" ? (
+        <div style={{ gridColumn: "2 / -1", display: "flex", minWidth: 0, minHeight: 0, paddingBlockStart: 12 }}>
+          {view === "table" ? (
+            <InboxTable
+              convs={visibleConvs}
+              contactById={contactById}
+              teamById={teamById}
+              labelById={labelById}
+              activeId={activeId}
+              onOpen={(id) => {
+                setActiveId(id);
+                setView("list");
+              }}
+              lang={t.lang}
+              tx={tx}
+            />
+          ) : (
+            <InboxBoard
+              convs={visibleConvs}
+              contactById={contactById}
+              teamById={teamById}
+              labelById={labelById}
+              onOpen={(id) => {
+                setActiveId(id);
+                setView("list");
+              }}
+              onChanged={() => Promise.all([convsQ.refetch(), activeQ.refetch()])}
+              tx={tx}
+            />
+          )}
+        </div>
+      ) : active ? (
         <ConversationPane
           conv={active}
           contactById={contactById}
@@ -3457,7 +3539,7 @@ function InboxImpl() {
           )}
         </div>
       )}
-      {active ? (
+      {view !== "list" ? null : active ? (
         <ContactRightRail
           conv={active}
           contactById={contactById}

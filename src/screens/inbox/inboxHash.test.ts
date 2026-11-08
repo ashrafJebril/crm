@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_FILTER } from "./inboxFilters";
-import { decodeFilter, encodeFilter, readFilterFromHash, writeFilterToHash } from "./inboxHash";
+import {
+  decodeFilter, encodeFilter, readFilterFromHash, readViewFromHash, writeFilterToHash, writeViewToHash,
+} from "./inboxHash";
 
 describe("inboxHash", () => {
   const f = {
@@ -29,5 +31,15 @@ describe("inboxHash", () => {
     expect(readFilterFromHash(h)).toEqual(f);
     expect(writeFilterToHash(h, EMPTY_FILTER)).toBe("#/inbox?v=table");
     expect(writeFilterToHash("#/inbox?f=abc", EMPTY_FILTER)).toBe("#/inbox");
+  });
+  it("reads and writes the view param, keeping the filter", () => {
+    expect(readViewFromHash("#/inbox")).toBe("list");
+    expect(readViewFromHash("#/inbox?v=board")).toBe("board");
+    expect(readViewFromHash("#/inbox?v=table")).toBe("table");
+    expect(readViewFromHash("#/inbox?v=nope")).toBe("list");
+    const h = writeViewToHash(writeFilterToHash("#/inbox", f), "board");
+    expect(readViewFromHash(h)).toBe("board");
+    expect(readFilterFromHash(h)).toEqual(f);
+    expect(writeViewToHash("#/inbox?v=board", "list")).toBe("#/inbox");
   });
 });
