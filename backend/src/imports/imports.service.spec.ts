@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { FakePrisma, makeService, seedJob } from "./imports-test-fakes";
 import { suggestMapping } from "./suggest-mapping";
 
@@ -51,7 +51,7 @@ describe("ImportsService.create", () => {
   });
 
   it("audience kind additionally requires audiences.create", async () => {
-    const { svc } = makeService(new FakePrisma(), "", (p) => p !== "audiences.create");
+    const { svc } = makeService(new FakePrisma(), "", (p) => !p.startsWith("audiences."));
     await expect(
       svc.create("ws1", V, { buffer: Buffer.from("Name\nA"), originalname: "x.csv" }, "audience"),
     ).rejects.toBeInstanceOf(ForbiddenException);
@@ -186,9 +186,9 @@ describe("ImportsService.preview", () => {
     seedJob(prisma, { id: "ja", kind: "audience", status: "uploaded" });
     const { svc } = makeService(prisma, "Name\nA");
     expect(await rejectKey(svc.preview("ws1", V, "ja", { mapping: { Name: "name" }, options: {} }))).toBe("imports.group_required");
-    await expect(
-      svc.preview("ws1", V, "ja", { mapping: { Name: "name" }, options: { groupId: "nope" } }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(await rejectKey(svc.preview("ws1", V, "ja", { mapping: { Name: "name" }, options: { groupId: "nope" } }))).toBe(
+      "imports.group_invalid",
+    );
   });
 
   it("updateExisting needs contacts.update; audience needs audiences.create", async () => {
@@ -197,6 +197,72 @@ describe("ImportsService.preview", () => {
       ForbiddenException,
     );
     await expect(svc.preview("ws1", V, "j1", { mapping: { Name: "name" }, options: {} })).resolves.toBeDefined();
+  });
+});
+
+describe("ImportsService preview guards and permissions", () => {
+  const MAP2 = { Name: "name" };
+  function one(status: string, can?: (p: string) => boolean) {
+    const prisma = new FakePrisma();
+    seedJob(prisma, { id: "j1", status });
+    return { prisma, ...makeService(prisma, "Name\nA", can) };
+  }
+
+  it("preview of a running job is 409 imports.invalid_state", async () => {
+    const { svc } = one("running");
+    await expect(svc.preview("ws1", V, "j1", { mapping: MAP2 })).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it("a run that starts while the preview is counting is not overwritten (409)", async () => {
+    const { prisma, svc, media } = one("uploaded");
+    media.readBuffer.mockImplementation(async () => {
+      prisma.jobs.get("j1").status = "running";
+      return Buffer.from("Name\nA");
+    });
+    await expect(svc.preview("ws1", V, "j1", { mapping: MAP2 })).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.jobs.get("j1").status).toBe("running");
+  });
+
+  it("adding to an existing group needs audiences.update (contacts kind too)", async () => {
+    const { prisma, svc } = one("uploaded", (p) => p !== "audiences.update");
+    prisma.segments.set("g1", { id: "g1", workspaceId: "ws1", origin: "manual" });
+    await expect(svc.preview("ws1", V, "j1", { mapping: MAP2, options: { groupId: "g1" } })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("a new audience group needs audiences.create, an existing one only audiences.update", async () => {
+    const a = one("uploaded", (p) => p !== "audiences.create");
+    seedJob(a.prisma, { id: "ja", kind: "audience", status: "uploaded" });
+    a.prisma.segments.set("g1", { id: "g1", workspaceId: "ws1", origin: "manual" });
+    await expect(a.svc.preview("ws1", V, "ja", { mapping: MAP2, options: { newGroupName: "N" } })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(a.svc.preview("ws1", V, "ja", { mapping: MAP2, options: { groupId: "g1" } })).resolves.toBeDefined();
+  });
+
+  it("a pipeline needs tickets.create and contacts.update", async () => {
+    for (const denied of ["tickets.create", "contacts.update"]) {
+      const { svc } = one("uploaded", (p) => p !== denied);
+      await expect(
+        svc.preview("ws1", V, "j1", { mapping: MAP2, options: { pipeline: { pipelineId: "p1" } } }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    }
+  });
+
+  it("job responses omit the storage reference", async () => {
+    const { svc } = one("previewed");
+    expect(await svc.job("ws1", "j1")).not.toHaveProperty("fileMediaId");
+    expect((await svc.list("ws1"))[0]).not.toHaveProperty("fileMediaId");
+  });
+});
+
+describe("ImportsService matching", () => {
+  it("matches stored phones with spaces/dashes and emails case-insensitively", async () => {
+    const prisma = new FakePrisma();
+    seedJob(prisma, { id: "j1", status: "uploaded" });
+    const { svc } = makeService(prisma, "Name,Phone,Email\nA,0501234567,\nB,0507654321,\nC,,mixed@case.com\nD,0500000000,");
+    prisma.contacts.set("c1", { id: "c1", workspaceId: "ws1", name: "x", phone: "+971 50 123 4567", email: null, tags: "[]" });
+    prisma.contacts.set("c2", { id: "c2", workspaceId: "ws1", name: "y", phone: "050-765-4321", email: null, tags: "[]" });
+    prisma.contacts.set("c3", { id: "c3", workspaceId: "ws1", name: "z", phone: null, email: "Mixed@Case.com", tags: "[]" });
+    const out = await svc.preview("ws1", V, "j1", { mapping: MAP, options: { updateExisting: true } });
+    expect(out.counts).toMatchObject({ update: 3, new: 1 });
   });
 });
 

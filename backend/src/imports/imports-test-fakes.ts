@@ -32,6 +32,7 @@ export class FakePrisma {
   /** Hook invoked after each importJob.updateMany (tests cancel from here). */
   onJobUpdate?: (data: any) => void;
   private seq = 0;
+  private digitsCache = new Map<string, string>();
 
   workspace = { findFirst: async () => ({ timezone: this.timezone }) };
   workspaceMember = { findMany: async () => this.workspaceMembers };
@@ -55,14 +56,35 @@ export class FakePrisma {
       return rows;
     },
     createMany: async ({ data }: any) => {
-      for (const d of data) this.contacts.set(d.id, { ...d });
-      return { count: data.length };
+      let n = 0;
+      for (const d of data) {
+        if (this.contacts.has(d.id)) continue;
+        this.contacts.set(d.id, { ...d });
+        n += 1;
+      }
+      return { count: n };
     },
     update: async ({ where, data }: any) => {
       const c = this.contacts.get(where.id)!;
       Object.assign(c, data);
       return c;
     },
+  };
+  /** Fake of the batch matching query: values are (workspaceId, digitsVariants, emails). */
+  $queryRaw = async (_s: unknown, ws: string, digits: string[], emails: string[]) => {
+    const d = new Set(digits);
+    const e = new Set(emails);
+    const out: FakeContact[] = [];
+    for (const c of this.contacts.values()) {
+      if (c.workspaceId !== ws) continue;
+      let dg = this.digitsCache.get(c.id);
+      if (dg === undefined) {
+        dg = c.phone ? String(c.phone).replace(/\D/g, "") : "";
+        this.digitsCache.set(c.id, dg);
+      }
+      if ((dg && d.has(dg)) || (c.email && e.has(String(c.email).toLowerCase()))) out.push(c);
+    }
+    return out;
   };
   customFieldValue = {
     deleteMany: async ({ where }: any) => {
@@ -188,7 +210,7 @@ export function seedJob(prisma: FakePrisma, over: Record<string, unknown> = {}) 
 }
 
 export function makeRunner(prisma: FakePrisma, csv: string | Buffer) {
-  const media = { readBuffer: jest.fn().mockResolvedValue(Buffer.isBuffer(csv) ? csv : Buffer.from(csv, "utf8")), ingestDocument: jest.fn() };
+  const media = { readBuffer: jest.fn().mockResolvedValue(Buffer.isBuffer(csv) ? csv : Buffer.from(csv, "utf8")), ingestDocument: jest.fn(), remove: jest.fn().mockResolvedValue({ ok: true }) };
   const tags = { assign: jest.fn().mockResolvedValue({ contactsUpdated: 0 }) };
   const bulk = { run: jest.fn().mockResolvedValue({ affected: 0 }) };
   const outbound = { emitSegmentUpserted: jest.fn() };

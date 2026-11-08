@@ -121,8 +121,8 @@ describe("ImportRunnerService", () => {
     const { runner, notifications } = makeRunner(prisma, csv(...rows(1500)));
     // cancel as soon as the first batch has been persisted
     let first = true;
-    prisma.onJobUpdate = () => {
-      if (first) {
+    prisma.onJobUpdate = (d: any) => {
+      if (first && d.processed === 500) {
         first = false;
         prisma.jobs.get("job-seed").status = "cancelled";
       }
@@ -144,47 +144,109 @@ describe("ImportRunnerService", () => {
     expect(prisma.jobs.get("job-seed").status).toBe("failed");
   });
 
-  // Review Focus 4
-  it("resumes after a crash at the stored offset without duplicating created contacts", async () => {
+  // Review Focus 4: exactly-once resume via deterministic per-row contact ids.
+  it("resumes after a crash right after createMany without duplicating, and re-applies tags, custom values and group", async () => {
+    const prisma = new FakePrisma();
+    prisma.defs = [{ id: "dAge", key: "age", label: "Age", labelAr: "العمر", type: "number", options: null }];
+    seedJob(prisma, {
+      kind: "audience",
+      mapping: { Name: "name", Phone: "phone", Tags: "tags", Age: "custom:dAge" },
+      options: { matchBy: "phone_then_email", updateExisting: false, newGroupName: "G", tags: ["imp"] },
+    });
+    const file = "Name,Phone,Tags,Age\nA,0501000001,vip,30\nNameOnly,,vip,31\nC,0501000003,,32";
+    const first = makeRunner(prisma, file);
+    // crash: tag assignment throws after createMany already wrote the contacts
+    first.tags.assign.mockRejectedValueOnce(new Error("process died"));
+    await first.runner.run("job-seed");
+    expect(prisma.contacts.size).toBe(3);
+    expect(prisma.jobs.get("job-seed")).toMatchObject({ status: "failed", processed: 0 });
+
+    // restart: the scheduler finds it running with processed=0
+    Object.assign(prisma.jobs.get("job-seed"), { status: "running", finishedAt: null, heartbeatAt: new Date(Date.now() - 600_000) });
+    const second = makeRunner(prisma, file);
+    await second.runner.run("job-seed");
+
+    expect(prisma.contacts.size).toBe(3); // no duplicates, name-only row included
+    expect([...prisma.contacts.values()].map((c) => c.name).sort()).toEqual(["A", "C", "NameOnly"]);
+    expect(prisma.jobs.get("job-seed")).toMatchObject({ status: "done", created: 3, updated: 0, skipped: 0 });
+    expect(prisma.customValues).toHaveLength(3);
+    const tagged = second.tags.assign.mock.calls.flatMap(([, i]) => i.contactIds);
+    expect(new Set(tagged).size).toBe(3);
+    expect([...prisma.segments.values()]).toHaveLength(1);
+    expect(prisma.members).toHaveLength(3);
+  });
+
+  it("resumes from the stored offset and only creates the unprocessed tail", async () => {
     const prisma = new FakePrisma();
     const all = rows(1500);
-    // First 1000 rows were already created before the crash; processed lags at 1000.
+    seedJob(prisma, { totalRows: 1500 });
     const first = makeRunner(prisma, csv(...all.slice(0, 1000)));
-    seedJob(prisma, { totalRows: 1000 });
     await first.runner.run("job-seed");
     expect(prisma.contacts.size).toBe(1000);
-
-    // Simulate the crash: job back to running with a stale heartbeat, processed=1000
-    // while the stored file has all 1500 rows.
-    const j = prisma.jobs.get("job-seed");
-    Object.assign(j, {
-      status: "running",
-      processed: 1000,
-      created: 1000,
-      totalRows: 1500,
-      finishedAt: null,
-      heartbeatAt: new Date(Date.now() - 10 * 60_000),
+    // crash image: processed=1000, stale heartbeat; stored file has all 1500 rows
+    Object.assign(prisma.jobs.get("job-seed"), {
+      status: "running", processed: 1000, created: 1000, totalRows: 1500, finishedAt: null,
+      heartbeatAt: new Date(Date.now() - 600_000),
     });
     const second = makeRunner(prisma, csv(...all));
     const createMany = jest.spyOn(prisma.contact, "createMany");
     await second.runner.run("job-seed");
     expect(prisma.contacts.size).toBe(1500);
-    expect(createMany.mock.calls.flatMap(([a]: any) => a.data)).toHaveLength(500); // only the unprocessed tail
+    expect(createMany.mock.calls.flatMap(([a]: any) => a.data)).toHaveLength(500);
     expect(prisma.jobs.get("job-seed")).toMatchObject({ status: "done", processed: 1500, created: 1500 });
   });
 
-  it("re-matches rows of a half-written batch instead of duplicating them", async () => {
+  it("a half-written batch is recognised by deterministic ids, not by phone/email", async () => {
     const prisma = new FakePrisma();
     const all = rows(600);
-    const a = makeRunner(prisma, csv(...all.slice(0, 500)));
     seedJob(prisma, { totalRows: 500 });
-    await a.runner.run("job-seed");
-    // Crash after batch contacts were written but before processed was persisted.
+    await makeRunner(prisma, csv(...all.slice(0, 500))).runner.run("job-seed");
     Object.assign(prisma.jobs.get("job-seed"), { status: "running", processed: 0, created: 0, finishedAt: null });
-    const b = makeRunner(prisma, csv(...all));
-    await b.runner.run("job-seed");
+    await makeRunner(prisma, csv(...all)).runner.run("job-seed");
     expect(prisma.contacts.size).toBe(600);
-    expect(prisma.jobs.get("job-seed").skipped).toBe(500);
+    expect(prisma.jobs.get("job-seed")).toMatchObject({ created: 600, skipped: 0, updated: 0 });
+  });
+
+  it("options.ownerId applies to created contacts only, not to updated ones", async () => {
+    const prisma = new FakePrisma();
+    prisma.contacts.set("c1", { id: "c1", workspaceId: "ws1", name: "E", phone: "+971501234567", email: null, tags: "[]", ownerId: "u1" });
+    seedJob(prisma, { options: { matchBy: "phone", updateExisting: true, ownerId: "u2" } });
+    await makeRunner(prisma, csv("E2,0501234567,", "F,0507654321,")).runner.run("job-seed");
+    expect(prisma.contacts.get("c1")!.ownerId).toBe("u1");
+    expect([...prisma.contacts.values()].find((c) => c.name === "F")!.ownerId).toBe("u2");
+  });
+
+  it("deletes the stored upload when the job finishes", async () => {
+    const prisma = new FakePrisma();
+    seedJob(prisma);
+    const { runner, media } = makeRunner(prisma, csv("A,0501234567,"));
+    await runner.run("job-seed");
+    expect(media.remove).toHaveBeenCalledWith("ws1", "m1");
+  });
+
+  it("lease fencing: a runner whose job was re-claimed stops, then the new runner finishes without duplicates", async () => {
+    const prisma = new FakePrisma();
+    seedJob(prisma, { totalRows: 1500 });
+    const a = makeRunner(prisma, csv(...rows(1500)));
+    // the scheduler re-claims the job (fresh heartbeat) after A's first progress write
+    let claimed = false;
+    prisma.onJobUpdate = (d: any) => {
+      if (!claimed && d.processed === 500) {
+        claimed = true;
+        prisma.jobs.get("job-seed").heartbeatAt = new Date(Date.now() + 1_000_000);
+      }
+    };
+    await a.runner.run("job-seed");
+    const j = prisma.jobs.get("job-seed");
+    expect(j.processed).toBe(500); // A stopped at its next batch start
+    expect(j.status).toBe("running");
+    expect(a.notifications.notify).not.toHaveBeenCalled();
+
+    prisma.onJobUpdate = undefined;
+    const b = makeRunner(prisma, csv(...rows(1500)));
+    await b.runner.run("job-seed");
+    expect(prisma.contacts.size).toBe(1500);
+    expect(prisma.jobs.get("job-seed")).toMatchObject({ status: "done", created: 1500 });
   });
 });
 

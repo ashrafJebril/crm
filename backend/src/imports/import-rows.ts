@@ -145,7 +145,7 @@ export function normalizeRow(cells: string[], ctx: ImportContext): NormalizeResu
     if (!phone) errors.push({ column: get.phone.col, key: "imports.err.bad_phone" });
   }
 
-  let ownerId: string | null = ctx.options.ownerId ?? null;
+  let ownerId: string | null = null; // options.ownerId applies to created contacts only (runner)
   if (get.owner) {
     const o = get.owner.v.toLowerCase();
     const id = ctx.ownersByEmail.get(o) ?? ctx.ownersByName.get(o);

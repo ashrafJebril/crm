@@ -4,7 +4,7 @@ import { MediaService } from "../media/media.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { ImportFileError, parseFile } from "./parse-file";
-import { importError, loadContext, parseOptions, planBatch } from "./import-plan";
+import { importConflict, importError, loadContext, parseOptions, planBatch } from "./import-plan";
 import { suggestMapping } from "./suggest-mapping";
 import { ImportRunnerService } from "./import-runner.service";
 import {
@@ -41,16 +41,33 @@ export class ImportsService {
     workspaceId: string,
     viewer: Viewer,
     kind: string,
-    options: { updateExisting: boolean },
+    options: { updateExisting: boolean; groupId?: string; pipeline?: unknown },
   ) {
     if (options.updateExisting) await this.require(workspaceId, viewer, "contacts.update");
-    if (kind === "audience") await this.require(workspaceId, viewer, "audiences.create");
+    // A new audience group needs audiences.create; adding to an existing group
+    // (either kind) needs audiences.update.
+    if (kind === "audience" && !options.groupId) await this.require(workspaceId, viewer, "audiences.create");
+    if (options.groupId) await this.require(workspaceId, viewer, "audiences.update");
+    if (options.pipeline) {
+      await this.require(workspaceId, viewer, "tickets.create");
+      await this.require(workspaceId, viewer, "contacts.update");
+    }
   }
 
-  async job(workspaceId: string, id: string) {
+  private async findJob(workspaceId: string, id: string) {
     const job = await this.prisma.importJob.findFirst({ where: { id, workspaceId } });
     if (!job) throw new NotFoundException("Import not found");
     return job;
+  }
+
+  /** Public job view: the internal storage reference is not exposed. */
+  private view<T extends { fileMediaId?: string }>(job: T): Omit<T, "fileMediaId"> {
+    const { fileMediaId: _omit, ...rest } = job;
+    return rest;
+  }
+
+  async job(workspaceId: string, id: string) {
+    return this.view(await this.findJob(workspaceId, id));
   }
 
   async create(
@@ -61,7 +78,10 @@ export class ImportsService {
   ) {
     if (kind !== "contacts" && kind !== "audience") throw importError("imports.invalid_kind");
     if (!file) throw importError("imports.file_missing");
-    await this.requireForOptions(workspaceId, viewer, kind, { updateExisting: false });
+    if (kind === "audience" && !(await this.perm.viewerCan(workspaceId, viewer, "audiences.create"))) {
+      // Importing into an existing group only needs audiences.update.
+      await this.require(workspaceId, viewer, "audiences.update");
+    }
     let parsed;
     try {
       parsed = await parseFile(file.buffer, file.originalname);
@@ -107,8 +127,8 @@ export class ImportsService {
     id: string,
     body: { mapping: ImportMapping; options?: Record<string, unknown> },
   ) {
-    const job = await this.job(workspaceId, id);
-    if (job.status !== "uploaded" && job.status !== "previewed") throw importError("imports.invalid_state");
+    const job = await this.findJob(workspaceId, id);
+    if (job.status !== "uploaded" && job.status !== "previewed") throw importConflict("imports.invalid_state");
     const options = parseOptions(body.options, job.kind);
     await this.requireForOptions(workspaceId, viewer, job.kind, options);
 
@@ -143,16 +163,18 @@ export class ImportsService {
       await new Promise((r) => setImmediate(r));
     }
 
-    await this.prisma.importJob.updateMany({
-      where: { id, workspaceId },
+    // Guarded: a run/cancel that started while we were counting must not be overwritten.
+    const saved = await this.prisma.importJob.updateMany({
+      where: { id, workspaceId, status: { in: ["uploaded", "previewed"] } },
       data: { status: "previewed", mapping: body.mapping as never, options: options as never },
     });
+    if (saved.count === 0) throw importConflict("imports.invalid_state");
     return { counts, invalidSamples };
   }
 
   async run(workspaceId: string, viewer: Viewer, id: string) {
-    const job = await this.job(workspaceId, id);
-    if (job.status === "running") return job;
+    const job = await this.findJob(workspaceId, id);
+    if (job.status === "running") return this.view(job);
     if (job.status !== "previewed" || !job.mapping || !job.options) throw importError("imports.not_previewed");
     await this.requireForOptions(workspaceId, viewer, job.kind, parseOptions(job.options, job.kind));
     const now = new Date();
@@ -167,20 +189,25 @@ export class ImportsService {
   }
 
   async cancel(workspaceId: string, id: string) {
-    await this.job(workspaceId, id);
-    await this.prisma.importJob.updateMany({
+    const job = await this.findJob(workspaceId, id);
+    const res = await this.prisma.importJob.updateMany({
       where: { id, workspaceId, status: { in: ["uploaded", "previewed", "running"] } },
       data: { status: "cancelled", finishedAt: new Date() },
     });
+    if (res.count === 1) {
+      // A cancelled job never resumes; drop its stored upload.
+      await this.media.remove(workspaceId, job.fileMediaId).catch(() => undefined);
+    }
     return this.job(workspaceId, id);
   }
 
   async list(workspaceId: string, limit = 10) {
     const take = Math.min(Math.max(Number.isFinite(limit) ? limit : 10, 1), 50);
-    return this.prisma.importJob.findMany({
+    const rows = await this.prisma.importJob.findMany({
       where: { workspaceId },
       orderBy: { createdAt: "desc" },
       take,
     });
+    return rows.map((r) => this.view(r));
   }
 }

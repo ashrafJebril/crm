@@ -1,5 +1,4 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { randomUUID } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { MediaService } from "../media/media.service";
 import { TagsService } from "../tags/tags.module";
@@ -7,8 +6,9 @@ import { ContactsBulkService } from "../contacts/contacts-bulk.service";
 import { MarketingOutboundService } from "../segments/marketing-outbound.service";
 import { addManualMembers } from "../segments/segment-members";
 import { NotificationsService } from "../notifications/notifications.service";
+import { workspaceContext } from "../common/workspace-context";
 import { parseFile } from "./parse-file";
-import { loadContext, parseOptions, planBatch, type BatchPlan } from "./import-plan";
+import { importGroupId, loadContext, parseOptions, planBatch, type BatchPlan } from "./import-plan";
 import {
   DupTracker,
   IMPORT_BATCH_SIZE,
@@ -21,15 +21,31 @@ import {
 
 type StoredError = { row: number; column: string | null; key: string };
 
+/** The runner's lease on a job: the heartbeat value it last wrote. */
+interface Lease {
+  beat: Date | null;
+  job: { id: string; workspaceId: string; fileMediaId: string } | null;
+}
+
+/** Strictly increasing heartbeat so every lease value is unique. */
+function nextBeat(prev: Date | null): Date {
+  return new Date(Math.max(Date.now(), (prev?.getTime() ?? 0) + 1));
+}
+
 /**
  * Runs an ImportJob in the background: 500 rows per batch, persisting
  * `processed` + counters + heartbeat after each batch and yielding the event
  * loop (setImmediate) between batches so a 50k-row import never starves HTTP.
  *
- * Idempotent resume: a restarted job re-reads the stored file and continues
- * from `processed`; rows of an interrupted batch are re-matched by phone/email,
- * so already-created contacts are matched, not duplicated (rows with neither
- * phone nor email have no match key and may repeat after a crash).
+ * Exactly-once resume: each created contact gets a deterministic id derived
+ * from (jobId, source row number). A resumed batch finds the contacts this job
+ * already created by id (so rows without phone or email are not duplicated
+ * either), creates only the missing ones, and re-applies custom values, tags,
+ * group and pipeline to all of them.
+ *
+ * Lease fencing: every batch start and progress write is conditional on the
+ * heartbeat value this runner last wrote; if the resume scheduler claimed the
+ * job (fresh heartbeat) the stale runner's next write matches nothing and it stops.
  *
  * Workflows: contacts are written with `createMany`, which emits no per-contact
  * `contact_created` workflow trigger. That is deliberate for bulk imports.
@@ -67,34 +83,59 @@ export class ImportRunnerService {
   async run(jobId: string): Promise<void> {
     if (this.inFlight.has(jobId)) return;
     this.inFlight.add(jobId);
+    const lease: Lease = { beat: null, job: null };
     try {
-      await this.execute(jobId);
+      const job = await this.prisma.importJob.findFirst({ where: { id: jobId } });
+      if (!job || job.status !== "running") return;
+      lease.beat = job.heartbeatAt;
+      lease.job = job;
+      await workspaceContext.run({ workspaceId: job.workspaceId, userId: job.createdById }, () =>
+        this.execute(job, lease),
+      );
     } catch (e) {
       this.log.error(`import ${jobId} failed: ${(e as Error).message}`);
-      await this.prisma.importJob.updateMany({
-        where: { id: jobId, status: "running" },
+      const res = await this.prisma.importJob.updateMany({
+        where: { id: jobId, status: "running", heartbeatAt: lease.beat },
         data: { status: "failed", finishedAt: new Date() },
       });
+      if (res.count === 1) await this.removeFile(lease);
     } finally {
       this.inFlight.delete(jobId);
     }
   }
 
-  private async execute(jobId: string): Promise<void> {
-    const job = await this.prisma.importJob.findFirst({ where: { id: jobId } });
-    if (!job || job.status !== "running") return;
+  /** The stored upload is only needed while the job can still run. */
+  private async removeFile(lease: Lease): Promise<void> {
+    if (!lease.job) return;
+    try {
+      await this.media.remove(lease.job.workspaceId, lease.job.fileMediaId);
+    } catch (e) {
+      this.log.warn(`import file cleanup failed: ${(e as Error).message}`);
+    }
+  }
+
+  private async execute(
+    job: NonNullable<Awaited<ReturnType<PrismaService["importJob"]["findFirst"]>>>,
+    lease: Lease,
+  ): Promise<void> {
+    const jobId = job.id;
     const ws = job.workspaceId;
 
     const parsed = await parseFile(await this.media.readBuffer(ws, job.fileMediaId), job.fileName);
     const options = parseOptions(job.options, job.kind);
     const ctx = await loadContext(this.prisma, ws, parsed.headers, job.mapping as ImportMapping, options, 0);
 
-    // Audience import: create the group once; persist its id so a resume reuses it.
+    // Audience import: one group per job, with a job-derived id so a crash
+    // between creating it and persisting options cannot create a second one.
     if (job.kind === "audience" && !options.groupId) {
-      const seg = await this.prisma.segment.create({
-        data: { workspaceId: ws, name: options.newGroupName ?? job.fileName, origin: "manual", filter: "{}" },
-      });
-      void this.outbound.emitSegmentUpserted(ws, seg.id);
+      const gid = importGroupId(jobId);
+      let seg = await this.prisma.segment.findFirst({ where: { id: gid, workspaceId: ws } });
+      if (!seg) {
+        seg = await this.prisma.segment.create({
+          data: { id: gid, workspaceId: ws, name: options.newGroupName ?? job.fileName, origin: "manual", filter: "{}" },
+        });
+        void this.outbound.emitSegmentUpserted(ws, seg.id);
+      }
       options.groupId = seg.id;
       await this.prisma.importJob.updateMany({
         where: { id: jobId },
@@ -107,6 +148,7 @@ export class ImportRunnerService {
     for (let i = 0; i < start; i++) {
       const r = normalizeRow(parsed.rows[i], ctx);
       if (r.ok) tracker.isDuplicate(r.rec);
+      if (i % 5000 === 4999) await this.yieldTick();
     }
 
     let created = job.created;
@@ -117,8 +159,14 @@ export class ImportRunnerService {
     const errors = ((job.errors as StoredError[] | null) ?? []).slice(0, MAX_STORED_ERRORS);
 
     for (let offset = start; offset < parsed.rows.length; offset += IMPORT_BATCH_SIZE) {
-      const live = await this.prisma.importJob.findFirst({ where: { id: jobId }, select: { status: true } });
-      if (!live || live.status !== "running") return; // cancelled (or finished elsewhere)
+      // Batch-start fence: still running, and still our lease.
+      const claimed = nextBeat(lease.beat);
+      const gate = await this.prisma.importJob.updateMany({
+        where: { id: jobId, status: "running", heartbeatAt: lease.beat },
+        data: { heartbeatAt: claimed },
+      });
+      if (gate.count === 0) return; // cancelled, or another runner took over
+      lease.beat = claimed;
 
       const end = Math.min(offset + IMPORT_BATCH_SIZE, parsed.rows.length);
       const plan = await planBatch(
@@ -128,10 +176,11 @@ export class ImportRunnerService {
         parsed.rows.slice(offset, end),
         parsed.rowNumbers.slice(offset, end),
         tracker,
+        jobId,
       );
-      const touched = await this.apply(ws, ctx, plan, job.kind);
+      await this.apply(ws, ctx, plan, job.kind);
 
-      created += touched.createdIds.length;
+      created += plan.news.length + plan.resumed.length;
       updated += plan.updates.length;
       skipped += plan.unchanged.length;
       failed += plan.invalid.length;
@@ -142,8 +191,9 @@ export class ImportRunnerService {
         }
       }
 
+      const next = nextBeat(lease.beat);
       const res = await this.prisma.importJob.updateMany({
-        where: { id: jobId, status: "running" },
+        where: { id: jobId, status: "running", heartbeatAt: lease.beat },
         data: {
           processed: end,
           created,
@@ -152,16 +202,18 @@ export class ImportRunnerService {
           failed,
           duplicateInFile,
           errors: errors as never,
-          heartbeatAt: new Date(),
+          heartbeatAt: next,
         },
       });
-      if (res.count === 0) return; // cancelled mid-batch
+      if (res.count === 0) return;
+      lease.beat = next;
       await this.yieldTick();
     }
 
+    const finished = nextBeat(lease.beat);
     const done = await this.prisma.importJob.updateMany({
-      where: { id: jobId, status: "running" },
-      data: { status: "done", processed: parsed.rows.length, finishedAt: new Date(), heartbeatAt: new Date() },
+      where: { id: jobId, status: "running", heartbeatAt: lease.beat },
+      data: { status: "done", processed: parsed.rows.length, finishedAt: new Date(), heartbeatAt: finished },
     });
     if (done.count === 0) return;
     await this.notifications.notify(ws, [job.createdById], {
@@ -169,28 +221,19 @@ export class ImportRunnerService {
       title: "import.finished",
       body: JSON.stringify({ created, updated, failed }),
     });
+    await this.removeFile(lease);
   }
 
-  /** Writes one planned batch; returns the ids of created and touched contacts. */
-  private async apply(
-    ws: string,
-    ctx: ImportContext,
-    plan: BatchPlan,
-    kind: string,
-  ): Promise<{ createdIds: string[] }> {
+  /** Writes one planned batch. Every step is idempotent so a replay is safe. */
+  private async apply(ws: string, ctx: ImportContext, plan: BatchPlan, kind: string): Promise<void> {
     const { options } = ctx;
-    const createdIds: string[] = [];
     const tagSets: { id: string; tags: string[] }[] = [];
     const customRows: { defId: string; contactId: string; value: unknown }[] = [];
     const baseTags = options.tags ?? [];
 
     if (plan.news.length) {
-      const data = plan.news.map((rec) => {
-        const id = randomUUID();
-        createdIds.push(id);
-        tagSets.push({ id, tags: [...baseTags, ...rec.tags] });
-        for (const [defId, value] of Object.entries(rec.custom)) customRows.push({ defId, contactId: id, value });
-        return {
+      await this.prisma.contact.createMany({
+        data: plan.news.map(({ id, rec }) => ({
           id,
           workspaceId: ws,
           name: rec.name,
@@ -204,10 +247,15 @@ export class ImportRunnerService {
           value: rec.value,
           lastSeen: "just now",
           tags: "[]",
-          ownerId: rec.ownerId,
-        };
+          ownerId: rec.ownerId ?? options.ownerId ?? null,
+        })),
+        skipDuplicates: true,
       });
-      await this.prisma.contact.createMany({ data });
+    }
+    const createdHere = [...plan.news, ...plan.resumed];
+    for (const { id, rec } of createdHere) {
+      tagSets.push({ id, tags: [...baseTags, ...rec.tags] });
+      for (const [defId, value] of Object.entries(rec.custom)) customRows.push({ defId, contactId: id, value });
     }
 
     const updateOps = plan.updates.map((u) => {
@@ -248,7 +296,7 @@ export class ImportRunnerService {
     }
     for (const g of bySet.values()) await this.tags.assign(ws, { contactIds: g.ids, add: g.tags });
 
-    const worked = [...createdIds, ...plan.updates.map((u) => u.id)];
+    const worked = [...createdHere.map((c) => c.id), ...plan.updates.map((u) => u.id)];
     if (options.groupId) {
       const ids = kind === "audience" ? [...worked, ...plan.unchanged.map((u) => u.id)] : worked;
       if (ids.length) await addManualMembers(this.prisma, this.outbound, ws, options.groupId, ids);
@@ -261,7 +309,6 @@ export class ImportRunnerService {
         stageId: options.pipeline.stageId,
       } as never);
     }
-    return { createdIds };
   }
 }
 

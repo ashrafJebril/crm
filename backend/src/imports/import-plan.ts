@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import type { PrismaService } from "../prisma/prisma.service";
 import { requireManualGroup } from "../segments/segment-members";
 import { countryCodeForTimezone, normalizeImportPhone } from "./phone";
@@ -19,6 +20,20 @@ import {
 
 export function importError(key: string): BadRequestException {
   return new BadRequestException({ message: key, messageKey: key });
+}
+
+export function importConflict(key: string): ConflictException {
+  return new ConflictException({ message: key, messageKey: key });
+}
+
+/** Deterministic id of the contact a job creates for a source row (exactly-once resume). */
+export function importContactId(jobId: string, rowNumber: number): string {
+  return "imp" + createHash("sha256").update(`${jobId}:${rowNumber}`).digest("hex").slice(0, 22);
+}
+
+/** Deterministic id of the group an audience job creates. */
+export function importGroupId(jobId: string): string {
+  return "impg" + createHash("sha256").update(`group:${jobId}`).digest("hex").slice(0, 21);
 }
 
 /** Coerce and validate the raw options object (shape only; ids are checked in loadContext). */
@@ -119,7 +134,13 @@ export async function loadContext(
   if (options.ownerId && !members.some((m) => m.userId === options.ownerId)) {
     throw importError("imports.owner_invalid");
   }
-  if (options.groupId) await requireManualGroup(prisma, workspaceId, options.groupId);
+  if (options.groupId) {
+    try {
+      await requireManualGroup(prisma, workspaceId, options.groupId);
+    } catch {
+      throw importError("imports.group_invalid");
+    }
+  }
 
   if (options.pipeline) {
     const p = await prisma.pipeline.findFirst({ where: { id: options.pipeline.pipelineId, workspaceId } });
@@ -154,7 +175,10 @@ export interface ExistingMatch {
 export interface BatchPlan {
   invalid: { row: number; errors: RowError[] }[];
   duplicates: number;
-  news: NormalizedRow[];
+  /** Rows to create, with their deterministic contact ids. */
+  news: { id: string; rec: NormalizedRow }[];
+  /** Rows whose contact this same job already created (a resumed batch). */
+  resumed: { id: string; rec: NormalizedRow }[];
   /** Existing contacts matched when updateExisting is true. */
   updates: { id: string; rec: NormalizedRow }[];
   /** Existing contacts matched but left alone (updateExisting false). */
@@ -174,45 +198,67 @@ export async function planBatch(
   rows: string[][],
   rowNumbers: number[],
   tracker: DupTracker,
+  /** Set when running a job: rows already created by it are recognised by id. */
+  resumeJobId?: string,
 ): Promise<BatchPlan> {
-  const plan: BatchPlan = { invalid: [], duplicates: 0, news: [], updates: [], unchanged: [] };
-  const candidates: NormalizedRow[] = [];
+  const plan: BatchPlan = { invalid: [], duplicates: 0, news: [], resumed: [], updates: [], unchanged: [] };
+  let candidates: { row: number; rec: NormalizedRow }[] = [];
   rows.forEach((cells, i) => {
     const r = normalizeRow(cells, ctx);
     if (!r.ok) plan.invalid.push({ row: rowNumbers[i], errors: r.errors });
     else if (tracker.isDuplicate(r.rec)) plan.duplicates += 1;
-    else candidates.push(r.rec);
+    else candidates.push({ row: rowNumbers[i], rec: r.rec });
   });
   if (!candidates.length) return plan;
 
-  const { matchBy, updateExisting } = ctx.options;
-  const phones = new Set<string>();
-  const emails = new Set<string>();
-  for (const c of candidates) {
-    if (c.phone && matchBy !== "email") phoneVariants(c.phone, ctx.cc).forEach((v) => phones.add(v));
-    if (c.email && matchBy !== "phone") emails.add(c.email);
+  if (resumeJobId) {
+    const ids = candidates.map((c) => importContactId(resumeJobId, c.row));
+    const found = (await prisma.contact.findMany({
+      where: { workspaceId, id: { in: ids } },
+      select: { id: true },
+    })) as { id: string }[];
+    const have = new Set(found.map((f) => f.id));
+    const rest: typeof candidates = [];
+    candidates.forEach((c, i) => (have.has(ids[i]) ? plan.resumed.push({ id: ids[i], rec: c.rec }) : rest.push(c)));
+    candidates = rest;
+    if (!candidates.length) return plan;
   }
-  const or: Record<string, unknown>[] = [];
-  if (phones.size) or.push({ phone: { in: [...phones] } });
-  if (emails.size) or.push({ email: { in: [...emails] } });
-  const existing = or.length
-    ? ((await prisma.contact.findMany({
-        where: { workspaceId, OR: or },
-        select: { id: true, phone: true, email: true },
-      })) as { id: string; phone: string | null; email: string | null }[])
-    : [];
+
+  const { matchBy, updateExisting } = ctx.options;
+  const digits = new Set<string>();
+  const emails = new Set<string>();
+  for (const { rec: c } of candidates) {
+    if (c.phone && matchBy !== "email") {
+      for (const v of phoneVariants(c.phone, ctx.cc)) digits.add(v.replace(/\D/g, ""));
+    }
+    if (c.email && matchBy !== "phone") emails.add(c.email.toLowerCase());
+  }
+  // Phones are compared digits-only (stored forms vary: "+971 50 123 4567",
+  // "050-123-4567"), emails case-insensitively; one query per batch.
+  const existing =
+    digits.size || emails.size
+      ? await prisma.$queryRaw<{ id: string; phone: string | null; email: string | null }[]>`
+          SELECT "id", "phone", "email" FROM "Contact"
+          WHERE "workspaceId" = ${workspaceId}
+            AND (
+              regexp_replace(COALESCE("phone", ''), '[^0-9]', '', 'g') = ANY(${[...digits]}::text[])
+              OR lower("email") = ANY(${[...emails]}::text[])
+            )
+          ORDER BY "createdAt" ASC, "id" ASC`
+      : [];
   const byPhone = new Map<string, string>();
   const byEmail = new Map<string, string>();
   for (const e of existing) {
     const p = normalizeImportPhone(e.phone, ctx.cc);
     if (p && !byPhone.has(p)) byPhone.set(p, e.id);
-    if (e.email) byEmail.set(e.email.toLowerCase(), e.id);
+    const em = e.email?.toLowerCase();
+    if (em && !byEmail.has(em)) byEmail.set(em, e.id);
   }
-  for (const rec of candidates) {
+  for (const { row, rec } of candidates) {
     const id =
       (rec.phone && matchBy !== "email" ? byPhone.get(rec.phone) : undefined) ??
       (rec.email && matchBy !== "phone" ? byEmail.get(rec.email) : undefined);
-    if (!id) plan.news.push(rec);
+    if (!id) plan.news.push({ id: importContactId(resumeJobId ?? "preview", row), rec });
     else if (updateExisting) plan.updates.push({ id, rec });
     else plan.unchanged.push({ id });
   }
