@@ -35,7 +35,7 @@ describe("RecordsService", () => {
 
   it("contact: fields and links (conversations, open tickets, upcoming bookings)", async () => {
     prisma.contact.findFirst.mockResolvedValue(contactRow);
-    prisma.conversation.findMany.mockResolvedValue([{ id: "v1", channel: "whatsapp" }]);
+    prisma.conversation.findMany.mockResolvedValue([{ id: "v1", channel: "whatsapp", updatedAt: created }]);
     prisma.ticket.findMany.mockResolvedValue([{ id: "t1", number: 12, title: "Refund", stage: { label: "New", labelAr: "جديد" } }]);
     prisma.appointment.findMany.mockResolvedValue([{ id: "b1", service: "Cut", serviceAr: "قص", startAt: created }]);
     const r = await svc.get(WS, ME, "contact", "c1");
@@ -49,7 +49,7 @@ describe("RecordsService", () => {
       { key: "createdAt", value: created.toISOString() },
     ]);
     expect(r.links).toEqual([
-      { kind: "conversation", id: "v1", title: "Layla", subtitle: "whatsapp" },
+      { kind: "conversation", id: "v1", title: "Layla", subtitle: "whatsapp", updatedAt: created.toISOString() },
       { kind: "ticket", id: "t1", title: "#12 · Refund", subtitle: "New", subtitleAr: "جديد" },
       { kind: "booking", id: "b1", title: "Cut", titleAr: "قص", subtitle: created.toISOString() },
     ]);
@@ -86,7 +86,7 @@ describe("RecordsService", () => {
       id: "t1", number: 12, title: "Refund", value: 250, ownerId: "u9", conversationId: "v1", createdAt: created,
       pipeline: { name: "Retail" }, stage: { label: "New", labelAr: "جديد" }, contact: { id: "c1", name: "Layla", phone: "+9665" },
     });
-    prisma.conversation.findFirst.mockResolvedValue({ id: "v1", channel: "instagram" });
+    prisma.conversation.findFirst.mockResolvedValue({ id: "v1", channel: "instagram", updatedAt: created });
     const r = await svc.get(WS, ME, "ticket", "t1");
     expect(r).toMatchObject({ title: "#12 · Refund", subtitle: "Layla" });
     expect(r.fields).toEqual([
@@ -99,6 +99,7 @@ describe("RecordsService", () => {
       { key: "createdAt", value: created.toISOString() },
     ]);
     expect(r.links.map((l) => `${l.kind}:${l.id}`)).toEqual(["contact:c1", "conversation:v1"]);
+    expect(r.links[1].updatedAt).toBe(created.toISOString());
   });
 
   it("ticket: opaque conversation id yields no conversation link", async () => {
@@ -115,7 +116,7 @@ describe("RecordsService", () => {
       id: "t1", number: 1, title: "T", value: null, ownerId: null, conversationId: "v1", createdAt: created,
       pipeline: { name: "P" }, stage: { label: "S" }, contact: { id: "c1", name: "L", phone: null },
     });
-    prisma.conversation.findFirst.mockResolvedValue({ id: "v1", channel: "whatsapp" });
+    prisma.conversation.findFirst.mockResolvedValue({ id: "v1", channel: "whatsapp", updatedAt: created });
     canOpen.mockImplementation(async (_p, _w, _u, kind) => kind !== "conversation");
     const r = await svc.get(WS, ME, "ticket", "t1");
     expect(r.links.map((l) => l.kind)).toEqual(["contact"]);
@@ -191,8 +192,8 @@ describe("RecordsService", () => {
     perm.conversationScope.mockResolvedValue(scope);
     prisma.contact.findFirst.mockResolvedValue(contactRow);
     prisma.conversation.findMany.mockResolvedValue([
-      { id: "mine", channel: "whatsapp" },
-      { id: "hidden", channel: "whatsapp" },
+      { id: "mine", channel: "whatsapp", updatedAt: created },
+      { id: "hidden", channel: "whatsapp", updatedAt: created },
     ]);
     canOpen.mockImplementation(async (_p, _w, _u, kind, id) => !(kind === "conversation" && id === "hidden"));
     const r = await svc.get(WS, ME, "contact", "c1");

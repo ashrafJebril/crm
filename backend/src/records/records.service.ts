@@ -19,6 +19,8 @@ export interface RecordLink {
   titleAr?: string;
   subtitle?: string;
   subtitleAr?: string;
+  /** ISO; only on conversation links. */
+  updatedAt?: string;
 }
 export interface RecordSummary {
   kind: RecordKind;
@@ -124,7 +126,7 @@ export class RecordsService {
         where: { contactId: id, workspaceId, ...scope },
         orderBy: { updatedAt: "desc" },
         take: LINK_LIMIT,
-        select: { id: true, channel: true },
+        select: { id: true, channel: true, updatedAt: true },
       }),
       this.prisma.ticket.findMany({
         where: { contactId: id, workspaceId, closedAt: null },
@@ -140,7 +142,7 @@ export class RecordsService {
       }),
     ]);
     const links: RecordLink[] = [
-      ...convs.map((v): RecordLink => ({ kind: "conversation", id: v.id, title: c.name, subtitle: v.channel })),
+      ...convs.map((v): RecordLink => ({ kind: "conversation", id: v.id, title: c.name, subtitle: v.channel, updatedAt: v.updatedAt.toISOString() })),
       ...tickets.map((t): RecordLink => ({
         kind: "ticket", id: t.id, title: `#${t.number} · ${t.title}`, subtitle: t.stage?.label,
         ...(t.stage?.labelAr ? { subtitleAr: t.stage.labelAr } : {}),
@@ -230,9 +232,14 @@ export class RecordsService {
       // Only a DB conversation can be a record; opaque thread ids match no row.
       const conv = await this.prisma.conversation.findFirst({
         where: { id: t.conversationId, workspaceId },
-        select: { id: true, channel: true },
+        select: { id: true, channel: true, updatedAt: true },
       });
-      if (conv) links.push({ kind: "conversation", id: conv.id, title: t.contact.name, subtitle: conv.channel });
+      if (conv) {
+        links.push({
+          kind: "conversation", id: conv.id, title: t.contact.name, subtitle: conv.channel,
+          updatedAt: conv.updatedAt.toISOString(),
+        });
+      }
     }
     return {
       kind: "ticket",
