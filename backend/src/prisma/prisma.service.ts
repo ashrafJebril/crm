@@ -27,6 +27,9 @@ export class PrismaService implements OnModuleDestroy {
   get workspaceMember() { return this.client.workspaceMember; }
   get contact() { return this.client.contact; }
   get conversation() { return this.client.conversation; }
+  get conversationLabel() { return this.client.conversationLabel; }
+  /** Not tenant-scoped: callers must verify conversation + label ownership first. */
+  get conversationLabelLink() { return this.client.conversationLabelLink; }
   get message() { return this.client.message; }
   get appointment() { return this.client.appointment; }
   get template() { return this.client.template; }
