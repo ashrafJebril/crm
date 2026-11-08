@@ -152,19 +152,23 @@ export class NotificationsService {
     userId: string,
     dto: UpdatePreferencesDto,
   ) {
-    for (const it of dto.items) {
-      await this.prisma.notificationPreference.upsert({
-        where: { workspaceId_userId_type: { workspaceId, userId, type: it.type } },
-        create: {
-          workspaceId,
-          userId,
-          type: it.type,
-          inApp: it.inApp,
-          sound: it.sound,
-        },
-        update: { inApp: it.inApp, sound: it.sound },
-      });
-    }
+    // Dedupe by type (last wins), then apply atomically.
+    const byType = new Map(dto.items.map((it) => [it.type, it]));
+    await this.prisma.$transaction(
+      [...byType.values()].map((it) =>
+        this.prisma.notificationPreference.upsert({
+          where: { workspaceId_userId_type: { workspaceId, userId, type: it.type } },
+          create: {
+            workspaceId,
+            userId,
+            type: it.type,
+            inApp: it.inApp,
+            sound: it.sound,
+          },
+          update: { inApp: it.inApp, sound: it.sound },
+        }),
+      ),
+    );
     return this.getPreferences(workspaceId, userId);
   }
 }

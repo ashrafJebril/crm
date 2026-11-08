@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from "@nestjs/common";
@@ -20,6 +21,8 @@ import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workf
 
 @Injectable()
 export class TicketsService {
+  private readonly logger = new Logger(TicketsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
@@ -277,8 +280,8 @@ export class TicketsService {
           recordId: id,
           actorId,
         });
-      } catch {
-        // best-effort: never fail the update over a notification
+      } catch (err) {
+        this.logger.warn(`owner notification failed: ${(err as Error)?.message}`);
       }
     }
 

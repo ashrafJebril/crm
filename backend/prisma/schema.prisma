@@ -691,6 +691,7 @@ model Notification {
   readAt      DateTime?
   createdAt   DateTime  @default(now())
 
+  workspace Workspace @relation("WorkspaceNotifications", fields: [workspaceId], references: [id], onDelete: Cascade)
   user User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, userId, readAt])
@@ -703,6 +704,8 @@ model NotificationPreference {
   type        String
   inApp       Boolean @default(true)
   sound       Boolean @default(true)
+
+  workspace Workspace @relation("WorkspaceNotificationPreferences", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@id([workspaceId, userId, type])
 }
@@ -812,6 +815,8 @@ model Workspace {
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
   notes             Note[]             @relation("WorkspaceNotes")
+  notifications     Notification[]     @relation("WorkspaceNotifications")
+  notificationPreferences NotificationPreference[] @relation("WorkspaceNotificationPreferences")
   media             Media[]            @relation("WorkspaceMedia")
   workflows         Workflow[]         @relation("WorkspaceWorkflows")
   workflowRuns      WorkflowRun[]      @relation("WorkspaceWorkflowRuns")

@@ -10,7 +10,7 @@ describe("NotificationsService", () => {
     prisma = {
       notificationPreference: {
         findMany: jest.fn().mockResolvedValue([]),
-        upsert: jest.fn().mockResolvedValue({}),
+        upsert: jest.fn().mockImplementation((a) => Promise.resolve(a)),
       },
       notification: {
         createMany: jest.fn().mockImplementation(({ data }) => Promise.resolve({ count: data.length })),
@@ -19,6 +19,7 @@ describe("NotificationsService", () => {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
+    prisma.$transaction = jest.fn().mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops));
     realtime = { emitToUser: jest.fn() };
     svc = new NotificationsService(prisma, realtime as never);
   });
@@ -156,5 +157,17 @@ describe("NotificationsService", () => {
       create: { workspaceId: "ws1", userId: "u1", type: "mention", inApp: false, sound: false },
       update: { inApp: false, sound: false },
     });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("updatePreferences dedupes by type, last wins", async () => {
+    await svc.updatePreferences("ws1", "u1", {
+      items: [
+        { type: "mention", inApp: true, sound: true },
+        { type: "mention", inApp: false, sound: false },
+      ],
+    });
+    expect(prisma.notificationPreference.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.notificationPreference.upsert.mock.calls[0][0].update).toEqual({ inApp: false, sound: false });
   });
 });

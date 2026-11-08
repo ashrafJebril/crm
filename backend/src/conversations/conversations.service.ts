@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   Optional,
 } from "@nestjs/common";
@@ -18,6 +19,8 @@ import {
 
 @Injectable()
 export class ConversationsService {
+  private readonly logger = new Logger(ConversationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
@@ -225,8 +228,8 @@ export class ConversationsService {
         recordId: conv.id,
         actorId,
       });
-    } catch {
-      // swallowed on purpose
+    } catch (err) {
+      this.logger.warn(`assignment notification failed: ${(err as Error)?.message}`);
     }
   }
 
