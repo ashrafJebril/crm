@@ -11,7 +11,6 @@ import {
   IconAttach,
   IconBook,
   IconCheck,
-  IconFilter,
   IconMore,
   IconPhone,
   IconSend,
@@ -26,6 +25,8 @@ import { useAuth } from "@/auth/context";
 import {
   CHANNEL_LABEL,
   type Contact,
+  type ConversationLabel,
+  type TeamMember,
   type ConvChannel,
   type Conversation,
   type Lang,
@@ -38,13 +39,21 @@ import {
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
-import { ConversationActions } from "./inbox/ConversationActions";
+import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
+import {
+  bucketCounts, matchesFilter, needsAttention, sortConversations,
+  type FilterCtx, type InboxBucket, type InboxFilter, type InboxSort,
+} from "./inbox/inboxFilters";
+import { readFilterFromHash, writeFilterToHash } from "./inbox/inboxHash";
+import { InboxFilterMenu } from "./inbox/InboxFilterMenu";
+import { InboxSortMenu } from "./inbox/InboxSortMenu";
+import { TriageStrip } from "./inbox/TriageStrip";
+import { LabelChips } from "./inbox/LabelChips";
 import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
 
-type FilterId = "all" | "human" | "unread" | "closed" | "spam";
 
 /** Day label for thread separators: Today / Yesterday / a localized date.
  *  Threads span days (a recovered complaint sat a week), so per-message
@@ -244,16 +253,15 @@ function ChannelMark({
   );
 }
 
-interface FilterDef {
-  id: FilterId;
-  label: string;
-  count: number;
-  kind?: "human";
-}
-
 interface InboxListProps {
-  filter: FilterId;
-  setFilter: (f: FilterId) => void;
+  filter: InboxFilter;
+  setFilter: (f: InboxFilter) => void;
+  sort: InboxSort;
+  setSort: (s: InboxSort) => void;
+  bucketCountMap: Record<InboxBucket, number>;
+  attention: Conversation[];
+  team: TeamMember[];
+  labels: ConversationLabel[];
   channels: Set<ConvChannel>;
   toggleChannel: (c: ConvChannel) => void;
   convs: Conversation[];
@@ -886,6 +894,12 @@ interface BubbleProps {
 function InboxList({
   filter,
   setFilter,
+  sort,
+  setSort,
+  bucketCountMap,
+  attention,
+  team,
+  labels,
   channels,
   toggleChannel,
   convs,
@@ -898,19 +912,8 @@ function InboxList({
   onRetry,
   tx,
 }: InboxListProps) {
-  // Count all six buckets in a single pass, memoized on the conversation list.
-  // Previously this ran six full allConvs.filter() scans on every render — and
-  // InboxList re-renders on every 30s poll and realtime bump.
-  const counts = useMemo(() => {
-    let human = 0, unread = 0, closed = 0, spam = 0;
-    for (const c of allConvs) {
-      if (c.status === "human") human++;
-      else if (c.status === "closed") closed++;
-      else if (c.status === "spam") spam++;
-      if (c.unread > 0) unread++;
-    }
-    return { all: allConvs.length, human, unread, closed, spam };
-  }, [allConvs]);
+  const teamById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
+  const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
 
   // During the unified initial load the skeleton stands in for the rows —
   // rendering partial rows underneath would reintroduce per-channel pop-in.
@@ -929,12 +932,16 @@ function InboxList({
     return m;
   }, [allConvs]);
 
-  const filters: FilterDef[] = [
-    { id: "all", label: tx("All", "الكل"), count: counts.all },
-    { id: "human", label: tx("Assigned", "معيّنة"), count: counts.human, kind: "human" },
-    { id: "unread", label: tx("Unread", "غير مقروءة"), count: counts.unread },
-    { id: "closed", label: tx("Closed", "مغلقة"), count: counts.closed },
-    { id: "spam", label: tx("Spam", "مزعجة"), count: counts.spam },
+  const filters: { id: InboxBucket; label: string }[] = [
+    { id: "all", label: tx("All", "الكل") },
+    { id: "mine", label: tx("Mine", "مخصّصة لي") },
+    { id: "unassigned", label: tx("Unassigned", "غير معيّنة") },
+    { id: "unread", label: tx("Unread", "غير مقروءة") },
+    { id: "human", label: tx("Open", "مفتوحة") },
+    { id: "pending_customer", label: tx("Pending", "بانتظار العميل") },
+    { id: "resolved", label: tx("Resolved", "محلولة") },
+    { id: "closed", label: tx("Closed", "مغلقة") },
+    { id: "spam", label: tx("Spam", "مزعجة") },
   ];
 
   return (
@@ -961,16 +968,12 @@ function InboxList({
               {tx("Inbox", "الرسائل")}
             </h2>
             <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 }}>
-              {counts.all} {tx("conversations", "محادثة")}
+              {allConvs.length} {tx("conversations", "محادثة")}
             </div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
-            <button className="btn ghost icon sm" title={tx("Filter", "فلتر")}>
-              <IconFilter w={14} />
-            </button>
-            <button className="btn ghost icon sm" title={tx("Sort", "ترتيب")}>
-              <IconMore w={14} />
-            </button>
+            <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} tx={tx} />
+            <InboxSortMenu sort={sort} onChange={setSort} tx={tx} />
           </div>
         </div>
         <input
@@ -984,11 +987,12 @@ function InboxList({
           {filters.map((f) => (
             <button
               key={f.id}
-              className={`ix-pill ${filter === f.id ? "active" : ""}`.trim()}
-              onClick={() => setFilter(f.id)}
+              className={`ix-pill ${filter.bucket === f.id ? "active" : ""}`.trim()}
+              aria-pressed={filter.bucket === f.id}
+              onClick={() => setFilter({ ...filter, bucket: f.id })}
             >
               {f.label}
-              <span className="ct">{f.count}</span>
+              <span className="ct">{bucketCountMap[f.id]}</span>
             </button>
           ))}
         </div>
@@ -1035,6 +1039,15 @@ function InboxList({
               {tx("Retry", "إعادة")}
             </button>
           </div>
+        )}
+        {!loading && (
+          <TriageStrip
+            items={attention}
+            contactById={contactById}
+            activeId={activeId}
+            onSelect={setActiveId}
+            tx={tx}
+          />
         )}
         {!loading && visibleConvs.length === 0 && q && (
           <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
@@ -1097,7 +1110,32 @@ function InboxList({
                   {c.lastFrom === "human" && <span style={{ color: "var(--accent)" }}>↳ </span>}
                   {c.preview}
                 </div>
+                {(c.labelIds?.length ?? 0) > 0 && (
+                  <div style={{ marginTop: 4 }}>
+                    <LabelChips labelIds={c.labelIds ?? []} labelById={labelById} />
+                  </div>
+                )}
               </div>
+              {c.assigneeId && teamById.get(c.assigneeId) && (
+                <span
+                  title={teamById.get(c.assigneeId)!.name}
+                  aria-label={teamById.get(c.assigneeId)!.name}
+                  style={{
+                    flex: "0 0 auto",
+                    width: 22,
+                    height: 22,
+                    borderRadius: 99,
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    background: "var(--bg-3)",
+                    color: "var(--ink-2)",
+                  }}
+                >
+                  {teamById.get(c.assigneeId)!.initials}
+                </span>
+              )}
               {(c.unread > 0 || c.escalated) && (
                 <span
                   className="ix-unread-dot"
@@ -2630,7 +2668,19 @@ interface IgMsg {
 function InboxImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const [filter, setFilter] = useState<FilterId>("all");
+  const { user } = useAuth();
+  const [filter, setFilterState] = useState<InboxFilter>(() =>
+    readFilterFromHash(window.location.hash),
+  );
+  const [sort, setSort] = useState<InboxSort>("recent");
+  // Persist the filter in the hash query without triggering hash navigation.
+  const setFilter = (f: InboxFilter) => {
+    setFilterState(f);
+    const next = writeFilterToHash(window.location.hash, f);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
   const [activeId, setActiveId] = useState<string | null>(null);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
@@ -2897,29 +2947,31 @@ function InboxImpl() {
     });
   };
 
+  const teamQ = useFetch<TeamMember[]>("/team");
+  const labelsQ = useFetch<ConversationLabel[]>("/conversation-labels");
+  const team = teamQ.data ?? [];
+  const labels = labelsQ.data ?? [];
+
+  const filterCtx = useMemo<FilterCtx>(
+    () => ({ meId: user?.id ?? "", contactById, isLive: (c) => isLiveThreadId(c.id) }),
+    [user?.id, contactById],
+  );
+  const bucketCountMap = useMemo(() => bucketCounts(conversations, filterCtx), [conversations, filterCtx]);
+  const attention = useMemo(
+    () => conversations.filter((c) => needsAttention(c, filterCtx)),
+    [conversations, filterCtx],
+  );
+
+  // matchesFilter + sort over the merged DB/FB/IG list; name/preview search
+  // is applied afterwards inside InboxList.
   const filtered = useMemo<Conversation[]>(() => {
-    let list: Conversation[];
-    switch (filter) {
-      case "human":
-        list = conversations.filter((c) => c.status === "human");
-        break;
-      case "closed":
-        list = conversations.filter((c) => c.status === "closed");
-        break;
-      case "spam":
-        list = conversations.filter((c) => c.status === "spam");
-        break;
-      case "unread":
-        list = conversations.filter((c) => c.unread > 0);
-        break;
-      case "all":
-      default:
-        list = conversations;
-        break;
-    }
+    const list = sortConversations(
+      conversations.filter((c) => matchesFilter(c, filter, filterCtx)),
+      sort,
+    );
     if (channels.size === 0) return list;
     return list.filter((c) => channels.has(c.channel));
-  }, [filter, channels, conversations]);
+  }, [filter, sort, filterCtx, channels, conversations]);
 
   // ─── Mutations ────────────────────────────────────────────────────────
   interface SendInput {
@@ -3260,6 +3312,12 @@ function InboxImpl() {
         <InboxList
           filter={filter}
           setFilter={setFilter}
+          sort={sort}
+          setSort={setSort}
+          bucketCountMap={bucketCountMap}
+          attention={attention}
+          team={team}
+          labels={labels}
           channels={channels}
           toggleChannel={toggleChannel}
           convs={filtered}
