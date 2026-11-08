@@ -20,6 +20,8 @@ export const RESOURCES = [
   "settings",
   "api_keys",
   "reports",
+  // Controller ruling (SP-25): automations get their own resource.
+  "workflows",
 ] as const;
 
 export const ACTIONS = ["view", "create", "update", "delete", "manage"] as const;

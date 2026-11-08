@@ -47,8 +47,8 @@ describe("system roles", () => {
   });
 
   it("agent: matrix from Global Constraints", () => {
-    const vcu = ["conversations", "contacts", "tickets", "bookings", "audiences"];
-    const v = ["pipelines", "campaigns", "templates", "knowledge", "agent", "channels", "reports", "members"];
+    const vcu = ["conversations", "contacts", "tickets", "bookings", "audiences", "campaigns", "templates", "workflows"];
+    const v = ["pipelines", "knowledge", "agent", "channels", "reports", "members"];
     for (const r of RESOURCES)
       for (const a of ACTIONS) {
         const want = vcu.includes(r) ? ["view", "create", "update"].includes(a) : v.includes(r) ? a === "view" : false;

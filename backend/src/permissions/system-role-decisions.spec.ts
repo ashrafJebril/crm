@@ -88,6 +88,15 @@ const AGENT_WORK = [
   "POST /notifications/read",
   "GET /team",
   "GET /dashboard/summary",
+  "GET /workflows",
+  "POST /workflows",
+  "PATCH /workflows/:id",
+  "POST /workflows/:id/activate",
+  "POST /workflows/:id/test",
+  "POST /templates",
+  "PATCH /templates/:id",
+  "POST /campaigns",
+  "PATCH /campaigns/:id",
   "GET /auth/me",
   "GET /me/permissions",
   "GET /workspaces/:id",
@@ -98,6 +107,7 @@ const AGENT_WORK = [
 // receipts, previews, or own-account routes. Everything else that is not a
 // GET must be denied to a viewer.
 const VIEWER_SAFE_NON_GET = new Set([
+  "POST /conversations/:id/read",
   "POST /notes/:id/seen",
   "POST /segments/preview",
 ]);
@@ -116,7 +126,7 @@ describe("system-role decision table", () => {
     expect(allowed("owner", key)).toBe(true);
   });
 
-  it.each(["DELETE /contacts/:id", "DELETE /tickets/:id"])("agent cannot %s", (key) => {
+  it.each(["DELETE /contacts/:id", "DELETE /tickets/:id", "DELETE /workflows/:id", "DELETE /templates/:id", "DELETE /campaigns/:id"])("agent cannot %s", (key) => {
     expect(allowed("agent", key)).toBe(false);
     expect(allowed("admin", key)).toBe(true);
   });

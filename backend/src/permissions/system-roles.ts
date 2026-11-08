@@ -18,11 +18,19 @@ function matrix(grant: (r: Resource) => readonly Action[]): PermissionsJson {
   return out;
 }
 
-const AGENT_WORK: readonly Resource[] = ["conversations", "contacts", "tickets", "bookings", "audiences"];
-const AGENT_VIEW: readonly Resource[] = [
-  "pipelines",
+const AGENT_WORK: readonly Resource[] = [
+  "conversations",
+  "contacts",
+  "tickets",
+  "bookings",
+  "audiences",
+  // Controller ruling: agents keep campaign/template/workflow edits.
   "campaigns",
   "templates",
+  "workflows",
+];
+const AGENT_VIEW: readonly Resource[] = [
+  "pipelines",
   "knowledge",
   "agent",
   "channels",
