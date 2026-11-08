@@ -37,6 +37,13 @@ describe("inboxFilters", () => {
     expect(matchesFilter(mk({ id: "a", labelIds: ["l3"] }), f, ctx)).toBe(false);
     expect(matchesFilter(mk({ id: "a" }), f, ctx)).toBe(false);
   });
+  it("an invalid updatedAt never matches a date filter", () => {
+    const bad = mk({ id: "bad", updatedAt: "not-a-date" });
+    expect(matchesFilter(bad, F({ from: "2026-11-01" }), ctx)).toBe(false);
+    expect(matchesFilter(bad, F({ to: "2026-11-30" }), ctx)).toBe(false);
+    expect(matchesFilter(bad, F({}), ctx)).toBe(true);
+  });
+
   it("tags come from the contact", () => {
     const f = F({ tags: ["vip"] });
     expect(matchesFilter(mk({ id: "a", contactId: "c1" }), f, ctx)).toBe(true);

@@ -70,7 +70,7 @@ export function LabelPicker({
       await api.put(`/conversations/${conversationId}/labels`, { labelIds: next });
       await onChanged();
     } catch {
-      onError(tx("Couldn't update labels", "تعذّر تحديث الوسوم"));
+      onError(tx("Couldn't update labels", "تعذّر تحديث التصنيفات"));
     } finally {
       setBusy(false);
     }
@@ -87,8 +87,8 @@ export function LabelPicker({
       } catch (e) {
         onError(
           e instanceof ApiError && e.status === 409
-            ? tx("A label with that name already exists", "يوجد وسم بهذا الاسم بالفعل")
-            : tx("Couldn't create label", "تعذّر إنشاء الوسم"),
+            ? tx("A label with that name already exists", "يوجد تصنيف بهذا الاسم بالفعل")
+            : tx("Couldn't create label", "تعذّر إنشاء التصنيف"),
         );
         return;
       }
@@ -131,7 +131,7 @@ export function LabelPicker({
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        {tx("Labels", "الوسوم")}
+        {tx("Labels", "التصنيفات")}
         {labelIds.length > 0 ? ` (${labelIds.length})` : ""}
       </button>
       </span>
@@ -141,7 +141,7 @@ export function LabelPicker({
           <div
             ref={panelRef}
             role="dialog"
-            aria-label={tx("Labels", "الوسوم")}
+            aria-label={tx("Labels", "التصنيفات")}
             style={{
               position: "absolute",
               insetInlineEnd: 0,
@@ -159,7 +159,7 @@ export function LabelPicker({
           >
             {labels.length === 0 && !labelsQ.loading && (
               <div style={{ fontSize: 12, color: "var(--ink-3)", padding: 4 }}>
-                {tx("No labels yet", "لا توجد وسوم بعد")}
+                {tx("No labels yet", "لا توجد تصنيفات بعد")}
               </div>
             )}
             {labels.map((l) => {
@@ -178,7 +178,7 @@ export function LabelPicker({
                     }
                   />
                   <span style={{ width: 10, height: 10, borderRadius: 99, background: LABEL_COLOR_VAR[l.color] }} />
-                  <span style={{ flex: 1 }}>{l.name}</span>
+                  <span dir="auto" style={{ flex: 1 }}>{l.name}</span>
                 </label>
               );
             })}
@@ -188,8 +188,8 @@ export function LabelPicker({
                 maxLength={40}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && create()}
-                placeholder={tx("New label name", "اسم وسم جديد")}
-                aria-label={tx("New label name", "اسم وسم جديد")}
+                placeholder={tx("New label name", "اسم تصنيف جديد")}
+                aria-label={tx("New label name", "اسم تصنيف جديد")}
                 style={{ width: "100%", boxSizing: "border-box" }}
               />
               <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>

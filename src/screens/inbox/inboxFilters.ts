@@ -44,8 +44,9 @@ function inBucket(c: Conversation, b: InboxBucket, ctx: FilterCtx): boolean {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 /** Local calendar day (YYYY-MM-DD) of an instant, as the user sees it. */
-const localDay = (iso: string) => {
+const localDay = (iso: string): string | null => {
   const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
@@ -65,6 +66,7 @@ export function matchesFilter(c: Conversation, f: InboxFilter, ctx: FilterCtx): 
   if (f.from || f.to) {
     if (!c.updatedAt) return false;
     const d = localDay(c.updatedAt);
+    if (d === null) return false;
     if (f.from && d < f.from.slice(0, 10)) return false;
     if (f.to && d > f.to.slice(0, 10)) return false;
   }

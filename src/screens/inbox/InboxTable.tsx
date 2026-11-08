@@ -23,6 +23,7 @@ export function InboxTable({
   onOpen,
   lang,
   tx,
+  noConversations,
 }: {
   convs: Conversation[];
   contactById: Map<string, Contact>;
@@ -32,6 +33,8 @@ export function InboxTable({
   onOpen: (id: string) => void;
   lang: Lang;
   tx: Tx;
+  /** No conversations at all (not just none matching the filters). */
+  noConversations?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -72,7 +75,9 @@ export function InboxTable({
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} style={{ color: "var(--ink-3)", padding: 24, textAlign: "center" }}>
-                  {tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")}
+                  {noConversations
+                    ? tx("No conversations yet", "لا توجد محادثات بعد")
+                    : tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")}
                 </td>
               </tr>
             )}
@@ -102,7 +107,10 @@ export function InboxTable({
                   <td>
                     {sl[c.status] ?? c.status}
                     {c.escalated && (
-                      <span style={{ color: "var(--bad)", marginInlineStart: 6 }}>
+                      <span
+                        title={c.escalateReason || undefined}
+                        style={{ color: "var(--bad)", marginInlineStart: 6 }}
+                      >
                         · {tx("Escalated", "مُصعّدة")}
                       </span>
                     )}
@@ -111,10 +119,10 @@ export function InboxTable({
                     {member ? (
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                         <Avatar name={member.name} color={member.color} size="sm" />
-                        {member.name}
+                        <span dir="auto">{member.name}</span>
                       </span>
                     ) : (
-                      <span style={{ color: "var(--ink-3)" }}>{tx("Unassigned", "غير مُسندة")}</span>
+                      <span style={{ color: "var(--ink-3)" }}>{tx("Unassigned", "غير معيّنة")}</span>
                     )}
                   </td>
                   <td>

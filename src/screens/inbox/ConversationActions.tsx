@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
 import { makeTx } from "@/lib/tx";
@@ -97,6 +97,9 @@ export function ConversationActions({
   const { patch: patchConv, busy, note, setNote, escalateError, setEscalateError } =
     useConversationPatch(tx, onChanged);
   const [escalateOpen, setEscalateOpen] = useState(false);
+  // Confirm re-reads the latest conversation (a 409 refetch swaps the prop).
+  const convRef = useRef(conv);
+  convRef.current = conv;
 
   const statusLabel = statusLabels(tx);
 
@@ -105,7 +108,7 @@ export function ConversationActions({
   const assignee = team.find((m) => m.id === conv.assigneeId);
   const assignLabel = conv.assigneeId
     ? (assignee?.name ?? tx("Assigned", "مُسندة"))
-    : tx("Unassigned", "غير مُسندة");
+    : tx("Unassigned", "غير معيّنة");
   const reopen = conv.status === "resolved" || conv.status === "closed";
 
   return (
@@ -132,7 +135,7 @@ export function ConversationActions({
                   void patch({ assigneeId: m.id });
                 }}
               >
-                {m.name}
+                <span dir="auto">{m.name}</span>
               </Item>
             ))}
             {conv.assigneeId && (
@@ -206,6 +209,23 @@ export function ConversationActions({
           {conv.escalated ? tx("De-escalate", "إلغاء التصعيد") : tx("Escalate", "تصعيد")}
         </button>
       </span>
+      {conv.escalated && conv.escalateReason && (
+        <span
+          dir="auto"
+          title={conv.escalateReason}
+          style={{
+            fontSize: 12,
+            color: "var(--ink-3)",
+            alignSelf: "center",
+            maxWidth: 180,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {conv.escalateReason}
+        </span>
+      )}
       <EscalateDialog
         open={escalateOpen}
         busy={busy}
@@ -215,8 +235,8 @@ export function ConversationActions({
           setEscalateError(null);
         }}
         onConfirm={async (reason) => {
-          const res = await patch({ escalated: true, escalateReason: reason });
-          if (res !== "error") setEscalateOpen(false);
+          const res = await patchConv(convRef.current, { escalated: true, escalateReason: reason });
+          if (res === "ok") setEscalateOpen(false);
         }}
       />
       {note && (

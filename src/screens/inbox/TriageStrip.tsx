@@ -27,7 +27,7 @@ export function TriageStrip({
         style={{ width: "100%", justifyContent: "space-between", color: "var(--warn)", fontWeight: 700 }}
       >
         <span>{tx("Needs attention", "تحتاج اهتمامًا")} ({items.length})</span>
-        <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <span aria-hidden="true">{open ? "▾" : tx("▸", "◂")}</span>
       </button>
       {open && (
         <div>
@@ -52,6 +52,24 @@ export function TriageStrip({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {contactById.get(c.contactId)?.name ?? c.preview}
               </span>
+              {c.escalated && c.escalateReason && (
+                <span
+                  dir="auto"
+                  title={c.escalateReason}
+                  style={{
+                    fontSize: 11,
+                    color: "var(--ink-3)",
+                    minWidth: 0,
+                    flex: "0 1 auto",
+                    maxWidth: 110,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c.escalateReason}
+                </span>
+              )}
               {c.escalated && (
                 <span style={{ fontSize: 10.5, color: "var(--bad)", marginInlineStart: "auto" }}>
                   {tx("Escalated", "مُصعَّدة")}

@@ -33,12 +33,13 @@ export function useConversationPatch(
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         await Promise.resolve(onChanged()).catch(() => undefined);
-        setNote(
-          tx(
-            "Someone else just changed this conversation — showing the latest.",
-            "قام شخص آخر بتعديل هذه المحادثة للتو — نعرض أحدث نسخة.",
-          ),
+        const conflictMsg = tx(
+          "Someone else just changed this conversation — showing the latest.",
+          "قام شخص آخر بتعديل هذه المحادثة للتو — نعرض أحدث نسخة.",
         );
+        setNote(conflictMsg);
+        // Keep the escalate dialog (and the typed reason) open with the message inside it.
+        if (isEscalate) setEscalateError(conflictMsg);
         return "conflict";
       }
       const msg =

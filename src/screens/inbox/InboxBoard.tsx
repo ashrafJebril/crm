@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -51,6 +51,12 @@ export function InboxBoard({
   const [dragId, setDragId] = useState<string | null>(null);
   const [escalatingId, setEscalatingId] = useState<string | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  // A "still saving" note is stale the moment the save finishes.
+  useEffect(() => {
+    if (!busy) setBusyNote(null);
+  }, [busy]);
   const cols = groupByColumn(convs);
   const sl = statusLabels(tx);
   const title: Record<BoardColumn, string> = {
@@ -83,6 +89,10 @@ export function InboxBoard({
     setBusyNote(null);
     // Defer one frame so dnd-kit finishes its cleanup before the card changes column.
     requestAnimationFrame(() => {
+      if (busyRef.current) {
+        setBusyNote(tx("Still saving — try again in a moment.", "جارٍ الحفظ — حاول مرة أخرى بعد لحظة."));
+        return;
+      }
       if (plan.kind === "escalate") {
         setEscalateError(null);
         setEscalatingId(conv.id);
@@ -92,7 +102,7 @@ export function InboxBoard({
     });
   }
 
-  const shownNote = busyNote ?? note;
+  const shownNote = note ?? busyNote;
 
   return (
     <DndContext
@@ -158,7 +168,7 @@ export function InboxBoard({
           onConfirm={async (reason) => {
             if (!escalating) return;
             const res = await patch(escalating, { escalated: true, escalateReason: reason });
-            if (res !== "error") setEscalatingId(null);
+            if (res === "ok") setEscalatingId(null);
           }}
         />
       </div>
@@ -297,6 +307,21 @@ function CardBody({
       >
         {c.preview}
       </span>
+      {c.escalated && c.escalateReason && (
+        <span
+          dir="auto"
+          title={c.escalateReason}
+          style={{
+            fontSize: 11.5,
+            color: "var(--bad)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {c.escalateReason}
+        </span>
+      )}
       <LabelChips labelIds={c.labelIds ?? []} labelById={labelById} />
     </article>
   );

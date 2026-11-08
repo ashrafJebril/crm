@@ -71,13 +71,13 @@ function Panel({
               checked={filter.assigneeIds.includes(m.id)}
               onChange={() => set({ assigneeIds: toggle(filter.assigneeIds, m.id) })}
             >
-              {m.name}
+              <span dir="auto">{m.name}</span>
             </Check>
           ))}
         </Group>
       )}
       {labels.length > 0 && (
-        <Group title={tx("Labels", "الوسوم")}>
+        <Group title={tx("Labels", "التصنيفات")}>
           {labels.map((l) => (
             <Check
               key={l.id}
@@ -85,7 +85,7 @@ function Panel({
               onChange={() => set({ labelIds: toggle(filter.labelIds, l.id) })}
             >
               <span style={{ width: 10, height: 10, borderRadius: 99, background: LABEL_COLOR_VAR[l.color] }} />
-              {l.name}
+              <span dir="auto">{l.name}</span>
             </Check>
           ))}
         </Group>

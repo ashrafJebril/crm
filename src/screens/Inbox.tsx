@@ -1066,8 +1066,12 @@ function InboxList({
         )}
         {!loading && !error && visibleConvs.length === 0 && !q && (
           <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
-            <div>{tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")}</div>
-            {(filter.bucket !== "all" || activeFilterCount(filter) > 0) && (
+            <div>
+              {allConvs.length === 0
+                ? tx("No conversations yet", "لا توجد محادثات بعد")
+                : tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")}
+            </div>
+            {allConvs.length > 0 && (filter.bucket !== "all" || activeFilterCount(filter) > 0) && (
               <button className="btn sm" style={{ marginTop: 8 }} onClick={() => setFilter(EMPTY_FILTER)}>
                 {tx("Clear filters", "مسح عوامل التصفية")}
               </button>
@@ -2857,6 +2861,7 @@ function InboxImpl() {
           unread: c.unread,
           pinned: false,
           lastAt: fmtCompact(c.updatedAt),
+          updatedAt: c.updatedAt,
           lastFrom: "them",
           preview: c.snippet || "—",
           channel: "facebook",
@@ -2875,6 +2880,7 @@ function InboxImpl() {
           unread: c.unread,
           pinned: false,
           lastAt: fmtCompact(c.updatedAt),
+          updatedAt: c.updatedAt,
           lastFrom: "them",
           preview: c.snippet || "—",
           channel: "instagram",
@@ -2994,6 +3000,17 @@ function InboxImpl() {
   const labelsQ = useFetch<ConversationLabel[]>("/conversation-labels");
   const team = teamQ.data ?? [];
   const labels = labelsQ.data ?? [];
+
+  // Drop label ids from a stale ?f= hash (label deleted since) once labels have
+  // loaded, so a dead label can't filter the whole inbox out.
+  useEffect(() => {
+    if (!labelsQ.data) return;
+    const known = new Set(labelsQ.data.map((l) => l.id));
+    if (filter.labelIds.some((id) => !known.has(id))) {
+      setFilter({ ...filter, labelIds: filter.labelIds.filter((id) => known.has(id)) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [labelsQ.data, filter.labelIds]);
 
   const filterCtx = useMemo<FilterCtx>(
     () => ({ meId: user?.id ?? "", contactById, isLive: (c) => isLiveThreadId(c.id) }),
@@ -3413,6 +3430,7 @@ function InboxImpl() {
               }}
               lang={t.lang}
               tx={tx}
+              noConversations={conversations.length === 0}
             />
           ) : (
             <InboxBoard
