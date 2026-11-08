@@ -19,7 +19,7 @@ import {
   UpdateWorkspaceDto,
 } from "./workspaces.dto";
 import type { JwtPayload } from "../auth/auth.guard";
-import { PermissionService } from "../permissions/permission.service";
+import { PermissionService, actorOf } from "../permissions/permission.service";
 import { missingPermission } from "../permissions/permission.guard";
 import type { Permission } from "../permissions/catalog";
 
@@ -85,7 +85,7 @@ export class WorkspacesController {
     @Req() req: AuthedReq,
   ) {
     await this.authorize(id, req, "members.create");
-    return this.svc.addMember(id, dto);
+    return this.svc.addMember(id, dto, actorOf(req.user));
   }
 
   @Post(":id/invite")
@@ -95,7 +95,7 @@ export class WorkspacesController {
     @Req() req: AuthedReq,
   ) {
     await this.authorize(id, req, "members.create");
-    return this.svc.inviteByEmail(id, dto);
+    return this.svc.inviteByEmail(id, dto, actorOf(req.user));
   }
 
   @Patch(":id/members/:userId")
@@ -106,7 +106,7 @@ export class WorkspacesController {
     @Req() req: AuthedReq,
   ) {
     await this.authorize(id, req, "members.update");
-    return this.svc.updateMemberRole(id, userId, dto);
+    return this.svc.updateMemberRole(id, userId, dto, actorOf(req.user));
   }
 
   @Patch(":id/members/:userId/password")
@@ -117,9 +117,7 @@ export class WorkspacesController {
     @Req() req: AuthedReq,
   ) {
     await this.authorize(id, req, "members.update");
-    return this.svc.resetMemberPassword(id, userId, dto, {
-      isSuperAdmin: !!req.user.isSuperAdmin,
-    });
+    return this.svc.resetMemberPassword(id, userId, dto, actorOf(req.user));
   }
 
   @Delete(":id/members/:userId")
@@ -129,6 +127,6 @@ export class WorkspacesController {
     @Req() req: AuthedReq,
   ) {
     await this.authorize(id, req, "members.delete");
-    return this.svc.removeMember(id, userId);
+    return this.svc.removeMember(id, userId, actorOf(req.user));
   }
 }

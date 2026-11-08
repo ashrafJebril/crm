@@ -8,7 +8,8 @@ import {
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
-import { PermissionService } from "../permissions/permission.service";
+import { PermissionService, type Actor } from "../permissions/permission.service";
+import { sanitizePermissions, type PermissionsJson } from "../permissions/catalog";
 import { isEffectiveOwner } from "../permissions/member-role";
 import { seedWorkspaceDefaults } from "./workspace-defaults";
 import {
@@ -132,12 +133,14 @@ export class WorkspacesService {
     });
   }
 
-  async addMember(workspaceId: string, dto: AddMemberDto) {
+  async addMember(workspaceId: string, dto: AddMemberDto, actor: Actor) {
     const exists = await this.prisma.workspaceMember.findUnique({
       where: { userId_workspaceId: { userId: dto.userId, workspaceId } },
     });
     if (exists) throw new ConflictException("Already a member");
-    const roleId = await this.permissions.systemRoleId(workspaceId, dto.role);
+    const target = await this.resolveTarget(workspaceId, { role: dto.role });
+    await this.authorizeAssignment(workspaceId, actor, target);
+    const roleId = target.roleId;
     return this.prisma.workspaceMember.create({
       data: { userId: dto.userId, workspaceId, role: dto.role, roleId },
     });
@@ -153,7 +156,10 @@ export class WorkspacesService {
    * Returns `{ memberId, created, tempPassword? }` so the UI can show the
    * password once when a new account was provisioned.
    */
-  async inviteByEmail(workspaceId: string, dto: InviteByEmailDto) {
+  async inviteByEmail(workspaceId: string, dto: InviteByEmailDto, actor: Actor) {
+    // Authorize the role before provisioning anything.
+    const target = await this.resolveTarget(workspaceId, { role: dto.role });
+    await this.authorizeAssignment(workspaceId, actor, target);
     const email = dto.email.toLowerCase().trim();
     let user = await this.prisma.user.findUnique({ where: { email } });
     let provisionedPassword: string | undefined;
@@ -210,7 +216,7 @@ export class WorkspacesService {
     });
     if (exists) throw new ConflictException("Already a member");
 
-    const roleId = await this.permissions.systemRoleId(workspaceId, dto.role);
+    const roleId = target.roleId;
     const member = await this.prisma.workspaceMember.create({
       data: { userId: user.id, workspaceId, role: dto.role, roleId },
     });
@@ -223,54 +229,102 @@ export class WorkspacesService {
     };
   }
 
+  /**
+   * The role a request asks for: a roleId (system or custom, must belong to
+   * this workspace) or a legacy system role string. `legacyRole` is what old
+   * code reads from WorkspaceMember.role: the system key, or "agent" for a
+   * custom role. The row check also guards against the tenancy extension
+   * rewriting workspaceId on the role query.
+   */
+  private async resolveTarget(
+    workspaceId: string,
+    dto: { role?: string; roleId?: string },
+  ): Promise<{ legacyRole: string; roleId: string | null; permissions: PermissionsJson }> {
+    if (dto.role && dto.roleId) throw new BadRequestException("Send role or roleId, not both");
+    if (dto.roleId) {
+      const role = await this.prisma.role.findFirst({ where: { id: dto.roleId, workspaceId } });
+      if (!role || role.workspaceId !== workspaceId) throw new NotFoundException("Role not found");
+      return {
+        legacyRole: role.isSystem && role.key ? role.key : "agent",
+        roleId: role.id,
+        permissions: sanitizePermissions(role.permissions),
+      };
+    }
+    if (dto.role) {
+      // Keep roleId in step with the legacy string (SP-25), so a stale system
+      // roleId can never outrank a demotion.
+      const row = await this.permissions.systemRoleRow(workspaceId, dto.role);
+      return {
+        legacyRole: dto.role,
+        roleId: row?.id ?? null,
+        permissions: row ? sanitizePermissions(row.permissions) : {},
+      };
+    }
+    throw new BadRequestException("role or roleId is required");
+  }
+
+  /** Only an owner may hand out the owner role, and nobody may hand out
+   *  permissions they do not hold themselves. */
+  private async authorizeAssignment(
+    workspaceId: string,
+    actor: Actor,
+    target: { legacyRole: string; permissions: PermissionsJson },
+  ) {
+    if (target.legacyRole === "owner") {
+      await this.permissions.assertOwner(workspaceId, actor, "Only an owner can assign the owner role");
+    }
+    await this.permissions.assertCanGrant(workspaceId, actor, target.permissions);
+  }
+
+  /** Member row of THIS workspace (explicit post-check: never trust a row
+   *  that came back for another workspace). */
+  private async findMember(db: Pick<PrismaService, "workspaceMember">, workspaceId: string, userId: string) {
+    const m = await db.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+      include: { roleRef: true },
+    });
+    if (!m || m.workspaceId !== workspaceId) throw new NotFoundException("Member not found");
+    return m;
+  }
+
   async updateMemberRole(
     workspaceId: string,
     userId: string,
     dto: UpdateMemberRoleDto,
+    actor: Actor,
   ) {
-    const m = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-      include: { roleRef: true },
-    });
-    if (!m) throw new NotFoundException("Member not found");
-
-    let legacyRole: string;
-    let roleId: string | null;
-    if (dto.roleId) {
-      // The role must belong to this workspace (system or custom). The row
-      // check also guards against the tenancy extension rewriting workspaceId.
-      const role = await this.prisma.role.findFirst({ where: { id: dto.roleId, workspaceId } });
-      if (!role || role.workspaceId !== workspaceId) throw new NotFoundException("Role not found");
-      roleId = role.id;
-      // Old code reads the legacy string: system key, or "agent" for custom.
-      legacyRole = role.isSystem && role.key ? role.key : "agent";
-    } else if (dto.role) {
-      // Keep roleId in step with the legacy string (SP-25), so a stale system
-      // roleId can never outrank a demotion.
-      legacyRole = dto.role;
-      roleId = await this.permissions.systemRoleId(workspaceId, dto.role);
-    } else {
-      throw new BadRequestException("role or roleId is required");
-    }
-
-    if (isEffectiveOwner(m) && legacyRole !== "owner") {
-      await this.assertAnotherOwner(workspaceId, m.id);
-    }
-    const updated = await this.prisma.workspaceMember.update({
-      where: { id: m.id },
-      data: { role: legacyRole, roleId },
-    });
+    // Last-owner check and write share one serializable transaction.
+    const updated = await this.prisma.$transaction(
+      async (tx) => {
+        const m = await this.findMember(tx, workspaceId, userId);
+        const target = await this.resolveTarget(workspaceId, dto);
+        await this.authorizeAssignment(workspaceId, actor, target);
+        if (isEffectiveOwner(m)) {
+          await this.permissions.assertOwner(workspaceId, actor, "Only an owner can change an owner's role");
+          if (target.legacyRole !== "owner") await this.assertAnotherOwner(tx, workspaceId, m.id);
+        }
+        return tx.workspaceMember.update({
+          where: { id: m.id },
+          data: { role: target.legacyRole, roleId: target.roleId },
+        });
+      },
+      { isolationLevel: "Serializable" },
+    );
     this.permissions.invalidate(workspaceId, userId);
     return updated;
   }
 
   /** The workspace must keep at least one member whose effective role is owner. */
-  private async assertAnotherOwner(workspaceId: string, exceptMemberId: string) {
-    const others = await this.prisma.workspaceMember.findMany({
+  private async assertAnotherOwner(
+    db: Pick<PrismaService, "workspaceMember">,
+    workspaceId: string,
+    exceptMemberId: string,
+  ) {
+    const others = await db.workspaceMember.findMany({
       where: { workspaceId, id: { not: exceptMemberId } },
       include: { roleRef: true },
     });
-    if (!others.some((o) => isEffectiveOwner(o))) {
+    if (!others.filter((o) => o.workspaceId === workspaceId).some((o) => isEffectiveOwner(o))) {
       throw new BadRequestException("A workspace must keep at least one owner");
     }
   }
@@ -287,13 +341,13 @@ export class WorkspacesService {
     workspaceId: string,
     userId: string,
     dto: ResetMemberPasswordDto,
-    options: { isSuperAdmin?: boolean } = {},
+    actor: Actor,
   ) {
-    const m = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-    });
-    if (!m) throw new NotFoundException("Member not found");
-    if (!options.isSuperAdmin) {
+    const m = await this.findMember(this.prisma, workspaceId, userId);
+    if (isEffectiveOwner(m)) {
+      await this.permissions.assertOwner(workspaceId, actor, "Only an owner can reset an owner's password");
+    }
+    if (!actor.isSuperAdmin) {
       const otherMemberships = await this.prisma.workspaceMember.count({
         where: { userId, workspaceId: { not: workspaceId } },
       });
@@ -316,16 +370,20 @@ export class WorkspacesService {
     };
   }
 
-  async removeMember(workspaceId: string, userId: string) {
-    const m = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-      include: { roleRef: true },
-    });
-    if (!m) throw new NotFoundException("Member not found");
-    if (isEffectiveOwner(m)) await this.assertAnotherOwner(workspaceId, m.id);
-    // Only the membership goes; the crm User (and so its Kewy identity) stays.
-    // Kewy resolves tenants from workspaces, so there is nothing to sync here.
-    await this.prisma.workspaceMember.delete({ where: { id: m.id } });
+  async removeMember(workspaceId: string, userId: string, actor: Actor) {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const m = await this.findMember(tx, workspaceId, userId);
+        if (isEffectiveOwner(m)) {
+          await this.permissions.assertOwner(workspaceId, actor, "Only an owner can remove an owner");
+          await this.assertAnotherOwner(tx, workspaceId, m.id);
+        }
+        // Only the membership goes; the crm User (and so its Kewy identity) stays.
+        // Kewy resolves tenants from workspaces, so there is nothing to sync here.
+        await tx.workspaceMember.delete({ where: { id: m.id } });
+      },
+      { isolationLevel: "Serializable" },
+    );
     this.permissions.invalidate(workspaceId, userId);
     return { ok: true };
   }

@@ -6,6 +6,7 @@ import { PermissionService, type EffectiveRole } from "./permission.service";
 import { REQUIRE_PERMISSION_KEY } from "./require-permission.decorator";
 import { ROUTE_PERMISSIONS, membershipExempt, routeKeysFor, type RouteRule } from "./permission-map";
 import type { Permission } from "./catalog";
+import { blockedForImpersonation } from "./impersonation";
 
 export type PermissionRequest = Request & { user?: JwtPayload; permissions?: EffectiveRole };
 
@@ -13,14 +14,7 @@ export function missingPermission(permission: string): ForbiddenException {
   return new ForbiddenException({ statusCode: 403, message: "Missing permission", permission });
 }
 
-/** Impersonation (a support session: `impersonating`, NOT `isSuperAdmin` —
- *  AdminService.impersonateWorkspace deliberately omits it) bypasses every
- *  check except spending the tenant's money: billing.* and campaigns.manage
- *  (ads spend approval/rejection, campaign launch). Topping up the ads
- *  wallet is billing.update. */
-export function blockedForImpersonation(permission: string): boolean {
-  return permission.startsWith("billing.") || permission === "campaigns.manage";
-}
+export { blockedForImpersonation };
 
 function impersonationDenied(permission: string): ForbiddenException {
   return new ForbiddenException({

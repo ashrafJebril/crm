@@ -30,6 +30,7 @@ describe("WorkspacesController member routes use permissions, not legacy roles",
 
   it("a custom role with members.update (legacy role agent) can change roles in the JWT workspace", async () => {
     await expect(ctl.updateMemberRole("ws1", "u2", { roleId: "r1" }, req())).resolves.toEqual({ ok: 1 });
+    expect(svc.updateMemberRole).toHaveBeenCalledWith("ws1", "u2", { roleId: "r1" }, expect.objectContaining({ userId: "u1" }));
     expect(svc.requireMember).toHaveBeenCalledWith("u1", "ws1");
     expect(effective).not.toHaveBeenCalled(); // the global guard already checked
   });

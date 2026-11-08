@@ -1,4 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from "@nestjs/common";
+import type { Request } from "express";
+import type { JwtPayload } from "../auth/auth.guard";
+import { actorOf } from "../permissions/permission.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { RolesService } from "./roles.service";
 import { CreateRoleDto, UpdateRoleDto } from "./roles.dto";
@@ -15,13 +18,22 @@ export class RolesController {
   }
 
   @Post()
-  create(@CurrentWorkspace() ws: string, @Body() dto: CreateRoleDto) {
-    return this.svc.create(ws, dto);
+  create(
+    @CurrentWorkspace() ws: string,
+    @Body() dto: CreateRoleDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    return this.svc.create(ws, dto, actorOf(req.user));
   }
 
   @Patch(":id")
-  update(@CurrentWorkspace() ws: string, @Param("id") id: string, @Body() dto: UpdateRoleDto) {
-    return this.svc.update(ws, id, dto);
+  update(
+    @CurrentWorkspace() ws: string,
+    @Param("id") id: string,
+    @Body() dto: UpdateRoleDto,
+    @Req() req: Request & { user: JwtPayload },
+  ) {
+    return this.svc.update(ws, id, dto, actorOf(req.user));
   }
 
   @Delete(":id")

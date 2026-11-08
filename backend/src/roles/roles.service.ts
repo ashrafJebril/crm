@@ -6,7 +6,7 @@ import {
 } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { PermissionService } from "../permissions/permission.service";
+import { PermissionService, type Actor } from "../permissions/permission.service";
 import { sanitizePermissions, validatePermissions } from "../permissions/catalog";
 import { resolveMemberRole } from "../permissions/member-role";
 import { CreateRoleDto, UpdateRoleDto } from "./roles.dto";
@@ -58,8 +58,9 @@ export class RolesService {
       }));
   }
 
-  async create(workspaceId: string, dto: CreateRoleDto) {
+  async create(workspaceId: string, dto: CreateRoleDto, actor: Actor) {
     const permissions = validatePermissions(dto.permissions);
+    await this.permissions.assertCanGrant(workspaceId, actor, permissions);
     await this.assertNameFree(workspaceId, dto.name);
     const role = await this.prisma.role.create({
       data: {
@@ -75,14 +76,16 @@ export class RolesService {
     return { ...role, permissions, memberCount: 0 };
   }
 
-  async update(workspaceId: string, id: string, dto: UpdateRoleDto) {
-    const role = await this.find(workspaceId, id);
+  async update(workspaceId: string, id: string, dto: UpdateRoleDto, actor: Actor) {
+    const role = await this.find(this.prisma, workspaceId, id);
     if (role.isSystem && role.key === "owner") {
       throw new BadRequestException("The Owner role cannot be modified");
     }
     const data: Prisma.RoleUpdateInput = {};
     if (dto.permissions !== undefined) {
-      data.permissions = validatePermissions(dto.permissions) as Prisma.InputJsonValue;
+      const permissions = validatePermissions(dto.permissions);
+      await this.permissions.assertCanGrant(workspaceId, actor, permissions);
+      data.permissions = permissions as Prisma.InputJsonValue;
     }
     if (dto.name !== undefined && dto.name.trim() !== role.name) {
       await this.assertNameFree(workspaceId, dto.name, id);
@@ -99,24 +102,27 @@ export class RolesService {
     return { ...updated, permissions: sanitizePermissions(updated.permissions) };
   }
 
+  /** The in-use check and the delete run in one transaction. */
   async remove(workspaceId: string, id: string) {
-    const role = await this.find(workspaceId, id);
-    if (role.isSystem) throw new BadRequestException("System roles cannot be deleted");
-    const members = await this.prisma.workspaceMember.count({ where: { workspaceId, roleId: id } });
-    if (members > 0) {
-      throw new ConflictException({
-        statusCode: 409,
-        message: "Role is assigned to members",
-        members,
-      });
-    }
-    await this.prisma.role.delete({ where: { id } });
-    return { ok: true };
+    return this.prisma.$transaction(async (tx) => {
+      const role = await this.find(tx, workspaceId, id);
+      if (role.isSystem) throw new BadRequestException("System roles cannot be deleted");
+      const members = await tx.workspaceMember.count({ where: { workspaceId, roleId: id } });
+      if (members > 0) {
+        throw new ConflictException({
+          statusCode: 409,
+          message: "Role is assigned to members",
+          members,
+        });
+      }
+      await tx.role.delete({ where: { id } });
+      return { ok: true };
+    });
   }
 
   /** Role of this workspace, or 404 (another workspace's role id is a 404 too). */
-  private async find(workspaceId: string, id: string) {
-    const role = await this.prisma.role.findFirst({ where: { id, workspaceId } });
+  private async find(db: Pick<PrismaService, "role">, workspaceId: string, id: string) {
+    const role = await db.role.findFirst({ where: { id, workspaceId } });
     if (!role || role.workspaceId !== workspaceId) throw new NotFoundException("Role not found");
     return role;
   }

@@ -1,7 +1,8 @@
-import { Injectable } from "@nestjs/common";
+import { ForbiddenException, Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { sanitizePermissions, type Permission, type PermissionsJson } from "./catalog";
+import { flattenPermissions, sanitizePermissions, type Permission, type PermissionsJson } from "./catalog";
+import { blockedForImpersonation } from "./impersonation";
 import { SYSTEM_ROLES, SYSTEM_ROLE_KEYS, type ConversationVisibility } from "./system-roles";
 
 export interface EffectiveRole {
@@ -18,6 +19,22 @@ export function hasPermission(perms: PermissionsJson, permission: Permission | s
   const [res, act] = permission.split(".");
   const acts = (perms as Record<string, readonly string[] | undefined>)[res];
   return Array.isArray(acts) && acts.includes(act);
+}
+
+/** Who is performing a role/member change. Super-admins bypass; impersonation
+ *  sessions bypass except money permissions (see impersonation.ts). */
+export interface Actor {
+  userId: string;
+  isSuperAdmin?: boolean;
+  impersonating?: boolean;
+}
+
+export function actorOf(user: { sub: string; isSuperAdmin?: boolean; impersonating?: boolean }): Actor {
+  return { userId: user.sub, isSuperAdmin: user.isSuperAdmin, impersonating: user.impersonating };
+}
+
+function cannotGrant(): ForbiddenException {
+  return new ForbiddenException("Cannot grant permissions you don't have");
 }
 
 const TTL_MS = 30_000;
@@ -101,6 +118,32 @@ export class PermissionService {
     }
     const prefix = `${workspaceId}:`;
     for (const k of [...this.cache.keys()]) if (k.startsWith(prefix)) this.cache.delete(k);
+  }
+
+  /** 403 unless the actor already holds every permission in `perms`
+   *  ("you cannot grant more than you hold"). */
+  async assertCanGrant(workspaceId: string, actor: Actor, perms: PermissionsJson): Promise<void> {
+    if (actor.isSuperAdmin) return;
+    const wanted = flattenPermissions(perms);
+    if (actor.impersonating) {
+      if (wanted.some((p) => blockedForImpersonation(p))) throw cannotGrant();
+      return;
+    }
+    const eff = await this.effective(workspaceId, actor.userId);
+    if (wanted.some((p) => !this.can(eff, p))) throw cannotGrant();
+  }
+
+  /** 403 unless the actor is an effective owner (or a bypass session). */
+  async assertOwner(workspaceId: string, actor: Actor, message: string): Promise<void> {
+    if (actor.isSuperAdmin || actor.impersonating) return;
+    const eff = await this.effective(workspaceId, actor.userId);
+    if (eff?.key !== "owner") throw new ForbiddenException(message);
+  }
+
+  /** The workspace's system role row for a legacy role string (creating the
+   *  system roles if missing), or null. Never a row of another workspace. */
+  async systemRoleRow(workspaceId: string, legacyRole: string): Promise<RoleRow | null> {
+    return this.systemRole(workspaceId, legacyRole.toLowerCase());
   }
 
   /** Creates any missing system roles for a workspace (idempotent). */
