@@ -144,6 +144,56 @@ describe("ConversationsService.update", () => {
     );
   });
 
+  describe("assignment notifications", () => {
+    let notifications: { notify: jest.Mock };
+    let nsvc: ConversationsService;
+
+    beforeEach(() => {
+      notifications = { notify: jest.fn().mockResolvedValue(1) };
+      (prisma as any).contact = { findFirst: jest.fn().mockResolvedValue({ name: "محمد أحمد" }) };
+      prisma.conversation.findFirst.mockResolvedValue(baseRow({ contactId: "c1" }));
+      nsvc = new ConversationsService(
+        prisma as never,
+        realtime as never,
+        { queueReply: jest.fn() } as never,
+        notifications as never,
+      );
+    });
+
+    it("assignment produces a notification for the assignee, not the actor", async () => {
+      await nsvc.update("ws1", "cv1", { assigneeId: "u2" }, "actor");
+      expect(notifications.notify).toHaveBeenCalledTimes(1);
+      expect(notifications.notify).toHaveBeenCalledWith("ws1", ["u2"], {
+        type: "assignment",
+        title: "assignment.conversation",
+        body: JSON.stringify({ contactName: "محمد أحمد" }),
+        recordKind: "conversation",
+        recordId: "cv1",
+        actorId: "actor",
+      });
+    });
+
+    it("assigning to yourself or leaving the assignee unchanged does not notify the assignee", async () => {
+      prisma.workspaceMember.findFirst.mockResolvedValue({ userId: "actor" });
+      await nsvc.update("ws1", "cv1", { assigneeId: "actor" }, "actor");
+      prisma.conversation.findFirst.mockResolvedValue(baseRow({ contactId: "c1", assigneeId: "u2" }));
+      prisma.workspaceMember.findFirst.mockResolvedValue({ userId: "u2" });
+      await nsvc.update("ws1", "cv1", { assigneeId: "u2" }, "actor");
+      await nsvc.update("ws1", "cv1", { assigneeId: null }, "actor");
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+
+    it("a notification failure never breaks the update", async () => {
+      notifications.notify.mockRejectedValue(new Error("boom"));
+      await expect(nsvc.update("ws1", "cv1", { assigneeId: "u2" }, "actor")).resolves.toBeDefined();
+    });
+
+    it("does not notify when the version check fails", async () => {
+      await expect(nsvc.update("ws1", "cv1", { assigneeId: "u2", version: 99 }, "actor")).rejects.toBeInstanceOf(ConflictException);
+      expect(notifications.notify).not.toHaveBeenCalled();
+    });
+  });
+
   it("reopen trigger SQL covers pending_customer, resolved and closed, not spam, and ignores backfill", () => {
     const sql = readFileSync(
       join(__dirname, "../../prisma/migrations/20261108120000_conversation_ownership/migration.sql"),

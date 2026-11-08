@@ -1,4 +1,5 @@
-import { RealtimeGateway } from "./realtime.gateway";
+import { RealtimeGateway, userRoom } from "./realtime.gateway";
+import { RealtimeService } from "./realtime.service";
 
 describe("RealtimeGateway payment lock", () => {
   let payload: Record<string, unknown>;
@@ -27,6 +28,12 @@ describe("RealtimeGateway payment lock", () => {
     expect(client.join).toHaveBeenCalledWith("workspace:w1");
   });
 
+  it("also joins the per-user room", async () => {
+    await gw.handleConnection(client as never);
+    expect(client.join).toHaveBeenCalledWith("user:w1:u1");
+    expect(userRoom("w1", "u1")).toBe("user:w1:u1");
+  });
+
   it("refuses a locked workspace", async () => {
     isLocked.mockResolvedValue(true);
     await gw.handleConnection(client as never);
@@ -47,5 +54,17 @@ describe("RealtimeGateway payment lock", () => {
     await gw.handleConnection(client as never);
     expect(client.join).not.toHaveBeenCalled();
     expect(client.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("RealtimeService.emitToUser", () => {
+  it("emits only to the user room and no-ops before the server boots", () => {
+    const emit = jest.fn();
+    const to = jest.fn().mockReturnValue({ emit });
+    const svc = new RealtimeService({ server: { to } } as never);
+    svc.emitToUser("w1", "u1", "notification:new", { id: "n1" });
+    expect(to).toHaveBeenCalledWith("user:w1:u1");
+    expect(emit).toHaveBeenCalledWith("notification:new", { id: "n1" });
+    expect(() => new RealtimeService({} as never).emitToUser("w1", "u1", "e", {})).not.toThrow();
   });
 });

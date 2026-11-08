@@ -19,6 +19,7 @@ import { IntegrationsModule } from "./integrations/integrations.module";
 import { TicketsModule } from "./tickets/tickets.module";
 import { ResolutionModule } from "./resolution/resolution.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 import { NotesModule } from "./notes/notes.module";
 import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
@@ -59,6 +60,7 @@ import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
     WorkflowsModule,
     WorkspacesModule,
     NotesModule,
+    NotificationsModule,
     MediaModule,
     SocialModule,
     AdminModule,

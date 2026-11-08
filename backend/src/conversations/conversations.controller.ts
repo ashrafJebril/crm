@@ -13,7 +13,7 @@ import {
   CreateMessageDto,
   UpdateConversationDto,
 } from "./conversations.dto";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentUserId, CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("conversations")
 export class ConversationsController {
@@ -22,8 +22,8 @@ export class ConversationsController {
   @Get() list(@CurrentWorkspace() workspaceId: string) { return this.svc.list(workspaceId); }
   @Get(":id") get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) { return this.svc.get(workspaceId, id); }
   @Post() create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateConversationDto) { return this.svc.create(workspaceId, dto); }
-  @Patch(":id") update(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Body() dto: UpdateConversationDto) {
-    return this.svc.update(workspaceId, id, dto);
+  @Patch(":id") update(@CurrentWorkspace() workspaceId: string, @CurrentUserId() userId: string, @Param("id") id: string, @Body() dto: UpdateConversationDto) {
+    return this.svc.update(workspaceId, id, dto, userId);
   }
   @Post(":id/read") markRead(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     return this.svc.markRead(workspaceId, id);

@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import {
   AddNoteDto,
   CreateTicketDto,
@@ -23,6 +24,7 @@ export class TicketsService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     @Optional() private readonly events?: EventEmitter2,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   // ─── Pipelines ─────────────────────────────────────────────────────────
@@ -212,7 +214,12 @@ export class TicketsService {
     return ticket;
   }
 
-  async updateTicket(workspaceId: string, id: string, dto: UpdateTicketDto) {
+  async updateTicket(
+    workspaceId: string,
+    id: string,
+    dto: UpdateTicketDto,
+    actorId?: string,
+  ) {
     const existing = await this.prisma.ticket.findFirst({
       where: { id, workspaceId },
     });
@@ -254,6 +261,26 @@ export class TicketsService {
     }
 
     this.realtime.emitToWorkspace(workspaceId, "ticket.updated", { ticket: updated });
+
+    if (
+      typeof dto.ownerId === "string" &&
+      dto.ownerId !== existing.ownerId &&
+      dto.ownerId !== actorId &&
+      this.notifications
+    ) {
+      try {
+        await this.notifications.notify(workspaceId, [dto.ownerId], {
+          type: "assignment",
+          title: "assignment.ticket",
+          body: JSON.stringify({ ticketTitle: updated.title }),
+          recordKind: "ticket",
+          recordId: id,
+          actorId,
+        });
+      } catch {
+        // best-effort: never fail the update over a notification
+      }
+    }
 
     return updated;
   }

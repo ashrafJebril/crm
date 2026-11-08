@@ -14,6 +14,10 @@ import type { JwtPayload } from "../auth/auth.guard";
 export const workspaceRoom = (workspaceId: string): string =>
   `workspace:${workspaceId}`;
 
+/** Room for one user's sockets in one workspace (per-user notifications). */
+export const userRoom = (workspaceId: string, userId: string): string =>
+  `user:${workspaceId}:${userId}`;
+
 @WebSocketGateway({
   // socket.io path; defaults work fine but pinning makes it explicit.
   path: "/api/socket.io",
@@ -63,6 +67,7 @@ export class RealtimeGateway
       // Stash on the socket for outbound messages or later checks.
       (client.data as { user?: JwtPayload }).user = payload;
       await client.join(workspaceRoom(payload.workspaceId));
+      await client.join(userRoom(payload.workspaceId, payload.sub));
       this.logger.log(
         `connected sub=${payload.sub} ws=${payload.workspaceId} sid=${client.id}`,
       );

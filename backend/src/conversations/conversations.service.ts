@@ -4,8 +4,10 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { LOutboundService } from "../integrations/l-outbound.service";
 import {
@@ -20,6 +22,7 @@ export class ConversationsService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly lOutbound: LOutboundService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   private emitActivity(
@@ -132,7 +135,12 @@ export class ConversationsService {
     return conv;
   }
 
-  async update(workspaceId: string, id: string, dto: UpdateConversationDto) {
+  async update(
+    workspaceId: string,
+    id: string,
+    dto: UpdateConversationDto,
+    actorId?: string,
+  ) {
     const row = await this.prisma.conversation.findFirst({
       where: { id, workspaceId },
       include: { labels: { select: { labelId: true } } },
@@ -186,7 +194,40 @@ export class ConversationsService {
     if (!fresh) throw new NotFoundException("Conversation not found");
     if (res.count === 0) throw this.conflict(fresh);
     this.emitActivity(workspaceId, fresh.channel, fresh.id);
+    if (
+      typeof dto.assigneeId === "string" &&
+      dto.assigneeId !== row.assigneeId &&
+      dto.assigneeId !== actorId
+    ) {
+      await this.notifyAssignment(workspaceId, fresh, dto.assigneeId, actorId);
+    }
     return this.mapLabels(fresh);
+  }
+
+  /** Best-effort: a notification problem must never fail the assignment. */
+  private async notifyAssignment(
+    workspaceId: string,
+    conv: { id: string; contactId: string },
+    assigneeId: string,
+    actorId?: string,
+  ): Promise<void> {
+    if (!this.notifications) return;
+    try {
+      const contact = await this.prisma.contact.findFirst({
+        where: { id: conv.contactId, workspaceId },
+        select: { name: true },
+      });
+      await this.notifications.notify(workspaceId, [assigneeId], {
+        type: "assignment",
+        title: "assignment.conversation",
+        body: JSON.stringify({ contactName: contact?.name ?? "" }),
+        recordKind: "conversation",
+        recordId: conv.id,
+        actorId,
+      });
+    } catch {
+      // swallowed on purpose
+    }
   }
 
   private mapLabels<T extends { labels: { labelId: string }[] }>(c: T) {

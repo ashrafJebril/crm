@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { RealtimeGateway, workspaceRoom } from "./realtime.gateway";
+import { RealtimeGateway, userRoom, workspaceRoom } from "./realtime.gateway";
 
 /** Thin façade over the gateway so services can emit without depending on
  *  socket.io types directly. */
@@ -13,5 +13,16 @@ export class RealtimeService {
     // guard so the emit is a no-op rather than crashing the request.
     if (!this.gateway.server) return;
     this.gateway.server.to(workspaceRoom(workspaceId)).emit(event, payload);
+  }
+
+  /** Emit an event only to one user's sockets within a workspace. */
+  emitToUser(
+    workspaceId: string,
+    userId: string,
+    event: string,
+    payload: unknown,
+  ): void {
+    if (!this.gateway.server) return;
+    this.gateway.server.to(userRoom(workspaceId, userId)).emit(event, payload);
   }
 }

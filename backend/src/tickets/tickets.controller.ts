@@ -17,7 +17,7 @@ import {
   MoveTicketDto,
   UpdateTicketDto,
 } from "./tickets.dto";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentUserId, CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller()
 export class TicketsController {
@@ -70,10 +70,11 @@ export class TicketsController {
   @Patch("tickets/:id")
   updateTicket(
     @CurrentWorkspace() workspaceId: string,
+    @CurrentUserId() userId: string,
     @Param("id") id: string,
     @Body() dto: UpdateTicketDto,
   ) {
-    return this.svc.updateTicket(workspaceId, id, dto);
+    return this.svc.updateTicket(workspaceId, id, dto, userId);
   }
 
   @Post("tickets/:id/move")

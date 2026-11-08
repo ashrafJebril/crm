@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { TicketsService } from "./tickets.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { NotificationsService } from "../notifications/notifications.service";
 
 describe("TicketsService.listTickets", () => {
   let svc: TicketsService;
@@ -213,5 +214,52 @@ describe("TicketsService.createFromConversation", () => {
         title: "x",
       }),
     ).rejects.toThrow("Conversation not found");
+  });
+});
+
+describe("TicketsService.updateTicket owner notifications", () => {
+  let svc: TicketsService;
+  let prisma: any;
+  let notifications: { notify: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = {
+      ticket: {
+        findFirst: jest.fn().mockResolvedValue({ id: "tk_1", value: 100, ownerId: "u_1" }),
+        update: jest.fn().mockResolvedValue({ id: "tk_1", title: "طلب عرض سعر", ownerId: "u_2" }),
+      },
+      workspaceMember: { findFirst: jest.fn().mockResolvedValue({ userId: "u_2" }) },
+      ticketActivity: { create: jest.fn().mockResolvedValue({}) },
+    };
+    notifications = { notify: jest.fn().mockResolvedValue(1) };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        TicketsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RealtimeService, useValue: { emitToWorkspace: jest.fn() } },
+        { provide: NotificationsService, useValue: notifications },
+      ],
+    }).compile();
+    svc = moduleRef.get(TicketsService);
+  });
+
+  it("ticket owner change notifies new owner", async () => {
+    await svc.updateTicket("ws_1", "tk_1", { ownerId: "u_2" }, "actor");
+    expect(notifications.notify).toHaveBeenCalledWith("ws_1", ["u_2"], {
+      type: "assignment",
+      title: "assignment.ticket",
+      body: JSON.stringify({ ticketTitle: "طلب عرض سعر" }),
+      recordKind: "ticket",
+      recordId: "tk_1",
+      actorId: "actor",
+    });
+  });
+
+  it("does not notify when the actor takes the ticket, owner is unchanged or cleared", async () => {
+    await svc.updateTicket("ws_1", "tk_1", { ownerId: "u_2" }, "u_2");
+    await svc.updateTicket("ws_1", "tk_1", { ownerId: "u_1" }, "actor");
+    await svc.updateTicket("ws_1", "tk_1", { ownerId: null as never }, "actor");
+    await svc.updateTicket("ws_1", "tk_1", { title: "x" }, "actor");
+    expect(notifications.notify).not.toHaveBeenCalled();
   });
 });
