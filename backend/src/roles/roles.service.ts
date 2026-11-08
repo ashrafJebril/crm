@@ -102,8 +102,21 @@ export class RolesService {
     return { ...updated, permissions: sanitizePermissions(updated.permissions) };
   }
 
-  /** The in-use check and the delete run in one transaction. */
+  /** The in-use check and the delete run in one Serializable transaction,
+   *  so a concurrent assignment cannot slip in between; a serialization
+   *  failure (P2034) is a retryable 409. */
   async remove(workspaceId: string, id: string) {
+    try {
+      return await this.removeTx(workspaceId, id);
+    } catch (e) {
+      if ((e as { code?: string })?.code === "P2034") {
+        throw new ConflictException("Another change happened at the same time — try again");
+      }
+      throw e;
+    }
+  }
+
+  private removeTx(workspaceId: string, id: string) {
     return this.prisma.$transaction(async (tx) => {
       const role = await this.find(tx, workspaceId, id);
       if (role.isSystem) throw new BadRequestException("System roles cannot be deleted");
@@ -117,7 +130,7 @@ export class RolesService {
       }
       await tx.role.delete({ where: { id } });
       return { ok: true };
-    });
+    }, { isolationLevel: "Serializable" });
   }
 
   /** Role of this workspace, or 404 (another workspace's role id is a 404 too). */

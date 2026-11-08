@@ -114,10 +114,18 @@ describe("RolesService", () => {
     expect(prisma.role.delete).toHaveBeenCalledWith({ where: { id: "r1" } });
   });
 
-  it("in-use check and delete share one transaction", async () => {
+  it("in-use check and delete share one Serializable transaction", async () => {
     prisma.role.findFirst.mockResolvedValue(row({}));
     await svc.remove("ws1", "r1");
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction.mock.calls[0][1]).toEqual({ isolationLevel: "Serializable" });
+  });
+
+  it("a serialization failure (P2034) on delete -> 409 try again", async () => {
+    prisma.$transaction.mockRejectedValue(Object.assign(new Error("tx"), { code: "P2034" }));
+    const err: any = await svc.remove("ws1", "r1").catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.message).toMatch(/try again/);
   });
 
   it("delete of a foreign role id -> 404", async () => {

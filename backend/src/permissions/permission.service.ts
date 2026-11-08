@@ -190,6 +190,27 @@ export class PermissionService {
     if (visibility === "all" && eff?.conversationVisibility !== "all") throw cannotGrant();
   }
 
+  /**
+   * 403 unless the actor may act on (reset the password of, re-role, remove)
+   * the member `targetUserId`: the target's effective permissions are a
+   * subset of the actor's and its conversation visibility is not wider, or
+   * the actor is an effective owner, a super-admin or an impersonation
+   * session (which bypasses like assertOwner). Checks the target's CURRENT
+   * role, so call it before changing it.
+   */
+  async assertCanActOn(workspaceId: string, actor: Actor, targetUserId: string): Promise<void> {
+    if (actor.isSuperAdmin || actor.impersonating) return;
+    const mine = await this.effective(workspaceId, actor.userId);
+    if (mine?.key === "owner") return;
+    const theirs = await this.effective(workspaceId, targetUserId);
+    if (!theirs) return; // not a member: the caller's own lookup 404s
+    const covered =
+      !!mine &&
+      flattenPermissions(theirs.permissions).every((p) => this.can(mine, p)) &&
+      !(theirs.conversationVisibility === "all" && mine.conversationVisibility !== "all");
+    if (!covered) throw new ForbiddenException("You can't change a member with more access than you");
+  }
+
   /** 403 unless the actor is an effective owner (or a bypass session). */
   async assertOwner(workspaceId: string, actor: Actor, message: string): Promise<void> {
     if (actor.isSuperAdmin || actor.impersonating) return;

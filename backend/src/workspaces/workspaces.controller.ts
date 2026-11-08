@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -19,31 +20,30 @@ import {
   UpdateWorkspaceDto,
 } from "./workspaces.dto";
 import type { JwtPayload } from "../auth/auth.guard";
-import { PermissionService, actorOf } from "../permissions/permission.service";
-import { missingPermission } from "../permissions/permission.guard";
-import type { Permission } from "../permissions/catalog";
+import { actorOf } from "../permissions/permission.service";
 
 type AuthedReq = Request & { user: JwtPayload };
 
+/** Returned as-is; the frontend maps it to its own translation. */
+export const SWITCH_WORKSPACE_FIRST = "Switch to this workspace first";
+
 @Controller("workspaces")
 export class WorkspacesController {
-  constructor(
-    private readonly svc: WorkspacesService,
-    private readonly permissions: PermissionService,
-  ) {}
+  constructor(private readonly svc: WorkspacesService) {}
 
   /**
    * Member/settings routes: the global PermissionGuard has already checked
-   * the permission (permission-map.ts) against the JWT workspace. Here we
-   * only require that the caller is a member of :id. When :id is not the JWT
-   * workspace the guard's check does not cover it, so the permission is
-   * evaluated for :id instead of trusting the other workspace's role.
+   * the permission (permission-map.ts) against the JWT workspace, and the
+   * request's tenancy context is that workspace too. A different :id would
+   * be checked against the wrong role and have its queries rewritten to the
+   * JWT workspace, so it is refused outright (super-admins excepted); the
+   * caller must switch workspaces first. Membership of :id is still required.
    */
-  private async authorize(id: string, req: AuthedReq, permission: Permission) {
+  private async authorize(id: string, req: AuthedReq) {
+    if (id !== req.user.workspaceId && !req.user.isSuperAdmin) {
+      throw new BadRequestException(SWITCH_WORKSPACE_FIRST);
+    }
     await this.svc.requireMember(req.user.sub, id);
-    if (id === req.user.workspaceId || req.user.isSuperAdmin) return;
-    const eff = await this.permissions.effective(id, req.user.sub);
-    if (!this.permissions.can(eff, permission)) throw missingPermission(permission);
   }
 
   @Get()
@@ -68,13 +68,13 @@ export class WorkspacesController {
     @Body() dto: UpdateWorkspaceDto,
     @Req() req: AuthedReq,
   ) {
-    await this.authorize(id, req, "settings.update");
+    await this.authorize(id, req);
     return this.svc.update(id, dto);
   }
 
   @Get(":id/members")
   async listMembers(@Param("id") id: string, @Req() req: AuthedReq) {
-    await this.authorize(id, req, "members.view");
+    await this.authorize(id, req);
     return this.svc.listMembers(id);
   }
 
@@ -84,7 +84,7 @@ export class WorkspacesController {
     @Body() dto: AddMemberDto,
     @Req() req: AuthedReq,
   ) {
-    await this.authorize(id, req, "members.create");
+    await this.authorize(id, req);
     return this.svc.addMember(id, dto, actorOf(req.user));
   }
 
@@ -94,7 +94,7 @@ export class WorkspacesController {
     @Body() dto: InviteByEmailDto,
     @Req() req: AuthedReq,
   ) {
-    await this.authorize(id, req, "members.create");
+    await this.authorize(id, req);
     return this.svc.inviteByEmail(id, dto, actorOf(req.user));
   }
 
@@ -105,7 +105,7 @@ export class WorkspacesController {
     @Body() dto: UpdateMemberRoleDto,
     @Req() req: AuthedReq,
   ) {
-    await this.authorize(id, req, "members.update");
+    await this.authorize(id, req);
     return this.svc.updateMemberRole(id, userId, dto, actorOf(req.user));
   }
 
@@ -116,7 +116,7 @@ export class WorkspacesController {
     @Body() dto: ResetMemberPasswordDto,
     @Req() req: AuthedReq,
   ) {
-    await this.authorize(id, req, "members.update");
+    await this.authorize(id, req);
     return this.svc.resetMemberPassword(id, userId, dto, actorOf(req.user));
   }
 
@@ -126,7 +126,7 @@ export class WorkspacesController {
     @Param("userId") userId: string,
     @Req() req: AuthedReq,
   ) {
-    await this.authorize(id, req, "members.delete");
+    await this.authorize(id, req);
     return this.svc.removeMember(id, userId, actorOf(req.user));
   }
 }

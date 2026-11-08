@@ -69,6 +69,20 @@ describe("WorkspacesService member roles (SP-25)", () => {
       expect(prisma.workspaceMember.update.mock.calls[0][0].data).toEqual({ role: "viewer", roleId: null });
     });
 
+    it("a missing system role row is checked against SYSTEM_ROLES, never an empty grant", async () => {
+      // e.g. the tenancy extension rewrote the role lookup to another workspace
+      (permissions as any).systemRoleRow.mockResolvedValue(null);
+      effective.mockResolvedValue(effOf(null, { members: ["view", "update"] }));
+      prisma.workspaceMember.findUnique.mockResolvedValue(mem({ role: "viewer", roleId: null, roleRef: null }));
+      const err: any = await svc.updateMemberRole("ws1", "u1", { role: "admin" }, { userId: "c" }).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.message).toBe("Cannot grant permissions you don't have");
+      prisma.workspaceMember.findUnique.mockResolvedValue(null);
+      await expect(svc.addMember("ws1", { userId: "u5", role: "admin" }, { userId: "c" })).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.workspaceMember.update).not.toHaveBeenCalled();
+      expect(prisma.workspaceMember.create).not.toHaveBeenCalled();
+    });
+
     it("404s an unknown member without touching cache", async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue(null);
       await expect(svc.updateMemberRole("ws1", "u9", { role: "agent" }, owner)).rejects.toBeInstanceOf(NotFoundException);
@@ -97,13 +111,13 @@ describe("WorkspacesService member roles (SP-25)", () => {
   });
 
   describe("updateMemberRole with roleId", () => {
-    it("custom role assignment syncs legacy role string to agent", async () => {
+    it("custom role assignment syncs legacy role string to viewer (least privilege if the role goes)", async () => {
       prisma.role.findFirst.mockResolvedValue(custom);
       await svc.updateMemberRole("ws1", "u1", { roleId: "r_custom" }, owner);
       expect(prisma.role.findFirst).toHaveBeenCalledWith({ where: { id: "r_custom", workspaceId: "ws1" } });
       expect(prisma.workspaceMember.update).toHaveBeenCalledWith({
         where: { id: "m1" },
-        data: { role: "agent", roleId: "r_custom" },
+        data: { role: "viewer", roleId: "r_custom" },
       });
       expect(invalidate).toHaveBeenCalledWith("ws1", "u1");
     });
@@ -283,6 +297,57 @@ describe("WorkspacesService member roles (SP-25)", () => {
     it("an admin can still manage non-owners", async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue(mem({ role: "viewer", roleId: null, roleRef: null }));
       await expect(svc.removeMember("ws1", "u1", adminActor)).resolves.toEqual({ ok: true });
+    });
+  });
+
+  describe("cannot act on a member with more access (assertCanActOn)", () => {
+    const actor: Actor = { userId: "actor" };
+    const MSG = "You can't change a member with more access than you";
+    // effective() answers per user: the actor and the target (u1) differ.
+    const roles = (a: EffectiveRole, t: EffectiveRole) =>
+      effective.mockImplementation((_ws: string, uid: string) => Promise.resolve(uid === "actor" ? a : t));
+    const managerOnly = effOf(null, { members: ["view", "update", "delete"] });
+    beforeEach(() => {
+      prisma.workspaceMember.findUnique.mockResolvedValue(mem({ role: "agent", roleId: null, roleRef: null }));
+    });
+
+    it("a members-only manager cannot reset the password of, re-role, or remove an agent", async () => {
+      roles(managerOnly, effOf("agent"));
+      for (const run of [
+        () => svc.resetMemberPassword("ws1", "u1", { password: "secret1" }, actor),
+        () => svc.updateMemberRole("ws1", "u1", { role: "viewer" }, actor),
+        () => svc.removeMember("ws1", "u1", actor),
+      ]) {
+        const err: any = await run().catch((e) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.message).toBe(MSG);
+      }
+      expect(prisma.workspaceMember.update).not.toHaveBeenCalled();
+      expect(prisma.workspaceMember.delete).not.toHaveBeenCalled();
+    });
+
+    it("checks the target's CURRENT role, before the change", async () => {
+      // admin target being demoted to viewer: the viewer grant would pass, the current admin role does not
+      roles(effOf(null, { ...SYSTEM_ROLES.viewer.permissions, members: ["view", "update"] } as never), effOf("admin"));
+      await expect(svc.updateMemberRole("ws1", "u1", { role: "viewer" }, actor)).rejects.toThrow(MSG);
+    });
+
+    it("an assigned-only actor cannot act on a member who sees all conversations", async () => {
+      roles({ ...effOf("admin"), conversationVisibility: "assigned" }, effOf("viewer"));
+      await expect(svc.removeMember("ws1", "u1", actor)).rejects.toThrow(MSG);
+    });
+
+    it("a subset target is fine (admin over agent)", async () => {
+      roles(effOf("admin"), effOf("agent"));
+      await expect(svc.removeMember("ws1", "u1", actor)).resolves.toEqual({ ok: true });
+      await expect(svc.updateMemberRole("ws1", "u1", { role: "viewer" }, actor)).resolves.toBeDefined();
+    });
+
+    it("an effective owner and a super-admin may act on anyone", async () => {
+      roles(effOf("owner"), effOf("admin"));
+      await expect(svc.removeMember("ws1", "u1", actor)).resolves.toEqual({ ok: true });
+      roles(effOf(null, {}), effOf("admin"));
+      await expect(svc.removeMember("ws1", "u1", { userId: "s", isSuperAdmin: true })).resolves.toEqual({ ok: true });
     });
   });
 
