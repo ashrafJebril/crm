@@ -92,8 +92,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 ### Phase 1: Foundations
 
 #### SP-01 Conversation ownership, status and inbox filtering. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-08-sp01-conversation-ownership.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied 2026-11-08. **Deviation:** filtering runs in the browser, so the acceptance tests `filters by assignee=me` and `cursor pages are stable under new inserts` are not met yet. Server cursor paging waits until FB/IG threads are stored.
 - **Gaps:** assign a conversation + "Mine" filter; status actions (resolve, close, pending customer, reopen, spam, pin); escalate with a reason; conversation labels; advanced filter menu (label, channel, number*, assignee, ad source*, contact tag, lifecycle, date range, status); server-side cursor pagination; table view; conversations kanban board with drag to change status; "Needs attention" triage section; add the filtered list's customers to a group. (*number filter turns on with SP-19; ad source with SP-15.)
 - **Read in Tkana:** `routes/conversations.tsx`, `conversations.$id.server.ts` (reassign, updateStatus), `lib/conversations/inbox-params.ts`, `components/conversations/{FilterBar,ListPane,TriageList,EscalationStrip,EscalateReasonDialog,LabelChips,table-columns}.tsx`, `routes/pipeline.conversations.tsx`, `routes/conversations.page.ts`.
 - **Data:** §2.1.
@@ -102,8 +102,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `conversations.service.spec.ts`: `filters by assignee=me`, `cursor pages are stable under new inserts`, `assign-conflict returns 409 with current` (Review Focus 4), `foreign label id → 404`; `inbox-params.test.ts` (frontend, vitest): URL ↔ filter round-trip.
 
 #### SP-02 Contact model: editing, custom fields, consent. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-08-sp02-contact-model.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied 2026-11-08. **Post-deploy step:** run `backend/scripts/normalize-lifecycle.sql` once this code is live.
 - **Gaps:** first/last name, email and owner; edit details in the drawer; a "new contact" page; custom fields (text/number/date/select/boolean) with a settings page, delete preview, editing on the contact and filtering the list; marketing opt-out (blocks template/campaign sends); "not a lead" marking; delete guard when bookings/tickets are linked (force confirm); merge tags; bulk remove tag, add to pipeline, select all across pages (`getAllIds`); list filters by group, lifecycle, pipeline/stage, next step (overdue/none, active after SP-04), custom field; paginated bookings and tickets on the contact; Meta lead-form data on the contact (visible once SP-15 captures it).
 - **Read in Tkana:** `routes/crm.contacts*.tsx`, `routes/settings.custom-fields.tsx`, `routes/crm.tags.tsx` (merge), `components/crm/{customer-fields-card,customer-field-filter,not-a-lead,contact-meta-leads,customer-records}.tsx`, `components/crm/contacts-list/bulk-bar.tsx`, `components/CustomerDetail.tsx`, `lib/customers/marketing-preference.ts`.
 - **Data:** §2.2. Backfill `firstName/lastName` from `name` (split on the first space), rerunnable.
