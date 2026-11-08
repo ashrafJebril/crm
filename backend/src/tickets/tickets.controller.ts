@@ -60,11 +60,16 @@ export class TicketsController {
   }
 
   @Post("tickets")
-  createTicket(
+  async createTicket(
     @CurrentWorkspace() workspaceId: string,
     @CurrentUserId() userId: string,
     @Body() dto: CreateTicketDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    // A hidden conversation cannot be linked: 404, same as reading it.
+    if (dto.conversationId) {
+      await this.perm?.assertConversationVisible(workspaceId, dto.conversationId, viewer);
+    }
     return this.svc.createTicket(workspaceId, dto, userId);
   }
 

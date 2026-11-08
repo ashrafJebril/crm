@@ -10,6 +10,9 @@ import { ZernioController } from "../integrations/zernio.controller";
 import { TicketsController } from "../tickets/tickets.controller";
 import { ContactsService } from "../contacts/contacts.service";
 import type { Viewer } from "./visibility";
+import { DashboardController } from "../dashboard/dashboard.module";
+import { FacebookController } from "../integrations/facebook.controller";
+import { InstagramController } from "../integrations/instagram.controller";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -60,6 +63,9 @@ function makePrisma(perms: Record<string, string[]>, visibility: "assigned" | "a
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       update: jest.fn().mockResolvedValue({ id: MINE, aiEnabled: true, aiPausedAt: null }),
       delete: jest.fn().mockResolvedValue({}),
+      count: jest.fn().mockResolvedValue(0),
+      aggregate: jest.fn().mockResolvedValue({ _sum: { unread: 0 } }),
+      groupBy: jest.fn().mockResolvedValue([]),
     },
     conversationLabel: { findMany: jest.fn().mockResolvedValue([]) },
     conversationLabelLink: { deleteMany: jest.fn(), createMany: jest.fn() },
@@ -69,7 +75,9 @@ function makePrisma(perms: Record<string, string[]>, visibility: "assigned" | "a
       count: jest.fn().mockResolvedValue(0),
       create: jest.fn().mockResolvedValue({ id: "m1" }),
     },
-    contact: { findFirst: jest.fn().mockResolvedValue({ id: "ct", name: "C" }) },
+    contact: { findFirst: jest.fn().mockResolvedValue({ id: "ct", name: "C" }), count: jest.fn().mockResolvedValue(0) },
+    template: { count: jest.fn().mockResolvedValue(0) },
+    campaign: { findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     ticket: { findFirst: jest.fn().mockResolvedValue(null), count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     note: {
       findMany: jest.fn().mockResolvedValue([{ id: "n" }]),
@@ -81,7 +89,6 @@ function makePrisma(perms: Record<string, string[]>, visibility: "assigned" | "a
     },
     noteSeen: { upsert: jest.fn() },
     appointment: { findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0) },
-    campaign: { findFirst: jest.fn() },
     user: { findUnique: jest.fn().mockResolvedValue({ name: "x" }) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     $executeRaw: jest.fn().mockResolvedValue(1),
@@ -300,6 +307,102 @@ describe("assigned-only conversation visibility: side doors", () => {
       perm = new PermissionService(prisma);
       expect((await convs().list(WS, viewer)).length).toBe(3);
       await expect(convs().get(WS, NONE, viewer)).resolves.toMatchObject({ id: NONE });
+    });
+  });
+
+  describe("dashboard summary", () => {
+    it("every conversation/message aggregate carries the viewer's scope", async () => {
+      prisma.message.findMany.mockResolvedValue([]);
+      const c = new DashboardController(prisma, perm);
+      await c.summary(WS, undefined, viewer);
+      for (const fn of [prisma.conversation.count, prisma.conversation.aggregate, prisma.conversation.groupBy]) {
+        for (const call of fn.mock.calls) expect(call[0].where.assigneeId).toBe(ME);
+      }
+      expect(prisma.message.findMany.mock.calls[0][0].where.conversation).toEqual({ assigneeId: ME });
+      const raws = prisma.$queryRaw.mock.calls.map((call: any[]) => {
+        const text = [(call[0] as string[]).join("?")];
+        for (const a of call.slice(1)) if (a && Array.isArray((a as any).strings)) text.push((a as any).strings.join("?"));
+        return text.join(" ");
+      });
+      expect(raws.length).toBe(2);
+      for (const t of raws) expect(t).toContain('"assigneeId"');
+    });
+    it("unfiltered for a bypass viewer", async () => {
+      prisma.message.findMany.mockResolvedValue([]);
+      const c = new DashboardController(prisma, perm);
+      await c.summary(WS, undefined, { userId: ME, bypass: true });
+      expect(prisma.message.findMany.mock.calls[0][0].where).toEqual({ workspaceId: WS });
+      expect(prisma.conversation.count.mock.calls[0][0].where.assigneeId).toBeUndefined();
+    });
+  });
+
+  describe("notes by contact/ticket hide notes of hidden conversations", () => {
+    const svc = () => new NotesService(prisma, { notify: jest.fn() } as never, perm);
+    const notes = [
+      { id: "n-none", conversationId: NONE },
+      { id: "n-mine", conversationId: MINE },
+      { id: "n-opaque", conversationId: "fb-thread" },
+      { id: "n-plain", conversationId: null },
+    ];
+    it("listForContact and listForTicket", async () => {
+      prisma.note.findMany.mockResolvedValue(notes);
+      for (const res of [await svc().listForContact(WS, "ct", viewer), await svc().listForTicket(WS, "t1", viewer)]) {
+        expect(res.map((n: any) => n.id)).toEqual(["n-mine", "n-opaque", "n-plain"]);
+      }
+      expect((await svc().listForContact(WS, "ct")).length).toBe(4);
+    });
+  });
+
+  describe("provider-live thread routes", () => {
+    const z = () => ({
+      listConversations: jest.fn().mockResolvedValue([{ id: "x" }]),
+      getMessages: jest.fn().mockResolvedValue([]),
+      sendInConversation: jest.fn().mockResolvedValue({}),
+    });
+    it("zernio: [] for lists, 404 for by-id and send, when assigned", async () => {
+      const zs = z();
+      const c = new ZernioController(zs as never, {} as never, perm);
+      expect(await c.conversations(WS, undefined, viewer)).toEqual([]);
+      await expect(c.messages(WS, "t", undefined, viewer)).rejects.toThrow(NotFoundException);
+      await expect(c.send(WS, "t", { accountId: "a", message: "m" } as never, viewer)).rejects.toThrow(NotFoundException);
+      expect(zs.listConversations).not.toHaveBeenCalled();
+      expect(zs.sendInConversation).not.toHaveBeenCalled();
+    });
+    it("zernio unchanged for 'all' members and bypass", async () => {
+      const zs = z();
+      const allPerm = new PermissionService(makePrisma(ASSIGNED_PERMS, "all"));
+      expect(await new ZernioController(zs as never, {} as never, allPerm).conversations(WS, undefined, viewer)).toEqual([{ id: "x" }]);
+      expect(await new ZernioController(zs as never, {} as never, perm).conversations(WS, undefined, { userId: ME, bypass: true })).toEqual([{ id: "x" }]);
+    });
+    it("facebook: [] / 404 when assigned, passthrough for 'all'", async () => {
+      const fb = { listConversations: jest.fn().mockResolvedValue([1]), listMessagesInConversation: jest.fn(), sendDirectMessage: jest.fn() };
+      const c = new FacebookController(fb as never, {} as never, perm);
+      expect(await c.listConversations(WS, viewer)).toEqual([]);
+      await expect(c.listMessagesInConversation(WS, "t", viewer)).rejects.toThrow(NotFoundException);
+      await expect(c.sendDirectMessage(WS, "r", { message: "m" } as never, viewer)).rejects.toThrow(NotFoundException);
+      expect(fb.sendDirectMessage).not.toHaveBeenCalled();
+      const allPerm = new PermissionService(makePrisma(ASSIGNED_PERMS, "all"));
+      expect(await new FacebookController(fb as never, {} as never, allPerm).listConversations(WS, viewer)).toEqual([1]);
+    });
+    it("instagram: [] / 404 when assigned; DB-id send follows conversation visibility", async () => {
+      const ig = { listConversations: jest.fn().mockResolvedValue([1]), listMessagesInConversation: jest.fn(), sendDirectMessage: jest.fn(), sendInConversation: jest.fn().mockResolvedValue({}) };
+      const c = new InstagramController(ig as never, { humanReplied: jest.fn() } as never, perm);
+      expect(await c.listConversations(WS, viewer)).toEqual([]);
+      await expect(c.listMessages(WS, "t", viewer)).rejects.toThrow(NotFoundException);
+      await expect(c.sendDirectMessage(WS, "ig", { message: "m" }, viewer)).rejects.toThrow(NotFoundException);
+      await expect(c.send(WS, NONE, { message: "m" }, viewer)).rejects.toThrow(NotFoundException);
+      expect(ig.sendInConversation).not.toHaveBeenCalled();
+      await expect(c.send(WS, MINE, { message: "m" }, viewer)).resolves.toBeDefined();
+    });
+  });
+
+  describe("ticket creation", () => {
+    it("POST /tickets with a hidden conversationId -> 404 before creating", async () => {
+      const svc = { createTicket: jest.fn().mockResolvedValue({ id: "t" }) };
+      const c = new TicketsController(svc as never, perm);
+      await expect(c.createTicket(WS, ME, { conversationId: NONE } as never, viewer)).rejects.toThrow(NotFoundException);
+      expect(svc.createTicket).not.toHaveBeenCalled();
+      await expect(c.createTicket(WS, ME, { conversationId: MINE } as never, viewer)).resolves.toBeDefined();
     });
   });
 });

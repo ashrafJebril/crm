@@ -140,6 +140,20 @@ export class PermissionService {
     if (!row) throw new NotFoundException("Conversation not found");
   }
 
+  /** True when `viewer` is limited to a subset of conversations. Provider-live
+   *  thread routes (Zernio/Facebook/Instagram, keyed by provider ids that
+   *  cannot be matched to assignees) are closed to such viewers. */
+  async isConversationRestricted(workspaceId: string, viewer?: Viewer | null): Promise<boolean> {
+    return Object.keys(await this.conversationScope(workspaceId, viewer)).length > 0;
+  }
+
+  /** 404 for restricted viewers (provider-live thread routes). */
+  async assertNotRestricted(workspaceId: string, viewer?: Viewer | null): Promise<void> {
+    if (await this.isConversationRestricted(workspaceId, viewer)) {
+      throw new NotFoundException("Conversation not found");
+    }
+  }
+
   /** Does `viewer` hold `permission`? No viewer or a bypass session: yes. */
   async viewerCan(workspaceId: string, viewer: Viewer | null | undefined, permission: Permission | string): Promise<boolean> {
     if (!viewer || viewer.bypass) return true;

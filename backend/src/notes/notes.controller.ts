@@ -28,9 +28,9 @@ export class NotesController {
     @Query("ticketId") ticketId?: string,
     @CurrentViewer() viewer?: Viewer,
   ) {
-    if (ticketId) return this.svc.listForTicket(workspaceId, ticketId);
+    if (ticketId) return this.svc.listForTicket(workspaceId, ticketId, viewer);
     if (conversationId) return this.svc.listForConversation(workspaceId, conversationId, viewer);
-    if (contactId) return this.svc.listForContact(workspaceId, contactId);
+    if (contactId) return this.svc.listForContact(workspaceId, contactId, viewer);
     return [];
   }
 

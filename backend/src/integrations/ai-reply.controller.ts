@@ -123,7 +123,6 @@ export class AiReplyController {
         channel: "whatsapp",
         conversationId: conv.id,
         escalated: true,
-        reason: dto.escalateReason ?? null,
       });
       return { delivered: false, reason: "escalated" };
     }

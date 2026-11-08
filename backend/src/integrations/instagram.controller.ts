@@ -1,14 +1,17 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Optional, Param, Patch, Post } from "@nestjs/common";
 import { AiHandoffService } from "./ai-handoff.service";
 import { InstagramService } from "./instagram.service";
 import { EditIgCaptionDto, PublishToIgDto } from "./instagram.dto";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 
 @Controller("integrations/instagram")
 export class InstagramController {
   constructor(
     private readonly svc: InstagramService,
     private readonly handoff: AiHandoffService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   @Get("status")
@@ -22,24 +25,31 @@ export class InstagramController {
   }
 
   @Get("conversations")
-  listConversations(@CurrentWorkspace() workspaceId: string) {
+  async listConversations(@CurrentWorkspace() workspaceId: string, @CurrentViewer() viewer?: Viewer) {
+    // Provider-live threads cannot be matched to assignees: empty for
+    // assigned-only members.
+    if (await this.perm?.isConversationRestricted(workspaceId, viewer)) return [];
     return this.svc.listConversations(workspaceId);
   }
 
   @Get("conversations/:conversationId/messages")
-  listMessages(
+  async listMessages(
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertNotRestricted(workspaceId, viewer);
     return this.svc.listMessagesInConversation(workspaceId, conversationId);
   }
 
   @Post("conversations/by-igsid/:igsid/send")
-  sendDirectMessage(
+  async sendDirectMessage(
     @CurrentWorkspace() workspaceId: string,
     @Param("igsid") igsid: string,
     @Body() dto: { message: string; mediaId?: string },
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertNotRestricted(workspaceId, viewer);
     return this.svc.sendDirectMessage(
       workspaceId,
       igsid,
@@ -53,7 +63,10 @@ export class InstagramController {
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
     @Body() dto: { message: string; mediaId?: string },
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    // DB conversation id: an assigned member may reply to their own thread.
+    await this.perm?.assertConversationVisible(workspaceId, conversationId, viewer);
     const res = await this.svc.sendInConversation(
       workspaceId,
       conversationId,

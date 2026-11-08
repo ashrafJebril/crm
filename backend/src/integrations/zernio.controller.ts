@@ -122,28 +122,36 @@ export class ZernioController {
   }
 
   @Get("integrations/zernio/conversations")
-  conversations(
+  async conversations(
     @CurrentWorkspace() workspaceId: string,
     @Query("platform") platform?: string,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    // Provider-live threads cannot be matched to assignees: empty for
+    // assigned-only members.
+    if (await this.perm?.isConversationRestricted(workspaceId, viewer)) return [];
     return this.zernio.listConversations(workspaceId, platform);
   }
 
   @Get("integrations/zernio/conversations/:id/messages")
-  messages(
+  async messages(
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Query("accountId") accountId?: string,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertNotRestricted(workspaceId, viewer);
     return this.zernio.getMessages(workspaceId, id, accountId);
   }
 
   @Post("integrations/zernio/conversations/:id/send")
-  send(
+  async send(
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: ZernioSendDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertNotRestricted(workspaceId, viewer);
     return this.zernio.sendInConversation(workspaceId, id, dto.accountId, dto.message);
   }
 

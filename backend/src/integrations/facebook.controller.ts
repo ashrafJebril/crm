@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Logger,
+  Optional,
   Param,
   Patch,
   Post,
@@ -15,7 +16,9 @@ import { randomBytes } from "crypto";
 import type { Response } from "express";
 import { FacebookService } from "./facebook.service";
 import { ConnectFacebookDto, EditPostDto, PublishToPageDto, ReplyToCommentDto, SendDmDto } from "./facebook.dto";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 
 const OAUTH_SCOPES = [
@@ -39,6 +42,7 @@ export class FacebookController {
   constructor(
     private readonly fb: FacebookService,
     private readonly jwt: JwtService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   private callbackUrl(): string {
@@ -214,24 +218,31 @@ export class FacebookController {
 
   // ── Page DMs ────────────────────────────────────────────────────────────
   @Get("conversations")
-  listConversations(@CurrentWorkspace() workspaceId: string) {
+  async listConversations(@CurrentWorkspace() workspaceId: string, @CurrentViewer() viewer?: Viewer) {
+    // Provider-live threads cannot be matched to assignees: empty for
+    // assigned-only members.
+    if (await this.perm?.isConversationRestricted(workspaceId, viewer)) return [];
     return this.fb.listConversations(workspaceId);
   }
 
   @Get("conversations/:conversationId/messages")
-  listMessagesInConversation(
+  async listMessagesInConversation(
     @CurrentWorkspace() workspaceId: string,
     @Param("conversationId") conversationId: string,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertNotRestricted(workspaceId, viewer);
     return this.fb.listMessagesInConversation(workspaceId, conversationId);
   }
 
   @Post("conversations/:recipientId/send")
-  sendDirectMessage(
+  async sendDirectMessage(
     @CurrentWorkspace() workspaceId: string,
     @Param("recipientId") recipientId: string,
     @Body() dto: SendDmDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
+    await this.perm?.assertNotRestricted(workspaceId, viewer);
     return this.fb.sendDirectMessage(
       workspaceId,
       recipientId,

@@ -44,12 +44,26 @@ export class NotesService {
   }
 
   /** Top-level notes (newest first), each with replies (oldest first) and seenBy. */
-  private list(workspaceId: string, where: Record<string, string>) {
-    return this.prisma.note.findMany({
+  private async list(workspaceId: string, where: Record<string, string>, viewer?: Viewer) {
+    const notes = await this.prisma.note.findMany({
       where: { workspaceId, ...where, parentId: null },
       orderBy: { createdAt: "desc" },
       include: LIST_INCLUDE,
     });
+    if (!this.perm) return notes;
+    const scope = await this.perm.conversationScope(workspaceId, viewer);
+    if (Object.keys(scope).length === 0) return notes;
+    // Drop notes attached to a DB conversation the viewer cannot see. Opaque
+    // (non-DB) conversation ids and notes with no conversation stay.
+    const ids = [...new Set(notes.map((n) => n.conversationId).filter((x): x is string => !!x))];
+    if (ids.length === 0) return notes;
+    const [existing, visible] = await Promise.all([
+      this.prisma.conversation.findMany({ where: { id: { in: ids }, workspaceId }, select: { id: true } }),
+      this.prisma.conversation.findMany({ where: { id: { in: ids }, workspaceId, ...scope }, select: { id: true } }),
+    ]);
+    const exist = new Set(existing.map((c) => c.id));
+    const vis = new Set(visible.map((c) => c.id));
+    return notes.filter((n) => !n.conversationId || !exist.has(n.conversationId) || vis.has(n.conversationId));
   }
 
   /** conversation -> ticket -> contact, each only if it really exists in the workspace
@@ -137,8 +151,8 @@ export class NotesService {
     return { memberIds, warnings, send };
   }
 
-  listForContact(workspaceId: string, contactId: string) {
-    return this.list(workspaceId, { contactId });
+  listForContact(workspaceId: string, contactId: string, viewer?: Viewer) {
+    return this.list(workspaceId, { contactId }, viewer);
   }
 
   async listForConversation(workspaceId: string, conversationId: string, viewer?: Viewer) {
@@ -146,8 +160,8 @@ export class NotesService {
     return this.list(workspaceId, { conversationId });
   }
 
-  listForTicket(workspaceId: string, ticketId: string) {
-    return this.list(workspaceId, { ticketId });
+  listForTicket(workspaceId: string, ticketId: string, viewer?: Viewer) {
+    return this.list(workspaceId, { ticketId }, viewer);
   }
 
   async get(workspaceId: string, id: string, viewer?: Viewer) {
