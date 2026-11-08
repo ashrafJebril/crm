@@ -1,3 +1,4 @@
+process.env.TZ = "Asia/Dubai";
 import { describe, it, expect } from "vitest";
 import type { Conversation } from "../../lib/types";
 import {
@@ -45,12 +46,13 @@ describe("inboxFilters", () => {
     expect(matchesFilter(mk({ id: "a" }), F({ lifecycles: ["customer"] }), ctx)).toBe(true);
     expect(matchesFilter(mk({ id: "a" }), F({ lifecycles: ["LEAD"] }), ctx)).toBe(false);
   });
-  it("date range is inclusive of the to-day", () => {
+  it("date range is inclusive of the to-day, using the local (Dubai) day", () => {
     const f = F({ from: "2026-11-01", to: "2026-11-03" });
-    expect(matchesFilter(mk({ id: "a", updatedAt: "2026-11-03T23:30:00.000Z" }), f, ctx)).toBe(true);
-    expect(matchesFilter(mk({ id: "a", updatedAt: "2026-11-01T00:00:00.000Z" }), f, ctx)).toBe(true);
-    expect(matchesFilter(mk({ id: "a", updatedAt: "2026-11-04T00:00:00.000Z" }), f, ctx)).toBe(false);
-    expect(matchesFilter(mk({ id: "a", updatedAt: "2026-10-31T23:59:59.000Z" }), f, ctx)).toBe(false);
+    const at = (u: string) => matchesFilter(mk({ id: "a", updatedAt: u }), f, ctx);
+    expect(at("2026-10-31T20:30:00Z")).toBe(true); // 1 Nov 00:30 Dubai
+    expect(at("2026-10-31T19:30:00Z")).toBe(false); // 31 Oct 23:30 Dubai
+    expect(at("2026-11-03T19:30:00Z")).toBe(true); // 3 Nov 23:30 Dubai
+    expect(at("2026-11-03T20:30:00Z")).toBe(false); // 4 Nov 00:30 Dubai
     expect(matchesFilter(mk({ id: "a" }), f, ctx)).toBe(false);
   });
   it("pinned stays first in every sort", () => {
@@ -91,6 +93,6 @@ describe("inboxFilters", () => {
   });
   it("activeFilterCount excludes bucket", () => {
     expect(activeFilterCount(F({ bucket: "mine" }))).toBe(0);
-    expect(activeFilterCount(F({ labelIds: ["a"], escalatedOnly: true, from: "2026-01-01" }))).toBe(3);
+    expect(activeFilterCount(F({ labelIds: ["a"], escalatedOnly: true, from: "2026-01-01", to: "2026-01-02" }))).toBe(3);
   });
 });

@@ -42,7 +42,12 @@ function inBucket(c: Conversation, b: InboxBucket, ctx: FilterCtx): boolean {
   }
 }
 
-const day = (iso: string) => iso.slice(0, 10);
+const pad = (n: number) => String(n).padStart(2, "0");
+/** Local calendar day (YYYY-MM-DD) of an instant, as the user sees it. */
+const localDay = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
 
 export function matchesFilter(c: Conversation, f: InboxFilter, ctx: FilterCtx): boolean {
   if (!inBucket(c, f.bucket, ctx)) return false;
@@ -59,9 +64,9 @@ export function matchesFilter(c: Conversation, f: InboxFilter, ctx: FilterCtx): 
   }
   if (f.from || f.to) {
     if (!c.updatedAt) return false;
-    const d = day(c.updatedAt);
-    if (f.from && d < day(f.from)) return false;
-    if (f.to && d > day(f.to)) return false;
+    const d = localDay(c.updatedAt);
+    if (f.from && d < f.from.slice(0, 10)) return false;
+    if (f.to && d > f.to.slice(0, 10)) return false;
   }
   return true;
 }
@@ -91,5 +96,5 @@ export function bucketCounts(list: Conversation[], ctx: FilterCtx): Record<Inbox
 
 export function activeFilterCount(f: InboxFilter): number {
   return (f.assigneeIds.length ? 1 : 0) + (f.labelIds.length ? 1 : 0) + (f.tags.length ? 1 : 0) +
-    (f.lifecycles.length ? 1 : 0) + (f.from ? 1 : 0) + (f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0);
+    (f.lifecycles.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0);
 }
