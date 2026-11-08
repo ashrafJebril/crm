@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
+import type { RoleRow } from "./RolesTab";
+import { roleErrorMessage } from "./RolesTab";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
@@ -14,6 +17,7 @@ interface Member {
   userId: string;
   workspaceId: string;
   role: WorkspaceRole;
+  roleId?: string | null;
   createdAt: string;
   user: {
     id: string;
@@ -33,7 +37,14 @@ export function MembersTab() {
   const { activeWorkspace, user } = useAuth();
 
   const wsId = activeWorkspace?.id;
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const { can } = usePermissions();
+  const canAdd = can("members.create");
+  const canEdit = can("members.update");
+  const canRemove = can("members.delete");
+  const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
+  const rolesQ = useFetch<RoleRow[]>(can("roles.view") ? "/roles" : null);
+  const roleOptions = rolesQ.data ?? [];
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const listQ = useFetch<Member[]>(wsId ? `/workspaces/${wsId}/members` : null);
 
@@ -49,11 +60,11 @@ export function MembersTab() {
   >((input) => api.post<InviteResponse>(`/workspaces/${wsId}/invite`, input));
 
   const updateRoleMut = useMutation<
-    { userId: string; role: WorkspaceRole },
+    { userId: string; roleId: string },
     Member
   >((input) =>
     api.patch<Member>(`/workspaces/${wsId}/members/${input.userId}`, {
-      role: input.role,
+      roleId: input.roleId,
     }),
   );
 
@@ -120,11 +131,17 @@ export function MembersTab() {
     }
   };
 
-  const onChangeRole = async (member: Member, role: WorkspaceRole) => {
-    if (role === member.role) return;
-    await updateRoleMut.mutate({ userId: member.userId, role });
+  const onChangeRole = async (member: Member, roleId: string) => {
+    if (roleId === member.roleId) return;
+    setRoleError(null);
+    try {
+      await updateRoleMut.mutate({ userId: member.userId, roleId });
+      showStatus(tx(`Updated ${member.user.name}'s role.`, `تم تحديث الدور.`));
+    } catch (e) {
+      // e.g. last owner, "Cannot grant permissions you don't have"
+      setRoleError(roleErrorMessage(e, tx));
+    }
     listQ.refetch();
-    showStatus(tx(`Updated ${member.user.name}'s role.`, `تم تحديث الدور.`));
   };
 
   const onResetPwd = async (member: Member) => {
@@ -172,7 +189,7 @@ export function MembersTab() {
 
   return (
     <>
-      {canEdit && (
+      {canAdd && (
         <SettingsCard
           title={tx("Add team member", "إضافة عضو")}
           description={tx(
@@ -308,31 +325,38 @@ export function MembersTab() {
                   </div>
                   {canEdit && !isMe ? (
                     <select
-                      value={m.role}
-                      onChange={(e) => onChangeRole(m, e.target.value as WorkspaceRole)}
-                      disabled={updateRoleMut.loading}
-                      style={{ ...inputStyle, width: 120, height: 30 }}
+                      dir="auto"
+                      value={m.roleId ?? roleOptions.find((r) => r.key === m.role)?.id ?? ""}
+                      onChange={(e) => onChangeRole(m, e.target.value)}
+                      disabled={updateRoleMut.loading || roleOptions.length === 0}
+                      aria-label={tx("Role", "الدور")}
+                      style={{ ...inputStyle, width: 160, height: 30 }}
                     >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {r}
+                      {roleOptions.length === 0 && <option value="">{m.role}</option>}
+                      {roleOptions.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {t.lang === "ar" ? r.nameAr || r.name : r.name}
                         </option>
                       ))}
                     </select>
                   ) : (
                     <Badge kind="accent">{m.role}</Badge>
                   )}
-                  {canEdit && !isMe && (
+                  {!isMe && (
                     <>
                       <button
                         type="button"
                         className="btn ghost sm"
                         onClick={() => onResetPwd(m)}
-                        disabled={resetPwdMut.loading}
-                        title={tx(
-                          "Generate a new password for this member",
-                          "إنشاء كلمة مرور جديدة لهذا العضو",
-                        )}
+                        disabled={resetPwdMut.loading || !canEdit}
+                        title={
+                          canEdit
+                            ? tx(
+                                "Generate a new password for this member",
+                                "إنشاء كلمة مرور جديدة لهذا العضو",
+                              )
+                            : noPerm
+                        }
                       >
                         {tx("Reset password", "إعادة تعيين كلمة المرور")}
                       </button>
@@ -340,7 +364,8 @@ export function MembersTab() {
                         type="button"
                         className="btn ghost sm"
                         onClick={() => onRemove(m)}
-                        disabled={removeMut.loading}
+                        disabled={removeMut.loading || !canRemove}
+                        title={canRemove ? undefined : noPerm}
                         style={{ color: "var(--bad)" }}
                       >
                         {tx("Remove", "حذف")}
@@ -354,7 +379,7 @@ export function MembersTab() {
         )}
         <ErrorRow
           message={
-            listQ.error ?? updateRoleMut.error ?? removeMut.error ?? resetPwdMut.error
+            listQ.error ?? roleError ?? removeMut.error ?? resetPwdMut.error
           }
         />
       </SettingsCard>

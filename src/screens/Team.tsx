@@ -8,7 +8,6 @@ import { Badge } from "@/components/Badge";
 import {
   IconAlert,
   IconBolt,
-  IconCheck,
   IconCheckCircle,
   IconMore,
   IconPlus,
@@ -17,12 +16,10 @@ import {
 import {
   ACTIVITY,
   PENDING_INVITES,
-  PERM_MATRIX,
-  PERMS,
   ROLES,
-  type RoleName,
 } from "@/data/team-extras";
 import { useFetch } from "@/api/useFetch";
+import { RolesTab } from "@/screens/settings/RolesTab";
 
 type Tab = "members" | "pending" | "roles" | "activity";
 
@@ -151,7 +148,6 @@ function TeamImpl() {
   const tx = makeTx(t.lang);
 
   const [tab, setTab] = useState<Tab>("members");
-  const [selectedRole, setSelectedRole] = useState<RoleName>("Agent");
   const [showInvite, setShowInvite] = useState(false);
 
   const {
@@ -164,7 +160,6 @@ function TeamImpl() {
   const team: TeamApiUser[] = teamData ?? [];
   const onlineCount = team.filter((m) => m.status === "online").length;
   const twoFACount = team.filter((m) => m.twoFA).length;
-  const selectedRoleDef = ROLES.find((r) => r.name === selectedRole);
 
   return (
     <div
@@ -450,120 +445,7 @@ function TeamImpl() {
         </div>
       )}
 
-      {tab === "roles" && (
-        <div
-          style={{
-            padding: 20,
-            display: "grid",
-            gridTemplateColumns: "240px 1fr",
-            gap: 16,
-          }}
-        >
-          <div className="card" style={{ padding: 8 }}>
-            {ROLES.map((r) => {
-              const isSelected = selectedRole === r.name;
-              return (
-                <div
-                  key={r.name}
-                  onClick={() => setSelectedRole(r.name)}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: "var(--r-sm)",
-                    cursor: "pointer",
-                    background: isSelected ? "var(--bg-2)" : "transparent",
-                    border: isSelected
-                      ? "1px solid var(--line-soft)"
-                      : "1px solid transparent",
-                    marginBottom: 4,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      marginBottom: 4,
-                    }}
-                  >
-                    <Badge kind={r.color}>{r.name}</Badge>
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color: "var(--ink-3)",
-                        marginInlineStart: "auto",
-                      }}
-                    >
-                      {team.filter((m) => m.role === r.name).length}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--ink-2)",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {tx(r.descEn, r.descAr)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="card">
-            <div className="card-h">
-              <div>
-                <h3>
-                  {selectedRole} {tx("permissions", "الصلاحيات")}
-                </h3>
-                <div className="sub">
-                  {selectedRoleDef
-                    ? tx(selectedRoleDef.descEn, selectedRoleDef.descAr)
-                    : null}
-                </div>
-              </div>
-              <button className="btn sm">
-                {tx("Duplicate as template", "نسخ كقالب")}
-              </button>
-            </div>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>{tx("Area", "المنطقة")}</th>
-                  {PERMS[0]!.caps.map((c, i) => (
-                    <th key={i} style={{ textAlign: "center" }}>
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {PERMS.map((row, ri) => (
-                  <tr key={row.area}>
-                    <td style={{ fontWeight: 500 }}>{row.area}</td>
-                    {row.caps.map((_c, ci) => {
-                      const allowed = PERM_MATRIX[selectedRole][ri]![ci] === 1;
-                      return (
-                        <td key={ci} style={{ textAlign: "center" }}>
-                          {allowed ? (
-                            <span style={{ color: "var(--accent)" }}>
-                              <IconCheck w={16} />
-                            </span>
-                          ) : (
-                            <span style={{ color: "var(--ink-4)" }}>—</span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
+      {tab === "roles" && <RolesTab />}
       {tab === "activity" && (
         <div style={{ padding: 20, maxWidth: 720 }}>
           <div className="card">
