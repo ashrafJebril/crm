@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { makeTx } from "@/lib/tx";
@@ -13,7 +13,9 @@ export const LABEL_COLOR_VAR: Record<ConversationLabel["color"], string> = {
   accent: "var(--accent)",
   human: "var(--human)",
 };
-const COLORS = Object.keys(LABEL_COLOR_VAR) as ConversationLabel["color"][];
+// "human" is identical to "info" visually, so it is not offered for new labels;
+// existing labels stored as "human" still render via LABEL_COLOR_VAR.
+const COLORS: ConversationLabel["color"][] = ["ink", "info", "ok", "warn", "bad", "accent"];
 
 export function LabelPicker({
   conversationId,
@@ -40,6 +42,14 @@ export function LabelPicker({
   const [color, setColor] = useState<ConversationLabel["color"]>("info");
   const labels = labelsQ.data ?? [];
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (open) {
+      panelRef.current
+        ?.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])")
+        ?.focus();
+    }
+  }, [open]);
   const closePanel = () => {
     setOpen(false);
     triggerRef.current?.focus();
@@ -51,7 +61,7 @@ export function LabelPicker({
     warn: tx("Amber", "كهرماني"),
     bad: tx("Red", "أحمر"),
     accent: tx("Accent", "لون التمييز"),
-    human: tx("Violet", "بنفسجي"),
+    human: tx("Blue", "أزرق"),
   };
 
   async function save(next: string[]) {
@@ -103,7 +113,15 @@ export function LabelPicker({
   }
 
   return (
-    <div style={{ position: "relative" }}>
+    <div
+      style={{ position: "relative" }}
+      onKeyDown={(e) => {
+        if (open && e.key === "Escape") {
+          e.stopPropagation();
+          closePanel();
+        }
+      }}
+    >
       <span title={disabled ? disabledReason : undefined} style={{ display: "inline-flex" }}>
       <button
         ref={triggerRef}
@@ -121,14 +139,9 @@ export function LabelPicker({
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
           <div
+            ref={panelRef}
             role="dialog"
             aria-label={tx("Labels", "الوسوم")}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.stopPropagation();
-                closePanel();
-              }
-            }}
             style={{
               position: "absolute",
               insetInlineEnd: 0,

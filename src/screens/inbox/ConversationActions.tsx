@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
@@ -30,12 +30,23 @@ function Menu({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (open) panelRef.current?.querySelector<HTMLElement>("button")?.focus();
+  }, [open]);
   const close = () => {
     setOpen(false);
     triggerRef.current?.focus();
   };
   return (
-    <div style={{ position: "relative" }}>
+    <div
+      style={{ position: "relative" }}
+      onKeyDown={(e) => {
+        if (open && e.key === "Escape") {
+          e.stopPropagation();
+          close();
+        }
+      }}
+    >
       <span title={title} style={{ display: "inline-flex" }}>
         <button
           ref={triggerRef}
@@ -54,10 +65,7 @@ function Menu({
           <div
             ref={panelRef}
             onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.stopPropagation();
-                close();
-              } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
                 e.preventDefault();
                 const items = Array.from(panelRef.current?.querySelectorAll("button") ?? []);
                 const i = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -152,7 +160,10 @@ export function ConversationActions({
 
   /** Resolves "ok", "conflict" or "error". busy stays set until the refetch
    *  lands, so the next action always carries the fresh version. */
-  async function patch(body: Record<string, unknown>): Promise<"ok" | "conflict" | "error"> {
+  async function patch(
+    body: Record<string, unknown>,
+  ): Promise<"ok" | "conflict" | "error"> {
+    const isEscalate = body.escalated === true;
     if (busy) return "error";
     setBusy(true);
     setNote(null);
@@ -177,7 +188,7 @@ export function ConversationActions({
           ? e.message
           : tx("Couldn't update the conversation", "تعذّر تحديث المحادثة");
       setNote(msg);
-      setEscalateError(msg);
+      if (isEscalate) setEscalateError(msg);
       return "error";
     } finally {
       setBusy(false);
@@ -281,7 +292,9 @@ export function ConversationActions({
           className="btn"
           disabled={live || busy}
           style={conv.escalated ? { borderColor: "var(--bad)", color: "var(--bad)" } : undefined}
-          onClick={() => (conv.escalated ? void patch({ escalated: false }) : setEscalateOpen(true))}
+          onClick={() => (conv.escalated
+              ? void patch({ escalated: false })
+              : (setEscalateError(null), setEscalateOpen(true)))}
         >
           {conv.escalated ? tx("De-escalate", "إلغاء التصعيد") : tx("Escalate", "تصعيد")}
         </button>
