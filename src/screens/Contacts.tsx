@@ -17,6 +17,7 @@ import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
 import { getHashParam, setHashParam } from "@/lib/hashState";
+import { useOpenParam } from "@/lib/useOpenParam";
 import { Pager } from "./contacts/Pager";
 import { Modal } from "@/components/Modal";
 import type { Contact, CustomFieldDef, Pipeline, Segment, TagRow, TeamMember } from "@/lib/types";
@@ -468,6 +469,8 @@ function ContactsImpl() {
   const [pipelineConfirm, setPipelineConfirm] = useState<Extract<BulkAction, { op: "addToPipeline" }> | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [openContactId, setOpenContactId] = useState<string | null>(null);
+  // Deep link from a notification: `#/contacts?open=<contactId>`.
+  useOpenParam(setOpenContactId);
 
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [showSegmentManager, setShowSegmentManager] = useState(false);

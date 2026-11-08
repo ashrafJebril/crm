@@ -431,8 +431,37 @@ export interface Note {
   ticketId: string | null;
   body: string;
   authorUserId: string | null;
+  parentId?: string | null;
+  mentions?: string[];
+  replies?: Note[];
+  seenBy?: Array<{ userId: string; seenAt: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface NoteWarning {
+  userId: string;
+  reason: "not_a_member" | "no_access";
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  /** Message KEY (e.g. "assignment.ticket"), localized client-side. */
+  title: string;
+  /** JSON string of message params. */
+  body: string | null;
+  recordKind: string | null;
+  recordId: string | null;
+  readAt?: string | null;
+  createdAt: string;
+  sound?: boolean;
+}
+
+export interface NotificationPreference {
+  type: string;
+  inApp: boolean;
+  sound: boolean;
 }
 
 // ─── Workspaces ───────────────────────────────────────────────────────────

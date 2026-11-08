@@ -1,4 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useOpenParam } from "@/lib/useOpenParam";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
@@ -2729,6 +2730,8 @@ function InboxImpl() {
   };
   const [search, setSearch] = useState<string>("");
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Deep link from a notification: `#/inbox?open=<conversationId>`.
+  useOpenParam(setActiveId);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
   const [channels, setChannels] = useState<Set<ConvChannel>>(

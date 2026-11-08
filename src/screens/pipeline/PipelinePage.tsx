@@ -5,6 +5,7 @@ import { useTicketRealtime } from "./hooks/useTicketRealtime";
 import { PipelineHeader } from "./PipelineHeader";
 import { PipelineBoard } from "./PipelineBoard";
 import { TicketDetailDrawer } from "./TicketDetailDrawer";
+import { useOpenParam } from "@/lib/useOpenParam";
 import { NewTicketModal } from "./NewTicketModal";
 import { TEAM } from "@/data/team";
 import type { Ticket } from "@/lib/types";
@@ -40,13 +41,19 @@ export default function PipelinePage() {
   const [ownerFilter, setOwnerFilter] = useState<string>("");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [showNew, setShowNew] = useState(false);
+  // Deep link from a notification: `#/pipeline?open=<ticketId>`.
+  const [deepTicketId, setDeepTicketId] = useState<string | null>(null);
+  useOpenParam(setDeepTicketId);
 
   // Keyboard shortcuts: N = new, / = search focus, Esc = close drawer/modal
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (showNew) setShowNew(false);
-        else if (selectedTicket) setSelectedTicket(null);
+        else if (selectedTicket || deepTicketId) {
+          setSelectedTicket(null);
+          setDeepTicketId(null);
+        }
         return;
       }
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -60,7 +67,7 @@ export default function PipelinePage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showNew, selectedTicket]);
+  }, [showNew, selectedTicket, deepTicketId]);
 
   const pipeline = pipelines.find((p) => p.id === pipelineId);
 
@@ -108,13 +115,16 @@ export default function PipelinePage() {
         />
       </div>
 
-      {selectedTicket ? (
+      {selectedTicket || deepTicketId ? (
         <TicketDetailDrawer
-          ticketId={selectedTicket.id}
-          pipelineId={selectedTicket.pipelineId}
-          stageId={selectedTicket.stageId}
+          ticketId={selectedTicket?.id ?? deepTicketId!}
+          pipelineId={selectedTicket?.pipelineId ?? ""}
+          stageId={selectedTicket?.stageId ?? ""}
           lang={lang}
-          onClose={() => setSelectedTicket(null)}
+          onClose={() => {
+            setSelectedTicket(null);
+            setDeepTicketId(null);
+          }}
           onOpenConversation={(cid) => {
             window.location.hash = `#/inbox?conversationId=${encodeURIComponent(cid)}`;
           }}

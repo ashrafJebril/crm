@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFetch } from "@/api/useFetch";
+import { api } from "@/api/client";
 import { useRealtime } from "@/api/useRealtime";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
-import { IconBell, IconVolume, IconVolumeMute } from "@/icons";
+import { IconBell, IconCog, IconVolume, IconVolumeMute } from "@/icons";
+import { notificationText } from "@/lib/notificationText";
+import { recordHref } from "@/lib/recordLink";
+import { NotificationsList } from "./NotificationsList";
+import { NotificationPrefsDialog } from "./NotificationPrefsDialog";
 import {
   armNotificationSound,
   isNotificationSoundOn,
   playNotificationChime,
   setNotificationSoundOn,
 } from "@/lib/chime";
-import type { Conversation, Contact } from "@/lib/types";
+import type { Conversation, Contact, Notification as StoredNotification } from "@/lib/types";
 
 interface InboxActivity {
   channel: string;
@@ -25,6 +30,8 @@ interface NotificationItem {
   name: string;
   preview: string;
   at: number; // epoch ms
+  /** Stored notifications deep-link here; conversation items go to the inbox. */
+  href?: string;
 }
 
 interface UnreadConvRich {
@@ -158,6 +165,15 @@ export function NotificationsBell(): React.ReactElement {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+  // Stored (server-side, per-member) notifications.
+  const [tab, setTab] = useState<"notifications" | "conversations">("notifications");
+  const [stored, setStored] = useState<StoredNotification[]>([]);
+  const [storedUnread, setStoredUnread] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [storedLoading, setStoredLoading] = useState(false);
+  const [storedError, setStoredError] = useState(false);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const storedIds = useRef<Set<string>>(new Set());
   // For the relative-time labels to tick without re-subscribing.
   const [tick, setTick] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -201,6 +217,76 @@ export function NotificationsBell(): React.ReactElement {
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((tt) => tt.id !== id));
     }, TOAST_EXIT_MS);
+  };
+
+  // Stored notifications: first page + unread count on mount.
+  const loadPage = (cursor: string | null): void => {
+    setStoredLoading(true);
+    setStoredError(false);
+    const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=20` : "?limit=20";
+    api
+      .get<{ items: StoredNotification[]; nextCursor: string | null }>(`/notifications${qs}`)
+      .then((res) => {
+        const fresh = res.items.filter((n) => !storedIds.current.has(n.id));
+        for (const n of fresh) storedIds.current.add(n.id);
+        setStored((prev) => [...prev, ...fresh]);
+        setNextCursor(res.nextCursor ?? null);
+      })
+      .catch(() => setStoredError(true))
+      .finally(() => setStoredLoading(false));
+  };
+  useEffect(() => {
+    loadPage(null);
+    api
+      .get<{ count: number }>("/notifications/unread-count")
+      .then((r) => setStoredUnread(r.count))
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live delivery of a stored notification.
+  useRealtime<StoredNotification>("notification:new", (n) => {
+    if (!n?.id || storedIds.current.has(n.id)) return;
+    storedIds.current.add(n.id);
+    setStored((prev) => [{ ...n, readAt: null }, ...prev]);
+    setStoredUnread((c) => c + 1);
+    if (n.sound !== false) playNotificationChime();
+    if (document.visibilityState === "visible") {
+      const txt = notificationText(tx, n);
+      const item: NotificationItem = {
+        id: `n-${n.id}`,
+        channel: "",
+        name: txt.title,
+        preview: txt.body ?? "",
+        at: Date.now(),
+        href: recordHref(n.recordKind, n.recordId) ?? undefined,
+      };
+      setToasts((prev) => [...prev, { id: item.id, item, dismissing: false }].slice(-MAX_VISIBLE_TOASTS));
+      window.setTimeout(() => dismissToast(item.id), TOAST_DURATION_MS);
+    }
+  });
+
+  const markRead = (ids: string[] | "all"): void => {
+    api
+      .post("/notifications/read", ids === "all" ? { all: true } : { ids })
+      .catch(() => undefined);
+  };
+  const openStored = (n: StoredNotification): void => {
+    if (!n.readAt) {
+      const nowIso = new Date().toISOString();
+      setStored((prev) => prev.map((x) => (x.id === n.id ? { ...x, readAt: nowIso } : x)));
+      setStoredUnread((c) => Math.max(0, c - 1));
+      markRead([n.id]);
+    }
+    const href = recordHref(n.recordKind, n.recordId);
+    if (href) window.location.hash = href;
+    setOpen(false);
+  };
+  const markAllStored = (): void => {
+    const nowIso = new Date().toISOString();
+    setStored((prev) => prev.map((x) => (x.readAt ? x : { ...x, readAt: nowIso })));
+    setStoredUnread(0);
+    markRead("all");
   };
 
   // Realtime hint: jump on activity so the diff lands quickly when the
@@ -347,10 +433,15 @@ export function NotificationsBell(): React.ReactElement {
     };
   }, [open]);
 
+  // Viewing the conversations tab marks that feed read (as opening the bell did before).
+  useEffect(() => {
+    if (open && tab === "conversations") setUnread(0);
+  }, [open, tab, unread]);
+
   const toggle = () => {
     setOpen((v) => {
       const next = !v;
-      if (next) setUnread(0); // opening = mark all read
+      if (next) setTab(storedUnread === 0 && unread > 0 ? "conversations" : "notifications");
       return next;
     });
   };
@@ -368,20 +459,26 @@ export function NotificationsBell(): React.ReactElement {
   const now = Date.now();
   void tick; // re-render trigger
   const sorted = useMemo(() => items, [items]);
-  const badge = unread > 9 ? "9+" : String(unread);
+  const totalUnread = unread + storedUnread;
+  const badge = totalUnread > 9 ? "9+" : String(totalUnread);
 
   return (
     <div ref={rootRef} style={{ position: "relative" }}>
       <button
         className="btn ghost icon"
         title={tx("Notifications", "الإشعارات")}
+        aria-label={
+          totalUnread > 0
+            ? tx(`Notifications (${totalUnread} unread)`, `الإشعارات (${totalUnread} غير مقروء)`)
+            : tx("Notifications", "الإشعارات")
+        }
         onClick={toggle}
         aria-haspopup="menu"
         aria-expanded={open}
         style={{ position: "relative" }}
       >
         <IconBell w={16} />
-        {unread > 0 && (
+        {totalUnread > 0 && (
           <span
             aria-hidden
             style={{
@@ -447,12 +544,24 @@ export function NotificationsBell(): React.ReactElement {
               }}
             >
               {tx("Notifications", "الإشعارات")}
-              {sorted.length > 0 && (
-                <span style={{ marginInlineStart: 8, color: "var(--ink-2)" }}>
-                  · {sorted.length}
-                </span>
-              )}
             </span>
+            <button
+              type="button"
+              onClick={() => setPrefsOpen(true)}
+              title={tx("Notification preferences", "تفضيلات الإشعارات")}
+              aria-label={tx("Notification preferences", "تفضيلات الإشعارات")}
+              style={{
+                border: 0,
+                background: "transparent",
+                color: "var(--ink-3)",
+                cursor: "pointer",
+                padding: "2px 4px",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              <IconCog w={13} />
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -481,7 +590,7 @@ export function NotificationsBell(): React.ReactElement {
             >
               {soundOn ? <IconVolume w={13} /> : <IconVolumeMute w={13} />}
             </button>
-            {sorted.length > 0 && (
+            {tab === "conversations" && sorted.length > 0 && (
               <button
                 type="button"
                 onClick={clearAll}
@@ -501,6 +610,62 @@ export function NotificationsBell(): React.ReactElement {
             )}
           </div>
 
+          <div
+            role="tablist"
+            style={{ display: "flex", borderBottom: "1px solid var(--line-soft)" }}
+          >
+            {(
+              [
+                ["notifications", tx("Notifications", "الإشعارات"), storedUnread],
+                ["conversations", tx("Conversations", "المحادثات"), unread],
+              ] as const
+            ).map(([id, label, count]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                onClick={() => setTab(id)}
+                style={{
+                  flex: 1,
+                  padding: "8px 6px",
+                  border: 0,
+                  background: "transparent",
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  color: tab === id ? "var(--ink)" : "var(--ink-3)",
+                  fontWeight: tab === id ? 600 : 400,
+                  borderBottom: `2px solid ${tab === id ? "var(--accent)" : "transparent"}`,
+                }}
+              >
+                {label}
+                {count > 0 && (
+                  <span className="mono" style={{ marginInlineStart: 6, color: "var(--accent)" }}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {tab === "notifications" && (
+            <NotificationsList
+              tx={tx}
+              isAr={isAr}
+              now={now}
+              items={stored}
+              loading={storedLoading}
+              error={storedError}
+              hasMore={nextCursor !== null}
+              onLoadMore={() => loadPage(nextCursor)}
+              onOpen={openStored}
+              onMarkAll={markAllStored}
+              hasUnread={storedUnread > 0}
+            />
+          )}
+
+          {tab === "conversations" && (
           <div style={{ overflowY: "auto", flex: 1 }}>
             {sorted.length === 0 ? (
               <div
@@ -620,8 +785,11 @@ export function NotificationsBell(): React.ReactElement {
               })
             )}
           </div>
+          )}
         </div>
       )}
+
+      {prefsOpen && <NotificationPrefsDialog tx={tx} onClose={() => setPrefsOpen(false)} />}
 
       {toasts.length > 0 &&
         createPortal(
@@ -631,7 +799,7 @@ export function NotificationsBell(): React.ReactElement {
               {toasts.map((tt) => {
                 const lbl = CHANNEL_LABEL[tt.item.channel];
                 const channelLabel = lbl ? (isAr ? lbl.ar : lbl.en) : tt.item.channel;
-                const dot = CHANNEL_DOT[tt.item.channel] ?? "var(--ink-3)";
+                const dot = tt.item.channel ? (CHANNEL_DOT[tt.item.channel] ?? "var(--ink-3)") : "var(--accent)";
                 return (
                   <div
                     key={tt.id}
@@ -641,17 +809,17 @@ export function NotificationsBell(): React.ReactElement {
                     onClick={(e) => {
                       // Don't navigate if the close button caught it.
                       if ((e.target as HTMLElement).closest(".close")) return;
-                      window.location.hash = "#/inbox";
+                      window.location.hash = tt.item.href ?? "#/inbox";
                       dismissToast(tt.id);
                     }}
                   >
                     <span className="dot" style={{ background: dot }} />
                     <div className="body">
                       <div className="row1">
-                        <span className="name">{tt.item.name}</span>
-                        <span className="channel">{channelLabel}</span>
+                        <span className="name" dir="auto">{tt.item.name}</span>
+                        {channelLabel && <span className="channel">{channelLabel}</span>}
                       </div>
-                      <div className="preview">
+                      <div className="preview" dir="auto">
                         {tt.item.preview || tx("New message", "رسالة جديدة")}
                       </div>
                     </div>
