@@ -140,6 +140,24 @@ export class PermissionService {
     if (!row) throw new NotFoundException("Conversation not found");
   }
 
+  /** For a restricted viewer, the subset of `ids` that are DB conversations
+   *  the viewer can see (opaque/unknown ids are never visible). null when the
+   *  viewer is unrestricted (no viewer, bypass, visibility "all"). */
+  async visibleConversationIds(
+    workspaceId: string,
+    viewer: Viewer | null | undefined,
+    ids: readonly string[],
+  ): Promise<Set<string> | null> {
+    const scope = await this.conversationScope(workspaceId, viewer);
+    if (Object.keys(scope).length === 0) return null;
+    if (ids.length === 0) return new Set();
+    const rows = await this.prisma.conversation.findMany({
+      where: { id: { in: [...new Set(ids)] }, workspaceId, ...scope },
+      select: { id: true },
+    });
+    return new Set(rows.map((r) => r.id));
+  }
+
   /** True when `viewer` is limited to a subset of conversations. Provider-live
    *  thread routes (Zernio/Facebook/Instagram, keyed by provider ids that
    *  cannot be matched to assignees) are closed to such viewers. */

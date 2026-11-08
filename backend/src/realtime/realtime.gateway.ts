@@ -9,6 +9,7 @@ import {
 import { Server, Socket } from "socket.io";
 import { PaymentLockService } from "../billing/payment-lock.service";
 import type { JwtPayload } from "../auth/auth.guard";
+import { PermissionService } from "../permissions/permission.service";
 
 /** Returns the room name a workspace's sockets join. */
 export const workspaceRoom = (workspaceId: string): string =>
@@ -37,6 +38,7 @@ export class RealtimeGateway
   constructor(
     private readonly jwt: JwtService,
     private readonly paymentLock: PaymentLockService,
+    private readonly permissions: PermissionService,
   ) {}
 
   async handleConnection(client: Socket): Promise<void> {
@@ -60,6 +62,18 @@ export class RealtimeGateway
         !payload.isSuperAdmin &&
         !payload.impersonating &&
         (await this.paymentLock.isLocked(payload.workspaceId))
+      ) {
+        client.disconnect();
+        return;
+      }
+      // Only members of the JWT workspace get its live feed: a removed
+      // member's token stays valid for days. Support sessions have no member
+      // row and are exempt (as in PermissionGuard). A lookup failure lands in
+      // the catch below and disconnects (fail closed).
+      if (
+        !payload.isSuperAdmin &&
+        !payload.impersonating &&
+        !(await this.permissions.effective(payload.workspaceId, payload.sub))
       ) {
         client.disconnect();
         return;

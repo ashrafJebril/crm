@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkflowDispatchService } from "./workflow-dispatch.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { StepGraph, validateStepGraph } from "./workflow-steps";
 import { CreateWorkflowDto, TestWorkflowDto, UpdateWorkflowDto } from "./workflows.dto";
 
@@ -50,12 +52,52 @@ const shapeRun = (r: {
   completedAt: r.completedAt,
 });
 
+/** The DB conversation a run was triggered by, if any. Shapes emitted:
+ *  message_received -> trigger.conversation.id (zernio.service.ts); ticket
+ *  triggers -> trigger.ticket.conversationId; a flat trigger.conversationId
+ *  (webhook/test payloads) is honoured too. */
+export function runConversationId(context: unknown): string | null {
+  const t = (context as { trigger?: Record<string, any> } | null)?.trigger;
+  if (!t || typeof t !== "object") return null;
+  const id = t.conversation?.id ?? t.conversationId ?? t.ticket?.conversationId;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** A run with no conversation, shown to a restricted viewer: the trigger's
+ *  message and the run result are stripped. */
+function redactRun<R extends { context: unknown; result: unknown }>(run: R): R {
+  const ctx = (run.context ?? {}) as Record<string, unknown>;
+  const trigger = { ...((ctx.trigger ?? {}) as Record<string, unknown>) };
+  delete trigger.message;
+  return { ...run, context: { ...ctx, trigger }, result: null };
+}
+
 @Injectable()
 export class WorkflowsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly dispatch: WorkflowDispatchService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
+
+  /**
+   * Restricted (assigned-only) viewers: runs on a conversation they cannot
+   * see are dropped; runs with no conversation lose trigger.message and
+   * result. Unrestricted viewers and internal callers get every run as-is.
+   */
+  private async scopeRuns(workspaceId: string, runs: ReturnType<typeof shapeRun>[], viewer?: Viewer) {
+    if (!this.perm) return runs;
+    const ids = runs.map((r) => runConversationId(r.context)).filter((x): x is string => !!x);
+    const visible = await this.perm.visibleConversationIds(workspaceId, viewer, ids);
+    if (!visible) return runs;
+    const out: ReturnType<typeof shapeRun>[] = [];
+    for (const r of runs) {
+      const cid = runConversationId(r.context);
+      if (!cid) out.push(redactRun(r));
+      else if (visible.has(cid)) out.push(r);
+    }
+    return out;
+  }
 
   async list(workspaceId: string) {
     const rows = await this.prisma.workflow.findMany({
@@ -160,19 +202,21 @@ export class WorkflowsService {
     return { runId: run.id };
   }
 
-  async listRuns(workspaceId: string, workflowId: string) {
+  async listRuns(workspaceId: string, workflowId: string, viewer?: Viewer) {
     await this.get(workspaceId, workflowId);
     const rows = await this.prisma.workflowRun.findMany({
       where: { workspaceId, workflowId },
       orderBy: { startedAt: "desc" },
       take: 50,
     });
-    return rows.map(shapeRun);
+    return this.scopeRuns(workspaceId, rows.map(shapeRun), viewer);
   }
 
-  async getRun(workspaceId: string, workflowId: string, runId: string) {
+  async getRun(workspaceId: string, workflowId: string, runId: string, viewer?: Viewer) {
     const row = await this.prisma.workflowRun.findFirst({ where: { id: runId, workspaceId, workflowId } });
     if (!row) throw new NotFoundException("Workflow run not found");
-    return shapeRun(row);
+    const [run] = await this.scopeRuns(workspaceId, [shapeRun(row)], viewer);
+    if (!run) throw new NotFoundException("Workflow run not found");
+    return run;
   }
 }

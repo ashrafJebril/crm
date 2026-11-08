@@ -3,12 +3,15 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { MEDIA_STORAGE } from "./storage/storage.provider";
 import { LocalStorage } from "./storage/local-storage";
 import type { MediaStorage } from "./storage/storage.types";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 
 const ALLOWED_IMAGE = new Set([
   "image/jpeg",
@@ -25,21 +28,58 @@ export class MediaService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(MEDIA_STORAGE) private readonly storage: MediaStorage,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
-  list(workspaceId: string) {
-    return this.prisma.media.findMany({
+  async list(workspaceId: string, viewer?: Viewer) {
+    const rows = await this.prisma.media.findMany({
       where: { workspaceId },
       orderBy: { createdAt: "desc" },
       take: 200,
     });
+    const visible = await this.visibleTo(workspaceId, rows, viewer);
+    return visible ? rows.filter((r) => visible.has(r.id)) : rows;
   }
 
-  async get(workspaceId: string, id: string) {
+  /**
+   * Media ids of `rows` a restricted (assigned-only) viewer may see: staff
+   * uploads (uploadedById set) and media referenced by a message in a
+   * conversation the viewer can see. Messages reference media by id in
+   * `attach`, or by a URL containing the id (public-token links). null when
+   * the viewer is unrestricted.
+   */
+  private async visibleTo(
+    workspaceId: string,
+    rows: { id: string; uploadedById: string | null }[],
+    viewer?: Viewer,
+  ): Promise<Set<string> | null> {
+    if (!this.perm) return null;
+    const scope = await this.perm.conversationScope(workspaceId, viewer);
+    if (Object.keys(scope).length === 0) return null;
+    const out = new Set(rows.filter((r) => r.uploadedById != null).map((r) => r.id));
+    const inbound = rows.filter((r) => r.uploadedById == null).map((r) => r.id);
+    if (inbound.length > 0) {
+      const msgs = await this.prisma.message.findMany({
+        where: {
+          workspaceId,
+          conversation: scope,
+          OR: inbound.map((id) => ({ attach: { contains: id } })),
+        },
+        select: { attach: true },
+      });
+      for (const id of inbound) if (msgs.some((m) => m.attach?.includes(id))) out.add(id);
+    }
+    return out;
+  }
+
+  /** The row, or 404 when missing or (restricted viewer) not visible. */
+  async get(workspaceId: string, id: string, viewer?: Viewer) {
     const row = await this.prisma.media.findFirst({
       where: { id, workspaceId },
     });
     if (!row) throw new NotFoundException("Media not found");
+    const visible = await this.visibleTo(workspaceId, [row], viewer);
+    if (visible && !visible.has(row.id)) throw new NotFoundException("Media not found");
     return row;
   }
 
@@ -50,11 +90,12 @@ export class MediaService {
     workspaceId: string,
     id: string,
     ttlSeconds = 3600,
+    viewer?: Viewer,
   ): Promise<
     | { kind: "local-file"; absolutePath: string; mimeType: string }
     | { kind: "signed-url"; url: string; mimeType: string }
   > {
-    const row = await this.get(workspaceId, id);
+    const row = await this.get(workspaceId, id, viewer);
     return this.resolveServeForRow(row, ttlSeconds);
   }
 
@@ -258,8 +299,8 @@ export class MediaService {
     return row;
   }
 
-  async remove(workspaceId: string, id: string) {
-    const row = await this.get(workspaceId, id);
+  async remove(workspaceId: string, id: string, viewer?: Viewer) {
+    const row = await this.get(workspaceId, id, viewer);
     await this.prisma.media.delete({ where: { id: row.id } });
     // Delete from whichever backend originally stored it.
     if (row.storageKind === "spaces") {

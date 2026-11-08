@@ -4,15 +4,18 @@ import { RealtimeService } from "./realtime.service";
 describe("RealtimeGateway payment lock", () => {
   let payload: Record<string, unknown>;
   let isLocked: jest.Mock;
+  let effective: jest.Mock;
   let gw: RealtimeGateway;
   let client: { handshake: unknown; data: object; join: jest.Mock; disconnect: jest.Mock; id: string };
 
   beforeEach(() => {
     payload = { sub: "u1", workspaceId: "w1" };
     isLocked = jest.fn().mockResolvedValue(false);
+    effective = jest.fn().mockResolvedValue({ key: "agent" });
     gw = new RealtimeGateway(
       { verifyAsync: jest.fn().mockImplementation(async () => payload) } as never,
       { isLocked } as never,
+      { effective } as never,
     );
     client = {
       handshake: { auth: { token: "t" }, headers: {} },
@@ -47,6 +50,28 @@ describe("RealtimeGateway payment lock", () => {
     await gw.handleConnection(client as never);
     expect(isLocked).not.toHaveBeenCalled();
     expect(client.join).toHaveBeenCalled();
+  });
+
+  it("refuses a user who is not (or no longer) a member of the JWT workspace", async () => {
+    effective.mockResolvedValue(null);
+    await gw.handleConnection(client as never);
+    expect(effective).toHaveBeenCalledWith("w1", "u1");
+    expect(client.join).not.toHaveBeenCalled();
+    expect(client.disconnect).toHaveBeenCalled();
+  });
+
+  it.each(["isSuperAdmin", "impersonating"])("%s sessions skip the membership check", async (flag) => {
+    payload[flag] = true;
+    effective.mockResolvedValue(null);
+    await gw.handleConnection(client as never);
+    expect(effective).not.toHaveBeenCalled();
+    expect(client.join).toHaveBeenCalled();
+  });
+
+  it("refuses when the membership lookup throws (fail closed)", async () => {
+    effective.mockRejectedValue(new Error("db"));
+    await gw.handleConnection(client as never);
+    expect(client.join).not.toHaveBeenCalled();
   });
 
   it("refuses when the lookup throws (fail closed)", async () => {

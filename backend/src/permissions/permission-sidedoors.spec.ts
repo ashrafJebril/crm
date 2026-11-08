@@ -13,6 +13,11 @@ import type { Viewer } from "./visibility";
 import { DashboardController } from "../dashboard/dashboard.module";
 import { FacebookController } from "../integrations/facebook.controller";
 import { InstagramController } from "../integrations/instagram.controller";
+import { WorkflowsService } from "../workflows/workflows.service";
+import { MediaService } from "../media/media.service";
+import { UpdateTicketDto } from "../tickets/tickets.dto";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -411,6 +416,126 @@ describe("assigned-only conversation visibility: side doors", () => {
       await expect(c.createTicket(WS, ME, { conversationId: NONE } as never, viewer)).rejects.toThrow(NotFoundException);
       expect(svc.createTicket).not.toHaveBeenCalled();
       await expect(c.createTicket(WS, ME, { conversationId: MINE } as never, viewer)).resolves.toBeDefined();
+    });
+  });
+
+  describe("workflow runs", () => {
+    const run = (id: string, trigger: Record<string, unknown>) => ({
+      id, status: "completed", isTest: false, error: null, startedAt: new Date(0), completedAt: null,
+      stepsSnapshot: {}, context: { trigger, steps: { s1: { ok: true } } }, result: { reply: "secret" },
+    });
+    const runs = [
+      run("r-mine", { conversation: { id: MINE, channel: "whatsapp" }, message: { body: "hi" } }),
+      run("r-other", { conversation: { id: OTHER, channel: "whatsapp" }, message: { body: "hidden text" } }),
+      run("r-flat", { conversationId: NONE }),
+      run("r-ticket", { ticket: { id: "t", conversationId: OTHER } }),
+      run("r-none", { contact: { id: "ct" }, message: { body: "webhook text" } }),
+    ];
+    const svc = () => {
+      prisma.workflow = {
+        findFirst: jest.fn().mockResolvedValue({
+          id: "w", name: "w", status: "active", triggerType: "x", triggerConfig: {}, steps: {},
+          webhookSecret: null, createdAt: new Date(0), updatedAt: new Date(0),
+        }),
+      };
+      prisma.workflowRun = {
+        findMany: jest.fn().mockResolvedValue(runs),
+        findFirst: jest.fn(async ({ where }: any) => runs.find((r) => r.id === where.id) ?? null),
+      };
+      return new WorkflowsService(prisma, {} as never, perm);
+    };
+
+    it("list: drops runs on hidden conversations; strips trigger.message and result when there is no conversation", async () => {
+      const res: any[] = await svc().listRuns(WS, "w", viewer);
+      expect(res.map((r) => r.id)).toEqual(["r-mine", "r-none"]);
+      expect(res[0].context.trigger.message).toEqual({ body: "hi" });
+      expect(res[0].result).toEqual({ reply: "secret" });
+      expect(res[1].context.trigger.message).toBeUndefined();
+      expect(res[1].context.trigger.contact).toEqual({ id: "ct" });
+      expect(res[1].result).toBeNull();
+    });
+
+    it("get: hidden -> 404, mine -> ok, no-conversation run is redacted", async () => {
+      await expect(svc().getRun(WS, "w", "r-other", viewer)).rejects.toThrow(NotFoundException);
+      await expect(svc().getRun(WS, "w", "r-flat", viewer)).rejects.toThrow(NotFoundException);
+      await expect(svc().getRun(WS, "w", "r-ticket", viewer)).rejects.toThrow(NotFoundException);
+      await expect(svc().getRun(WS, "w", "r-mine", viewer)).resolves.toMatchObject({ id: "r-mine" });
+      const none: any = await svc().getRun(WS, "w", "r-none", viewer);
+      expect(none.context.trigger.message).toBeUndefined();
+      expect(none.result).toBeNull();
+    });
+
+    it("unfiltered for 'all' members, bypass sessions and internal callers", async () => {
+      expect((await svc().listRuns(WS, "w", { userId: ME, bypass: true })).length).toBe(5);
+      expect((await svc().listRuns(WS, "w")).length).toBe(5);
+      prisma = makePrisma(ASSIGNED_PERMS, "all");
+      perm = new PermissionService(prisma);
+      const all: any[] = await svc().listRuns(WS, "w", viewer);
+      expect(all.length).toBe(5);
+      expect(all[4].result).toEqual({ reply: "secret" });
+    });
+  });
+
+  describe("media library", () => {
+    const media = [
+      { id: "med-staff", uploadedById: "u9", storageKind: "spaces", storedPath: "a", mimeType: "image/png" },
+      { id: "med-mine", uploadedById: null, storageKind: "spaces", storedPath: "b", mimeType: "image/png" },
+      { id: "med-url", uploadedById: null, storageKind: "spaces", storedPath: "c", mimeType: "image/png" },
+      { id: "med-hidden", uploadedById: null, storageKind: "spaces", storedPath: "d", mimeType: "image/png" },
+    ];
+    // Messages: attach is a media id, or a public URL containing it.
+    const messages = [
+      { conversationId: MINE, attach: "med-mine" },
+      { conversationId: MINE, attach: "https://x/api/media/med-url/public?token=t" },
+      { conversationId: OTHER, attach: "med-hidden" },
+    ];
+    const svc = () => {
+      prisma.media = {
+        findMany: jest.fn().mockResolvedValue(media),
+        findFirst: jest.fn(async ({ where }: any) => media.find((m) => m.id === where.id) ?? null),
+        delete: jest.fn().mockResolvedValue({}),
+      };
+      prisma.message.findMany = jest.fn(async ({ where }: any) =>
+        messages
+          .filter((m) => rows.some((r) => r.id === m.conversationId && matches(r, where.conversation ?? {})))
+          .filter((m) => where.OR.some((o: any) => m.attach.includes(o.attach.contains))),
+      );
+      const storage = { kind: "local", getSignedUrl: jest.fn().mockResolvedValue("signed"), delete: jest.fn() };
+      return new MediaService(prisma, storage as never, perm);
+    };
+
+    it("list: staff uploads plus media on visible messages only", async () => {
+      const res: any[] = await svc().list(WS, viewer);
+      expect(res.map((m) => m.id)).toEqual(["med-staff", "med-mine", "med-url"]);
+      expect(prisma.message.findMany.mock.calls[0][0].where.conversation).toEqual({ assigneeId: ME });
+    });
+
+    it("file: same rule, 404 otherwise", async () => {
+      const s = svc();
+      await expect(s.resolveServe(WS, "med-hidden", 3600, viewer)).rejects.toThrow(NotFoundException);
+      await expect(s.resolveServe(WS, "med-mine", 3600, viewer)).resolves.toBeDefined();
+      await expect(s.resolveServe(WS, "med-staff", 3600, viewer)).resolves.toBeDefined();
+    });
+
+    it("delete: a hidden inbound attachment -> 404, nothing removed", async () => {
+      const s = svc();
+      await expect(s.remove(WS, "med-hidden", viewer)).rejects.toThrow(NotFoundException);
+      expect(prisma.media.delete).not.toHaveBeenCalled();
+    });
+
+    it("unfiltered for 'all' members and bypass", async () => {
+      expect((await svc().list(WS, { userId: ME, bypass: true })).length).toBe(4);
+      prisma = makePrisma(ASSIGNED_PERMS, "all");
+      perm = new PermissionService(prisma);
+      expect((await svc().list(WS, viewer)).length).toBe(4);
+    });
+  });
+
+  describe("ticket conversation link (M7)", () => {
+    it("PATCH /tickets/:id cannot set or change conversationId (rejected by the global ValidationPipe)", async () => {
+      const dto = plainToInstance(UpdateTicketDto, { title: "x", conversationId: NONE });
+      const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+      expect(errors.map((e) => e.property)).toEqual(["conversationId"]);
     });
   });
 });

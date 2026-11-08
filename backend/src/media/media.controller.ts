@@ -17,9 +17,11 @@ import { diskStorage } from "multer";
 import { tmpdir } from "node:os";
 import { MediaService } from "./media.service";
 import {
+  CurrentViewer,
   CurrentWorkspace,
   CurrentUserId,
 } from "../common/current-workspace.decorator";
+import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 
 @Controller("media")
@@ -29,8 +31,8 @@ export class MediaController {
   constructor(private readonly svc: MediaService) {}
 
   @Get()
-  list(@CurrentWorkspace() workspaceId: string) {
-    return this.svc.list(workspaceId);
+  list(@CurrentWorkspace() workspaceId: string, @CurrentViewer() viewer: Viewer) {
+    return this.svc.list(workspaceId, viewer);
   }
 
   @Post("upload")
@@ -57,8 +59,9 @@ export class MediaController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Res() res: Response,
+    @CurrentViewer() viewer: Viewer,
   ) {
-    const resolved = await this.svc.resolveServe(workspaceId, id);
+    const resolved = await this.svc.resolveServe(workspaceId, id, 3600, viewer);
     if (resolved.kind === "signed-url") {
       // Proxy the bytes instead of 302-redirecting. The frontend's fetch()
       // sends an Authorization header, which triggers a CORS preflight on
@@ -122,7 +125,8 @@ export class MediaController {
   remove(
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
+    @CurrentViewer() viewer: Viewer,
   ) {
-    return this.svc.remove(workspaceId, id);
+    return this.svc.remove(workspaceId, id, viewer);
   }
 }
