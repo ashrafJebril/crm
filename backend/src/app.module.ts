@@ -32,6 +32,7 @@ import { WorkflowsModule } from "./workflows/workflows.module";
 import { McpServerModule } from "./mcp-server/mcp-server.module";
 import { AdsModule } from "./ads/ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
+import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
     SearchModule,
     AdsModule,
     KnowledgeModule,
+    CustomFieldsModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },
