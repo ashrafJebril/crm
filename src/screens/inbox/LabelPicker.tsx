@@ -103,7 +103,7 @@ export function LabelPicker({
         onError(
           tx(
             "Label created, but couldn't attach it",
-            "تم إنشاء الوسم، لكن تعذّر إرفاقه بالمحادثة",
+            "تم إنشاء التصنيف، لكن تعذّر إرفاقه بالمحادثة",
           ),
         );
       }
