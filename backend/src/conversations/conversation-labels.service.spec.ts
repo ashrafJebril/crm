@@ -61,7 +61,7 @@ describe("ConversationLabelsService", () => {
   });
 
   it("set labels replaces the set", async () => {
-    prisma.conversation.findFirst.mockResolvedValue({ id: "cv1", channel: "whatsapp" });
+    prisma.conversation.findFirst.mockResolvedValue({ id: "cv1", channel: "whatsapp", updatedAt: new Date("2026-01-01T00:00:00Z") });
     prisma.conversationLabel.findMany.mockResolvedValue([{ id: "l1" }, { id: "l2" }]);
     const res = await svc.setForConversation("ws1", "cv1", ["l1", "l2", "l1"]);
     expect(res).toEqual({ labelIds: ["l1", "l2"] });
@@ -80,6 +80,9 @@ describe("ConversationLabelsService", () => {
       skipDuplicates: true,
     });
     expect(prisma.conversation.update.mock.calls[0][0].data.version).toEqual({ increment: 1 });
+    expect(prisma.conversation.update.mock.calls[0][0].data.updatedAt).toEqual(
+      new Date("2026-01-01T00:00:00Z"),
+    );
     expect(realtime.emitToWorkspace).toHaveBeenCalledWith("ws1", "inbox.activity", {
       channel: "whatsapp",
       conversationId: "cv1",
@@ -87,7 +90,7 @@ describe("ConversationLabelsService", () => {
   });
 
   it("foreign label id -> 404", async () => {
-    prisma.conversation.findFirst.mockResolvedValue({ id: "cv1", channel: "whatsapp" });
+    prisma.conversation.findFirst.mockResolvedValue({ id: "cv1", channel: "whatsapp", updatedAt: new Date("2026-01-01T00:00:00Z") });
     prisma.conversationLabel.findMany.mockResolvedValue([{ id: "l1" }]);
     await expect(svc.setForConversation("ws1", "cv1", ["l1", "evil"])).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -97,5 +100,13 @@ describe("ConversationLabelsService", () => {
     prisma.conversation.findFirst.mockResolvedValue(null);
     await expect(svc.setForConversation("ws1", "cvX", ["l1"])).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.conversationLabelLink.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("label deleted mid-request (P2003) -> 404", async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: "cv1", channel: "whatsapp", updatedAt: new Date() });
+    prisma.conversationLabel.findMany.mockResolvedValue([{ id: "l1" }]);
+    prisma.$transaction.mockRejectedValue({ code: "P2003" });
+    await expect(svc.setForConversation("ws1", "cv1", ["l1"])).rejects.toBeInstanceOf(NotFoundException);
+    expect(realtime.emitToWorkspace).not.toHaveBeenCalled();
   });
 });

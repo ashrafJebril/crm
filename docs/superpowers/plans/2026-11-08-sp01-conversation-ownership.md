@@ -24,7 +24,7 @@
 
 1. **Two agents assigning the same thread at once.** The second save carries a stale `version` and gets 409 with the current row. The UI shows the current assignee and a toast, not a silent overwrite. → Task 2 test `returns 409 with current when version is stale`.
 2. **Assigning to someone who isn't a member of this workspace** (a removed member, or another tenant's user id) → 400 `assignee is not a member`. → Task 2 test.
-3. **A customer writing into a resolved or pending thread** must reopen it to Open. Closed and spam threads stay as they are. → Task 1 trigger + Task 2 test `reopen trigger SQL covers pending_customer and resolved only`, which asserts on the migration text.
+3. **A customer writing into a resolved, pending or closed thread** must reopen it to Open, but only for messages newer than the status change (backfilled history never reopens). Spam stays sticky. → Task 1 trigger + Task 2 test `reopen trigger SQL covers pending_customer, resolved and closed, not spam, and ignores backfill`, which asserts on the migration text.
 4. **Deleting a label still attached to conversations** removes the links (cascade) and doesn't 500. Rows that showed it simply lose the chip. → Task 3 test.
 5. **Filters combined with Arabic search and live FB/IG threads.** A live thread has no assignee or labels. "Mine" must exclude it, and "All" must keep it. → Task 4 tests.
 
@@ -52,7 +52,8 @@ BEGIN
     UPDATE "Conversation"
        SET "status" = 'human', "statusChangedAt" = NOW(), "version" = "version" + 1
      WHERE "id" = NEW."conversationId"
-       AND "status" IN ('pending_customer', 'resolved');
+       AND "status" IN ('pending_customer', 'resolved', 'closed')
+       AND ("statusChangedAt" IS NULL OR NEW."createdAt" >= "statusChangedAt");
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
@@ -90,7 +91,7 @@ CREATE TRIGGER conversation_reopen_on_inbound AFTER INSERT ON "Message"
   - `unassigns with null`
   - `escalating requires a reason`; `de-escalating clears the reason`
   - `404 for a conversation in another workspace`
-  - `reopen trigger SQL covers pending_customer and resolved only` (read the migration file with `fs`; assert it contains `IN ('pending_customer', 'resolved')` and does not contain `'closed'` inside the IN list)
+  - `reopen trigger SQL covers pending_customer, resolved and closed, not spam, and ignores backfill` (read the migration file with `fs`; assert the trigger's `IN (...)` list is exactly those three and the `createdAt >= statusChangedAt` guard is present)
 - [ ] **Step 2:** `npx jest src/conversations`. Expected: FAIL.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** `npx jest src/conversations`. Expected: PASS. Then the full `npm test`, to confirm the 6 `status: "human"` writers' specs still pass.

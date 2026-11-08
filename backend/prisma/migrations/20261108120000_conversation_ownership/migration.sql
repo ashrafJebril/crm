@@ -44,14 +44,16 @@ DO $$ BEGIN
     FOREIGN KEY ("labelId") REFERENCES "ConversationLabel"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Reopen a pending/resolved thread when the customer writes again.
+-- Reopen a pending/resolved/closed thread when the customer writes again.
+-- Spam stays sticky. Backfilled history (older than the status change) is ignored.
 CREATE OR REPLACE FUNCTION conversation_reopen_on_inbound() RETURNS trigger AS $$
 BEGIN
   IF NEW."from" = 'them' THEN
     UPDATE "Conversation"
        SET "status" = 'human', "statusChangedAt" = NOW(), "version" = "version" + 1
      WHERE "id" = NEW."conversationId"
-       AND "status" IN ('pending_customer', 'resolved');
+       AND "status" IN ('pending_customer', 'resolved', 'closed')
+       AND ("statusChangedAt" IS NULL OR NEW."createdAt" >= "statusChangedAt");
   END IF;
   RETURN NEW;
 END $$ LANGUAGE plpgsql;

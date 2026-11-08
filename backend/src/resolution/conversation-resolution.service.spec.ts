@@ -54,7 +54,15 @@ describe("ConversationResolutionService.apply", () => {
 
   it("an escalation flags the conversation too", async () => {
     await svc.apply("c1", "ws", { ...base, issue_type: "escalation", ticket_title: "Wants a manager" });
-    expect(data()).toMatchObject({ escalated: true, resolutionIssue: "escalation" });
+    expect(data()).toMatchObject({
+      escalated: true,
+      escalateReason: "s",
+      version: { increment: 1 },
+      resolutionIssue: "escalation",
+    });
+    raw.conversation.update.mockClear();
+    await svc.apply("c1", "ws", { ...base, summary: "", issue_type: "escalation" });
+    expect(data().escalateReason).toBe("Escalated by Kewy AI");
     expect(tickets.createTicket.mock.calls[0][1].title).toBe("[Escalation] Wants a manager");
   });
 

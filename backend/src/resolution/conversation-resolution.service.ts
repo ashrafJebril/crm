@@ -198,7 +198,15 @@ export class ConversationResolutionService {
         resolutionAttempts: 0,
         // Fills the long-unused classifier slot the Inbox already reads.
         ...(issue !== "none" ? { intent: issue } : {}),
-        ...(issue === "escalation" ? { escalated: true } : {}),
+        // Same contract as a human escalation: a reason is always stored and
+        // the optimistic version moves so open clients see a conflict.
+        ...(issue === "escalation"
+          ? {
+              escalated: true,
+              escalateReason: (v.summary || "Escalated by Kewy AI").slice(0, 500),
+              version: { increment: 1 },
+            }
+          : {}),
       },
       select: { id: true, contactId: true, channel: true },
     });

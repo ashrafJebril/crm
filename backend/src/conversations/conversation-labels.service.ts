@@ -67,7 +67,7 @@ export class ConversationLabelsService {
     const ids = [...new Set(labelIds)];
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
-      select: { id: true, channel: true },
+      select: { id: true, channel: true, updatedAt: true },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
     if (ids.length) {
@@ -77,19 +77,28 @@ export class ConversationLabelsService {
       });
       if (found.length !== ids.length) throw new NotFoundException("Label not found");
     }
-    await this.prisma.$transaction([
-      this.prisma.conversationLabelLink.deleteMany({
-        where: { conversationId, labelId: { notIn: ids } },
-      }),
-      this.prisma.conversationLabelLink.createMany({
-        data: ids.map((labelId) => ({ conversationId, labelId })),
-        skipDuplicates: true,
-      }),
-      this.prisma.conversation.update({
-        where: { id: conversationId },
-        data: { version: { increment: 1 } },
-      }),
-    ]);
+    try {
+      await this.prisma.$transaction([
+        this.prisma.conversationLabelLink.deleteMany({
+          where: { conversationId, labelId: { notIn: ids } },
+        }),
+        this.prisma.conversationLabelLink.createMany({
+          data: ids.map((labelId) => ({ conversationId, labelId })),
+          skipDuplicates: true,
+        }),
+        this.prisma.conversation.update({
+          where: { id: conversationId },
+          // updatedAt kept explicit: labelling must not reorder the inbox.
+          data: { version: { increment: 1 }, updatedAt: conv.updatedAt },
+        }),
+      ]);
+    } catch (e) {
+      // A label deleted between the check and the write (FK violation).
+      if ((e as { code?: string })?.code === "P2003") {
+        throw new NotFoundException("Label not found");
+      }
+      throw e;
+    }
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: conv.channel,
       conversationId,

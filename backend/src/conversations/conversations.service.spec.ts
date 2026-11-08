@@ -17,6 +17,7 @@ describe("ConversationsService.update", () => {
     escalateReason: null,
     assigneeId: null,
     version: 3,
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
     labels: [{ labelId: "l1" }],
     ...over,
   });
@@ -58,6 +59,11 @@ describe("ConversationsService.update", () => {
       channel: "whatsapp",
       conversationId: "cv1",
     });
+  });
+
+  it("keeps updatedAt unchanged so ownership actions do not reorder the inbox", async () => {
+    await svc.update("ws1", "cv1", { assigneeId: null });
+    expect(dataOf().updatedAt).toEqual(new Date("2026-01-01T00:00:00Z"));
   });
 
   it("returns 409 with current when version is stale", async () => {
@@ -138,13 +144,19 @@ describe("ConversationsService.update", () => {
     );
   });
 
-  it("reopen trigger SQL covers pending_customer and resolved only", () => {
+  it("reopen trigger SQL covers pending_customer, resolved and closed, not spam, and ignores backfill", () => {
     const sql = readFileSync(
       join(__dirname, "../../prisma/migrations/20261108120000_conversation_ownership/migration.sql"),
       "utf8",
     );
-    expect(sql).toContain("IN ('pending_customer', 'resolved')");
-    const m = sql.match(/IN \(([^)]*)\)/);
-    expect(m && m[1]).not.toContain("closed");
+    const fn = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION conversation_reopen_on_inbound"));
+    const m = fn.match(/"status" IN \(([^)]*)\)/);
+    expect(m).not.toBeNull();
+    const list = m![1].split(",").map((x) => x.trim().replace(/'/g, ""));
+    expect(list).toEqual(["pending_customer", "resolved", "closed"]);
+    expect(list).not.toContain("spam");
+    expect(fn).toContain(
+      `AND ("statusChangedAt" IS NULL OR NEW."createdAt" >= "statusChangedAt")`,
+    );
   });
 });

@@ -162,6 +162,8 @@ export class ConversationsService {
       data.statusChangedAt = new Date();
     }
     data.version = { increment: 1 };
+    // Ownership actions must not reorder the inbox (list sorts by updatedAt).
+    data.updatedAt = row.updatedAt;
 
     if (dto.version !== undefined && dto.version !== row.version) {
       throw this.conflict(row);
