@@ -44,6 +44,34 @@ describe("PermissionService", () => {
     expect(eff).toMatchObject({ roleId: "r_c", key: null, conversationVisibility: "assigned", permissions: { contacts: ["view"] } });
   });
 
+  it("demotion via legacy role string wins over stale system roleId", async () => {
+    const ownerRole = { ...agentRole, id: "r_owner", key: "owner", name: "Owner", permissions: SYSTEM_ROLES.owner.permissions };
+    // roleId still points at the owner system role, but deployed code demoted
+    // the member by writing only the legacy string.
+    prisma.workspaceMember.findUnique.mockResolvedValue({ role: "agent", roleId: "r_owner", roleRef: ownerRole });
+    prisma.role.findFirst.mockResolvedValue(agentRole);
+    const eff = await svc.effective("ws1", "u1");
+    expect(prisma.role.findFirst).toHaveBeenCalledWith({ where: { workspaceId: "ws1", key: "agent" } });
+    expect(eff).toMatchObject({ roleId: "r_agent", key: "agent" });
+    expect(svc.can(eff, "roles.manage")).toBe(false);
+  });
+
+  it("a matching system roleId is used as-is", async () => {
+    const ownerRole = { ...agentRole, id: "r_owner", key: "owner", name: "Owner", permissions: SYSTEM_ROLES.owner.permissions };
+    prisma.workspaceMember.findUnique.mockResolvedValue({ role: "Owner", roleId: "r_owner", roleRef: ownerRole });
+    const eff = await svc.effective("ws1", "u1");
+    expect(prisma.role.findFirst).not.toHaveBeenCalled();
+    expect(eff).toMatchObject({ roleId: "r_owner", key: "owner" });
+  });
+
+  it("systemRoleId never returns another workspace's role (tenancy rewrite)", async () => {
+    prisma.role.findFirst.mockResolvedValue({ ...agentRole, workspaceId: "ws_other" });
+    expect(await svc.systemRoleId("ws1", "Agent")).toBeNull();
+    prisma.role.findFirst.mockResolvedValue(agentRole);
+    expect(await svc.systemRoleId("ws1", "Agent")).toBe("r_agent");
+    expect(await svc.systemRoleId("ws1", "analyst")).toBeNull();
+  });
+
   it("creates the system roles lazily when the workspace has none", async () => {
     prisma.workspaceMember.findUnique.mockResolvedValue({ role: "agent", roleId: null, roleRef: null });
     prisma.role.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(agentRole);

@@ -59,11 +59,22 @@ describe("GET /me/permissions", () => {
     });
   });
 
-  it("gives super-admins/impersonation every permission", async () => {
+  it("gives super-admins every permission", async () => {
     perms.effective.mockClear();
-    const res = await ctrl.mine({ user: { sub: "u1", workspaceId: "ws1", impersonating: true } } as never);
+    const res = await ctrl.mine({ user: { sub: "u1", workspaceId: "ws1", isSuperAdmin: true } } as never);
     expect(res.key).toBe("owner");
     expect(res.permissions).toContain("roles.manage");
+    expect(res.permissions).toContain("billing.manage");
+    expect(res.permissions).toContain("campaigns.manage");
+    expect(perms.effective).not.toHaveBeenCalled();
+  });
+
+  it("gives impersonation everything except billing.* and campaigns.manage", async () => {
+    perms.effective.mockClear();
+    const res = await ctrl.mine({ user: { sub: "u1", workspaceId: "ws1", impersonating: true } } as never);
+    expect(res.permissions).toContain("roles.manage");
+    expect(res.permissions).toContain("campaigns.update");
+    expect(res.permissions.filter((p) => p.startsWith("billing.") || p === "campaigns.manage")).toEqual([]);
     expect(perms.effective).not.toHaveBeenCalled();
   });
 

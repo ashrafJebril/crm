@@ -1,7 +1,7 @@
 import { Controller, ForbiddenException, Get, Req } from "@nestjs/common";
 import { flattenPermissions, type Permission } from "./catalog";
 import { PermissionService } from "./permission.service";
-import type { PermissionRequest } from "./permission.guard";
+import { blockedForImpersonation, type PermissionRequest } from "./permission.guard";
 import { SYSTEM_ROLES, type ConversationVisibility } from "./system-roles";
 
 export interface MyPermissions {
@@ -20,14 +20,15 @@ export class PermissionsController {
   @Get("permissions")
   async mine(@Req() req: PermissionRequest): Promise<MyPermissions> {
     const u = req.user;
-    // Super-admin / impersonation sessions bypass every check server-side,
-    // so the UI should not hide anything from them either.
+    // Super-admin sessions bypass every check server-side; impersonation
+    // bypasses all but spend permissions. Mirror that so the UI matches.
     if (u?.isSuperAdmin === true || u?.impersonating === true) {
+      const all = flattenPermissions(SYSTEM_ROLES.owner.permissions);
       return {
         roleId: null,
         key: "owner",
         name: SYSTEM_ROLES.owner.name,
-        permissions: flattenPermissions(SYSTEM_ROLES.owner.permissions),
+        permissions: u.isSuperAdmin === true ? all : all.filter((p) => !blockedForImpersonation(p)),
         conversationVisibility: "all",
       };
     }

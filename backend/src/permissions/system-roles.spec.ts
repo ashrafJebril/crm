@@ -24,6 +24,28 @@ describe("system roles", () => {
     expect(found).toEqual(SYSTEM_ROLES);
   });
 
+  it("migration VALUES rows are well-formed 5-column tuples", () => {
+    const sql = fs.readFileSync(MIGRATION, "utf8").replace(/\r\n/g, "\n");
+    const head = "CROSS JOIN (VALUES\n";
+    const start = sql.indexOf(head);
+    const end = sql.indexOf("\n) AS r(", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = sql.slice(start + head.length, end);
+    // A doubled paren makes each row a single record column (Postgres error).
+    expect(block).not.toContain("((");
+    expect(block).not.toContain("))");
+    const rows = block.split("\n");
+    expect(rows).toHaveLength(4);
+    rows.forEach((row, i) => {
+      const comma = i < rows.length - 1 ? "," : "";
+      expect(row).toMatch(
+        new RegExp(String.raw`^\s*\('(owner|admin|agent|viewer)', '[^']*', '[^']*', '\{[^']*\}', '(all|assigned)'\)${comma}$`),
+      );
+    });
+    expect(sql).toContain(') AS r("key", "name", "nameAr", "permissions", "conversationVisibility")');
+  });
+
   it("every system matrix passes validation unchanged", () => {
     for (const k of SYSTEM_ROLE_KEYS) {
       expect(validatePermissions(SYSTEM_ROLES[k].permissions)).toEqual(SYSTEM_ROLES[k].permissions);

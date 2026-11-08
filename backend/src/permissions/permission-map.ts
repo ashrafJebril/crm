@@ -48,13 +48,26 @@ export function routesOf(controller: Function): { key: string; controller: Funct
  * Route → permission for every route in every controller.
  *  - "public": no workspace user (webhooks with their own signature guards,
  *    SSO, login, health, public media). PermissionGuard is a no-op there.
- *  - "authenticated": any signed-in user; own-account routes (auth/me,
- *    notifications, /me/permissions, search — results are visibility-filtered
- *    in the service). No role lookup.
+ *  - "authenticated": any member of the JWT workspace, no specific
+ *    permission (notifications, /me/permissions, search — results are
+ *    visibility-filtered in the service). Own-account routes listed by
+ *    membershipExempt() (/auth/*, /admin/*, workspace list/create) work
+ *    even without membership, e.g. to switch away after being removed.
  *  - otherwise the `resource.action` the member's role must grant.
  * There is no default: permission-map.spec.ts fails for an unmapped route,
  * and PermissionGuard fails closed (403) if one slips through at runtime.
  */
+const MEMBERSHIP_EXEMPT = new Set(["GET /workspaces", "POST /workspaces"]);
+
+/** "authenticated" routes that must keep working for a user who is not (or
+ *  no longer) a member of the JWT workspace: /auth/* (me, workspaces,
+ *  switch-workspace, change-password), /admin/* (SuperAdminGuard decides),
+ *  and the workspace list/create. */
+export function membershipExempt(key: string): boolean {
+  const path = key.slice(key.indexOf(" ") + 1);
+  return path.startsWith("/auth/") || path.startsWith("/admin/") || MEMBERSHIP_EXEMPT.has(key);
+}
+
 export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // ── Own account / any signed-in user ──────────────────────────────────
   "GET /auth/me": "authenticated",
@@ -71,8 +84,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /search": "authenticated", // results get visibility-filtered in SearchService (later task)
   "GET /hjz/link": "authenticated", // the caller's own HJZ link
   "POST /hjz/link": "authenticated",
-  // Workspace list/switch/create act on the caller's own memberships; the
-  // :id route also checks membership of :id inline (requireMember).
+  // Workspace list/create act on the caller's own memberships (membership-
+  // exempt); the :id route also checks membership of :id inline.
   "GET /workspaces": "authenticated",
   "POST /workspaces": "authenticated",
   "GET /workspaces/:id": "authenticated",

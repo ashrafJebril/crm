@@ -1,6 +1,12 @@
-import { ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from "@nestjs/common";
 import { APP_GUARD, Reflector } from "@nestjs/core";
-import { MODULE_METADATA } from "@nestjs/common/constants";
+import { MODULE_METADATA, ROUTE_ARGS_METADATA } from "@nestjs/common/constants";
+import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { SearchController } from "../search/search.controller";
+import { AuthController } from "../auth/auth.controller";
+import { WorkspacesController } from "../workspaces/workspaces.controller";
+import { AdminController } from "../admin/admin.controller";
+import { AdsController } from "../ads/ads.controller";
 import { PermissionGuard } from "./permission.guard";
 import { SYSTEM_ROLES, SystemRoleKey } from "./system-roles";
 import { ContactsController } from "../contacts/contacts.controller";
@@ -75,18 +81,49 @@ describe("PermissionGuard", () => {
     expect(perms.effective).not.toHaveBeenCalled();
   });
 
-  it("guard: impersonation bypass", async () => {
-    const { c } = ctx(ContactsController, ContactsController.prototype.create, { ...user, impersonating: true });
-    await expect(guard.canActivate(c)).resolves.toBe(true);
+  it("guard: impersonation bypasses ordinary permissions", async () => {
+    const imp = { ...user, impersonating: true };
+    for (const [cls, h] of [
+      [ContactsController, ContactsController.prototype.create],
+      [ContactsController, ContactsController.prototype.remove],
+      [CustomFieldsController, CustomFieldsController.prototype.create], // settings.manage
+    ] as const) {
+      await expect(guard.canActivate(ctx(cls, h, imp).c)).resolves.toBe(true);
+    }
     expect(perms.effective).not.toHaveBeenCalled();
   });
 
-  it("guard: no workspace user → skip", async () => {
+  it("guard: impersonation cannot spend — billing.* and campaigns.manage are 403", async () => {
+    const imp = { ...user, impersonating: true };
+    for (const [h, perm] of [
+      [AdsController.prototype.topup, "billing.update"],
+      [AdsController.prototype.approveAction, "campaigns.manage"],
+      [AdsController.prototype.rejectAction, "campaigns.manage"],
+    ] as const) {
+      const err = await guard.canActivate(ctx(AdsController, h, imp).c).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ message: "Not allowed during impersonation", permission: perm });
+    }
+    // A super-admin session (not impersonation) still bypasses everything.
+    await expect(guard.canActivate(ctx(AdsController, AdsController.prototype.topup, { ...user, isSuperAdmin: true }).c)).resolves.toBe(true);
+    expect(perms.effective).not.toHaveBeenCalled();
+  });
+
+  it("guard: no workspace user → skip; workspace handlers then 401 via @CurrentWorkspace()", async () => {
     const a = ctx(ContactsController, ContactsController.prototype.create, undefined);
     await expect(guard.canActivate(a.c)).resolves.toBe(true);
     const b = ctx(ContactsController, ContactsController.prototype.create, { sub: "u1" });
     await expect(guard.canActivate(b.c)).resolves.toBe(true);
     expect(perms.effective).not.toHaveBeenCalled();
+
+    // The skip is safe only because workspace-scoped handlers take
+    // @CurrentWorkspace(), which 401s a token without a workspace.
+    class Probe { m(@CurrentWorkspace() _ws: string) { return _ws; } }
+    const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, Probe, "m") as Record<string, { factory: Function }>;
+    const factory = Object.values(args)[0].factory;
+    expect(() => factory(undefined, b.c)).toThrow(UnauthorizedException);
+    const create = Reflect.getMetadata(ROUTE_ARGS_METADATA, ContactsController, "create") as Record<string, unknown>;
+    expect(Object.keys(create).some((k) => k.includes("__customRouteArgs__"))).toBe(true);
   });
 
   it("guard: non-member gets 403 Not a member", async () => {
@@ -97,9 +134,39 @@ describe("PermissionGuard", () => {
     expect(err.getResponse()).toMatchObject({ message: "Not a member" });
   });
 
-  it("guard: authenticated routes pass without a role lookup", async () => {
+  it("guard: authenticated routes need membership but no permission", async () => {
+    asRole("viewer");
     const { c } = ctx(NotificationsController, NotificationsController.prototype.list, user);
     await expect(guard.canActivate(c)).resolves.toBe(true);
+    expect(perms.effective).toHaveBeenCalledWith("ws1", "u1");
+  });
+
+  it("guard: removed member gets 403 on GET /search and notifications", async () => {
+    perms.effective.mockResolvedValue(null);
+    for (const [cls, h] of [
+      [SearchController, SearchController.prototype.search],
+      [NotificationsController, NotificationsController.prototype.list],
+      [NotificationsController, NotificationsController.prototype.unreadCount],
+    ] as const) {
+      const err = await guard.canActivate(ctx(cls, h, user).c).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ message: "Not a member" });
+    }
+  });
+
+  it("guard: /auth/*, /admin/* and workspace list/create work without membership", async () => {
+    perms.effective.mockResolvedValue(null);
+    for (const [cls, h] of [
+      [AuthController, AuthController.prototype.me],
+      [AuthController, AuthController.prototype.myWorkspaces],
+      [AuthController, AuthController.prototype.switchWorkspace],
+      [AuthController, AuthController.prototype.changePassword],
+      [AdminController, AdminController.prototype.listWorkspaces],
+      [WorkspacesController, WorkspacesController.prototype.list],
+      [WorkspacesController, WorkspacesController.prototype.create],
+    ] as const) {
+      await expect(guard.canActivate(ctx(cls, h, user).c)).resolves.toBe(true);
+    }
     expect(perms.effective).not.toHaveBeenCalled();
   });
 

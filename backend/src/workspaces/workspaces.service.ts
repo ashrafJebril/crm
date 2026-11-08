@@ -7,6 +7,7 @@ import {
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
+import { PermissionService } from "../permissions/permission.service";
 import { seedWorkspaceDefaults } from "./workspace-defaults";
 import {
   AddMemberDto,
@@ -38,6 +39,7 @@ export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly kewySync: KewyIdentitySync,
+    private readonly permissions: PermissionService,
   ) {}
 
   async listForUser(userId: string) {
@@ -226,10 +228,15 @@ export class WorkspacesService {
       where: { userId_workspaceId: { userId, workspaceId } },
     });
     if (!m) throw new NotFoundException("Member not found");
-    return this.prisma.workspaceMember.update({
+    // Keep roleId in step with the legacy string (SP-25), so a stale system
+    // roleId can never outrank a demotion.
+    const roleId = await this.permissions.systemRoleId(workspaceId, dto.role);
+    const updated = await this.prisma.workspaceMember.update({
       where: { id: m.id },
-      data: { role: dto.role },
+      data: { role: dto.role, roleId },
     });
+    this.permissions.invalidate(workspaceId, userId);
+    return updated;
   }
 
   /**

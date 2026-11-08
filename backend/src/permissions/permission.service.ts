@@ -24,6 +24,8 @@ const TTL_MS = 30_000;
 
 type RoleRow = {
   id: string;
+  workspaceId?: string;
+  isSystem?: boolean;
   key: string | null;
   name: string;
   nameAr: string;
@@ -62,8 +64,14 @@ export class PermissionService {
       return null;
     }
 
+    const legacyKey = (member.role ?? "").toLowerCase();
     let role: RoleRow | null = member.roleRef ?? null;
-    if (!role) role = await this.systemRole(workspaceId, (member.role ?? "").toLowerCase());
+    // A system roleId that disagrees with the legacy role string is stale:
+    // deployed code (and any path that only writes `role`) can demote or
+    // promote a member without touching roleId. The legacy string wins for
+    // system roles; a custom role (isSystem false) always wins.
+    if (role && role.isSystem === true && role.key !== legacyKey) role = null;
+    if (!role) role = await this.systemRole(workspaceId, legacyKey);
 
     const value: EffectiveRole = role
       ? {
@@ -111,11 +119,27 @@ export class PermissionService {
     });
   }
 
+  /** Id of the workspace's system role for a legacy role string (creating
+   *  the system roles if missing), or null for an unknown string. */
+  async systemRoleId(workspaceId: string, legacyRole: string): Promise<string | null> {
+    return (await this.systemRole(workspaceId, legacyRole.toLowerCase()))?.id ?? null;
+  }
+
   private async systemRole(workspaceId: string, key: string): Promise<RoleRow | null> {
     if (!(SYSTEM_ROLE_KEYS as readonly string[]).includes(key)) return null;
-    const found = await this.prisma.role.findFirst({ where: { workspaceId, key } });
+    const found = await this.findSystemRole(workspaceId, key);
     if (found) return found;
     await this.ensureSystemRoles(workspaceId);
-    return this.prisma.role.findFirst({ where: { workspaceId, key } });
+    return this.findSystemRole(workspaceId, key);
+  }
+
+  /** The tenancy extension rewrites `where.workspaceId` to the request's
+   *  workspace when a context is active. If a caller asks about another
+   *  workspace (e.g. /workspaces/:id/... with :id ≠ the JWT workspace), a
+   *  row from the wrong workspace must never be returned. */
+  private async findSystemRole(workspaceId: string, key: string): Promise<RoleRow | null> {
+    const found = await this.prisma.role.findFirst({ where: { workspaceId, key } });
+    if (found && found.workspaceId !== workspaceId) return null;
+    return found;
   }
 }

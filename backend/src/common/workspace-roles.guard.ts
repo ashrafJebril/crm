@@ -40,8 +40,11 @@ export class WorkspaceRolesGuard implements CanActivate {
       throw new UnauthorizedException("Missing workspace context");
     }
 
-    // Impersonation sessions (super-admin acting inside a tenant) have no
-    // WorkspaceMember row for that workspace — bypass the membership check.
+    // Super-admin sessions bypass the membership check. Impersonation tokens
+    // (AdminService.impersonateWorkspace) deliberately do NOT carry
+    // isSuperAdmin, so this guard treats them like any user — and as they have
+    // no WorkspaceMember row, they are refused here. (Superseded by the
+    // global PermissionGuard since SP-25; no controller uses this guard now.)
     if (user.isSuperAdmin === true) return true;
 
     const member = await this.prisma.workspaceMember.findUnique({
