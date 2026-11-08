@@ -77,6 +77,35 @@ const STATUSES: Record<RecordKind, Record<string, { en: string; ar: string }>> =
 
 const DATE_KEYS = new Set(["createdAt", "updatedAt", "start"]);
 
+export function channelLabel(value: string, lang: Lang): string {
+  const c = CHANNELS[value];
+  return c ? (lang === "ar" ? c.ar : c.en) : value;
+}
+
+/** Localized date and time; unparseable input is returned unchanged. */
+export function formatDate(iso: string, lang: Lang): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString(lang === "ar" ? "ar" : "en-US", { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** Readable subtitle for a record or link: raw channel / ISO values are formatted
+ *  by kind, anything else uses the server text (Arabic variant when available). */
+export function displaySubtitle(
+  kind: RecordKind,
+  subtitle: string | undefined,
+  subtitleAr: string | undefined,
+  lang: Lang,
+): string {
+  if (!subtitle && !subtitleAr) return "";
+  if (lang === "ar" && subtitleAr) return subtitleAr;
+  const raw = subtitle ?? "";
+  if (kind === "conversation" || kind === "campaign") return channelLabel(raw, lang);
+  if (kind === "booking") return formatDate(raw, lang);
+  return raw;
+}
+
 export function fieldLabel(key: string, lang: Lang): string {
   const l = LABELS[key];
   return l ? l[lang === "ar" ? "ar" : "en"] : key;
@@ -116,13 +145,9 @@ export function displayFields(
       text = String(byKey.get("serviceAr"));
       auto = true;
     } else if (DATE_KEYS.has(f.key)) {
-      const d = new Date(String(value));
-      text = Number.isNaN(d.getTime())
-        ? String(value)
-        : d.toLocaleString(ar ? "ar" : "en-US", { dateStyle: "medium", timeStyle: "short" });
+      text = formatDate(String(value), lang);
     } else if (f.key === "channel") {
-      const c = CHANNELS[String(value)];
-      text = c ? (ar ? c.ar : c.en) : String(value);
+      text = channelLabel(String(value), lang);
     } else if (f.key === "status") {
       const s = STATUSES[kind][String(value)];
       text = s ? (ar ? s.ar : s.en) : String(value);

@@ -7,7 +7,7 @@ import { openRecord } from "@/lib/openRecord";
 import { anotherModalOpen } from "@/lib/modalOpen";
 import type { RecordKind, RecordRef } from "@/lib/recordParam";
 import type { Lang } from "@/lib/types";
-import { kindLabel, type FieldValue } from "./recordFields";
+import { displaySubtitle, formatDate, kindLabel, type FieldValue } from "./recordFields";
 import { ContactBody } from "./record-bodies/ContactBody";
 import { TicketBody } from "./record-bodies/TicketBody";
 import { ConversationBody } from "./record-bodies/ConversationBody";
@@ -21,6 +21,8 @@ export interface RecordLinkItem {
   titleAr?: string;
   subtitle?: string;
   subtitleAr?: string;
+  /** Optional ISO timestamp (lets conversation chips be told apart). */
+  updatedAt?: string;
 }
 
 /** GET /records/:kind/:id */
@@ -101,48 +103,60 @@ export function RecordSheet({
     panelRef.current?.focus();
   }, []);
 
-  // Escape closes, ahead of the screen behind it (capture + stop), unless a
-  // dialog stacked above the sheet (e.g. delete confirmation) should take it.
+  // Keys inside the sheet: handled here (React) so inner handlers such as the
+  // mention list, which stop propagation, win over the sheet. Escape closes;
+  // Tab is trapped. Everything else is kept from window-level screen shortcuts.
+  // Keys from a dialog stacked above the sheet (delete confirm) are left alone.
+  const onPanelKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const inner = e.target instanceof Element ? e.target.closest('[aria-modal="true"]') : null;
+    if (inner && inner !== panel) return;
+    e.stopPropagation();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const els = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+    if (els.length === 0) {
+      e.preventDefault();
+      panel.focus();
+      return;
+    }
+    const first = els[0];
+    const last = els[els.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === panel)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  // Fallback: focus is outside the panel (e.g. on the body), so React never sees
+  // the key. Close on Escape unless a stacked dialog should take it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (anotherModalOpen(panelRef.current)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        onClose();
-        return;
-      }
-      if (e.key === "Tab" && panelRef.current) {
-        const els = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-          (el) => el.offsetParent !== null,
-        );
-        if (anotherModalOpen(panelRef.current)) return;
-        if (els.length === 0) {
-          e.preventDefault();
-          panelRef.current.focus();
-          return;
-        }
-        const first = els[0];
-        const last = els[els.length - 1];
-        const active = document.activeElement;
-        if (e.shiftKey && (active === first || active === panelRef.current)) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && active === last) {
-          e.preventDefault();
-          first.focus();
-        } else if (!panelRef.current.contains(active)) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
+      if (e.key !== "Escape") return;
+      const panel = panelRef.current;
+      if (!panel || panel.contains(document.activeElement)) return;
+      if (anotherModalOpen(panel)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
 
   const title = s ? pick(lang, s.title, s.titleAr) : "";
-  const subtitle = s ? pick(lang, s.subtitle, s.subtitleAr) : "";
+  const subtitle = s ? displaySubtitle(s.kind, s.subtitle, s.subtitleAr, lang) : "";
+  const convLinkCount = s ? s.links.filter((l) => l.kind === "conversation").length : 0;
+  let convIndex = 0;
 
   return (
     <div
@@ -160,6 +174,7 @@ export function RecordSheet({
         aria-labelledby={titleId}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onPanelKeyDown}
       >
         <div
           style={{
@@ -210,7 +225,14 @@ export function RecordSheet({
               gap: 6,
             }}
           >
-            {s.links.map((l) => (
+            {s.links.map((l) => {
+              let sub = displaySubtitle(l.kind, l.subtitle, l.subtitleAr, lang);
+              if (l.kind === "conversation") {
+                convIndex += 1;
+                if (l.updatedAt) sub = `${sub} · ${formatDate(l.updatedAt, lang)}`;
+                else if (convLinkCount > 1) sub = `${sub} · #${convIndex}`;
+              }
+              return (
               <button
                 key={`${l.kind}:${l.id}`}
                 type="button"
@@ -237,13 +259,14 @@ export function RecordSheet({
                 <span dir="auto" style={{ fontSize: 12.5, fontWeight: 500, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {pick(lang, l.title, l.titleAr)}
                 </span>
-                {(l.subtitle || l.subtitleAr) && (
+                {sub && (
                   <span dir="auto" style={{ fontSize: 11, color: "var(--ink-3)", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {pick(lang, l.subtitle, l.subtitleAr)}
+                    {sub}
                   </span>
                 )}
               </button>
-            ))}
+              );
+            })}
           </nav>
         )}
 

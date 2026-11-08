@@ -168,6 +168,7 @@ export function useUpdateTicket() {
     }) => api.patch<Ticket>(`/tickets/${v.id}`, v.patch),
     onSuccess: (ticket) => {
       qc.setQueryData(qk.ticket(ticket.id), ticket);
+      void qc.invalidateQueries({ queryKey: ["record", "ticket", ticket.id] });
       // Patch every stage cache that might contain it (pipelineId may vary)
       qc.setQueriesData<StageTicketsCache>(
         { queryKey: ["tickets", "stage"] },
@@ -196,6 +197,7 @@ export function useAddNote() {
       api.post<TicketActivity>(`/tickets/${v.ticketId}/notes`, { note: v.note }),
     onSuccess: (_a, v) => {
       qc.invalidateQueries({ queryKey: qk.ticket(v.ticketId) });
+      void qc.invalidateQueries({ queryKey: ["record", "ticket", v.ticketId] });
     },
   });
 }

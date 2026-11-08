@@ -107,10 +107,9 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
         ) : (
           <>
             {/* ── Header ───────────────────────────────────────────────── */}
-            {!embedded && (
             <div
               style={{
-                padding: "16px 20px 14px",
+                padding: embedded ? "12px 20px" : "16px 20px 14px",
                 borderBottom: "1px solid var(--line)",
                 background:
                   "linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%)",
@@ -119,12 +118,13 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
                 alignItems: "flex-start",
               }}
             >
-              <Avatar
+              {!embedded && <Avatar
                 name={c.name}
                 color={String(150 + (c.id.charCodeAt(1) || 0) * 6)}
                 size="lg"
-              />
+              />}
               <div style={{ flex: 1, minWidth: 0 }}>
+                {!embedded && (<>
                 <div
                   style={{
                     fontSize: 16,
@@ -142,12 +142,13 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
                 >
                   {c.phone || "—"}
                 </div>
+                </>)}
                 <div
                   style={{
                     display: "flex",
                     flexWrap: "wrap",
                     gap: 6,
-                    marginTop: 8,
+                    marginTop: embedded ? 0 : 8,
                     fontSize: 11,
                     color: "var(--ink-2)",
                   }}
@@ -189,7 +190,7 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
                   </div>
                 )}
               </div>
-              <button
+              {!embedded && <button
                 onClick={onClose}
                 aria-label={tx("Close", "إغلاق")}
                 style={{
@@ -212,9 +213,8 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
                 }}
               >
                 ×
-              </button>
+              </button>}
             </div>
-            )}
 
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ overflowY: "auto", flex: 1, padding: "14px 16px 24px" }}>
@@ -452,7 +452,8 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
           onClose={() => setDeleting(false)}
           onDeleted={() => {
             setDeleting(false);
-            onChanged?.();
+            // Inside the sheet, onDeleted is the single change notification.
+            if (!onDeleted) onChanged?.();
             (onDeleted ?? onClose)();
           }}
         />

@@ -385,12 +385,17 @@ export function TicketDetailContent({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      del.mutate({
-                        id: t.id,
-                        pipelineId: t.pipelineId,
-                        stageId: t.stageId,
-                      });
+                    disabled={del.isPending}
+                    onClick={async () => {
+                      try {
+                        await del.mutateAsync({
+                          id: t.id,
+                          pipelineId: t.pipelineId,
+                          stageId: t.stageId,
+                        });
+                      } catch {
+                        return; // keep the panel open; the error shows below
+                      }
                       (onDeleted ?? onClose)();
                     }}
                     style={{
@@ -403,6 +408,11 @@ export function TicketDetailContent({
                   >
                     {lang === "ar" ? "احذف" : "Delete"}
                   </button>
+                  {del.isError && (
+                    <span role="alert" style={{ fontSize: 11.5, color: "var(--bad, #ef4444)" }}>
+                      {lang === "ar" ? "تعذّر حذف التذكرة" : "Couldn't delete the ticket"}
+                    </span>
+                  )}
                 </>
               ) : (
                 <button

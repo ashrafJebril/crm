@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { closeRecordHash, parseRecordParam, type RecordRef } from "@/lib/recordParam";
+import { takeOpener } from "@/lib/openRecord";
 import { RecordSheet } from "./RecordSheet";
 
 const same = (a: RecordRef | null, b: RecordRef | null): boolean =>
@@ -30,7 +31,7 @@ export function RecordSheetHost() {
       // Remember the opener before the sheet pulls focus in.
       if (!recRef.current && next) {
         const a = document.activeElement;
-        openerRef.current = a instanceof HTMLElement && a !== document.body ? a : null;
+        openerRef.current = takeOpener() ?? (a instanceof HTMLElement && a !== document.body ? a : null);
       }
       setRec(next);
     };
