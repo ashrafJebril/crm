@@ -13,6 +13,8 @@ describe("NotesService", () => {
   beforeEach(() => {
     prisma = {
       contact: { findFirst: jest.fn().mockResolvedValue({ id: "c1" }) },
+      conversation: { findFirst: jest.fn().mockResolvedValue(null) },
+      ticket: { findFirst: jest.fn().mockResolvedValue({ id: "t1" }) },
       note: {
         findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn().mockResolvedValue([]),
@@ -77,6 +79,36 @@ describe("NotesService", () => {
     expect(res.mentions).toEqual(["u2", "me"]);
   });
 
+  it("opaque FB conversation id falls back to contact (no no_access warning, recordKind contact)", async () => {
+    prisma.workspaceMember.findMany.mockResolvedValue([{ userId: "u2" }]);
+    const res = await svc.create("ws", { contactId: "c1", conversationId: "t_123", body: "@[A](user:u2)" }, "me");
+    expect(res.warnings).toEqual([]);
+    expect(canOpen).toHaveBeenCalledWith(prisma, "ws", "u2", "contact", "c1");
+    expect(notifications.notify.mock.calls[0][2]).toMatchObject({ recordKind: "contact", recordId: "c1" });
+  });
+
+  it("foreign ticket id falls back to contact", async () => {
+    prisma.ticket.findFirst.mockResolvedValue(null);
+    prisma.workspaceMember.findMany.mockResolvedValue([{ userId: "u2" }]);
+    const note = { conversationId: null, ticketId: "tx", contactId: "c1", mentions: [], id: "n1" };
+    prisma.note.findFirst.mockResolvedValue(note);
+    await svc.update("ws", "n1", { body: "@[A](user:u2)" }, "me");
+    expect(notifications.notify.mock.calls[0][2]).toMatchObject({ recordKind: "contact", recordId: "c1" });
+  });
+
+  it("create with a foreign ticketId -> 404 and nothing stored", async () => {
+    prisma.ticket.findFirst.mockResolvedValue(null);
+    await expect(svc.create("ws", { contactId: "c1", ticketId: "tx", body: "x" }, "me")).rejects.toThrow("Ticket not found");
+    expect(prisma.note.create).not.toHaveBeenCalled();
+  });
+
+  it("no notification when the create fails", async () => {
+    prisma.workspaceMember.findMany.mockResolvedValue([{ userId: "u2" }]);
+    prisma.note.create.mockRejectedValue(new Error("db"));
+    await expect(svc.create("ws", { contactId: "c1", body: "@[A](user:u2)" }, "me")).rejects.toThrow("db");
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
   it("no_access mention warns and is not notified", async () => {
     prisma.workspaceMember.findMany.mockResolvedValue([{ userId: "u2" }]);
     canOpen.mockResolvedValue(false);
@@ -89,6 +121,7 @@ describe("NotesService", () => {
     prisma.note.findFirst.mockResolvedValue({
       id: "n1", contactId: "c1", conversationId: "cv1", ticketId: null, mentions: ["u2"], body: "old",
     });
+    prisma.conversation.findFirst.mockResolvedValue({ id: "cv1" });
     prisma.workspaceMember.findMany.mockResolvedValue([{ userId: "u2" }, { userId: "u3" }]);
     await svc.update("ws", "n1", { body: "@[A](user:u2) @[B](user:u3)" }, "me");
     expect(notifications.notify).toHaveBeenCalledTimes(1);

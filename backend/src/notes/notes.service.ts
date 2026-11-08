@@ -32,6 +32,29 @@ export class NotesService {
     });
   }
 
+  /** conversation -> ticket -> contact, each only if it really exists in the workspace
+   *  (conversationId may be an opaque FB thread id, not a DB Conversation). */
+  private async resolveRecord(
+    workspaceId: string,
+    note: { conversationId: string | null; ticketId: string | null; contactId: string },
+  ): Promise<readonly ["conversation" | "ticket" | "contact", string]> {
+    if (note.conversationId) {
+      const c = await this.prisma.conversation.findFirst({
+        where: { id: note.conversationId, workspaceId },
+        select: { id: true },
+      });
+      if (c) return ["conversation", note.conversationId];
+    }
+    if (note.ticketId) {
+      const t = await this.prisma.ticket.findFirst({
+        where: { id: note.ticketId, workspaceId },
+        select: { id: true },
+      });
+      if (t) return ["ticket", note.ticketId];
+    }
+    return ["contact", note.contactId];
+  }
+
   /**
    * Resolve mentions in `body`: members only, each checked through
    * canOpenRecord. Notifies the members not in `alreadyMentioned` (and not the
@@ -46,7 +69,7 @@ export class NotesService {
   ) {
     const parsed = parseMentions(body);
     const warnings: MentionWarning[] = [];
-    if (parsed.length === 0) return { memberIds: [] as string[], warnings };
+    if (parsed.length === 0) return { memberIds: [] as string[], warnings, send: async () => {} };
     const members = await this.prisma.workspaceMember.findMany({
       where: { workspaceId, userId: { in: parsed } },
       select: { userId: true },
@@ -57,18 +80,16 @@ export class NotesService {
       if (!memberSet.has(id)) warnings.push({ userId: id, reason: "not_a_member" });
     }
 
-    const [kind, recordId] = note.conversationId
-      ? (["conversation", note.conversationId] as const)
-      : note.ticketId
-        ? (["ticket", note.ticketId] as const)
-        : (["contact", note.contactId] as const);
+    const [kind, recordId] = await this.resolveRecord(workspaceId, note);
     const toNotify: string[] = [];
     for (const id of memberIds) {
       if (id === authorUserId || alreadyMentioned.includes(id)) continue;
       if (await canOpenRecord(this.prisma, workspaceId, id, kind, recordId)) toNotify.push(id);
       else warnings.push({ userId: id, reason: "no_access" });
     }
-    if (toNotify.length > 0) {
+    // Deferred so callers notify only after the note write succeeded.
+    const send = async () => {
+      if (toNotify.length === 0) return;
       await this.notifications.notify(workspaceId, toNotify, {
         type: "mention",
         title: "mention.note",
@@ -77,8 +98,8 @@ export class NotesService {
         recordId,
         actorId: authorUserId ?? undefined,
       });
-    }
-    return { memberIds, warnings };
+    };
+    return { memberIds, warnings, send };
   }
 
   listForContact(workspaceId: string, contactId: string) {
@@ -114,7 +135,14 @@ export class NotesService {
     }
     const conversationId = dto.conversationId ?? null;
     const ticketId = dto.ticketId ?? null;
-    const { memberIds, warnings } = await this.processMentions(
+    if (ticketId) {
+      const t = await this.prisma.ticket.findFirst({
+        where: { id: ticketId, workspaceId },
+        select: { id: true },
+      });
+      if (!t) throw new NotFoundException("Ticket not found");
+    }
+    const { memberIds, warnings, send } = await this.processMentions(
       workspaceId,
       { conversationId, ticketId, contactId: dto.contactId },
       dto.body,
@@ -133,6 +161,7 @@ export class NotesService {
         mentions: memberIds,
       },
     });
+    await send();
     return { ...note, warnings };
   }
 
@@ -143,7 +172,7 @@ export class NotesService {
     actorUserId: string | null = null,
   ) {
     const existing = await this.get(workspaceId, id);
-    const { memberIds, warnings } = await this.processMentions(
+    const { memberIds, warnings, send } = await this.processMentions(
       workspaceId,
       existing,
       dto.body,
@@ -154,6 +183,7 @@ export class NotesService {
       where: { id },
       data: { body: dto.body, mentions: memberIds },
     });
+    await send();
     return { ...note, warnings };
   }
 
