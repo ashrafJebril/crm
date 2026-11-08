@@ -200,6 +200,37 @@ export interface Contact {
   source: string;
   convs: number;
   value: string;
+  firstName?: string;
+  lastName?: string;
+  /** "" when none. */
+  email?: string;
+  ownerId?: string | null;
+  marketingOptOut?: boolean;
+  notALead?: boolean;
+  createdAt?: string;
+}
+
+export type CustomFieldType = "text" | "number" | "date" | "select" | "boolean";
+
+export interface CustomFieldDef {
+  id: string;
+  key: string;
+  label: string;
+  labelAr: string;
+  type: CustomFieldType;
+  options: string[] | null;
+  order: number;
+  archivedAt: string | null;
+}
+
+export interface ContactFieldValue {
+  defId: string;
+  key: string;
+  label: string;
+  labelAr: string;
+  type: CustomFieldType;
+  options: string[] | null;
+  value: string | number | boolean | null;
 }
 
 export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";

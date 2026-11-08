@@ -18,10 +18,14 @@ export class ApiError extends Error {
   // Backend error code (e.g. "ADS_SERVICE_BUSY", "PROMPT_NOT_AVAILABLE") from a
   // flat { code, message } error body. Optional — most endpoints don't send one.
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  // Parsed JSON response body (or raw text), for callers that need extra
+  // fields such as a 409's `linked` counts.
+  body?: unknown;
+  constructor(message: string, status: number, code?: string, body?: unknown) {
     super(message);
     this.status = status;
     this.code = code;
+    this.body = body;
   }
 }
 
@@ -120,7 +124,7 @@ function errorFromBody(data: unknown, status: number, notifyLock = true): ApiErr
         : `HTTP ${status}`;
   const code = isObject(data) && typeof data.code === "string" ? data.code : undefined;
   if (notifyLock && status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
-  return new ApiError(message, status, code);
+  return new ApiError(message, status, code, data);
 }
 
 // POST that reads a Server-Sent Events stream instead of a single JSON body —

@@ -1103,6 +1103,7 @@ function ContactsImpl() {
         <ContactDetailDrawer
           contactId={openContactId}
           onClose={() => setOpenContactId(null)}
+          onChanged={refetch}
         />
       )}
 
