@@ -31,12 +31,37 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
   const p = parseParams(n.body);
   const out = (title: string, body?: string) => (body ? { title, body } : { title });
   switch (n.title) {
-    case "assignment.conversation":
-      return out(tx("Conversation assigned to you", "تم إسناد محادثة إليك"), str(p.contactName));
-    case "assignment.ticket":
-      return out(tx("Ticket assigned to you", "تم إسناد تذكرة إليك"), str(p.ticketTitle));
-    case "mention.note":
-      return out(tx("You were mentioned in a note", "تمت الإشارة إليك في ملاحظة"), str(p.excerpt));
+    case "assignment.conversation": {
+      const actor = str(p.actorName);
+      const contact = str(p.contactName);
+      if (actor) {
+        return out(
+          contact
+            ? tx(`${actor} assigned you a conversation with ${contact}`, `أسندت إليك ${actor} محادثة مع ${contact}`)
+            : tx(`${actor} assigned you a conversation`, `أسندت إليك ${actor} محادثة`),
+        );
+      }
+      return out(tx("Conversation assigned to you", "تم إسناد محادثة إليك"), contact);
+    }
+    case "assignment.ticket": {
+      const actor = str(p.actorName);
+      const ticket = str(p.ticketTitle);
+      if (actor) {
+        return out(
+          ticket
+            ? tx(`${actor} assigned you a ticket: ${ticket}`, `أسندت إليك ${actor} تذكرة: ${ticket}`)
+            : tx(`${actor} assigned you a ticket`, `أسندت إليك ${actor} تذكرة`),
+        );
+      }
+      return out(tx("Ticket assigned to you", "تم إسناد تذكرة إليك"), ticket);
+    }
+    case "mention.note": {
+      const actor = str(p.actorName);
+      const excerpt = str(p.excerpt);
+      return actor
+        ? out(tx(`${actor} mentioned you in a note`, `أشارت إليك ${actor} في ملاحظة`), excerpt)
+        : out(tx("You were mentioned in a note", "تمت الإشارة إليك في ملاحظة"), excerpt);
+    }
   }
   if (KEY_SHAPE.test(n.title)) {
     const detail = str(p.name) ?? str(p.title) ?? str(p.excerpt) ?? str(p.message);

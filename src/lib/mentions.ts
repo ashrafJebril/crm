@@ -66,13 +66,24 @@ export function insertMentionPlain(
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function serializeMentions(display: string, picked: Array<{ id: string; name: string }>): string {
-  if (picked.length === 0) return display;
+/** `picked` members always resolve. `team` members let a hand-typed full
+ *  "@Name" resolve too, except for display names shared by more than one team
+ *  member (ambiguous: only an explicit pick resolves those). */
+export function serializeMentions(
+  display: string,
+  picked: Array<{ id: string; name: string }>,
+  team: Array<{ id: string; name: string }> = [],
+): string {
   const byName = new Map<string, string>();
+  const counts = new Map<string, number>();
+  for (const m of team) counts.set(strip(m.name), (counts.get(strip(m.name)) ?? 0) + 1);
+  for (const m of team) if (counts.get(strip(m.name)) === 1) byName.set(strip(m.name), m.id);
   for (const p of picked) byName.set(strip(p.name), p.id);
+  if (byName.size === 0) return display;
   const names = [...byName.keys()].sort((a, b) => b.length - a.length).map(escapeRe);
-  const re = new RegExp(`(?<![^\\s])@(${names.join("|")})(?![\\p{L}\\p{N}_])`, "gu");
-  return display.replace(re, (_m, name: string) => `@[${name}](user:${byName.get(name)})`);
+  // Capture-group form instead of a lookbehind (unsupported before Safari 16.4).
+  const re = new RegExp(`(^|\\s)@(${names.join("|")})(?![\\p{L}\\p{N}_])`, "gu");
+  return display.replace(re, (_m, pre: string, name: string) => `${pre}@[${name}](user:${byName.get(name)})`);
 }
 
 /** Interleave `extra` items into `base` by createdAt. Base items without a

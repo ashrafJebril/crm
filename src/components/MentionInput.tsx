@@ -11,8 +11,10 @@ import type { TeamMember } from "@/lib/types";
  * movement and IME input reliable in both Arabic and English, instead of
  * fighting a raw `@[Name](user:id)` token the user could corrupt mid-edit.
  * The members picked are remembered in `picked`; `serialize()` turns each
- * still-present `@Name` into the wire token on submit. Names the user edited or
- * typed by hand without picking stay plain text (and notify nobody).
+ * still-present `@Name` into the wire token on submit. A hand-typed full
+ * team-member name also resolves (unless that display name is shared by several
+ * members, which only an explicit pick resolves). Partial or edited names stay
+ * plain text and notify nobody.
  */
 export function useMentionDraft() {
   const [text, setText] = useState("");
@@ -24,9 +26,9 @@ export function useMentionDraft() {
     pick: (m: { id: string; name: string }) =>
       setPicked((p) => (p.some((x) => x.id === m.id) ? p : [...p, { id: m.id, name: m.name }])),
     /** `members` (the team) lets a hand-typed full "@Name" still become a mention;
-     *  picked members take precedence on duplicate names (they come last). */
+     *  names shared by several members are skipped there, only picks resolve them. */
     serialize: (members: Array<{ id: string; name: string }> = []) =>
-      serializeMentions(text.trim(), [...members, ...picked]),
+      serializeMentions(text.trim(), picked, members),
     reset: () => {
       setText("");
       setPicked([]);

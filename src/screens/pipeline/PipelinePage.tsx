@@ -43,7 +43,10 @@ export default function PipelinePage() {
   const [showNew, setShowNew] = useState(false);
   // Deep link from a notification: `#/pipeline?open=<ticketId>`.
   const [deepTicketId, setDeepTicketId] = useState<string | null>(null);
-  useOpenParam("pipeline", setDeepTicketId);
+  useOpenParam("pipeline", (id) => {
+    setSelectedTicket(null);
+    setDeepTicketId(id);
+  });
 
   // Keyboard shortcuts: N = new, / = search focus, Esc = close drawer/modal
   useEffect(() => {
@@ -110,7 +113,7 @@ export default function PipelinePage() {
           searchQuery={search}
           onCardClick={setSelectedTicket}
           onOpenConversation={(cid) => {
-            window.location.hash = `#/inbox?conversationId=${encodeURIComponent(cid)}`;
+            window.location.hash = `#/inbox?open=${encodeURIComponent(cid)}`;
           }}
         />
       </div>
@@ -126,7 +129,7 @@ export default function PipelinePage() {
             setDeepTicketId(null);
           }}
           onOpenConversation={(cid) => {
-            window.location.hash = `#/inbox?conversationId=${encodeURIComponent(cid)}`;
+            window.location.hash = `#/inbox?open=${encodeURIComponent(cid)}`;
           }}
         />
       ) : null}

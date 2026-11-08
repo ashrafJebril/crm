@@ -22,6 +22,15 @@ describe("notificationText", () => {
     expect(r.title).toBe("You were mentioned in a note");
     expect(r.body).toBe("hello");
   });
+  it("names the actor when actorName is present, in both languages", () => {
+    const conv = { ...base, title: "assignment.conversation", body: JSON.stringify({ actorName: "Sara", contactName: "Ahmad" }) };
+    expect(notificationText(en, conv)).toEqual({ title: "Sara assigned you a conversation with Ahmad" });
+    expect(notificationText(ar, conv)).toEqual({ title: "أسندت إليك Sara محادثة مع Ahmad" });
+    const tk = { ...base, title: "assignment.ticket", body: JSON.stringify({ actorName: "Sara", ticketTitle: "Quote" }) };
+    expect(notificationText(en, tk).title).toBe("Sara assigned you a ticket: Quote");
+    const mn = { type: "mention", title: "mention.note", body: JSON.stringify({ actorName: "Sara", excerpt: "hi" }), recordKind: null, recordId: null };
+    expect(notificationText(en, mn)).toEqual({ title: "Sara mentioned you in a note", body: "hi" });
+  });
   it("tolerates missing or malformed body", () => {
     expect(notificationText(en, { ...base, title: "assignment.ticket", body: "{oops" }).body).toBeUndefined();
     expect(notificationText(en, { ...base, title: "assignment.ticket", body: null }).body).toBeUndefined();

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useFetch } from "@/api/useFetch";
+import { useAuth } from "@/auth/context";
 import { api } from "@/api/client";
 import { useRealtime } from "@/api/useRealtime";
 import { useTweaks } from "@/tweaks/context";
@@ -32,6 +33,8 @@ interface NotificationItem {
   at: number; // epoch ms
   /** Stored notifications deep-link here; conversation items go to the inbox. */
   href?: string;
+  /** Set for stored-notification toasts; a click marks it read. */
+  storedId?: string;
 }
 
 interface UnreadConvRich {
@@ -161,6 +164,11 @@ export function NotificationsBell(): React.ReactElement {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const isAr = t.lang === "ar";
+  const { activeWorkspace } = useAuth();
+  const workspaceId = activeWorkspace?.id ?? null;
+  const uid = useId();
+  const tabId = (id: string): string => `${uid}-tab-${id}`;
+  const panelId = (id: string): string => `${uid}-panel-${id}`;
 
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
@@ -174,6 +182,8 @@ export function NotificationsBell(): React.ReactElement {
   const [storedError, setStoredError] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const storedIds = useRef<Set<string>>(new Set());
+  const storedRef = useRef<StoredNotification[]>([]);
+  storedRef.current = stored;
   // For the relative-time labels to tick without re-subscribing.
   const [tick, setTick] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -219,30 +229,70 @@ export function NotificationsBell(): React.ReactElement {
     }, TOAST_EXIT_MS);
   };
 
-  // Stored notifications: first page + unread count on mount.
+  // Stored notifications: first page + unread count on mount, on workspace
+  // switch, and on every socket (re)connect. `gen` drops responses that were
+  // requested for a previous workspace.
+  const gen = useRef(0);
   const loadPage = (cursor: string | null): void => {
+    const g = gen.current;
     setStoredLoading(true);
     setStoredError(false);
     const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}&limit=20` : "?limit=20";
     api
       .get<{ items: StoredNotification[]; nextCursor: string | null }>(`/notifications${qs}`)
       .then((res) => {
+        if (g !== gen.current) return;
         const fresh = res.items.filter((n) => !storedIds.current.has(n.id));
         for (const n of fresh) storedIds.current.add(n.id);
         setStored((prev) => [...prev, ...fresh]);
         setNextCursor(res.nextCursor ?? null);
       })
-      .catch(() => setStoredError(true))
-      .finally(() => setStoredLoading(false));
+      .catch(() => {
+        if (g === gen.current) setStoredError(true);
+      })
+      .finally(() => {
+        if (g === gen.current) setStoredLoading(false);
+      });
   };
-  useEffect(() => {
-    loadPage(null);
+  const loadUnread = (): void => {
+    const g = gen.current;
     api
       .get<{ count: number }>("/notifications/unread-count")
-      .then((r) => setStoredUnread(r.count))
+      .then((r) => {
+        if (g === gen.current) setStoredUnread(r.count);
+      })
       .catch(() => undefined);
+  };
+  // Catch up after a disconnect: pull the newest page, prepend what we missed.
+  const refreshStored = (): void => {
+    const g = gen.current;
+    api
+      .get<{ items: StoredNotification[]; nextCursor: string | null }>("/notifications?limit=20")
+      .then((res) => {
+        if (g !== gen.current) return;
+        const fresh = res.items.filter((n) => !storedIds.current.has(n.id));
+        if (fresh.length === 0) return;
+        for (const n of fresh) storedIds.current.add(n.id);
+        setStored((prev) => [...fresh, ...prev]);
+      })
+      .catch(() => undefined);
+    loadUnread();
+  };
+  const firstWorkspace = useRef(true);
+  useEffect(() => {
+    if (!firstWorkspace.current) {
+      gen.current += 1;
+      storedIds.current = new Set();
+      setStored([]);
+      setNextCursor(null);
+      setStoredUnread(0);
+    }
+    firstWorkspace.current = false;
+    loadPage(null);
+    loadUnread();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [workspaceId]);
+  useRealtime<undefined>("connect", () => refreshStored());
 
   // Live delivery of a stored notification.
   useRealtime<StoredNotification>("notification:new", (n) => {
@@ -260,9 +310,28 @@ export function NotificationsBell(): React.ReactElement {
         preview: txt.body ?? "",
         at: Date.now(),
         href: recordHref(n.recordKind, n.recordId) ?? undefined,
+        storedId: n.id,
       };
       setToasts((prev) => [...prev, { id: item.id, item, dismissing: false }].slice(-MAX_VISIBLE_TOASTS));
       window.setTimeout(() => dismissToast(item.id), TOAST_DURATION_MS);
+    } else if (
+      typeof window !== "undefined" &&
+      "Notification" in window &&
+      Notification.permission === "granted"
+    ) {
+      const txt = notificationText(tx, n);
+      const os = new Notification(txt.title, {
+        body: txt.body ?? "",
+        tag: `aram-notification-${n.id}`,
+        icon: "/favicon.svg",
+      });
+      os.onclick = () => {
+        window.focus();
+        const href = recordHref(n.recordKind, n.recordId);
+        if (href) window.location.hash = href;
+        markStoredRead(n.id);
+        os.close();
+      };
     }
   });
 
@@ -271,13 +340,16 @@ export function NotificationsBell(): React.ReactElement {
       .post("/notifications/read", ids === "all" ? { all: true } : { ids })
       .catch(() => undefined);
   };
+  const markStoredRead = (id: string): void => {
+    const cur = storedRef.current.find((x) => x.id === id);
+    if (cur?.readAt) return;
+    const nowIso = new Date().toISOString();
+    setStored((prev) => prev.map((x) => (x.id === id ? { ...x, readAt: nowIso } : x)));
+    setStoredUnread((c) => Math.max(0, c - 1));
+    markRead([id]);
+  };
   const openStored = (n: StoredNotification): void => {
-    if (!n.readAt) {
-      const nowIso = new Date().toISOString();
-      setStored((prev) => prev.map((x) => (x.id === n.id ? { ...x, readAt: nowIso } : x)));
-      setStoredUnread((c) => Math.max(0, c - 1));
-      markRead([n.id]);
-    }
+    markStoredRead(n.id);
     const href = recordHref(n.recordKind, n.recordId);
     if (href) window.location.hash = href;
     setOpen(false);
@@ -446,6 +518,18 @@ export function NotificationsBell(): React.ReactElement {
     });
   };
 
+  const TABS = ["notifications", "conversations"] as const;
+  const onTabKey = (e: React.KeyboardEvent<HTMLButtonElement>): void => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    // Visual order follows the writing direction, so Right means "previous" in RTL.
+    const forward = (e.key === "ArrowRight") !== isAr;
+    const i = TABS.indexOf(tab);
+    const next = TABS[(i + (forward ? 1 : TABS.length - 1)) % TABS.length]!;
+    setTab(next);
+    document.getElementById(tabId(next))?.focus();
+  };
+
   const goToInbox = () => {
     window.location.hash = "#/inbox";
     setOpen(false);
@@ -473,7 +557,7 @@ export function NotificationsBell(): React.ReactElement {
             : tx("Notifications", "الإشعارات")
         }
         onClick={toggle}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open}
         style={{ position: "relative" }}
       >
@@ -507,7 +591,8 @@ export function NotificationsBell(): React.ReactElement {
 
       {open && (
         <div
-          role="menu"
+          role="dialog"
+          aria-label={tx("Notifications", "الإشعارات")}
           style={{
             position: "absolute",
             top: "calc(100% + 6px)",
@@ -624,7 +709,11 @@ export function NotificationsBell(): React.ReactElement {
                 key={id}
                 type="button"
                 role="tab"
+                id={tabId(id)}
                 aria-selected={tab === id}
+                aria-controls={panelId(id)}
+                tabIndex={tab === id ? 0 : -1}
+                onKeyDown={onTabKey}
                 onClick={() => setTab(id)}
                 style={{
                   flex: 1,
@@ -650,6 +739,12 @@ export function NotificationsBell(): React.ReactElement {
           </div>
 
           {tab === "notifications" && (
+            <div
+              role="tabpanel"
+              id={panelId("notifications")}
+              aria-labelledby={tabId("notifications")}
+              style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}
+            >
             <NotificationsList
               tx={tx}
               isAr={isAr}
@@ -663,10 +758,16 @@ export function NotificationsBell(): React.ReactElement {
               onMarkAll={markAllStored}
               hasUnread={storedUnread > 0}
             />
+            </div>
           )}
 
           {tab === "conversations" && (
-          <div style={{ overflowY: "auto", flex: 1 }}>
+          <div
+            role="tabpanel"
+            id={panelId("conversations")}
+            aria-labelledby={tabId("conversations")}
+            style={{ overflowY: "auto", flex: 1 }}
+          >
             {sorted.length === 0 ? (
               <div
                 style={{
@@ -810,6 +911,7 @@ export function NotificationsBell(): React.ReactElement {
                       // Don't navigate if the close button caught it.
                       if ((e.target as HTMLElement).closest(".close")) return;
                       window.location.hash = tt.item.href ?? "#/inbox";
+                      if (tt.item.storedId) markStoredRead(tt.item.storedId);
                       dismissToast(tt.id);
                     }}
                   >

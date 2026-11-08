@@ -57,10 +57,22 @@ function SeenBy({ note, team, selfId, tx }: { note: Note; team: Map<string, Team
   return (
     <span
       title={`${tx("Seen by", "شوهدت بواسطة")} ${names}`}
-      aria-label={`${tx("Seen by", "شوهدت بواسطة")} ${names}`}
       style={{ display: "inline-flex", alignItems: "center", gap: 3 }}
     >
       <span>{tx("Seen by", "شوهدت بواسطة")}</span>
+      <span
+        dir="auto"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          overflow: "hidden",
+          clip: "rect(0 0 0 0)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {names}
+      </span>
       {shown.map((s) => {
         const m = team.get(s.userId);
         return (
@@ -217,32 +229,45 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
     );
   };
 
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const failText = tx("Couldn't save the note. Try again.", "تعذّر حفظ الملاحظة. حاول مرة أخرى.");
+
   const submit = async () => {
-    const body = draft.serialize(teamQ.data ?? []);
-    if (!body || !contactId) return;
-    const res = await createNote.mutate({
-      contactId,
-      conversationId: scope === "conversation" ? conversationId : undefined,
-      body,
-    });
-    showWarnings(body, res.warnings);
-    draft.reset();
-    listQ.refetch();
+    setSubmitError(null);
+    try {
+      const body = draft.serialize(teamQ.data ?? []);
+      if (!body || !contactId) return;
+      const res = await createNote.mutate({
+        contactId,
+        conversationId: scope === "conversation" ? conversationId : undefined,
+        body,
+      });
+      showWarnings(body, res.warnings);
+      draft.reset();
+      listQ.refetch();
+    } catch {
+      setSubmitError(failText);
+    }
   };
 
   const submitReply = async () => {
-    const body = replyDraft.serialize(teamQ.data ?? []);
-    if (!body || !contactId || !replyTo) return;
-    const res = await createNote.mutate({
-      contactId,
-      conversationId: replyTo.conversationId ?? undefined,
-      parentId: replyTo.id,
-      body,
-    });
-    showWarnings(body, res.warnings);
-    replyDraft.reset();
-    setReplyTo(null);
-    listQ.refetch();
+    setSubmitError(null);
+    try {
+      const body = replyDraft.serialize(teamQ.data ?? []);
+      if (!body || !contactId || !replyTo) return;
+      const res = await createNote.mutate({
+        contactId,
+        conversationId: replyTo.conversationId ?? undefined,
+        parentId: replyTo.id,
+        body,
+      });
+      showWarnings(body, res.warnings);
+      replyDraft.reset();
+      setReplyTo(null);
+      listQ.refetch();
+    } catch {
+      setSubmitError(failText);
+    }
   };
 
   const remove = async (id: string) => {
@@ -300,9 +325,9 @@ function NotesPanelImpl({ contactId, conversationId, scope }: Props) {
         tx("Add an internal note… (@ to mention)", "أضف ملاحظة داخلية… (@ للإشارة)"),
         tx("Add note", "إضافة ملاحظة"),
       )}
-      {createNote.error && (
-        <div style={{ color: "var(--bad)", fontSize: 11 }}>
-          {createNote.error}
+      {(submitError ?? createNote.error) && (
+        <div role="alert" style={{ color: "var(--bad)", fontSize: 11 }}>
+          {submitError ?? createNote.error}
         </div>
       )}
       {warnings.length > 0 && (

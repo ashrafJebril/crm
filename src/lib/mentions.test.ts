@@ -105,3 +105,18 @@ describe("serializeMentions with team fallback", () => {
     );
   });
 });
+
+describe("serializeMentions positions and duplicates", () => {
+  const ann = { id: "u1", name: "Ann Lee" };
+  it("matches a mention at the very start of the string", () => {
+    expect(serializeMentions("@Ann Lee hi", [ann])).toBe("@[Ann Lee](user:u1) hi");
+  });
+  it("matches a mention after a newline", () => {
+    expect(serializeMentions("hi\n@Ann Lee", [ann])).toBe("hi\n@[Ann Lee](user:u1)");
+  });
+  it("does not resolve a duplicated team name by typing; only a pick does", () => {
+    const team = [{ id: "t2", name: "Sam Lee" }, { id: "t3", name: "Sam Lee" }, { id: "t4", name: "Zed" }];
+    expect(serializeMentions("@Sam Lee @Zed", [], team)).toBe("@Sam Lee @[Zed](user:t4)");
+    expect(serializeMentions("@Sam Lee", [{ id: "t3", name: "Sam Lee" }], team)).toBe("@[Sam Lee](user:t3)");
+  });
+});

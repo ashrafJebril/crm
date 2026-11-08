@@ -1504,7 +1504,7 @@ function ConversationPane({
             conversationId={conv.id}
             lang={lang}
             onClick={(t) => {
-              window.location.hash = `#/pipeline?openTicket=${encodeURIComponent(t.id)}`;
+              window.location.hash = `#/pipeline?open=${encodeURIComponent(t.id)}`;
             }}
           />
           <AddToPipelineButton
@@ -1578,7 +1578,7 @@ function ConversationPane({
                     isOwn={!!user && m.authorUserId === (user as { id?: string }).id}
                     authorName={authorName(m.authorUserId)}
                     label={tx("Internal note", "ملاحظة داخلية")}
-                    timeLabel={m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                    timeLabel={m.createdAt ? new Date(m.createdAt).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" }) : ""}
                   />
                 ) : (
                   <Bubble m={m} />
@@ -3300,6 +3300,7 @@ function InboxImpl() {
       const serverMsgs: Message[] = (fbMsgsQ.data ?? []).map((m) => ({
         from: m.from === "page" ? "human" : "them",
         t: fmtCompact(m.at),
+        createdAt: m.at,
         body: m.body || (m.attachmentUrl ? "📎 attachment" : ""),
         agent: m.from === "page" ? undefined : undefined,
         attach: m.attachmentUrl,
@@ -3328,6 +3329,7 @@ function InboxImpl() {
       const serverMsgs: Message[] = (igMsgsQ.data ?? []).map((m) => ({
         from: m.from === "page" ? "human" : "them",
         t: fmtCompact(m.at),
+        createdAt: m.at,
         body: m.body || "📎 attachment",
         agent: undefined,
       }));

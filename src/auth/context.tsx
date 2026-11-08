@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api, setPaymentOverdueHandler, setUnauthorizedHandler, tokenStore } from "@/api/client";
-import { disconnectSocket } from "@/api/realtime";
+import { disconnectSocket, ensureSocket } from "@/api/realtime";
 import { bootPaymentOverdue } from "@/lib/paymentLock";
 import type { Workspace } from "@/lib/types";
 
@@ -197,6 +197,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       workspaceId,
     }, { localPaymentError: true });
     tokenStore.set(resp.token);
+    // Reconnect the same socket so the handshake (auth callback reads tokenStore)
+    // joins the new workspace's room; existing listeners stay attached.
+    ensureSocket().disconnect().connect();
     setUser(resp.user);
     setWorkspaces(resp.workspaces);
     setActiveWorkspace(
