@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { Prisma } from "@prisma/client";
 import { PaymentLockService } from "../billing/payment-lock.service";
@@ -7,6 +7,7 @@ import { ZernioBroadcastVariable, ZernioClient } from "../integrations/zernio.cl
 import { campaignSender, campaignSenderAccountId } from "../channels/default-channel";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { SKIP_CODES } from "./tracking/failure-codes";
+import { campaignError } from "./campaign-errors";
 import {
   buildRecipients,
   campaignStatusFor,
@@ -40,7 +41,8 @@ const FINISHED = ["completed", "failed", "cancelled"];
 export interface LaunchInput {
   mode: "now" | "schedule";
   scheduledAt?: string;
-  variables: ZernioBroadcastVariable[];
+  /** Legacy body variables (SP-13 makes them optional; Task 2 reads Campaign.varMap). */
+  variables?: ZernioBroadcastVariable[];
 }
 
 /**
@@ -96,7 +98,7 @@ export class CampaignSendService {
       throw new BadRequestException("Sending is paused until the overdue payment for this workspace is settled.");
     }
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
-    if (!campaign) throw new NotFoundException("Campaign not found");
+    if (!campaign) throw campaignError("campaigns.not_found");
     if (campaign.status !== "draft" || campaign.zernioBroadcastId) {
       throw new BadRequestException("This campaign has already been launched.");
     }
@@ -115,9 +117,10 @@ export class CampaignSendService {
     if (!template || template.status !== "approved") {
       throw new BadRequestException("Pick a WhatsApp template that Meta has approved.");
     }
+    const variables = input.variables ?? [];
     const needed = templatePlaceholderCount(template.body);
-    if (input.variables.length !== needed) {
-      throw new BadRequestException(`This template needs ${needed} variables; ${input.variables.length} were given.`);
+    if (variables.length !== needed) {
+      throw new BadRequestException(`This template needs ${needed} variables; ${variables.length} were given.`);
     }
 
     // SP-19: the chosen sender (an active Zernio WhatsApp channel, else 400
@@ -126,7 +129,8 @@ export class CampaignSendService {
     const sender = await campaignSender(this.prisma, workspaceId, campaign.senderChannelId);
     const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { zernioProfileId: true } });
     if (!workspace?.zernioProfileId || !sender) {
-      throw new BadRequestException("Connect a WhatsApp number in Channels before sending a campaign.");
+      // SP-13 ruling 6: one key for every marketing action (409, code WHATSAPP_NOT_CONNECTED).
+      throw campaignError("campaigns.whatsapp_not_connected");
     }
     const profileId = workspace.zernioProfileId;
     const accountId = sender.accountId;
@@ -152,7 +156,7 @@ export class CampaignSendService {
       accountId,
       name: campaign.name,
       template: { name: template.name, language: template.lang },
-      variables: input.variables,
+      variables,
     });
 
     try {
@@ -178,7 +182,7 @@ export class CampaignSendService {
         launchedAt: new Date(),
         recipients: recipients.length,
         skipped: totalSkipped(skipped),
-        variableMapping: input.variables as unknown as Prisma.InputJsonValue,
+        variableMapping: variables as unknown as Prisma.InputJsonValue,
         lastError: null,
       },
     });
@@ -233,7 +237,7 @@ export class CampaignSendService {
 
   async cancel(workspaceId: string, id: string) {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
-    if (!campaign) throw new NotFoundException("Campaign not found");
+    if (!campaign) throw campaignError("campaigns.not_found");
     if (!campaign.zernioBroadcastId || !["scheduled", "running"].includes(campaign.status)) {
       throw new BadRequestException("This campaign is not sending, so there is nothing to cancel.");
     }
@@ -251,7 +255,7 @@ export class CampaignSendService {
    */
   async refresh(workspaceId: string, id: string) {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
-    if (!campaign) throw new NotFoundException("Campaign not found");
+    if (!campaign) throw campaignError("campaigns.not_found");
     if (!campaign.zernioBroadcastId) return campaign;
     const updated = await this.applyStats(campaign.id, campaign.zernioBroadcastId, this.useAggregates(campaign));
     if (updated.recipientTracking !== true || this.syncing) return updated;

@@ -1,8 +1,9 @@
-import { BadRequestException, HttpException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, HttpException, NotFoundException } from "@nestjs/common";
 
 /**
- * SP-12 error keys. The `message` is the key itself (the frontend maps it
- * through `tx`), the same convention as `channels.*` (channel-errors.ts).
+ * SP-12 and SP-13 error keys. The `message` is the key itself (the frontend
+ * maps it through `tx`), the same convention as `channels.*`
+ * (channel-errors.ts).
  */
 export type CampaignErrorKey =
   | "campaigns.not_found"
@@ -13,9 +14,24 @@ export type CampaignErrorKey =
   | "campaigns.ids_too_many"
   | "campaigns.follow_up_target"
   | "campaigns.follow_up_too_large"
-  | "campaigns.group_name_required";
+  | "campaigns.group_name_required"
+  // SP-13
+  | "campaigns.whatsapp_not_connected"
+  | "campaigns.already_launched"
+  | "campaigns.sender_conflict"
+  | "campaigns.too_many_senders"
+  | "campaigns.template_missing_on_number"
+  | "campaigns.template_check_failed"
+  | "campaigns.template_not_approved"
+  | "campaigns.template_unsupported"
+  | "campaigns.schedule_invalid"
+  | "campaigns.var_map_invalid"
+  | "campaigns.var_map_too_varied"
+  | "campaigns.no_reachable_recipients"
+  | "campaigns.header_media_schedule_too_far"
+  | "campaigns.not_cancellable";
 
-const STATUS: Record<CampaignErrorKey, 400 | 404> = {
+const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.not_found": 404,
   "campaigns.recipient_not_found": 404,
   "campaigns.invalid_cursor": 400,
@@ -25,10 +41,33 @@ const STATUS: Record<CampaignErrorKey, 400 | 404> = {
   "campaigns.follow_up_target": 400,
   "campaigns.follow_up_too_large": 400, // {limit, count}
   "campaigns.group_name_required": 400,
+  // SP-13
+  "campaigns.whatsapp_not_connected": 409, // + code: "WHATSAPP_NOT_CONNECTED"
+  "campaigns.already_launched": 409,
+  "campaigns.sender_conflict": 400,
+  "campaigns.too_many_senders": 400, // {limit}
+  "campaigns.template_missing_on_number": 400, // {channelIds}
+  "campaigns.template_check_failed": 502, // {channelIds}
+  "campaigns.template_not_approved": 400,
+  "campaigns.template_unsupported": 400,
+  "campaigns.schedule_invalid": 400,
+  "campaigns.var_map_invalid": 400, // {slot, reason}
+  "campaigns.var_map_too_varied": 400, // {partitions, limit, directLimit, reachable}
+  "campaigns.no_reachable_recipients": 400, // a launch failure (lastError)
+  "campaigns.header_media_schedule_too_far": 400, // {days: 6}
+  "campaigns.not_cancellable": 400,
+};
+
+/** Machine codes carried next to the key (ruling 6: the roadmap's name). */
+const CODES: Partial<Record<CampaignErrorKey, string>> = {
+  "campaigns.whatsapp_not_connected": "WHATSAPP_NOT_CONNECTED",
 };
 
 export function campaignError(key: CampaignErrorKey, extra: Record<string, unknown> = {}): HttpException {
   const statusCode = STATUS[key];
-  const body = { statusCode, message: key, ...extra };
-  return statusCode === 404 ? new NotFoundException(body) : new BadRequestException(body);
+  const body = { statusCode, message: key, ...(CODES[key] ? { code: CODES[key] } : {}), ...extra };
+  if (statusCode === 404) return new NotFoundException(body);
+  if (statusCode === 409) return new ConflictException(body);
+  if (statusCode === 400) return new BadRequestException(body);
+  return new HttpException(body, statusCode);
 }

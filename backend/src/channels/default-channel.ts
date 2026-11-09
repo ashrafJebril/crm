@@ -1,5 +1,7 @@
 import type { PrismaService } from "../prisma/prisma.service";
+import { campaignError } from "../campaigns/campaign-errors";
 import { channelError } from "./channel-errors";
+import { whatsappLimit } from "./channel-limits";
 import { ensureLegacyChannels } from "./legacy-mirror";
 
 /**
@@ -95,4 +97,120 @@ export async function campaignSender(
     select: { id: true },
   });
   return { accountId, channelId: mirrored?.id ?? null };
+}
+
+/** SP-13: one validated campaign sender. */
+export interface CampaignSenderInfo {
+  channelId: string;
+  accountId: string;
+  displayName: string;
+  phoneNumber: string | null;
+}
+
+/** SP-13: at most this many senders per campaign, whatever the plan. */
+export const CAMPAIGN_SENDERS_MAX = 10;
+
+/** Senders a campaign of this workspace may name: `min(10, whatsappLimit(plan))`. */
+export async function campaignSenderLimit(prisma: PrismaService, workspaceId: string): Promise<number> {
+  const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { plan: true } });
+  return Math.min(CAMPAIGN_SENDERS_MAX, whatsappLimit(ws?.plan ?? "free"));
+}
+
+const isEligibleSender = (ch: { kind: string; provider: string; status: string; externalId: string | null }) =>
+  ch.kind === "whatsapp" && ch.provider === "zernio" && ch.status === "active" && !!ch.externalId;
+
+/**
+ * SP-13: validates a campaign's sender list, in order. Duplicates are
+ * removed (first kept). More than `campaignSenderLimit` → 400
+ * `campaigns.too_many_senders {limit}` (checked before any lookup). Every id
+ * must be an active Zernio WhatsApp channel of this workspace, else 400
+ * `channels.sender_invalid {channelId}`: a foreign id answers exactly like a
+ * missing one (ruling 11), and Meta-direct numbers are refused (SP-19 R6).
+ * One query for all ids. `[]` stays `[]` (the default number).
+ */
+export async function campaignSenders(
+  prisma: PrismaService,
+  workspaceId: string,
+  ids: readonly string[],
+): Promise<CampaignSenderInfo[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const limit = await campaignSenderLimit(prisma, workspaceId);
+  if (unique.length > limit) throw campaignError("campaigns.too_many_senders", { limit });
+  const rows = (await prisma.channel.findMany({
+    where: { workspaceId, id: { in: unique } },
+    select: { id: true, kind: true, provider: true, status: true, externalId: true, displayName: true, phoneNumber: true },
+  })) as Array<{
+    id: string;
+    kind: string;
+    provider: string;
+    status: string;
+    externalId: string | null;
+    displayName: string;
+    phoneNumber: string | null;
+  }>;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return unique.map((id) => {
+    const ch = byId.get(id);
+    if (!ch || !isEligibleSender(ch)) throw channelError("channels.sender_invalid", { channelId: id });
+    return { channelId: ch.id, accountId: ch.externalId as string, displayName: ch.displayName, phoneNumber: ch.phoneNumber ?? null };
+  });
+}
+
+export type SenderIneligibleReason = "provider_meta" | "not_active";
+
+export interface CampaignSenderOption {
+  channelId: string;
+  displayName: string;
+  phoneNumber: string | null;
+  isDefault: boolean;
+  provider: string;
+  eligible: boolean;
+  reason: SenderIneligibleReason | null;
+}
+
+/**
+ * SP-13 `GET /campaigns/senders`: the workspace's WhatsApp numbers (not
+ * disconnected), default first, each with whether it can send campaigns.
+ * `connected` holds when at least one eligible sender exists and the
+ * workspace has its Zernio profile (the launch gate's two conditions).
+ * A legacy Integration-only number is mirrored first, as at launch.
+ */
+export async function campaignSenderOptions(
+  prisma: PrismaService,
+  workspaceId: string,
+): Promise<{ connected: boolean; limit: number; senders: CampaignSenderOption[] }> {
+  await ensureLegacyChannels(prisma, workspaceId);
+  const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { plan: true, zernioProfileId: true } });
+  const rows = (await prisma.channel.findMany({
+    where: { workspaceId, kind: "whatsapp", status: { not: "disconnected" } },
+    orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+    select: { id: true, kind: true, provider: true, status: true, externalId: true, displayName: true, phoneNumber: true, isDefault: true },
+  })) as Array<{
+    id: string;
+    kind: string;
+    provider: string;
+    status: string;
+    externalId: string | null;
+    displayName: string;
+    phoneNumber: string | null;
+    isDefault: boolean;
+  }>;
+  const senders = rows.map((r) => {
+    const reason: SenderIneligibleReason | null = r.provider !== "zernio" ? "provider_meta" : isEligibleSender(r) ? null : "not_active";
+    return {
+      channelId: r.id,
+      displayName: r.displayName,
+      phoneNumber: r.phoneNumber ?? null,
+      isDefault: r.isDefault === true,
+      provider: r.provider,
+      eligible: reason === null,
+      reason,
+    };
+  });
+  return {
+    connected: !!ws?.zernioProfileId && senders.some((s) => s.eligible),
+    limit: Math.min(CAMPAIGN_SENDERS_MAX, whatsappLimit(ws?.plan ?? "free")),
+    senders,
+  };
 }

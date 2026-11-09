@@ -109,10 +109,11 @@ describe("CampaignSendService", () => {
       ).rejects.toThrow(/future/);
     });
 
-    it("SP-19 m6: with no WhatsApp sender it points to Channels, not Settings → Integrations", async () => {
+    it("SP-19 m6 / SP-13 ruling 6: with no WhatsApp sender it answers the keyed 409, never an English provider message", async () => {
       prisma.integration.findFirst.mockResolvedValue(null);
       const err = await svc.launch("ws1", "camp1", { mode: "now", variables: vars }).catch((e) => e);
-      expect(err.message).toMatch(/Channels/);
+      expect(err.getStatus()).toBe(409);
+      expect(err.getResponse()).toEqual({ statusCode: 409, message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" });
       expect(err.message).not.toMatch(/Integrations/);
     });
 
@@ -133,7 +134,10 @@ describe("CampaignSendService", () => {
 
     it("requires WhatsApp to be connected through Zernio", async () => {
       prisma.integration.findFirst.mockResolvedValue(null);
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/WhatsApp/);
+      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toMatchObject({
+        status: 409,
+        response: { message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" },
+      });
     });
 
     it("refuses an audience nobody can be reached in", async () => {

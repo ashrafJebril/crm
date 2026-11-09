@@ -99,6 +99,32 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-13 routes", () => {
+    const sp13: Record<string, string> = {
+      "GET /campaigns/senders": "campaigns.view",
+      "POST /campaigns/preview": "campaigns.view",
+      // Unchanged and re-asserted.
+      "GET /campaigns/preview": "campaigns.view",
+      "GET /campaigns/:id": "campaigns.view",
+      "POST /campaigns": "campaigns.create",
+      "PATCH /campaigns/:id": "campaigns.update",
+      "POST /campaigns/:id/launch": "campaigns.manage",
+      "POST /campaigns/:id/cancel": "campaigns.manage",
+      "POST /templates": "templates.create",
+      "PATCH /templates/:id": "templates.update",
+      "GET /media": "conversations.view",
+      "POST /media/upload": "conversations.create",
+    };
+    for (const [k, p] of Object.entries(sp13)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // The literal routes are declared before ":id" so they are never captured by it.
+    const campaignRoutes = routes.filter((r) => r.key.startsWith("GET /campaigns/") || r.key.startsWith("POST /campaigns/"));
+    const at = (k: string) => campaignRoutes.findIndex((r) => r.key === k);
+    expect(at("GET /campaigns/senders")).toBeLessThan(at("GET /campaigns/:id"));
+    expect(at("GET /campaigns/senders")).toBeGreaterThanOrEqual(0);
+  });
+
   it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

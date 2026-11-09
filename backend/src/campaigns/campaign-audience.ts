@@ -53,14 +53,16 @@ export interface SkippedCounts {
 /**
  * Who a campaign can actually reach. "churned" is what an HJZ opt-out or
  * deletion sets, so those contacts never get marketing.
+ *
+ * SP-13: `seen` carries the duplicate-phone set across keyset pages when
+ * the audience is streamed (a fresh set per call by default).
  */
-export function buildRecipients(contacts: AudienceContact[]): {
+export function buildRecipients(contacts: AudienceContact[], seen: Set<string> = new Set<string>()): {
   recipients: CampaignRecipient[];
   skipped: SkippedCounts;
   /** Opted-out and phoneless members (duplicates get no row, ruling 11). */
   skippedRows: SkippedRecipient[];
 } {
-  const seen = new Set<string>();
   const recipients: CampaignRecipient[] = [];
   const skippedRows: SkippedRecipient[] = [];
   const skipped: SkippedCounts = { noPhone: 0, optedOut: 0, duplicate: 0 };

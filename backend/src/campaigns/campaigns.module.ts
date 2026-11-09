@@ -5,18 +5,23 @@ import {
   Delete,
   Get,
   Module,
+  NotFoundException,
   Param,
   Patch,
   Post,
   Query,
+  Req,
 } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
   IsArray,
   IsIn,
   IsInt,
   IsISO8601,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   Min,
@@ -34,6 +39,12 @@ import { TagsModule } from "../tags/tags.module";
 import { CampaignReportController } from "./campaign-report.controller";
 import { CampaignReportService } from "./campaign-report.service";
 import { CampaignFollowUpService } from "./campaign-follow-up.service";
+import { campaignError } from "./campaign-errors";
+import { CampaignPreviewService } from "./sending/campaign-preview.service";
+import { effectiveSenderIds, normalizeSenderWrite } from "./sending/senders";
+import { validateVarMapShape } from "./sending/var-map";
+import { campaignSenderOptions, campaignSenders } from "../channels/default-channel";
+import { assertRequestPermission, type PermissionRequest } from "../permissions/permission.guard";
 
 class CreateCampaignDto {
   @IsString() @IsNotEmpty() name!: string;
@@ -45,6 +56,12 @@ class CreateCampaignDto {
   @IsOptional() @IsString() templateId?: string;
   /** SP-19: an active Zernio WhatsApp channel; null/absent = the default number. */
   @IsOptional() @IsString() senderChannelId?: string | null;
+  /** SP-13: the sending numbers in order ([0] = primary); [] = the default number. */
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) senderChannelIds?: string[];
+  /** SP-13: {"1": {source, key?, value?, fallback?}}; the shape is checked by validateVarMapShape. */
+  @IsOptional() @IsObject() varMap?: Record<string, unknown> | null;
+  /** SP-13: a library file overriding the template's header sample; null clears it. */
+  @IsOptional() @IsString() headerMediaId?: string | null;
 }
 
 /** Drafts only. Status and delivery counters come from Zernio, never the client. */
@@ -58,6 +75,20 @@ class UpdateCampaignDto {
   @IsOptional() @IsString() templateId?: string;
   /** SP-19: an active Zernio WhatsApp channel; null/absent = the default number. */
   @IsOptional() @IsString() senderChannelId?: string | null;
+  /** SP-13: see CreateCampaignDto. */
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) senderChannelIds?: string[];
+  @IsOptional() @IsObject() varMap?: Record<string, unknown> | null;
+  @IsOptional() @IsString() headerMediaId?: string | null;
+}
+
+/** SP-13 `POST /campaigns/preview`: the draft as the builder holds it (nothing is saved). */
+class PreviewCampaignDto {
+  @IsOptional() @IsString() segmentId?: string | null;
+  @IsOptional() @IsString() templateId?: string | null;
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) senderChannelIds?: string[];
+  @IsOptional() @IsString() senderChannelId?: string | null;
+  @IsOptional() @IsObject() varMap?: Record<string, unknown> | null;
+  @IsOptional() @IsString() headerMediaId?: string | null;
 }
 
 const VARIABLE_FIELDS = ["name", "phone", "email", "company", "custom"] as const;
@@ -73,18 +104,64 @@ class BroadcastVariableDto {
 class LaunchCampaignDto {
   @IsIn(["now", "schedule"]) mode!: "now" | "schedule";
   @ValidateIf((d: LaunchCampaignDto) => d.mode === "schedule") @IsISO8601() scheduledAt?: string;
+  /** Legacy only (SP-13): campaigns with a stored varMap need none. */
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => BroadcastVariableDto)
-  variables!: BroadcastVariableDto[];
+  variables?: BroadcastVariableDto[];
 }
 
+type SendingFieldsDto = Pick<UpdateCampaignDto, "senderChannelIds" | "senderChannelId" | "varMap" | "headerMediaId">;
+
 @Controller("campaigns")
-class CampaignsController {
+export class CampaignsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly send: CampaignSendService,
+    private readonly previewer: CampaignPreviewService,
   ) {}
+
+  /**
+   * SP-13 sender, varMap and header fields of a create/update body ->
+   * Prisma data. Senders go through `normalizeSenderWrite` (senderChannelId
+   * is always the primary) and `campaignSenders` (each an active Zernio
+   * WhatsApp channel of this workspace, within the plan limit). The varMap
+   * is checked for shape only (the template may still change). The header
+   * file must be this workspace's media (404 otherwise). Absent fields are
+   * not touched. Everything is validated before anything is written.
+   */
+  private async sendingFields(workspaceId: string, dto: SendingFieldsDto) {
+    const data: {
+      senderChannelIds?: string[];
+      senderChannelId?: string | null;
+      varMap?: Prisma.InputJsonValue | typeof Prisma.DbNull;
+      headerMediaId?: string | null;
+    } = {};
+    const senders = normalizeSenderWrite({ senderChannelIds: dto.senderChannelIds, senderChannelId: dto.senderChannelId });
+    if (senders) {
+      await campaignSenders(this.prisma, workspaceId, senders.senderChannelIds);
+      data.senderChannelIds = senders.senderChannelIds;
+      data.senderChannelId = senders.senderChannelId;
+    }
+    if (dto.varMap !== undefined) {
+      data.varMap = dto.varMap === null ? Prisma.DbNull : (validateVarMapShape(dto.varMap) as unknown as Prisma.InputJsonValue);
+    }
+    if (dto.headerMediaId !== undefined) {
+      if (dto.headerMediaId) {
+        const media = await this.prisma.media.findFirst({ where: { id: dto.headerMediaId, workspaceId }, select: { id: true } });
+        if (!media) throw new NotFoundException("Media not found");
+      }
+      data.headerMediaId = dto.headerMediaId || null;
+    }
+    return data;
+  }
+
+  /** The draft's own columns (everything but the SP-13 sending fields). */
+  private plainFields<T extends SendingFieldsDto>(dto: T): Omit<T, keyof SendingFieldsDto> {
+    const { senderChannelIds: _a, senderChannelId: _b, varMap: _c, headerMediaId: _d, ...rest } = dto;
+    return rest;
+  }
 
   @Get()
   list(@CurrentWorkspace() workspaceId: string) {
@@ -100,17 +177,68 @@ class CampaignsController {
     return this.send.preview(workspaceId, segmentId || null);
   }
 
+  /**
+   * SP-13: the WhatsApp numbers a campaign can send from, with eligibility
+   * and the plan limit (campaigns.view; no channels.view needed).
+   */
+  @Get("senders")
+  senders(@CurrentWorkspace() workspaceId: string) {
+    return campaignSenderOptions(this.prisma, workspaceId);
+  }
+
+  /**
+   * SP-13 review step: reach, per-number split, missing values, transport,
+   * template per number and real-contact samples (those only with
+   * contacts.view, ruling 18). Writes nothing; declared before :id.
+   */
+  @Post("preview")
+  previewV2(@CurrentWorkspace() workspaceId: string, @Body() dto: PreviewCampaignDto, @Req() req: PermissionRequest) {
+    let canViewContacts = true;
+    try {
+      assertRequestPermission(req, "contacts.view");
+    } catch {
+      canViewContacts = false;
+    }
+    return this.previewer.preview(workspaceId, dto, { canViewContacts });
+  }
+
+  /**
+   * One campaign of this workspace (404 campaigns.not_found otherwise), with
+   * its senders `{channelId, displayName, phoneNumber}[]` in order (the
+   * default number when none is chosen; a deleted channel is absent).
+   */
   @Get(":id")
-  get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+  async get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!campaign) throw campaignError("campaigns.not_found");
+    const ids = effectiveSenderIds(campaign);
+    const select = { id: true, displayName: true, phoneNumber: true } as const;
+    let rows: Array<{ id: string; displayName: string; phoneNumber: string | null }>;
+    if (ids.length > 0) {
+      const found = await this.prisma.channel.findMany({ where: { workspaceId, id: { in: ids } }, select });
+      const byId = new Map(found.map((c) => [c.id, c]));
+      rows = ids.flatMap((i) => (byId.has(i) ? [byId.get(i)!] : []));
+    } else {
+      const def = await this.prisma.channel.findFirst({
+        where: { workspaceId, kind: "whatsapp", provider: "zernio", status: { notIn: ["disconnected", "pending"] } },
+        orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
+        select,
+      });
+      rows = def ? [def] : [];
+    }
+    return {
+      ...campaign,
+      senders: rows.map((c) => ({ channelId: c.id, displayName: c.displayName, phoneNumber: c.phoneNumber ?? null })),
+    };
   }
 
   @Post()
   async create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto) {
-    await this.send.validateSender(workspaceId, dto.senderChannelId);
+    const sending = await this.sendingFields(workspaceId, dto);
     return this.prisma.campaign.create({
       data: {
-        ...dto,
+        ...this.plainFields(dto),
+        ...sending,
         workspaceId,
         status: "draft",
         recipients: dto.recipients ?? 0,
@@ -124,10 +252,11 @@ class CampaignsController {
     @Param("id") id: string,
     @Body() dto: UpdateCampaignDto,
   ) {
-    const existing = await this.prisma.campaign.findFirstOrThrow({ where: { id, workspaceId } });
+    const existing = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!existing) throw campaignError("campaigns.not_found");
     if (existing.status !== "draft") throw new BadRequestException("Only draft campaigns can be edited.");
-    await this.send.validateSender(workspaceId, dto.senderChannelId);
-    return this.prisma.campaign.update({ where: { id }, data: dto });
+    const sending = await this.sendingFields(workspaceId, dto);
+    return this.prisma.campaign.update({ where: { id }, data: { ...this.plainFields(dto), ...sending } });
   }
 
   @Post(":id/launch")
@@ -135,7 +264,7 @@ class CampaignsController {
     return this.send.launch(workspaceId, id, {
       mode: dto.mode,
       scheduledAt: dto.scheduledAt,
-      variables: dto.variables as ZernioBroadcastVariable[],
+      variables: dto.variables as ZernioBroadcastVariable[] | undefined,
     });
   }
 
@@ -151,7 +280,8 @@ class CampaignsController {
 
   @Delete(":id")
   async remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    const existing = await this.prisma.campaign.findFirstOrThrow({ where: { id, workspaceId } });
+    const existing = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!existing) throw campaignError("campaigns.not_found");
     if (existing.status === "scheduled" || existing.status === "running") {
       throw new BadRequestException("Cancel this campaign before deleting it.");
     }
@@ -164,6 +294,6 @@ class CampaignsController {
   imports: [IntegrationsModule, CampaignTrackingModule, SegmentsModule, TagsModule],
   // CampaignsController first, so its literal GET preview is registered before any :id route.
   controllers: [CampaignsController, CampaignReportController],
-  providers: [CampaignSendService, CampaignReportService, CampaignFollowUpService],
+  providers: [CampaignSendService, CampaignReportService, CampaignFollowUpService, CampaignPreviewService],
 })
 export class CampaignsModule {}

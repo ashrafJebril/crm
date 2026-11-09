@@ -45,6 +45,7 @@ export class PrismaService implements OnModuleDestroy {
   get template() { return this.client.template; }
   get campaign() { return this.client.campaign; }
   get campaignRecipient() { return this.client.campaignRecipient; }
+  get campaignBroadcast() { return this.client.campaignBroadcast; }
   get pipeline() { return this.client.pipeline; }
   get ticketStage() { return this.client.ticketStage; }
   get ticket() { return this.client.ticket; }

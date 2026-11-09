@@ -26,6 +26,10 @@ function matchValue(v: any, cond: any): boolean {
       if (cond.not === null ? v === null || v === undefined : matchValue(v, cond.not)) return false;
     }
     if ("equals" in cond && v !== cond.equals) return false;
+    // SP-13: Postgres array columns (String[]).
+    if ("has" in cond && !(Array.isArray(v) && v.includes(cond.has))) return false;
+    if ("hasSome" in cond && !(Array.isArray(v) && (cond.hasSome as any[]).some((x) => v.includes(x)))) return false;
+    if ("isEmpty" in cond && (Array.isArray(v) && v.length === 0) !== cond.isEmpty) return false;
     if ("contains" in cond && !String(v ?? "").includes(cond.contains)) return false;
     if ("gt" in cond && !(v != null && v > cond.gt)) return false;
     if ("lt" in cond && !(v != null && v < cond.lt)) return false;
@@ -52,6 +56,13 @@ export function matches(row: Row, where: any, db: Tables, model: string): boolea
     if (k === "NOT") {
       const list = Array.isArray(cond) ? cond : [cond];
       if (list.some((w) => matches(row, w, db, model))) return false;
+      continue;
+    }
+    if (model === "contact" && k === "segmentMembers") {
+      // SP-13 audience stream: `segmentMembers: { some: { segmentId } }`.
+      const some = (cond as any)?.some ?? {};
+      const hit = (db.segmentMember ?? []).some((m) => m.contactId === row.id && matches(m, some, db, "segmentMember"));
+      if (!hit) return false;
       continue;
     }
     if (model === "integration" && k === "channel") {
@@ -133,7 +144,24 @@ const DEFAULTS: Record<string, () => Row> = {
   integration: () => ({ provider: "meta", pageId: null, pageName: null, accessToken: null, raw: null }),
   conversation: () => ({ channelId: null, externalId: null, aiEnabled: false, aiPausedAt: null, unread: 0 }),
   // SP-12
-  campaign: () => ({ recipientTracking: false, recipientsSyncedAt: null, recipientSyncSkip: 0, scheduledAt: null, launchedAt: null }),
+  campaign: () => ({
+    recipientTracking: false,
+    recipientsSyncedAt: null,
+    recipientSyncSkip: 0,
+    scheduledAt: null,
+    launchedAt: null,
+    // SP-13
+    senderChannelIds: [],
+    varMap: null,
+    headerMediaId: null,
+    launchStage: null,
+    launchHeartbeatAt: null,
+    launchAttempts: 0,
+    launchedById: null,
+    planCompletedAt: null,
+    cancelRequestedAt: null,
+    sendTransport: null,
+  }),
   campaignRecipient: () => ({
     contactId: null,
     channelId: null,
@@ -150,8 +178,32 @@ const DEFAULTS: Record<string, () => Row> = {
     replyMessageId: null,
     failureCode: null,
     failureReason: null,
+    // SP-13
+    broadcastId: null,
+    templateParams: null,
+    sendAttemptedAt: null,
   }),
+  // SP-13
+  campaignBroadcast: () => ({
+    channelId: null,
+    stage: "pending",
+    recipientCount: 0,
+    importedThroughId: null,
+    addedThroughId: null,
+    createAttemptedAt: null,
+    zernioBroadcastId: null,
+    recipientSyncSkip: 0,
+    recipientsSyncedAt: null,
+    lastError: null,
+  }),
+  template: () => ({ headerMediaId: null }),
+  customFieldDef: () => ({ entity: "contact", options: null, order: 0, archivedAt: null }),
 };
+
+/** SP-13: @@unique([campaignId, partitionKey]). */
+function broadcastClash(rows: Row[], row: Row): boolean {
+  return rows.some((o) => o !== row && o.campaignId === row.campaignId && o.partitionKey === row.partitionKey);
+}
 
 /** SP-12: @@unique([campaignId, phone]) (NULL phones are distinct, as in Postgres). */
 function recipientClash(rows: Row[], row: Row): boolean {
@@ -194,6 +246,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     const rows = () => (db[name] ??= []);
     const write = (row: Row) => {
       if (name === "channel") checkChannelUniques(rows(), row);
+      if (name === "campaignBroadcast" && broadcastClash(rows(), row)) throw p2002("CampaignBroadcast_campaignId_partitionKey_key");
     };
     // Like Prisma, every call returns a LAZY thenable: nothing runs until it
     // is awaited, so an array $transaction can snapshot first and roll back.
@@ -325,6 +378,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
       if (r.channelId === row.id) r.channelId = null;
     }
     if (db.campaignRecipient) db.campaignRecipient = db.campaignRecipient.filter((r) => r.campaignId !== row.id);
+    // SP-13: CampaignRecipient.broadcastId and CampaignBroadcast.channelId → SET NULL,
+    // CampaignBroadcast.campaignId → CASCADE, Campaign/Template.headerMediaId → SET NULL.
+    for (const r of db.campaignRecipient ?? []) if (r.broadcastId === row.id) r.broadcastId = null;
+    for (const b of db.campaignBroadcast ?? []) if (b.channelId === row.id) b.channelId = null;
+    if (db.campaignBroadcast) db.campaignBroadcast = db.campaignBroadcast.filter((b) => b.campaignId !== row.id);
+    for (const c of db.campaign ?? []) if (c.headerMediaId === row.id) c.headerMediaId = null;
+    for (const t of db.template ?? []) if (t.headerMediaId === row.id) t.headerMediaId = null;
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -357,6 +417,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     segment: model("segment"),
     segmentMember: model("segmentMember"),
     tag: model("tag"),
+    // SP-13: partitions, custom fields (varMap) and header media.
+    campaignBroadcast: model("campaignBroadcast"),
+    customFieldDef: model("customFieldDef"),
+    customFieldValue: model("customFieldValue"),
+    media: model("media"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();
@@ -446,6 +511,11 @@ function p2025(): Error {
 function applyData(row: Row, data: Row): Row {
   const out: Row = {};
   for (const [k, v] of Object.entries(data ?? {})) {
+    // Prisma.DbNull / Prisma.JsonNull on a Json column store SQL/JSON null.
+    if (v && typeof v === "object" && ["DbNull", "JsonNull"].includes((v as object).constructor?.name)) {
+      out[k] = null;
+      continue;
+    }
     if (v && typeof v === "object" && !(v instanceof Date) && !Array.isArray(v)) {
       if ("increment" in v) {
         out[k] = (row[k] ?? 0) + (v as any).increment;

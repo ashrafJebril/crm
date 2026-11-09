@@ -112,6 +112,8 @@ const VIEWER_SAFE_NON_GET = new Set([
   "POST /conversations/:id/read",
   "POST /notes/:id/seen",
   "POST /segments/preview",
+  // SP-13: the campaign review-step preview writes nothing.
+  "POST /campaigns/preview",
 ]);
 
 describe("system-role decision table", () => {
@@ -209,6 +211,37 @@ describe("system-role decision table", () => {
       expect(() => assertRequestPermission(imp, "campaigns.view")).not.toThrow();
       expect(blockedForImpersonation(ROUTE_PERMISSIONS["POST /campaigns/:id/launch"] as string)).toBe(true);
       expect(() => assertRequestPermission(imp, "campaigns.manage")).toThrow();
+    });
+  });
+
+  // SP-13: sending numbers and the campaign preview.
+  describe("SP-13 campaign sending routes", () => {
+    const VIEW = ["GET /campaigns/senders", "POST /campaigns/preview"];
+    const MANAGE = ["POST /campaigns/:id/launch", "POST /campaigns/:id/cancel"];
+
+    it.each(VIEW)("agent can %s", (key) => expect(allowed("agent", key)).toBe(true));
+    it.each(VIEW)("viewer can %s", (key) => expect(allowed("viewer", key)).toBe(true));
+    it.each(MANAGE)("viewer cannot %s", (key) => expect(allowed("viewer", key)).toBe(false));
+    it.each(MANAGE)("owner and admin can %s", (key) => {
+      expect(allowed("owner", key)).toBe(true);
+      expect(allowed("admin", key)).toBe(true);
+    });
+
+    it("preview samples need contacts.view: viewer and agent hold it", () => {
+      expect(hasPermission(SYSTEM_ROLES.agent.permissions, "contacts.view")).toBe(true);
+      expect(hasPermission(SYSTEM_ROLES.viewer.permissions, "contacts.view")).toBe(true);
+    });
+
+    it("an impersonated owner may view senders and preview, but cannot launch or cancel", () => {
+      const imp = { user: { workspaceId: "ws1", impersonating: true } } as never;
+      for (const k of VIEW) {
+        expect({ k, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[k] as string) }).toEqual({ k, blocked: false });
+      }
+      for (const k of MANAGE) {
+        expect({ k, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[k] as string) }).toEqual({ k, blocked: true });
+      }
+      expect(() => assertRequestPermission(imp, "campaigns.manage")).toThrow();
+      expect(() => assertRequestPermission(imp, "campaigns.view")).not.toThrow();
     });
   });
 

@@ -359,6 +359,10 @@ model Template {
   submittedAt         DateTime?
   reviewedAt          DateTime?
 
+  /// SP-13: the library file chosen as the media header sample (image/video/document).
+  headerMediaId String?
+  headerMedia   Media?  @relation("TemplateHeaderMedia", fields: [headerMediaId], references: [id], onDelete: SetNull)
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceTemplates", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -643,6 +647,7 @@ model Channel {
   conversations Conversation[] @relation("ConversationChannel")
   campaigns     Campaign[]     @relation("CampaignSenderChannel")
   campaignRecipients CampaignRecipient[] @relation("ChannelCampaignRecipients")
+  campaignBroadcasts CampaignBroadcast[] @relation("ChannelCampaignBroadcasts")
 
   @@unique([workspaceId, provider, externalId])
   @@index([workspaceId, kind])
@@ -693,6 +698,25 @@ model Campaign {
   /// SP-12 rows. Named recipientRows: `recipients` is already the Int count.
   recipientRows      CampaignRecipient[]
 
+  /// SP-13: the sending numbers, in order; [0] is the primary (template copy,
+  /// skipped rows). Empty = legacy: senderChannelId, else the default number.
+  senderChannelIds  String[]  @default([])
+  /// SP-13: {"1": {source, key?, value?, fallback?}, …}. Null on campaigns
+  /// launched before SP-13 (they keep variableMapping).
+  varMap            Json?
+  /// SP-13: optional header file override (library media). Null = the template's sample.
+  headerMediaId     String?
+  headerMedia       Media?    @relation("CampaignHeaderMedia", fields: [headerMediaId], references: [id], onDelete: SetNull)
+  /// SP-13 background launch.
+  launchStage       String?   // planning | sending | done | failed
+  launchHeartbeatAt DateTime?
+  launchAttempts    Int       @default(0)
+  launchedById      String?   // audit string, not a FK (survives the member leaving)
+  planCompletedAt   DateTime?
+  cancelRequestedAt DateTime?
+  sendTransport     String?   // broadcast | direct
+  broadcasts        CampaignBroadcast[]
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -700,6 +724,43 @@ model Campaign {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+  @@index([status, launchHeartbeatAt])
+}
+
+/// SP-13: one Zernio broadcast (or one direct-send batch) of a campaign:
+/// recipients sharing a sender and the same non-native variable values.
+model CampaignBroadcast {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace @relation("WorkspaceCampaignBroadcasts", fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaignId         String
+  campaign           Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  channelId          String?
+  channel            Channel?  @relation("ChannelCampaignBroadcasts", fields: [channelId], references: [id], onDelete: SetNull)
+  /// Zernio account id at plan time (the channel may be renamed or re-pointed later).
+  accountId          String
+  /// sha256 hex of [channelId, ...non-native values]; unique per campaign.
+  partitionKey       String
+  /// Zernio variableMapping for this partition ({"1": {field|custom, customValue?}}).
+  variables          Json
+  transport          String    // broadcast | direct
+  stage              String    @default("pending") // pending | contacts_imported | created | recipients_added | sent | scheduled | cancelled | failed
+  recipientCount     Int       @default(0)
+  importedThroughId  String?
+  addedThroughId     String?
+  createAttemptedAt  DateTime?
+  zernioBroadcastId  String?
+  recipientSyncSkip  Int       @default(0)
+  recipientsSyncedAt DateTime?
+  lastError          String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  recipients         CampaignRecipient[]
+
+  @@unique([campaignId, partitionKey])
+  @@index([workspaceId])
+  @@index([zernioBroadcastId])
+  @@index([channelId])
 }
 
 /// SP-12: one row per audience member per campaign (reachable = queued,
@@ -736,6 +797,13 @@ model CampaignRecipient {
   failureCode    String?
   /// Provider text (errorExplanation ?? error), one line, <= 300 chars. Never shown unless short.
   failureReason  String?
+  /// SP-13: the partition (Zernio broadcast or direct batch) this row goes out in.
+  broadcastId     String?
+  broadcast       CampaignBroadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
+  /// SP-13: the resolved template values (string[]), on queued rows only.
+  templateParams  Json?
+  /// SP-13: direct transport only; set when the send was claimed.
+  sendAttemptedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -745,6 +813,8 @@ model CampaignRecipient {
   @@index([workspaceId, messageId])
   @@index([channelId, phone])
   @@index([contactId])
+  @@index([broadcastId, status, id])
+  @@index([campaignId, channelId, status])
 }
 
 // ─── Workflows ────────────────────────────────────────────────────────────
@@ -992,6 +1062,7 @@ model Workspace {
   integrations      Integration[]      @relation("WorkspaceIntegrations")
   channels          Channel[]          @relation("WorkspaceChannels")
   campaignRecipients CampaignRecipient[] @relation("WorkspaceCampaignRecipients")
+  campaignBroadcasts CampaignBroadcast[] @relation("WorkspaceCampaignBroadcasts")
   notes             Note[]             @relation("WorkspaceNotes")
   notifications     Notification[]     @relation("WorkspaceNotifications")
   notificationPreferences NotificationPreference[] @relation("WorkspaceNotificationPreferences")
@@ -1140,6 +1211,10 @@ model Media {
   uploadedBy    User?    @relation("UserMediaUploads", fields: [uploadedById], references: [id], onDelete: SetNull)
   publicToken          String?   @unique
   publicTokenExpiresAt DateTime?
+
+  /// SP-13 back-relations: campaigns and templates using this file as their header.
+  campaignHeaders Campaign[] @relation("CampaignHeaderMedia")
+  templateHeaders Template[] @relation("TemplateHeaderMedia")
 
   createdAt DateTime @default(now())
 

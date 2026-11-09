@@ -7,6 +7,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient, ZernioWhatsAppTemplate } from "../integrations/zernio.client";
 import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
+import { campaignError } from "../campaigns/campaign-errors";
 
 /**
  * WhatsApp message templates.
@@ -114,12 +115,9 @@ export class TemplatesService {
   /** Submit a template to Meta (custom) or import a pre-approved library one. */
   async create(workspaceId: string, input: CreateTemplateInput): Promise<TemplateRow> {
     const accountId = await this.whatsappAccountId(workspaceId);
-    if (!accountId) {
-      throw new BadRequestException(
-        "WhatsApp is not connected via Zernio — connect it in Settings → Integrations first. " +
-          "Meta has to approve every template, so there is no such thing as a local-only one.",
-      );
-    }
+    // Meta has to approve every template, so there is no such thing as a
+    // local-only one. SP-13 ruling 6: one keyed 409 for every marketing action.
+    if (!accountId) throw campaignError("campaigns.whatsapp_not_connected");
 
     const components = input.libraryTemplateName ? undefined : this.buildComponents(input);
     const created = await this.client.createWhatsAppTemplate({
@@ -194,11 +192,8 @@ export class TemplatesService {
     let status = existing.status;
     if (touchesContent && existing.metaTemplateId) {
       const accountId = await this.whatsappAccountId(workspaceId);
-      if (!accountId) {
-        throw new BadRequestException(
-          "WhatsApp is not connected via Zernio — cannot submit the edit to Meta",
-        );
-      }
+      // SP-13 ruling 6: the edit has to reach Meta.
+      if (!accountId) throw campaignError("campaigns.whatsapp_not_connected");
       const updated = await this.client.updateWhatsAppTemplate(
         accountId,
         existing.name,
@@ -294,9 +289,7 @@ export class TemplatesService {
    */
   async lookupLibraryTemplate(workspaceId: string, name: string, language?: string) {
     const accountId = await this.whatsappAccountId(workspaceId);
-    if (!accountId) {
-      throw new BadRequestException("WhatsApp is not connected via Zernio");
-    }
+    if (!accountId) throw campaignError("campaigns.whatsapp_not_connected");
     return this.client.whatsappLibraryTemplate(accountId, name, language);
   }
 

@@ -305,6 +305,7 @@ describe("TemplatesService.create — real submission only", () => {
   it("refuses to invent an approved template when WhatsApp is not connected", async () => {
     const { svc, prisma } = build(null);
 
+    // SP-13 ruling 6: the keyed 409 every marketing action shares.
     await expect(
       svc.create(workspaceId, {
         name: "order_ready",
@@ -312,7 +313,10 @@ describe("TemplatesService.create — real submission only", () => {
         category: "UTILITY",
         body: "hi",
       }),
-    ).rejects.toThrow(/not connected/i);
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { statusCode: 409, message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" },
+    });
     expect(prisma.template.create).not.toHaveBeenCalled();
   });
 });

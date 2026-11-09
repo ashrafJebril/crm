@@ -75,7 +75,8 @@ describe("SP-12 campaign recipients migration", () => {
     // Ordered after the last applied migration, and the newest folder.
     expect(FOLDER.slice(0, 14) > "20261112120000").toBe(true);
     const folders = readdirSync(MIGRATIONS).filter((f) => /^\d{14}_/.test(f)).sort();
-    expect(folders.at(-1)).toBe(FOLDER);
+    // SP-13 adds 20261114120000 after it; nothing may slip in before it.
+    expect(folders[folders.indexOf(FOLDER) - 1]).toBe("20261112120000_channels");
   });
 
   it("schema.prisma declares the same model and Campaign columns", () => {

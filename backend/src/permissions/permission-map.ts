@@ -292,6 +292,9 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // ── Campaigns, social posts, ads ──────────────────────────────────────
   "GET /campaigns": "campaigns.view",
   "GET /campaigns/preview": "campaigns.view",
+  // SP-13: sending numbers (no channels.view needed) and the review-step preview.
+  "GET /campaigns/senders": "campaigns.view",
+  "POST /campaigns/preview": "campaigns.view",
   "GET /campaigns/:id": "campaigns.view",
   "POST /campaigns": "campaigns.create",
   "PATCH /campaigns/:id": "campaigns.update",

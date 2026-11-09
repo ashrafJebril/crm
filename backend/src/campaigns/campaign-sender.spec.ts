@@ -1,5 +1,6 @@
 import { CampaignSendService } from "./campaign-send.service";
 import { makeFakePrisma } from "../channels/test-prisma";
+import { campaignSenderOptions, campaignSenders } from "../channels/default-channel";
 
 const ch = (id: string, over: Record<string, unknown> = {}) => ({
   id,
@@ -68,5 +69,103 @@ describe("campaign senderChannelId must be an active zernio whatsapp channel", (
     await expect(svc.validateSender("ws1", "B")).resolves.toBeUndefined();
     await expect(svc.validateSender("ws1", null)).resolves.toBeUndefined();
     await expect(svc.validateSender("ws1", "META")).rejects.toMatchObject({ response: { message: "channels.sender_invalid" } });
+  });
+});
+
+describe("SP-13 campaign senders", () => {
+  const build = (plan = "pro", extra: Record<string, unknown>[] = []) =>
+    makeFakePrisma({
+      workspace: [{ id: "ws1", plan, zernioProfileId: "prof1" }],
+      channel: [
+        ch("A", { isDefault: true, phoneNumber: "+962790000001", displayName: "Main" }),
+        ch("B", { phoneNumber: "+962790000002" }),
+        ch("C"),
+        ch("OFF", { status: "disconnected" }),
+        ch("PEND", { status: "needs_attention" }),
+        ch("META", { provider: "meta", externalId: "pn" }),
+        ch("FB", { kind: "facebook" }),
+        ch("FOREIGN", { workspaceId: "ws2" }),
+        ...extra,
+      ],
+    });
+  const err = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return { status: (e as { getStatus(): number }).getStatus(), ...(e as { getResponse(): object }).getResponse() };
+    }
+    return null;
+  };
+
+  it("campaignSenders validates every sender and caps at the plan limit", async () => {
+    const prisma = build();
+    // Order kept, duplicates removed (first kept), one query for all ids.
+    await expect(campaignSenders(prisma, "ws1", ["B", "A", "B"])).resolves.toEqual([
+      { channelId: "B", accountId: "acc-B", displayName: "B", phoneNumber: "+962790000002" },
+      { channelId: "A", accountId: "acc-A", displayName: "Main", phoneNumber: "+962790000001" },
+    ]);
+    expect(prisma.channel.findMany).toHaveBeenCalledTimes(1);
+    await expect(campaignSenders(prisma, "ws1", [])).resolves.toEqual([]);
+    // A foreign id answers exactly like a missing one; a Meta number is refused.
+    for (const bad of ["FOREIGN", "missing", "META", "OFF", "PEND", "FB"]) {
+      expect(await err(campaignSenders(prisma, "ws1", ["A", bad]))).toEqual({
+        status: 400,
+        statusCode: 400,
+        message: "channels.sender_invalid",
+        channelId: bad,
+      });
+    }
+    // growth allows 3 numbers: 3 pass, limit + 1 is refused before any lookup.
+    const growth = build("growth", [ch("D")]);
+    await expect(campaignSenders(growth, "ws1", ["A", "B", "C"])).resolves.toHaveLength(3);
+    growth.channel.findMany.mockClear();
+    expect(await err(campaignSenders(growth, "ws1", ["A", "B", "C", "D"]))).toEqual({
+      status: 400,
+      statusCode: 400,
+      message: "campaigns.too_many_senders",
+      limit: 3,
+    });
+    expect(growth.channel.findMany).not.toHaveBeenCalled();
+    // Duplicates do not count toward the limit.
+    await expect(campaignSenders(growth, "ws1", ["A", "B", "C", "A"])).resolves.toHaveLength(3);
+    // Never more than 10, whatever the plan.
+    const many = Array.from({ length: 11 }, (_, i) => ch(`M${i}`));
+    const big = build("pro", many);
+    const prev = process.env.CHANNEL_WHATSAPP_LIMIT;
+    process.env.CHANNEL_WHATSAPP_LIMIT = "50";
+    try {
+      expect(await err(campaignSenders(big, "ws1", many.map((m) => m.id)))).toMatchObject({ message: "campaigns.too_many_senders", limit: 10 });
+    } finally {
+      if (prev === undefined) delete process.env.CHANNEL_WHATSAPP_LIMIT;
+      else process.env.CHANNEL_WHATSAPP_LIMIT = prev;
+    }
+  });
+
+  it("campaignSenderOptions lists WhatsApp numbers with eligibility (GET /campaigns/senders)", async () => {
+    const prisma = build("growth");
+    const r = await campaignSenderOptions(prisma, "ws1");
+    expect(r.connected).toBe(true);
+    expect(r.limit).toBe(3);
+    expect(r.senders.map((s) => [s.channelId, s.eligible, s.reason, s.isDefault])).toEqual([
+      ["A", true, null, true],
+      ["B", true, null, false],
+      ["C", true, null, false],
+      ["PEND", false, "not_active", false],
+      ["META", false, "provider_meta", false],
+    ]);
+    expect(r.senders[0]).toEqual({
+      channelId: "A",
+      displayName: "Main",
+      phoneNumber: "+962790000001",
+      isDefault: true,
+      provider: "zernio",
+      eligible: true,
+      reason: null,
+    });
+    // No eligible number, or no Zernio profile: not connected.
+    const none = makeFakePrisma({ workspace: [{ id: "ws1", plan: "free", zernioProfileId: "p" }], channel: [ch("META", { provider: "meta" })] });
+    expect((await campaignSenderOptions(none, "ws1")).connected).toBe(false);
+    const noProfile = makeFakePrisma({ workspace: [{ id: "ws1", plan: "free", zernioProfileId: null }], channel: [ch("A")] });
+    expect((await campaignSenderOptions(noProfile, "ws1")).connected).toBe(false);
   });
 });
