@@ -1,9 +1,9 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { WhatsAppService } from "./whatsapp.service";
 import { ZernioService } from "./zernio.service";
-import { resolveTemplateHeader } from "./template-header";
+import { assertHeaderMedia, HEADER_LIMITS, resolveTemplateHeader } from "./template-header";
 
-function deps(o: { headerType?: string | null; tpl?: boolean; mime?: string; foreign?: boolean } = {}) {
+function deps(o: { headerType?: string | null; tpl?: boolean; mime?: string; foreign?: boolean; size?: number } = {}) {
   const prisma = {
     template: {
       findFirst: jest.fn(async () =>
@@ -14,7 +14,7 @@ function deps(o: { headerType?: string | null; tpl?: boolean; mime?: string; for
   const media = {
     get: jest.fn(async (ws: string, id: string) => {
       if (o.foreign) throw new NotFoundException("Media not found");
-      return { id, workspaceId: ws, mimeType: o.mime ?? "image/png" };
+      return { id, workspaceId: ws, mimeType: o.mime ?? "image/png", sizeBytes: o.size ?? 1000 };
     }),
     resolveExternalUrl: jest.fn(async () => "https://cdn.example/m.png"),
   };
@@ -160,5 +160,74 @@ describe("template send with header", () => {
     expect(tpl.components.map((c: any) => c.type)).toEqual(["header", "body"]);
     expect(tpl.components[0]).toEqual(header);
     expect((prisma.message.create.mock.calls[0] as any)[0].data.attach).toBe("m1");
+  });
+});
+
+const MB = 1024 * 1024;
+
+describe("header media over the WhatsApp limit is refused", () => {
+  it("HEADER_LIMITS: image 5 MB, video 16 MB, document 100 MB", () => {
+    expect(HEADER_LIMITS).toEqual({ image: 5 * MB, video: 16 * MB, document: 100 * MB });
+  });
+
+  it("a 6 MB JPEG image header -> 400 templates.header_media_too_large {limit: 5242880}", async () => {
+    const d = deps({ headerType: "image", mime: "image/jpeg", size: 6 * MB });
+    const e: any = await resolveTemplateHeader(d as never, "ws", "promo", { mediaId: "m" }).catch((x) => x);
+    expect(e).toBeInstanceOf(BadRequestException);
+    expect(e.getResponse()).toMatchObject({ statusCode: 400, message: "templates.header_media_too_large", limit: 5242880 });
+    expect(d.media.resolveExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("a 17 MB MP4 -> too large {limit: 16 MB}; a 90 MB PDF passes", async () => {
+    const v = deps({ headerType: "video", mime: "video/mp4", size: 17 * MB });
+    await expect(resolveTemplateHeader(v as never, "ws", "promo", { mediaId: "m" })).rejects.toMatchObject({
+      response: { message: "templates.header_media_too_large", limit: 16 * MB },
+    });
+    const pdf = deps({ headerType: "document", mime: "application/pdf", size: 90 * MB });
+    const r = await resolveTemplateHeader(pdf as never, "ws", "promo", { mediaId: "m" });
+    expect((r!.component.parameters[0] as any).type).toBe("document");
+  });
+
+  it("exactly at the limit passes; library-only types (webp, quicktime) are a mismatch", () => {
+    expect(assertHeaderMedia({ mimeType: "image/png", sizeBytes: 5 * MB }, "image")).toBe("image");
+    expect(() => assertHeaderMedia({ mimeType: "image/webp", sizeBytes: 1 }, "image")).toThrow("templates.header_media_mismatch");
+    expect(() => assertHeaderMedia({ mimeType: "video/quicktime", sizeBytes: 1 }, null)).toThrow("templates.header_media_mismatch");
+    expect(assertHeaderMedia({ mimeType: "application/pdf", sizeBytes: 1 }, null)).toBe("document");
+    expect(assertHeaderMedia({ mimeType: "video/mp4", sizeBytes: 1 }, "VIDEO")).toBe("video");
+  });
+
+  const big = { mimeType: "image/jpeg", sizeBytes: 6 * MB };
+
+  it("WhatsApp (Meta direct) inbox send refuses it before anything is sent", async () => {
+    const prisma: any = {
+      conversation: { findFirst: jest.fn(async () => ({ id: "c1", channel: "whatsapp", contact: { externalId: "9" } })) },
+      template: { findFirst: jest.fn(async () => ({ headerType: "image" })) },
+    };
+    const media = { get: jest.fn(async () => big), resolveExternalUrl: jest.fn() };
+    const svc = new WhatsAppService(prisma, {} as never, media as never, {} as never, {} as never);
+    jest.spyOn(svc as any, "sendTarget").mockResolvedValue({ token: "t", phoneNumberId: "pn", channel: { id: "ch1" } });
+    const fetchJson = jest.spyOn(svc as any, "fetchJson");
+    await expect(svc.sendTemplateInConversation("ws", "c1", "promo", "en", [], { mediaId: "m1" })).rejects.toMatchObject({
+      response: { message: "templates.header_media_too_large", limit: 5 * MB },
+    });
+    expect(fetchJson).not.toHaveBeenCalled();
+  });
+
+  it("Zernio inbox send refuses it before anything is sent", async () => {
+    const prisma: any = {
+      conversation: { findFirst: jest.fn(async () => ({ id: "c1", channel: "whatsapp", contactId: "ct", contact: {} })) },
+      template: { findFirst: jest.fn(async () => ({ headerType: "image" })) },
+    };
+    const media = { get: jest.fn(async () => big), resolveExternalUrl: jest.fn() };
+    const client = { sendTemplateMessage: jest.fn() };
+    const svc = new ZernioService(
+      prisma, { emitToWorkspace: jest.fn() } as never, media as never, client as never,
+      { onOutboundReply: jest.fn() } as never, { enabled: false } as never, {} as never,
+    );
+    jest.spyOn(svc as any, "resolveZernioTarget").mockResolvedValue({ accountId: "a", zernioConvId: "z" });
+    await expect(svc.sendTemplateInDbConversation("ws", "c1", "promo", "en", [], { mediaId: "m1" })).rejects.toMatchObject({
+      response: { message: "templates.header_media_too_large", limit: 5 * MB },
+    });
+    expect(client.sendTemplateMessage).not.toHaveBeenCalled();
   });
 });

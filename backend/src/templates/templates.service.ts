@@ -3,11 +3,17 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient, ZernioWhatsAppTemplate } from "../integrations/zernio.client";
 import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
 import { campaignError } from "../campaigns/campaign-errors";
+import { MediaService } from "../media/media.service";
+import type { Viewer } from "../permissions/visibility";
+import { assertHeaderMedia, HEADER_MEDIA_MISMATCH } from "../integrations/template-header";
+
+const MEDIA_HEADER_TYPES = new Set(["image", "video", "document"]);
 
 /**
  * WhatsApp message templates.
@@ -36,6 +42,8 @@ export interface TemplateRow {
   footer?: string | null;
   headerType?: string | null;
   headerContent?: string | null;
+  /** SP-13: the library file used as the media header's sample. */
+  headerMediaId?: string | null;
   buttons?: string | null;
   metaTemplateId?: string | null;
   metaRejectionReason?: string | null;
@@ -48,8 +56,17 @@ export interface CreateTemplateInput {
   category: string;
   body?: string;
   footer?: string;
+  /** "none" | "text" | "image" | "video" | "document". "none" = no header. */
   headerType?: string;
+  /** Text headers only (a legacy media header may still carry a public URL). */
   headerContent?: string;
+  /**
+   * SP-13: library file for an image/video/document header. Resolved through
+   * MediaService.get with the viewer (404 when foreign or hidden), checked
+   * against the header kind and WhatsApp's limits, and submitted to Meta as
+   * `header_handle` (a 1 h link). null on update clears it.
+   */
+  headerMediaId?: string | null;
   buttons?: Array<Record<string, unknown>>;
   /**
    * Sample values for the body's {{n}} placeholders, in order. Meta REJECTS a
@@ -79,6 +96,7 @@ export class TemplatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly client: ZernioClient,
+    @Optional() private readonly media?: MediaService,
   ) {}
 
   /**
@@ -113,13 +131,18 @@ export class TemplatesService {
   }
 
   /** Submit a template to Meta (custom) or import a pre-approved library one. */
-  async create(workspaceId: string, input: CreateTemplateInput): Promise<TemplateRow> {
+  async create(workspaceId: string, input: CreateTemplateInput, viewer?: Viewer): Promise<TemplateRow> {
+    const header = this.normalizeHeader(input.headerType, input.headerContent, input.headerMediaId ?? null);
+    // Validate the header file before anything reaches Meta (404 / mismatch / too large).
+    await this.checkHeaderMedia(workspaceId, header, viewer);
     const accountId = await this.whatsappAccountId(workspaceId);
     // Meta has to approve every template, so there is no such thing as a
     // local-only one. SP-13 ruling 6: one keyed 409 for every marketing action.
     if (!accountId) throw campaignError("campaigns.whatsapp_not_connected");
 
-    const components = input.libraryTemplateName ? undefined : this.buildComponents(input);
+    const components = input.libraryTemplateName
+      ? undefined
+      : this.buildComponents({ ...input, ...(await this.submittable(workspaceId, header)) });
     const created = await this.client.createWhatsAppTemplate({
       accountId,
       name: input.name,
@@ -142,8 +165,9 @@ export class TemplatesService {
         uses: 0,
         body: input.body ?? null,
         footer: input.footer ?? null,
-        headerType: input.headerType ?? null,
-        headerContent: input.headerContent ?? null,
+        headerType: header.headerType,
+        headerContent: header.headerContent,
+        headerMediaId: header.headerMediaId,
         buttons:
           input.buttons && input.buttons.length > 0 ? JSON.stringify(input.buttons) : null,
         metaTemplateId: created.id ?? null,
@@ -165,11 +189,42 @@ export class TemplatesService {
     workspaceId: string,
     id: string,
     input: Partial<CreateTemplateInput>,
+    viewer?: Viewer,
   ): Promise<TemplateRow> {
     const existing = (await this.prisma.template.findFirst({
       where: { id, workspaceId },
     })) as unknown as TemplateRow | null;
     if (!existing) throw new NotFoundException("Template not found");
+
+    const touchesHeader =
+      input.headerType !== undefined ||
+      input.headerContent !== undefined ||
+      input.headerMediaId !== undefined;
+    // The header after this edit. A file id is kept unless replaced, cleared,
+    // or the header type changes.
+    const typeChanged =
+      input.headerType !== undefined &&
+      input.headerType.toLowerCase() !== String(existing.headerType ?? "").toLowerCase();
+    const header = touchesHeader
+      ? this.normalizeHeader(
+          input.headerType ?? existing.headerType ?? undefined,
+          input.headerContent !== undefined
+            ? input.headerContent
+            : typeChanged
+              ? undefined
+              : (existing.headerContent ?? undefined),
+          input.headerMediaId !== undefined
+            ? input.headerMediaId
+            : typeChanged
+              ? null
+              : (existing.headerMediaId ?? null),
+        )
+      : {
+          headerType: existing.headerType ?? null,
+          headerContent: existing.headerContent ?? null,
+          headerMediaId: existing.headerMediaId ?? null,
+        };
+    if (touchesHeader) await this.checkHeaderMedia(workspaceId, header, viewer);
 
     const merged: CreateTemplateInput = {
       name: input.name ?? existing.name,
@@ -177,16 +232,13 @@ export class TemplatesService {
       category: input.category ?? existing.category,
       body: input.body ?? existing.body ?? undefined,
       footer: input.footer ?? existing.footer ?? undefined,
-      headerType: input.headerType ?? existing.headerType ?? undefined,
-      headerContent: input.headerContent ?? existing.headerContent ?? undefined,
       buttons: input.buttons,
     };
 
     const touchesContent =
       input.body !== undefined ||
       input.footer !== undefined ||
-      input.headerType !== undefined ||
-      input.headerContent !== undefined ||
+      touchesHeader ||
       input.buttons !== undefined;
 
     let status = existing.status;
@@ -197,7 +249,7 @@ export class TemplatesService {
       const updated = await this.client.updateWhatsAppTemplate(
         accountId,
         existing.name,
-        this.buildComponents(merged),
+        this.buildComponents({ ...merged, ...(await this.submittable(workspaceId, header)) }),
       );
       status = this.mapStatus(updated.status);
     }
@@ -211,9 +263,13 @@ export class TemplatesService {
         status,
         body: input.body === undefined ? undefined : (input.body ?? null),
         footer: input.footer === undefined ? undefined : (input.footer ?? null),
-        headerType: input.headerType === undefined ? undefined : (input.headerType ?? null),
-        headerContent:
-          input.headerContent === undefined ? undefined : (input.headerContent ?? null),
+        ...(touchesHeader
+          ? {
+              headerType: header.headerType,
+              headerContent: header.headerContent,
+              headerMediaId: header.headerMediaId,
+            }
+          : {}),
         buttons:
           input.buttons === undefined
             ? undefined
@@ -247,6 +303,7 @@ export class TemplatesService {
         footer: src.footer ?? null,
         headerType: src.headerType ?? null,
         headerContent: src.headerContent ?? null,
+        headerMediaId: src.headerMediaId ?? null,
         buttons: src.buttons ?? null,
         metaTemplateId: null,
       },
@@ -294,6 +351,54 @@ export class TemplatesService {
   }
 
   // ─── Internals ───────────────────────────────────────────────────────────
+
+  /**
+   * The stored header columns for an input. "none" (or no type) clears all
+   * three; a text header keeps only its text; a media header keeps its file
+   * id (or, for a legacy caller without one, the URL in headerContent).
+   * A file id on a text or no header is a mismatch.
+   */
+  private normalizeHeader(
+    headerType: string | undefined | null,
+    headerContent: string | undefined | null,
+    headerMediaId: string | null,
+  ): { headerType: string | null; headerContent: string | null; headerMediaId: string | null } {
+    const type = headerType ? headerType.toLowerCase() : null;
+    const isMedia = !!type && MEDIA_HEADER_TYPES.has(type);
+    if (headerMediaId && !isMedia) throw new BadRequestException(HEADER_MEDIA_MISMATCH);
+    if (!type || type === "none") return { headerType: null, headerContent: null, headerMediaId: null };
+    if (!isMedia) return { headerType: type, headerContent: headerContent ?? null, headerMediaId: null };
+    if (headerMediaId) return { headerType: type, headerContent: null, headerMediaId };
+    return { headerType: type, headerContent: headerContent ?? null, headerMediaId: null };
+  }
+
+  /** The header file: workspace- and viewer-scoped (404), kind and size checked. */
+  private async checkHeaderMedia(
+    workspaceId: string,
+    header: { headerType: string | null; headerMediaId: string | null },
+    viewer?: Viewer,
+  ): Promise<void> {
+    if (!header.headerMediaId) return;
+    if (!this.media) throw new Error("TemplatesService: MediaService is required for header files");
+    const row = await this.media.get(workspaceId, header.headerMediaId, viewer);
+    assertHeaderMedia(row, header.headerType);
+  }
+
+  /**
+   * What buildComponents submits for the header: a library file becomes a
+   * 1 h external link (Zernio downloads it and swaps in Meta's handle).
+   */
+  private async submittable(
+    workspaceId: string,
+    header: { headerType: string | null; headerContent: string | null; headerMediaId: string | null },
+  ): Promise<{ headerType?: string; headerContent?: string }> {
+    let content = header.headerContent ?? undefined;
+    if (header.headerMediaId) {
+      if (!this.media) throw new Error("TemplatesService: MediaService is required for header files");
+      content = await this.media.resolveExternalUrl(workspaceId, header.headerMediaId, 3600);
+    }
+    return { headerType: header.headerType ?? undefined, headerContent: content };
+  }
 
   private async reconcile(
     workspaceId: string,

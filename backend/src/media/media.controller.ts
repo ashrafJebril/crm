@@ -15,7 +15,8 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
 import { diskStorage } from "multer";
 import { tmpdir } from "node:os";
-import { MediaService } from "./media.service";
+import { MEDIA_KINDS, MEDIA_LIST_MAX, MediaService, type MediaKind } from "./media.service";
+import { mediaError } from "./media-errors";
 import {
   CurrentViewer,
   CurrentWorkspace,
@@ -24,15 +25,73 @@ import {
 import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 
+/** Types served inline. Everything else is a sandboxed download (SP-13). */
+const INLINE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/quicktime",
+]);
+
+/**
+ * Serving headers for a media response. `nosniff` always; anything that is
+ * not a library image or video (PDFs, legacy CSV/XLSX, unknown types) is sent
+ * as an attachment with a `sandbox` CSP, so a crafted file can never run as a
+ * page on our origin.
+ */
+export function applyServeHeaders(
+  res: Pick<Response, "setHeader">,
+  mimeType: string,
+  fileName?: string | null,
+) {
+  res.setHeader("Content-Type", mimeType);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  if (INLINE_TYPES.has(String(mimeType).toLowerCase())) return;
+  const name = (fileName ?? "").trim() || "download";
+  // ASCII fallback: printable ASCII only, no quote or backslash.
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+  );
+  res.setHeader("Content-Security-Policy", "sandbox");
+}
+
 @Controller("media")
 export class MediaController {
   private readonly log = new Logger(MediaController.name);
 
   constructor(private readonly svc: MediaService) {}
 
+  /**
+   * `GET /media?kind=image|video|document&before=<id>&limit=1..200`. With no
+   * query the response is unchanged: an array of up to 200, newest first.
+   */
   @Get()
-  list(@CurrentWorkspace() workspaceId: string, @CurrentViewer() viewer: Viewer) {
-    return this.svc.list(workspaceId, viewer);
+  list(
+    @CurrentWorkspace() workspaceId: string,
+    @CurrentViewer() viewer: Viewer,
+    @Query("kind") kind?: string,
+    @Query("before") before?: string,
+    @Query("limit") limit?: string,
+  ) {
+    if (kind !== undefined && !MEDIA_KINDS.includes(kind as MediaKind)) {
+      throw mediaError("media.invalid_query", { param: "kind" });
+    }
+    let n: number | undefined;
+    if (limit !== undefined) {
+      n = /^\d+$/.test(limit) ? Number(limit) : NaN;
+      if (!Number.isInteger(n) || n < 1 || n > MEDIA_LIST_MAX) {
+        throw mediaError("media.invalid_query", { param: "limit" });
+      }
+    }
+    return this.svc.list(workspaceId, viewer, {
+      kind: kind as MediaKind | undefined,
+      before: before || undefined,
+      limit: n,
+    });
   }
 
   @Post("upload")
@@ -76,7 +135,7 @@ export class MediaController {
           `Upstream fetch failed (${upstream.status})`,
         );
       }
-      res.setHeader("Content-Type", resolved.mimeType);
+      applyServeHeaders(res, resolved.mimeType, resolved.fileName);
       res.setHeader("Cache-Control", "private, max-age=3600");
       const contentLength = upstream.headers.get("content-length");
       if (contentLength) res.setHeader("Content-Length", contentLength);
@@ -97,7 +156,7 @@ export class MediaController {
       }
       return;
     }
-    res.setHeader("Content-Type", resolved.mimeType);
+    applyServeHeaders(res, resolved.mimeType, resolved.fileName);
     res.setHeader("Cache-Control", "private, max-age=3600");
     res.sendFile(resolved.absolutePath);
   }
@@ -116,7 +175,7 @@ export class MediaController {
     if (resolved.kind === "signed-url") {
       return res.redirect(302, resolved.url);
     }
-    res.setHeader("Content-Type", resolved.mimeType);
+    applyServeHeaders(res, resolved.mimeType, resolved.fileName);
     res.setHeader("Cache-Control", "public, max-age=900");
     res.sendFile(resolved.absolutePath);
   }

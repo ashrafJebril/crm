@@ -1,11 +1,12 @@
 import {
-  BadRequestException,
   Inject,
   Injectable,
   NotFoundException,
   Optional,
 } from "@nestjs/common";
 import { randomBytes } from "node:crypto";
+import { mediaError } from "./media-errors";
+import { familyOfMime, MIME_OF_FAMILY, sniffFamily, SNIFF_BYTES } from "./sniff";
 import { PrismaService } from "../prisma/prisma.service";
 import { MEDIA_STORAGE } from "./storage/storage.provider";
 import { LocalStorage } from "./storage/local-storage";
@@ -25,9 +26,55 @@ const ALLOWED_DOCUMENT = new Set([
   "text/csv",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
+/** SP-13 (ruling 7): library documents. PDF only; no Office, no audio. */
+const ALLOWED_PDF = new Set(["application/pdf"]);
 const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024; // 10 MB (import files)
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
-const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB — IG's ceiling; FB/TikTok allow more
+export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
+export const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB — IG's ceiling; FB/TikTok allow more
+export const MAX_PDF_BYTES = 100 * 1024 * 1024; // 100 MB — WhatsApp's document maximum
+
+/** Every type the library accepts on upload, in the order the error lists them. */
+export const LIBRARY_MIME_TYPES = [...ALLOWED_IMAGE, ...ALLOWED_VIDEO, ...ALLOWED_PDF];
+
+export type MediaKind = "image" | "video" | "document";
+export const MEDIA_KINDS: readonly MediaKind[] = ["image", "video", "document"];
+const MIME_BY_KIND: Record<MediaKind, string[]> = {
+  image: [...ALLOWED_IMAGE],
+  video: [...ALLOWED_VIDEO],
+  document: [...ALLOWED_PDF],
+};
+
+/** Library page size: default and maximum (`GET /media?limit=1..200`). */
+export const MEDIA_LIST_MAX = 200;
+/** Restricted viewers: how many raw pages one request scans to fill a page. */
+const MAX_SCAN_PAGES = 20;
+
+/** Campaign statuses whose header file must stay (ruling 10). */
+const LIVE_CAMPAIGN_STATUSES = ["draft", "launching", "scheduled", "running"];
+
+/** The upload cap for a declared library mime type, or null outside the library. */
+function capOf(mime: string): number | null {
+  if (ALLOWED_IMAGE.has(mime)) return MAX_IMAGE_BYTES;
+  if (ALLOWED_VIDEO.has(mime)) return MAX_VIDEO_BYTES;
+  if (ALLOWED_PDF.has(mime)) return MAX_PDF_BYTES;
+  return null;
+}
+
+/** First SNIFF_BYTES of a staged temp file; empty when it can't be read. */
+async function readHead(filePath: string): Promise<Buffer> {
+  const fs = await import("node:fs/promises");
+  let fh: Awaited<ReturnType<typeof fs.open>> | undefined;
+  try {
+    fh = await fs.open(filePath, "r");
+    const buf = Buffer.alloc(SNIFF_BYTES);
+    const { bytesRead } = await fh.read(buf, 0, SNIFF_BYTES, 0);
+    return buf.subarray(0, bytesRead);
+  } catch {
+    return Buffer.alloc(0);
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
 
 @Injectable()
 export class MediaService {
@@ -37,14 +84,64 @@ export class MediaService {
     @Optional() private readonly perm?: PermissionService,
   ) {}
 
-  async list(workspaceId: string, viewer?: Viewer) {
-    const rows = await this.prisma.media.findMany({
-      where: { workspaceId, mimeType: { notIn: [...ALLOWED_DOCUMENT] } },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    });
-    const visible = await this.visibleTo(workspaceId, rows, viewer);
-    return visible ? rows.filter((r) => visible.has(r.id)) : rows;
+  /**
+   * The library, newest first (`(createdAt, id)` desc). Import files
+   * (CSV/XLSX) never appear. SP-13:
+   * - `kind` filters by mime family (image | video | document = PDF);
+   * - `before` is a keyset cursor: a media id of this workspace; only rows
+   *   strictly older are returned (400 media.invalid_query {param: "before"}
+   *   when unknown or foreign);
+   * - `limit` 1..200, default 200.
+   * A restricted viewer gets full pages of what they may see: hidden rows are
+   * skipped and the scan continues (up to MAX_SCAN_PAGES raw pages), so a
+   * page shorter than `limit` means the end of the list.
+   */
+  async list(
+    workspaceId: string,
+    viewer?: Viewer,
+    opts: { kind?: MediaKind; before?: string; limit?: number } = {},
+  ) {
+    const limit = Math.min(Math.max(1, Math.floor(opts.limit ?? MEDIA_LIST_MAX)), MEDIA_LIST_MAX);
+    const base = opts.kind
+      ? { workspaceId, mimeType: { in: MIME_BY_KIND[opts.kind] } }
+      : { workspaceId, mimeType: { notIn: [...ALLOWED_DOCUMENT] } };
+
+    let cursor: { id: string; createdAt: Date } | null = null;
+    if (opts.before) {
+      cursor = await this.prisma.media.findFirst({
+        where: { id: opts.before, workspaceId },
+        select: { id: true, createdAt: true },
+      });
+      if (!cursor) throw mediaError("media.invalid_query", { param: "before" });
+    }
+
+    type Row = Awaited<ReturnType<PrismaService["media"]["findMany"]>>[number];
+    const out: Row[] = [];
+    for (let page = 0; page < MAX_SCAN_PAGES; page++) {
+      const rows: Row[] = await this.prisma.media.findMany({
+        where: cursor
+          ? {
+              AND: [
+                base,
+                {
+                  OR: [
+                    { createdAt: { lt: cursor.createdAt } },
+                    { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+                  ],
+                },
+              ],
+            }
+          : base,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: limit,
+      });
+      const visible = await this.visibleTo(workspaceId, rows, viewer);
+      out.push(...(visible ? rows.filter((r) => visible.has(r.id)) : rows));
+      if (!visible || rows.length < limit || out.length >= limit) break;
+      const last = rows[rows.length - 1];
+      cursor = { id: last.id, createdAt: last.createdAt };
+    }
+    return out.slice(0, limit);
   }
 
   /**
@@ -98,23 +195,23 @@ export class MediaService {
     ttlSeconds = 3600,
     viewer?: Viewer,
   ): Promise<
-    | { kind: "local-file"; absolutePath: string; mimeType: string }
-    | { kind: "signed-url"; url: string; mimeType: string }
+    | { kind: "local-file"; absolutePath: string; mimeType: string; fileName?: string }
+    | { kind: "signed-url"; url: string; mimeType: string; fileName?: string }
   > {
     const row = await this.get(workspaceId, id, viewer);
     return this.resolveServeForRow(row, ttlSeconds);
   }
 
   async resolveServeForRow(
-    row: { storageKind: string; storedPath: string; mimeType: string; workspaceId: string },
+    row: { storageKind: string; storedPath: string; mimeType: string; workspaceId: string; fileName?: string | null },
     ttlSeconds = 3600,
   ): Promise<
-    | { kind: "local-file"; absolutePath: string; mimeType: string }
-    | { kind: "signed-url"; url: string; mimeType: string }
+    | { kind: "local-file"; absolutePath: string; mimeType: string; fileName?: string }
+    | { kind: "signed-url"; url: string; mimeType: string; fileName?: string }
   > {
     if (row.storageKind === "spaces") {
       const url = await this.storage.getSignedUrl(row.storedPath, ttlSeconds);
-      return { kind: "signed-url", url, mimeType: row.mimeType };
+      return { kind: "signed-url", url, mimeType: row.mimeType, fileName: row.fileName ?? undefined };
     }
     // Legacy / local: resolve to an absolute path the controller can sendFile.
     // The storage instance might be SpacesStorage now even though THIS row was
@@ -128,7 +225,7 @@ export class MediaService {
     if (!absolutePath) {
       throw new NotFoundException("Media path is outside workspace root");
     }
-    return { kind: "local-file", absolutePath, mimeType: row.mimeType };
+    return { kind: "local-file", absolutePath, mimeType: row.mimeType, fileName: row.fileName ?? undefined };
   }
 
   /** Read the file bytes for a media row, regardless of which backend stored
@@ -165,24 +262,19 @@ export class MediaService {
     file: Express.Multer.File,
     uploadedById: string,
   ) {
-    if (!file) throw new BadRequestException("No file uploaded");
+    if (!file) throw mediaError("media.no_file");
     try {
       // Validation lives inside the try so a rejected upload still hits the
       // finally below — multer's diskStorage has already written file.path
       // to tmpdir by the time we get here, and we must not leak it.
-      const isImage = ALLOWED_IMAGE.has(file.mimetype);
-      const isVideo = ALLOWED_VIDEO.has(file.mimetype);
-      if (!isImage && !isVideo) {
-        throw new BadRequestException(
-          `Unsupported file type: ${file.mimetype}. Allowed: ${[...ALLOWED_IMAGE, ...ALLOWED_VIDEO].join(", ")}`,
-        );
-      }
-      const cap = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-      if (file.size > cap) {
-        throw new BadRequestException(
-          `File too large (${file.size} bytes). Max ${cap} bytes for ${isVideo ? "videos" : "images"}.`,
-        );
-      }
+      const cap = capOf(file.mimetype);
+      if (cap == null) throw mediaError("media.unsupported_type", { allowed: LIBRARY_MIME_TYPES });
+      if (file.size > cap) throw mediaError("media.too_large", { limit: cap });
+      // SP-13: never trust the declared type — the bytes must agree with it.
+      const head = file.path
+        ? await readHead(file.path)
+        : (file.buffer ?? Buffer.alloc(0)).subarray(0, SNIFF_BYTES);
+      if (sniffFamily(head) !== familyOfMime(file.mimetype)) throw mediaError("media.type_mismatch");
       // Disk-staged uploads (current multer config) hand us file.path; memory
       // uploads (tests, legacy) hand us file.buffer. Storage accepts either.
       const { key } = await this.storage.put({
@@ -223,22 +315,26 @@ export class MediaService {
     fileName: string;
   }) {
     if (!ALLOWED_IMAGE.has(input.mimeType)) {
-      throw new BadRequestException(`Unsupported file type: ${input.mimeType}`);
+      throw mediaError("media.unsupported_type", { allowed: [...ALLOWED_IMAGE] });
     }
-    if (input.buffer.length > MAX_IMAGE_BYTES) {
-      throw new BadRequestException(`File too large (${input.buffer.length} bytes)`);
-    }
+    if (input.buffer.length > MAX_IMAGE_BYTES) throw mediaError("media.too_large", { limit: MAX_IMAGE_BYTES });
+    // SP-13: sniff. Providers often send a fallback type ("image/jpeg" when
+    // they don't know), so a real image of another library image family is
+    // stored under its sniffed type; anything that is not an image is refused.
+    const family = sniffFamily(input.buffer.subarray(0, SNIFF_BYTES));
+    const mimeType = family ? MIME_OF_FAMILY[family] : null;
+    if (!mimeType || !ALLOWED_IMAGE.has(mimeType)) throw mediaError("media.type_mismatch");
     const { key } = await this.storage.put({
       workspaceId: input.workspaceId,
       buffer: input.buffer,
-      mimeType: input.mimeType,
+      mimeType,
       originalFilename: input.fileName,
     });
     return this.prisma.media.create({
       data: {
         workspaceId: input.workspaceId,
         fileName: input.fileName,
-        mimeType: input.mimeType,
+        mimeType,
         sizeBytes: input.buffer.length,
         storedPath: key,
         storageKind: this.storage.kind,
@@ -259,11 +355,9 @@ export class MediaService {
     uploadedById: string;
   }) {
     if (!ALLOWED_DOCUMENT.has(input.mimeType)) {
-      throw new BadRequestException(`Unsupported file type: ${input.mimeType}`);
+      throw mediaError("media.unsupported_type", { allowed: [...ALLOWED_DOCUMENT] });
     }
-    if (input.buffer.length > MAX_DOCUMENT_BYTES) {
-      throw new BadRequestException(`File too large (${input.buffer.length} bytes)`);
-    }
+    if (input.buffer.length > MAX_DOCUMENT_BYTES) throw mediaError("media.too_large", { limit: MAX_DOCUMENT_BYTES });
     const { key } = await this.storage.put({
       workspaceId: input.workspaceId,
       buffer: input.buffer,
@@ -288,14 +382,34 @@ export class MediaService {
     mediaId: string,
     ttlMs = 15 * 60 * 1000,
   ): Promise<string> {
-    const row = await this.get(workspaceId, mediaId);
-    const token = randomBytes(24).toString("base64url");
-    const expiresAt = new Date(Date.now() + ttlMs);
-    await this.prisma.media.update({
-      where: { id: row.id },
-      data: { publicToken: token, publicTokenExpiresAt: expiresAt },
-    });
-    return token;
+    // SP-13: extend-only. An unexpired token is reused and its expiry only
+    // ever moves later, so two senders of one file (two campaigns, a campaign
+    // and an inbox send) never invalidate each other's link. Both writes are
+    // conditional, so a concurrent mint cannot replace a token another caller
+    // has already handed out.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const row = await this.get(workspaceId, mediaId);
+      const now = Date.now();
+      const wanted = new Date(now + ttlMs);
+      const current = row.publicTokenExpiresAt?.getTime() ?? 0;
+      if (row.publicToken && current > now) {
+        if (current < wanted.getTime()) {
+          await this.prisma.media.updateMany({
+            where: { id: row.id, workspaceId, publicToken: row.publicToken, publicTokenExpiresAt: { lt: wanted } },
+            data: { publicTokenExpiresAt: wanted },
+          });
+        }
+        return row.publicToken;
+      }
+      const token = randomBytes(24).toString("base64url");
+      const { count } = await this.prisma.media.updateMany({
+        where: { id: row.id, workspaceId, publicToken: row.publicToken ?? null },
+        data: { publicToken: token, publicTokenExpiresAt: wanted },
+      });
+      if (count === 1) return token;
+      // Another caller minted in between: loop and reuse theirs.
+    }
+    throw new Error(`Could not mint a public token for media ${mediaId}`);
   }
 
   /**
@@ -341,8 +455,27 @@ export class MediaService {
     return row;
   }
 
+  /**
+   * Delete a file. SP-13 (ruling 10): a file used as the header of a template,
+   * or of a campaign that may still send, is refused with 409 media.in_use
+   * {templates: {id, name}[], campaigns: {id, name, status}[]}. The FKs are
+   * SET NULL as a backstop for a reference added after this check.
+   */
   async remove(workspaceId: string, id: string, viewer?: Viewer) {
     const row = await this.get(workspaceId, id, viewer);
+    const [templates, campaigns] = await Promise.all([
+      this.prisma.template.findMany({
+        where: { workspaceId, headerMediaId: row.id },
+        select: { id: true, name: true },
+      }),
+      this.prisma.campaign.findMany({
+        where: { workspaceId, headerMediaId: row.id, status: { in: LIVE_CAMPAIGN_STATUSES } },
+        select: { id: true, name: true, status: true },
+      }),
+    ]);
+    if (templates.length > 0 || campaigns.length > 0) {
+      throw mediaError("media.in_use", { templates, campaigns });
+    }
     await this.prisma.media.delete({ where: { id: row.id } });
     // Delete from whichever backend originally stored it.
     if (row.storageKind === "spaces") {

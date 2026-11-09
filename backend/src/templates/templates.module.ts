@@ -22,12 +22,15 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { PrismaService } from "../prisma/prisma.service";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import type { Viewer } from "../permissions/visibility";
 import { IntegrationsModule } from "../integrations/integrations.module";
+import { MediaModule } from "../media/media.module";
 import { TemplatesService } from "./templates.service";
 
 const CATEGORIES = ["TRANSACTIONAL", "UTILITY", "MARKETING", "AUTHENTICATION"] as const;
-const HEADER_TYPES = ["text", "image", "video", "document"] as const;
+// SP-13: "none" removes the header.
+const HEADER_TYPES = ["none", "text", "image", "video", "document"] as const;
 
 class TemplateButtonDto {
   @IsIn(["QUICK_REPLY", "URL", "PHONE_NUMBER"]) type!: "QUICK_REPLY" | "URL" | "PHONE_NUMBER";
@@ -52,6 +55,8 @@ class CreateTemplateDto {
   @IsOptional() @IsString() @MaxLength(60) footer?: string;
   @IsOptional() @IsIn([...HEADER_TYPES]) headerType?: (typeof HEADER_TYPES)[number];
   @IsOptional() @IsString() headerContent?: string;
+  /** SP-13: library file for an image/video/document header (null clears it on PATCH). */
+  @IsOptional() @IsString() @MaxLength(64) headerMediaId?: string | null;
   @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => TemplateButtonDto)
   buttons?: TemplateButtonDto[];
 
@@ -78,6 +83,8 @@ class UpdateTemplateDto {
   @IsOptional() @IsString() @MaxLength(60) footer?: string;
   @IsOptional() @IsIn([...HEADER_TYPES]) headerType?: (typeof HEADER_TYPES)[number];
   @IsOptional() @IsString() headerContent?: string;
+  /** SP-13: library file for an image/video/document header (null clears it on PATCH). */
+  @IsOptional() @IsString() @MaxLength(64) headerMediaId?: string | null;
   @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => TemplateButtonDto)
   buttons?: TemplateButtonDto[];
 }
@@ -117,7 +124,11 @@ class TemplatesController {
   }
 
   @Post()
-  create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateTemplateDto) {
+  create(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: CreateTemplateDto,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
     return this.templates.create(workspaceId, {
       name: dto.name,
       lang: dto.lang,
@@ -126,11 +137,12 @@ class TemplatesController {
       footer: dto.footer,
       headerType: dto.headerType,
       headerContent: dto.headerContent,
+      headerMediaId: dto.headerMediaId ?? undefined,
       buttons: dto.buttons as unknown as Array<Record<string, unknown>> | undefined,
       bodyExamples: dto.bodyExamples,
       headerExamples: dto.headerExamples,
       libraryTemplateName: dto.libraryTemplateName,
-    });
+    }, viewer);
   }
 
   @Patch(":id")
@@ -138,6 +150,7 @@ class TemplatesController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: UpdateTemplateDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
     return this.templates.update(workspaceId, id, {
       name: dto.name,
@@ -147,8 +160,9 @@ class TemplatesController {
       footer: dto.footer,
       headerType: dto.headerType,
       headerContent: dto.headerContent,
+      headerMediaId: dto.headerMediaId,
       buttons: dto.buttons as unknown as Array<Record<string, unknown>> | undefined,
-    });
+    }, viewer);
   }
 
   @Delete(":id")
@@ -163,7 +177,8 @@ class TemplatesController {
 }
 
 @Module({
-  imports: [IntegrationsModule],
+  // SP-13: MediaModule for header files (MediaService.get with the viewer).
+  imports: [IntegrationsModule, MediaModule],
   controllers: [TemplatesController],
   providers: [TemplatesService],
 })

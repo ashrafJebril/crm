@@ -1,3 +1,4 @@
+import { NotFoundException } from "@nestjs/common";
 import { TemplatesService } from "./templates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient } from "../integrations/zernio.client";
@@ -856,5 +857,155 @@ describe("TemplatesService.list — surfaces Meta's rejection reason", () => {
 
     expect(rows[0].status).toBe("approved");
     expect(rows[0].metaRejectionReason).toBeNull();
+  });
+});
+
+describe("template create with headerMediaId submits header_handle from the library file", () => {
+  const MB = 1024 * 1024;
+  const library = [
+    { id: "img", workspaceId: "ws1", mimeType: "image/jpeg", sizeBytes: 2 * MB, uploadedById: "u" },
+    { id: "bigimg", workspaceId: "ws1", mimeType: "image/png", sizeBytes: 6 * MB, uploadedById: "u" },
+    { id: "pdf", workspaceId: "ws1", mimeType: "application/pdf", sizeBytes: 90 * MB, uploadedById: "u" },
+    { id: "foreign", workspaceId: "ws2", mimeType: "image/jpeg", sizeBytes: 1, uploadedById: "u" },
+  ];
+  const build = (row?: Record<string, unknown>) => {
+    const prisma = {
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      template: {
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })),
+        findFirst: jest.fn().mockResolvedValue(row ?? null),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...row, ...data })),
+      },
+    };
+    const client = {
+      createWhatsAppTemplate: jest.fn().mockResolvedValue({ id: "m1", name: "x", status: "PENDING", language: "en" }),
+      updateWhatsAppTemplate: jest.fn().mockResolvedValue({ id: "m1", name: "x", status: "PENDING", language: "en" }),
+    };
+    const media = {
+      get: jest.fn(async (ws: string, id: string) => {
+        const m = library.find((x) => x.id === id && x.workspaceId === ws);
+        if (!m) throw new NotFoundException("Media not found");
+        return m;
+      }),
+      resolveExternalUrl: jest.fn(async (_ws: string, id: string) => `https://cdn.example/${id}?sig`),
+    };
+    const svc = new TemplatesService(
+      prisma as unknown as PrismaService,
+      client as unknown as ZernioClient,
+      media as never,
+    );
+    return { svc, prisma, client, media };
+  };
+  const base = { name: "x", lang: "en", category: "MARKETING", body: "Hi" };
+  const viewer = { userId: "u1" } as never;
+
+  it("submits the library file's link as header_handle and stores headerMediaId (headerContent null)", async () => {
+    const { svc, client, prisma, media } = build();
+    const row = await svc.create("ws1", { ...base, headerType: "image", headerMediaId: "img" }, viewer);
+    expect(media.get).toHaveBeenCalledWith("ws1", "img", viewer);
+    expect(media.resolveExternalUrl).toHaveBeenCalledWith("ws1", "img", 3600);
+    expect(client.createWhatsAppTemplate.mock.calls[0][0].components[0]).toEqual({
+      type: "header",
+      format: "image",
+      example: { header_handle: ["https://cdn.example/img?sig"] },
+    });
+    const data = prisma.template.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ headerType: "image", headerMediaId: "img", headerContent: null });
+    expect(row.headerMediaId).toBe("img");
+  });
+
+  it("a document header takes a PDF up to 100 MB", async () => {
+    const { svc, client } = build();
+    await svc.create("ws1", { ...base, headerType: "document", headerMediaId: "pdf" });
+    expect(client.createWhatsAppTemplate.mock.calls[0][0].components[0]).toMatchObject({ format: "document" });
+  });
+
+  it("a foreign media id -> 404, nothing submitted", async () => {
+    const { svc, client, prisma } = build();
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerMediaId: "foreign" })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(prisma.template.create).not.toHaveBeenCalled();
+  });
+
+  it("a kind mismatch -> 400 templates.header_media_mismatch; text/none headers take no media", async () => {
+    const { svc, client } = build();
+    for (const headerType of ["video", "document", "text", "none"]) {
+      await expect(svc.create("ws1", { ...base, headerType, headerMediaId: "img" })).rejects.toMatchObject({
+        message: "templates.header_media_mismatch",
+      });
+    }
+    await expect(svc.create("ws1", { ...base, headerMediaId: "img" })).rejects.toMatchObject({
+      message: "templates.header_media_mismatch",
+    });
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it("over the WhatsApp header limit -> 400 templates.header_media_too_large {limit}", async () => {
+    const { svc, client } = build();
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerMediaId: "bigimg" })).rejects.toMatchObject({
+      response: { message: "templates.header_media_too_large", limit: 5 * MB },
+    });
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it('headerType "none" sends no header and stores none', async () => {
+    const { svc, client, prisma } = build();
+    await svc.create("ws1", { ...base, headerType: "none", headerContent: "ignored" });
+    expect(client.createWhatsAppTemplate.mock.calls[0][0].components.map((c: any) => c.type)).toEqual(["body"]);
+    expect(prisma.template.create.mock.calls[0][0].data).toMatchObject({
+      headerType: null,
+      headerContent: null,
+      headerMediaId: null,
+    });
+  });
+
+  it("PATCH swaps the header file, resubmits it to Meta and stores the new id", async () => {
+    const existing = {
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "approved", body: "Hi",
+      headerType: "document", headerMediaId: "old", metaTemplateId: "meta-1",
+    };
+    const { svc, client, prisma, media } = build(existing);
+    await svc.update("ws1", "t1", { headerType: "image", headerMediaId: "img" }, viewer);
+    expect(media.get).toHaveBeenCalledWith("ws1", "img", viewer);
+    expect(client.updateWhatsAppTemplate.mock.calls[0][2][0]).toEqual({
+      type: "header",
+      format: "image",
+      example: { header_handle: ["https://cdn.example/img?sig"] },
+    });
+    expect(prisma.template.update.mock.calls[0][0].data).toMatchObject({
+      headerType: "image",
+      headerMediaId: "img",
+      headerContent: null,
+    });
+  });
+
+  it("PATCH to a text or none header clears headerMediaId; a foreign id is 404", async () => {
+    const existing = {
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "local", body: "Hi",
+      headerType: "image", headerMediaId: "img", metaTemplateId: null,
+    };
+    const { svc, prisma } = build(existing);
+    await svc.update("ws1", "t1", { headerType: "none" });
+    expect(prisma.template.update.mock.calls[0][0].data).toMatchObject({ headerType: null, headerMediaId: null, headerContent: null });
+    await svc.update("ws1", "t1", { headerType: "text", headerContent: "Hello" });
+    expect(prisma.template.update.mock.calls[1][0].data).toMatchObject({ headerType: "text", headerMediaId: null, headerContent: "Hello" });
+    await expect(svc.update("ws1", "t1", { headerMediaId: "foreign" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("PATCH that leaves the header alone keeps headerMediaId and re-sends the stored file", async () => {
+    const existing = {
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "approved", body: "Hi",
+      headerType: "image", headerMediaId: "img", metaTemplateId: "meta-1",
+    };
+    const { svc, client, prisma } = build(existing);
+    await svc.update("ws1", "t1", { body: "Hello" });
+    expect(client.updateWhatsAppTemplate.mock.calls[0][2][0]).toMatchObject({
+      format: "image",
+      example: { header_handle: ["https://cdn.example/img?sig"] },
+    });
+    expect(prisma.template.update.mock.calls[0][0].data.headerMediaId).toBeUndefined();
   });
 });

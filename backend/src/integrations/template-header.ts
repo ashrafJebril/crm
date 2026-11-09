@@ -20,18 +20,53 @@ export interface ResolvedTemplateHeader {
   attach?: string;
 }
 
-type MediaKind = "image" | "video" | "document";
+export const HEADER_MEDIA_TOO_LARGE = "templates.header_media_too_large";
+
+export type HeaderMediaKind = "image" | "video" | "document";
 
 /** Mime types WhatsApp accepts per header media type. */
-const MIME_BY_KIND: Record<MediaKind, string[]> = {
+const MIME_BY_KIND: Record<HeaderMediaKind, string[]> = {
   image: ["image/jpeg", "image/png"],
   video: ["video/mp4"],
   document: ["application/pdf"],
 };
 
-function kindOfMime(mime: string): MediaKind | null {
-  for (const k of Object.keys(MIME_BY_KIND) as MediaKind[]) if (MIME_BY_KIND[k].includes(mime)) return k;
+/**
+ * SP-13 (ruling 7): WhatsApp's header file limits, in bytes. The library takes
+ * larger files (images 20 MB, video 300 MB for social posts), so these are
+ * checked where a file is used as a header, never at upload.
+ */
+export const HEADER_LIMITS: Record<HeaderMediaKind, number> = {
+  image: 5 * 1024 * 1024,
+  video: 16 * 1024 * 1024,
+  document: 100 * 1024 * 1024,
+};
+
+export function headerKindOfMime(mime: string): HeaderMediaKind | null {
+  for (const k of Object.keys(MIME_BY_KIND) as HeaderMediaKind[]) if (MIME_BY_KIND[k].includes(mime)) return k;
   return null;
+}
+
+/**
+ * Check a library file for use as a WhatsApp header of `expected` kind (a
+ * template's headerType; null infers it from the mime). Returns the kind.
+ * - wrong kind, or a type WhatsApp refuses for headers (webp, gif, quicktime)
+ *   → 400 templates.header_media_mismatch;
+ * - over HEADER_LIMITS → 400 templates.header_media_too_large {limit}.
+ * Used by inbox template sends, the template editor and campaign launch.
+ */
+export function assertHeaderMedia(
+  row: { mimeType: string; sizeBytes?: number | null },
+  expected: string | null | undefined,
+): HeaderMediaKind {
+  const kind = headerKindOfMime(row.mimeType);
+  const want = expected ? expected.toLowerCase() : kind;
+  if (!kind || !want || want !== kind) throw new BadRequestException(HEADER_MEDIA_MISMATCH);
+  const limit = HEADER_LIMITS[kind];
+  if ((row.sizeBytes ?? 0) > limit) {
+    throw new BadRequestException({ statusCode: 400, message: HEADER_MEDIA_TOO_LARGE, limit });
+  }
+  return kind;
 }
 
 /**
@@ -63,11 +98,8 @@ export async function resolveTemplateHeader(
 
   if (mediaId) {
     const row = await deps.media.get(workspaceId, mediaId, opts.viewer); // 404 across workspaces
-    const kind = kindOfMime(row.mimeType);
-    const expected = declared ?? kind;
-    if (!kind || !expected || expected !== kind || !(expected in MIME_BY_KIND)) {
-      throw new BadRequestException(HEADER_MEDIA_MISMATCH);
-    }
+    // Kind must match the template's header; size within WhatsApp's limit.
+    const kind = assertHeaderMedia(row, declared);
     const link = await deps.media.resolveExternalUrl(workspaceId, mediaId, 60 * 60);
     return {
       component: { type: "header", parameters: [{ type: kind, [kind]: { link } }] },
