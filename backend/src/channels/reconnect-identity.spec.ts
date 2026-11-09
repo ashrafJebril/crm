@@ -176,10 +176,11 @@ describe("zernio re-auth with new account keeps existing threads replying and in
       conversation: [conv({ externalId: "zc-old" })],
     });
     const client = {
-      // Zernio still lists the revoked account first after a re-auth.
+      // Zernio still lists the revoked account first after a re-auth; the same
+      // WhatsApp phone (strong identity) proves it is the same number.
       listAccounts: jest.fn(async () => [
-        { _id: "acc-old", platform: "whatsapp", displayName: "Shop", needsReconnection: true },
-        { _id: "acc-new", platform: "whatsapp", displayName: "Shop" },
+        { _id: "acc-old", platform: "whatsapp", displayName: "Old name", needsReconnection: true, metadata: { phoneNumber: "+962790000099" } },
+        { _id: "acc-new", platform: "whatsapp", displayName: "Shop", metadata: { phoneNumber: "962790000099" } },
       ]),
       sendMessage: jest.fn(async () => ({ id: "out" })),
     };

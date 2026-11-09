@@ -63,6 +63,9 @@ export const USER_DISCONNECTED = "disconnected_by_user";
 /** statusReason of a channel whose legacy Integration was deleted through the
  *  old Settings disconnect routes. A reconnect / sync that lists it revives it. */
 export const INTEGRATION_REMOVED = "integration_removed";
+/** statusReason of a legacy slot whose conversations were merged into the
+ *  Integration's current channel after its account left Zernio. Final. */
+export const MERGED = "merged";
 /** Disconnect reasons a sync or relink may undo. */
 export const REVIVABLE_REASONS: ReadonlySet<string> = new Set([ZERNIO_MISSING, INTEGRATION_REMOVED]);
 
@@ -71,7 +74,7 @@ const REVIVE = { status: "active", statusReason: null, disconnectedAt: null } as
 
 /** The reactivation fields for `row`, or nothing. A row disconnected by the
  *  user stays disconnected unless this is an explicit connect. */
-function revival(row: Pick<Channel, "status" | "statusReason">, explicit: boolean) {
+export function revival(row: Pick<Channel, "status" | "statusReason">, explicit: boolean) {
   if (row.status !== "disconnected") return {};
   return explicit || REVIVABLE_REASONS.has(row.statusReason ?? "") ? { ...REVIVE } : {};
 }

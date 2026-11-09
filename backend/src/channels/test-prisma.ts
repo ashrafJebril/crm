@@ -297,6 +297,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     // lastInboundAt stamp (neither bumps updatedAt, as in Postgres).
     $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...vals: any[]) => {
       const sql = strings.join("?");
+      if (/UPDATE "Conversation" SET "channelId"/.test(sql) && !/IS NULL/.test(sql)) {
+        // merge: move every conversation of one channel to another
+        const [to, workspaceId, from] = vals;
+        const hit = db.conversation.filter((c) => c.workspaceId === workspaceId && c.channelId === from);
+        hit.forEach((c) => (c.channelId = to));
+        return hit.length;
+      }
       if (/UPDATE "Conversation" SET "channelId"/.test(sql)) {
         const [channelId, id, workspaceId] = vals;
         const row = db.conversation.find((c) => c.id === id && c.workspaceId === workspaceId && !c.channelId);

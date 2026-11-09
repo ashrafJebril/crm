@@ -1,8 +1,12 @@
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ZernioAccount } from "../integrations/zernio.client";
 import { accountHealth } from "../integrations/zernio-account-health";
+import type { Channel } from "@prisma/client";
 import {
   alignLegacyChannel,
+  MERGED,
+  revival,
+  USER_DISCONNECTED,
   ensureDefaultPerKind,
   initcap,
   isUniqueViolation,
@@ -20,15 +24,21 @@ export { INTEGRATION_REMOVED, USER_DISCONNECTED, ZERNIO_MISSING } from "./legacy
  * whatever the number limit — the limit gates only our own add flows.
  *
  * `primaries` are the Integration rows `syncAccounts` just upserted for
- * `main` (their primary is sticky: see ZernioService.syncAccounts). A legacy
- * slot is re-pointed IN PLACE to the primary — so its threads follow — only
- * when it looks like the same number re-authenticated (`canRepointInPlace`):
- * the new account has no row of its own, the platform matches, and the old
- * account is gone (not listed, or a Meta row being switched to Zernio) or
- * listed-but-unhealthy under the same name. Otherwise the per-account rows
- * are created first and the Integration is relinked to the primary's row;
- * the old slot keeps its threads on its old account. Number A's threads are
- * never moved onto a second number B.
+ * `main` (their primary is sticky: see ZernioService.syncAccounts). An
+ * Integration's legacy slot (its linked channel, or the unlinked
+ * deterministic `chi_<integrationId>`) follows the Integration's current
+ * account only when that is safe (`slotMove`):
+ *  - while the slot's old account is still LISTED (healthy or not): only on
+ *    strong identity — the same WhatsApp phone, or the same IG/FB/TikTok
+ *    username. Display names never count (two numbers of one business share
+ *    the verified name). No strong identifier → no move;
+ *  - once the old account is ABSENT (or the slot is a Meta row switched to
+ *    Zernio), unless the user disconnected it: re-point in place when the new
+ *    account has no row of its own, else merge the slot's conversations into
+ *    the Integration's current channel and retire the slot (`merged`).
+ * This keeps `main`'s behaviour, where replies always followed the
+ * Integration's pageId — including the accepted parity case "A deleted in
+ * Zernio, a different B added → A's threads reply from B".
  *
  * Accounts Zernio no longer lists are marked disconnected — except when the
  * list is empty or carries no usable account, which is far more likely a bad
@@ -42,16 +52,36 @@ export async function mirrorZernioAccounts(
 ): Promise<void> {
   const valid = (accounts ?? []).filter((a): a is ZernioAccount => !!a?._id && !!a.platform);
   const listed = new Map(valid.map((a) => [a._id, a]));
-  const live = primaries.filter((p) => p?.id && p.pageId);
+  // With no usable account list, every old account would look "absent":
+  // never move or merge slots on such a response (same guard as step 5).
+  const live = valid.length > 0 ? primaries.filter((p) => p?.id && p.pageId) : [];
 
-  // 1. Same number re-authenticated (or switched Meta → Zernio): move the
-  //    legacy slot in place before its new account could get a sibling row.
+  // 1. Decide, per legacy slot, before any row for the new account exists.
   const before = await prisma.channel.findMany({ where: { workspaceId, provider: "zernio" } });
   const hasRow = new Set(before.map((c) => c.externalId));
+  const merges: Array<{ slot: Channel; p: IntegrationLike }> = [];
   for (const p of live) {
-    const slot = await prisma.channel.findFirst({ where: { integrationId: p.id } });
-    if (slot && canRepointInPlace(slot, p, listed, hasRow)) {
-      await alignLegacyChannel(prisma, p, { allowInPlace: true });
+    const slots = await prisma.channel.findMany({
+      where: { workspaceId, OR: [{ integrationId: p.id }, { id: `chi_${p.id}` }] },
+    });
+    for (const slot of slots) {
+      const move = slotMove(slot, p, listed, hasRow);
+      if (move === "merge") merges.push({ slot, p });
+      if (move !== "inPlace") continue;
+      await prisma.channel.updateMany({
+        where: { integrationId: p.id, id: { not: slot.id } },
+        data: { integrationId: null },
+      });
+      await prisma.channel.update({
+        where: { id: slot.id },
+        data: {
+          provider: "zernio",
+          externalId: p.pageId,
+          kind: p.platform.toLowerCase(),
+          integrationId: p.id,
+          ...revival(slot, false),
+        },
+      });
       hasRow.add(p.pageId);
     }
   }
@@ -87,6 +117,21 @@ export async function mirrorZernioAccounts(
   //    that is not the same number stays on its old account.
   for (const p of live) await alignLegacyChannel(prisma, p, { allowInPlace: false });
 
+  // 4. Merge retired slots into the Integration's current channel. Raw SQL so
+  //    the inbox order (Conversation.updatedAt) is untouched.
+  for (const { slot, p } of merges) {
+    const target = await prisma.channel.findFirst({ where: { integrationId: p.id } });
+    if (!target || target.id === slot.id || target.externalId !== p.pageId) continue;
+    await prisma.$executeRaw`
+      UPDATE "Conversation" SET "channelId" = ${target.id}
+      WHERE "workspaceId" = ${workspaceId} AND "channelId" = ${slot.id}`;
+    await prisma.channel.update({
+      where: { id: slot.id },
+      data: { status: "disconnected", statusReason: MERGED, disconnectedAt: new Date(), isDefault: false, integrationId: null },
+    });
+  }
+
+  // 5. Mark accounts Zernio no longer lists (skipped on an empty list).
   if (valid.length > 0) {
     await prisma.channel.updateMany({
       where: {
@@ -102,23 +147,46 @@ export async function mirrorZernioAccounts(
   await ensureDefaultPerKind(prisma, workspaceId);
 }
 
-/** Is `slot` (an Integration's legacy channel) the same number as the
- *  Integration's new primary, re-authenticated? See mirrorZernioAccounts. */
-function canRepointInPlace(
-  slot: { provider: string; externalId: string | null; kind: string },
+/** What happens to an Integration's legacy slot during a sync (see
+ *  mirrorZernioAccounts). */
+function slotMove(
+  slot: Pick<Channel, "provider" | "externalId" | "kind" | "status" | "statusReason">,
   p: IntegrationLike,
   listed: Map<string, ZernioAccount>,
   hasRow: Set<string | null>,
-): boolean {
-  if (slot.provider === "zernio" && slot.externalId === p.pageId) return false; // already aligned
-  if (!p.pageId || hasRow.has(p.pageId)) return false; // the new account has a row of its own
-  if (slot.kind !== p.platform.toLowerCase()) return false;
-  if (slot.provider !== "zernio" || !slot.externalId) return true; // Meta → Zernio switch
-  const old = listed.get(slot.externalId);
-  if (!old) return true; // the old account is gone
-  if (accountHealth(old).health === "ok") return false; // still a working number
-  // Listed but broken: only the same number signed in again (same name).
-  const fresh = listed.get(p.pageId);
-  const label = (a?: ZernioAccount) => (a?.username ?? a?.displayName ?? a?.name ?? "").trim().toLowerCase();
-  return !!fresh && label(old) !== "" && label(old) === label(fresh);
+): "keep" | "inPlace" | "merge" {
+  if (!p.pageId) return "keep";
+  if (slot.provider === "zernio" && slot.externalId === p.pageId) return "keep"; // aligned
+  if (slot.status === "disconnected" && slot.statusReason === USER_DISCONNECTED) return "keep";
+  if (slot.status === "disconnected" && slot.statusReason === MERGED) return "keep";
+  const kind = p.platform.toLowerCase();
+  if (slot.kind !== kind) return "keep";
+  const old = slot.provider === "zernio" && slot.externalId ? listed.get(slot.externalId) : undefined;
+  if (old) {
+    // Old account still listed: move only when it provably is the same number.
+    const a = strongIdentity(old, kind);
+    const b = strongIdentity(listed.get(p.pageId), kind);
+    if (!a || a !== b) return "keep";
+  }
+  return hasRow.has(p.pageId) ? "merge" : "inPlace";
+}
+
+/** A per-account identity that survives a re-auth: the WhatsApp phone (from
+ *  the account metadata, when Zernio provides it) or the IG/FB/TikTok
+ *  username. Never the display name. Null when there is none. */
+export function strongIdentity(a: ZernioAccount | undefined, kind: string): string | null {
+  if (!a) return null;
+  if (kind === "whatsapp") {
+    const m = (a.metadata ?? {}) as Record<string, unknown>;
+    for (const k of ["phoneNumber", "displayPhoneNumber", "display_phone_number", "phone"]) {
+      const v = m[k];
+      if (typeof v === "string") {
+        const digits = v.replace(/\D/g, "");
+        if (digits.length >= 8) return digits;
+      }
+    }
+    return null;
+  }
+  const u = a.username?.trim().toLowerCase().replace(/^@/, "");
+  return u || null;
 }
