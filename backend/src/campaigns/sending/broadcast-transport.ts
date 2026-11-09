@@ -33,7 +33,10 @@ export const broadcastName = (campaignName: string, partitionId: string) => `${c
 /** The partition's stored variableMapping as Zernio's ordered variable list. */
 export function partitionVariables(p: Pick<PartitionRow, "variables">): ZernioBroadcastVariable[] {
   const v = (p.variables && typeof p.variables === "object" ? p.variables : {}) as Record<string, ZernioBroadcastVariable>;
-  return slotKeys(v).map((k) => v[k]);
+  // Only slot keys ("1", "2", …); reserved keys such as `__headerLink` are not variables.
+  return slotKeys(v)
+    .filter((k) => /^[0-9]+$/.test(k))
+    .map((k) => v[k]);
 }
 
 /**
@@ -89,7 +92,7 @@ export async function prepareBroadcastPartition(job: LaunchJob, p: PartitionRow,
     }
     if (!id) {
       const at = new Date(job.now());
-      await job.updatePartition(p.id, { createAttemptedAt: at });
+      await job.updatePartition(p.id, { createAttemptedAt: at }, { progress: false });
       p.createAttemptedAt = at;
       id = await job.call(() =>
         zernio.createWhatsAppBroadcast({

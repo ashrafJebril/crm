@@ -44,7 +44,13 @@ export class CampaignLaunchScheduler {
     try {
       const cutoff = new Date(now.getTime() - CAMPAIGN_LAUNCH_STALE_MS);
       const stale = (await this.prisma.campaign.findMany({
-        where: { status: "launching", OR: [{ launchHeartbeatAt: { lt: cutoff } }, { launchHeartbeatAt: null }] },
+        // m5: oldest heartbeat first, and never the ids this process is running.
+        where: {
+          status: "launching",
+          id: { notIn: this.runner.runningIds() },
+          OR: [{ launchHeartbeatAt: { lt: cutoff } }, { launchHeartbeatAt: null }],
+        },
+        orderBy: [{ launchHeartbeatAt: "asc" }, { id: "asc" }],
         select: { id: true, launchHeartbeatAt: true },
         take: BATCH,
       })) as Array<{ id: string; launchHeartbeatAt: Date | null }>;
@@ -61,6 +67,7 @@ export class CampaignLaunchScheduler {
       }
       const due = (await this.prisma.campaign.findMany({
         where: { status: "scheduled", sendTransport: "direct", launchStage: "sending", scheduledAt: { lte: now } },
+        orderBy: [{ scheduledAt: "asc" }, { id: "asc" }],
         select: { id: true },
         take: BATCH,
       })) as Array<{ id: string }>;
@@ -85,6 +92,7 @@ export class CampaignLaunchScheduler {
       const since = new Date(now.getTime() - DIRECT_RECOUNT_TAIL_MS);
       const list = (await this.prisma.campaign.findMany({
         where: { sendTransport: "direct", OR: [{ status: "running" }, { status: "completed", launchedAt: { gte: since } }] },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: { id: true, workspaceId: true, status: true },
         take: 200,
       })) as Array<{ id: string; workspaceId: string; status: string }>;

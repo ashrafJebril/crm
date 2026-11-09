@@ -10,7 +10,8 @@ import type { Viewer } from "../permissions/visibility";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { campaignError } from "./campaign-errors";
 import { buildRecipients, campaignStatusFor, estimateMetaCost, templatePlaceholderCount } from "./campaign-audience";
-import { CampaignLaunchRunner } from "./sending/campaign-launch-runner.service";
+import { CampaignLaunchRunner, FINISHED_BROADCAST, isNotFound } from "./sending/campaign-launch-runner.service";
+import { ZernioBudget } from "./sending/zernio-budget";
 import { aggregateBroadcastStatus } from "./sending/broadcast-status";
 import { loadCustomDefs, resolveLaunchSenders, templateUnsupported } from "./sending/launch-context";
 import { effectiveSenderIds, templateOnSenders } from "./sending/senders";
@@ -95,6 +96,8 @@ export class CampaignSendService {
   private readonly tracker: RecipientTrackerService;
   /** SP-13: the background launch runner (module singleton; hand-built specs get one over the same Prisma). */
   readonly launcher: CampaignLaunchRunner;
+  /** Zernio budget for per-partition status reads (fix round 1, m3); process-wide by default. */
+  budget: ZernioBudget = ZernioBudget.shared();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -222,6 +225,54 @@ export class CampaignSendService {
    * - otherwise the legacy single broadcast, unchanged.
    * 400 `campaigns.not_cancellable` when nothing is sending.
    */
+  /** SP-13: partitions that may still send (by our records): a Zernio id and stage sent or scheduled. */
+  private livePartitions(workspaceId: string, campaignId: string): Promise<Array<{ id: string; zernioBroadcastId: string }>> {
+    return this.prisma.campaignBroadcast.findMany({
+      where: { workspaceId, campaignId, zernioBroadcastId: { not: null }, stage: { in: ["sent", "scheduled"] } },
+      select: { id: true, zernioBroadcastId: true },
+    }) as Promise<Array<{ id: string; zernioBroadcastId: string }>>;
+  }
+
+  /**
+   * Whether `cancel` has something to stop (GET /campaigns/:id `canCancel`):
+   * a launching campaign; a waiting scheduled direct one; a scheduled or
+   * running one with a broadcast; a failed SP-13 campaign that still has a
+   * partition that may send (fix round 1, I1). Database only, no Zernio call.
+   */
+  async cancellable(workspaceId: string, id: string): Promise<boolean> {
+    const c = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!c) throw campaignError("campaigns.not_found");
+    if (c.status === "launching") return true;
+    if (c.sendTransport === "direct") return c.status === "scheduled";
+    if (c.sendTransport === "broadcast" && ["scheduled", "running", "failed"].includes(c.status)) {
+      return (await this.livePartitions(workspaceId, id)).length > 0 || (c.status !== "failed" && !!c.zernioBroadcastId);
+    }
+    return !!c.zernioBroadcastId && ["scheduled", "running"].includes(c.status);
+  }
+
+  /**
+   * Fix round 1 (I1): a campaign may not be deleted while one of its
+   * broadcasts may still send (the cascade would drop the only record of
+   * it). Each partition our records call sent or scheduled is read from
+   * Zernio (budgeted): finished or gone (404) is fine; anything else, or an
+   * unreadable one, refuses with 400 `campaigns.has_live_broadcasts`.
+   */
+  async assertDeletable(workspaceId: string, id: string): Promise<void> {
+    const c = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!c) throw campaignError("campaigns.not_found");
+    if (c.sendTransport !== "broadcast") return;
+    for (const p of await this.livePartitions(workspaceId, id)) {
+      try {
+        await this.budget.campaign.take();
+        const st = await this.zernio.getBroadcast(p.zernioBroadcastId);
+        if (FINISHED_BROADCAST.includes(st.status)) continue;
+      } catch (e) {
+        if (isNotFound(e)) continue;
+      }
+      throw campaignError("campaigns.has_live_broadcasts");
+    }
+  }
+
   async cancel(workspaceId: string, id: string): Promise<Campaign> {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) throw campaignError("campaigns.not_found");
@@ -242,16 +293,35 @@ export class CampaignSendService {
       if (res.count === 1) return reread();
       return this.cancel(workspaceId, id);
     }
-    if (campaign.sendTransport === "broadcast" && ["scheduled", "running"].includes(campaign.status)) {
-      const parts = (await this.prisma.campaignBroadcast.findMany({
-        where: { workspaceId, campaignId: id, zernioBroadcastId: { not: null }, stage: { in: ["sent", "scheduled"] } },
-        select: { id: true, zernioBroadcastId: true },
-      })) as Array<{ id: string; zernioBroadcastId: string }>;
+    // SP-13: every partition that may still send, also on a launch that
+    // ended failed with one still live (fix round 1, I1).
+    if (campaign.sendTransport === "broadcast" && ["scheduled", "running", "failed"].includes(campaign.status)) {
+      const parts = await this.livePartitions(workspaceId, id);
       if (parts.length > 0) {
+        let firstError: unknown = null;
         for (const p of parts) {
-          await this.zernio.cancelBroadcast(p.zernioBroadcastId);
-          await this.prisma.campaignBroadcast.update({ where: { id: p.id }, data: { stage: "cancelled" } });
+          try {
+            await this.budget.campaign.take();
+            const st = await this.zernio.getBroadcast(p.zernioBroadcastId);
+            if (!FINISHED_BROADCAST.includes(st.status)) {
+              await this.budget.campaign.take();
+              await this.zernio.cancelBroadcast(p.zernioBroadcastId);
+            }
+            await this.prisma.campaignBroadcast.update({ where: { id: p.id }, data: { stage: "cancelled" } });
+          } catch (e) {
+            if (isNotFound(e)) {
+              await this.prisma.campaignBroadcast.update({ where: { id: p.id }, data: { stage: "cancelled" } });
+              continue;
+            }
+            firstError ??= e;
+            await this.prisma.campaignBroadcast.update({
+              where: { id: p.id },
+              data: { lastError: `cancel: ${String((e as Error)?.message ?? e).slice(0, 290)}` },
+            });
+          }
         }
+        // A partition that could not be stopped keeps the campaign as it was: try again.
+        if (firstError) throw firstError;
         return this.prisma.campaign.update({ where: { id }, data: { status: "cancelled" } });
       }
     }
@@ -551,7 +621,11 @@ export class CampaignSendService {
       })) as Array<{ zernioBroadcastId: string }>;
       if (parts.length > 0) {
         const stats = [];
-        for (const p of parts) stats.push(await this.zernio.getBroadcast(p.zernioBroadcastId));
+        for (const p of parts) {
+          // m3: up to 25 reads per campaign per tick share the launch budget.
+          await this.budget.campaign.take();
+          stats.push(await this.zernio.getBroadcast(p.zernioBroadcastId));
+        }
         const b = aggregateBroadcastStatus(stats);
         return this.prisma.campaign.update({
           where: { id: c.id },

@@ -89,11 +89,12 @@ export interface LaunchJob {
   campaignId: string;
   workspaceId: string;
   /** Lease compare-and-set on `launchHeartbeatAt`; throws LeaseLost or CancelRequested. */
-  fence(opts?: { allowCancel?: boolean }): Promise<void>;
+  /** `progress: true` also resets `launchAttempts` (durable progress, fix round 1 I3). */
+  fence(opts?: { allowCancel?: boolean; progress?: boolean }): Promise<void>;
   /** Budget token(s), then the fence, then the Zernio call (429s wait out Retry-After). */
   call<T>(fn: () => Promise<T>, opts?: { direct?: boolean; allowCancel?: boolean }): Promise<T>;
-  /** Fenced write to one partition. */
-  updatePartition(id: string, data: Record<string, unknown>, opts?: { allowCancel?: boolean }): Promise<void>;
+  /** Fenced write to one partition (counts as progress unless `progress: false`). */
+  updatePartition(id: string, data: Record<string, unknown>, opts?: { allowCancel?: boolean; progress?: boolean }): Promise<void>;
   /** The partition being worked on (for a failure's `lastError`). */
   setPartition(id: string | null): void;
   yieldTick(): Promise<void>;
@@ -102,4 +103,6 @@ export interface LaunchJob {
   importPageSize: number;
   addPageSize: number;
   directPageSize: number;
+  /** Consecutive identical row rejections in this run (direct sends, m1). */
+  rejectStreak: { count: number; message: string | null };
 }

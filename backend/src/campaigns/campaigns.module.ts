@@ -241,6 +241,8 @@ export class CampaignsController {
       senders: rows.map((c) => ({ channelId: c.id, displayName: c.displayName, phoneNumber: c.phoneNumber ?? null })),
       // SP-13: background launch progress while launching (two indexed queries).
       launch: campaign.status === "launching" ? await CampaignLaunchRunner.progress(this.prisma, workspaceId, campaign) : null,
+      // SP-13 fix round 1 (I1): also true for a failed launch with a partition that may still send.
+      canCancel: await this.send.cancellable(workspaceId, id),
     };
   }
 
@@ -332,6 +334,8 @@ export class CampaignsController {
     if (existing.status === "scheduled" || existing.status === "running" || existing.status === "launching") {
       throw new BadRequestException("Cancel this campaign before deleting it.");
     }
+    // SP-13 fix round 1 (I1): 400 campaigns.has_live_broadcasts while a broadcast may still send.
+    await this.send.assertDeletable(workspaceId, id);
     return this.prisma.campaign.delete({ where: { id } }).then(() => ({ ok: true }));
   }
 }

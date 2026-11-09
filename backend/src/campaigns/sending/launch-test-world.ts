@@ -9,7 +9,8 @@
  *   counted as `skipped`, as Zernio does) and a name for draft adoption;
  * - refuses to send, schedule or add to a broadcast that is not a draft,
  *   and to delete one that is not a draft;
- * - replays a direct send by Idempotency-Key (Zernio keeps keys 24 h);
+ * - replays a direct send by Idempotency-Key (Zernio keeps keys 24 h), and
+ *   answers 422 when a key is reused with a different body;
  * - records every message that would reach a phone in `deliveries`.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -40,7 +41,7 @@ export function fakeZernio(templates: Array<Record<string, unknown>>) {
   let seq = 0;
   const broadcasts = new Map<string, any>();
   const deliveries: Delivery[] = [];
-  const replay = new Map<string, { messageId: string; conversationId: string }>();
+  const replay = new Map<string, { body: string; res: { messageId: string; conversationId: string } }>();
   const notFound = () => new HttpException("Broadcast not found", 404);
   const get = (id: string) => {
     const b = broadcasts.get(id);
@@ -109,8 +110,15 @@ export function fakeZernio(templates: Array<Record<string, unknown>>) {
       broadcasts.delete(id);
     }),
     sendTemplateToPhone: jest.fn(async (input: any) => {
+      // Idempotency-Key semantics (IETF draft / Stripe): the same key with the
+      // same body replays; the same key with a different body is a 422.
+      const { idempotencyKey: _k, ...rest } = input;
+      const body = JSON.stringify(rest);
       const seen = replay.get(input.idempotencyKey);
-      if (seen) return seen;
+      if (seen) {
+        if (seen.body !== body) throw new HttpException("Idempotency-Key reused with a different request body", 422);
+        return seen.res;
+      }
       deliveries.push({
         phone: input.phone,
         accountId: input.accountId,
@@ -120,7 +128,7 @@ export function fakeZernio(templates: Array<Record<string, unknown>>) {
         key: input.idempotencyKey,
       });
       const res = { messageId: `zm${++seq}`, conversationId: `zc${seq}` };
-      replay.set(input.idempotencyKey, res);
+      replay.set(input.idempotencyKey, { body, res });
       return res;
     }),
     listBroadcastRecipients: jest.fn(async () => ({ recipients: [], pagination: { total: 0, limit: 100, skip: 0, hasMore: false }, summary: {} })),
@@ -173,8 +181,8 @@ export const zernioCopy = (body: string, name = "svc", language = "en") => ({
 export const freeBudget = () => {
   const takes = { campaign: 0, direct: 0 };
   const budget = {
-    campaign: { rpm: 300, take: jest.fn(async () => void takes.campaign++) },
-    direct: { rpm: 120, take: jest.fn(async () => void takes.direct++) },
+    campaign: { rpm: 300, take: jest.fn(async () => void takes.campaign++), pause: jest.fn() },
+    direct: { rpm: 120, take: jest.fn(async () => void takes.direct++), pause: jest.fn() },
   } as unknown as ZernioBudget;
   return { budget, takes };
 };

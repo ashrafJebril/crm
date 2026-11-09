@@ -31,7 +31,9 @@ export type CampaignErrorKey =
   | "campaigns.header_media_schedule_too_far"
   | "campaigns.not_cancellable"
   // SP-13 Task 2: lastError of a launch that failed for a non-keyed reason (the provider text is on the partition).
-  | "campaigns.launch_failed";
+  | "campaigns.launch_failed"
+  // SP-13 Task 2 fix round 1 (I1): a broadcast of this campaign may still send.
+  | "campaigns.has_live_broadcasts";
 
 const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.not_found": 404,
@@ -59,6 +61,7 @@ const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.header_media_schedule_too_far": 400, // {days: 6}
   "campaigns.not_cancellable": 400,
   "campaigns.launch_failed": 502, // a launch failure (lastError)
+  "campaigns.has_live_broadcasts": 400, // DELETE refused while a partition may still send
 };
 
 /** Machine codes carried next to the key (ruling 6: the roadmap's name). */

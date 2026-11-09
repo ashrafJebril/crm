@@ -2,6 +2,7 @@ import { CampaignSendService, REFRESH_SWEEP_MAX_PAGES } from "./campaign-send.se
 import { makeFakePrisma } from "../channels/test-prisma";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { CampaignReplyAttributor } from "./tracking/reply-attributor.service";
+import { freeBudget } from "./sending/launch-test-world";
 
 /** SP-12 Task 1 fix round 1: sweep counters, paging, scheduled tail, cron guard and ordering. */
 
@@ -90,6 +91,8 @@ function build(seed: Parameters<typeof makeFakePrisma>[0]) {
     listBroadcastRecipients: jest.fn(),
   };
   const svc = new CampaignSendService(prisma, zernio as never, { isLocked: jest.fn() } as never, new RecipientTrackerService(prisma));
+  // Time is frozen here; the process-wide token bucket would wait on real time.
+  svc.budget = freeBudget().budget;
   return { prisma, zernio, svc };
 }
 
@@ -572,7 +575,8 @@ describe("sweep pages every broadcast of a multi-broadcast campaign and aggregat
     const { prisma, zernio, svc } = multiWorld();
     (zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast = jest.fn(async () => {});
     const res = await svc.cancel("ws1", "m1");
-    expect((zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast.mock.calls.map((c) => c[0]).sort()).toEqual(["zb-1", "zb-2"]);
+    // zb-1 already completed in Zernio (fix round 1: cancel reads the status first), so only zb-2 is cancelled.
+    expect((zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast.mock.calls.map((c) => c[0]).sort()).toEqual(["zb-2"]);
     expect(res.status).toBe("cancelled");
     expect(prisma.db.campaignBroadcast.map((p: { stage: string }) => p.stage)).toEqual(["cancelled", "cancelled", "cancelled"]);
   });

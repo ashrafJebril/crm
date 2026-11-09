@@ -51,6 +51,15 @@ export class TokenBucket {
     this.tolerance = (Math.max(1, burst) - 1) * this.interval;
   }
 
+  /**
+   * Fix round 1 (m3): a 429 is team-wide, so its Retry-After holds every
+   * caller of this bucket, not only the one that got it.
+   */
+  pause(ms: number): void {
+    if (!(ms > 0)) return;
+    this.tat = Math.max(this.tat, this.clock.now() + ms + this.tolerance);
+  }
+
   async take(): Promise<void> {
     const now = this.clock.now();
     const tat = Math.max(this.tat, now);
@@ -94,6 +103,8 @@ export async function withRetryAfter<T>(
   opts: {
     sleep: (ms: number) => Promise<void>;
     before?: () => Promise<void>;
+    /** Called with the wait before sleeping it (the runner pauses the shared bucket). */
+    onRateLimit?: (waitMs: number) => void;
     maxRetries?: number;
     maxWaitMs?: number;
   },
@@ -106,7 +117,9 @@ export async function withRetryAfter<T>(
       return await fn();
     } catch (e) {
       if (!(e instanceof ZernioRateLimitError) || attempt >= maxRetries) throw e;
-      await opts.sleep(Math.min(e.retryAfterMs ?? RETRY_AFTER_DEFAULT_MS, maxWait));
+      const wait = Math.min(e.retryAfterMs ?? RETRY_AFTER_DEFAULT_MS, maxWait);
+      opts.onRateLimit?.(wait);
+      await opts.sleep(wait);
     }
   }
 }

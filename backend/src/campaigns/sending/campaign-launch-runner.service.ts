@@ -212,14 +212,18 @@ export class CampaignLaunchRunner {
 
   private job(lease: Lease): LaunchJob {
     const prisma = this.prisma;
-    const fence = async (opts: { allowCancel?: boolean } = {}) => {
+    const fence = async (opts: { allowCancel?: boolean; progress?: boolean } = {}) => {
       const next = nextBeat(lease.beat);
+      // Fix round 1 (I3): durable progress resets the attempt counter, so
+      // MAX_LAUNCH_ATTEMPTS counts consecutive failures without progress.
+      const reset = opts.progress && lease.launchAttempts > 0;
       const res = await prisma.campaign.updateMany({
         where: { id: lease.id, status: "launching", launchHeartbeatAt: lease.beat, ...(opts.allowCancel ? {} : { cancelRequestedAt: null }) },
-        data: { launchHeartbeatAt: next },
+        data: { launchHeartbeatAt: next, ...(reset ? { launchAttempts: 0 } : {}) },
       });
       if (res.count === 1) {
         lease.beat = next;
+        if (reset) lease.launchAttempts = 0;
         return;
       }
       if (!opts.allowCancel) {
@@ -242,6 +246,8 @@ export class CampaignLaunchRunner {
       call: (fn, opts = {}) =>
         withRetryAfter(fn, {
           sleep: (ms) => this.sleep(ms),
+          // Fix round 1 (m3): a 429 is team-wide; hold every caller of the bucket.
+          onRateLimit: (ms) => this.budget.campaign.pause(ms),
           before: async () => {
             await this.budget.campaign.take();
             if (opts.direct) await this.budget.direct.take();
@@ -249,7 +255,7 @@ export class CampaignLaunchRunner {
           },
         }),
       updatePartition: async (pid, data, opts = {}) => {
-        await fence(opts);
+        await fence({ allowCancel: opts.allowCancel, progress: opts.progress ?? true });
         await prisma.campaignBroadcast.update({ where: { id: pid }, data });
       },
       setPartition: (pid) => (lease.partitionId = pid),
@@ -259,6 +265,7 @@ export class CampaignLaunchRunner {
       importPageSize: this.importPageSize,
       addPageSize: this.addPageSize,
       directPageSize: this.directPageSize,
+      rejectStreak: { count: 0, message: null },
     };
   }
 
@@ -271,6 +278,7 @@ export class CampaignLaunchRunner {
     });
     if (res.count === 1) {
       lease.beat = next;
+      if (typeof data.launchAttempts === "number") lease.launchAttempts = data.launchAttempts;
       return;
     }
     // Lost or cancelled: let fence tell which.
@@ -317,6 +325,7 @@ export class CampaignLaunchRunner {
         planCompletedAt: new Date(),
         launchStage: "sending",
         recipientTracking: true,
+        launchAttempts: 0,
       });
       await job.yieldTick();
     }
@@ -330,13 +339,10 @@ export class CampaignLaunchRunner {
         await this.writeCampaign(lease, { status: "scheduled" });
         return;
       }
-      const headerMedia =
-        c.headerMediaId && this.media
-          ? { link: await this.media.resolveExternalUrl(ws, c.headerMediaId, this.headerTtlSeconds(scheduledAt)) }
-          : undefined;
       for (const p of parts) {
         if (p.transport !== "direct" || p.stage === "sent") continue;
         job.setPartition(p.id);
+        const headerMedia = c.headerMediaId ? { link: await this.headerLink(job, p, ws, c.headerMediaId, scheduledAt) } : undefined;
         await sendDirectPartition(job, p, { template: tpl, headerMedia });
       }
       job.setPartition(null);
@@ -368,83 +374,199 @@ export class CampaignLaunchRunner {
   }
 
   /**
-   * Cancel during launch: partitions already sent or scheduled are
-   * cancelled in Zernio; drafts are deleted (a resumed runner first adopts a
-   * draft it may have created); then the campaign is `cancelled`. Queued
-   * rows stay queued ("Not sent"). Each call is still lease-fenced.
+   * Fix round 1 (I4): the header link of a direct partition is resolved
+   * ONCE and stored on the partition as `variables.__headerLink` (with
+   * `__headerLinkExpiresAt`), then reused on every retry and resume. A fresh
+   * presigned URL per run would change the request body under the same
+   * Idempotency-Key. Our own `/api/media/:id/public` route needs an expiring
+   * token, so there is no stable non-expiring link to use instead. The
+   * ruling-9 TTL (72 h past the send, at most 7 days) covers the 23 h
+   * resume window.
+   */
+  private async headerLink(job: LaunchJob, p: PartitionRow, ws: string, mediaId: string, scheduledAt: Date | null): Promise<string> {
+    const vars = (p.variables && typeof p.variables === "object" ? p.variables : {}) as Record<string, unknown>;
+    if (typeof vars.__headerLink === "string" && vars.__headerLink) return vars.__headerLink;
+    if (!this.media) throw new HttpException("Media service unavailable", 500);
+    const ttl = this.headerTtlSeconds(scheduledAt);
+    const link = await this.media.resolveExternalUrl(ws, mediaId, ttl);
+    const next = { ...vars, __headerLink: link, __headerLinkExpiresAt: new Date(Date.now() + ttl * 1000).toISOString() };
+    await job.updatePartition(p.id, { variables: next }, { progress: false });
+    p.variables = next;
+    return link;
+  }
+
+  /**
+   * Stops one partition in Zernio, as far as it can go out:
+   * - a draft is deleted when `deleteDrafts` (cancel), else left (a draft never sends);
+   * - a broadcast still scheduled or sending is cancelled;
+   * - a finished one is left as it is.
+   * Zernio errors propagate (the callers decide per partition: 404 = gone).
+   */
+  private async stopPartition(
+    job: LaunchJob,
+    p: PartitionRow,
+    opts: { profileId: string | null; deleteDrafts: boolean },
+  ): Promise<"gone" | "draft" | "stopped" | "finished"> {
+    const call = <T>(fn: () => Promise<T>) => job.call(fn, { allowCancel: true });
+    const write = (data: Record<string, unknown>) => job.updatePartition(p.id, data, { allowCancel: true, progress: false });
+    let bid = p.zernioBroadcastId;
+    if (!bid && p.createAttemptedAt && opts.profileId && opts.deleteDrafts) {
+      const profileId = opts.profileId;
+      const drafts = await call(() => this.zernio.listBroadcasts({ profileId, status: "draft", limit: 100 }));
+      bid = drafts.find((b) => b.name.endsWith(` · crm:${p.id}`))?.id ?? null;
+    }
+    if (!bid) {
+      if (opts.deleteDrafts) await write({ stage: "cancelled" });
+      return "gone";
+    }
+    const id = bid;
+    const st = await call(() => this.zernio.getBroadcast(id));
+    if (st.status === "draft") {
+      if (!opts.deleteDrafts) return "draft";
+      await call(() => this.zernio.deleteBroadcast(id));
+      await write({ stage: "cancelled", zernioBroadcastId: null });
+      return "gone";
+    }
+    if (FINISHED_BROADCAST.includes(st.status)) {
+      if (opts.deleteDrafts) await write({ stage: "cancelled" });
+      return "finished";
+    }
+    await call(() => this.zernio.cancelBroadcast(id));
+    await write({ stage: "cancelled" });
+    return "stopped";
+  }
+
+  /**
+   * Cancel during launch, per partition (fix round 1, I2): drafts are
+   * deleted (a resumed runner first adopts a draft it may have created),
+   * broadcasts already scheduled or sending are cancelled. A 404 means the
+   * broadcast is gone. Any other error is noted on that partition's
+   * `lastError` and the others go on. While a partition failed transiently,
+   * the job stays `launching` for the next resume (an attempt is counted);
+   * the end state is always `cancelled`, never `failed`, with the notes left
+   * on partitions that could not be confirmed. Queued rows stay queued.
    */
   private async cancelLaunch(job: LaunchJob, lease: Lease): Promise<void> {
     const ws = await this.prisma.workspace.findUnique({ where: { id: lease.workspaceId }, select: { zernioProfileId: true } });
-    const opts = { allowCancel: true };
-    let firstSent: string | null = null;
+    const opts = { allowCancel: true, progress: false };
+    let pending = false;
+    let firstOut: string | null = null;
     for (const p of await this.partitions(lease)) {
-      if (p.stage === "cancelled") continue;
-      let bid = p.zernioBroadcastId;
-      if (!bid && p.createAttemptedAt && ws?.zernioProfileId) {
-        const drafts = await job.call(() => this.zernio.listBroadcasts({ profileId: ws.zernioProfileId!, status: "draft", limit: 100 }), opts);
-        bid = drafts.find((b) => b.name.endsWith(` · crm:${p.id}`))?.id ?? null;
+      if (p.stage === "cancelled") {
+        if (p.zernioBroadcastId) firstOut ??= p.zernioBroadcastId;
+        continue;
       }
-      if (bid) {
-        const id = bid;
-        const st = await job.call(() => this.zernio.getBroadcast(id), opts);
-        if (st.status === "draft") {
-          await job.call(() => this.zernio.deleteBroadcast(id), opts);
+      try {
+        const r = await this.stopPartition(job, p, { profileId: ws?.zernioProfileId ?? null, deleteDrafts: true });
+        if ((r === "stopped" || r === "finished") && p.zernioBroadcastId) firstOut ??= p.zernioBroadcastId;
+      } catch (e) {
+        if (e instanceof LeaseLost) throw e;
+        if (isNotFound(e)) {
           await job.updatePartition(p.id, { stage: "cancelled", zernioBroadcastId: null }, opts);
           continue;
         }
-        if (!["cancelled", "completed", "failed"].includes(st.status)) await job.call(() => this.zernio.cancelBroadcast(id), opts);
-        firstSent ??= id;
+        await job.updatePartition(p.id, { lastError: `cancel: ${errorText(e)}` }, opts);
+        if (isTransientLaunchError(e)) pending = true;
       }
-      await job.updatePartition(p.id, { stage: "cancelled" }, opts);
+    }
+    if (pending && lease.launchAttempts + 1 < MAX_LAUNCH_ATTEMPTS) {
+      // Retried by the next resume; the other partitions are already handled.
+      await this.writeCampaign(lease, { launchAttempts: lease.launchAttempts + 1 }, { allowCancel: true });
+      return;
     }
     await this.writeCampaign(
       lease,
-      { status: "cancelled", launchStage: "done", ...(firstSent ? { zernioBroadcastId: firstSent, launchedAt: new Date() } : {}) },
-      opts,
+      { status: "cancelled", launchStage: "done", ...(firstOut ? { zernioBroadcastId: firstOut, launchedAt: new Date() } : {}) },
+      { allowCancel: true },
     );
   }
 
   /**
    * Transient: stay `launching` (the scheduler resumes a stale lease) until
-   * MAX_LAUNCH_ATTEMPTS. Otherwise `failed` with a keyed `lastError`
-   * (`campaigns.*`, else `campaigns.launch_failed`; the provider's text goes
-   * on the partition's `lastError`) and a notification to the launcher. Any
-   * partition already sent stays tracked (its broadcast becomes the
-   * campaign's `zernioBroadcastId`, so the sweep follows it).
+   * MAX_LAUNCH_ATTEMPTS consecutive failures without progress.
+   *
+   * A cancel requested meanwhile always wins: the cleanup runs instead and
+   * the campaign ends `cancelled`, never `failed` (fix round 1, I2).
+   *
+   * Otherwise (fix round 1, I1) every partition that may still go out is
+   * stopped in Zernio first, each independently and best-effort (a failure
+   * is noted on that partition), then the campaign is `failed` with a keyed
+   * `lastError` (`campaigns.*`, else `campaigns.launch_failed`; the
+   * provider's text on the partition) and the launcher is notified. A
+   * partition that could not be stopped keeps the failed campaign
+   * cancellable (`CampaignSendService.cancel`) and undeletable. A direct
+   * campaign is recounted once (m4).
    */
   private async fail(lease: Lease, e: unknown): Promise<void> {
     this.log.error(`campaign launch ${lease.id} failed: ${(e as Error).message}`);
     try {
+      const cur = await this.prisma.campaign.findFirst({
+        where: { id: lease.id },
+        select: { cancelRequestedAt: true, sendTransport: true, status: true },
+      });
+      if (!cur || cur.status !== "launching") return;
+      const job = this.job(lease);
+      if (cur.cancelRequestedAt) {
+        try {
+          await this.cancelLaunch(job, lease);
+        } catch (inner) {
+          if (inner instanceof LeaseLost) return;
+          const attempts = lease.launchAttempts + 1;
+          await this.writeCampaign(
+            lease,
+            attempts < MAX_LAUNCH_ATTEMPTS ? { launchAttempts: attempts } : { status: "cancelled", launchStage: "done", launchAttempts: attempts },
+            { allowCancel: true },
+          );
+        }
+        return;
+      }
+
       const attempts = lease.launchAttempts + 1;
-      const fence = { id: lease.id, status: "launching", launchHeartbeatAt: lease.beat };
       const key = campaignErrorKey(e);
       const noteOnPartition = async () => {
         if (lease.partitionId && !key) {
           await this.prisma.campaignBroadcast.updateMany({
             where: { id: lease.partitionId, workspaceId: lease.workspaceId },
-            data: { lastError: String((e as Error)?.message ?? e).slice(0, 300) },
+            data: { lastError: errorText(e) },
           });
         }
       };
       if (isTransientLaunchError(e) && attempts < MAX_LAUNCH_ATTEMPTS) {
-        const res = await this.prisma.campaign.updateMany({ where: fence, data: { launchAttempts: attempts } });
+        const res = await this.prisma.campaign.updateMany({
+          where: { id: lease.id, status: "launching", launchHeartbeatAt: lease.beat },
+          data: { launchAttempts: attempts },
+        });
         if (res.count === 1) await noteOnPartition();
         return;
       }
+
+      await noteOnPartition();
+      // I1: nothing may keep going out once the campaign reads `failed`.
+      for (const p of await this.partitions(lease)) {
+        if (!p.zernioBroadcastId || p.stage === "cancelled" || p.transport !== "broadcast") continue;
+        try {
+          await this.stopPartition(job, p, { profileId: null, deleteDrafts: false });
+        } catch (x) {
+          if (x instanceof LeaseLost) return;
+          if (isNotFound(x)) await job.updatePartition(p.id, { stage: "cancelled" }, { allowCancel: true, progress: false });
+          else await job.updatePartition(p.id, { lastError: `cancel: ${errorText(x)}` }, { allowCancel: true, progress: false });
+        }
+      }
       const error = key ?? "campaigns.launch_failed";
-      const sent = (await this.partitions(lease)).find((p) => p.zernioBroadcastId && ["sent", "scheduled"].includes(p.stage));
+      const out = (await this.partitions(lease)).find((p) => p.zernioBroadcastId && ["sent", "scheduled", "cancelled"].includes(p.stage));
       const res = await this.prisma.campaign.updateMany({
-        where: fence,
+        where: { id: lease.id, status: "launching", launchHeartbeatAt: lease.beat },
         data: {
           status: "failed",
           launchStage: "failed",
           lastError: error,
           launchAttempts: attempts,
-          ...(sent ? { zernioBroadcastId: sent.zernioBroadcastId, launchedAt: new Date() } : {}),
+          ...(out ? { zernioBroadcastId: out.zernioBroadcastId, launchedAt: new Date() } : {}),
         },
       });
       if (res.count !== 1) return;
-      await noteOnPartition();
+      // m4: rows a direct campaign already sent show in its counters.
+      if (cur.sendTransport === "direct") await this.tracker.recountCampaign(lease.id);
       if (lease.launchedById && this.notifications) {
         await this.notifications.notify(lease.workspaceId, [lease.launchedById], {
           type: "campaign_finished",
@@ -458,4 +580,15 @@ export class CampaignLaunchRunner {
       this.log.error(`campaign launch ${lease.id} failure handling crashed: ${(inner as Error).message}`);
     }
   }
+
+  /** In-flight campaign ids (the scheduler skips them in its query). */
+  runningIds(): string[] {
+    return [...this.inFlight];
+  }
 }
+
+/** Zernio statuses after which a broadcast sends nothing more. */
+export const FINISHED_BROADCAST = ["completed", "failed", "cancelled"];
+
+export const isNotFound = (e: unknown) => e instanceof HttpException && e.getStatus() === 404;
+const errorText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 300);
