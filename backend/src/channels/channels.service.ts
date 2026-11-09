@@ -11,34 +11,18 @@ import { whatsappUsage } from "./channel-limits";
 import { secretsEncryptionEnabled } from "./channel-credentials";
 import { ensureDefaultPerKind, ensureLegacyChannels, isUniqueViolation } from "./legacy-mirror";
 import { USER_DISCONNECTED } from "./zernio-mirror";
+import { originOptions, validateWebchatConfig } from "./webchat/origin-match";
 import type { ChannelLimitsDto, CreateChannelDto, UpdateChannelDto } from "./channels.dto";
 
-/** Config keys a member may set. Server-managed keys (wabaId, verification,
- *  botUsername) are written only by the connect flows. */
-const EDITABLE_CONFIG_KEYS = ["allowedOrigins", "greeting", "greetingAr", "color", "position", "askName", "lang"] as const;
-
-/** `scheme://host[:port]`, nothing else (no path, query, wildcard or `*`). */
-const ORIGIN_RE = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i;
-
 /**
- * Basic web chat config validation (SP-19 T1): `allowedOrigins` is an array
- * of at most 20 http(s) origins. T3 tightens it (https outside localhost,
- * `*.domain` wildcards, greeting length, colour) and must re-validate stored
- * values when it reads them.
+ * Member-editable web chat config (allowedOrigins, greeting, greetingAr,
+ * color, position, askName, lang), validated by T3's origin-match rules:
+ * https-only origins in production, `https://*.domain` wildcards, greeting
+ * <= 280 chars, `#rrggbb` colours. Server-managed keys (wabaId,
+ * verification, botUsername) are written only by the connect flows.
  */
 function editableConfig(config: Record<string, unknown> | undefined): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (!config) return out;
-  for (const k of EDITABLE_CONFIG_KEYS) if (config[k] !== undefined) out[k] = config[k];
-  if (out.allowedOrigins !== undefined) {
-    const list = out.allowedOrigins;
-    const ok =
-      Array.isArray(list) &&
-      list.length <= 20 &&
-      list.every((o) => typeof o === "string" && ORIGIN_RE.test(o) && new URL(o).origin === o.toLowerCase());
-    if (!ok) throw channelError("channels.invalid_config", { field: "allowedOrigins" });
-  }
-  return out;
+  return validateWebchatConfig(config, originOptions());
 }
 
 /**
@@ -69,7 +53,7 @@ export class ChannelsService {
     return toChannelDto(await this.load(workspaceId, id));
   }
 
-  /** Web chat only; T3 adds allowedOrigins/greeting/color validation. */
+  /** Web chat only; the config is validated by validateWebchatConfig. */
   async createWebchat(workspaceId: string, dto: CreateChannelDto): Promise<ChannelDto> {
     if (dto.kind !== "webchat") throw channelError("channels.invalid_config", { field: "kind" });
     const hasDefault = await this.prisma.channel.findFirst({

@@ -10,6 +10,11 @@ import { TelegramWebhookGuard } from "./telegram/telegram-webhook.guard";
 import { ChannelResolver } from "./channel-resolver.service";
 import { ChannelTransportRegistry } from "./channel-transport";
 import { InboundSinkService } from "./inbound-sink.service";
+import { WebchatController } from "./webchat/webchat.controller";
+import { WebchatService } from "./webchat/webchat.service";
+import { WidgetGateway } from "./webchat/widget.gateway";
+import { WidgetOriginGuard } from "./webchat/widget-origin.guard";
+import { WidgetRateLimiter, WidgetRateLimitGuard } from "./webchat/widget-rate-limit.guard";
 
 describe("channels modules", () => {
   it("the global core exports the routing building blocks", () => {
@@ -19,10 +24,12 @@ describe("channels modules", () => {
     );
   });
 
-  it("the feature module serves the hub and Telegram controllers", () => {
-    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, ChannelsModule)).toEqual([ChannelsController, TelegramController]);
+  it("the feature module serves the hub, Telegram and web chat controllers", () => {
+    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, ChannelsModule)).toEqual([ChannelsController, TelegramController, WebchatController]);
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ChannelsModule)).toEqual(
-      expect.arrayContaining([TelegramService, TelegramClient, TelegramWebhookGuard]),
+      expect.arrayContaining([TelegramService, TelegramClient, TelegramWebhookGuard, WebchatService, WidgetGateway, WidgetOriginGuard, WidgetRateLimitGuard]),
     );
+    const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ChannelsModule) as unknown[];
+    expect(providers).toContainEqual(expect.objectContaining({ provide: WidgetRateLimiter }));
   });
 });

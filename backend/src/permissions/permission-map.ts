@@ -116,6 +116,12 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /webhooks/whatsapp": "public",
   "POST /webhooks/zernio": "public",
   "POST /webhooks/telegram/:channelId": "public", // TelegramWebhookGuard: secret header
+  // SP-19 T3 web chat widget: WidgetRateLimitGuard + WidgetOriginGuard (the loader is static).
+  "GET /widget.js": "public",
+  "GET /chat/:channelId": "public",
+  "GET /widget/:channelId/config": "public",
+  "GET /widget/:channelId/messages": "public",
+  "POST /widget/:channelId/messages": "public",
   "GET /webhooks/meta": "public",
   "POST /webhooks/meta": "public",
   "POST /webhooks/l/messages": "public",

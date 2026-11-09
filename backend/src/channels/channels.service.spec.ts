@@ -129,3 +129,45 @@ describe("ChannelsService", () => {
     expect(dto.config).toEqual({ allowedOrigins: ["https://a.example"], greeting: "Hi" });
   });
 });
+
+describe("web chat config validation (SP-19 T3)", () => {
+  const OLD = process.env.NODE_ENV;
+  afterEach(() => {
+    process.env.NODE_ENV = OLD;
+  });
+
+  it("create and PATCH normalize origins and accept greeting, colour, position, askName and lang", async () => {
+    const { svc } = build();
+    const dto = await svc.createWebchat("ws1", {
+      kind: "webchat",
+      displayName: "Site",
+      config: { allowedOrigins: ["https://Shop.example:443", "https://*.shop.com"], greeting: " Hi ", color: "#0F766E" },
+    });
+    expect(dto.config).toEqual({ allowedOrigins: ["https://shop.example", "https://*.shop.com"], greeting: "Hi", color: "#0F766E" });
+    const next = await svc.update("ws1", dto.id, { config: { position: "start", askName: true, lang: "ar", greetingAr: "أهلًا" } });
+    expect(next.config).toMatchObject({ allowedOrigins: ["https://shop.example", "https://*.shop.com"], position: "start", askName: true, lang: "ar", greetingAr: "أهلًا" });
+  });
+
+  it.each([
+    [{ allowedOrigins: ["https://*.com"] }, "allowedOrigins"],
+    [{ allowedOrigins: ["http://shop.example"] }, "allowedOrigins"],
+    [{ greeting: "x".repeat(281) }, "greeting"],
+    [{ color: "#abc" }, "color"],
+    [{ position: "left" }, "position"],
+    [{ lang: "fr" }, "lang"],
+  ])("refuses %j with 400 channels.invalid_config {field: %s}", async (config, field) => {
+    const { svc } = build();
+    const err = await svc.createWebchat("ws1", { kind: "webchat", displayName: "Site", config }).catch((e) => e);
+    expect(channelErrorKey(err)).toBe("channels.invalid_config");
+    expect(err.getResponse().field).toBe(field);
+  });
+
+  it("production refuses http://localhost origins (https only)", async () => {
+    process.env.NODE_ENV = "production";
+    const { svc } = build();
+    const err = await svc
+      .createWebchat("ws1", { kind: "webchat", displayName: "Site", config: { allowedOrigins: ["http://localhost:5173"] } })
+      .catch((e) => e);
+    expect(channelErrorKey(err)).toBe("channels.invalid_config");
+  });
+});

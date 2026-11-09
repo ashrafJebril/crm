@@ -27,7 +27,12 @@ export type ChannelErrorKey =
   | "channels.telegram_invalid_token"
   | "channels.telegram_needs_public_url"
   | "channels.telegram_send_failed"
-  | "channels.webhook_forbidden";
+  | "channels.webhook_forbidden"
+  | "widget.origin_forbidden"
+  | "widget.rate_limited"
+  | "widget.channel_unavailable"
+  | "widget.visitor_forbidden"
+  | "widget.invalid_message";
 
 const STATUS: Record<ChannelErrorKey, number> = {
   "channels.not_found": 404,
@@ -47,6 +52,12 @@ const STATUS: Record<ChannelErrorKey, number> = {
   "channels.telegram_needs_public_url": 400,
   "channels.telegram_send_failed": 502,
   "channels.webhook_forbidden": 403,
+  // SP-19 T3: the public web chat widget.
+  "widget.origin_forbidden": 403,
+  "widget.rate_limited": 429,
+  "widget.channel_unavailable": 404,
+  "widget.visitor_forbidden": 403,
+  "widget.invalid_message": 400,
 };
 
 export function channelError(key: ChannelErrorKey, extra: Record<string, unknown> = {}): HttpException {
