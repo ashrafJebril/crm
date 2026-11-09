@@ -108,7 +108,17 @@ export class ContactTimelineService {
       }),
       this.prisma.note.findMany({
         where: {
-          AND: [{ workspaceId, contactId, parentId: null, ...this.cursorWhere("note", cur) }, noteScope],
+          AND: [
+            {
+              workspaceId,
+              contactId,
+              parentId: null,
+              // Ticket-linked notes belong to the ticket: hidden without tickets.view.
+              ...(canTickets ? {} : { ticketId: null }),
+              ...this.cursorWhere("note", cur),
+            },
+            noteScope,
+          ],
         },
         orderBy: order,
         take,
@@ -118,6 +128,7 @@ export class ContactTimelineService {
             where: { workspaceId, ticket: { contactId, workspaceId }, ...this.cursorWhere("ticket_activity", cur) },
             orderBy: order,
             take,
+            include: { ticket: { select: { id: true, number: true, title: true } } },
           })
         : Promise.resolve([]),
       canConversations

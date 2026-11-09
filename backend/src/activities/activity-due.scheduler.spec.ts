@@ -22,7 +22,7 @@ describe("ActivityDueScheduler", () => {
     expect(notifications.notify).toHaveBeenCalledWith("ws", ["u1"], {
       type: "activity_due",
       title: "activity.due",
-      body: JSON.stringify({ title: "Call back", contactName: "Ali" }),
+      body: JSON.stringify({ title: "Call back", contactName: "Ali", kind: "follow_up" }),
       recordKind: "contact",
       recordId: "c1",
     });
@@ -101,7 +101,7 @@ describe("ActivityDueScheduler", () => {
     const svc = new ActivitiesService(prisma as never, notifications as never, perm as never);
     const row = prisma.seed({ id: "a", dueAt: new Date(NOW.getTime() - 60_000) });
     await sched.sweep(NOW);
-    await svc.update("ws", row.id, { dueAt: new Date(NOW.getTime() - 30_000).toISOString() }, "u1", { userId: "u1" });
+    await svc.update("ws", row.id, { dueAt: new Date(NOW.getTime() - 120_000).toISOString() }, "u1", { userId: "u1" });
     await sched.sweep(NOW);
     expect(notifications.notify).toHaveBeenCalledTimes(2);
   });

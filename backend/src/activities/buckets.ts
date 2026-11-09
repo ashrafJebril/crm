@@ -1,12 +1,14 @@
 /** Follow-up buckets in the workspace timezone. Pure; uses Intl only. */
 export type Bucket = "overdue" | "today" | "upcoming";
 
+export const DEFAULT_TZ = "Asia/Riyadh";
+
 function validTz(tz: string): string {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
     return tz;
   } catch {
-    return "UTC";
+    return DEFAULT_TZ;
   }
 }
 

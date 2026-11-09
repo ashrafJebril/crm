@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS "Activity" (
 CREATE INDEX IF NOT EXISTS "Activity_workspaceId_assigneeId_doneAt_dueAt_idx" ON "Activity"("workspaceId", "assigneeId", "doneAt", "dueAt");
 CREATE INDEX IF NOT EXISTS "Activity_workspaceId_contactId_idx" ON "Activity"("workspaceId", "contactId");
 CREATE INDEX IF NOT EXISTS "Activity_workspaceId_ticketId_idx" ON "Activity"("workspaceId", "ticketId");
+CREATE INDEX IF NOT EXISTS "Activity_doneAt_notifiedAt_dueAt_idx" ON "Activity"("doneAt", "notifiedAt", "dueAt");
 
 DO $$ BEGIN
   ALTER TABLE "Activity" ADD CONSTRAINT "Activity_workspaceId_fkey"

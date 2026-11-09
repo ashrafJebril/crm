@@ -15,16 +15,19 @@ import {
   QueueQuery,
   UpdateActivityDto,
 } from "./activities.dto";
-import { localDayBounds } from "./buckets";
+import { DEFAULT_TZ, localDayBounds } from "./buckets";
 import { canOpenRecord } from "../notifications/record-access";
 
 const INCLUDE = {
   contact: { select: { id: true, name: true } },
   ticket: { select: { id: true, number: true, title: true } },
 };
+/** Open activities of these kinds always keep a due time (a logged call/note may not). */
+const OPEN_DUE_KINDS: readonly string[] = [...DUE_REQUIRED_KINDS, "meeting"];
 const PAGE = 50;
 const QUEUE_CAP = 500;
-const DEFAULT_TZ = "Asia/Riyadh";
+
+const minuteOf = (d: Date | null | undefined) => (d ? Math.floor(d.getTime() / 60_000) : null);
 
 type Action = "view" | "update" | "delete";
 /** "all" = unrestricted (no viewer, bypass session or no PermissionService). */
@@ -125,11 +128,13 @@ export class ActivitiesService {
     let contactId = dto.contactId ?? null;
     const ticketId = dto.ticketId ?? null;
     if (ticketId) {
+      await this.assertCan(ws, viewer, { ticketId }, "update");
       const t = await this.prisma.ticket.findFirst({ where: { id: ticketId, workspaceId: ws }, select: { id: true, contactId: true } });
       if (!t) throw new NotFoundException("Ticket not found");
       if (contactId && contactId !== t.contactId) throw new BadRequestException("contactId does not match the ticket's contact");
       contactId = t.contactId;
     } else {
+      await this.assertCan(ws, viewer, { ticketId }, "update");
       const c = await this.prisma.contact.findFirst({ where: { id: contactId!, workspaceId: ws }, select: { id: true } });
       if (!c) throw new NotFoundException("Contact not found");
     }
@@ -142,7 +147,6 @@ export class ActivitiesService {
       await this.assertMember(ws, dto.assigneeId);
       await this.assertAssigneeAccess(ws, dto.assigneeId, { ticketId, contactId });
     }
-    await this.assertCan(ws, viewer, { ticketId }, "update");
 
     const now = this.now();
     const logged = !DUE_REQUIRED_KINDS.includes(dto.kind);
@@ -178,12 +182,13 @@ export class ActivitiesService {
     let rearm = false;
     if (dto.dueAt !== undefined) {
       if (dto.dueAt === null) {
-        if (DUE_REQUIRED_KINDS.includes(existing.kind)) throw new BadRequestException("dueAt is required");
+        if (!existing.doneAt && OPEN_DUE_KINDS.includes(existing.kind)) throw new BadRequestException("activities.due_required");
         data.dueAt = null;
       } else {
         const d = this.parseDate(dto.dueAt, "dueAt");
         data.dueAt = d;
-        if (existing.dueAt?.getTime() !== d.getTime()) rearm = true;
+        // Minute precision: the UI works in minutes, so sub-minute drift must not re-arm.
+        if (minuteOf(existing.dueAt) !== minuteOf(d)) rearm = true;
       }
     }
     let newAssignee: string | null = null;
@@ -339,8 +344,11 @@ export class ActivitiesService {
     let allowed = rows.filter((r) => this.can(eff, this.permFor(r, "update")));
     // A reassign target that cannot open a record is skipped for that row.
     if (dto.op === "reassign") {
-      const ok = await Promise.all(allowed.map((r) => this.canAssigneeOpen(ws, dto.assigneeId!, r)));
-      allowed = allowed.filter((_, i) => ok[i]);
+      // The assignee's permissions are looked up once, then rows are filtered in memory.
+      const aeff: Eff | null = this.perm ? await this.perm.effective(ws, dto.assigneeId!) : "all";
+      const canC = aeff !== null && this.can(aeff, "contacts.view");
+      const canT = aeff !== null && this.can(aeff, "tickets.view");
+      allowed = allowed.filter((r) => (r.ticketId ? canT : canC));
     }
     const target = allowed.map((r) => r.id);
     if (target.length === 0) return { affected: 0, skipped: ids.length };
@@ -381,18 +389,49 @@ export class ActivitiesService {
 
     const rows = await this.prisma.activity.findMany({
       where,
-      orderBy: { dueAt: "asc" },
+      orderBy: [{ dueAt: "asc" }, { id: "asc" }],
       distinct: [field],
-      select: { id: true, kind: true, title: true, dueAt: true, contactId: true, ticketId: true },
+      select: {
+        id: true,
+        kind: true,
+        title: true,
+        dueAt: true,
+        contactId: true,
+        ticketId: true,
+        assigneeId: true,
+        notes: true,
+        outcome: true,
+      },
     });
     const now = this.now().getTime();
-    const out: Record<string, { activityId: string; kind: string; title: string; dueAt: Date; overdue: boolean }> = {};
+    const out: Record<
+      string,
+      {
+        activityId: string;
+        kind: string;
+        title: string;
+        dueAt: Date;
+        overdue: boolean;
+        assigneeId: string | null;
+        notes: string | null;
+        outcome: string | null;
+      }
+    > = {};
     for (const r of rows) {
       const key = (r as Record<string, string | null>)[field];
       if (!key || !r.dueAt) continue;
       const cur = out[key];
       if (cur && cur.dueAt.getTime() <= r.dueAt.getTime()) continue;
-      out[key] = { activityId: r.id, kind: r.kind, title: r.title, dueAt: r.dueAt, overdue: r.dueAt.getTime() < now };
+      out[key] = {
+        activityId: r.id,
+        kind: r.kind,
+        title: r.title,
+        dueAt: r.dueAt,
+        overdue: r.dueAt.getTime() < now,
+        assigneeId: r.assigneeId ?? null,
+        notes: r.notes ?? null,
+        outcome: r.outcome ?? null,
+      };
     }
     return out;
   }

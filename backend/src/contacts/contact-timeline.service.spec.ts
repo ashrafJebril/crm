@@ -153,6 +153,14 @@ describe("ContactTimelineService", () => {
     expect(f.message.findMany).not.toHaveBeenCalled();
   });
 
+  it("hides ticket-linked notes without tickets.view but shows them with it", async () => {
+    f.notes.push({ id: "n3", workspaceId: "ws", contactId: "c1", parentId: null, conversationId: null, ticketId: "t1", body: "tk", createdAt: ts("2026-01-09") });
+    const without = await build(f, {}, ["contacts.view", "conversations.view"]).timeline("ws", "c1", viewer, {});
+    expect(without.items.map((i) => i.id)).not.toContain("n3");
+    const withT = await build(f, {}, ["contacts.view", "tickets.view", "conversations.view"]).timeline("ws", "c1", viewer, {});
+    expect(withT.items.map((i) => i.id)).toContain("n3");
+  });
+
   it("a viewer with everything is unchanged and message payloads omit metaMessageId", async () => {
     f.messages[0].metaMessageId = "wamid.X";
     const r = await build(f, {}, ["contacts.view", "tickets.view", "conversations.view"]).timeline("ws", "c1", viewer, {});

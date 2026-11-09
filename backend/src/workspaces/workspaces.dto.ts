@@ -1,3 +1,4 @@
+import { IsTimezone } from "../common/is-timezone";
 import { IsIn, IsOptional, IsString, MinLength } from "class-validator";
 
 export const WORKSPACE_ROLES = ["owner", "admin", "agent", "viewer"] as const;
@@ -10,6 +11,7 @@ export class CreateWorkspaceDto {
 
   @IsString()
   @IsOptional()
+  @IsTimezone()
   timezone?: string;
 
   @IsString()
@@ -24,6 +26,7 @@ export class UpdateWorkspaceDto {
 
   @IsString()
   @IsOptional()
+  @IsTimezone()
   timezone?: string;
 
   @IsString()

@@ -44,9 +44,9 @@ describe("localDayBounds", () => {
     const { start } = localDayBounds(new Date("2026-11-10T21:00:00Z"), TZ);
     expect(start.toISOString()).toBe("2026-11-10T20:00:00.000Z");
   });
-  it("falls back to UTC for an invalid timezone", () => {
+  it("falls back to the default (Asia/Riyadh) for an invalid timezone", () => {
     const { start } = localDayBounds(NOW, "Not/AZone");
-    expect(start.toISOString()).toBe("2026-11-10T00:00:00.000Z");
+    expect(start.toISOString()).toBe("2026-11-09T21:00:00.000Z");
   });
 });
 
@@ -68,5 +68,12 @@ describe("Africa/Cairo DST", () => {
     const now = new Date("2026-04-24T10:00:00Z");
     expect(bucketOf(new Date("2026-04-24T20:59:00Z"), now, "Africa/Cairo")).toBe("today");
     expect(bucketOf(new Date("2026-04-24T21:00:00Z"), now, "Africa/Cairo")).toBe("upcoming");
+  });
+});
+
+describe("localDayBounds invalid tz", () => {
+  it("falls back to Asia/Riyadh (not UTC) for an invalid zone", () => {
+    expect(localDayBounds(NOW, "Bad/Zone")).toEqual(localDayBounds(NOW, "Asia/Riyadh"));
+    expect(localDayBounds(NOW, "Bad/Zone").start.getTime()).not.toBe(localDayBounds(NOW, "UTC").start.getTime());
   });
 });

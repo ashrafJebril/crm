@@ -124,6 +124,41 @@ describe("ActivitiesService CRUD", () => {
     await expect(svc.update("ws", "zz", { title: "x" }, "u1", me)).rejects.toThrow(NotFoundException);
   });
 
+  it("update: a same-minute dueAt does not re-arm the notification; a new minute does", async () => {
+    const { svc, prisma } = setup({ u1: { perms: ALL } });
+    const row = prisma.seed({ notifiedAt: NOW, dueAt: new Date("2026-11-10T08:00:00Z") });
+    await svc.update("ws", row.id, { dueAt: "2026-11-10T08:00:40Z" }, "u1", me);
+    expect(prisma.activities[0].notifiedAt).toEqual(NOW);
+    await svc.update("ws", row.id, { dueAt: "2026-11-10T08:01:00Z" }, "u1", me);
+    expect(prisma.activities[0].notifiedAt).toBeNull();
+  });
+
+  it("update: clearing dueAt on an open follow_up/task/meeting is activities.due_required; a logged call may", async () => {
+    const { svc, prisma } = setup({ u1: { perms: ALL } });
+    for (const kind of ["follow_up", "task", "meeting"]) {
+      const row = prisma.seed({ kind });
+      await expect(svc.update("ws", row.id, { dueAt: null }, "u1", me)).rejects.toThrow("activities.due_required");
+    }
+    const call = prisma.seed({ kind: "call", doneAt: NOW });
+    await svc.update("ws", call.id, { dueAt: null }, "u1", me);
+    expect(prisma.activities.find((x) => x.id === call.id)!.dueAt).toBeNull();
+  });
+
+  it("create: the permission check runs before the ticket/contact existence checks", async () => {
+    const { svc } = setup({ u1: { perms: ["contacts.update"] } });
+    await expect(
+      svc.create("ws", { kind: "task", title: "x", dueAt: "2026-11-11T08:00:00Z", ticketId: "missing" }, "u1", me),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it("bulk reassign looks up the assignee's permissions once", async () => {
+    const { svc, prisma, perm } = setup({ u1: { perms: ALL }, u2: { perms: ["contacts.view"] } });
+    for (let i = 0; i < 5; i++) prisma.seed({ id: `r${i}` });
+    perm.effective.mockClear();
+    await svc.bulk("ws", { ids: ["r0", "r1", "r2", "r3", "r4"], op: "reassign", assigneeId: "u2" }, "u1", me);
+    expect(perm.effective.mock.calls.filter((c: any[]) => c[1] === "u2")).toHaveLength(1);
+  });
+
   it("an activity in another workspace is a 404", async () => {
     const { svc, prisma } = setup({ u1: { perms: ALL } });
     const row = prisma.seed({ workspaceId: "other" });
@@ -275,7 +310,16 @@ describe("next-steps", () => {
     expect(prisma.activity.findMany.mock.calls[0][0].where.contactId).toEqual({ in: ["c1", "c2"] });
     expect(prisma.activity.count).not.toHaveBeenCalled();
     expect(r).toEqual({
-      c1: { activityId: "early", kind: "follow_up", title: "Sooner", dueAt: new Date("2026-11-09T08:00:00Z"), overdue: true },
+      c1: {
+        activityId: "early",
+        kind: "follow_up",
+        title: "Sooner",
+        dueAt: new Date("2026-11-09T08:00:00Z"),
+        overdue: true,
+        assigneeId: "u1",
+        notes: null,
+        outcome: null,
+      },
     });
   });
 

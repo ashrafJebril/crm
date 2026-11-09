@@ -59,7 +59,7 @@ export class ActivityDueScheduler {
           await this.notifications.notify(a.workspaceId, [a.assigneeId!], {
             type: "activity_due",
             title: "activity.due",
-            body: JSON.stringify({ title: a.title, contactName: a.contact?.name ?? "" }),
+            body: JSON.stringify({ title: a.title, contactName: a.contact?.name ?? "", kind: a.kind }),
             recordKind: kind,
             recordId,
           });
