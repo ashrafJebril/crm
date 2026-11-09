@@ -29,16 +29,7 @@ export class TicketsController {
     @Optional() private readonly perm?: PermissionService,
   ) {}
 
-  // ── Pipelines ──────────────────────────────────────────────────────────
-  @Get("pipelines")
-  listPipelines(@CurrentWorkspace() workspaceId: string) {
-    return this.svc.listPipelines(workspaceId);
-  }
-
-  @Get("pipelines/:id")
-  getPipeline(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.svc.getPipeline(workspaceId, id);
-  }
+  // Pipelines moved to PipelinesController (SP-07).
 
   // ── Tickets ────────────────────────────────────────────────────────────
   @Get("tickets")
@@ -101,8 +92,9 @@ export class TicketsController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: MoveTicketDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
-    return this.svc.moveTicket(workspaceId, id, dto);
+    return this.svc.moveTicket(workspaceId, id, dto, viewer);
   }
 
   @Post("tickets/:id/notes")

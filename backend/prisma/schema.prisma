@@ -421,11 +421,20 @@ model Pipeline {
   nameAr    String
   isDefault Boolean @default(false)
 
+  // SP-07 pipeline editor
+  version              Int       @default(0) // optimistic-concurrency counter for draft saves
+  archivedAt           DateTime?
+  staleDays            Int?
+  agentCanMove         Boolean   @default(true)
+  assignsConversations Boolean   @default(false)
+  kind                 String    @default("deals") // "deals" | "support"
+
   workspaceId String
   workspace   Workspace @relation("WorkspacePipelines", fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  stages   TicketStage[]
-  tickets  Ticket[]
+  stages      TicketStage[]
+  tickets     Ticket[]
+  lostReasons LostReason[]
 
   createdAt DateTime @default(now())
 
@@ -471,7 +480,8 @@ model Ticket {
   value       Float?
   currency    String  @default("SAR")
 
-  lostReason String?
+  lostReason   String? // label snapshot, survives edits/deletes of the LostReason row
+  lostReasonId String?
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -483,6 +493,7 @@ model Ticket {
 
   pipeline   Pipeline         @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   stage      TicketStage      @relation(fields: [stageId], references: [id])
+  lostReasonRef LostReason?   @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
   contact    Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
   activities TicketActivity[]
   notes      Note[]
@@ -492,6 +503,26 @@ model Ticket {
   @@index([contactId])
   @@index([stageId])
   @@index([ownerId])
+  @@index([workspaceId])
+  @@index([lostReasonId])
+}
+
+model LostReason {
+  id         String    @id @default(cuid())
+  pipelineId String
+  label      String
+  labelAr    String
+  order      Int       @default(0)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceLostReasons", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  tickets  Ticket[]
+
+  @@index([pipelineId])
   @@index([workspaceId])
 }
 
@@ -818,6 +849,7 @@ model Workspace {
   campaigns         Campaign[]         @relation("WorkspaceCampaigns")
   pipelines         Pipeline[]         @relation("WorkspacePipelines")
   ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")
+  lostReasons       LostReason[]       @relation("WorkspaceLostReasons")
   tickets           Ticket[]           @relation("WorkspaceTickets")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
@@ -948,6 +980,7 @@ model Activity {
   @@index([workspaceId, assigneeId, doneAt, dueAt])
   @@index([workspaceId, contactId])
   @@index([workspaceId, ticketId])
+  @@index([doneAt, notifiedAt, dueAt])
 }
 
 // ─── Media library ────────────────────────────────────────────────────────

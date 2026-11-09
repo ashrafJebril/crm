@@ -261,6 +261,7 @@ export class ConversationResolutionService {
             key: SUPPORT_PIPELINE.key,
             name: SUPPORT_PIPELINE.name,
             nameAr: SUPPORT_PIPELINE.nameAr,
+            kind: "support",
             stages: { create: SUPPORT_STAGES.map((s) => ({ ...s, workspaceId })) },
           },
         });

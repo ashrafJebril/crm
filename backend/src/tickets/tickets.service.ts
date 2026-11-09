@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,6 +11,8 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import {
   AddNoteDto,
   CreateTicketDto,
@@ -28,28 +31,10 @@ export class TicketsService {
     private readonly realtime: RealtimeService,
     @Optional() private readonly events?: EventEmitter2,
     @Optional() private readonly notifications?: NotificationsService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
-  // ─── Pipelines ─────────────────────────────────────────────────────────
-  async listPipelines(workspaceId: string) {
-    return this.prisma.pipeline.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: "asc" },
-      include: {
-        stages: { orderBy: { order: "asc" } },
-        _count: { select: { tickets: true } },
-      },
-    });
-  }
-
-  async getPipeline(workspaceId: string, id: string) {
-    const p = await this.prisma.pipeline.findFirst({
-      where: { id, workspaceId },
-      include: { stages: { orderBy: { order: "asc" } } },
-    });
-    if (!p) throw new NotFoundException("Pipeline not found");
-    return p;
-  }
+  // Pipelines (list/get/edit) live in PipelinesService (SP-07).
 
   // ─── Tickets ───────────────────────────────────────────────────────────
   async listTickets(workspaceId: string, query: ListTicketsQuery) {
@@ -139,6 +124,12 @@ export class TicketsService {
     if (!stage || stage.pipelineId !== dto.pipelineId) {
       throw new BadRequestException("stageId does not belong to pipelineId");
     }
+    // Archived pipelines are read-only for new work (their tickets stay readable).
+    const pl = await this.prisma.pipeline.findFirst({
+      where: { id: dto.pipelineId, workspaceId },
+      select: { archivedAt: true },
+    });
+    if (pl?.archivedAt) throw new BadRequestException("pipelines.archived");
 
     // Reject foreign-key ids from other tenants — otherwise a ticket created in
     // your own workspace could point at another workspace's contact and leak
@@ -309,12 +300,20 @@ export class TicketsService {
     }
   }
 
-  async moveTicket(workspaceId: string, id: string, dto: MoveTicketDto) {
+  async moveTicket(workspaceId: string, id: string, dto: MoveTicketDto, viewer?: Viewer) {
     const ticket = await this.prisma.ticket.findFirst({
       where: { id, workspaceId },
-      include: { stage: true },
+      include: { stage: true, pipeline: { select: { agentCanMove: true } } },
     });
     if (!ticket) throw new NotFoundException("Ticket not found");
+
+    // SP-07: a pipeline can restrict moves to people who may edit pipelines
+    // (owner/admin). Internal callers pass no viewer and are never gated.
+    if (ticket.pipeline && ticket.pipeline.agentCanMove === false && viewer && this.perm) {
+      if (!(await this.perm.viewerCan(workspaceId, viewer, "pipelines.update"))) {
+        throw new ForbiddenException({ statusCode: 403, message: "Missing permission", permission: "pipelines.update" });
+      }
+    }
 
     const targetStage = await this.prisma.ticketStage.findFirst({
       where: { id: dto.stageId, workspaceId },
@@ -328,7 +327,19 @@ export class TicketsService {
     }
 
     const isLost = targetStage.isTerminal && !targetStage.isWon;
-    if (isLost && !dto.lostReason) {
+    // lostReasonId (SP-07) wins over free text; its label is the snapshot.
+    let lostLabel: string | null = isLost ? (dto.lostReason ?? null) : null;
+    let lostReasonId: string | null = null;
+    if (isLost && dto.lostReasonId) {
+      const reason = await this.prisma.lostReason.findFirst({
+        where: { id: dto.lostReasonId, pipelineId: ticket.pipelineId, workspaceId, archivedAt: null },
+        select: { id: true, label: true },
+      });
+      if (!reason) throw new BadRequestException("pipelines.invalid_lost_reason");
+      lostReasonId = reason.id;
+      lostLabel = reason.label;
+    }
+    if (isLost && !lostLabel) {
       throw new BadRequestException("lostReason is required when moving to a Lost stage");
     }
 
@@ -336,7 +347,8 @@ export class TicketsService {
       where: { id },
       data: {
         stageId: targetStage.id,
-        lostReason: isLost ? dto.lostReason : null,
+        lostReason: isLost ? lostLabel : null,
+        lostReasonId: isLost ? lostReasonId : null,
         closedAt: targetStage.isTerminal ? new Date() : null,
         enteredStageAt: new Date(),
       },
@@ -350,7 +362,7 @@ export class TicketsService {
         kind: targetStage.isTerminal ? (targetStage.isWon ? "won" : "lost") : "stage_changed",
         fromStage: ticket.stage.key,
         toStage: targetStage.key,
-        note: dto.note ?? (isLost ? dto.lostReason : null),
+        note: dto.note ?? (isLost ? lostLabel : null),
         byUserId: dto.byUserId ?? null,
       },
     });

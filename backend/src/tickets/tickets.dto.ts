@@ -29,6 +29,8 @@ export class UpdateTicketDto {
 export class MoveTicketDto {
   @IsString() @IsNotEmpty() stageId!: string;
   @IsOptional() @IsString() lostReason?: string;
+  /** SP-07: a LostReason of the ticket's pipeline; its label becomes the lostReason snapshot. */
+  @IsOptional() @IsString() lostReasonId?: string;
   @IsOptional() @IsString() note?: string;
   @IsOptional() @IsString() byUserId?: string;
 }

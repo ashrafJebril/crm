@@ -13,6 +13,7 @@ const SCOPED_MODELS = new Set([
   "Campaign",
   "Pipeline",
   "TicketStage",
+  "LostReason",
   "Ticket",
   "TicketActivity",
   "Integration",

@@ -240,6 +240,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // ── Tickets & pipelines ───────────────────────────────────────────────
   "GET /pipelines": "pipelines.view",
   "GET /pipelines/:id": "pipelines.view",
+  "GET /pipelines/:id/lost-reasons": "pipelines.view",
+  "POST /pipelines": "pipelines.manage",
+  "PUT /pipelines/:id/draft": "pipelines.manage",
+  "POST /pipelines/:id/archive": "pipelines.manage",
+  "POST /pipelines/:id/unarchive": "pipelines.manage",
   "GET /tickets": "tickets.view",
   "GET /tickets/dashboard/summary": "tickets.view",
   "GET /tickets/:id": "tickets.view",

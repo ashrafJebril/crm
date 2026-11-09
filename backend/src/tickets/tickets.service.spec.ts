@@ -42,6 +42,7 @@ describe("TicketsService.createTicket", () => {
     prisma = {
       contact: { findFirst: jest.fn().mockResolvedValue({ id: "ct_1" }) },
       ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st_1", pipelineId: "pl_1", key: "new" }) },
+      pipeline: { findFirst: jest.fn().mockResolvedValue({ archivedAt: null }) },
       ticket: {
         findFirst: jest.fn().mockResolvedValue({ number: 4 }),
         create: jest.fn().mockResolvedValue({ id: "tk_1", number: 5, stageId: "st_1", pipelineId: "pl_1" }),
@@ -155,6 +156,7 @@ describe("TicketsService.createFromConversation", () => {
         findFirst: jest.fn().mockResolvedValue({ id: "conv_1", contactId: "ct_99", workspaceId: "ws_1" }),
       },
       ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st_1", pipelineId: "pl_1", key: "new" }) },
+      pipeline: { findFirst: jest.fn().mockResolvedValue({ archivedAt: null }) },
       ticket: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({
@@ -273,6 +275,7 @@ describe("TicketsService.createTicket owner notifications", () => {
   beforeEach(async () => {
     prisma = {
       ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st", pipelineId: "pl", key: "new" }) },
+      pipeline: { findFirst: jest.fn().mockResolvedValue({ archivedAt: null }) },
       contact: { findFirst: jest.fn().mockResolvedValue({ id: "c1" }) },
       conversation: { findFirst: jest.fn() },
       workspaceMember: { findFirst: jest.fn().mockResolvedValue({ id: "m" }) },
