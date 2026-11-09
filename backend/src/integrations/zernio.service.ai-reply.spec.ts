@@ -24,6 +24,13 @@ function build(
     integration: {
       findFirst: jest.fn().mockResolvedValue({ workspaceId: WS, platform: "facebook", pageId: "page-1" }),
     },
+    // SP-19: the account's channel decides workspace and thread.
+    channel: {
+      findMany: jest.fn().mockResolvedValue([
+        { id: "ch1", workspaceId: WS, kind: "facebook", provider: "zernio", externalId: "page-1", status: "active" },
+      ]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     message: {
       findFirst: jest.fn().mockResolvedValue(null), // not a redelivery
       create: jest.fn().mockResolvedValue({ id: "m-db" }),

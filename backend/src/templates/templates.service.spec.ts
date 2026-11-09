@@ -21,6 +21,8 @@ describe("TemplatesService.list — reconciliation against Meta", () => {
   }) => {
     const local = opts.local ?? [];
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: {
         findFirst: jest.fn().mockResolvedValue(
           opts.accountId === null ? null : { pageId: opts.accountId ?? "acc1", provider: "zernio" },
@@ -208,6 +210,8 @@ describe("TemplatesService.create — real submission only", () => {
 
   const build = (accountId: string | null = "acc1") => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: {
         findFirst: jest
           .fn()
@@ -318,6 +322,8 @@ describe("TemplatesService.create — category translation", () => {
     // Meta retired TRANSACTIONAL and 400s on it, but our seed and older rows
     // still use it — including order_confirmed_v2 in the demo workspace.
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
@@ -347,6 +353,8 @@ describe("TemplatesService.create — category translation", () => {
 describe("TemplatesService.update — edits reach Meta", () => {
   const build = (row: Record<string, unknown>) => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: {
         findFirst: jest.fn().mockResolvedValue(row),
@@ -436,6 +444,8 @@ describe("TemplatesService.duplicate", () => {
 describe("TemplatesService.remove", () => {
   const build = (row: Record<string, unknown>, deleteFails = false) => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: {
         findFirst: jest.fn().mockResolvedValue(row),
@@ -514,6 +524,8 @@ describe("TemplatesService.list — write only on change", () => {
       buttons: null,
     };
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: {
         findMany: jest.fn().mockResolvedValue([stored]),
@@ -547,6 +559,8 @@ describe("TemplatesService.list — write only on change", () => {
 
   it("writes when Meta's verdict has actually changed", async () => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: {
         findMany: jest.fn().mockResolvedValue([
@@ -592,6 +606,8 @@ describe("TemplatesService.list — write only on change", () => {
 describe("TemplatesService.create — Zernio's lowercase component contract", () => {
   const build = () => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
@@ -669,6 +685,8 @@ describe("TemplatesService.create — Zernio's lowercase component contract", ()
 describe("TemplatesService.create — Meta requires sample values", () => {
   const build = () => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
@@ -768,6 +786,8 @@ describe("TemplatesService.create — Meta requires sample values", () => {
 describe("TemplatesService.list — surfaces Meta's rejection reason", () => {
   const build = (meta: Array<Record<string, unknown>>, local: Array<Record<string, unknown>> = []) => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: {
         findMany: jest.fn().mockResolvedValue(local),

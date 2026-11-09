@@ -18,6 +18,7 @@ const SCOPED_MODELS = new Set([
   "Ticket",
   "TicketActivity",
   "Integration",
+  "Channel",
   "Note",
   "Notification",
   "NotificationPreference",

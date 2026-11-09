@@ -34,9 +34,14 @@ export class WhatsAppController {
   ) {}
 
   // ── Tenant-scoped endpoints ─────────────────────────────────────────────
+  /** verifyToken is a webhook credential: only channels.update holders get
+   *  it, though agents/viewers may read this route (SP-19 R10). */
   @Get("integrations/whatsapp/status")
-  status(@CurrentWorkspace() workspaceId: string) {
-    return this.wa.status(workspaceId);
+  async status(@CurrentWorkspace() workspaceId: string, @CurrentViewer() viewer?: Viewer) {
+    const includeVerifyToken = this.perm
+      ? await this.perm.viewerCan(workspaceId, viewer, "channels.update")
+      : false;
+    return this.wa.status(workspaceId, { includeVerifyToken });
   }
 
   @Post("integrations/whatsapp/connect")

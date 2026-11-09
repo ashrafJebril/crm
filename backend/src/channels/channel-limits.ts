@@ -1,0 +1,42 @@
+import type { PrismaService } from "../prisma/prisma.service";
+import { channelError } from "./channel-errors";
+
+/**
+ * WhatsApp numbers per workspace, by `Workspace.plan` (ruling R3, values
+ * pending user confirmation). `CHANNEL_WHATSAPP_LIMIT` overrides every plan.
+ *
+ * Counts non-disconnected WhatsApp channels. Gates only OUR add flows
+ * (embedded signup, manual token, Zernio connect link — T4). Accounts that
+ * already exist at a provider are always mirrored and inbound is never
+ * dropped because of the limit.
+ */
+export const CHANNEL_LIMITS: Readonly<Record<string, number>> = Object.freeze({
+  free: 1,
+  starter: 1,
+  growth: 3,
+  pro: 10,
+});
+
+export function whatsappLimit(plan: string, env: Record<string, string | undefined> = process.env): number {
+  const override = Number(env.CHANNEL_WHATSAPP_LIMIT);
+  if (Number.isInteger(override) && override > 0) return override;
+  return CHANNEL_LIMITS[plan] ?? CHANNEL_LIMITS.free;
+}
+
+export async function whatsappUsage(
+  prisma: PrismaService,
+  workspaceId: string,
+): Promise<{ used: number; limit: number; plan: string }> {
+  const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { plan: true } });
+  const plan = ws?.plan ?? "free";
+  const used = await prisma.channel.count({
+    where: { workspaceId, kind: "whatsapp", status: { not: "disconnected" } },
+  });
+  return { used, limit: whatsappLimit(plan), plan };
+}
+
+/** 409 channels.limit_reached {limit, plan} when no WhatsApp slot is left. */
+export async function assertWhatsappCapacity(prisma: PrismaService, workspaceId: string): Promise<void> {
+  const { used, limit, plan } = await whatsappUsage(prisma, workspaceId);
+  if (used >= limit) throw channelError("channels.limit_reached", { limit, plan });
+}

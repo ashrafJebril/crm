@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient, ZernioWhatsAppTemplate } from "../integrations/zernio.client";
+import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
 
 /**
  * WhatsApp message templates.
@@ -382,11 +383,9 @@ export class TemplatesService {
     return { ...row, status: "local" };
   }
 
+  /** SP-19 (R8): templates live on the default WhatsApp number. */
   private async whatsappAccountId(workspaceId: string): Promise<string | null> {
-    const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, provider: "zernio", platform: "whatsapp" },
-    });
-    return integ?.pageId ?? null;
+    return defaultZernioWhatsappAccountId(this.prisma, workspaceId);
   }
 
   /** Match on name + base language so an "en" row links to Meta's "en_US". */

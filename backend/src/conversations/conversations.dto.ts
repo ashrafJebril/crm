@@ -43,3 +43,9 @@ export class CreateMessageDto {
   @IsString() body!: string;
   @IsOptional() @IsString() attach?: string;
 }
+
+/** SP-19 `POST /conversations/:id/send`: a text reply through the channel's
+ *  transport (Telegram, web chat). Zernio/Meta keep their own routes. */
+export class SendViaChannelDto {
+  @IsString() @IsNotEmpty() @MaxLength(4096) body!: string;
+}

@@ -70,7 +70,7 @@ const ALLOWLIST: Record<string, string> = {
 };
 
 const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
-  ["conversations", ConversationsController, ["list", "get", "update", "markRead", "remove", "messages", "setAi", "send"]],
+  ["conversations", ConversationsController, ["list", "get", "update", "markRead", "remove", "messages", "setAi", "send", "sendViaChannel"]],
   ["conversation-labels", ConversationLabelsController, ["setLabels"]],
   ["notes", NotesController, ["list", "create", "update", "seen", "remove"]],
   ["records", RecordsController, ["get"]],

@@ -29,6 +29,8 @@ describe("CampaignSendService", () => {
         findFirst: jest.fn().mockResolvedValue({ id: "tpl1", name: "eid_offer", lang: "ar", status: "approved", body: "Hi {{1}}, {{2}} off" }),
       },
       workspace: { findUnique: jest.fn().mockResolvedValue({ zernioProfileId: "prof1" }) },
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       contact: { findMany: jest.fn().mockResolvedValue([...contacts(3), { name: "X", phone: null, lifecycle: "lead" }]) },
     };

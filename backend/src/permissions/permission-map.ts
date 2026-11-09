@@ -140,6 +140,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /conversations/:id/messages": "conversations.view",
   "POST /conversations/:id/ai": "conversations.update",
   "POST /conversations/:id/messages": "conversations.create",
+  "POST /conversations/:id/send": "conversations.create", // SP-19 transport send (telegram/native); viewer-checked
   "PUT /conversations/:id/labels": "conversations.update",
   "GET /conversation-labels": "conversations.view",
   "GET /saved-replies": "conversations.view",
@@ -380,6 +381,14 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /integrations/zernio/whatsapp/numbers": "channels.view",
   "POST /integrations/zernio/backfill": "channels.update",
   "DELETE /integrations/zernio/:platform": "channels.delete",
+  // SP-19 channels hub
+  "GET /channels": "channels.view",
+  "GET /channels/limits": "channels.view",
+  "GET /channels/:id": "channels.view",
+  "POST /channels": "channels.create", // web chat only
+  "PATCH /channels/:id": "channels.update",
+  "POST /channels/sync": "channels.update",
+  "DELETE /channels/:id": "channels.delete", // soft disconnect
 
   // ── Members & workspace settings ──────────────────────────────────────
   "GET /roles": "roles.view",

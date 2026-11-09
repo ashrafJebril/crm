@@ -37,6 +37,8 @@ class CreateCampaignDto {
   @IsOptional() @IsInt() @Min(0) recipients?: number;
   @IsOptional() @IsString() segmentId?: string;
   @IsOptional() @IsString() templateId?: string;
+  /** SP-19: an active Zernio WhatsApp channel; null/absent = the default number. */
+  @IsOptional() @IsString() senderChannelId?: string | null;
 }
 
 /** Drafts only. Status and delivery counters come from Zernio, never the client. */
@@ -48,6 +50,8 @@ class UpdateCampaignDto {
   @IsOptional() @IsInt() @Min(0) recipients?: number;
   @IsOptional() @IsString() segmentId?: string;
   @IsOptional() @IsString() templateId?: string;
+  /** SP-19: an active Zernio WhatsApp channel; null/absent = the default number. */
+  @IsOptional() @IsString() senderChannelId?: string | null;
 }
 
 const VARIABLE_FIELDS = ["name", "phone", "email", "company", "custom"] as const;
@@ -96,7 +100,8 @@ class CampaignsController {
   }
 
   @Post()
-  create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto) {
+  async create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto) {
+    await this.send.validateSender(workspaceId, dto.senderChannelId);
     return this.prisma.campaign.create({
       data: {
         ...dto,
@@ -115,6 +120,7 @@ class CampaignsController {
   ) {
     const existing = await this.prisma.campaign.findFirstOrThrow({ where: { id, workspaceId } });
     if (existing.status !== "draft") throw new BadRequestException("Only draft campaigns can be edited.");
+    await this.send.validateSender(workspaceId, dto.senderChannelId);
     return this.prisma.campaign.update({ where: { id }, data: dto });
   }
 

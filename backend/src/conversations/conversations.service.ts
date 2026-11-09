@@ -14,6 +14,10 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { applyConversationAssignment } from "./assign-conversation";
 import { LOutboundService } from "../integrations/l-outbound.service";
+import { ChannelResolver, pickEffectiveChannel } from "../channels/channel-resolver.service";
+import { ChannelTransportRegistry, type TransportConversation } from "../channels/channel-transport";
+import { channelError } from "../channels/channel-errors";
+import { ensureLegacyChannels } from "../channels/legacy-mirror";
 import {
   CreateConversationDto,
   CreateMessageDto,
@@ -31,7 +35,16 @@ export class ConversationsService {
     @Optional() private readonly notifications?: NotificationsService,
     // Absent only in unit tests; the module is @Global in the app.
     @Optional() private readonly perm?: PermissionService,
-  ) {}
+    // SP-19, from the global ChannelsCoreModule (unit specs may omit them).
+    @Optional() channelResolver?: ChannelResolver,
+    @Optional() transports?: ChannelTransportRegistry,
+  ) {
+    this.channels = channelResolver ?? new ChannelResolver(prisma);
+    this.transports = transports ?? new ChannelTransportRegistry();
+  }
+
+  private readonly channels: ChannelResolver;
+  private readonly transports: ChannelTransportRegistry;
 
   /** Which conversations `viewer` may see. No viewer = internal caller. */
   private scope(workspaceId: string, viewer?: Viewer): Promise<Prisma.ConversationWhereInput> {
@@ -49,13 +62,37 @@ export class ConversationsService {
     });
   }
 
-  async list(workspaceId: string, viewer?: Viewer) {
+  /**
+   * SP-19: `filter.channelIds` keeps conversations whose EFFECTIVE channel is
+   * one of them (legacy null-channel rows included). It is ANDed with the
+   * viewer's scope, never replacing it. Every row carries its effective
+   * `channelId` and `channelProvider` (null when none resolves, e.g. `l`).
+   */
+  async list(workspaceId: string, viewer?: Viewer, filter: { channelIds?: string[] } = {}) {
     const scope = await this.scope(workspaceId, viewer);
-    const convs = await this.prisma.conversation.findMany({
-      where: { workspaceId, ...scope },
-      orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-      include: { labels: { select: { labelId: true } } },
-    });
+    const channelIds = (filter.channelIds ?? []).filter(Boolean);
+    await ensureLegacyChannels(this.prisma, workspaceId);
+    const where: Prisma.ConversationWhereInput = channelIds.length
+      ? { AND: [{ workspaceId }, scope, { OR: [{ channelId: { in: channelIds } }, { channelId: null }] }] }
+      : { workspaceId, ...scope };
+    const [rows, channels] = await Promise.all([
+      this.prisma.conversation.findMany({
+        where,
+        orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+        include: { labels: { select: { labelId: true } } },
+      }),
+      this.prisma.channel.findMany({
+        where: { workspaceId },
+        select: { id: true, workspaceId: true, kind: true, provider: true, status: true, isDefault: true, integrationId: true },
+      }),
+    ]);
+    const wanted = new Set(channelIds);
+    const convs = rows
+      .map((c) => {
+        const eff = pickEffectiveChannel(c, channels);
+        return { ...c, channelId: eff?.id ?? null, channelProvider: eff?.provider ?? null };
+      })
+      .filter((c) => wanted.size === 0 || (c.channelId !== null && wanted.has(c.channelId)));
 
     // 24-hour customer-service window state for WhatsApp conversations only.
     // Inbox uses it to flip the composer to a template picker when the window
@@ -315,5 +352,72 @@ export class ConversationsService {
       this.lOutbound.queueReply(workspaceId, conversationId, dto.body);
     }
     return message;
+  }
+
+  /**
+   * SP-19 `POST /conversations/:id/send`: deliver a text reply through the
+   * conversation's channel transport (Telegram — T2, web chat — T3), then
+   * record it once. Hidden conversation → 404 before anything is sent;
+   * disconnected channel → 409 channels.disconnected (never another number).
+   * Zernio and Meta threads keep their dedicated routes: 400
+   * channels.transport_unavailable.
+   */
+  async sendViaChannel(workspaceId: string, conversationId: string, body: string, viewer?: Viewer) {
+    const text = (body ?? "").trim();
+    if (!text) throw new BadRequestException("body is required");
+    const scope = await this.scope(workspaceId, viewer);
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId, ...scope },
+      include: { contact: { select: { id: true, externalId: true, phone: true, name: true } } },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+
+    const channel = await this.channels.forSend(workspaceId, conv);
+    const transport = this.transports.get(channel.provider);
+    if (!transport) throw channelError("channels.transport_unavailable", { provider: channel.provider });
+
+    const target: TransportConversation = {
+      id: conv.id,
+      workspaceId,
+      channel: conv.channel,
+      channelId: channel.id,
+      externalId: conv.externalId,
+      contactId: conv.contactId,
+      contact: conv.contact ?? null,
+    };
+    const { providerMessageId } = await transport.sendText(channel, target, text);
+
+    const now = new Date();
+    const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const message = await this.prisma.message.create({
+      data: {
+        workspaceId,
+        conversationId: conv.id,
+        from: "human",
+        body: text,
+        t,
+        metaMessageId: providerMessageId,
+        deliveryStatus: providerMessageId ? "sent" : null,
+        deliveryStatusAt: providerMessageId ? now : null,
+      },
+    });
+    await this.prisma.conversation.update({
+      where: { id: conv.id },
+      // A human reply takes an AI-handled thread over, as in addMessage.
+      data: { preview: text.slice(0, 140), lastAt: "now", lastFrom: "human", unread: 0, aiPausedAt: now },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: conv.channel,
+      channelId: channel.id,
+      conversationId: conv.id,
+    });
+    if (transport.delivered) {
+      try {
+        await transport.delivered(channel, target, message);
+      } catch (e) {
+        this.logger.warn(`post-delivery hook failed for ${channel.provider}: ${(e as Error).message}`);
+      }
+    }
+    return { ok: true as const, message };
   }
 }

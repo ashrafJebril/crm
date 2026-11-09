@@ -105,7 +105,29 @@ describe("ZernioService.sendTemplateInDbConversation", () => {
             ? { pageId: "acc1", platform: "whatsapp", provider: "zernio" }
             : overrides.integration,
         ),
+        findMany: jest.fn().mockResolvedValue([]),
       },
+      // SP-19: the send account comes from the conversation's channel — here
+      // the channel mirrored from the integration above (none when it is null).
+      channel: {
+        findMany: jest.fn().mockResolvedValue(
+          overrides.integration === null
+            ? []
+            : [
+                {
+                  id: "ch1",
+                  workspaceId,
+                  kind: "whatsapp",
+                  provider: (overrides.integration?.provider as string) ?? "zernio",
+                  externalId: "acc1",
+                  status: "active",
+                  isDefault: true,
+                  integrationId: "i1",
+                },
+              ],
+        ),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       message: { create: jest.fn().mockResolvedValue({}) },
     };
     const client = {
@@ -189,11 +211,20 @@ describe("ZernioService.sendTemplateInDbConversation", () => {
   });
 
   it("reports the real reason when WhatsApp is not connected via Zernio", async () => {
-    const { svc } = build({ integration: null });
+    const { svc } = build({ integration: { pageId: "pn", platform: "whatsapp", provider: "meta" } });
 
     await expect(
       svc.sendTemplateInDbConversation(workspaceId, "conv-db", "greetings", "en", []),
     ).rejects.toThrow(/not connected via Zernio/i);
+  });
+
+  it("409 channels.not_connected when no channel resolves for the thread", async () => {
+    const { svc, client } = build({ integration: null });
+
+    await expect(
+      svc.sendTemplateInDbConversation(workspaceId, "conv-db", "greetings", "en", []),
+    ).rejects.toMatchObject({ status: 409, response: { message: "channels.not_connected" } });
+    expect(client.sendTemplateMessage).not.toHaveBeenCalled();
   });
 });
 

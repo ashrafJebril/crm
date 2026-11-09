@@ -218,6 +218,12 @@ model Conversation {
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
 
+  /// SP-19: the Channel (number/account) this thread belongs to. Null for
+  /// rows the backfill could not derive, pre-SP-19 webchat and `l`; readers
+  /// fall back through ChannelResolver.effectiveChannel.
+  channelId  String?
+  channelRef Channel? @relation("ConversationChannel", fields: [channelId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -225,6 +231,7 @@ model Conversation {
   @@index([workspaceId])
   @@index([lConversationId])
   @@index([workspaceId, assigneeId])
+  @@index([workspaceId, channelId])
 }
 
 model ConversationLabel {
@@ -595,8 +602,47 @@ model Integration {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// SP-19: the Channel mirrored from this row (legacy credential link).
+  channel Channel?
+
   @@unique([workspaceId, platform])
   @@index([workspaceId])
+}
+
+/// SP-19: one connected channel (a WhatsApp number, a page, a Telegram bot, a
+/// website chat). The routing source of truth. Each legacy Integration row is
+/// mirrored to exactly one Channel (integrationId), whose credentials stay on
+/// the Integration. The partial unique index "Channel_one_default_per_kind"
+/// (one isDefault per workspace + kind) lives only in the migration SQL.
+model Channel {
+  id                String       @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace    @relation("WorkspaceChannels", fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind              String // whatsapp | telegram | webchat | facebook | instagram | tiktok (others stored verbatim)
+  provider          String // zernio | meta | telegram | native (legacy Integration.provider copied verbatim)
+  externalId        String? // zernio accountId | Meta phone_number_id | Telegram bot id | null for webchat
+  displayName       String
+  phoneNumber       String? // E.164 for WhatsApp, when known
+  status            String       @default("active") // active | pending | needs_attention | disconnected | error
+  statusReason      String?
+  health            Json? // reserved for SP-14; SP-19 leaves it null
+  isDefault         Boolean      @default(false)
+  config            Json? // NON-secret settings only
+  secretsEnc        String? // encryptSecret(JSON) of {accessToken?, botToken?, registrationPin?}; never in a DTO
+  webhookSecretHash String? // sha256 hex of the Telegram secret_token
+  integrationId     String?      @unique
+  integration       Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  lastInboundAt     DateTime?
+  disconnectedAt    DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  conversations Conversation[] @relation("ConversationChannel")
+  campaigns     Campaign[]     @relation("CampaignSenderChannel")
+
+  @@unique([workspaceId, provider, externalId])
+  @@index([workspaceId, kind])
+  @@index([provider, externalId])
 }
 
 model Campaign {
@@ -629,6 +675,10 @@ model Campaign {
   lastError         String?
   launchedAt        DateTime?
   statsSyncedAt     DateTime?
+  /// SP-19: the WhatsApp channel the broadcast goes out from; it must be an
+  /// active Zernio WhatsApp channel. Null = the default WhatsApp channel.
+  senderChannelId   String?
+  senderChannel     Channel?  @relation("CampaignSenderChannel", fields: [senderChannelId], references: [id], onDelete: SetNull)
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -882,6 +932,7 @@ model Workspace {
   tickets           Ticket[]           @relation("WorkspaceTickets")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
+  channels          Channel[]          @relation("WorkspaceChannels")
   notes             Note[]             @relation("WorkspaceNotes")
   notifications     Notification[]     @relation("WorkspaceNotifications")
   notificationPreferences NotificationPreference[] @relation("WorkspaceNotificationPreferences")

@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { WhatsAppService } from "../../integrations/whatsapp.service";
 import { ZernioService } from "../../integrations/zernio.service";
+import { ChannelResolver } from "../../channels/channel-resolver.service";
 import { SendWhatsappTemplateConfig } from "../workflow-steps";
 import { resolveVariables, RunContext } from "../workflow-variables";
 
@@ -11,8 +12,8 @@ import { resolveVariables, RunContext } from "../workflow-variables";
  * Target chat, in order: the trigger's own WhatsApp conversation, the
  * ticket's conversation, then the contact's most recent WhatsApp chat (sale
  * and appointment triggers carry only a contact). The transport follows the
- * workspace's WhatsApp integration, like the Inbox does: Zernio or our Meta
- * app. Neither can open a brand-new chat here, so a customer who has never
+ * chat's own channel (SP-19), like the Inbox does: Zernio or our Meta app.
+ * Neither can open a brand-new chat here, so a customer who has never
  * messaged the business fails with a reason the Runs tab can show.
  */
 @Injectable()
@@ -21,6 +22,7 @@ export class SendWhatsappTemplateExecutor {
     private readonly prisma: PrismaService,
     private readonly zernio: ZernioService,
     private readonly meta: WhatsAppService,
+    private readonly channels: ChannelResolver,
   ) {}
 
   async execute(
@@ -43,13 +45,12 @@ export class SendWhatsappTemplateExecutor {
       );
     }
 
-    const integration = await this.prisma.integration.findFirst({
-      where: { workspaceId, platform: "whatsapp" },
-      select: { provider: true },
-    });
-    if (!integration) throw new Error("WhatsApp is not connected for this workspace");
+    // SP-19: the transport follows the conversation's own channel (number),
+    // not the workspace's single WhatsApp integration.
+    const channel = await this.channels.forConversation(workspaceId, conversationId);
+    if (!channel) throw new Error("WhatsApp is not connected for this workspace");
 
-    if (integration.provider === "zernio") {
+    if (channel.provider === "zernio") {
       const res = await this.zernio.sendTemplateInDbConversation(
         workspaceId,
         conversationId,

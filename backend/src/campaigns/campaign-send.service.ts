@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioBroadcastVariable, ZernioClient } from "../integrations/zernio.client";
+import { campaignSenderAccountId, defaultZernioWhatsappAccountId } from "../channels/default-channel";
 import {
   buildRecipients,
   campaignStatusFor,
@@ -42,6 +43,11 @@ export class CampaignSendService {
       where: segmentId ? { workspaceId, segmentMembers: { some: { segmentId } } } : { workspaceId },
       select: { name: true, phone: true, lifecycle: true, marketingOptOut: true },
     });
+  }
+
+  /** Create/update guard for `senderChannelId` (null/undefined = default). */
+  async validateSender(workspaceId: string, senderChannelId: string | null | undefined): Promise<void> {
+    if (senderChannelId) await campaignSenderAccountId(this.prisma, workspaceId, senderChannelId);
   }
 
   /** Who a segment (or everyone) would reach, and roughly what Meta will charge. */
@@ -85,16 +91,17 @@ export class CampaignSendService {
       throw new BadRequestException(`This template needs ${needed} variables; ${input.variables.length} were given.`);
     }
 
+    // SP-19: the chosen sender (an active Zernio WhatsApp channel, else 400
+    // channels.sender_invalid) or, when none was chosen, the default one.
+    const senderAccountId = campaign.senderChannelId
+      ? await campaignSenderAccountId(this.prisma, workspaceId, campaign.senderChannelId)
+      : await defaultZernioWhatsappAccountId(this.prisma, workspaceId);
     const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { zernioProfileId: true } });
-    const integration = await this.prisma.integration.findFirst({
-      where: { workspaceId, provider: "zernio", platform: "whatsapp" },
-      select: { pageId: true },
-    });
-    if (!workspace?.zernioProfileId || !integration?.pageId) {
+    if (!workspace?.zernioProfileId || !senderAccountId) {
       throw new BadRequestException("Connect WhatsApp in Settings → Integrations before sending a campaign.");
     }
     const profileId = workspace.zernioProfileId;
-    const accountId = integration.pageId;
+    const accountId = senderAccountId;
 
     const { recipients, skipped } = buildRecipients(await this.audience(workspaceId, campaign.segmentId));
     if (recipients.length === 0) {

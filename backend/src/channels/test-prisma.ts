@@ -1,0 +1,288 @@
+/**
+ * In-memory Prisma double for the SP-19 channel specs (not a runtime file;
+ * same convention as src/pipelines/test-prisma.ts).
+ *
+ * Supports the subset of Prisma the channel code uses: equality, `in`,
+ * `notIn`, `not`, `null`, AND/OR/NOT, the `channel: { is: null }` relation
+ * filter on Integration, single-key orderBy, compound uniques used by
+ * upserts, and the Channel unique constraints (including the SQL-only
+ * "one default per kind" partial index), which throw P2002 like Postgres.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+type Row = Record<string, any>;
+export type Tables = Record<string, Row[]>;
+
+let seq = 0;
+const nextId = (p: string) => `${p}_${++seq}`;
+
+function matchValue(v: any, cond: any): boolean {
+  if (cond === null) return v === null || v === undefined;
+  if (cond instanceof Date) return v instanceof Date && v.getTime() === cond.getTime();
+  if (typeof cond === "object" && !Array.isArray(cond)) {
+    if ("in" in cond && !(cond.in as any[]).includes(v)) return false;
+    if ("notIn" in cond && (cond.notIn as any[]).includes(v)) return false;
+    if ("not" in cond) {
+      if (cond.not === null ? v === null || v === undefined : matchValue(v, cond.not)) return false;
+    }
+    if ("equals" in cond && v !== cond.equals) return false;
+    if ("contains" in cond && !String(v ?? "").includes(cond.contains)) return false;
+    if ("gt" in cond && !(v > cond.gt)) return false;
+    if ("lt" in cond && !(v < cond.lt)) return false;
+    return true;
+  }
+  return v === cond;
+}
+
+export function matches(row: Row, where: any, db: Tables, model: string): boolean {
+  if (!where) return true;
+  for (const [k, cond] of Object.entries(where)) {
+    if (cond === undefined) continue;
+    if (k === "AND") {
+      const list = Array.isArray(cond) ? cond : [cond];
+      if (!list.every((w) => matches(row, w, db, model))) return false;
+      continue;
+    }
+    if (k === "OR") {
+      if (!(cond as any[]).some((w) => matches(row, w, db, model))) return false;
+      continue;
+    }
+    if (k === "NOT") {
+      const list = Array.isArray(cond) ? cond : [cond];
+      if (list.some((w) => matches(row, w, db, model))) return false;
+      continue;
+    }
+    if (model === "integration" && k === "channel") {
+      const linked = (db.channel ?? []).some((c) => c.integrationId === row.id);
+      const wantNull = cond === null || (cond as any)?.is === null;
+      if (wantNull ? linked : !linked) return false;
+      continue;
+    }
+    if (
+      k.includes("_") &&
+      cond &&
+      typeof cond === "object" &&
+      !Array.isArray(cond) &&
+      Object.keys(cond).every((ck) => k.split("_").includes(ck))
+    ) {
+      // compound unique, e.g. workspaceId_externalSource_externalId
+      if (!Object.entries(cond).every(([ck, cv]) => row[ck] === cv)) return false;
+      continue;
+    }
+    if (!matchValue(row[k], cond)) return false;
+  }
+  return true;
+}
+
+function sortRows(rows: Row[], orderBy: any): Row[] {
+  if (!orderBy) return rows;
+  const list = Array.isArray(orderBy) ? orderBy : [orderBy];
+  return [...rows].sort((a, b) => {
+    for (const o of list) {
+      const [k, dir] = Object.entries(o)[0] as [string, string];
+      const av = a[k] instanceof Date ? a[k].getTime() : a[k];
+      const bv = b[k] instanceof Date ? b[k].getTime() : b[k];
+      if (av === bv) continue;
+      const cmp = av > bv ? 1 : -1;
+      return dir === "desc" ? -cmp : cmp;
+    }
+    return 0;
+  });
+}
+
+function p2002(target: string): Error {
+  const e = new Error(`Unique constraint failed on ${target}`) as Error & { code: string };
+  e.code = "P2002";
+  return e;
+}
+
+function checkChannelUniques(rows: Row[], row: Row) {
+  for (const o of rows) {
+    if (o === row) continue;
+    if (o.id === row.id) throw p2002("Channel_pkey");
+    if (row.integrationId && o.integrationId === row.integrationId) throw p2002("Channel_integrationId_key");
+    if (
+      row.externalId != null &&
+      o.workspaceId === row.workspaceId &&
+      o.provider === row.provider &&
+      o.externalId === row.externalId
+    )
+      throw p2002("Channel_workspaceId_provider_externalId_key");
+    if (row.isDefault && o.isDefault && o.workspaceId === row.workspaceId && o.kind === row.kind)
+      throw p2002("Channel_one_default_per_kind");
+  }
+}
+
+const DEFAULTS: Record<string, () => Row> = {
+  channel: () => ({
+    status: "active",
+    isDefault: false,
+    externalId: null,
+    phoneNumber: null,
+    statusReason: null,
+    config: null,
+    secretsEnc: null,
+    webhookSecretHash: null,
+    integrationId: null,
+    lastInboundAt: null,
+    disconnectedAt: null,
+    health: null,
+  }),
+  conversation: () => ({ channelId: null, externalId: null, aiEnabled: false, aiPausedAt: null, unread: 0 }),
+};
+
+function project(row: Row, select?: any, include?: any, db?: Tables): Row {
+  let out: Row = { ...row };
+  if (include && db) {
+    for (const [k, v] of Object.entries(include)) {
+      if (!v) continue;
+      if (k === "contact") out.contact = (db.contact ?? []).find((c) => c.id === row.contactId) ?? null;
+      if (k === "labels") out.labels = [];
+      if (k === "messages") out.messages = (db.message ?? []).filter((m) => m.conversationId === row.id);
+    }
+  }
+  if (select) {
+    const picked: Row = {};
+    for (const [k, v] of Object.entries(select)) if (v) picked[k] = out[k];
+    out = picked;
+  }
+  return out;
+}
+
+export function makeFakePrisma(seed: Partial<Tables> = {}) {
+  const db: Tables = {
+    channel: [],
+    integration: [],
+    conversation: [],
+    contact: [],
+    message: [],
+    workspace: [],
+    campaign: [],
+    template: [],
+    ...seed,
+  } as Tables;
+
+  const model = (name: string) => {
+    const rows = () => (db[name] ??= []);
+    const write = (row: Row) => {
+      if (name === "channel") checkChannelUniques(rows(), row);
+    };
+    return {
+      findMany: jest.fn(async (a: any = {}) => {
+        let r = rows().filter((x) => matches(x, a.where, db, name));
+        r = sortRows(r, a.orderBy);
+        if (a.take) r = r.slice(0, a.take);
+        return r.map((x) => project(x, a.select, a.include, db));
+      }),
+      findFirst: jest.fn(async (a: any = {}) => {
+        const r = sortRows(rows().filter((x) => matches(x, a.where, db, name)), a.orderBy)[0];
+        return r ? project(r, a.select, a.include, db) : null;
+      }),
+      findUnique: jest.fn(async (a: any = {}) => {
+        const r = rows().find((x) => matches(x, a.where, db, name));
+        return r ? project(r, a.select, a.include, db) : null;
+      }),
+      count: jest.fn(async (a: any = {}) => rows().filter((x) => matches(x, a.where, db, name)).length),
+      groupBy: jest.fn(async () => []),
+      create: jest.fn(async (a: any) => {
+        const row: Row = {
+          id: a.data.id ?? nextId(name),
+          ...(DEFAULTS[name]?.() ?? {}),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...a.data,
+        };
+        write(row);
+        rows().push(row);
+        return project(row, a.select, a.include, db);
+      }),
+      update: jest.fn(async (a: any) => {
+        const row = rows().find((x) => matches(x, a.where, db, name));
+        if (!row) {
+          const e = new Error("Record to update not found") as Error & { code: string };
+          e.code = "P2025";
+          throw e;
+        }
+        const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
+        if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
+        Object.assign(row, next);
+        return project(row, a.select, a.include, db);
+      }),
+      updateMany: jest.fn(async (a: any) => {
+        const hit = rows().filter((x) => matches(x, a.where, db, name));
+        for (const row of hit) {
+          const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
+          if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
+          Object.assign(row, next);
+        }
+        return { count: hit.length };
+      }),
+      upsert: jest.fn(async (a: any) => {
+        const row = rows().find((x) => matches(x, a.where, db, name));
+        if (row) {
+          Object.assign(row, applyData(row, a.update), { updatedAt: new Date() });
+          return project(row);
+        }
+        const created: Row = {
+          id: nextId(name),
+          ...(DEFAULTS[name]?.() ?? {}),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...a.create,
+        };
+        write(created);
+        rows().push(created);
+        return project(created);
+      }),
+      delete: jest.fn(async (a: any) => {
+        const i = rows().findIndex((x) => matches(x, a.where, db, name));
+        const [row] = rows().splice(i, 1);
+        return row;
+      }),
+    };
+  };
+
+  const prisma: any = {
+    db,
+    channel: model("channel"),
+    integration: model("integration"),
+    conversation: model("conversation"),
+    contact: model("contact"),
+    message: model("message"),
+    workspace: model("workspace"),
+    campaign: model("campaign"),
+    template: model("template"),
+    workspaceMember: model("workspaceMember"),
+    $transaction: jest.fn(async (arg: any) => (typeof arg === "function" ? arg(prisma) : Promise.all(arg))),
+    // Only the channel write-back is issued as raw SQL by the channel code.
+    $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...vals: any[]) => {
+      const sql = strings.join("?");
+      if (/UPDATE "Conversation" SET "channelId"/.test(sql)) {
+        const [channelId, id, workspaceId] = vals;
+        const row = db.conversation.find((c) => c.id === id && c.workspaceId === workspaceId && !c.channelId);
+        if (row) row.channelId = channelId;
+        return row ? 1 : 0;
+      }
+      return 0;
+    }),
+  };
+  return prisma;
+}
+
+function applyData(row: Row, data: Row): Row {
+  const out: Row = {};
+  for (const [k, v] of Object.entries(data ?? {})) {
+    if (v && typeof v === "object" && !(v instanceof Date) && !Array.isArray(v)) {
+      if ("increment" in v) {
+        out[k] = (row[k] ?? 0) + (v as any).increment;
+        continue;
+      }
+      if ("set" in v) {
+        out[k] = (v as any).set;
+        continue;
+      }
+    }
+    out[k] = v;
+  }
+  return out;
+}

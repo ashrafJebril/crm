@@ -51,6 +51,7 @@ export class PrismaService implements OnModuleDestroy {
   get lostReason() { return this.client.lostReason; }
   get savedReply() { return this.client.savedReply; }
   get integration() { return this.client.integration; }
+  get channel() { return this.client.channel; }
   get note() { return this.client.note; }
   get media() { return this.client.media; }
   get segment() { return this.client.segment; }

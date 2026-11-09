@@ -17,6 +17,14 @@ describe("Zernio reaction.received", () => {
   function build(integ: any = { workspaceId: "ws1", platform: "whatsapp", provider: "zernio", pageId: "acc1" }) {
     const prisma = {
       integration: { findFirst: jest.fn(async () => integ) },
+      // SP-19: the account resolves through its channel (none for an unknown account).
+      channel: {
+        findMany: jest.fn(async () =>
+          integ
+            ? [{ id: "ch1", workspaceId: integ.workspaceId, kind: integ.platform, provider: "zernio", externalId: integ.pageId, status: "active" }]
+            : [],
+        ),
+      },
       message: { updateMany: jest.fn(async () => ({ count: 1 })), findFirst: jest.fn(async () => null) },
     };
     const realtime = { emitToWorkspace: jest.fn() };
@@ -83,6 +91,13 @@ describe("Meta WhatsApp reaction webhook", () => {
       integration: {
         findFirst: jest.fn(async () => ({ id: "i1", workspaceId: "ws1", platform: "whatsapp", pageId: "pn1" })),
         update: jest.fn(async () => ({})),
+      },
+      // SP-19: phone_number_id resolves through the number's channel.
+      channel: {
+        findMany: jest.fn(async () => [
+          { id: "ch1", workspaceId: "ws1", kind: "whatsapp", provider: "meta", externalId: "pn1", status: "active", integrationId: "i1" },
+        ]),
+        updateMany: jest.fn(async () => ({ count: 1 })),
       },
       message: { updateMany: jest.fn(async () => ({ count: 1 })) },
     };

@@ -21,6 +21,9 @@ import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { LAgentService } from "./l-agent.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { ChannelResolver } from "../channels/channel-resolver.service";
+import { mirrorZernioAccounts, USER_DISCONNECTED } from "../channels/zernio-mirror";
+import { ensureDefaultPerKind } from "../channels/legacy-mirror";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -57,6 +60,8 @@ export class ZernioService {
   private readonly log = new Logger(ZernioService.name);
   /** profileId → Zernio's account list (null = Zernio unreachable), for status(). */
   private readonly healthCache = new Map<string, { at: number; accounts: ZernioAccount[] | null }>();
+  /** SP-19: every inbound/outbound path resolves its Channel here. */
+  private readonly channels: ChannelResolver;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -68,7 +73,12 @@ export class ZernioService {
     private readonly aiBridge: AiBridgeService,
     @Optional() private readonly events?: EventEmitter2,
     @Optional() private readonly paymentLock?: PaymentLockService,
-  ) {}
+    // Provided by the global ChannelsCoreModule; unit specs that build the
+    // service by hand get a resolver over the same Prisma double.
+    @Optional() channelResolver?: ChannelResolver,
+  ) {
+    this.channels = channelResolver ?? new ChannelResolver(prisma);
+  }
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
 
@@ -188,6 +198,7 @@ export class ZernioService {
     }
 
     const connected: Array<{ platform: string; accountId: string; name: string | null }> = [];
+    const primaries: Array<{ integrationId: string; accountId: string }> = [];
     for (const [platform, list] of byPlatform) {
       // After a reconnect Zernio can still list the revoked account first;
       // link the one that works.
@@ -202,8 +213,9 @@ export class ZernioService {
         })),
       });
       // Upserting over any prior provider="meta" row is intentional: this is
-      // the "replace Meta for FB/IG" behavior (one row per platform).
-      await this.prisma.integration.upsert({
+      // the "replace Meta for FB/IG" behavior (one row per platform). The
+      // single row stays for `main`; SP-19 Channels below hold every account.
+      const integ = await this.prisma.integration.upsert({
         where: { workspaceId_platform: { workspaceId, platform } },
         create: {
           workspaceId,
@@ -225,9 +237,15 @@ export class ZernioService {
         },
       });
       connected.push({ platform, accountId: primary._id, name });
+      primaries.push({ integrationId: integ.id, accountId: primary._id });
     }
 
+    // SP-19 (ruling 2): one Channel per Zernio account, missing ones
+    // disconnected, each Integration linked to its primary's channel.
+    await mirrorZernioAccounts(this.prisma, workspaceId, accounts, primaries);
+
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
+    this.realtime.emitToWorkspace(workspaceId, "channels.updated", {});
     return { connected };
   }
 
@@ -354,10 +372,26 @@ export class ZernioService {
   /** Guard: an accountId sent by the client must be one of this workspace's
    *  own Zernio-connected accounts. */
   private async assertOwnAccount(workspaceId: string, accountId: string) {
-    const row = await this.prisma.integration.findFirst({
+    if (!(await this.ownAccount(workspaceId, accountId))) {
+      throw new NotFoundException("Account not found in this workspace");
+    }
+  }
+
+  /**
+   * The workspace's own Zernio account: a non-disconnected Channel (SP-19:
+   * one per account) or, before mirroring, the legacy Integration row.
+   * Returns its platform.
+   */
+  private async ownAccount(workspaceId: string, accountId: string): Promise<{ platform: string } | null> {
+    const ch = await this.prisma.channel.findFirst({
+      where: { workspaceId, provider: "zernio", externalId: accountId, status: { not: "disconnected" } },
+      select: { kind: true },
+    });
+    if (ch) return { platform: ch.kind };
+    const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, provider: "zernio", pageId: accountId },
     });
-    if (!row) throw new NotFoundException("Account not found in this workspace");
+    return integ ? { platform: integ.platform } : null;
   }
 
   /**
@@ -672,7 +706,15 @@ export class ZernioService {
       where: { workspaceId, platform: platform.toLowerCase(), provider: "zernio" },
     });
     if (!integ) return { ok: true, removed: false };
+    // SP-19: the platform's Zernio channels stop sending too (soft: history
+    // and conversation.channelId stay; a later sync will not revive them).
+    await this.prisma.channel.updateMany({
+      where: { workspaceId, provider: "zernio", kind: platform.toLowerCase(), status: { not: "disconnected" } },
+      data: { status: "disconnected", statusReason: USER_DISCONNECTED, disconnectedAt: new Date(), isDefault: false },
+    });
     await this.prisma.integration.delete({ where: { id: integ.id } });
+    await ensureDefaultPerKind(this.prisma, workspaceId);
+    this.realtime.emitToWorkspace(workspaceId, "channels.updated", {});
     this.healthCache.clear();
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
     return { ok: true, removed: true };
@@ -729,14 +771,12 @@ export class ZernioService {
     accountId: string,
     message: string,
   ) {
-    const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, provider: "zernio", pageId: accountId },
-    });
-    if (!integ) {
+    const own = await this.ownAccount(workspaceId, accountId);
+    if (!own) {
       throw new NotFoundException("Zernio account not connected for this workspace");
     }
     const { id } = await this.client.sendMessage(conversationId, accountId, message);
-    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: integ.platform });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: own.platform });
     return { ok: true, id };
   }
 
@@ -780,7 +820,7 @@ export class ZernioService {
       );
     }
 
-    const { accountId, zernioConvId } = await this.resolveZernioTarget(
+    const { accountId, zernioConvId, channelId } = await this.resolveZernioTarget(
       workspaceId,
       conv,
       channel,
@@ -843,6 +883,7 @@ export class ZernioService {
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel,
+      channelId,
       conversationId: conv.id,
     });
     await this.pipelineAutomation.onOutboundReply(workspaceId, conv.contactId);
@@ -859,15 +900,22 @@ export class ZernioService {
    */
   private async resolveZernioTarget(
     workspaceId: string,
-    conv: { id: string; externalId: string | null; contact?: { externalId: string | null } | null },
+    conv: {
+      id: string;
+      channel: string;
+      channelId?: string | null;
+      externalId: string | null;
+      contact?: { externalId: string | null } | null;
+    },
     channel: string,
-  ): Promise<{ accountId: string; zernioConvId: string }> {
-    const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, provider: "zernio", platform: channel },
-    });
-    if (!integ?.pageId) {
+  ): Promise<{ accountId: string; zernioConvId: string; channelId: string }> {
+    // SP-19: send from the account the conversation belongs to (its channel),
+    // never "the" platform integration. Disconnected → 409, never rerouted.
+    const ch = await this.channels.forSend(workspaceId, conv);
+    if (ch.provider !== "zernio" || !ch.externalId) {
       throw new NotFoundException(`${channel} is not connected via Zernio`);
     }
+    const accountId = ch.externalId;
 
     let zernioConvId = conv.externalId;
     if (!zernioConvId) {
@@ -875,8 +923,10 @@ export class ZernioService {
       if (!participantId) {
         throw new BadRequestException("This contact has no platform id to reply to");
       }
+      // Only this account's threads: with two numbers the same customer has
+      // a Zernio conversation on each, and the other one must never match.
       const convs = await this.listConversations(workspaceId, channel);
-      const match = convs.find((c) => c.participantId === participantId);
+      const match = convs.find((c) => c.participantId === participantId && c.accountId === accountId);
       if (!match) {
         throw new NotFoundException(
           "No Zernio conversation for this contact yet — they need to message you first",
@@ -888,7 +938,7 @@ export class ZernioService {
         data: { externalId: zernioConvId },
       });
     }
-    return { accountId: integ.pageId, zernioConvId };
+    return { accountId, zernioConvId, channelId: ch.id };
   }
 
   async sendInDbConversation(
@@ -933,7 +983,7 @@ export class ZernioService {
     }
 
     const channel = conv.channel.toLowerCase();
-    const { accountId, zernioConvId } = await this.resolveZernioTarget(
+    const { accountId, zernioConvId, channelId } = await this.resolveZernioTarget(
       workspaceId,
       conv,
       channel,
@@ -985,6 +1035,7 @@ export class ZernioService {
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel,
+      channelId,
       conversationId: conv.id,
     });
     // Replying counts as making contact — moves the auto-created ticket
@@ -1053,14 +1104,24 @@ export class ZernioService {
           }
         }
 
-        let conv = await this.prisma.conversation.findFirst({
-          where: { workspaceId, contactId: contact.id, channel },
-        });
+        // SP-19: the thread's account picks its channel, like the webhook.
+        const ch = zc.accountId
+          ? await this.prisma.channel.findFirst({
+              where: { workspaceId, provider: "zernio", externalId: zc.accountId },
+              select: { id: true },
+            })
+          : null;
+        let conv = ch
+          ? await this.channels.findOrAdoptConversation(workspaceId, contact.id, { id: ch.id, kind: channel })
+          : await this.prisma.conversation.findFirst({
+              where: { workspaceId, contactId: contact.id, channel },
+            });
         if (!conv) {
           conv = await this.prisma.conversation.create({
             data: {
               workspaceId,
               contactId: contact.id,
+              channelId: ch?.id ?? null,
               unread: 0,
               pinned: false,
               lastAt: "—",
@@ -1308,15 +1369,18 @@ export class ZernioService {
     const isOutbound = evt.message?.direction === "outgoing";
     const from = isOutbound ? "human" : "them";
 
-    const integ = await this.prisma.integration.findFirst({
-      where: { provider: "zernio", pageId: accountId },
-    });
-    if (!integ) {
+    // SP-19: the account's Channel decides the workspace AND the thread, so
+    // number B's messages land in B's conversations. A legacy Integration
+    // with no Channel yet is mirrored on the fly — nothing `main` connected
+    // is dropped.
+    const ch = await this.channels.forInbound("zernio", accountId);
+    if (!ch) {
       this.log.warn(`Inbound for unknown zernio accountId=${accountId}`);
       return;
     }
-    const workspaceId = integ.workspaceId;
-    const channel = (evt.message?.platform ?? evt.account?.platform ?? integ.platform).toLowerCase();
+    const workspaceId = ch.workspaceId;
+    const channelId = ch.id;
+    const channel = (evt.message?.platform ?? evt.account?.platform ?? ch.kind).toLowerCase();
     const externalMsgId = evt.message?.id ?? evt.message?.platformMessageId ?? null;
     const attachment = evt.message?.attachments?.[0];
     // Media-only messages arrive with text: null. Label by attachment type
@@ -1406,14 +1470,18 @@ export class ZernioService {
     // conversation directly instead of re-listing on every send.
     const zernioConvId = evt.conversation?.id ?? evt.message?.conversationId ?? null;
 
-    let conv = await this.prisma.conversation.findFirst({
-      where: { workspaceId, contactId: contact.id, channel },
+    // Conversation key (SP-19): (workspace, contact, channelId). A legacy
+    // null-channel thread is adopted only by the channel it resolves to.
+    let conv = await this.channels.findOrAdoptConversation(workspaceId, contact.id, {
+      id: channelId,
+      kind: channel,
     });
     if (!conv) {
       conv = await this.prisma.conversation.create({
         data: {
           workspaceId,
           contactId: contact.id,
+          channelId,
           unread: isOutbound ? 0 : 1,
           pinned: false,
           lastAt: "now",
@@ -1460,8 +1528,10 @@ export class ZernioService {
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel,
+      channelId,
       conversationId: conv.id,
     });
+    if (!isOutbound) await this.channels.touchInbound(channelId);
 
     // Our own outbound echo is not something to answer, and a thread only
     // auto-replies once someone has switched it into AI mode — and stops while
@@ -1547,16 +1617,14 @@ export class ZernioService {
     if (typeof r.emoji !== "string") return;
     const emoji = normalizeReaction(r.emoji);
     if (emoji === undefined) return;
-    const integ = await this.prisma.integration.findFirst({
-      where: { provider: "zernio", pageId: accountId },
-    });
-    if (!integ) return;
+    const ch = await this.channels.forInbound("zernio", accountId);
+    if (!ch) return;
     const updated = await this.prisma.message.updateMany({
-      where: { workspaceId: integ.workspaceId, metaMessageId: { in: ids } },
+      where: { workspaceId: ch.workspaceId, metaMessageId: { in: ids } },
       data: { reaction: emoji, reactionAt: emoji === null ? null : new Date() },
     });
     if (updated.count > 0) {
-      this.realtime.emitToWorkspace(integ.workspaceId, "inbox.activity", { channel: integ.platform });
+      this.realtime.emitToWorkspace(ch.workspaceId, "inbox.activity", { channel: ch.kind, channelId: ch.id });
     }
   }
 
@@ -1572,17 +1640,16 @@ export class ZernioService {
     const accountId = payload.account?.accountId ?? payload.account?.id;
     if (ids.length === 0 || !accountId) return 0;
     const status = type.split(".").pop(); // sent | delivered | read | failed
-    const integ = await this.prisma.integration.findFirst({
-      where: { provider: "zernio", pageId: accountId },
-    });
-    if (!integ) return 0;
+    const ch = await this.channels.forInbound("zernio", accountId);
+    if (!ch) return 0;
     const updated = await this.prisma.message.updateMany({
-      where: { workspaceId: integ.workspaceId, metaMessageId: { in: ids } },
+      where: { workspaceId: ch.workspaceId, metaMessageId: { in: ids } },
       data: { deliveryStatus: status, deliveryStatusAt: new Date() },
     });
     if (updated.count > 0) {
-      this.realtime.emitToWorkspace(integ.workspaceId, "inbox.activity", {
-        channel: integ.platform,
+      this.realtime.emitToWorkspace(ch.workspaceId, "inbox.activity", {
+        channel: ch.kind,
+        channelId: ch.id,
       });
     }
     return updated.count;

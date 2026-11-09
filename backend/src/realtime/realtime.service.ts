@@ -15,6 +15,21 @@ export class RealtimeService {
     this.gateway.server.to(workspaceRoom(workspaceId)).emit(event, payload);
   }
 
+  /** SP-19 T3: the `/widget` namespace server, attached by the WidgetGateway. */
+  private widgetServer?: { to(room: string): { emit(event: string, payload: unknown): unknown } };
+
+  attachWidgetServer(server: { to(room: string): { emit(event: string, payload: unknown): unknown } }): void {
+    this.widgetServer = server;
+  }
+
+  /**
+   * Emit to one web chat visitor (room `widget:<channelId>:<visitorId>`).
+   * A no-op until T3's WidgetGateway attaches its namespace server.
+   */
+  emitToWidgetVisitor(channelId: string, visitorId: string, event: string, payload: unknown): void {
+    this.widgetServer?.to(`widget:${channelId}:${visitorId}`).emit(event, payload);
+  }
+
   /** Emit an event only to one user's sockets within a workspace. */
   emitToUser(
     workspaceId: string,

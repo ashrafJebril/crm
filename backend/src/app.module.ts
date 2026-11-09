@@ -18,6 +18,8 @@ import { TeamModule } from "./team/team.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
+import { ChannelsCoreModule } from "./channels/channels-core.module";
+import { ChannelsModule } from "./channels/channels.module";
 import { TicketsModule } from "./tickets/tickets.module";
 import { PipelinesModule } from "./pipelines/pipelines.module";
 import { ResolutionModule } from "./resolution/resolution.module";
@@ -66,7 +68,11 @@ import { RolesModule } from "./roles/roles.module";
     TeamModule,
     CampaignsModule,
     DashboardModule,
+    // SP-19: global routing core (resolver, transports, inbound sink) before
+    // anything that sends or receives, then the /channels hub.
+    ChannelsCoreModule,
     IntegrationsModule,
+    ChannelsModule,
     McpServerModule,
     TicketsModule,
     PipelinesModule,

@@ -32,6 +32,13 @@ describe("ZernioService.sendInDbConversation — text + attachment", () => {
       integration: {
         findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", platform: channel }),
       },
+      // SP-19: the account comes from the thread's channel (mirrored legacy row).
+      channel: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: "ch1", workspaceId, kind: channel, provider: "zernio", externalId: "acc1", status: "active", isDefault: true, integrationId: "i1" },
+        ]),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       message: { create: jest.fn().mockResolvedValue({}) },
     };
     const client = {

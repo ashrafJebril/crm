@@ -112,7 +112,7 @@ describe("template send with header", () => {
       resolveExternalUrl: jest.fn(async () => "https://cdn.example/m.png"),
     };
     const svc = new WhatsAppService(prisma, { emitToWorkspace: jest.fn() } as never, media as never, {} as never, {} as never);
-    jest.spyOn(svc as any, "requireToken").mockResolvedValue({ token: "t", phoneNumberId: "pn" });
+    jest.spyOn(svc as any, "sendTarget").mockResolvedValue({ token: "t", phoneNumberId: "pn", channel: { id: "ch1" } });
     const fetchJson = jest.spyOn(svc as any, "fetchJson").mockResolvedValue({ messages: [{ id: "wamid.1" }] });
     await svc.sendTemplateInConversation("ws", "c1", "promo", "en", ["Ali"], { mediaId: "m1" });
     const body = JSON.parse((fetchJson.mock.calls[0] as any)[1].body);
@@ -128,7 +128,7 @@ describe("template send with header", () => {
     };
     const media = { get: jest.fn(async () => ({ mimeType: "video/mp4" })), resolveExternalUrl: jest.fn() };
     const svc = new WhatsAppService(prisma, {} as never, media as never, {} as never, {} as never);
-    jest.spyOn(svc as any, "requireToken").mockResolvedValue({ token: "t", phoneNumberId: "pn" });
+    jest.spyOn(svc as any, "sendTarget").mockResolvedValue({ token: "t", phoneNumberId: "pn", channel: { id: "ch1" } });
     const fetchJson = jest.spyOn(svc as any, "fetchJson");
     await expect(svc.sendTemplateInConversation("ws", "c1", "promo", "en", [], { mediaId: "m1" })).rejects.toMatchObject({
       message: "templates.header_media_mismatch",

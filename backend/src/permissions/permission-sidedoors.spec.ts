@@ -74,6 +74,9 @@ function makePrisma(perms: Record<string, string[]>, visibility: "assigned" | "a
     },
     conversationLabel: { findMany: jest.fn().mockResolvedValue([]) },
     conversationLabelLink: { deleteMany: jest.fn(), createMany: jest.fn() },
+    // SP-19: list mirrors legacy integrations and resolves effective channels.
+    integration: { findMany: jest.fn().mockResolvedValue([]) },
+    channel: { findMany: jest.fn().mockResolvedValue([]) },
     message: {
       findMany: jest.fn().mockResolvedValue([{ id: "m1" }]),
       groupBy: jest.fn().mockResolvedValue([]),
