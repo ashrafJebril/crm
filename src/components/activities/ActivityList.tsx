@@ -17,7 +17,11 @@ export function ActivityList({ contactId, ticketId }: { contactId?: string; tick
   const { can } = usePermissions();
   const { toast } = useToast();
   const invalidate = useInvalidateActivities();
-  const canUpdate = ticketId ? can("tickets.update") : can("contacts.update");
+  const canUpdateContact = can("contacts.update");
+  const canUpdateTicket = can("tickets.update");
+  // Per row: ticket-linked activities follow tickets.update, the rest contacts.update.
+  const canEditRow = (a: Activity) => (a.ticketId ? canUpdateTicket : canUpdateContact);
+  const canUpdate = ticketId ? canUpdateTicket : canUpdateContact; // new activities
   const q = useFetch<{ items: Activity[]; nextCursor: string | null }>(
     `/activities?${ticketId ? `ticketId=${ticketId}` : `contactId=${contactId}`}&limit=20`,
   );
@@ -51,6 +55,7 @@ export function ActivityList({ contactId, ticketId }: { contactId?: string; tick
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {items.map((a) => {
+            const rowCan = canEditRow(a);
             const overdue = !a.doneAt && a.dueAt && new Date(a.dueAt) < now;
             return (
               <div
@@ -60,15 +65,15 @@ export function ActivityList({ contactId, ticketId }: { contactId?: string; tick
                 <input
                   type="checkbox"
                   checked={!!a.doneAt}
-                  disabled={!!a.doneAt || !canUpdate}
+                  disabled={!!a.doneAt || !rowCan}
                   aria-label={tx("Mark done", "تم الإنجاز")}
                   onChange={() => void markDone(a)}
                   style={{ marginTop: 3 }}
                 />
                 <button
                   type="button"
-                  onClick={() => canUpdate && setDialog({ activity: a })}
-                  style={{ all: "unset", flex: 1, minWidth: 0, cursor: canUpdate ? "pointer" : "default" }}
+                  onClick={() => rowCan && setDialog({ activity: a })}
+                  style={{ all: "unset", flex: 1, minWidth: 0, cursor: rowCan ? "pointer" : "default" }}
                 >
                   <div dir="auto" style={{ fontSize: 13, textDecoration: a.doneAt ? "line-through" : "none", color: a.doneAt ? "var(--ink-3)" : "var(--ink)" }}>
                     <span aria-hidden>{kindGlyph[a.kind]}</span> {a.title}

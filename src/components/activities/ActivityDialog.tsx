@@ -6,7 +6,8 @@ import { useAuth } from "@/auth/context";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import {
-  fromLocalInput, quickReschedule, toLocalInput, type Activity, type ActivityKind, type QuickChoice,
+  buildActivityPayload, dueAfterKindChange, fromLocalInput, quickReschedule, toLocalInput,
+  type Activity, type ActivityKind, type QuickChoice,
 } from "@/screens/followups/followupsLogic";
 import { KINDS, kindLabel, needsDue, useInvalidateActivities, useTeam, useWorkspaceTz, activityError } from "./activityApi";
 
@@ -42,6 +43,7 @@ export function ActivityDialog({ activity, contactId, ticketId, defaultKind = "f
         ? toLocalInput(quickReschedule(new Date(), "tomorrow9", tz).toISOString(), tz)
         : "",
   );
+  const [dueTouched, setDueTouched] = useState(false);
   const [assigneeId, setAssigneeId] = useState(activity ? (activity.assigneeId ?? "") : (user?.id ?? ""));
   const [assigneeTouched, setAssigneeTouched] = useState(false);
   const [notes, setNotes] = useState(activity?.notes ?? "");
@@ -53,7 +55,13 @@ export function ActivityDialog({ activity, contactId, ticketId, defaultKind = "f
   const dueRequired = needsDue(kind);
   const valid = title.trim().length > 0 && (!dueRequired || !!dueDate);
 
+  const defaultDue = () => toLocalInput(quickReschedule(new Date(), "tomorrow9", tz).toISOString(), tz);
+  const changeKind = (k: ActivityKind) => {
+    setKind(k);
+    setDue((d) => dueAfterKindChange(k, d, dueTouched, defaultDue()));
+  };
   const quick = (c: QuickChoice) => setDue(toLocalInput(quickReschedule(new Date(), c, tz).toISOString(), tz));
+  const quickAndTouch = (c: QuickChoice) => { setDueTouched(true); quick(c); };
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -70,12 +78,10 @@ export function ActivityDialog({ activity, contactId, ticketId, defaultKind = "f
 
   const save = () =>
     run(() => {
-      const body = {
-        title: title.trim(),
-        notes: notes.trim() || undefined,
-        dueAt: dueDate ? dueDate.toISOString() : undefined,
-        outcome: outcome.trim() || undefined,
-      };
+      const body = buildActivityPayload(
+        { title, notes, outcome, dueDate },
+        activity ? { notes: activity.notes, outcome: activity.outcome, dueAt: activity.dueAt } : undefined,
+      );
       if (activity) return api.patch(`/activities/${activity.id}`, { ...body, ...(assigneeTouched ? { assigneeId: assigneeId || null } : {}) });
       return api.post("/activities", {
         ...body,
@@ -97,7 +103,7 @@ export function ActivityDialog({ activity, contactId, ticketId, defaultKind = "f
       {!editing && (
         <>
           <label style={LABEL}>{tx("Kind", "النوع")}</label>
-          <select className="input" style={FIELD} value={kind} onChange={(e) => setKind(e.target.value as ActivityKind)}>
+          <select className="input" style={FIELD} value={kind} onChange={(e) => changeKind(e.target.value as ActivityKind)}>
             {KINDS.map((k) => <option key={k} value={k}>{kindLabel(tx, k)}</option>)}
           </select>
         </>
@@ -115,11 +121,11 @@ export function ActivityDialog({ activity, contactId, ticketId, defaultKind = "f
         {" · "}
         <span className="mono" dir="ltr">{tz}</span>
       </label>
-      <input className="input" type="datetime-local" dir="ltr" style={FIELD} value={due} onChange={(e) => setDue(e.target.value)} />
+      <input className="input" type="datetime-local" dir="ltr" style={FIELD} value={due} onChange={(e) => { setDue(e.target.value); setDueTouched(true); }} />
       <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-        <button type="button" className="btn sm" onClick={() => quick("plus1h")}>{tx("+1 hour", "بعد ساعة")}</button>
-        <button type="button" className="btn sm" onClick={() => quick("tomorrow9")}>{tx("Tomorrow 9:00", "غدًا 9:00")}</button>
-        <button type="button" className="btn sm" onClick={() => quick("nextWeek")}>{tx("Next week", "الأسبوع القادم")}</button>
+        <button type="button" className="btn sm" onClick={() => quickAndTouch("plus1h")}>{tx("+1 hour", "بعد ساعة")}</button>
+        <button type="button" className="btn sm" onClick={() => quickAndTouch("tomorrow9")}>{tx("Tomorrow 9:00", "غدًا 9:00")}</button>
+        <button type="button" className="btn sm" onClick={() => quickAndTouch("nextWeek")}>{tx("Next week", "الأسبوع القادم")}</button>
       </div>
 
       <label style={LABEL}>{tx("Assignee", "المسؤول")}</label>

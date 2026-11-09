@@ -44,9 +44,24 @@ export function groupForDisplay(q: QueueResponse): Section[] {
 
 // ── timezone helpers (Intl only, no dependency) ───────────────────────────
 
+export const FALLBACK_TZ = "Asia/Riyadh";
+
+/** `tz` when Intl accepts it as an IANA zone, otherwise FALLBACK_TZ (an invalid
+ *  workspace timezone must never crash the UI). */
+export function safeTz(tz: string | null | undefined): string {
+  if (!tz) return FALLBACK_TZ;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return FALLBACK_TZ;
+  }
+}
+
 interface Parts { y: number; mo: number; d: number; h: number; mi: number }
 
-function zonedParts(date: Date, tz: string): Parts {
+function zonedParts(date: Date, tzIn: string): Parts {
+  const tz = safeTz(tzIn);
   const f = new Intl.DateTimeFormat("en-US", {
     timeZone: tz, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric",
   });
@@ -70,7 +85,8 @@ function zonedToUtc(y: number, mo: number, d: number, h: number, mi: number, tz:
 export type QuickChoice = "plus1h" | "tomorrow9" | "nextWeek";
 
 export function quickReschedule(now: Date, choice: QuickChoice, tz: string): Date {
-  if (choice === "plus1h") return new Date(now.getTime() + 3600_000);
+  // Floored to the minute: dialog and server both work at minute precision.
+  if (choice === "plus1h") return new Date(Math.floor((now.getTime() + 3600_000) / 60_000) * 60_000);
   const p = zonedParts(now, tz);
   const add = choice === "tomorrow9" ? 1 : 7;
   const day = new Date(Date.UTC(p.y, p.mo - 1, p.d + add));
@@ -105,7 +121,76 @@ export function formatDue(dueAt: string, now: Date, tz: string, lang: Lang): str
   if (diff === 1) return `${ar ? "غدًا" : "Tomorrow"} ${time}`;
   if (diff === -1) return `${ar ? "أمس" : "Yesterday"} ${time}`;
   const date = new Intl.DateTimeFormat(ar ? "ar-u-nu-latn" : "en-US", {
-    timeZone: tz, month: "short", day: "numeric",
+    timeZone: safeTz(tz), month: "short", day: "numeric",
   }).format(due);
   return `${date} ${time}`;
+}
+
+// ── activity dialog logic (pure) ──────────────────────────────────────────
+
+const DUE_KINDS: ActivityKind[] = ["follow_up", "task"];
+
+/** The due input after the user switches kind in the create dialog. A logged
+ *  kind must not inherit the scheduling default (that would turn a logged call
+ *  into a scheduled one); a note never has a due time. */
+export function dueAfterKindChange(kind: ActivityKind, due: string, touched: boolean, defaultDue: string): string {
+  if (kind === "note_log") return "";
+  if (kind === "call" || kind === "meeting") return touched ? due : "";
+  if (DUE_KINDS.includes(kind) && !due) return defaultDue;
+  return due;
+}
+
+export interface ActivityFormValues {
+  title: string;
+  notes: string;
+  outcome: string;
+  dueDate: Date | null;
+}
+
+export interface ActivityOriginal {
+  notes: string | null;
+  outcome: string | null;
+  dueAt: string | null;
+}
+
+const minute = (d: Date | string) => Math.floor(new Date(d).getTime() / 60_000);
+
+/** Body for POST (no `original`) or PATCH (with `original`). On edit, `dueAt` is
+ *  sent only when the input really changed (so an unrelated edit never re-arms
+ *  the due notification) and an emptied notes/outcome/due is sent as null. */
+export function buildActivityPayload(v: ActivityFormValues, original?: ActivityOriginal): Record<string, unknown> {
+  const notes = v.notes.trim();
+  const outcome = v.outcome.trim();
+  const body: Record<string, unknown> = { title: v.title.trim() };
+  if (!original) {
+    if (notes) body.notes = notes;
+    if (outcome) body.outcome = outcome;
+    if (v.dueDate) body.dueAt = v.dueDate.toISOString();
+    return body;
+  }
+  if (notes) body.notes = notes;
+  else if (original.notes) body.notes = null;
+  if (outcome) body.outcome = outcome;
+  else if (original.outcome) body.outcome = null;
+  if (v.dueDate) {
+    if (!original.dueAt || minute(v.dueDate) !== minute(original.dueAt)) body.dueAt = v.dueDate.toISOString();
+  } else if (original.dueAt) {
+    body.dueAt = null;
+  }
+  return body;
+}
+
+/** Keep only selected ids that are still present in the list. */
+export function pruneSelection(selected: Set<string>, ids: Iterable<string>): Set<string> {
+  const present = new Set(ids);
+  const next = new Set([...selected].filter((id) => present.has(id)));
+  return next.size === selected.size ? selected : next;
+}
+
+/** Split ids into request-sized chunks, preserving order and dropping duplicates. */
+export function chunkIds(ids: string[], size: number): string[][] {
+  const uniq = [...new Set(ids)];
+  const out: string[][] = [];
+  for (let i = 0; i < uniq.length; i += size) out.push(uniq.slice(i, i + size));
+  return out;
 }

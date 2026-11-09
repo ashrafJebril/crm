@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { openRecord } from "@/lib/openRecord";
+import { channelLabel } from "@/shell/recordFields";
 import { formatDue, type ActivityKind } from "@/screens/followups/followupsLogic";
 import { kindGlyph, kindLabel, useWorkspaceTz } from "./activityApi";
 
@@ -51,7 +52,7 @@ export function Timeline({ contactId }: { contactId: string }) {
     getNextPageParam: (last) => last.nextBefore || null,
   });
 
-  const sentinel = useRef<HTMLDivElement | null>(null);
+  const sentinel = useRef<HTMLLIElement | null>(null);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = q;
   useEffect(() => {
     const el = sentinel.current;
@@ -91,11 +92,15 @@ export function Timeline({ contactId }: { contactId: string }) {
           body = s(d.body);
         } else if (it.type === "ticket_activity") {
           heading = ticketActivityText(tx, d);
+          const tk = d.ticket as { number?: number; title?: string } | null | undefined;
+          if (tk && (tk.number != null || tk.title)) {
+            heading = `${tk.number != null ? `#${tk.number} ` : ""}${tk.title ?? ""} · ${heading}`.trim();
+          }
           body = s(d.kind) === "note" ? "" : s(d.note);
         } else {
           const from = s(d.from);
           const who = from === "them" ? tx("Customer", "العميل") : from === "ai" ? tx("AI", "الذكاء الاصطناعي") : tx("Team", "الفريق");
-          heading = `${tx("Message", "رسالة")} · ${s(d.channel) || "—"} · ${who}`;
+          heading = `${tx("Message", "رسالة")} · ${s(d.channel) ? channelLabel(s(d.channel), t.lang) : "—"} · ${who}`;
           body = s(d.body);
           const convId = s(d.conversationId);
           if (convId) link = { label: tx("Open conversation", "فتح المحادثة"), open: () => openRecord("conversation", convId) };
@@ -122,7 +127,7 @@ export function Timeline({ contactId }: { contactId: string }) {
           </li>
         );
       })}
-      <div ref={sentinel} style={{ height: 1 }} />
+      <li ref={sentinel} aria-hidden style={{ height: 1 }} />
       {isFetchingNextPage && <li style={{ fontSize: 11, color: "var(--ink-3)" }}>{tx("Loading…", "جارٍ التحميل…")}</li>}
     </ol>
   );

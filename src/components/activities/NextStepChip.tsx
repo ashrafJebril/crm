@@ -1,8 +1,9 @@
 import { useMemo, type CSSProperties } from "react";
-import { useFetch } from "@/api/useFetch";
+import { useQueries } from "@tanstack/react-query";
+import { api } from "@/api/client";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
-import { formatDue, type ActivityKind } from "@/screens/followups/followupsLogic";
+import { chunkIds, formatDue, type ActivityKind } from "@/screens/followups/followupsLogic";
 import { useWorkspaceTz, kindLabel } from "./activityApi";
 
 export interface NextStep {
@@ -11,14 +12,29 @@ export interface NextStep {
   title: string;
   dueAt: string | null;
   overdue: boolean;
+  ticketId?: string | null;
+  assigneeId: string | null;
+  notes: string | null;
+  outcome: string | null;
 }
 export type NextSteps = Record<string, NextStep | undefined>;
 
-/** One batched request for a page/column of records (backend caps at 200 ids). */
+const CHUNK = 200; // backend cap per request
+
+/** Batched requests for a page/column of records: ids go out in display order,
+ *  200 per request, so every visible card gets its chip. */
 export function useNextSteps(by: "contactIds" | "ticketIds", ids: string[]): NextSteps {
-  const key = useMemo(() => [...new Set(ids)].sort().slice(0, 200).join(","), [ids]);
-  const q = useFetch<NextSteps>(key ? `/activities/next-steps?${by}=${key}` : null);
-  return q.data ?? {};
+  const urls = useMemo(
+    () => chunkIds(ids, CHUNK).map((c) => `/activities/next-steps?${by}=${c.join(",")}`),
+    [by, ids],
+  );
+  return useQueries({
+    queries: urls.map((url) => ({
+      queryKey: [url],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.get<NextSteps>(url, signal),
+    })),
+    combine: (rs) => Object.assign({}, ...rs.map((r) => r.data ?? {})) as NextSteps,
+  });
 }
 
 const chip: CSSProperties = {

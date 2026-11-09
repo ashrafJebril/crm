@@ -58,10 +58,13 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
     case "activity.due": {
       const title = str(p.title);
       const contact = str(p.contactName);
-      return out(
-        title ? tx(`Follow-up due: ${title}`, `موعد متابعة: ${title}`) : tx("A follow-up is due", "حان موعد متابعة"),
-        contact,
-      );
+      const kind = str(p.kind);
+      const label =
+        kind === "call" ? tx("Call due", "موعد مكالمة")
+        : kind === "meeting" ? tx("Meeting due", "موعد اجتماع")
+        : kind === "task" ? tx("Task due", "موعد مهمة")
+        : tx("Follow-up due", "موعد متابعة");
+      return out(title ? `${label}: ${title}` : label, contact);
     }
     case "assignment.activity": {
       const title = str(p.title);

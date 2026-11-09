@@ -4,14 +4,14 @@ import { useAuth } from "@/auth/context";
 import { useFetch } from "@/api/useFetch";
 import type { Tx } from "@/lib/tx";
 import type { TeamMember } from "@/lib/types";
-import type { ActivityKind } from "@/screens/followups/followupsLogic";
+import { FALLBACK_TZ, safeTz, type ActivityKind } from "@/screens/followups/followupsLogic";
 
-export const FALLBACK_TZ = "Asia/Riyadh";
+export { FALLBACK_TZ };
 
 /** The active workspace's IANA timezone (all due times are shown/entered in it). */
 export function useWorkspaceTz(): string {
   const { activeWorkspace } = useAuth();
-  return activeWorkspace?.timezone || FALLBACK_TZ;
+  return safeTz(activeWorkspace?.timezone);
 }
 
 export const KINDS: ActivityKind[] = ["follow_up", "call", "meeting", "task", "note_log"];
@@ -60,6 +60,9 @@ export function activityError(tx: Tx, e: unknown): string {
       "That person can't open this record, so it can't be assigned to them.",
       "لا يستطيع هذا الشخص فتح هذا السجل، لذلك لا يمكن إسناده إليه.",
     );
+  }
+  if (msg.includes("activities.due_required")) {
+    return tx("This activity needs a due time.", "يحتاج هذا النشاط إلى موعد.");
   }
   if (e instanceof ApiError && e.status === 403) {
     return tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");

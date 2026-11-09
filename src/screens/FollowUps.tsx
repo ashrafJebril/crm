@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { PageHeader } from "@/components/PageHeader";
@@ -11,7 +11,7 @@ import { decodeJson, encodeJson, getHashParam, setHashParam } from "@/lib/hashSt
 import type { Pipeline } from "@/lib/types";
 import { BulkFollowUpBar } from "./followups/BulkFollowUpBar";
 import { FollowUpRow } from "./followups/FollowUpRow";
-import { groupForDisplay, type Activity, type ActivityKind, type QueueResponse, type SectionKey } from "./followups/followupsLogic";
+import { groupForDisplay, pruneSelection, type ActivityKind, type QueueResponse, type SectionKey } from "./followups/followupsLogic";
 
 interface FuState {
   scope: "mine" | "team";
@@ -43,6 +43,15 @@ export default function FollowUps() {
   const canTeam = can("contacts.view");
 
   const [st, setSt] = useState<FuState>(readState);
+  // Back/forward or a pasted link changes ?fu= without remounting: re-read it.
+  useEffect(() => {
+    const onHash = () => setSt((cur) => {
+      const next = readState();
+      return JSON.stringify(next) === JSON.stringify(cur) ? cur : next;
+    });
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const scope = st.scope === "team" && canTeam ? "team" : "mine";
   const update = (patch: Partial<FuState>) => {
     const next = { ...st, ...patch };
@@ -58,36 +67,38 @@ export default function FollowUps() {
   if (st.pipelineId) params.set("pipelineId", st.pipelineId);
   const base = `/activities/queue?${params.toString()}`;
 
-  const q = useQuery<QueueResponse, Error>({
+  // Upcoming pages are infinite-query pages keyed by the filter base, so the 60 s
+  // refetch refreshes every loaded page instead of dropping "Load more" results.
+  const q = useInfiniteQuery<QueueResponse, Error, { pages: QueueResponse[] }, string[], string | null>({
     queryKey: [base],
-    queryFn: ({ signal }) => api.get<QueueResponse>(base, signal),
+    initialPageParam: null,
+    queryFn: ({ pageParam, signal }) =>
+      api.get<QueueResponse>(pageParam ? `${base}&cursorUpcoming=${encodeURIComponent(pageParam)}` : base, signal),
+    getNextPageParam: (last) => last.nextCursorUpcoming ?? null,
     refetchInterval: 60_000,
   });
+  const loadingMore = q.isFetchingNextPage;
+  const cursor = q.hasNextPage ? (q.data?.pages[q.data.pages.length - 1]?.nextCursorUpcoming ?? null) : null;
+  const loadMore = () => void q.fetchNextPage();
 
-  // "Load more" pages append to Upcoming; any refetch of the base resets them.
-  const [extra, setExtra] = useState<{ items: Activity[]; cursor: string | null } | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  useEffect(() => setExtra(null), [q.dataUpdatedAt, base]);
-  const cursor = extra ? extra.cursor : q.data?.nextCursorUpcoming ?? null;
-  const loadMore = async () => {
-    if (!cursor) return;
-    setLoadingMore(true);
-    try {
-      const r = await api.get<QueueResponse>(`${base}&cursorUpcoming=${encodeURIComponent(cursor)}`);
-      setExtra({ items: [...(extra?.items ?? []), ...r.upcoming], cursor: r.nextCursorUpcoming });
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const data: QueueResponse | undefined = useMemo(
-    () => (q.data ? { ...q.data, upcoming: [...q.data.upcoming, ...(extra?.items ?? [])] } : undefined),
-    [q.data, extra],
-  );
+  const data: QueueResponse | undefined = useMemo(() => {
+    const pages = q.data?.pages;
+    if (!pages || pages.length === 0) return undefined;
+    const first = pages[0];
+    const seen = new Set<string>();
+    const upcoming = pages.flatMap((p) => p.upcoming).filter((a) => !seen.has(a.id) && !!seen.add(a.id));
+    return { ...first, upcoming, nextCursorUpcoming: pages[pages.length - 1].nextCursorUpcoming };
+  }, [q.data]);
   const sections = data ? groupForDisplay(data) : [];
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   useEffect(() => setSelected(new Set()), [base]);
+  // After a refresh, drop selected ids that are no longer listed.
+  useEffect(() => {
+    if (!data) return;
+    const ids = [...data.overdue, ...data.today, ...data.upcoming].map((a) => a.id);
+    setSelected((s) => pruneSelection(s, ids));
+  }, [data]);
   const toggle = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -165,7 +176,7 @@ export default function FollowUps() {
               ))}
               {sec.key === "upcoming" && cursor && (
                 <div style={{ padding: 10, textAlign: "center" }}>
-                  <button type="button" className="btn sm" disabled={loadingMore} onClick={() => void loadMore()}>
+                  <button type="button" className="btn sm" disabled={loadingMore} onClick={loadMore}>
                     {loadingMore ? tx("Loading…", "جارٍ التحميل…") : tx("Load more", "تحميل المزيد")}
                   </button>
                 </div>

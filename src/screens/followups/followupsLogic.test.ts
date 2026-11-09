@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildActivityPayload,
+  chunkIds,
+  dueAfterKindChange,
+  FALLBACK_TZ,
+  pruneSelection,
+  safeTz,
   fromLocalInput,
   formatDue,
   groupForDisplay,
@@ -74,5 +80,75 @@ describe("groupForDisplay", () => {
   });
   it("returns nothing for an empty queue", () => {
     expect(groupForDisplay({ ...q, overdue: [], upcoming: [], counts: { overdue: 0, today: 0, upcoming: 0 } })).toEqual([]);
+  });
+});
+
+describe("invalid timezone", () => {
+  it("safeTz falls back and the helpers do not throw", () => {
+    expect(safeTz("Not/AZone")).toBe(FALLBACK_TZ);
+    expect(safeTz("")).toBe(FALLBACK_TZ);
+    expect(safeTz("Asia/Dubai")).toBe("Asia/Dubai");
+    expect(() => formatDue("2026-11-09T19:30:00Z", NOW, "Bad/Zone", "en")).not.toThrow();
+    expect(() => quickReschedule(NOW, "tomorrow9", "Bad/Zone")).not.toThrow();
+    expect(toLocalInput("2026-11-09T19:30:00Z", "Bad/Zone")).toBe(toLocalInput("2026-11-09T19:30:00Z", FALLBACK_TZ));
+  });
+});
+
+describe("quickReschedule plus1h", () => {
+  it("floors to the minute", () => {
+    const r = quickReschedule(new Date("2026-11-09T10:00:42.123Z"), "plus1h", DUBAI);
+    expect(r.toISOString()).toBe("2026-11-09T11:00:00.000Z");
+  });
+});
+
+describe("dueAfterKindChange", () => {
+  const def = "2026-11-10T09:00";
+  it("clears the scheduling default when switching to call/meeting untouched", () => {
+    expect(dueAfterKindChange("call", def, false, def)).toBe("");
+    expect(dueAfterKindChange("meeting", def, false, def)).toBe("");
+  });
+  it("keeps a user-entered due for call/meeting", () => {
+    expect(dueAfterKindChange("call", "2026-11-12T10:00", true, def)).toBe("2026-11-12T10:00");
+  });
+  it("always clears for a note", () => {
+    expect(dueAfterKindChange("note_log", "2026-11-12T10:00", true, def)).toBe("");
+  });
+  it("fills the default when a required kind has no due", () => {
+    expect(dueAfterKindChange("follow_up", "", false, def)).toBe(def);
+    expect(dueAfterKindChange("task", "2026-11-12T10:00", true, def)).toBe("2026-11-12T10:00");
+  });
+});
+
+describe("buildActivityPayload", () => {
+  const due = new Date("2026-11-10T09:00:00Z");
+  const orig = { notes: "n", outcome: "o", dueAt: "2026-11-10T09:00:00.000Z" };
+  const v = { title: " T ", notes: "n", outcome: "o", dueDate: due };
+  it("omits dueAt when unchanged (even with sub-minute drift)", () => {
+    expect(buildActivityPayload(v, orig)).not.toHaveProperty("dueAt");
+    expect(buildActivityPayload({ ...v, dueDate: new Date("2026-11-10T09:00:30Z") }, orig)).not.toHaveProperty("dueAt");
+  });
+  it("sends dueAt when the minute changed", () => {
+    expect(buildActivityPayload({ ...v, dueDate: new Date("2026-11-10T10:00:00Z") }, orig).dueAt).toBe("2026-11-10T10:00:00.000Z");
+  });
+  it("sends null for emptied notes/outcome/due on edit", () => {
+    const p = buildActivityPayload({ title: "T", notes: " ", outcome: "", dueDate: null }, orig);
+    expect(p).toMatchObject({ notes: null, outcome: null, dueAt: null });
+  });
+  it("does not send null for already-empty fields; create omits empties", () => {
+    const p = buildActivityPayload({ title: "T", notes: "", outcome: "", dueDate: null }, { notes: null, outcome: null, dueAt: null });
+    expect(p).toEqual({ title: "T" });
+    expect(buildActivityPayload({ title: "T", notes: "", outcome: "", dueDate: null })).toEqual({ title: "T" });
+    expect(buildActivityPayload(v).dueAt).toBe(due.toISOString());
+  });
+});
+
+describe("pruneSelection / chunkIds", () => {
+  it("drops ids no longer listed, keeping the same set when unchanged", () => {
+    const s = new Set(["a", "b"]);
+    expect([...pruneSelection(s, ["a", "c"])]).toEqual(["a"]);
+    expect(pruneSelection(s, ["a", "b"])).toBe(s);
+  });
+  it("chunks in order without duplicates", () => {
+    expect(chunkIds(["1", "2", "3", "2", "4", "5"], 2)).toEqual([["1", "2"], ["3", "4"], ["5"]]);
   });
 });

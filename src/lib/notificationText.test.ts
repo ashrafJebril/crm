@@ -51,6 +51,12 @@ describe("notificationText", () => {
     const due = { type: "activity_due", title: "activity.due", body: JSON.stringify({ title: "Call back", contactName: "Sara" }) };
     expect(notificationText(en, due)).toEqual({ title: "Follow-up due: Call back", body: "Sara" });
     expect(notificationText(ar, due).title).toBe("موعد متابعة: Call back");
+    const call = { ...due, body: JSON.stringify({ title: "Ring", kind: "call" }) };
+    expect(notificationText(en, call).title).toBe("Call due: Ring");
+    expect(notificationText(ar, call).title).toBe("موعد مكالمة: Ring");
+    expect(notificationText(en, { ...due, body: JSON.stringify({ title: "Q", kind: "meeting" }) }).title).toBe("Meeting due: Q");
+    expect(notificationText(en, { ...due, body: JSON.stringify({ title: "Q", kind: "task" }) }).title).toBe("Task due: Q");
+    expect(notificationText(ar, { ...due, body: JSON.stringify({ title: "Q", kind: "task" }) }).title).toBe("موعد مهمة: Q");
     const asg = { ...base, title: "assignment.activity", body: JSON.stringify({ title: "Send quote", contactName: "Sara" }) };
     expect(notificationText(en, asg)).toEqual({ title: "Activity assigned to you: Send quote", body: "Sara" });
     expect(notificationText(ar, asg).title).toBe("أُسند إليك نشاط: Send quote");

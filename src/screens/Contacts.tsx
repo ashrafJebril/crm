@@ -98,7 +98,9 @@ function ContactsTable({
   const pageAll = contacts.length > 0 && contacts.every((c) => selected.has(c.id));
   // One batched request for the whole page.
   const nextSteps = useNextSteps("contactIds", useMemo(() => contacts.map((c) => c.id), [contacts]));
-  const canEditActivity = usePermissions().can("contacts.update");
+  const { can: canDo } = usePermissions();
+  // A ticket-linked next step needs tickets.update; a contact-level one contacts.update.
+  const canEditStep = (id: string) => (nextSteps[id]?.ticketId ? canDo("tickets.update") : canDo("contacts.update"));
   const [stepFor, setStepFor] = useState<string | null>(null);
   const togglePage = () => {
     const next = new Set(selected);
@@ -202,7 +204,7 @@ function ContactsTable({
               <td className="mono">{c.convs}</td>
               <td className="mono">{c.value}</td>
               <td onClick={(e) => e.stopPropagation()} style={{ maxWidth: 220 }}>
-                <NextStepChip step={nextSteps[c.id]} canEdit={canEditActivity} onClick={() => setStepFor(c.id)} />
+                <NextStepChip step={nextSteps[c.id]} canEdit={canEditStep(c.id)} onClick={() => setStepFor(c.id)} />
               </td>
               <td className="mono muted">{c.lastSeen}</td>
               <td onClick={(e) => e.stopPropagation()}>
@@ -218,7 +220,7 @@ function ContactsTable({
         <ActivityDialog
           key={stepFor}
           contactId={stepFor}
-          activity={nextSteps[stepFor] ? { id: nextSteps[stepFor]!.activityId, kind: nextSteps[stepFor]!.kind, title: nextSteps[stepFor]!.title, notes: null, dueAt: nextSteps[stepFor]!.dueAt, doneAt: null, outcome: null, assigneeId: null } : undefined}
+          activity={nextSteps[stepFor] ? { id: nextSteps[stepFor]!.activityId, kind: nextSteps[stepFor]!.kind, title: nextSteps[stepFor]!.title, notes: nextSteps[stepFor]!.notes, dueAt: nextSteps[stepFor]!.dueAt, doneAt: null, outcome: nextSteps[stepFor]!.outcome, assigneeId: nextSteps[stepFor]!.assigneeId } : undefined}
           onClose={() => setStepFor(null)}
         />
       )}

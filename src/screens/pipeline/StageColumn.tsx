@@ -328,7 +328,7 @@ export function StageColumn({
           ticketId={stepTicketId}
           activity={
             nextSteps[stepTicketId]
-              ? { id: nextSteps[stepTicketId]!.activityId, kind: nextSteps[stepTicketId]!.kind, title: nextSteps[stepTicketId]!.title, notes: null, dueAt: nextSteps[stepTicketId]!.dueAt, doneAt: null, outcome: null, assigneeId: null }
+              ? { id: nextSteps[stepTicketId]!.activityId, kind: nextSteps[stepTicketId]!.kind, title: nextSteps[stepTicketId]!.title, notes: nextSteps[stepTicketId]!.notes, dueAt: nextSteps[stepTicketId]!.dueAt, doneAt: null, outcome: nextSteps[stepTicketId]!.outcome, assigneeId: nextSteps[stepTicketId]!.assigneeId }
               : undefined
           }
           onClose={() => setStepTicketId(null)}
