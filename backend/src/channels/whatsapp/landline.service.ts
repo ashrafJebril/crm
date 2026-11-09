@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
 import { Prisma, type Channel } from "@prisma/client";
+import { randomBytes } from "node:crypto";
 import { PrismaService } from "../../prisma/prisma.service";
 import { RealtimeService } from "../../realtime/realtime.service";
 import { channelError } from "../channel-errors";
@@ -7,10 +8,11 @@ import { toChannelDto, type ChannelDto } from "../channel-dto";
 import { assertWhatsappCapacity } from "../channel-limits";
 import { credentialsFor, encryptChannelSecrets } from "../channel-credentials";
 import { ChannelTransportRegistry } from "../channel-transport";
-import { ensureDefaultPerKind, isUniqueViolation } from "../legacy-mirror";
+import { isUniqueViolation } from "../legacy-mirror";
 import { MetaGraphClient, MetaGraphError } from "./meta-graph.client";
 import {
   assertNotConnectedElsewhere,
+  attachMetaNumber,
   findMetaNumber,
   generatePin,
   META_REGISTER_FAILED,
@@ -294,17 +296,24 @@ export class LandlineService implements OnModuleInit {
     } catch (e) {
       throw await fail("register", META_SUBSCRIBE_FAILED, e);
     }
-    await this.prisma.channel.update({
-      where: { id: row.id },
-      data: {
-        status: "active",
-        statusReason: null,
-        disconnectedAt: null,
-        config: withVerification(objectConfig(row.config), null) as Prisma.InputJsonValue,
-      },
+    // Done: attach like the FINISH signup (m2). A workspace's first WhatsApp
+    // number becomes the legacy Integration (template submit, status and
+    // test-send read it), and this row becomes its slot; a later number stays
+    // channel-only. Either way `verification` is cleared and the row active.
+    const { channel } = await attachMetaNumber(this.prisma, row.workspaceId, {
+      phoneNumberId: row.externalId!,
+      wabaId,
+      accessToken: token,
+      displayName: row.displayName,
+      displayPhoneNumber: row.phoneNumber,
+      verifiedName: null,
+      registrationPin: pin,
+      status: "active",
+      statusReason: null,
+      verification: null,
+      verifyToken: `aram-wa-${randomBytes(6).toString("hex")}`,
     });
-    await ensureDefaultPerKind(this.prisma, row.workspaceId);
-    return (await this.prisma.channel.findFirst({ where: { id: row.id, workspaceId: row.workspaceId } })) ?? row;
+    return channel;
   }
 
   /** The row in one of `stages`, with the token and WABA the steps need. */

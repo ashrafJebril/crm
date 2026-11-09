@@ -20,6 +20,10 @@ export const CHANNEL_LIMITS: Readonly<Record<string, number>> = Object.freeze({
   pro: 10,
 });
 
+/** A pending row (landline flow, parked signup) idle this long stops taking
+ *  a slot, so an abandoned FINISH_ONLY_WABA row never blocks a plan (m5). */
+export const STALE_PENDING_MS = 24 * 3600_000;
+
 export function whatsappLimit(plan: string, env: Record<string, string | undefined> = process.env): number {
   const override = Number(env.CHANNEL_WHATSAPP_LIMIT);
   if (Number.isInteger(override) && override > 0) return override;
@@ -33,7 +37,12 @@ export async function whatsappUsage(
   const ws = await prisma.workspace.findUnique({ where: { id: workspaceId }, select: { plan: true } });
   const plan = ws?.plan ?? "free";
   const used = await prisma.channel.count({
-    where: { workspaceId, kind: "whatsapp", status: { not: "disconnected" } },
+    where: {
+      workspaceId,
+      kind: "whatsapp",
+      status: { not: "disconnected" },
+      NOT: { status: "pending", updatedAt: { lt: new Date(Date.now() - STALE_PENDING_MS) } },
+    },
   });
   return { used, limit: whatsappLimit(plan), plan };
 }

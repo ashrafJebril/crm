@@ -15,6 +15,24 @@ describe("channel limits", () => {
     expect(whatsappLimit("pro", { CHANNEL_WHATSAPP_LIMIT: "0" })).toBe(10);
   });
 
+  it("pending rows idle for more than 24 h stop counting (m5); fresh ones still count", async () => {
+    const prev = process.env.CHANNEL_WHATSAPP_LIMIT;
+    delete process.env.CHANNEL_WHATSAPP_LIMIT;
+    const old = new Date(Date.now() - 25 * 3600_000);
+    const prisma = makeFakePrisma({
+      workspace: [{ id: "ws1", plan: "free" }],
+      channel: [{ id: "p", workspaceId: "ws1", kind: "whatsapp", status: "pending", updatedAt: old, createdAt: old }],
+    });
+    try {
+      expect(await whatsappUsage(prisma, "ws1")).toMatchObject({ used: 0 });
+      await expect(assertWhatsappCapacity(prisma, "ws1")).resolves.toBeUndefined();
+      prisma.db.channel[0].updatedAt = new Date();
+      expect(await whatsappUsage(prisma, "ws1")).toMatchObject({ used: 1 });
+    } finally {
+      if (prev !== undefined) process.env.CHANNEL_WHATSAPP_LIMIT = prev;
+    }
+  });
+
   it("counts non-disconnected WhatsApp channels and gates adds with 409 channels.limit_reached", async () => {
     const prisma = makeFakePrisma({
       workspace: [{ id: "ws1", plan: "free" }],

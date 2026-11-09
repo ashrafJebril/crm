@@ -259,6 +259,17 @@ describe("embedded signup", () => {
     });
   });
 
+  it("re-running signup on a working number whose re-register fails keeps it active (m4)", async () => {
+    const { svc, prisma, g } = build({ ...growth, integration: [{ ...integA }], channel: [{ ...chanA }] });
+    const first = await svc.signup("ws1", { code: "c1", wabaId: "waba-B", phoneNumberId: "pn-B", signupEvent: "FINISH" });
+    expect(first.status).toBe("active");
+    g.prepend(["/pn-B/register", graphError(133005, "Two step verification PIN mismatch")]);
+    const again = await svc.signup("ws1", { code: "c2", wabaId: "waba-B", phoneNumberId: "pn-B", signupEvent: "FINISH" });
+    expect(again).toMatchObject({ id: first.id, status: "active", statusReason: "meta_register_failed" });
+    expect(again.config).not.toHaveProperty("verification");
+    expect(prisma.db.channel[1].status).toBe("active");
+  });
+
   it("a refused WABA subscription leaves the number in error for a reconnect", async () => {
     const { svc } = build({ ...growth, integration: [{ ...integA }], channel: [{ ...chanA }] }, [
       ["subscribed_apps", graphError(200, "Permissions error")],

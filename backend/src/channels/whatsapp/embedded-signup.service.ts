@@ -219,9 +219,19 @@ export class EmbeddedSignupService {
         this.log.warn(`register failed for a signup number: code=${(e as MetaGraphError).code ?? "-"}`);
       }
     }
-    const status = !registered ? "pending" : a.subscribed ? "active" : "error";
-    const statusReason = !registered ? META_REGISTER_FAILED : a.subscribed ? null : META_SUBSCRIBE_FAILED;
-    const verification: Verification | null = registered ? null : { stage: "needs_registration" };
+    // A re-run on a number that already works (active, no landline stage):
+    // a refused re-register is recorded but never parks it (m4).
+    const working = !!existing && existing.status === "active" && !verificationOf(existing);
+    const parked = !registered && !working;
+    const status = parked ? "pending" : a.subscribed ? "active" : "error";
+    const statusReason = parked
+      ? META_REGISTER_FAILED
+      : !a.subscribed
+        ? META_SUBSCRIBE_FAILED
+        : registered
+          ? null
+          : META_REGISTER_FAILED;
+    const verification: Verification | null = parked ? { stage: "needs_registration" } : null;
     const label = a.displayName?.trim() || info.verified_name?.trim() || info.display_phone_number?.trim() || "WhatsApp";
 
     const { channel } = await attachMetaNumber(this.prisma, workspaceId, {

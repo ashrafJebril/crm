@@ -67,7 +67,7 @@ describe("landline verification", () => {
   });
 
   it("landline happy path reaches active", async () => {
-    const { svc, g, row, realtime } = build();
+    const { svc, g, row, realtime, prisma } = build();
 
     const a = await svc.addNumber("ws1", "P", { cc: "+962", phoneNumber: "06 500 0000", verifiedName: "Shop L" });
     expect(a).toMatchObject({ externalId: "pn-L", phoneNumber: "+96265000000", displayName: "Shop L", status: "pending", config: { verification: { stage: "awaiting_code" } } });
@@ -89,10 +89,27 @@ describe("landline verification", () => {
     expect(g.calls[4].url).toBe("https://graph.facebook.com/v21.0/waba-L/subscribed_apps");
     expect(done).toMatchObject({ status: "active", statusReason: null, isDefault: true, config: { wabaId: "waba-L" } });
     expect(done.config).not.toHaveProperty("verification");
-    expect(JSON.parse(row().secretsEnc).accessToken).toBe(LTOKEN);
+    // m2: the workspace's first WhatsApp number becomes the legacy Integration
+    // (token there; the row keeps only its PIN), like the FINISH signup path.
+    expect(prisma.db.integration).toEqual([
+      expect.objectContaining({ workspaceId: "ws1", platform: "whatsapp", provider: "meta", pageId: "pn-L", accessToken: LTOKEN }),
+    ]);
+    expect(JSON.parse(prisma.db.integration[0].raw)).toMatchObject({ wabaId: "waba-L" });
+    expect(row()).toMatchObject({ integrationId: prisma.db.integration[0].id, status: "active" });
+    expect(JSON.parse(row().secretsEnc)).toEqual({ registrationPin: pin });
     expect(realtime.emitToWorkspace).toHaveBeenCalledTimes(4);
     expect(JSON.stringify(done)).not.toContain(LTOKEN);
     expect(JSON.stringify(done)).not.toContain(pin);
+  });
+
+  it("a later landline number next to an existing WhatsApp Integration stays channel-only", async () => {
+    const { svc, prisma, row } = build([pending({ externalId: "pn-L", config: { wabaId: "waba-L", verification: { stage: "needs_registration" } } })]);
+    prisma.db.integration.push({ id: "I-A", workspaceId: "ws1", platform: "whatsapp", provider: "meta", pageId: "pn-A", accessToken: "TOKEN-A", raw: null, createdAt: new Date() });
+    await svc.register("ws1", "P");
+    expect(prisma.db.integration).toHaveLength(1);
+    expect(prisma.db.integration[0]).toMatchObject({ pageId: "pn-A", accessToken: "TOKEN-A" });
+    expect(row()).toMatchObject({ integrationId: null, status: "active" });
+    expect(JSON.parse(row().secretsEnc).accessToken).toBe(LTOKEN);
   });
 
   it("landline wrong code and cooldown map to keys", async () => {

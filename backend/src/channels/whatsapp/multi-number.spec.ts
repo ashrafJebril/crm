@@ -132,19 +132,67 @@ describe("manual connect of a different number adds a channel", () => {
     expect(res).not.toHaveProperty("verifyToken");
   });
 
-  it("connect-by-token picks the token's number this workspace does not have yet", async () => {
-    const prisma = seed();
-    const { svc } = meta(prisma, [
-      ["/me?fields=id,name", { id: "user-1" }],
-      ["/me/businesses", { data: [{ id: "biz", owned_whatsapp_business_accounts: { data: [{ id: "waba-A" }] } }] }],
-      ["/waba-A?fields=id,name", { id: "waba-A", name: "Shop" }],
-      ["/waba-A/phone_numbers", { data: [{ id: "pn-A", display_phone_number: "+962 7 9000 0001" }, { id: "pn-B", display_phone_number: "+962 7 9000 0002" }] }],
-      phoneB,
-    ]);
+  const twoNumbers = (): Array<[string, unknown]> => [
+    ["/me?fields=id,name", { id: "user-1" }],
+    ["/me/businesses", { data: [{ id: "biz", owned_whatsapp_business_accounts: { data: [{ id: "waba-A" }] } }] }],
+    ["/waba-A?fields=id,name", { id: "waba-A", name: "Shop" }],
+    // Meta's test number listed first, next to the workspace's real number
+    ["/waba-A/phone_numbers", { data: [{ id: "pn-B", display_phone_number: "+962 7 9000 0002" }, { id: "pn-A", display_phone_number: "+962 7 9000 0001" }] }],
+    phoneA,
+    phoneB,
+  ];
+
+  it("a token refresh with two WABA numbers refreshes the held one and adds nothing (I1)", async () => {
+    const prisma = seed("free");
+    prisma.db.channel[0].status = "needs_attention";
+    const { svc } = meta(prisma, twoNumbers());
     const res = await svc.connectByToken("ws1", TOKEN_B);
+    expect(res.discovered.picked).toEqual({ wabaId: "waba-A", phoneNumberId: "pn-A" });
+    expect(prisma.db.channel.map((c: { externalId: string }) => c.externalId)).toEqual(["pn-A"]);
+    expect(prisma.db.integration).toHaveLength(1);
+    expect(prisma.db.integration[0]).toMatchObject({ pageId: "pn-A", accessToken: TOKEN_B });
+    expect(prisma.db.channel[0]).toMatchObject({ status: "active", statusReason: null });
+  });
+
+  it("a held number that was disconnected is refreshed and reactivated, not replaced", async () => {
+    const prisma = seed("growth", { channel: [chanA({ status: "disconnected", statusReason: "disconnected_by_user", isDefault: false })] });
+    const { svc } = meta(prisma, twoNumbers());
+    await svc.connectByToken("ws1", TOKEN_B);
+    expect(prisma.db.channel).toHaveLength(1);
+    expect(prisma.db.channel[0]).toMatchObject({ externalId: "pn-A", status: "active", statusReason: null });
+    expect(prisma.db.integration[0].accessToken).toBe(TOKEN_B);
+  });
+
+  it("an explicit add (the hub's manual route) takes the token's number this workspace does not have yet", async () => {
+    const prisma = seed();
+    const { svc } = meta(prisma, twoNumbers());
+    const res = await svc.connectByToken("ws1", TOKEN_B, { add: true, errorStyle: "keys" });
     expect(res.discovered.picked).toEqual({ wabaId: "waba-A", phoneNumberId: "pn-B" });
     expect(prisma.db.channel.map((c: { externalId: string }) => c.externalId)).toEqual(["pn-A", "pn-B"]);
     expect(prisma.db.integration[0]).toMatchObject({ pageId: "pn-A", accessToken: "TOKEN-A" });
+  });
+
+  it("without an add intent, a token that cannot reach any held number adds nothing", async () => {
+    const prisma = seed();
+    const { svc } = meta(prisma, [
+      ["/me?fields=id,name", { id: "user-1" }],
+      ["/me/businesses", { data: [{ id: "biz", owned_whatsapp_business_accounts: { data: [{ id: "waba-X" }] } }] }],
+      ["/waba-X?fields=id,name", { id: "waba-X" }],
+      ["/waba-X/phone_numbers", { data: [{ id: "pn-X" }] }],
+    ]);
+    const keyed = await svc.connectByToken("ws1", TOKEN_B, { errorStyle: "keys" }).catch((e) => e);
+    expect(channelErrorKey(keyed)).toBe("channels.meta_no_number");
+    const legacy = await svc.connectByToken("ws1", TOKEN_B).catch((e) => e);
+    expect(legacy.getStatus()).toBe(400);
+    expect(prisma.db.channel).toHaveLength(1);
+  });
+
+  it("a workspace with no Meta number still connects the token's first number", async () => {
+    const prisma = seed("growth", { integration: [], channel: [] });
+    const { svc } = meta(prisma, twoNumbers());
+    const res = await svc.connectByToken("ws1", TOKEN_B);
+    expect(res.discovered.picked.phoneNumberId).toBe("pn-B");
+    expect(prisma.db.integration[0]).toMatchObject({ pageId: "pn-B", accessToken: TOKEN_B });
   });
 
   it("connect-by-token honours an explicit phoneNumberId and refuses one the token does not hold (keys mode)", async () => {
@@ -220,6 +268,39 @@ describe("number limit blocks add flows but not zernio mirror", () => {
     );
     return { svc, client };
   }
+
+  it("reconnecting the held Zernio WhatsApp number is not gated by the limit (C1)", async () => {
+    for (const state of [
+      { status: "needs_attention", statusReason: null },
+      { status: "disconnected", statusReason: "zernio_account_missing" },
+      { status: "disconnected", statusReason: "integration_removed" },
+    ]) {
+      const prisma = seed("free", {
+        integration: [integA({ provider: "zernio", pageId: "acc-A", accessToken: null, raw: null })],
+        channel: [chanA({ provider: "zernio", externalId: "acc-A", ...state })],
+      });
+      // a second, healthy number fills the free slot when the first is disconnected
+      if (state.status === "disconnected") {
+        prisma.db.channel.push(chanA({ id: "other", integrationId: null, externalId: "pn-Z", isDefault: false }));
+      }
+      const { svc, client } = zernio(prisma);
+      await expect(svc.getConnectUrl("ws1", "whatsapp")).resolves.toEqual({ authUrl: "https://zernio.example/connect" });
+      expect(client.getConnectUrl).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("a user-disconnected Zernio number is not a reconnect: the link stays gated", async () => {
+    const prisma = seed("free", {
+      integration: [integA({ provider: "zernio", pageId: "acc-A", accessToken: null, raw: null })],
+      channel: [
+        chanA({ provider: "zernio", externalId: "acc-A", status: "disconnected", statusReason: "disconnected_by_user", isDefault: false }),
+        chanA({ id: "live", integrationId: null, externalId: "pn-Z" }),
+      ],
+    });
+    const { svc } = zernio(prisma);
+    const e = await svc.getConnectUrl("ws1", "whatsapp").catch((x: unknown) => x);
+    expect(channelErrorKey(e)).toBe("channels.limit_reached");
+  });
 
   it("free plan with one number: embedded signup, manual connect and the Zernio WhatsApp link are 409; Meta/Zernio never called", async () => {
     const prisma = seed("free");

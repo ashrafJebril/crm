@@ -58,7 +58,7 @@ describe("WhatsappChannelsController", () => {
   it("manual connect returns the new channel's DTO and never the token or the verify token", async () => {
     const { ctrl, wa, channels } = build();
     const out = await ctrl.manual("ws1", { accessToken: "SECRET-TOKEN-1234567890", phoneNumberId: "pn" });
-    expect(wa.connectByToken).toHaveBeenCalledWith("ws1", "SECRET-TOKEN-1234567890", { phoneNumberId: "pn", errorStyle: "keys" });
+    expect(wa.connectByToken).toHaveBeenCalledWith("ws1", "SECRET-TOKEN-1234567890", { phoneNumberId: "pn", errorStyle: "keys", add: true });
     expect(channels.get).toHaveBeenCalledWith("ws1", "ch-M");
     expect(out).toEqual({
       channel: { id: "ch-M", kind: "whatsapp" },

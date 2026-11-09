@@ -23,7 +23,7 @@ import { LAgentService } from "./l-agent.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { ChannelResolver } from "../channels/channel-resolver.service";
 import { INTEGRATION_REMOVED, mirrorZernioAccounts } from "../channels/zernio-mirror";
-import { ensureDefaultPerKind, type IntegrationLike } from "../channels/legacy-mirror";
+import { ensureDefaultPerKind, ZERNIO_MISSING, type IntegrationLike } from "../channels/legacy-mirror";
 import { credentialsFor } from "../channels/channel-credentials";
 import { assertWhatsappCapacity } from "../channels/channel-limits";
 
@@ -168,9 +168,13 @@ export class ZernioService {
       );
     }
     // SP-19 T4: a WhatsApp connect link adds a number, so it needs a free
-    // slot under the plan limit (409 channels.limit_reached). Accounts that
-    // already exist at Zernio are still mirrored by every sync.
-    if (p === "whatsapp") await assertWhatsappCapacity(this.prisma, workspaceId);
+    // slot under the plan limit (409 channels.limit_reached). Re-authorising
+    // the number the workspace already holds (sign-in expired, access
+    // revoked, account dropped by Zernio) is a reconnect and is never gated.
+    // Accounts that already exist at Zernio are still mirrored by every sync.
+    if (p === "whatsapp" && !(await this.zernioWhatsappNeedsReconnect(workspaceId))) {
+      await assertWhatsappCapacity(this.prisma, workspaceId);
+    }
     const profileId = await this.ensureProfile(workspaceId);
     const base =
       process.env.ZERNIO_REDIRECT_BASE ??
@@ -179,6 +183,24 @@ export class ZernioService {
       "http://localhost:5174";
     const redirectUrl = `${base}/#/settings?zernio=connected&platform=${encodeURIComponent(p)}`;
     return this.client.getConnectUrl(p, profileId, redirectUrl);
+  }
+
+  /** A held Zernio WhatsApp channel that is not healthy-active: the connect
+   *  link is its re-auth, not a new number. A user's hub disconnect is not. */
+  private async zernioWhatsappNeedsReconnect(workspaceId: string): Promise<boolean> {
+    const row = await this.prisma.channel.findFirst({
+      where: {
+        workspaceId,
+        kind: "whatsapp",
+        provider: "zernio",
+        OR: [
+          { status: "needs_attention" },
+          { status: "disconnected", statusReason: { in: [ZERNIO_MISSING, INTEGRATION_REMOVED] } },
+        ],
+      },
+      select: { id: true },
+    });
+    return !!row;
   }
 
   /**

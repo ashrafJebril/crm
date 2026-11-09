@@ -207,7 +207,7 @@ export class WhatsAppService {
   async connectByToken(
     workspaceId: string,
     accessToken: string,
-    opts: ConnectOptions & { phoneNumberId?: string } = {},
+    opts: ConnectOptions & { phoneNumberId?: string; add?: boolean } = {},
   ) {
     const bad = (key: ChannelErrorKey, english: string) =>
       opts.errorStyle === "keys" ? channelError(key) : new BadRequestException(english);
@@ -359,9 +359,15 @@ export class WhatsAppService {
       );
     }
 
-    // SP-19 T4: pick the requested number, else the first number this
-    // workspace does not hold yet (a token for a WABA with several numbers
-    // adds the next one instead of re-saving the first), else the first.
+    // SP-19 T4: which number this token connects.
+    //  - an explicit `phoneNumberId`: that one;
+    //  - otherwise a number this workspace already holds that the token can
+    //    reach (live first): the usual reason to paste a token is to refresh
+    //    an expired one, so it is refreshed in place and reactivated (I1);
+    //  - an explicit add (`add`, the hub's manual route): the first number the
+    //    workspace does not hold yet, else a held one;
+    //  - a workspace with no Meta number yet: the token's first number;
+    //  - otherwise nothing is added: 400 (keys: channels.meta_no_number).
     const candidates = wabas.flatMap((w) =>
       (w.phone_numbers?.data ?? []).filter((p) => p?.id).map((p) => ({ waba: w, phone: p })),
     );
@@ -372,15 +378,25 @@ export class WhatsAppService {
         throw bad("channels.meta_no_number", "This token cannot access the requested WhatsApp phone number.");
       }
     } else {
-      const held = new Set(
-        (
-          await this.prisma.channel.findMany({
-            where: { workspaceId, kind: "whatsapp", provider: { notIn: NOT_META }, status: { not: "disconnected" } },
-            select: { externalId: true },
-          })
-        ).map((c) => c.externalId),
-      );
-      pick = candidates.find((c) => !held.has(c.phone.id)) ?? candidates[0];
+      const rows = await this.prisma.channel.findMany({
+        where: { workspaceId, kind: "whatsapp", provider: { notIn: NOT_META } },
+        select: { externalId: true, status: true },
+      });
+      const held = new Set(rows.map((c) => c.externalId));
+      const live = new Set(rows.filter((c) => c.status !== "disconnected").map((c) => c.externalId));
+      const heldPick = candidates.find((c) => live.has(c.phone.id)) ?? candidates.find((c) => held.has(c.phone.id));
+      if (opts.add) {
+        pick = candidates.find((c) => !held.has(c.phone.id)) ?? heldPick;
+      } else if (heldPick) {
+        pick = heldPick;
+      } else if (held.size === 0) {
+        pick = candidates[0];
+      } else if (candidates.length) {
+        throw bad(
+          "channels.meta_no_number",
+          "This token cannot access the WhatsApp number connected to this workspace. To connect another number, use Add number in Channels.",
+        );
+      }
     }
     if (!pick) {
       const first = wabas[0];

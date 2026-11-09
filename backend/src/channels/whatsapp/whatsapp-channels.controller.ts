@@ -59,6 +59,8 @@ export class WhatsappChannelsController {
     const res = await this.wa.connectByToken(workspaceId, dto.accessToken, {
       phoneNumberId: dto.phoneNumberId,
       errorStyle: "keys",
+      // The hub's "Add number": a token's not-yet-held number is added.
+      add: true,
     });
     return {
       channel: await this.channels.get(workspaceId, res.channelId),
