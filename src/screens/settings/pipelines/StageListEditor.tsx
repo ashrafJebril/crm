@@ -23,6 +23,7 @@ import {
   addStage,
   moveStage,
   moveTargetsFor,
+  isBuiltInStage,
   removeStage,
   reorderStages,
   restoreStage,
@@ -96,6 +97,16 @@ function StageRow({
   const patch = (p: Partial<DraftStage>) => onChange(updateStage(draft, stage.clientId, p));
 
   const onRemove = () => {
+    if (
+      isBuiltInStage(stage) &&
+      !window.confirm(
+        tx(
+          "This is a built-in stage. Automations that rely on it will stop working.",
+          "هذه مرحلة مدمجة. ستتوقف عمليات الأتمتة التي تعتمد عليها.",
+        ),
+      )
+    )
+      return;
     if (stage.id && stage.ticketCount > 0) {
       setConfirming(true);
       setTarget(targets[0]?.id ?? "");
@@ -348,7 +359,7 @@ export function StageListEditor({ draft, original, onChange, readOnly, errors, t
             {tx("Removed on save", "ستُحذف عند الحفظ")}
           </div>
           {draft.removed.map((r) => {
-            const needs = r.ticketCount > 0;
+            const needs = r.ticketCount > 0; // required only then; the select is always shown
             const targets = draft.stages.filter((s) => s.id);
             const bad = errors.some((e) => e.removedStage === r.stageId);
             return (
@@ -368,10 +379,12 @@ export function StageListEditor({ draft, original, onChange, readOnly, errors, t
                 <span dir="auto" style={{ flex: "1 1 120px", textDecoration: "line-through" }}>
                   {tx(r.label || "—", r.labelAr || r.label || "—")}
                 </span>
-                {needs ? (
+                {
                   <>
                     <span className="muted">
-                      {tx(`${r.ticketCount} card(s) move to`, `تنقل ${r.ticketCount} بطاقة إلى`)}
+                      {needs
+                        ? tx(`${r.ticketCount} card(s) move to`, `تنقل ${r.ticketCount} بطاقة إلى`)
+                        : tx("Any new cards move to", "أي بطاقات جديدة تنقل إلى")}
                     </span>
                     <select
                       style={{ ...small, width: "auto", minWidth: 140 }}
@@ -388,7 +401,7 @@ export function StageListEditor({ draft, original, onChange, readOnly, errors, t
                       ))}
                     </select>
                   </>
-                ) : null}
+                }
                 {!readOnly ? (
                   <button type="button" className="btn" onClick={() => onChange(restoreStage(draft, r.stageId, original))}>
                     {tx("Undo", "تراجع")}

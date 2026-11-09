@@ -12,6 +12,8 @@ export const MAX_LOST_REASONS = 50;
 export interface DraftStageInput {
   id: string;
   key?: string;
+  /** "custom_*" for editor-made stages; anything else is built in. */
+  groupKey?: string;
   label: string;
   labelAr: string;
   color: StageColor;
@@ -51,6 +53,7 @@ export interface DraftStage {
   clientId: string;
   id?: string;
   key?: string;
+  groupKey?: string;
   label: string;
   labelAr: string;
   color: StageColor;
@@ -140,6 +143,7 @@ export function draftFromPipeline(p: DraftPipelineInput): PipelineDraft {
         clientId: s.id,
         id: s.id,
         key: s.key,
+        groupKey: s.groupKey,
         label: s.label,
         labelAr: s.labelAr,
         color: s.color,
@@ -272,6 +276,20 @@ export function removeStage(d: PipelineDraft, clientId: string, moveTo?: string)
   return { ...d, stages, removed: [...d.removed, entry] };
 }
 
+/** True for stages the editor did not create; automations may rely on them. */
+export const isBuiltInStage = (s: { id?: string; groupKey?: string }): boolean =>
+  !!s.id && !!s.groupKey && !s.groupKey.startsWith("custom_");
+
+/** After a move_target_required rejection: adopt fresh card counts, keep the user's edits. */
+export function refreshCounts(d: PipelineDraft, fresh: DraftPipelineInput): PipelineDraft {
+  const count = new Map(fresh.stages.map((s) => [s.id, s.ticketCount ?? 0]));
+  return {
+    ...d,
+    stages: d.stages.map((s) => (s.id && count.has(s.id) ? { ...s, ticketCount: count.get(s.id)! } : s)),
+    removed: d.removed.map((r) => (count.has(r.stageId) ? { ...r, ticketCount: count.get(r.stageId)! } : r)),
+  };
+}
+
 /** Change/choose the move target of an already removed stage. */
 export function setRemovedMoveTo(d: PipelineDraft, stageId: string, moveTo: string | undefined): PipelineDraft {
   return {
@@ -383,6 +401,7 @@ export const DRAFT_ERROR_TEXT: Record<string, [string, string]> = {
   "pipelines.lost_reasons_count": ["Keep between 1 and 50 lost reasons.", "أبقِ ما بين 1 و50 سبب خسارة."],
   "pipelines.cannot_archive_default": ["The default pipeline cannot be archived.", "لا يمكن أرشفة المسار الافتراضي."],
   "pipelines.cannot_archive_support": ["The support pipeline cannot be archived.", "لا يمكن أرشفة مسار الدعم."],
+  "pipelines.system_stage": ["The Open stage of the Support pipeline cannot be removed or closed.", "لا يمكن حذف مرحلة «مفتوح» في مسار الدعم أو جعلها مرحلة إغلاق."],
   "pipelines.archived": ["This pipeline is archived.", "هذا المسار مؤرشف."],
   "pipelines.won_must_be_terminal": ["A Won stage must be a closing stage.", "يجب أن تكون مرحلة الفوز مرحلة إغلاق."],
   "pipelines.unknown_stage": ["A stage in the draft no longer exists. Reload and try again.", "مرحلة في المسودة لم تعد موجودة. أعد التحميل وحاول مجدداً."],

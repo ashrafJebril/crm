@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
 import type { Ticket, Lang } from "@/lib/types";
+import { makeTx } from "@/lib/tx";
+import { usePermissions } from "@/auth/usePermissions";
 
 export interface LostReasonOption {
   id: string;
@@ -21,6 +23,8 @@ interface Props {
 
 export function LostReasonModal({ ticket, lang, pipelineId, onCancel, onConfirm }: Props) {
   const ar = lang === "ar";
+  const tx = makeTx(lang);
+  const { can } = usePermissions();
   const q = useQuery<LostReasonOption[]>({
     queryKey: ["pipelines", pipelineId, "lost-reasons"],
     queryFn: ({ signal }) => api.get<LostReasonOption[]>(`/pipelines/${pipelineId}/lost-reasons`, signal),
@@ -45,6 +49,20 @@ export function LostReasonModal({ ticket, lang, pipelineId, onCancel, onConfirm 
           ) : q.isError ? (
             <div style={{ fontSize: 12, color: "var(--bad, #ef4444)" }}>
               {ar ? "تعذر تحميل أسباب الخسارة" : "Could not load lost reasons"}
+            </div>
+          ) : reasons.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--ink-3)", display: "grid", gap: 6 }}>
+              <span>
+                {tx(
+                  "No lost reasons yet — add them in Settings → Pipelines",
+                  "لا توجد أسباب خسارة بعد — أضفها من الإعدادات ← المسارات",
+                )}
+              </span>
+              {can("pipelines.manage") ? (
+                <a href="#/settings?tab=pipelines" style={{ color: "var(--accent)" }}>
+                  {tx("Open the pipeline editor", "فتح محرر المسارات")}
+                </a>
+              ) : null}
             </div>
           ) : null}
           {reasons.map((r) => (

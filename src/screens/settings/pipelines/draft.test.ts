@@ -4,6 +4,8 @@ import {
   addStage,
   draftFromPipeline,
   hasChanges,
+  isBuiltInStage,
+  refreshCounts,
   moveStage,
   moveTargetsFor,
   removeLostReason,
@@ -175,5 +177,25 @@ describe("draft", () => {
     const orig = draftFromPipeline(base());
     expect(hasChanges({ ...orig, name: "X" }, orig)).toBe(true);
     expect(hasChanges(moveStage(orig, orig.stages[0].clientId, 1), orig)).toBe(true);
+  });
+});
+
+describe("built-in stages and count refresh", () => {
+  it("flags non-custom groupKeys as built in, never new or custom stages", () => {
+    expect(isBuiltInStage({ id: "s1", groupKey: "new" })).toBe(true);
+    expect(isBuiltInStage({ id: "s1", groupKey: "custom_x" })).toBe(false);
+    expect(isBuiltInStage({ groupKey: "new" })).toBe(false);
+  });
+
+  it("refreshCounts adopts fresh card counts and keeps the user's edits", () => {
+    let d = draftFromPipeline(base());
+    d = removeStage(d, "s2", "s1");
+    d = updateStage(d, "s1", { label: "Renamed" });
+    const fresh = base();
+    fresh.stages[1].ticketCount = 3;
+    const out = refreshCounts(d, fresh);
+    expect(out.removed[0].ticketCount).toBe(3);
+    expect(out.removed[0].moveTo).toBe("s1");
+    expect(out.stages.find((s) => s.id === "s1")?.label).toBe("Renamed");
   });
 });

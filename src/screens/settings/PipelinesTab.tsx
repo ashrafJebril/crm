@@ -12,6 +12,7 @@ import {
   DRAFT_ERROR_TEXT,
   draftFromPipeline,
   hasChanges,
+  refreshCounts,
   toPayload,
   validateDraft,
   type DraftPipelineInput,
@@ -70,7 +71,7 @@ export function PipelinesTab() {
   if (loading) return null;
   if (!canView) {
     return (
-      <SettingsCard title={tx("Pipelines", "مسارات المبيعات")}>
+      <SettingsCard title={tx("Pipelines", "المسارات")}>
         <div className="muted" style={{ fontSize: 13 }}>
           {tx(NO_PERMISSION_EN, NO_PERMISSION_AR)}
         </div>
@@ -142,7 +143,7 @@ export function PipelinesTab() {
   return (
     <div>
       <SettingsCard
-        title={tx("Pipelines", "مسارات المبيعات")}
+        title={tx("Pipelines", "المسارات")}
         description={tx(
           "Stages, lost reasons and rules for each pipeline.",
           "المراحل وأسباب الخسارة وقواعد كل مسار.",
@@ -152,7 +153,7 @@ export function PipelinesTab() {
         {list.isError ? <div style={{ color: "var(--bad, #ef4444)" }}>{errorText(list.error, tx)}</div> : null}
         {items.map((p) => {
           const archived = !!p.archivedAt;
-          const protectedPipe = p.isDefault || p.kind === "support";
+          const protectedPipe = p.isDefault || p.key === "support";
           return (
             <div
               key={p.id}
@@ -176,7 +177,7 @@ export function PipelinesTab() {
                 </div>
               </div>
               {p.isDefault ? <Badge kind="accent">{tx("Default", "افتراضي")}</Badge> : null}
-              {p.kind === "support" ? <Badge kind="info">{tx("Support", "الدعم")}</Badge> : null}
+              {p.key === "support" ? <Badge kind="info">{tx("Support", "الدعم")}</Badge> : null}
               {archived ? <Badge>{tx("Archived", "مؤرشف")}</Badge> : null}
               <button type="button" className="btn" onClick={() => setEditingId(p.id)}>
                 {canManage ? tx("Edit", "تعديل") : tx("View", "عرض")}
@@ -244,7 +245,7 @@ export function PipelinesTab() {
               onChange={(e) => setCreating({ ...creating, kind: e.target.value })}
             >
               <option value="deals">{tx("Deals", "صفقات")}</option>
-              <option value="support">{tx("Support", "دعم")}</option>
+              <option value="leads">{tx("Leads", "عملاء محتملون")}</option>
             </select>
           </Field>
         </SettingsCard>
@@ -339,6 +340,16 @@ function PipelineEditor({
           return;
         }
       }
+      if (e instanceof ApiError && e.message === "pipelines.move_target_required") {
+        // A card arrived in a stage that looked empty: refresh counts, keep edits.
+        try {
+          const fresh = await api.get<PipelineFull>(`/pipelines/${id}`);
+          setDraft(refreshCounts(draft, fresh));
+          setShowErrors(true);
+        } catch {
+          /* fall through to the message */
+        }
+      }
       setSaveError(errorText(e, tx));
     } finally {
       setSaving(false);
@@ -429,7 +440,7 @@ function PipelineEditor({
           <input
             style={inputStyle}
             disabled
-            value={meta.kind === "support" ? tx("Support", "دعم") : tx("Deals", "صفقات")}
+            value={meta.kind === "support" ? tx("Support", "دعم") : meta.kind === "leads" ? tx("Leads", "عملاء محتملون") : tx("Deals", "صفقات")}
           />
         </Field>
       </SettingsCard>
@@ -525,7 +536,10 @@ function PipelineEditor({
   );
 }
 
-const t_back = (tx: Tx) => `← ${tx("Pipelines", "المسارات")}`;
+// RTL: the back arrow points right in Arabic.
+const t_back = (tx: Tx) => `${tx("←", "→")} ${tx("Pipelines", "المسارات")}`;
+const joiner = (tx: Tx) => tx(", ", "، ");
+const arrowJoin = (tx: Tx) => ` ${tx("→", "←")} `;
 
 function KeptCopy({ copy, tx, onDismiss }: { copy: PipelineDraft; tx: Tx; onDismiss: () => void }) {
   return (
@@ -547,15 +561,15 @@ function KeptCopy({ copy, tx, onDismiss }: { copy: PipelineDraft; tx: Tx; onDism
         </div>
         <div dir="auto">
           {tx("Stages", "المراحل")}:{" "}
-          {copy.stages.map((s) => tx(s.label, s.labelAr || s.label) + (s.isWon ? " ✓" : s.isTerminal ? " ✗" : "")).join(" → ")}
+          {copy.stages.map((s) => tx(s.label, s.labelAr || s.label) + (s.isWon ? " ✓" : s.isTerminal ? " ✗" : "")).join(arrowJoin(tx))}
         </div>
         {copy.removed.length > 0 ? (
           <div dir="auto">
-            {tx("Removed", "المحذوفة")}: {copy.removed.map((r) => tx(r.label, r.labelAr || r.label)).join(", ")}
+            {tx("Removed", "المحذوفة")}: {copy.removed.map((r) => tx(r.label, r.labelAr || r.label)).join(joiner(tx))}
           </div>
         ) : null}
         <div dir="auto">
-          {tx("Lost reasons", "أسباب الخسارة")}: {copy.lostReasons.map((r) => tx(r.label, r.labelAr || r.label)).join(", ")}
+          {tx("Lost reasons", "أسباب الخسارة")}: {copy.lostReasons.map((r) => tx(r.label, r.labelAr || r.label)).join(joiner(tx))}
         </div>
         <div>
           <button type="button" className="btn ghost sm" onClick={onDismiss}>

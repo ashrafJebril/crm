@@ -85,7 +85,7 @@ export function useMoveTicket() {
       removeFromAllStages(qc, v.pipelineId, v.ticketId);
       // … then prepend it to the destination stage. Single source of truth.
       patchStageCache(qc, v.pipelineId, v.toStageId, (items) => [
-        { ...v.optimisticTicket, stageId: v.toStageId },
+        { ...v.optimisticTicket, stageId: v.toStageId, enteredStageAt: new Date().toISOString() },
         ...items,
       ]);
 

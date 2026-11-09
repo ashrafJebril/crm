@@ -26,15 +26,17 @@ export default function PipelinePage() {
 
   const [pipelineId, setPipelineId] = useState<string>(initialPipelineId);
 
+  // No selection, or the remembered pipeline is gone/archived: fall back to the first one.
   useEffect(() => {
-    if (!pipelineId && pipelines.length > 0) {
+    if (pipelines.length === 0) return;
+    if (!pipelineId || !pipelines.some((p) => p.id === pipelineId)) {
       setPipelineId(pipelines[0].id);
     }
   }, [pipelines, pipelineId]);
 
   useEffect(() => {
-    if (pipelineId) localStorage.setItem(LAST_USED_KEY, pipelineId);
-  }, [pipelineId]);
+    if (pipelineId && (pipelines.length === 0 || pipelines.some((p) => p.id === pipelineId))) localStorage.setItem(LAST_USED_KEY, pipelineId);
+  }, [pipelineId, pipelines]);
 
   const { data: summary } = usePipelineSummary(pipelineId || null);
   useTicketRealtime(pipelineId || null);
@@ -84,7 +86,7 @@ export default function PipelinePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [showNew, selectedTicket, deepTicketId]);
 
-  const pipeline = pipelines.find((p) => p.id === pipelineId);
+  const pipeline = pipelines.find((p) => p.id === pipelineId) ?? pipelines[0];
 
   if (isLoading) {
     return (
