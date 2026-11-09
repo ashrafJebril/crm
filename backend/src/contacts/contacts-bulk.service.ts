@@ -117,6 +117,8 @@ export class ContactsBulkService {
     if (!dto.pipelineId) throw new BadRequestException("pipelineId required");
     const pipeline = await this.prisma.pipeline.findFirst({ where: { id: dto.pipelineId, workspaceId } });
     if (!pipeline) throw new NotFoundException("Pipeline not found");
+    // Archived pipelines take no new tickets: refuse before any work (SP-07).
+    if (pipeline.archivedAt) throw new BadRequestException("pipelines.archived");
     if (!ids.length) return { affected: 0, created: 0, skipped: 0 };
     if (ids.length > PIPELINE_BULK_CAP) {
       // Bilingual like the tags API's conflict message; the UI disables the

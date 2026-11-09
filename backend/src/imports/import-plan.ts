@@ -148,7 +148,8 @@ export async function loadContext(
 
   if (options.pipeline) {
     const p = await prisma.pipeline.findFirst({ where: { id: options.pipeline.pipelineId, workspaceId } });
-    if (!p) throw importError("imports.pipeline_invalid");
+    // An archived pipeline takes no new tickets (SP-07).
+    if (!p || p.archivedAt) throw importError("imports.pipeline_invalid");
     if (options.pipeline.stageId) {
       const st = await prisma.ticketStage.findFirst({
         where: { id: options.pipeline.stageId, workspaceId, pipelineId: options.pipeline.pipelineId },

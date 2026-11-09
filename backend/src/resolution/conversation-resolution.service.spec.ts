@@ -72,6 +72,13 @@ describe("ConversationResolutionService.apply", () => {
     expect(tickets.createTicket).not.toHaveBeenCalled();
   });
 
+  it("an archived Support pipeline is skipped with no ticket and no throw", async () => {
+    raw.pipeline.findFirst.mockResolvedValue({ id: "p1", archivedAt: new Date(), stages: [{ id: "s1" }] });
+    await expect(svc.supportPipeline("ws")).resolves.toBeNull();
+    await expect(svc.apply("c1", "ws", { ...base, issue_type: "complaint", ticket_title: "x" })).resolves.not.toThrow();
+    expect(tickets.createTicket).not.toHaveBeenCalled();
+  });
+
   it("creates the Support pipeline on first use", async () => {
     raw.pipeline.findFirst
       .mockResolvedValueOnce(null)

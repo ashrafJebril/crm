@@ -181,6 +181,16 @@ describe("ImportsService.preview", () => {
     );
   });
 
+  it("refuses an archived pipeline (imports.pipeline_invalid)", async () => {
+    const prisma = new FakePrisma();
+    prisma.pipelines = [{ id: "p1", workspaceId: "ws1", archivedAt: new Date() }];
+    seedJob(prisma, { id: "j1", status: "uploaded", totalRows: 1 });
+    const { svc } = makeService(prisma, "Name\nA");
+    expect(await rejectKey(svc.preview("ws1", V, "j1", { mapping: { Name: "name" }, options: { pipeline: { pipelineId: "p1" } } }))).toBe(
+      "imports.pipeline_invalid",
+    );
+  });
+
   it("audience kind needs a group; a foreign groupId is 404", async () => {
     const prisma = new FakePrisma();
     seedJob(prisma, { id: "ja", kind: "audience", status: "uploaded" });

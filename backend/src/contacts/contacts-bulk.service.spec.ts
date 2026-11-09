@@ -157,6 +157,13 @@ describe("ContactsBulkService", () => {
     );
   });
 
+  it("addToPipeline refuses an archived pipeline with 400 pipelines.archived before any work", async () => {
+    prisma.pipeline.findFirst.mockResolvedValue({ id: "p1", archivedAt: new Date() });
+    await expect(svc.run("ws1", { ids: ["a"], op: "addToPipeline", pipelineId: "p1" })).rejects.toThrow("pipelines.archived");
+    expect(tickets.createTicket).not.toHaveBeenCalled();
+    expect(prisma.ticket.findMany).not.toHaveBeenCalled();
+  });
+
   it("bulk delete without force reports blocked", async () => {
     // contact.findMany: ownership check first, then the linked-records lookup.
     prisma.contact.findMany

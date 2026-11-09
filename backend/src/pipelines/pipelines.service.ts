@@ -101,6 +101,11 @@ export class PipelinesService {
     return new ConflictException({ statusCode: 409, message: "pipelines.version_conflict", current });
   }
 
+  /**
+   * Known limitation: toggling isTerminal / isWon on an EXISTING stage does not
+   * reconcile tickets already in it (their closedAt / lostReason stay as they
+   * were). Only stage removal moves tickets and recomputes closedAt.
+   */
   async saveDraft(workspaceId: string, id: string, draft: DraftInput) {
     const p = await this.load(workspaceId, id);
     if (draft.version !== p.version) throw this.conflict(await this.get(workspaceId, id));
@@ -208,6 +213,7 @@ export class PipelinesService {
   async archive(workspaceId: string, id: string) {
     const p = await this.load(workspaceId, id);
     if (p.isDefault) throw new BadRequestException("pipelines.cannot_archive_default");
+    if (p.kind === "support") throw new BadRequestException("pipelines.cannot_archive_support");
     await this.prisma.pipeline.updateMany({
       where: { id, workspaceId },
       data: { archivedAt: p.archivedAt ?? new Date(), version: { increment: 1 } },

@@ -37,6 +37,16 @@ describe("PipelinesService", () => {
     expect(err.message).toBe("pipelines.cannot_archive_default");
   });
 
+  it("a support-kind pipeline cannot be archived", async () => {
+    const f = baseFixture();
+    f.pipeline.kind = "support";
+    const svc = new PipelinesService(makePrisma(f));
+    const err = await svc.archive("ws_1", "pl_1").catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.message).toBe("pipelines.cannot_archive_support");
+    expect(f.pipeline.archivedAt).toBeNull();
+  });
+
   it("archive sets archivedAt, unarchive clears it, both bump the version", async () => {
     const f = baseFixture();
     const prisma = makePrisma(f);

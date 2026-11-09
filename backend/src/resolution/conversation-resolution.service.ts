@@ -227,7 +227,12 @@ export class ConversationResolutionService {
     issue: "complaint" | "escalation",
     v: Verdict,
   ): Promise<void> {
-    const { pipelineId, stageId } = await this.supportPipeline(workspaceId);
+    const sp = await this.supportPipeline(workspaceId);
+    if (!sp) {
+      this.log.warn(`support pipeline is archived in workspace ${workspaceId}; skipping ticket for ${conversationId}`);
+      return;
+    }
+    const { pipelineId, stageId } = sp;
     const open = await this.prisma.raw.ticket.findFirst({
       where: { workspaceId, pipelineId, conversationId, closedAt: null },
       select: { id: true },
@@ -246,11 +251,12 @@ export class ConversationResolutionService {
   }
 
   /** The workspace's Support pipeline, created on first use. */
-  async supportPipeline(workspaceId: string): Promise<{ pipelineId: string; stageId: string }> {
+  /** Null when the pipeline has (unexpectedly) been archived: no ticket is created. */
+  async supportPipeline(workspaceId: string): Promise<{ pipelineId: string; stageId: string } | null> {
     const find = () =>
       this.prisma.raw.pipeline.findFirst({
         where: { workspaceId, key: SUPPORT_PIPELINE.key },
-        select: { id: true, stages: { where: { key: "open" }, select: { id: true } } },
+        select: { id: true, archivedAt: true, stages: { where: { key: "open" }, select: { id: true } } },
       });
     let p = await find();
     if (!p) {
@@ -271,6 +277,7 @@ export class ConversationResolutionService {
       }
       p = await find();
     }
+    if (p?.archivedAt) return null;
     if (!p?.stages[0]) throw new Error("Support pipeline has no open stage");
     return { pipelineId: p.id, stageId: p.stages[0].id };
   }

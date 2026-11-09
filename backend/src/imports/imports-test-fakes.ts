@@ -25,7 +25,7 @@ export class FakePrisma {
     { userId: "u1", user: { id: "u1", name: "Owner One", email: "owner@x.com" } },
     { userId: "u2", user: { id: "u2", name: "Agent Two", email: "agent@x.com" } },
   ];
-  pipelines = [{ id: "p1", workspaceId: "ws1" }];
+  pipelines: Array<{ id: string; workspaceId: string; archivedAt?: Date | null }> = [{ id: "p1", workspaceId: "ws1" }];
   stages = [{ id: "s1", workspaceId: "ws1", pipelineId: "p1" }];
   timezone = "Asia/Dubai";
   jobUpdates: any[] = [];
