@@ -199,9 +199,15 @@ describe("insights buckets read times and groups replies and failures", () => {
       { payload: "STOP", label: "Stop", count: 1 },
       { payload: null, label: null, count: 4 },
     ]);
-    const sql = sqls.find((s) => s.sql.includes('GROUP BY "buttonPayload"'))!.sql;
-    expect(sql).toContain(`(array_agg("replyText" ORDER BY "repliedAt" DESC`);
+    const q = sqls.find((s) => s.sql.includes('GROUP BY "buttonPayload"'))!;
+    const sql = q.sql;
+    // m1: the label is the latest row per payload (DISTINCT ON), never a full array_agg.
+    expect(sql).not.toContain("array_agg");
+    expect(sql).toContain(`SELECT DISTINCT ON ("buttonPayload") "buttonPayload", "replyText"`);
+    expect(sql).toContain(`ORDER BY "buttonPayload", "repliedAt" DESC NULLS LAST, "id" DESC`);
+    expect(sql).toContain(`IS NOT DISTINCT FROM`);
     expect(sql).toContain(`WHERE "workspaceId" = ? AND "campaignId" = ? AND "status" = 'replied'`);
+    expect(q.vals).toEqual([WS, "c1", WS, "c1"]);
   });
 
   it("failure lines group by code, null codes go to unrecorded, and lines add up to failed + skipped", async () => {
@@ -230,9 +236,13 @@ describe("insights buckets read times and groups replies and failures", () => {
     expect(res.unrecorded).toBe(2);
     const lines = res.failures.reduce((s, f) => s + f.count, 0) + res.unrecorded;
     expect(lines).toBe(res.counts.failed + res.counts.skipped);
-    expect(sqls.find((s) => s.sql.includes('GROUP BY "failureCode"'))!.sql).toContain(
-      `WHERE "workspaceId" = ? AND "campaignId" = ? AND "status" IN ('failed', 'skipped')`,
-    );
+    const fq = sqls.find((s) => s.sql.includes('GROUP BY "failureCode"'))!;
+    expect(fq.sql).toContain(`WHERE "workspaceId" = ? AND "campaignId" = ? AND "status" IN ('failed', 'skipped')`);
+    // m1: latest non-null reason per code through DISTINCT ON.
+    expect(fq.sql).not.toContain("array_agg");
+    expect(fq.sql).toContain(`SELECT DISTINCT ON ("failureCode") "failureCode", "failureReason"`);
+    expect(fq.sql).toContain(`AND "failureReason" IS NOT NULL ORDER BY "failureCode", "updatedAt" DESC, "id" DESC`);
+    expect(fq.vals).toEqual([WS, "c1", WS, "c1"]);
   });
 
   it("counts every status, builds the funnel from the one-outcome-per-row sets, and returns sync times", async () => {

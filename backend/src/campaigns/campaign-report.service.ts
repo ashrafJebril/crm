@@ -239,21 +239,39 @@ export class CampaignReportService {
         WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId}
           AND "status" IN ('read', 'replied') AND "sentAt" IS NOT NULL AND "readAt" IS NOT NULL
       `,
+      // Label = the latest reply text per payload: one row per group (DISTINCT ON),
+      // not an array of every reply. Joined to the plain counts.
       this.prisma.$queryRaw<{ payload: string | null; label: string | null; count: number }[]>`
-        SELECT "buttonPayload" AS payload,
-          (array_agg("replyText" ORDER BY "repliedAt" DESC NULLS LAST, "id" DESC))[1] AS label,
-          count(*)::int AS count
-        FROM "CampaignRecipient"
-        WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId} AND "status" = 'replied'
-        GROUP BY "buttonPayload"
+        SELECT c.payload, l."replyText" AS label, c.count
+        FROM (
+          SELECT "buttonPayload" AS payload, count(*)::int AS count
+          FROM "CampaignRecipient"
+          WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId} AND "status" = 'replied'
+          GROUP BY "buttonPayload"
+        ) c
+        LEFT JOIN (
+          SELECT DISTINCT ON ("buttonPayload") "buttonPayload", "replyText"
+          FROM "CampaignRecipient"
+          WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId} AND "status" = 'replied'
+          ORDER BY "buttonPayload", "repliedAt" DESC NULLS LAST, "id" DESC
+        ) l ON l."buttonPayload" IS NOT DISTINCT FROM c.payload
       `,
+      // Title source = the latest non-null reason per code, the same way.
       this.prisma.$queryRaw<{ code: string | null; reason: string | null; count: number }[]>`
-        SELECT "failureCode" AS code,
-          (array_agg("failureReason" ORDER BY "updatedAt" DESC, "id" DESC) FILTER (WHERE "failureReason" IS NOT NULL))[1] AS reason,
-          count(*)::int AS count
-        FROM "CampaignRecipient"
-        WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId} AND "status" IN ('failed', 'skipped')
-        GROUP BY "failureCode"
+        SELECT c.code, l."failureReason" AS reason, c.count
+        FROM (
+          SELECT "failureCode" AS code, count(*)::int AS count
+          FROM "CampaignRecipient"
+          WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId} AND "status" IN ('failed', 'skipped')
+          GROUP BY "failureCode"
+        ) c
+        LEFT JOIN (
+          SELECT DISTINCT ON ("failureCode") "failureCode", "failureReason"
+          FROM "CampaignRecipient"
+          WHERE "workspaceId" = ${workspaceId} AND "campaignId" = ${campaignId} AND "status" IN ('failed', 'skipped')
+            AND "failureReason" IS NOT NULL
+          ORDER BY "failureCode", "updatedAt" DESC, "id" DESC
+        ) l ON l."failureCode" IS NOT DISTINCT FROM c.code
       `,
     ]);
 

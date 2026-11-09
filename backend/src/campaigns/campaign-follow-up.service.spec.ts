@@ -5,6 +5,7 @@ import {
   FOLLOW_UP_CHUNK,
   FOLLOW_UP_CONTACTS_CAP,
   FOLLOW_UP_IDS_CAP,
+  ROW_SCAN_BATCH,
 } from "./campaign-follow-up.service";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -146,6 +147,56 @@ describe("follow-up resolves contacts per workspace and reuses group and tag ser
     expect(prisma.db.segment.length).toBe(before);
     expect(prisma.segmentMember.createMany).not.toHaveBeenCalled();
     expect(tags.assign).not.toHaveBeenCalled();
+  });
+
+  it("an outcome over the cap stops paging as soon as the cap is passed (m3)", async () => {
+    // 30 000 distinct contacts read: the cap (10 000) is passed in the 3rd batch of 5 000.
+    const recipients = Array.from({ length: 30_000 }, (_, i) => row("c1", `k${i}`, "read"));
+    const { svc, prisma, tags } = setup({ recipients, contacts: [] });
+    await expect(svc.tag(WS, "c1", { status: "read", tagId: "t1" }).catch(errOf)).resolves.toMatchObject({
+      status: 400,
+      key: "campaigns.follow_up_too_large",
+      body: { limit: FOLLOW_UP_CONTACTS_CAP },
+    });
+    expect(ROW_SCAN_BATCH).toBe(5000);
+    expect(prisma.campaignRecipient.findMany).toHaveBeenCalledTimes(Math.ceil((FOLLOW_UP_CONTACTS_CAP + 1) / ROW_SCAN_BATCH));
+    expect(prisma.contact.findMany).not.toHaveBeenCalled();
+    expect(tags.assign).not.toHaveBeenCalled();
+  });
+
+  it("create-group partial failure: the error carries {groupId}, and HJZ is notified for the written members (m2)", async () => {
+    const contacts = Array.from({ length: 2500 }, (_, i) => contact(`k${i}`));
+    const recipients = contacts.map((c) => row("c1", c.id, "read"));
+    const { svc, prisma, outbound } = setup({ recipients, contacts });
+    // A contact of the 3rd chunk is deleted after resolve: addManualMembers 404s on that chunk.
+    const realCreateMany = prisma.segmentMember.createMany.getMockImplementation();
+    let calls = 0;
+    prisma.segmentMember.createMany.mockImplementation((a: any) => {
+      if (++calls === 2) prisma.db.contact = prisma.db.contact.filter((c: any) => c.id !== "k2400");
+      return realCreateMany(a);
+    });
+    const err = await svc.createGroup(WS, "c1", { status: "read", name: "Readers" }).catch((e) => e);
+    const created = prisma.db.segment.find((s: any) => s.name === "Readers");
+    expect(created).toBeDefined();
+    expect(err.getStatus()).toBe(404);
+    expect(err.getResponse()).toMatchObject({ groupId: created.id, added: 2000 });
+    expect(prisma.db.segmentMember).toHaveLength(2000);
+    expect(outbound.emitSegmentUpserted).toHaveBeenCalledTimes(1);
+    expect(outbound.emitSegmentUpserted).toHaveBeenCalledWith(WS, created.id);
+  });
+
+  it("create-group failing before any member is written does not notify HJZ, but still reports {groupId} (m2)", async () => {
+    const recipients = [row("c1", "k1")];
+    const { svc, prisma, outbound } = setup({ recipients, contacts: [contact("k1")] });
+    prisma.segmentMember.createMany.mockImplementation(() => {
+      throw new Error("db down");
+    });
+    const err = await svc.createGroup(WS, "c1", { status: "read", name: "G" }).catch((e) => e);
+    const created = prisma.db.segment.find((s: any) => s.name === "G");
+    expect(err.getStatus()).toBe(500);
+    expect(err.getResponse()).toMatchObject({ groupId: created.id, added: 0 });
+    expect(JSON.stringify(err.getResponse())).not.toContain("db down");
+    expect(outbound.emitSegmentUpserted).not.toHaveBeenCalled();
   });
 
   it("more than 5 000 ids is 400 campaigns.ids_too_many; exactly one of status/ids is required", async () => {

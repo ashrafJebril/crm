@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { HttpException, Injectable, InternalServerErrorException, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { MarketingOutboundService } from "../segments/marketing-outbound.service";
 import { addManualMembers, createManualGroup, requireManualGroup } from "../segments/segment-members";
@@ -14,7 +14,7 @@ export const FOLLOW_UP_CHUNK = 1000;
 /** Distinct contacts one synchronous action may touch (ruling 9); equals BULK_IDS_CAP. */
 export const FOLLOW_UP_CONTACTS_CAP: number = BULK_IDS_CAP;
 /** Keyset batch for reading an outcome's rows. */
-const ROW_SCAN_BATCH = 5000;
+export const ROW_SCAN_BATCH = 5000;
 
 export interface FollowUpTarget {
   status?: RecipientStatus;
@@ -61,9 +61,25 @@ export class CampaignFollowUpService {
     if (!name) throw campaignError("campaigns.group_name_required");
     const { contactIds, leftOut } = await this.resolve(workspaceId, campaignId, target);
     const seg = await createManualGroup(this.prisma, NO_EMIT, workspaceId, { name, nameAr: dto.nameAr });
-    const added = await this.addMembers(workspaceId, seg.id, contactIds);
-    void this.outbound.emitSegmentUpserted(workspaceId, seg.id);
-    return { added, already: contactIds.length - added, leftOut, groupId: seg.id };
+    const progress = { added: 0 };
+    let ok = false;
+    try {
+      await this.addMembers(workspaceId, seg.id, contactIds, progress);
+      ok = true;
+    } catch (e) {
+      // Partial failure: the group exists and holds `added` members. Return its
+      // id so the user can finish with add-to-group instead of creating a duplicate.
+      const extra = { groupId: seg.id, added: progress.added };
+      if (e instanceof HttpException) {
+        const r = e.getResponse();
+        const body = typeof r === "object" && r !== null ? r : { statusCode: e.getStatus(), message: r };
+        throw new HttpException({ ...body, ...extra }, e.getStatus());
+      }
+      throw new InternalServerErrorException({ statusCode: 500, message: "Internal server error", ...extra });
+    } finally {
+      if (ok || progress.added > 0) void this.outbound.emitSegmentUpserted(workspaceId, seg.id);
+    }
+    return { added: progress.added, already: contactIds.length - progress.added, leftOut, groupId: seg.id };
   }
 
   async addToGroup(
@@ -127,14 +143,26 @@ export class CampaignFollowUpService {
     campaignId: string,
     target: { status: RecipientStatus } | { ids: string[] },
   ): Promise<{ contactIds: string[]; leftOut: number }> {
-    const rows: { contactId: string | null }[] = [];
+    const perContact = new Map<string, number>();
+    let leftOut = 0;
+    const take = (rows: { contactId: string | null }[]) => {
+      for (const r of rows) {
+        if (!r.contactId) leftOut++;
+        else perContact.set(r.contactId, (perContact.get(r.contactId) ?? 0) + 1);
+      }
+      // Checked per batch, so an oversized outcome is rejected without reading
+      // every row. `count` is then the distinct contacts seen so far (> limit).
+      if (perContact.size > FOLLOW_UP_CONTACTS_CAP) {
+        throw campaignError("campaigns.follow_up_too_large", { limit: FOLLOW_UP_CONTACTS_CAP, count: perContact.size });
+      }
+    };
     if ("ids" in target) {
       const found = await this.prisma.campaignRecipient.findMany({
         where: { workspaceId, campaignId, id: { in: target.ids } },
         select: { id: true, contactId: true },
       });
       if (found.length !== target.ids.length) throw campaignError("campaigns.recipient_not_found");
-      rows.push(...found);
+      take(found);
     } else {
       // Keyset over (campaignId, status, id): bounded queries even for a 100k outcome.
       let last: string | null = null;
@@ -150,20 +178,10 @@ export class CampaignFollowUpService {
           take: ROW_SCAN_BATCH,
           select: { id: true, contactId: true },
         });
-        rows.push(...batch);
+        take(batch);
         if (batch.length < ROW_SCAN_BATCH) break;
         last = batch[batch.length - 1].id;
       }
-    }
-
-    const perContact = new Map<string, number>();
-    let leftOut = 0;
-    for (const r of rows) {
-      if (!r.contactId) leftOut++;
-      else perContact.set(r.contactId, (perContact.get(r.contactId) ?? 0) + 1);
-    }
-    if (perContact.size > FOLLOW_UP_CONTACTS_CAP) {
-      throw campaignError("campaigns.follow_up_too_large", { limit: FOLLOW_UP_CONTACTS_CAP, count: perContact.size });
     }
 
     const existing = new Set<string>();
@@ -182,12 +200,17 @@ export class CampaignFollowUpService {
     return { contactIds, leftOut };
   }
 
-  private async addMembers(workspaceId: string, segmentId: string, contactIds: string[]): Promise<number> {
-    let added = 0;
+  /** `progress.added` is kept current per chunk, so a caller can report a partial write. */
+  private async addMembers(
+    workspaceId: string,
+    segmentId: string,
+    contactIds: string[],
+    progress: { added: number } = { added: 0 },
+  ): Promise<number> {
     for (const chunk of chunks(contactIds, FOLLOW_UP_CHUNK)) {
       const r = await addManualMembers(this.prisma, NO_EMIT, workspaceId, segmentId, chunk);
-      added += r.added;
+      progress.added += r.added;
     }
-    return added;
+    return progress.added;
   }
 }
