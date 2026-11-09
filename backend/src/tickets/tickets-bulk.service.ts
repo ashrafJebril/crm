@@ -98,17 +98,17 @@ export class TicketsBulkService {
       if (r.pipeline?.kind !== "leads" || isClosed(r) || r.pipeline?.archivedAt) return false;
       const stage = await this.lostStage(workspaceId, r.pipelineId);
       if (!stage) return false;
-      // Close first: if the move is gated, the contact must not be flagged.
+      // The close and the contact flag commit together; a gated move flags nothing.
       await this.tickets.moveTicket(
         workspaceId,
         r.id,
         { stageId: stage.id, lostReason: NOT_A_LEAD_REASON, byUserId: actorId },
         viewer,
+        {
+          inTx: (db) =>
+            db.contact.updateMany({ where: { workspaceId, id: { in: [r.contactId] } }, data: { notALead: true } }),
+        },
       );
-      await this.prisma.contact.updateMany({
-        where: { workspaceId, id: { in: [r.contactId] } },
-        data: { notALead: true },
-      });
       return true;
     });
   }

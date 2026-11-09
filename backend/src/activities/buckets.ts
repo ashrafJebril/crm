@@ -3,7 +3,7 @@ export type Bucket = "overdue" | "today" | "upcoming";
 
 export const DEFAULT_TZ = "Asia/Riyadh";
 
-function validTz(tz: string): string {
+export function validTz(tz: string): string {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
     return tz;
@@ -37,7 +37,7 @@ function offsetMs(d: Date, tz: string): number {
 }
 
 /** The UTC instant at which local midnight of y-m-d (month 0-based) occurs. */
-function localMidnight(y: number, m: number, d: number, tz: string): Date {
+export function localMidnight(y: number, m: number, d: number, tz: string): Date {
   const wall = Date.UTC(y, m, d);
   let guess = wall - offsetMs(new Date(wall), tz);
   guess = wall - offsetMs(new Date(guess), tz);

@@ -100,7 +100,7 @@ describe("lead pipelines", () => {
   it("creating a second open lead for the same contact is 409 tickets.lead_exists with the existing id", async () => {
     const m = makeSvc();
     setupCreate(m);
-    m.prisma.ticket.findFirst.mockImplementation(async (a: any) => (a.where.closedAt === null ? { id: "tk_old" } : null));
+    m.prisma.ticket.findFirst.mockImplementation(async (a: any) => (a.where.stage?.isTerminal === false ? { id: "tk_old" } : null));
     const err: any = await m.svc.createTicket("ws", create).catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ statusCode: 409, message: "tickets.lead_exists", ticketId: "tk_old" });
@@ -114,6 +114,26 @@ describe("lead pipelines", () => {
     expect(m.prisma.$transaction).toHaveBeenCalled();
     expect(m.prisma.$executeRaw).toHaveBeenCalled();
     expect(m.prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(m.prisma.ticket.create.mock.invocationCallOrder[0]);
+  });
+
+  it("the lead guard treats open as a non-terminal stage, not closedAt null", async () => {
+    const m = makeSvc();
+    setupCreate(m);
+    await m.svc.createTicket("ws", create);
+    expect(m.prisma.ticket.findFirst.mock.calls[0][0].where).toMatchObject({ stage: { isTerminal: false } });
+    expect(m.prisma.ticket.findFirst.mock.calls[0][0].where).not.toHaveProperty("closedAt");
+  });
+
+  it("a ticket created directly in a terminal stage is closed", async () => {
+    const m = makeSvc();
+    m.prisma.ticketStage.findFirst.mockResolvedValue(WON);
+    m.prisma.contact.findFirst.mockResolvedValue({ id: "c1" });
+    await m.svc.createTicket("ws", { ...create, stageId: "st_won" });
+    expect(m.prisma.ticket.create.mock.calls[0][0].data.closedAt).toBeInstanceOf(Date);
+    const o = makeSvc();
+    setupCreate(o);
+    await o.svc.createTicket("ws", create);
+    expect(o.prisma.ticket.create.mock.calls[0][0].data.closedAt).toBeNull();
   });
 
   it("deals pipelines are not constrained and use no transaction", async () => {
@@ -167,6 +187,29 @@ describe("lead pipelines", () => {
       expect(m.prisma.contact.update).not.toHaveBeenCalled();
     });
 
+    it("a failing contact write rolls the move back (one transaction: the move rolls back with it)", async () => {
+      const m = makeSvc();
+      setupMove(m, WON);
+      m.prisma.contact.update.mockRejectedValue(new Error("db down"));
+      // Emulate a real transaction: writes made through tx are discarded when the callback throws.
+      const committed: string[] = [];
+      m.prisma.$transaction = jest.fn(async (cb: any) => {
+        const staged: string[] = [];
+        const tx = {
+          ...m.prisma,
+          ticket: { ...m.prisma.ticket, update: jest.fn(async (a: any) => (staged.push("move"), { id: "tk", ...a.data })) },
+          ticketActivity: { ...m.prisma.ticketActivity, create: jest.fn(async () => (staged.push("activity"), {})) },
+        };
+        const out = await cb(tx);
+        committed.push(...staged);
+        return out;
+      });
+      await expect(m.svc.moveTicket("ws", "tk", { stageId: "st_won" })).rejects.toThrow("db down");
+      expect(m.prisma.$transaction).toHaveBeenCalled();
+      expect(committed).toEqual([]);
+      expect(m.realtime.emitToWorkspace).not.toHaveBeenCalled();
+    });
+
     it("dragging a closed lead back to an open stage is guarded by uniqueness too", async () => {
       const m = makeSvc();
       setupMove(m, OPEN, LOST);
@@ -174,17 +217,18 @@ describe("lead pipelines", () => {
         id: "tk", stage: LOST, stageId: "st_lost", pipelineId: "pl", contactId: "c1", closedAt: new Date(),
         pipeline: { agentCanMove: true, kind: "leads" },
       };
-      m.prisma.ticket.findFirst.mockImplementation(async (a: any) => (a.where.closedAt === null ? { id: "tk_other" } : closedRow));
+      m.prisma.ticket.findFirst.mockImplementation(async (a: any) => (a.where.stage?.isTerminal === false ? { id: "tk_other" } : closedRow));
       await expect(m.svc.moveTicket("ws", "tk", { stageId: "st_open" })).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });
 
 describe("reopenTicket", () => {
-  function setup(m: M, opts: { kind?: string; lifecycle?: string; marker?: string | null; closed?: any } = {}) {
+  function setup(m: M, opts: { otherWon?: boolean; kind?: string; lifecycle?: string; marker?: string | null; closed?: any } = {}) {
     const closed = opts.closed ?? LOST;
     m.prisma.ticket.findFirst = jest.fn(async (a: any) => {
-      if (a.where.closedAt === null) return null; // no other open lead
+      if (a.where.stage?.isTerminal === false) return null; // no other open lead
+      if (a.where.pipeline) return opts.otherWon ? { id: "tk_won2" } : null; // other won lead card
       return {
         id: "tk", workspaceId: "ws", pipelineId: "pl", stageId: closed.id, stage: closed, contactId: "c1", closedAt: new Date(),
         lostReason: "x", lostReasonId: "r1", pipeline: { agentCanMove: true, kind: opts.kind ?? "leads", archivedAt: null },
@@ -250,7 +294,7 @@ describe("reopenTicket", () => {
     const m = makeSvc();
     setup(m);
     m.prisma.ticket.findFirst = jest.fn(async (a: any) =>
-      a.where.closedAt === null
+      a.where.stage?.isTerminal === false
         ? { id: "tk_other" }
         : { id: "tk", stage: LOST, closedAt: new Date(), pipelineId: "pl", contactId: "c1", pipeline: { agentCanMove: true, kind: "leads" } },
     );
@@ -263,6 +307,13 @@ describe("reopenTicket", () => {
     setup(m, { closed: WON, lifecycle: "customer", marker: "lifecycle:lead->customer" });
     await m.svc.reopenTicket("ws", "tk");
     expect(m.prisma.contact.update).toHaveBeenCalledWith({ where: { id: "c1" }, data: { lifecycle: "lead" } });
+  });
+
+  it("keeps customer when the contact has another won lead card elsewhere", async () => {
+    const m = makeSvc();
+    setup(m, { closed: WON, lifecycle: "customer", marker: "lifecycle:lead->customer", otherWon: true });
+    await m.svc.reopenTicket("ws", "tk");
+    expect(m.prisma.contact.update).not.toHaveBeenCalled();
   });
 
   it("does not touch the lifecycle without the marker, or if the contact moved on", async () => {

@@ -206,6 +206,8 @@ export class TicketsService {
           description: dto.description ?? null,
           value: dto.value ?? null,
           currency: "SAR",
+          // Created straight into a terminal stage: it is closed from the start.
+          closedAt: stage.isTerminal ? new Date() : null,
         },
         include: { contact: true, stage: true },
       });
@@ -378,7 +380,14 @@ export class TicketsService {
     }
   }
 
-  async moveTicket(workspaceId: string, id: string, dto: MoveTicketDto, viewer?: Viewer) {
+  async moveTicket(
+    workspaceId: string,
+    id: string,
+    dto: MoveTicketDto,
+    viewer?: Viewer,
+    /** Runs inside the same transaction as the move (e.g. the bulk "not a lead" contact flag). */
+    opts?: { inTx?: (db: any) => Promise<unknown> },
+  ) {
     const ticket = await this.prisma.ticket.findFirst({
       where: { id, workspaceId },
       include: { stage: true, pipeline: { select: { agentCanMove: true, kind: true } } },
@@ -427,24 +436,31 @@ export class TicketsService {
         },
         include: { contact: true, stage: true },
       });
+    // Move + its activity + the lead lifecycle (or caller extra) commit together or not at all.
+    const run = async (db: any) => {
+      const row = await write(db);
+      await db.ticketActivity.create({
+        data: {
+          workspaceId,
+          ticketId: id,
+          kind: targetStage.isTerminal ? (targetStage.isWon ? "won" : "lost") : "stage_changed",
+          fromStage: ticket.stage.key,
+          toStage: targetStage.key,
+          note: dto.note ?? (isLost ? lostLabel : null),
+          byUserId: dto.byUserId ?? null,
+        },
+      });
+      if (isLead) await this.syncLeadLifecycle(db, workspaceId, id, ticket.contactId, ticket.stage, targetStage);
+      if (opts?.inTx) await opts.inTx(db);
+      return row;
+    };
     // Dragging a closed lead back into an open stage reopens it: the one-open-card rule applies.
     const updated =
       isLead && ticket.stage.isTerminal && !targetStage.isTerminal
-        ? await this.withLeadGuard(workspaceId, ticket.pipelineId, ticket.contactId, ticket.id, write)
-        : await write(this.prisma);
-
-    await this.prisma.ticketActivity.create({
-      data: {
-        workspaceId,
-        ticketId: id,
-        kind: targetStage.isTerminal ? (targetStage.isWon ? "won" : "lost") : "stage_changed",
-        fromStage: ticket.stage.key,
-        toStage: targetStage.key,
-        note: dto.note ?? (isLost ? lostLabel : null),
-        byUserId: dto.byUserId ?? null,
-      },
-    });
-    if (isLead) await this.syncLeadLifecycle(workspaceId, id, ticket.contactId, ticket.stage, targetStage);
+        ? await this.withLeadGuard(workspaceId, ticket.pipelineId, ticket.contactId, ticket.id, run)
+        : isLead || opts?.inTx
+          ? await this.prisma.$transaction((tx: any) => run(tx))
+          : await run(this.prisma);
 
     // Broadcast to every other connected client in this workspace so their
     // pipeline boards reflect the move without a refetch. The author's own
@@ -547,7 +563,7 @@ export class TicketsService {
           workspaceId,
           pipelineId,
           contactId,
-          closedAt: null,
+          stage: { isTerminal: false },
           ...(excludeTicketId ? { id: { not: excludeTicketId } } : {}),
         },
         select: { id: true },
@@ -566,6 +582,7 @@ export class TicketsService {
    * `customer` and this card set it.
    */
   private async syncLeadLifecycle(
+    db: any,
     workspaceId: string,
     ticketId: string,
     contactId: string,
@@ -575,7 +592,7 @@ export class TicketsService {
     const wasWon = from.isTerminal && from.isWon;
     const isWon = to.isTerminal && to.isWon;
     if (isWon === wasWon) return;
-    const contact = await this.prisma.contact.findFirst({
+    const contact = await db.contact.findFirst({
       where: { id: contactId, workspaceId },
       select: { lifecycle: true },
     });
@@ -583,20 +600,32 @@ export class TicketsService {
     const current = (contact.lifecycle ?? "").toLowerCase();
     if (isWon) {
       if (current === "customer") return;
-      await this.prisma.contact.update({ where: { id: contactId }, data: { lifecycle: "customer" } });
-      await this.prisma.ticketActivity.create({
+      await db.contact.update({ where: { id: contactId }, data: { lifecycle: "customer" } });
+      await db.ticketActivity.create({
         data: { workspaceId, ticketId, kind: LIFECYCLE_ACTIVITY, note: `lifecycle:${current || "none"}->customer` },
       });
       return;
     }
-    const marker = await this.prisma.ticketActivity.findFirst({
+    const marker = await db.ticketActivity.findFirst({
       where: { workspaceId, ticketId, kind: LIFECYCLE_ACTIVITY },
       orderBy: { createdAt: "desc" },
       select: { note: true },
     });
     if (!marker?.note?.endsWith("->customer") || current !== "customer") return;
-    await this.prisma.contact.update({ where: { id: contactId }, data: { lifecycle: "lead" } });
-    await this.prisma.ticketActivity.create({
+    // Another won card in any leads pipeline still justifies "customer".
+    const otherWon = await db.ticket.findFirst({
+      where: {
+        workspaceId,
+        contactId,
+        id: { not: ticketId },
+        pipeline: { kind: "leads" },
+        stage: { isTerminal: true, isWon: true },
+      },
+      select: { id: true },
+    });
+    if (otherWon) return;
+    await db.contact.update({ where: { id: contactId }, data: { lifecycle: "lead" } });
+    await db.ticketActivity.create({
       data: { workspaceId, ticketId, kind: LIFECYCLE_ACTIVITY, note: "lifecycle:customer->lead" },
     });
   }
@@ -661,12 +690,12 @@ export class TicketsService {
           byUserId: actorId ?? null,
         },
       });
+      if (isLead) await this.syncLeadLifecycle(db, workspaceId, id, ticket.contactId, ticket.stage, stage);
       return row;
     };
     const updated = isLead
       ? await this.withLeadGuard(workspaceId, ticket.pipelineId, ticket.contactId, id, write)
       : await write(this.prisma);
-    if (isLead) await this.syncLeadLifecycle(workspaceId, id, ticket.contactId, ticket.stage, stage);
 
     this.realtime.emitToWorkspace(workspaceId, "ticket.moved", {
       ticket: updated,

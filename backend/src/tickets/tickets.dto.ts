@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from "class-validator";
 
@@ -51,7 +52,7 @@ export class ListTicketsQuery {
   @IsOptional() @IsString() conversationId?: string;
   /** A user id, or "none" for unassigned. */
   @IsOptional() @IsString() ownerId?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
   @IsOptional() @IsString() cursor?: string;
 
   // SP-08 board filters (shared by the table and the kanban)

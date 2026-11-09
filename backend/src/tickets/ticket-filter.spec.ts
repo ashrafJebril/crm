@@ -40,6 +40,20 @@ describe("buildTicketWhere", () => {
     ]);
   });
 
+  it("a numeric q (optionally #-prefixed) also matches the ticket number", () => {
+    expect(buildTicketWhere("ws1", { q: "#42" }, "UTC").OR).toContainEqual({ number: 42 });
+    expect(buildTicketWhere("ws1", { q: "7" }, "UTC").OR).toContainEqual({ number: 7 });
+    expect(buildTicketWhere("ws1", { q: "acme1" }, "UTC").OR).toHaveLength(2);
+  });
+
+  it("from/to are correct in UTC+12 zones (Pacific/Auckland, NZST in June)", () => {
+    const w = buildTicketWhere("ws1", { from: "2026-06-10", to: "2026-06-10" }, "Pacific/Auckland");
+    expect(w.createdAt).toEqual({
+      gte: new Date("2026-06-09T12:00:00.000Z"),
+      lt: new Date("2026-06-10T12:00:00.000Z"),
+    });
+  });
+
   it("a blank q is ignored", () => {
     expect(buildTicketWhere("ws1", { q: "   " }, "UTC").OR).toBeUndefined();
   });

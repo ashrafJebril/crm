@@ -1,6 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { localDayBounds } from "../activities/buckets";
+import { localMidnight, validTz } from "../activities/buckets";
 
 /** Filters shared by the table view and the kanban (SP-08). */
 export interface TicketFilter {
@@ -28,14 +28,16 @@ const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** Local calendar day -> [start, end) UTC instants in `tz`. */
 function dayBounds(day: string, tz: string, label: string): { start: Date; end: Date } {
   const m = DAY.exec(day);
-  const noon = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12)) : null;
+  const probe = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
   // Reject impossible dates like 2026-13-45 (Date.UTC would roll them over).
-  if (!m || !noon || noon.getUTCMonth() !== +m[2] - 1 || noon.getUTCDate() !== +m[3]) {
+  if (!m || !probe || probe.getUTCMonth() !== +m[2] - 1 || probe.getUTCDate() !== +m[3]) {
     throw new BadRequestException(`${label} must be a YYYY-MM-DD date`);
   }
-  // Noon UTC falls on the same calendar day in every real-world timezone's
-  // wall clock close enough for localDayBounds to pick the intended day.
-  return localDayBounds(noon, tz);
+  const zone = validTz(tz);
+  return {
+    start: localMidnight(+m[1], +m[2] - 1, +m[3], zone),
+    end: localMidnight(+m[1], +m[2] - 1, +m[3] + 1, zone),
+  };
 }
 
 /** The one place ticket list filters become a Prisma `where` (table + kanban). */
@@ -60,6 +62,10 @@ export function buildTicketWhere(workspaceId: string, f: TicketFilter, tz: strin
       { title: { contains: q, mode: "insensitive" } },
       { contact: { name: { contains: q, mode: "insensitive" } } },
     ];
+    if (/^#?\d+$/.test(q)) {
+      const n = parseInt(q.replace("#", ""), 10);
+      if (Number.isSafeInteger(n) && n <= 2147483647) where.OR.push({ number: n });
+    }
   }
 
   if (f.from || f.to) {

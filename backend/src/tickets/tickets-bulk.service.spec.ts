@@ -128,11 +128,16 @@ describe("TicketsBulkService", () => {
         "a",
         { stageId: "st_lost", lostReason: NOT_A_LEAD_REASON, byUserId: "u1" },
         viewer,
+        { inTx: expect.any(Function) },
       );
-      expect(s.prisma.contact.updateMany).toHaveBeenCalledWith({
+      // The flag is written through the move's own transaction client, not this.prisma.
+      const tx = { contact: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+      await s.tickets.moveTicket.mock.calls[0][4].inTx(tx);
+      expect(tx.contact.updateMany).toHaveBeenCalledWith({
         where: { workspaceId: "ws", id: { in: ["c_a"] } },
         data: { notALead: true },
       });
+      expect(s.prisma.contact.updateMany).not.toHaveBeenCalled();
       expect(NOT_A_LEAD_REASON).toMatch(/Not a lead/);
       expect(NOT_A_LEAD_REASON).toMatch(/[؀-ۿ]/);
     });
