@@ -409,6 +409,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "PATCH /channels/:id": "channels.update",
   "POST /channels/sync": "channels.update",
   "POST /channels/:id/reconnect": "channels.update", // T2: Telegram re-registers its webhook
+  "POST /channels/:id/health/check": "channels.update", // SP-14 R4: spends provider budget
   "POST /channels/telegram": "channels.create",
   "DELETE /channels/:id": "channels.delete", // soft disconnect
   // SP-19 T4: WhatsApp embedded signup, manual multi-number, landline numbers

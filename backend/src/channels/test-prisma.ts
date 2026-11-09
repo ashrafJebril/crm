@@ -140,6 +140,9 @@ const DEFAULTS: Record<string, () => Row> = {
     lastInboundAt: null,
     disconnectedAt: null,
     health: null,
+    // SP-14
+    healthCheckedAt: null,
+    healthAttemptedAt: null,
   }),
   integration: () => ({ provider: "meta", pageId: null, pageName: null, accessToken: null, raw: null }),
   conversation: () => ({ channelId: null, externalId: null, aiEnabled: false, aiPausedAt: null, unread: 0 }),
@@ -480,6 +483,31 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         const row = db.campaign.find((c) => c.id === id);
         if (row) row.replied = Math.max(row.replied ?? 0, Number(n));
         return row ? 1 : 0;
+      }
+      // SP-14 health claim: cooldown + lease in one statement. Like Postgres
+      // raw SQL, neither the claim nor the fenced write touches updatedAt.
+      if (/UPDATE "Channel" SET "healthAttemptedAt" = \?::timestamp\(3\)/.test(sql)) {
+        // The fake only honours the exact guarded statement (a spec catches a dropped guard).
+        if (!/WHERE "id" = \? AND "workspaceId" = \? AND \("healthAttemptedAt" IS NULL OR "healthAttemptedAt" <= \?::timestamp\(3\)\)$/.test(sql.trim()) || /updatedAt/.test(sql))
+          throw new Error(`unexpected health claim SQL: ${sql}`);
+        const [at, id, workspaceId, cutoff] = vals;
+        const row = db.channel.find((c) => c.id === id && c.workspaceId === workspaceId);
+        if (!row) return 0;
+        const prev: Date | null = row.healthAttemptedAt ?? null;
+        if (prev && prev.getTime() > new Date(cutoff).getTime()) return 0;
+        row.healthAttemptedAt = new Date(at);
+        return 1;
+      }
+      // SP-14 fenced health write.
+      if (/UPDATE "Channel" SET "health" = \?::jsonb, "healthCheckedAt" = \?::timestamp\(3\)/.test(sql)) {
+        if (!/WHERE "id" = \? AND "healthAttemptedAt" = \?::timestamp\(3\)$/.test(sql.trim()) || /updatedAt/.test(sql))
+          throw new Error(`unexpected health write SQL: ${sql}`);
+        const [json, at, id, token] = vals;
+        const row = db.channel.find((c) => c.id === id);
+        if (!row || !(row.healthAttemptedAt instanceof Date) || row.healthAttemptedAt.getTime() !== new Date(token).getTime()) return 0;
+        row.health = JSON.parse(json);
+        row.healthCheckedAt = new Date(at);
+        return 1;
       }
       if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {
         const [id] = vals;

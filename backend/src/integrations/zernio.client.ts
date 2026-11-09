@@ -218,6 +218,26 @@ export class ZernioClient {
   }
 
   /**
+   * SP-14: the number's health as Zernio reports it
+   * (`GET /whatsapp/number-info?accountId`). Documented: `phone.quality_rating`,
+   * `messaging_limit_tier`, `name_status`, `status` and `health_status`
+   * (Meta's object). `waba` is returned but its sub-fields are undocumented.
+   * Typed defensively: every field optional, a `data` wrapper accepted.
+   */
+  async whatsappNumberInfo(accountId: string): Promise<ZernioNumberInfo> {
+    const res = await this.request<Record<string, unknown> | undefined>("GET", "/whatsapp/number-info", {
+      query: { accountId },
+    });
+    const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+    const body = isObj(res) && !isObj(res.phone) && isObj(res.data) ? res.data : res;
+    if (!isObj(body)) return {};
+    return {
+      ...(isObj(body.phone) ? { phone: body.phone as ZernioNumberInfo["phone"] } : {}),
+      ...(isObj(body.waba) ? { waba: body.waba as ZernioNumberInfo["waba"] } : {}),
+    };
+  }
+
+  /**
    * Create a template. Two modes, per Zernio's spec:
    *  - custom: pass `components` → submitted to Meta, review can take 24h
    *  - library: pass `libraryTemplateName` → pre-approved by Meta, no wait
@@ -1111,6 +1131,34 @@ export interface ZernioWhatsAppTemplate {
    * duplicates an already-rejected template (both verified live 2026-08-28).
    */
   rejected_reason?: string;
+  /**
+   * SP-14: Meta's template quality, read only when Zernio passes it through
+   * (undocumented, ruling 1). Absent → unknown.
+   */
+  quality_score?: { score?: string };
+}
+
+/** SP-14: GET /whatsapp/number-info. Every field optional (shape unverified live). */
+export interface ZernioNumberInfo {
+  phone?: {
+    id?: string;
+    display_phone_number?: string;
+    verified_name?: string;
+    /** GREEN | YELLOW | RED | UNKNOWN */
+    quality_rating?: string;
+    /** e.g. TIER_250, TIER_1K, TIER_UNLIMITED */
+    messaging_limit_tier?: string;
+    name_status?: string;
+    /** e.g. CONNECTED */
+    status?: string;
+    /** Meta's health_status object; we read `can_send_message` only. */
+    health_status?: { can_send_message?: string; [k: string]: unknown };
+    /** Undocumented; read only when present (ruling 1). */
+    code_verification_status?: string;
+    [k: string]: unknown;
+  };
+  /** Undocumented sub-fields; read only when present (ruling 1). */
+  waba?: { business_verification_status?: string; account_review_status?: string; [k: string]: unknown };
 }
 
 export interface ZernioWhatsAppNumbers {

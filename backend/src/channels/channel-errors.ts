@@ -41,6 +41,9 @@ export type ChannelErrorKey =
   | "channels.landline_wrong_state"
   | "channels.landline_meta_error"
   | "channels.zernio_reauth_required"
+  | "channels.health_unsupported"
+  | "channels.health_check_cooldown"
+  | "channels.health_check_busy"
   | "widget.origin_forbidden"
   | "widget.rate_limited"
   | "widget.channel_unavailable"
@@ -80,6 +83,10 @@ const STATUS: Record<ChannelErrorKey, number> = {
   "channels.landline_meta_error": 502, // {metaCode}
   // SP-19 T5 fix round 1: the Zernio account needs a fresh OAuth sign-in.
   "channels.zernio_reauth_required": 409, // {platform}
+  // SP-14: number health live check.
+  "channels.health_unsupported": 400, // {provider}
+  "channels.health_check_cooldown": 429, // {retryAfter (s), nextAt (ISO)}
+  "channels.health_check_busy": 429, // {retryAfter (s)}
   // SP-19 T3: the public web chat widget.
   "widget.origin_forbidden": 403,
   "widget.rate_limited": 429,

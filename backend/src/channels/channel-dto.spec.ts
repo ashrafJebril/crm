@@ -63,6 +63,10 @@ describe("channel DTOs and logs never contain secrets", () => {
       config: { botUsername: "shop_bot", allowedOrigins: ["https://shop.example"] },
       lastInboundAt: null,
       createdAt: new Date("2026-01-01"),
+      // SP-14: public health (none yet) and its times.
+      health: null,
+      healthCheckedAt: null,
+      healthNextCheckAt: null,
     });
   });
 

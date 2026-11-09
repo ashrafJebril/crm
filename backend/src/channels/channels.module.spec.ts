@@ -17,6 +17,8 @@ import { WidgetGateway } from "./webchat/widget.gateway";
 import { WidgetOriginGuard } from "./webchat/widget-origin.guard";
 import { WidgetRateLimiter, WidgetRateLimitGuard } from "./webchat/widget-rate-limit.guard";
 import { ZernioChannelTransport } from "./zernio-transport";
+import { ChannelHealthController } from "./health/channel-health.controller";
+import { ChannelHealthService } from "./health/channel-health.service";
 
 describe("channels modules", () => {
   it("the global core exports the routing building blocks", () => {
@@ -27,9 +29,25 @@ describe("channels modules", () => {
   });
 
   it("the feature module serves the hub, Telegram and web chat controllers", () => {
-    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, ChannelsModule)).toEqual([ChannelsController, TelegramController, WebchatController, WhatsappChannelsController]);
+    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, ChannelsModule)).toEqual([
+      ChannelsController,
+      TelegramController,
+      WebchatController,
+      WhatsappChannelsController,
+      ChannelHealthController,
+    ]);
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ChannelsModule)).toEqual(
-      expect.arrayContaining([TelegramService, TelegramClient, TelegramWebhookGuard, WebchatService, WidgetGateway, WidgetOriginGuard, WidgetRateLimitGuard, ZernioChannelTransport]),
+      expect.arrayContaining([
+        TelegramService,
+        TelegramClient,
+        TelegramWebhookGuard,
+        WebchatService,
+        WidgetGateway,
+        WidgetOriginGuard,
+        WidgetRateLimitGuard,
+        ZernioChannelTransport,
+        ChannelHealthService,
+      ]),
     );
     const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ChannelsModule) as unknown[];
     expect(providers).toContainEqual(expect.objectContaining({ provide: WidgetRateLimiter }));

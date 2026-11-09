@@ -1,4 +1,6 @@
 import type { Channel } from "@prisma/client";
+import { healthCooldownMs } from "./health/health-config";
+import { publicHealth, type ChannelHealthPublic } from "./health/health-model";
 
 /**
  * The only shape a Channel leaves the server in. Built by whitelist, so a new
@@ -20,6 +22,12 @@ export interface ChannelDto {
   lastInboundAt: Date | null;
   createdAt: Date;
   conversationCount?: number;
+  /** SP-14: the stored health without `alerts` and template items; null before the first check. */
+  health: ChannelHealthPublic | null;
+  /** SP-14: when the last health check finished (ISO). */
+  healthCheckedAt: string | null;
+  /** SP-14: when the next live check is allowed (ISO), or null when no cooldown is running. */
+  healthNextCheckAt: string | null;
 }
 
 /** Non-secret config keys: widget, Meta and Telegram settings. */
@@ -57,9 +65,23 @@ type ChannelRowLike = Pick<
   | "isDefault"
   | "lastInboundAt"
   | "createdAt"
-> & { config?: unknown };
+> & {
+  config?: unknown;
+  // SP-14 (optional so narrow selects and older fakes still build a DTO).
+  health?: unknown;
+  healthCheckedAt?: Date | null;
+  healthAttemptedAt?: Date | null;
+};
 
-export function toChannelDto(row: ChannelRowLike, extra: { conversationCount?: number } = {}): ChannelDto {
+const iso = (d: unknown): string | null => (d instanceof Date && !Number.isNaN(d.getTime()) ? d.toISOString() : null);
+
+export function toChannelDto(
+  row: ChannelRowLike,
+  extra: { conversationCount?: number } = {},
+  now: Date = new Date(),
+): ChannelDto {
+  const attempted = row.healthAttemptedAt instanceof Date ? row.healthAttemptedAt.getTime() : null;
+  const nextAt = attempted !== null ? attempted + healthCooldownMs() : null;
   return {
     id: row.id,
     kind: row.kind,
@@ -74,5 +96,8 @@ export function toChannelDto(row: ChannelRowLike, extra: { conversationCount?: n
     lastInboundAt: row.lastInboundAt ?? null,
     createdAt: row.createdAt,
     ...(extra.conversationCount !== undefined ? { conversationCount: extra.conversationCount } : {}),
+    health: publicHealth(row.health),
+    healthCheckedAt: iso(row.healthCheckedAt),
+    healthNextCheckAt: nextAt !== null && nextAt > now.getTime() ? new Date(nextAt).toISOString() : null,
   };
 }

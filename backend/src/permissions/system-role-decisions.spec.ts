@@ -245,7 +245,32 @@ describe("system-role decision table", () => {
     });
   });
 
-  it("billing.manage and roles.manage are owner-only", () => {
+  // SP-14 (part 1): the live number-health check (ruling R4).
+  describe("SP-14 health routes", () => {
+    const CHECK = "POST /channels/:id/health/check";
+
+    it("owner and admin can check", () => {
+      expect(allowed("owner", CHECK)).toBe(true);
+      expect(allowed("admin", CHECK)).toBe(true);
+    });
+
+    it("agent and viewer cannot check, but can read the cached health", () => {
+      expect(allowed("agent", CHECK)).toBe(false);
+      expect(allowed("viewer", CHECK)).toBe(false);
+      for (const role of ["agent", "viewer"] as const) {
+        expect(allowed(role, "GET /channels/:id")).toBe(true);
+        expect(allowed(role, "GET /channels")).toBe(true);
+      }
+    });
+
+    it("an impersonated owner is not blocked from checking", () => {
+      const imp = { user: { workspaceId: "ws1", impersonating: true } } as never;
+      expect(blockedForImpersonation(ROUTE_PERMISSIONS[CHECK] as string)).toBe(false);
+      expect(() => assertRequestPermission(imp, "channels.update")).not.toThrow();
+    });
+  });
+
+    it("billing.manage and roles.manage are owner-only", () => {
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "billing.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "roles.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.owner.permissions, "roles.manage")).toBe(true);

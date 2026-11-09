@@ -20,6 +20,9 @@ export const ZERNIO_CAMPAIGN_RPM = 300;
 export const CAMPAIGN_DIRECT_RPM = 120;
 export const zernioCampaignRpm = (env: Env = process.env) => positiveInt(env.ZERNIO_CAMPAIGN_RPM, ZERNIO_CAMPAIGN_RPM);
 export const campaignDirectRpm = (env: Env = process.env) => positiveInt(env.CAMPAIGN_DIRECT_RPM, CAMPAIGN_DIRECT_RPM);
+/** SP-14 ruling 6: number-health calls, taken after a campaign token. */
+export const ZERNIO_HEALTH_RPM = 30;
+export const zernioHealthRpm = (env: Env = process.env) => positiveInt(env.ZERNIO_HEALTH_RPM, ZERNIO_HEALTH_RPM);
 
 /** Time source; tests pass a virtual one whose sleep advances it. */
 export interface BudgetClock {
@@ -69,14 +72,24 @@ export class TokenBucket {
   }
 }
 
-/** The campaign bucket and the direct-send bucket (taken in that order). */
+/**
+ * The campaign bucket and the direct-send bucket (taken in that order).
+ * SP-14: `health` is taken after `campaign` by every number-health call
+ * (`zernioHealthCall`), so health counts against the shared budget and is
+ * capped well below launch traffic.
+ */
 export class ZernioBudget {
   readonly campaign: TokenBucket;
   readonly direct: TokenBucket;
+  readonly health: TokenBucket;
 
-  constructor(env: Env = process.env, clock: BudgetClock = realClock) {
+  constructor(
+    env: Env = process.env,
+    readonly clock: BudgetClock = realClock,
+  ) {
     this.campaign = new TokenBucket(zernioCampaignRpm(env), clock);
     this.direct = new TokenBucket(campaignDirectRpm(env), clock);
+    this.health = new TokenBucket(zernioHealthRpm(env), clock);
   }
 
   private static instance: ZernioBudget | null = null;

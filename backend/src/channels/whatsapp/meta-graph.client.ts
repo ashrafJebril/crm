@@ -15,6 +15,44 @@ export function graphVersion(env: Record<string, string | undefined> = process.e
   return /^v\d{1,3}\.\d{1,3}$/.test(v) ? v : DEFAULT_VERSION;
 }
 
+export const DEFAULT_GRAPH_BASE = "https://graph.facebook.com";
+let warnedBase = false;
+
+/**
+ * SP-14 ruling 13: the Graph base URL. `META_GRAPH_BASE_URL` is honoured only
+ * when it is exactly `https://graph.facebook.com` or a loopback
+ * `http://127.0.0.1:<port>` (the verification stub); anything else falls back
+ * to the default with a one-time warning, so a mistyped env can never send a
+ * token to another host. The rejected value is never logged.
+ */
+export function metaGraphBase(env: Record<string, string | undefined> = process.env): string {
+  const raw = (env.META_GRAPH_BASE_URL ?? "").trim().replace(/\/+$/, "");
+  if (!raw) return DEFAULT_GRAPH_BASE;
+  const loopback = /^http:\/\/127\.0\.0\.1:(\d{2,5})$/.exec(raw);
+  if (raw === DEFAULT_GRAPH_BASE || (loopback && Number(loopback[1]) <= 65535)) return raw;
+  if (!warnedBase) {
+    warnedBase = true;
+    new Logger("MetaGraphClient").warn("META_GRAPH_BASE_URL is not graph.facebook.com or 127.0.0.1; using the default");
+  }
+  return DEFAULT_GRAPH_BASE;
+}
+
+/** SP-14: per-call timeout for health reads. */
+export const HEALTH_TIMEOUT_MS = 10_000;
+/** SP-14: the template fields a health read asks for. */
+export const TEMPLATE_HEALTH_FIELDS = "id,name,language,status,quality_score,category,rejected_reason";
+
+/** One row of `/{waba}/message_templates` (the fields health reads). */
+export interface MetaTemplateRow {
+  id?: string;
+  name?: string;
+  language?: string;
+  status?: string;
+  category?: string;
+  quality_score?: { score?: string };
+  rejected_reason?: string;
+}
+
 /**
  * A failed Graph call. `message` is Graph's own error text with every secret
  * of the call scrubbed out; `code`/`subcode` are Graph's numeric error codes
@@ -47,6 +85,8 @@ interface CallOptions {
   body?: unknown;
   /** Extra values to scrub from error text (app secret, code…). */
   secrets?: string[];
+  /** Overrides the default 15 s timeout (health reads use 10 s). */
+  timeoutMs?: number;
 }
 
 /**
@@ -145,8 +185,43 @@ export class MetaGraphClient {
     await this.call("POST", `/${seg(phoneNumberId)}/verify_code`, { token, body: { code }, secrets: [code] });
   }
 
+  /**
+   * SP-14: one field of a Graph node (`GET /{node}?fields=<field>`), so a
+   * field one Graph version does not know fails alone. Returns the field's
+   * raw value (undefined when Graph omits it).
+   */
+  async getField(nodeId: string, field: string, token: string): Promise<unknown> {
+    if (!/^[a-z_]{1,64}$/.test(field)) throw new MetaGraphError("Invalid Graph field", 400);
+    const res = await this.call<Record<string, unknown> | undefined>("GET", `/${seg(nodeId)}`, {
+      token,
+      query: { fields: field },
+      timeoutMs: HEALTH_TIMEOUT_MS,
+    });
+    return res && typeof res === "object" ? res[field] : undefined;
+  }
+
+  /** SP-14: one page (100) of a WABA's templates; `after` is the next cursor, null on the last page. */
+  async listTemplates(
+    wabaId: string,
+    token: string,
+    opts: { after?: string } = {},
+  ): Promise<{ data: MetaTemplateRow[]; after: string | null }> {
+    const res = await this.call<{ data?: unknown; paging?: { next?: string; cursors?: { after?: string } } } | undefined>(
+      "GET",
+      `/${seg(wabaId)}/message_templates`,
+      {
+        token,
+        query: { fields: TEMPLATE_HEALTH_FIELDS, limit: "100", ...(opts.after ? { after: opts.after } : {}) },
+        timeoutMs: HEALTH_TIMEOUT_MS,
+      },
+    );
+    const data = Array.isArray(res?.data) ? (res!.data as MetaTemplateRow[]) : [];
+    const after = res?.paging?.next && res.paging.cursors?.after ? String(res.paging.cursors.after) : null;
+    return { data, after };
+  }
+
   private async call<T>(method: "GET" | "POST", path: string, opts: CallOptions = {}): Promise<T> {
-    const url = new URL(`https://graph.facebook.com/${graphVersion()}${path}`);
+    const url = new URL(`${metaGraphBase()}/${graphVersion()}${path}`);
     for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
     const href = url.toString();
     const secrets = [opts.token, ...(opts.secrets ?? [])].filter((s): s is string => !!s && s.length >= 4);
@@ -166,7 +241,7 @@ export class MetaGraphClient {
         method,
         headers,
         ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS),
       });
     } catch (e) {
       const timeout = (e as Error)?.name === "TimeoutError";

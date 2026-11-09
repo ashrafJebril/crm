@@ -344,7 +344,10 @@ model Template {
   name     String
   lang     String // en | ar
   category String // TRANSACTIONAL | UTILITY | MARKETING | AUTHENTICATION
-  status   String // approved | pending | rejected | submitted | failed
+  /// approved | pending | rejected | submitted | failed | local | paused | disabled
+  status   String
+  /// SP-14: Meta template quality (GREEN | YELLOW | RED | NOT_RATED). Null = unknown.
+  quality  String?
   uses     Int    @default(0)
 
   // Meta WhatsApp Cloud API template content (sent to /{wabaId}/message_templates).
@@ -645,6 +648,10 @@ model Channel {
   disconnectedAt    DateTime?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
+  /// SP-14: when the last health check finished (any field read). Raw-SQL written.
+  healthCheckedAt   DateTime?
+  /// SP-14: claim token + cooldown + sweep cursor for health checks. Raw-SQL written.
+  healthAttemptedAt DateTime?
 
   conversations Conversation[] @relation("ConversationChannel")
   campaigns     Campaign[]     @relation("CampaignSenderChannel")
@@ -654,6 +661,7 @@ model Channel {
   @@unique([workspaceId, provider, externalId])
   @@index([workspaceId, kind])
   @@index([provider, externalId])
+  @@index([kind, healthAttemptedAt])
 }
 
 model Campaign {

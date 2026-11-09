@@ -5,6 +5,8 @@ import { RealtimeModule } from "../realtime/realtime.module";
 import { ChannelsCoreModule } from "./channels-core.module";
 import { ChannelsController } from "./channels.controller";
 import { ChannelsService } from "./channels.service";
+import { ChannelHealthController } from "./health/channel-health.controller";
+import { ChannelHealthService } from "./health/channel-health.service";
 import { TelegramClient } from "./telegram/telegram.client";
 import { TelegramController } from "./telegram/telegram.controller";
 import { TelegramService } from "./telegram/telegram.service";
@@ -21,12 +23,14 @@ import { ZernioChannelTransport } from "./zernio-transport";
  *  widget (T3: loader, hosted page, visitor API, `/widget` socket
  *  namespace) and the WhatsApp add flows (T4: embedded signup, manual
  *  multi-number, landline verification; their services are in
- *  ChannelsCoreModule). */
+ *  ChannelsCoreModule). SP-14: number health (live check; the Zernio
+ *  client comes from IntegrationsModule, the Graph client is global). */
 @Module({
   imports: [ChannelsCoreModule, IntegrationsModule, MediaModule, RealtimeModule],
-  controllers: [ChannelsController, TelegramController, WebchatController, WhatsappChannelsController],
+  controllers: [ChannelsController, TelegramController, WebchatController, WhatsappChannelsController, ChannelHealthController],
   providers: [
     ChannelsService,
+    ChannelHealthService,
     TelegramClient,
     TelegramService,
     TelegramWebhookGuard,
@@ -37,6 +41,6 @@ import { ZernioChannelTransport } from "./zernio-transport";
     widgetRateLimiterProvider,
     ZernioChannelTransport,
   ],
-  exports: [ChannelsService],
+  exports: [ChannelsService, ChannelHealthService],
 })
 export class ChannelsModule {}

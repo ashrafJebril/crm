@@ -125,7 +125,20 @@ describe("permission map", () => {
     expect(at("GET /campaigns/senders")).toBeGreaterThanOrEqual(0);
   });
 
-  it("@RequirePermission overrides agree with the map", () => {
+  it("permission map covers SP-14 routes", () => {
+    // Part 1 (Task 1): the live check. Task 2 adds the template-health routes.
+    const sp14: Record<string, string> = {
+      "POST /channels/:id/health/check": "channels.update",
+      // Reading the cached health stays on the channel DTO (channels.view).
+      "GET /channels/:id": "channels.view",
+      "GET /channels": "channels.view",
+    };
+    for (const [k, p] of Object.entries(sp14)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+  });
+
+    it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;
       if (p) expect({ key: r.key, p: ROUTE_PERMISSIONS[r.key] }).toEqual({ key: r.key, p });
