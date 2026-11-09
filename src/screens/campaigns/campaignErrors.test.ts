@@ -38,6 +38,7 @@ const SP13_KEYS = [
   "campaigns.schedule_invalid",
   "campaigns.var_map_invalid",
   "campaigns.var_map_too_varied",
+  "campaigns.header_direct_too_large",
   "campaigns.no_reachable_recipients",
   "campaigns.header_media_schedule_too_far",
   "campaigns.not_cancellable",
@@ -156,6 +157,18 @@ describe("campaignErrorText", () => {
     });
     expect(campaignErrorText(varied, en)).toContain("40 different messages");
     expect(campaignErrorText(varied, en)).toContain("5,000");
+    // A header-file campaign over the direct limit has its own cause (final review m3): the audience size, never "N different messages".
+    const header = new ApiError("campaigns.header_direct_too_large", 400, undefined, { limit: 5000, reachable: 7200 });
+    expect(campaignErrorText(header, en)).toBe(
+      "With its own header file, the campaign sends each message individually, which works for up to 5,000 recipients. This audience has 7,200. Use the template's file or a smaller audience.",
+    );
+    expect(campaignErrorText(header, en)).not.toContain("different messages");
+    expect(campaignErrorText(header, ar)).toMatch(ARABIC);
+    expect(campaignErrorText(header, ar)).toContain("5,000");
+    // As a stored lastError (no extras) it still reads correctly.
+    expect(lastErrorText("campaigns.header_direct_too_large", en)).toBe(
+      "With its own header file, the campaign sends each message individually, which works for up to 5,000 recipients. Use the template's file or a smaller audience.",
+    );
   });
 
   it("words a failed cancel and keeps a short provider reason so the user can retry", () => {

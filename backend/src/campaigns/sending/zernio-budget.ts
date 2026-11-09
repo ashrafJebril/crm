@@ -123,3 +123,24 @@ export async function withRetryAfter<T>(
     }
   }
 }
+
+/** The part of a bucket a budgeted caller needs (specs pass a stub). */
+export type BudgetBucket = Pick<TokenBucket, "take" | "pause">;
+
+/**
+ * SP-13 final review (R19): one budgeted Zernio call outside the launch
+ * runner (template checks, recipient sweeps, stats syncs, cancel/delete
+ * reads). Takes a token first; a 429 pauses the whole bucket for its
+ * Retry-After (default RETRY_AFTER_DEFAULT_MS, at most RETRY_AFTER_MAX_MS),
+ * so every other campaign caller waits too, then rethrows (no retry here:
+ * these callers already retry on their next tick or click).
+ */
+export async function budgeted<T>(bucket: BudgetBucket, fn: () => Promise<T>): Promise<T> {
+  await bucket.take();
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof ZernioRateLimitError) bucket.pause(Math.min(e.retryAfterMs ?? RETRY_AFTER_DEFAULT_MS, RETRY_AFTER_MAX_MS));
+    throw e;
+  }
+}

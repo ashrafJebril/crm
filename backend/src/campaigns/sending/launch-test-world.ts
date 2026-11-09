@@ -283,7 +283,10 @@ export function world(opts: WorldOpts = {}) {
   const scheduler = new CampaignLaunchScheduler(prisma, runner, tracker);
   const isLocked = jest.fn(async () => false);
   const send = new CampaignSendService(prisma, zernio as never, { isLocked } as never, tracker, runner, media as never);
+  // The services' Zernio reads use the same free budget (SP-13 final review, R19).
+  send.budget = budget;
   const preview = new CampaignPreviewService(prisma, zernio as never, media as never);
+  preview.budget = budget;
   const report = new CampaignReportService(prisma);
   const camp = () => prisma.db.campaign.find((c: any) => c.id === "camp");
   const rows = () => (prisma.db.campaignRecipient as any[]).filter((r) => r.campaignId === "camp");

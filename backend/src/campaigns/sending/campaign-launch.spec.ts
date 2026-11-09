@@ -387,7 +387,10 @@ describe("launch concurrency, leases and cancel", () => {
     await w.launch();
     expect(beats.length).toBeGreaterThan(8);
     for (let i = 1; i < beats.length; i++) expect(beats[i]).toBeGreaterThan(beats[i - 1]);
-    expect(w.takes.campaign).toBe(beats.length);
+    // Plus one token per account for the launch's template check (final review, R19), taken before the claim.
+    const templateReads = w.zernio.whatsappTemplates.mock.calls.length;
+    expect(templateReads).toBe(2);
+    expect(w.takes.campaign).toBe(beats.length + templateReads);
     expect(w.takes.direct).toBe(0);
   });
 });

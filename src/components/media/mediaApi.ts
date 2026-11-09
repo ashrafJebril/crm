@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { API_BASE, ApiError, tokenStore } from "@/api/client";
+import { api } from "@/api/client";
 import {
   NEXT_BEFORE_HEADER,
   flattenMediaPages,
@@ -11,27 +11,13 @@ import {
 } from "./mediaKinds";
 
 /**
- * One page of GET /media. A raw fetch, because the JSON client drops response
- * headers and the cursor lives in `X-Media-Next-Before` (absent = end).
+ * One page of GET /media. The cursor lives in the `X-Media-Next-Before`
+ * header (absent = end), so this uses the client's header-returning GET,
+ * which keeps its session rules: a rejected token logs out (SP-13 final review).
  */
 export async function fetchMediaPage(kind: MediaCategory, before: string | null, signal?: AbortSignal): Promise<MediaPage> {
-  const tok = tokenStore.get();
-  const res = await fetch(`${API_BASE}${mediaPagePath(kind, before)}`, {
-    headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-    signal,
-  });
-  const raw = await res.text();
-  let body: unknown;
-  try {
-    body = raw ? JSON.parse(raw) : undefined;
-  } catch {
-    body = raw;
-  }
-  if (!res.ok) {
-    const m = (body as { message?: unknown } | undefined)?.message;
-    throw new ApiError(typeof m === "string" ? m : `HTTP ${res.status}`, res.status, undefined, body);
-  }
-  return parseMediaPage(body, res.headers.get(NEXT_BEFORE_HEADER));
+  const { data, headers } = await api.getWithHeaders<unknown>(mediaPagePath(kind, before), signal);
+  return parseMediaPage(data, headers.get(NEXT_BEFORE_HEADER));
 }
 
 export const MEDIA_PAGES_KEY = "media-pages";

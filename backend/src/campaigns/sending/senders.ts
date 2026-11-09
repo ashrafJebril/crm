@@ -1,5 +1,6 @@
 import type { ZernioClient, ZernioWhatsAppTemplate } from "../../integrations/zernio.client";
 import { campaignError } from "../campaign-errors";
+import { type BudgetBucket, budgeted } from "./zernio-budget";
 
 /**
  * SP-13 sending numbers. A campaign names its senders in
@@ -92,19 +93,24 @@ function approvedCopy(list: ZernioWhatsAppTemplate[], template: { name: string; 
  * primary's copy is missing or unreadable, the others are judged by
  * presence alone. `failed` lists senders whose account could not be read
  * (launch fails closed on them: 502 campaigns.template_check_failed).
- * Returns channel ids.
+ * Returns channel ids. With `opts.budget` (SP-13 final review, R19) each
+ * account read takes a token from the shared campaign bucket, and a 429
+ * pauses it.
  */
 export async function templateOnSenders(
   zernio: Pick<ZernioClient, "whatsappTemplates">,
   senders: ReadonlyArray<{ channelId: string | null; accountId: string }>,
   template: { name: string; lang: string },
+  opts: { budget?: BudgetBucket } = {},
 ): Promise<{ missing: string[]; failed: string[] }> {
+  const read = (accountId: string) =>
+    opts.budget ? budgeted(opts.budget, () => zernio.whatsappTemplates(accountId)) : zernio.whatsappTemplates(accountId);
   const reads = new Map<string, Promise<ZernioWhatsAppTemplate[] | Error>>();
   for (const s of senders) {
     if (!reads.has(s.accountId)) {
       reads.set(
         s.accountId,
-        zernio.whatsappTemplates(s.accountId).then(
+        read(s.accountId).then(
           (l) => l ?? [],
           (e: unknown) => (e instanceof Error ? e : new Error(String(e))),
         ),

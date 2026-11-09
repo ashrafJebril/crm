@@ -1,6 +1,6 @@
 import { HttpException } from "@nestjs/common";
 import { ZernioRateLimitError } from "../../integrations/zernio.client";
-import { campaignDirectRpm, TokenBucket, withRetryAfter, ZernioBudget, zernioCampaignRpm } from "./zernio-budget";
+import { budgeted, campaignDirectRpm, RETRY_AFTER_DEFAULT_MS, TokenBucket, withRetryAfter, ZernioBudget, zernioCampaignRpm } from "./zernio-budget";
 
 /** A virtual clock: sleeping advances time instantly. */
 function clock(start = 0) {
@@ -106,5 +106,26 @@ describe("zernio budget throttles campaign calls and honours Retry-After", () =>
     }).catch((e) => e);
     expect(err).toBeInstanceOf(ZernioRateLimitError);
     expect(c.sleeps).toEqual([60_000, 60_000]);
+  });
+
+  it("budgeted takes a token before the call and pauses the bucket on any 429 (SP-13 final review, R19)", async () => {
+    const c = clock();
+    const bucket = new TokenBucket(60, c, 1);
+    const take = jest.spyOn(bucket, "take");
+    const pause = jest.spyOn(bucket, "pause");
+    await expect(budgeted(bucket, async () => "ok")).resolves.toBe("ok");
+    expect(take).toHaveBeenCalledTimes(1);
+    expect(pause).not.toHaveBeenCalled();
+
+    // A 429 holds every caller of the bucket for its Retry-After (default when absent), then rethrows.
+    await expect(budgeted(bucket, async () => Promise.reject(new ZernioRateLimitError("slow", 9000)))).rejects.toBeInstanceOf(ZernioRateLimitError);
+    expect(pause).toHaveBeenLastCalledWith(9000);
+    await expect(budgeted(bucket, async () => Promise.reject(new ZernioRateLimitError("slow", null)))).rejects.toBeInstanceOf(ZernioRateLimitError);
+    expect(pause).toHaveBeenLastCalledWith(RETRY_AFTER_DEFAULT_MS);
+    // Any other error passes through without a pause.
+    pause.mockClear();
+    await expect(budgeted(bucket, async () => Promise.reject(new HttpException("bad", 500)))).rejects.toThrow("bad");
+    expect(pause).not.toHaveBeenCalled();
+    expect(take).toHaveBeenCalledTimes(4);
   });
 });

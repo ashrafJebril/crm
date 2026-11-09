@@ -2,7 +2,7 @@ import { CampaignSendService } from "./campaign-send.service";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { HttpException } from "@nestjs/common";
-import { channel, contact, ME, world, WS, zernioCopy } from "./sending/launch-test-world";
+import { channel, contact, freeBudget, ME, world, WS, zernioCopy } from "./sending/launch-test-world";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -377,6 +377,8 @@ describe("broadcast sweep maps Zernio recipients monotonically and resumes from 
       listBroadcastRecipients: jest.fn(),
     };
     const svc = new CampaignSendService(prisma, zernio as never, { isLocked: jest.fn() } as never, new RecipientTrackerService(prisma));
+    // Sweep pages and status reads take budget tokens (final review, R19); the clock is frozen here, so never wait.
+    svc.budget = freeBudget().budget;
     return { prisma, zernio, svc };
   }
 

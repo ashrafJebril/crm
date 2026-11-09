@@ -168,12 +168,27 @@ export class CampaignsController {
     return rest;
   }
 
+  /**
+   * Every campaign of the workspace, newest first, each with `canCancel`
+   * (the `cancellable()` rule, one batched partition query for the page)
+   * and `launch` progress for launching rows (two batched queries), so the
+   * list needs no per-row fetch (SP-13 final review, I2).
+   */
   @Get()
-  list(@CurrentWorkspace() workspaceId: string) {
-    return this.prisma.campaign.findMany({
+  async list(@CurrentWorkspace() workspaceId: string) {
+    const rows = await this.prisma.campaign.findMany({
       where: { workspaceId },
       orderBy: { createdAt: "desc" },
     });
+    const [cancel, progress] = await Promise.all([
+      this.send.cancellableMany(workspaceId, rows),
+      CampaignLaunchRunner.progressMany(
+        this.prisma,
+        workspaceId,
+        rows.filter((c) => c.status === "launching"),
+      ),
+    ]);
+    return rows.map((c) => ({ ...c, canCancel: cancel.get(c.id) ?? false, launch: progress.get(c.id) ?? null }));
   }
 
   /** Reach and Meta cost estimate for an audience (declared before :id). */
@@ -286,11 +301,18 @@ export class CampaignsController {
   ) {
     const existing = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!existing) throw campaignError("campaigns.not_found");
-    if (existing.status !== "draft") throw new BadRequestException("Only draft campaigns can be edited.");
+    // Final review (m4): drafts only, by a compare-and-set on the status, so a
+    // PATCH racing the launch claim can never rewrite a launching campaign.
+    if (existing.status !== "draft") throw campaignError("campaigns.already_launched");
     const sending = await this.sendingFields(workspaceId, dto, viewer);
-    return this.withHeaderLock(workspaceId, sending.headerMediaId, (db) =>
-      db.campaign.update({ where: { id }, data: { ...this.plainFields(dto), ...sending } }),
-    );
+    return this.withHeaderLock(workspaceId, sending.headerMediaId, async (db) => {
+      const res = await db.campaign.updateMany({
+        where: { id, workspaceId, status: "draft" },
+        data: { ...this.plainFields(dto), ...sending },
+      });
+      if (res.count !== 1) throw campaignError("campaigns.already_launched");
+      return (await db.campaign.findFirst({ where: { id, workspaceId } }))!;
+    });
   }
 
   /**

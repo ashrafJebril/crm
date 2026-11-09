@@ -5,7 +5,7 @@ import { usePermissions } from "@/auth/usePermissions";
 import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { Modal } from "@/components/Modal";
 import { useMediaPages } from "@/components/media/mediaApi";
-import { mediaErrorText } from "@/components/media/mediaErrors";
+import { mediaErrorText, mediaLibraryBlocked, mediaNoAccessText } from "@/components/media/mediaErrors";
 import { LIBRARY_MIMES, MEDIA_CATEGORIES, formatBytes, kindOfMime, type MediaCategory } from "@/components/media/mediaKinds";
 import { useToast } from "@/components/Toast";
 import { IconPlus, IconTrash } from "@/icons";
@@ -33,15 +33,18 @@ async function downloadMedia(m: Media): Promise<void> {
  * SP-13 Templates → Gallery: the media library (images, videos and PDFs) with
  * category chips, paged by the `X-Media-Next-Before` cursor. Upload needs
  * conversations.create and delete conversations.update (the backend route
- * map); hidden actions are not rendered.
+ * map); hidden actions are not rendered. Listing needs conversations.view:
+ * without it (or on a 403) the tab shows a no-access line, never an error,
+ * and fetches nothing (SP-13 final review).
  */
 export function GalleryTab({ tx }: { tx: Tx }) {
   const { can } = usePermissions();
   const { toast } = useToast();
   const canUpload = can("conversations.create");
   const canDelete = can("conversations.update");
+  const canView = can("conversations.view");
   const [category, setCategory] = useState<MediaCategory>("all");
-  const pages = useMediaPages(category);
+  const pages = useMediaPages(category, canView);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +83,20 @@ export function GalleryTab({ tx }: { tx: Tx }) {
   };
 
   const token = tokenStore.get();
+
+  if (mediaLibraryBlocked(canView, pages.error)) {
+    return (
+      <div style={{ padding: 20, flex: 1, minHeight: 0 }}>
+        <div
+          role="status"
+          className="muted"
+          style={{ fontSize: 13, padding: "32px 16px", textAlign: "center", border: "1px dashed var(--line-soft)", borderRadius: 12 }}
+        >
+          {mediaNoAccessText(tx)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 20, display: "grid", gap: 14, alignContent: "start", overflowY: "auto", flex: 1, minHeight: 0 }}>

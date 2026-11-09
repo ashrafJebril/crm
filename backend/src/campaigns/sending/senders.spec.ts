@@ -1,3 +1,4 @@
+import { ZernioRateLimitError } from "../../integrations/zernio.client";
 import {
   assignSender,
   effectiveSenderIds,
@@ -123,6 +124,22 @@ describe("senders", () => {
     const r3 = await templateOnSenders(zernio, [s("F"), s("A"), s("C")], { name: "eid_offer", lang: "ar" });
     expect(r3).toEqual({ missing: ["C"], failed: ["F"] });
     expect(await templateOnSenders(zernio, [], { name: "eid_offer", lang: "ar" })).toEqual({ missing: [], failed: [] });
+  });
+
+  it("templateOnSenders reads through the shared budget, and a 429 pauses it (SP-13 final review, R19)", async () => {
+    const budget = { take: jest.fn(async () => {}), pause: jest.fn() };
+    const zernio = {
+      whatsappTemplates: jest.fn(async (acc: string) => {
+        if (acc === "acc-B") throw new ZernioRateLimitError("slow", 4000);
+        return [copy()] as never;
+      }),
+    };
+    const s = (id: string, acc = `acc-${id}`) => ({ channelId: id, accountId: acc });
+    const r = await templateOnSenders(zernio, [s("A"), s("A2", "acc-A"), s("B")], { name: "eid_offer", lang: "ar" }, { budget });
+    // One token per account read; the rate-limited account fails closed and pauses the bucket.
+    expect(budget.take).toHaveBeenCalledTimes(2);
+    expect(budget.pause).toHaveBeenCalledWith(4000);
+    expect(r).toEqual({ missing: [], failed: ["B"] });
   });
 
   it("sender write keeps senderChannelId equal to the primary", async () => {

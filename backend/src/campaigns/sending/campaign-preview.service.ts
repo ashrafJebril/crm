@@ -9,6 +9,7 @@ import { campaignError } from "../campaign-errors";
 import { streamAudience, type StreamedContact } from "./audience-stream";
 import { campaignDirectMax, campaignMaxPartitions, partitionKey, planTransport, slotsInOrder, type TransportKind } from "./partition";
 import { assignSender, normalizeSenderWrite, splitCounts, templateOnSenders } from "./senders";
+import { ZernioBudget } from "./zernio-budget";
 import {
   type CustomDef,
   fieldLabel,
@@ -81,6 +82,9 @@ export function renderTemplate(body: string, values: readonly string[]): string 
  */
 @Injectable()
 export class CampaignPreviewService {
+  /** The process-wide Zernio budget (final review, R19): template reads take a token; a 429 pauses it. */
+  budget: ZernioBudget = ZernioBudget.shared();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly zernio: ZernioClient,
@@ -189,7 +193,7 @@ export class CampaignPreviewService {
     let templateMissing: string[] = [];
     let templateCheckFailed: string[] = [];
     if (template && connected && senders.length > 0) {
-      const r = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang });
+      const r = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang }, { budget: this.budget.campaign });
       templateMissing = r.missing;
       templateCheckFailed = r.failed;
     }

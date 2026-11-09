@@ -21,7 +21,7 @@ import { useHashParam } from "@/lib/useHashParam";
 import { InlineBar, MiniStat } from "./campaigns/ui";
 import { CampaignDetail } from "./campaigns/CampaignDetail";
 import { campaignErrorText, campaignKeyText, cancelErrorText, lastErrorText } from "./campaigns/campaignErrors";
-import { LAUNCH_POLL_MS, campaignStatusLabel } from "./campaigns/campaignDetailModel";
+import { LAUNCH_POLL_MS, campaignStatusLabel, listMayCancel } from "./campaigns/campaignDetailModel";
 import {
   defaultVarMap,
   normalizeVarMap,
@@ -788,13 +788,6 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   );
 }
 
-/** A launching row polls its own campaign (GET /campaigns/:id carries `launch`) every 5 s. */
-function LaunchingRowProgress({ id, tx }: { id: string; tx: Tx }) {
-  const q = useFetch<Campaign>(`/campaigns/${encodeURIComponent(id)}`, { pollMs: LAUNCH_POLL_MS });
-  if (!q.data || q.data.status !== "launching") return null;
-  return <LaunchProgress tx={tx} campaign={q.data} compact />;
-}
-
 function CampaignsImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
@@ -1077,7 +1070,8 @@ function CampaignsImpl() {
                       >
                         {c.name}
                       </a>
-                      {c.status === "launching" && <LaunchingRowProgress id={c.id} tx={tx} />}
+                      {/* GET /campaigns carries `launch`; the list itself polls every 5 s while a row is launching. */}
+                      {c.status === "launching" && <LaunchProgress tx={tx} campaign={c} compact />}
                       {c.lastError && (
                         <div dir="auto" style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>
                           {lastErrorText(c.lastError, tx)}
@@ -1137,9 +1131,7 @@ function CampaignsImpl() {
                             {tx("Refresh", "تحديث")}
                           </button>
                         )}
-                        {(c.status === "launching" ||
-                          ((c.status === "running" || c.status === "scheduled") && (c.zernioBroadcastId || c.sendTransport === "direct"))) &&
-                          can("campaigns.manage") && (
+                        {listMayCancel(c) && can("campaigns.manage") && (
                           <button
                             className="btn ghost sm danger"
                             disabled={cancelCampaign.loading || !!c.cancelRequestedAt}

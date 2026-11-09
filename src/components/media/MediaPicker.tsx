@@ -6,7 +6,7 @@ import { AuthorizedImage } from "@/components/AuthorizedImage";
 import type { Tx } from "@/lib/tx";
 import type { Media } from "@/lib/types";
 import { useMediaPages } from "./mediaApi";
-import { mediaErrorText } from "./mediaErrors";
+import { mediaErrorText, mediaLibraryBlocked, mediaNoAccessText } from "./mediaErrors";
 import { HEADER_MIMES, formatBytes, headerIneligibleReason, type HeaderMediaKind } from "./mediaKinds";
 
 const CAPTION: CSSProperties = {
@@ -48,7 +48,9 @@ export function MediaPicker({
 }) {
   const { can } = usePermissions();
   const canUpload = can("conversations.create");
-  const pages = useMediaPages(kind);
+  // GET /media needs conversations.view; without it the picker says so and fetches nothing (SP-13 final review).
+  const canView = can("conversations.view");
+  const pages = useMediaPages(kind, canView);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +77,22 @@ export function MediaPicker({
   };
 
   const selectedMissing = value !== null && !items.some((m) => m.id === value);
+
+  if (mediaLibraryBlocked(canView, pages.error)) {
+    return (
+      <div>
+        <span style={CAPTION}>{caption ?? `${tx("Header", "الترويسة")}: ${headerKindName(kind, tx)}`}</span>
+        <div role="status" style={{ marginTop: 6, fontSize: 11.5, color: "var(--ink-3)" }}>
+          {mediaNoAccessText(tx)}
+        </div>
+        {value !== null && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: "var(--ink-3)" }}>
+            {tx("A file is already chosen.", "تم اختيار ملف بالفعل.")}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>

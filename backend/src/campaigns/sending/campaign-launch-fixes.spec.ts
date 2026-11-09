@@ -257,7 +257,7 @@ describe("m3: Retry-After pauses the shared budget; sweep status reads take toke
     expect(w.camp().status).toBe("running");
   });
 
-  it("the sweep's per-partition getBroadcast takes a budget token each", async () => {
+  it("the sweep's per-partition getBroadcast and each recipients page take a budget token", async () => {
     const w = world({ senders: ["A", "B", "C"], contacts: people(6) });
     await w.launch();
     w.send.budget = w.budget;
@@ -265,7 +265,9 @@ describe("m3: Retry-After pauses the shared budget; sweep status reads take toke
     const reads = w.zernio.getBroadcast.mock.calls.length;
     await w.send.syncActive();
     expect(w.zernio.getBroadcast.mock.calls.length - reads).toBe(3);
-    expect(w.takes.campaign - before).toBe(3);
+    // Final review (R19): the recipient sweep pages share the budget too.
+    expect(w.zernio.listBroadcastRecipients).toHaveBeenCalledTimes(3);
+    expect(w.takes.campaign - before).toBe(3 + 3);
   });
 });
 

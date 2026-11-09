@@ -222,6 +222,7 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Read in Tkana:** `components/marketing/{CampaignSenders,CustomerFieldFallbacks,MediaLibrary}.tsx`, `lib/marketing/{campaign-senders,campaign-custom-fields,samples}.ts`, `routes/media.library.ts`.
 - **API:** `Campaign.senderChannelIds String[]`, `Campaign.varMap Json {n: {source:"field"|"custom"|"static", key, fallback}}`; error code `WHATSAPP_NOT_CONNECTED`.
 - **Acceptance:** `missing field uses fallback, missing fallback skips recipient with reason`; `split sends round-robin across senders`.
+- **Rollback:** do not roll the backend back below SP-13 while an SP-13 campaign may still be sending. Run the gate query in [docs/runbooks/campaign-launch-rollback.md](../../runbooks/campaign-launch-rollback.md) first; it must return 0 rows.
 
 #### SP-14 Number and template health. Size M
 - [ ] Detailed plan written

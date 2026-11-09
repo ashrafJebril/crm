@@ -20,6 +20,7 @@ import {
   insightsPollMs,
   launchPollMs,
   launchProgressView,
+  listMayCancel,
   mergePages,
   outcomeChips,
   readTimingShares,
@@ -276,6 +277,30 @@ describe("launch progress", () => {
     for (const s of CAMPAIGN_STATUSES) {
       expect(campaignStatusLabel(s, en), s).not.toMatch(ARABIC);
       expect(campaignStatusLabel(s, ar), s).toMatch(ARABIC);
+    }
+  });
+});
+
+describe("list Cancel (SP-13 final review I2)", () => {
+  it("follows the row's canCancel from GET /campaigns, as the report does", () => {
+    // A running direct campaign the runner finished: the backend says no, so no Cancel (it would 400).
+    expect(listMayCancel({ status: "running", sendTransport: "direct", zernioBroadcastId: null, canCancel: false })).toBe(false);
+    // A failed or cancelled broadcast campaign with a live partition: Cancel is offered.
+    expect(listMayCancel({ status: "failed", sendTransport: "broadcast", zernioBroadcastId: "zb", canCancel: true })).toBe(true);
+    expect(listMayCancel({ status: "cancelled", sendTransport: "broadcast", zernioBroadcastId: "zb", canCancel: true })).toBe(true);
+    expect(listMayCancel({ status: "running", sendTransport: "broadcast", zernioBroadcastId: "zb", canCancel: false })).toBe(false);
+  });
+
+  it("falls back to the backend's status rule when an older backend sends no canCancel", () => {
+    const rule = (c: Parameters<typeof listMayCancel>[0]) => listMayCancel({ ...c, canCancel: undefined });
+    expect(rule({ status: "launching", sendTransport: null, zernioBroadcastId: null })).toBe(true);
+    expect(rule({ status: "scheduled", sendTransport: "direct", zernioBroadcastId: null })).toBe(true);
+    expect(rule({ status: "running", sendTransport: "direct", zernioBroadcastId: null })).toBe(false);
+    expect(rule({ status: "running", sendTransport: "broadcast", zernioBroadcastId: "zb" })).toBe(true);
+    expect(rule({ status: "scheduled", sendTransport: null, zernioBroadcastId: "zb" })).toBe(true);
+    expect(rule({ status: "running", sendTransport: null, zernioBroadcastId: null })).toBe(false);
+    for (const status of ["draft", "completed", "failed", "cancelled"] as const) {
+      expect(rule({ status, sendTransport: "broadcast", zernioBroadcastId: "zb" }), status).toBe(false);
     }
   });
 });

@@ -106,6 +106,22 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   return data as T;
 }
 
+// GET whose caller needs the response headers (e.g. the media library's
+// `X-Media-Next-Before` cursor): same token, 401 logout and error handling as
+// request(), returning the parsed body with the headers.
+async function getWithHeaders<T>(path: string, signal?: AbortSignal): Promise<{ data: T; headers: Headers }> {
+  const tok = tokenStore.get();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+    signal,
+  });
+  if (res.status === 401 && tok) onUnauthorized?.();
+  const raw = await res.text();
+  const data: unknown = raw ? safeJson(raw) : undefined;
+  if (!res.ok) throw errorFromBody(data, res.status);
+  return { data: data as T, headers: res.headers };
+}
+
 // POST with a JSON body whose successful response is a file (e.g. a CSV
 // export): same token, 401 and error handling as request(), but the body is
 // returned as a Blob together with the server's filename.
@@ -230,6 +246,7 @@ async function postStream<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   get:        <T,>(path: string, signal?: AbortSignal) => request<T>(path, { method: "GET", signal }),
+  getWithHeaders: <T,>(path: string, signal?: AbortSignal) => getWithHeaders<T>(path, signal),
   post:       <T,>(path: string, body?: unknown, o?: { localPaymentError?: boolean }) =>
     request<T>(path, { method: "POST", body, localPaymentError: o?.localPaymentError }),
   postForm:   <T,>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),

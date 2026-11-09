@@ -14,6 +14,22 @@ import type {
  * numbers, queries and copy are unit-tested.
  */
 
+/**
+ * SP-13 final review (I2): whether a list row offers Cancel. GET /campaigns
+ * now carries `canCancel` (the backend's `cancellable()` rule); an older
+ * backend without it falls back to the same status rule: launching; a
+ * scheduled direct campaign still waiting; a scheduled or running one with a
+ * broadcast. Permission is checked by the caller.
+ */
+export function listMayCancel(
+  c: Pick<Campaign, "status" | "sendTransport" | "zernioBroadcastId" | "canCancel">,
+): boolean {
+  if (typeof c.canCancel === "boolean") return c.canCancel;
+  if (c.status === "launching") return true;
+  if (c.sendTransport === "direct") return c.status === "scheduled";
+  return !!c.zernioBroadcastId && (c.status === "running" || c.status === "scheduled");
+}
+
 export const RECIPIENT_STATUSES: readonly RecipientStatus[] = [
   "queued",
   "sent",

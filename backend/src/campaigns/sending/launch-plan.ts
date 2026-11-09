@@ -49,7 +49,8 @@ const directKey = (channelId: string | null) => createHash("sha256").update(JSON
  * Broadcast partitions (sender + non-native values) are created as they
  * appear, up to CAMPAIGN_MAX_PARTITIONS. Past that the plan switches to
  * direct sends when the campaign is small enough (one batch per sender),
- * else fails with `campaigns.var_map_too_varied`. Zero reachable recipients
+ * else fails with `campaigns.var_map_too_varied` (`campaigns.header_direct_too_large`
+ * when a campaign header file forced direct sends). Zero reachable recipients
  * fails with `campaigns.no_reachable_recipients`.
  */
 export async function planLaunch(job: LaunchJob, input: PlanInput): Promise<PlanResult> {
@@ -194,8 +195,10 @@ export async function planLaunch(job: LaunchJob, input: PlanInput): Promise<Plan
     ? planTransport({ partitions: 0, reachable, headerOverride: true })
     : planTransport({ partitions: allKeys.size, reachable });
   if (kind === "too_varied") {
+    // Final review (m3): a header file forces direct sends (R8), so the cause is the audience size, not the variables.
+    if (headerOverride) throw campaignError("campaigns.header_direct_too_large", { limit: campaignDirectMax(), reachable });
     throw campaignError("campaigns.var_map_too_varied", {
-      partitions: headerOverride ? senders.length : allKeys.size,
+      partitions: allKeys.size,
       limit: campaignMaxPartitions(),
       directLimit: campaignDirectMax(),
       reachable,

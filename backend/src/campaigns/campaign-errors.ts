@@ -27,6 +27,8 @@ export type CampaignErrorKey =
   | "campaigns.schedule_invalid"
   | "campaigns.var_map_invalid"
   | "campaigns.var_map_too_varied"
+  // SP-13 final review (m3): a campaign header file forces direct sends, which stop at CAMPAIGN_DIRECT_MAX.
+  | "campaigns.header_direct_too_large"
   | "campaigns.no_reachable_recipients"
   | "campaigns.header_media_schedule_too_far"
   | "campaigns.not_cancellable"
@@ -57,6 +59,7 @@ const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.schedule_invalid": 400,
   "campaigns.var_map_invalid": 400, // {slot, reason}
   "campaigns.var_map_too_varied": 400, // {partitions, limit, directLimit, reachable}
+  "campaigns.header_direct_too_large": 400, // {limit, reachable}; a launch failure (lastError)
   "campaigns.no_reachable_recipients": 400, // a launch failure (lastError)
   "campaigns.header_media_schedule_too_far": 400, // {days: 6}
   "campaigns.not_cancellable": 400,

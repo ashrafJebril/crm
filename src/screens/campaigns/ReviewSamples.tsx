@@ -77,10 +77,7 @@ export function ReviewSamples({
       {t.kind === "too_varied" && (
         <Notice tone="warn">
           {headerOverride
-            ? tx(
-                `With its own header file, the campaign sends each message individually, which works for up to ${fmtNum(t.directLimit)} recipients. This audience has ${fmtNum(preview.reachable)}. Use the template's file or a smaller audience.`,
-                `مع ملف ترويسة خاص، ترسل الحملة كل رسالة على حدة، وهذا يصلح لـ ${fmtNum(t.directLimit)} مستلم كحد أقصى. هذا الجمهور فيه ${fmtNum(preview.reachable)}. استخدم ملف القالب أو جمهورًا أصغر.`,
-              )
+            ? campaignKeyText("campaigns.header_direct_too_large", { limit: t.directLimit, reachable: preview.reachable }, tx)
             : campaignKeyText("campaigns.var_map_too_varied", { partitions: t.partitions, limit: t.limit, directLimit: t.directLimit }, tx)}
         </Notice>
       )}

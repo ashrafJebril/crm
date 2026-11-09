@@ -137,6 +137,15 @@ export const CAMPAIGN_ERROR_COPY: Record<string, CopyFn> = {
       `تُنتج المتغيرات ${parts ? `${parts} رسالة مختلفة` : "رسائل مختلفة كثيرة"} (الحد ${limit})، والجمهور أكبر من ${direct} شخص. استخدم حقولًا شخصية أقل، أو جمهورًا أصغر.`,
     ];
   },
+  // SP-13 final review (m3): a campaign header file sends each message on its own, up to the direct limit.
+  "campaigns.header_direct_too_large": (x) => {
+    const limit = num(x.limit) ?? "5,000";
+    const reachable = num(x.reachable);
+    return [
+      `With its own header file, the campaign sends each message individually, which works for up to ${limit} recipients.${reachable ? ` This audience has ${reachable}.` : ""} Use the template's file or a smaller audience.`,
+      `مع ملف ترويسة خاص، ترسل الحملة كل رسالة على حدة، وهذا يصلح لـ ${limit} مستلم كحد أقصى.${reachable ? ` هذا الجمهور فيه ${reachable}.` : ""} استخدم ملف القالب أو جمهورًا أصغر.`,
+    ];
+  },
   "campaigns.no_reachable_recipients": () => [
     "No one in the audience could receive it: no usable number, opted out, or a missing value without a fallback.",
     "لا أحد في الجمهور يمكنه استلامها: لا رقم صالح، أو ألغى الاشتراك، أو قيمة ناقصة بلا بديل.",

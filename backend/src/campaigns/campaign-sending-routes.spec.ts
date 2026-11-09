@@ -276,6 +276,41 @@ describe("SP-13 campaign routes", () => {
     expect(JSON.stringify(prisma.db.campaign)).toBe(before);
   });
 
+  it("PATCH past draft is 409 campaigns.already_launched, also when the launch claim lands mid-request (final review m4)", async () => {
+    const { ctrl, prisma } = build();
+    const already = { status: 409, statusCode: 409, message: "campaigns.already_launched" };
+    const mine = () => prisma.db.campaign.find((c: { id: string }) => c.id === "mine");
+    for (const status of ["launching", "scheduled", "running", "failed"]) {
+      mine().status = status;
+      expect({ status, e: await err(ctrl.update("ws1", "mine", { name: "x" })) }).toEqual({ status, e: already });
+    }
+    expect(mine().name).toBe("mine");
+
+    // The draft is read, then the launch claims it before the write: nothing is written.
+    mine().status = "draft";
+    const real = prisma.campaign.findFirst.getMockImplementation();
+    (prisma.campaign.findFirst as jest.Mock).mockImplementationOnce((a: unknown) => {
+      const r = real(a);
+      mine().status = "launching";
+      return r;
+    });
+    expect(await err(ctrl.update("ws1", "mine", { varMap: { "1": { source: "static", value: "late" } }, senderChannelIds: ["B"] }))).toEqual(already);
+    expect(mine()).toMatchObject({ status: "launching", senderChannelIds: [], name: "mine" });
+    expect(mine().varMap ?? null).toBeNull();
+    // The same guard holds on the header-lock path.
+    mine().status = "draft";
+    (prisma.campaign.findFirst as jest.Mock).mockImplementationOnce((a: unknown) => {
+      const r = real(a);
+      mine().status = "launching";
+      return r;
+    });
+    expect(await err(ctrl.update("ws1", "mine", { headerMediaId: "m1" }))).toEqual(already);
+    expect(mine().headerMediaId ?? null).toBeNull();
+    // A draft still saves and returns the campaign.
+    mine().status = "draft";
+    await expect(ctrl.update("ws1", "mine", { name: "renamed" })).resolves.toMatchObject({ id: "mine", name: "renamed", status: "draft" });
+  });
+
   it("GET senders and POST preview are wired, samples follow contacts.view", async () => {
     const { ctrl } = build();
     const s = await ctrl.senders("ws1");

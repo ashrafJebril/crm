@@ -51,6 +51,22 @@ function nameList(list: string[], tx: Tx): string {
   return tx(`${quoted.slice(0, 2).join(", ")} and ${more} more`, `${quoted.slice(0, 2).join("، ")} و${more} غيرها`);
 }
 
+/**
+ * SP-13 final review: GET /media needs conversations.view. Without it (or
+ * when the server refuses with 403) the Gallery and the header picker show a
+ * plain no-access line instead of an error and do not fetch.
+ */
+export function mediaLibraryBlocked(canView: boolean, error: unknown): boolean {
+  return !canView || (error instanceof ApiError && error.status === 403);
+}
+
+export function mediaNoAccessText(tx: Tx): string {
+  return tx(
+    "Your role can't open the media library. Ask an admin for access to conversations.",
+    "لا يسمح دورك بفتح مكتبة الوسائط. اطلب من المسؤول صلاحية الوصول إلى المحادثات.",
+  );
+}
+
 export const MEDIA_ERROR_COPY: Record<string, CopyFn> = {
   "media.no_file": () => ["Choose a file to upload.", "اختر ملفًا لرفعه."],
   "media.unsupported_type": (x) => {

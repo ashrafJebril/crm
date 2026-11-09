@@ -61,6 +61,15 @@ interface Lease {
   partitionId: string | null;
 }
 
+/** `launch` on GET /campaigns and GET /campaigns/:id while a campaign is launching. */
+export interface LaunchProgress {
+  stage: string | null;
+  planned: number;
+  partitionsTotal: number;
+  partitionsDone: number;
+  directSent: number;
+}
+
 const PARTITION_ORDER = [{ createdAt: "asc" as const }, { id: "asc" as const }];
 const DONE_STAGES = ["sent", "scheduled", "completed", "cancelled", "failed"];
 
@@ -156,22 +165,48 @@ export class CampaignLaunchRunner {
     prisma: PrismaService,
     workspaceId: string,
     c: { id: string; launchStage?: string | null; sendTransport?: string | null },
-  ): Promise<{ stage: string | null; planned: number; partitionsTotal: number; partitionsDone: number; directSent: number }> {
+  ): Promise<LaunchProgress> {
+    return (await CampaignLaunchRunner.progressMany(prisma, workspaceId, [c])).get(c.id)!;
+  }
+
+  /**
+   * SP-13 final review (I2): `progress` for every launching row of a list
+   * page in two queries (rows grouped by campaign and status; partition
+   * stages), whatever the page size. Keyed by campaign id.
+   */
+  static async progressMany(
+    prisma: PrismaService,
+    workspaceId: string,
+    campaigns: ReadonlyArray<{ id: string; launchStage?: string | null; sendTransport?: string | null }>,
+  ): Promise<Map<string, LaunchProgress>> {
+    const out = new Map<string, LaunchProgress>();
+    if (campaigns.length === 0) return out;
+    const ids = campaigns.map((c) => c.id);
     const [groups, parts] = await Promise.all([
-      prisma.campaignRecipient.groupBy({ by: ["status"], where: { workspaceId, campaignId: c.id }, _count: { _all: true } }) as unknown as Promise<
-        Array<{ status: string; _count: { _all: number } }>
-      >,
-      prisma.campaignBroadcast.findMany({ where: { workspaceId, campaignId: c.id }, select: { stage: true } }) as Promise<Array<{ stage: string }>>,
+      prisma.campaignRecipient.groupBy({
+        by: ["campaignId", "status"],
+        where: { workspaceId, campaignId: { in: ids } },
+        _count: { _all: true },
+      }) as unknown as Promise<Array<{ campaignId: string; status: string; _count: { _all: number } }>>,
+      prisma.campaignBroadcast.findMany({
+        where: { workspaceId, campaignId: { in: ids } },
+        select: { campaignId: true, stage: true },
+      }) as Promise<Array<{ campaignId: string; stage: string }>>,
     ]);
-    const n = (s: string) => groups.find((g) => g.status === s)?._count._all ?? 0;
-    const planned = groups.reduce((t, g) => t + g._count._all, 0);
-    return {
-      stage: c.launchStage ?? null,
-      planned,
-      partitionsTotal: parts.length,
-      partitionsDone: parts.filter((p) => DONE_STAGES.includes(p.stage)).length,
-      directSent: c.sendTransport === "direct" ? planned - n("queued") - n("skipped") : 0,
-    };
+    for (const c of campaigns) {
+      const mine = groups.filter((g) => g.campaignId === c.id);
+      const n = (s: string) => mine.find((g) => g.status === s)?._count._all ?? 0;
+      const planned = mine.reduce((t, g) => t + g._count._all, 0);
+      const ps = parts.filter((p) => p.campaignId === c.id);
+      out.set(c.id, {
+        stage: c.launchStage ?? null,
+        planned,
+        partitionsTotal: ps.length,
+        partitionsDone: ps.filter((p) => DONE_STAGES.includes(p.stage)).length,
+        directSent: c.sendTransport === "direct" ? planned - n("queued") - n("skipped") : 0,
+      });
+    }
+    return out;
   }
 
   async run(id: string): Promise<void> {
@@ -512,6 +547,14 @@ export class CampaignLaunchRunner {
       { status: "cancelled", launchStage: "done", ...(firstOut ? { zernioBroadcastId: firstOut, launchedAt: new Date() } : {}) },
       { allowCancel: true },
     );
+    // Final review (m2): rows a direct campaign sent before the cancel show in
+    // its counters (nothing recounts a cancelled campaign later). Best effort.
+    try {
+      const cur = await this.prisma.campaign.findFirst({ where: { id: lease.id }, select: { sendTransport: true } });
+      if (cur?.sendTransport === "direct") await this.tracker.recountCampaign(lease.id);
+    } catch (e) {
+      this.log.warn(`campaign ${lease.id} recount after cancel failed: ${(e as Error).message}`);
+    }
   }
 
   /**

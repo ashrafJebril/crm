@@ -11,7 +11,7 @@ import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { campaignError } from "./campaign-errors";
 import { buildRecipients, campaignStatusFor, estimateMetaCost, templatePlaceholderCount } from "./campaign-audience";
 import { CampaignLaunchRunner, FINISHED_BROADCAST, isNotFound } from "./sending/campaign-launch-runner.service";
-import { ZernioBudget } from "./sending/zernio-budget";
+import { budgeted, ZernioBudget } from "./sending/zernio-budget";
 import { aggregateBroadcastStatus } from "./sending/broadcast-status";
 import { loadCustomDefs, resolveLaunchSenders, templateUnsupported } from "./sending/launch-context";
 import { effectiveSenderIds, templateOnSenders } from "./sending/senders";
@@ -176,7 +176,7 @@ export class CampaignSendService {
     const senders = await resolveLaunchSenders(this.prisma, workspaceId, effectiveSenderIds(campaign));
     if (senders.length === 0) throw campaignError("campaigns.whatsapp_not_connected");
 
-    const onSenders = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang });
+    const onSenders = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang }, { budget: this.budget.campaign });
     if (onSenders.failed.length > 0) throw campaignError("campaigns.template_check_failed", { channelIds: onSenders.failed });
     if (onSenders.missing.length > 0) throw campaignError("campaigns.template_missing_on_number", { channelIds: onSenders.missing });
 
@@ -242,13 +242,26 @@ export class CampaignSendService {
   async cancellable(workspaceId: string, id: string): Promise<boolean> {
     const c = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!c) throw campaignError("campaigns.not_found");
-    if (c.status === "launching") return true;
-    if (c.sendTransport === "direct") return c.status === "scheduled";
-    // Fix round 2 (n2): also a cancelled one whose stop could not be confirmed, so the user can retry.
-    if (c.sendTransport === "broadcast" && ["scheduled", "running", "failed", "cancelled"].includes(c.status)) {
-      return (await this.livePartitions(workspaceId, id)).length > 0 || (["scheduled", "running"].includes(c.status) && !!c.zernioBroadcastId);
+    const live = needsLiveCheck(c) && (await this.livePartitions(workspaceId, id)).length > 0;
+    return cancellableRule(c, live);
+  }
+
+  /**
+   * SP-13 final review (I2): `cancellable` for a whole list page. One
+   * grouped query finds which of the page's broadcast campaigns still have a
+   * partition that may send; none runs when no row needs it. Keyed by id.
+   */
+  async cancellableMany(workspaceId: string, campaigns: readonly CancellableShape[]): Promise<Map<string, boolean>> {
+    const ids = campaigns.filter(needsLiveCheck).map((c) => c.id);
+    const live = new Set<string>();
+    if (ids.length > 0) {
+      const groups = (await this.prisma.campaignBroadcast.groupBy({
+        by: ["campaignId"],
+        where: { workspaceId, campaignId: { in: ids }, zernioBroadcastId: { not: null }, stage: { in: ["sent", "scheduled"] } },
+      })) as unknown as Array<{ campaignId: string }>;
+      for (const g of groups) live.add(g.campaignId);
     }
-    return !!c.zernioBroadcastId && ["scheduled", "running"].includes(c.status);
+    return new Map(campaigns.map((c) => [c.id, cancellableRule(c, live.has(c.id))]));
   }
 
   /**
@@ -264,8 +277,7 @@ export class CampaignSendService {
     if (c.sendTransport !== "broadcast") return;
     for (const p of await this.livePartitions(workspaceId, id)) {
       try {
-        await this.budget.campaign.take();
-        const st = await this.zernio.getBroadcast(p.zernioBroadcastId);
+        const st = await budgeted(this.budget.campaign, () => this.zernio.getBroadcast(p.zernioBroadcastId));
         if (FINISHED_BROADCAST.includes(st.status)) continue;
       } catch (e) {
         if (isNotFound(e)) continue;
@@ -302,11 +314,9 @@ export class CampaignSendService {
         let firstError: unknown = null;
         for (const p of parts) {
           try {
-            await this.budget.campaign.take();
-            const st = await this.zernio.getBroadcast(p.zernioBroadcastId);
+            const st = await budgeted(this.budget.campaign, () => this.zernio.getBroadcast(p.zernioBroadcastId));
             if (!FINISHED_BROADCAST.includes(st.status)) {
-              await this.budget.campaign.take();
-              await this.zernio.cancelBroadcast(p.zernioBroadcastId);
+              await budgeted(this.budget.campaign, () => this.zernio.cancelBroadcast(p.zernioBroadcastId));
             }
             await this.prisma.campaignBroadcast.update({ where: { id: p.id }, data: { stage: "cancelled" } });
           } catch (e) {
@@ -494,7 +504,8 @@ export class CampaignSendService {
         s.pages++;
         this.lastPagedAt.set(s.u.key, ++this.pageSeq);
         try {
-          const res = await this.zernio.listBroadcastRecipients(s.u.broadcastId, { skip: s.skip, limit });
+          // Final review (R19): every page shares the campaign budget; a 429 pauses it.
+          const res = await budgeted(this.budget.campaign, () => this.zernio.listBroadcastRecipients(s.u.broadcastId, { skip: s.skip, limit }));
           const applied = await this.tracker.applyBroadcastPage({ id: s.c.id, workspaceId: s.c.workspaceId }, res);
           s.changed += applied.changed;
           const n = res.recipients.length;
@@ -610,11 +621,20 @@ export class CampaignSendService {
     id: string;
     workspaceId: string;
     zernioBroadcastId: string | null;
+    status?: string | null;
     sendTransport?: string | null;
     recipientTracking?: boolean | null;
     recipientsSyncedAt?: Date | null;
   }) {
     const aggregates = this.useAggregates(c);
+    // Final review (m1): an SP-13 campaign's status is only moved by a sync
+    // while it is active, and only forward; terminal states belong to the
+    // runner and the cancel paths. A legacy campaign keeps Zernio's status.
+    const statusFrom = (zernioStatus: string): { status?: CampaignStatusValue } => {
+      const next = campaignStatusFor(zernioStatus);
+      if (!c.sendTransport) return { status: next };
+      return forwardStatus(c.status ?? null, next) ? { status: next } : {};
+    };
     if (c.sendTransport === "broadcast") {
       const parts = (await this.prisma.campaignBroadcast.findMany({
         where: { workspaceId: c.workspaceId, campaignId: c.id, zernioBroadcastId: { not: null }, stage: { in: SWEPT_STAGES } },
@@ -624,36 +644,84 @@ export class CampaignSendService {
         const stats = [];
         for (const p of parts) {
           // m3: up to 25 reads per campaign per tick share the launch budget.
-          await this.budget.campaign.take();
-          stats.push(await this.zernio.getBroadcast(p.zernioBroadcastId));
+          stats.push(await budgeted(this.budget.campaign, () => this.zernio.getBroadcast(p.zernioBroadcastId)));
         }
         const b = aggregateBroadcastStatus(stats);
         return this.prisma.campaign.update({
           where: { id: c.id },
           data: {
-            status: campaignStatusFor(b.status),
+            ...statusFrom(b.status),
             ...(aggregates ? { sent: b.sent, delivered: b.delivered, read: b.read, failed: b.failed } : {}),
             statsSyncedAt: new Date(),
           },
         });
       }
     }
-    return this.applyStats(c.id, c.zernioBroadcastId!, aggregates);
+    return this.applyStats(c.id, c.zernioBroadcastId!, aggregates, statusFrom);
   }
 
   /**
-   * Zernio's broadcast status always; its aggregate counters only when
-   * `aggregates` (see `useAggregates`).
+   * Zernio's broadcast status (through `statusFrom`); its aggregate counters
+   * only when `aggregates` (see `useAggregates`). The read is budgeted
+   * (final review, R19).
    */
-  private async applyStats(id: string, broadcastId: string, aggregates = true) {
-    const b = await this.zernio.getBroadcast(broadcastId);
+  private async applyStats(
+    id: string,
+    broadcastId: string,
+    aggregates: boolean,
+    statusFrom: (zernioStatus: string) => { status?: CampaignStatusValue },
+  ) {
+    const b = await budgeted(this.budget.campaign, () => this.zernio.getBroadcast(broadcastId));
     return this.prisma.campaign.update({
       where: { id },
       data: {
-        status: campaignStatusFor(b.status),
+        ...statusFrom(b.status),
         ...(aggregates ? { sent: b.sent, delivered: b.delivered, read: b.read, failed: b.failed } : {}),
         statsSyncedAt: new Date(),
       },
     });
   }
+}
+
+type CampaignStatusValue = ReturnType<typeof campaignStatusFor>;
+
+/** The campaign fields the cancel rule reads. */
+export interface CancellableShape {
+  id: string;
+  status: string;
+  sendTransport?: string | null;
+  zernioBroadcastId?: string | null;
+}
+
+/** Only an SP-13 broadcast campaign in one of these states needs its partitions read. */
+function needsLiveCheck(c: CancellableShape): boolean {
+  return c.sendTransport === "broadcast" && ["scheduled", "running", "failed", "cancelled"].includes(c.status);
+}
+
+/**
+ * Whether `cancel` has something to stop, given whether the campaign has a
+ * partition our records call sent or scheduled (`live`): a launching
+ * campaign; a waiting scheduled direct one; a scheduled or running one with
+ * a broadcast; a failed or cancelled SP-13 campaign with a live partition
+ * (fix rounds 1 I1 and 2 n2). Shared by GET :id and GET /campaigns.
+ */
+export function cancellableRule(c: CancellableShape, live: boolean): boolean {
+  if (c.status === "launching") return true;
+  if (c.sendTransport === "direct") return c.status === "scheduled";
+  const active = ["scheduled", "running"].includes(c.status);
+  if (needsLiveCheck(c)) return live || (active && !!c.zernioBroadcastId);
+  return !!c.zernioBroadcastId && active;
+}
+
+const STATUS_RANK: Record<string, number> = { scheduled: 1, running: 2, completed: 3, failed: 3, cancelled: 3 };
+
+/**
+ * Final review (m1): a sync may move an SP-13 campaign only while it is
+ * scheduled or running, and only forward (scheduled, then running, then a
+ * terminal state). Never out of a terminal state, never back, never to draft.
+ */
+export function forwardStatus(current: string | null, next: string): boolean {
+  if (current !== "scheduled" && current !== "running") return false;
+  const to = STATUS_RANK[next];
+  return to !== undefined && to >= STATUS_RANK[current];
 }
