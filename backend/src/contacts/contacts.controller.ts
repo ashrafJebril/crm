@@ -1,6 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res } from "@nestjs/common";
 import type { Response } from "express";
-import { ContactsExportService } from "./contacts-export.service";
+import { ContactsExportService, EXPORT_IDS_CAP, type PreparedExport } from "./contacts-export.service";
 import { ContactsService } from "./contacts.service";
 import { ContactTimelineService } from "./contact-timeline.service";
 import { ContactsBulkService } from "./contacts-bulk.service";
@@ -62,7 +62,35 @@ export class ContactsController {
         ? [...new Set(rawIds.split(",").map((s) => s.trim()).filter(Boolean))]
         : undefined;
     const job = await this.exportSvc.prepare(workspaceId, parseContactFilter(query), ids);
+    await this.stream(res, job);
+  }
 
+  /**
+   * Same export as GET, with the selection in a JSON body so a large
+   * selection (up to 10 000 ids) does not overflow the URL. Body:
+   * `{ ids?: string[], ...ContactListFilter }` (contacts.manage).
+   */
+  @Post("export")
+  async exportPost(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() body: Record<string, unknown>,
+    @Res() res: Response,
+  ) {
+    const { ids: rawIds, ...rest } = body ?? {};
+    let ids: string[] | undefined;
+    if (rawIds !== undefined && rawIds !== null) {
+      if (!Array.isArray(rawIds) || rawIds.some((x) => typeof x !== "string")) {
+        throw new BadRequestException("ids must be an array of strings");
+      }
+      if (rawIds.length > EXPORT_IDS_CAP) throw new BadRequestException(`ids is limited to ${EXPORT_IDS_CAP}`);
+      ids = [...new Set((rawIds as string[]).map((x) => x.trim()).filter(Boolean))];
+      if (!ids.length) ids = undefined;
+    }
+    const job = await this.exportSvc.prepare(workspaceId, parseContactFilter(rest), ids);
+    await this.stream(res, job);
+  }
+
+  private async stream(res: Response, job: PreparedExport) {
     let closed = false;
     res.on("close", () => {
       if (!res.writableEnded) closed = true;

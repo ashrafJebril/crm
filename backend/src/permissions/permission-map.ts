@@ -201,6 +201,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /contacts/ids": "contacts.view",
   // Bulk export is owner/admin only (SP-03 ruling).
   "GET /contacts/export": "contacts.manage",
+  "POST /contacts/export": "contacts.manage", // JSON body: large selections
   // op "delete" additionally requires contacts.delete (ContactsController).
   "POST /contacts/bulk": "contacts.update",
   "GET /contacts/stats": "contacts.view",

@@ -55,6 +55,7 @@ export interface ImportContext {
   options: ImportOptions;
   defs: Map<string, FieldDef>;
   ownersByEmail: Map<string, string>;
+  /** Lower-cased member name -> user id; "" when several members share the name. */
   ownersByName: Map<string, string>;
 }
 
@@ -148,8 +149,11 @@ export function normalizeRow(cells: string[], ctx: ImportContext): NormalizeResu
   let ownerId: string | null = null; // options.ownerId applies to created contacts only (runner)
   if (get.owner) {
     const o = get.owner.v.toLowerCase();
-    const id = ctx.ownersByEmail.get(o) ?? ctx.ownersByName.get(o);
-    if (id) ownerId = id;
+    const byEmail = ctx.ownersByEmail.get(o);
+    const byName = ctx.ownersByName.get(o);
+    if (byEmail) ownerId = byEmail;
+    else if (byName) ownerId = byName;
+    else if (byName === "") errors.push({ column: get.owner.col, key: "imports.err.owner_ambiguous" });
     else errors.push({ column: get.owner.col, key: "imports.err.owner_not_found" });
   }
 

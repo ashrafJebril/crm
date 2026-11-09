@@ -3,12 +3,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { MediaService } from "../media/media.service";
 import { TagsService } from "../tags/tags.module";
 import { ContactsBulkService } from "../contacts/contacts-bulk.service";
+import { BulkContactsDto } from "../contacts/contacts.dto";
 import { MarketingOutboundService } from "../segments/marketing-outbound.service";
 import { addManualMembers } from "../segments/segment-members";
 import { NotificationsService } from "../notifications/notifications.service";
 import { workspaceContext } from "../common/workspace-context";
 import { parseFile } from "./parse-file";
-import { importGroupId, loadContext, parseOptions, planBatch, type BatchPlan } from "./import-plan";
+import { importGroupId, loadContext, parseOptions, planBatch, type BatchPlan, type StoredName } from "./import-plan";
+import { effectiveNameParts, joinName } from "../contacts/contact-name";
 import {
   DupTracker,
   IMPORT_BATCH_SIZE,
@@ -24,8 +26,33 @@ type StoredError = { row: number; column: string | null; key: string };
 /** The runner's lease on a job: the heartbeat value it last wrote. */
 interface Lease {
   beat: Date | null;
-  job: { id: string; workspaceId: string; fileMediaId: string } | null;
+  job: {
+    id: string;
+    workspaceId: string;
+    createdById: string;
+    fileMediaId: string;
+    options: unknown;
+    errors: unknown;
+  } | null;
+  /** The runner's in-memory error list (persisted on every batch). */
+  errors?: StoredError[];
+  /** Group whose membership this run changed; pushed to HJZ once when the run ends. */
+  touchedGroup?: string;
 }
+
+const MAX_TRANSIENT_ATTEMPTS = 3;
+const TRANSIENT_CODES = new Set(["P1001", "P1008", "P1017", "P2024"]);
+
+/** Connection / timeout class errors that a later resume can survive. */
+function isTransient(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code;
+  if (typeof code === "string" && (TRANSIENT_CODES.has(code) || /^(ECONNRESET|ETIMEDOUT|ECONNREFUSED)$/.test(code))) {
+    return true;
+  }
+  return /can't reach database|connection (terminated|closed|reset)|timed out|timeout/i.test((e as Error)?.message ?? "");
+}
+
+const NOOP_OUTBOUND = { emitSegmentUpserted: async () => true };
 
 /** Strictly increasing heartbeat so every lease value is unique. */
 function nextBeat(prev: Date | null): Date {
@@ -93,14 +120,54 @@ export class ImportRunnerService {
         this.execute(job, lease),
       );
     } catch (e) {
-      this.log.error(`import ${jobId} failed: ${(e as Error).message}`);
+      await this.fail(jobId, lease, e);
+    } finally {
+      if (lease.touchedGroup && lease.job) {
+        void this.outbound.emitSegmentUpserted(lease.job.workspaceId, lease.touchedGroup);
+      }
+      this.inFlight.delete(jobId);
+    }
+  }
+
+  /**
+   * Transient database errors leave the job `running` (the resume scheduler
+   * retries it) up to MAX_TRANSIENT_ATTEMPTS; anything else fails it with a
+   * stored reason and a notification to the creator.
+   */
+  private async fail(jobId: string, lease: Lease, e: unknown): Promise<void> {
+    this.log.error(`import ${jobId} failed: ${(e as Error).message}`);
+    try {
+      const job = lease.job;
+      if (job && isTransient(e)) {
+        const opts = (job.options && typeof job.options === "object" ? job.options : {}) as Record<string, unknown>;
+        const attempts = (Number(opts.attempts) || 0) + 1;
+        if (attempts < MAX_TRANSIENT_ATTEMPTS) {
+          await this.prisma.importJob.updateMany({
+            where: { id: jobId, status: "running", heartbeatAt: lease.beat },
+            data: { options: { ...opts, attempts } as never },
+          });
+          return;
+        }
+      }
+      const prior = lease.errors ?? ((job?.errors as StoredError[] | null) ?? []);
+      const errors: StoredError[] = [
+        { row: 0, column: null, key: "imports.err.job_failed" },
+        ...prior.filter((x) => x.key !== "imports.err.job_failed").slice(0, MAX_STORED_ERRORS - 1),
+      ];
       const res = await this.prisma.importJob.updateMany({
         where: { id: jobId, status: "running", heartbeatAt: lease.beat },
-        data: { status: "failed", finishedAt: new Date() },
+        data: { status: "failed", finishedAt: new Date(), errors: errors as never },
       });
-      if (res.count === 1) await this.removeFile(lease);
-    } finally {
-      this.inFlight.delete(jobId);
+      if (res.count === 1 && job) {
+        await this.removeFile(lease);
+        await this.notifications.notify(job.workspaceId, [job.createdById], {
+          type: "import_finished", // same preference as a finished import
+          title: "import.failed",
+          body: JSON.stringify({}),
+        });
+      }
+    } catch (inner) {
+      this.log.error(`import ${jobId} failure handling crashed: ${(inner as Error).message}`);
     }
   }
 
@@ -127,22 +194,33 @@ export class ImportRunnerService {
 
     // Audience import: one group per job, with a job-derived id so a crash
     // between creating it and persisting options cannot create a second one.
+    // Creating the group and writing options sit behind a fenced gate so a
+    // cancelled or re-claimed job does not create anything.
     if (job.kind === "audience" && !options.groupId) {
+      const claimed = nextBeat(lease.beat);
+      const gate = await this.prisma.importJob.updateMany({
+        where: { id: jobId, status: "running", heartbeatAt: lease.beat },
+        data: { heartbeatAt: claimed },
+      });
+      if (gate.count === 0) return;
+      lease.beat = claimed;
       const gid = importGroupId(jobId);
       let seg = await this.prisma.segment.findFirst({ where: { id: gid, workspaceId: ws } });
       if (!seg) {
         seg = await this.prisma.segment.create({
           data: { id: gid, workspaceId: ws, name: options.newGroupName ?? job.fileName, origin: "manual", filter: "{}" },
         });
-        void this.outbound.emitSegmentUpserted(ws, seg.id);
       }
       options.groupId = seg.id;
-      await this.prisma.importJob.updateMany({
-        where: { id: jobId },
-        data: { options: { ...(job.options as object), groupId: seg.id } },
+      lease.touchedGroup = seg.id;
+      const withGroup = { ...(job.options as object), groupId: seg.id };
+      const saved = await this.prisma.importJob.updateMany({
+        where: { id: jobId, status: "running", heartbeatAt: lease.beat },
+        data: { options: withGroup },
       });
+      if (saved.count === 0) return;
+      job.options = withGroup;
     }
-
     const tracker = new DupTracker(options.matchBy);
     const start = Math.min(job.processed, parsed.rows.length);
     for (let i = 0; i < start; i++) {
@@ -157,6 +235,7 @@ export class ImportRunnerService {
     let failed = job.failed;
     let duplicateInFile = job.duplicateInFile;
     const errors = ((job.errors as StoredError[] | null) ?? []).slice(0, MAX_STORED_ERRORS);
+    lease.errors = errors;
 
     for (let offset = start; offset < parsed.rows.length; offset += IMPORT_BATCH_SIZE) {
       // Batch-start fence: still running, and still our lease.
@@ -178,7 +257,7 @@ export class ImportRunnerService {
         tracker,
         jobId,
       );
-      await this.apply(ws, ctx, plan, job.kind);
+      if (await this.apply(ws, ctx, plan, job.kind)) lease.touchedGroup = options.groupId;
 
       created += plan.news.length + plan.resumed.length;
       updated += plan.updates.length;
@@ -205,7 +284,15 @@ export class ImportRunnerService {
           heartbeatAt: next,
         },
       });
-      if (res.count === 0) return;
+      if (res.count === 0) {
+        // Cancelled mid-batch: the batch is already written, so record its
+        // counters (heartbeat-fenced, status-agnostic) to keep the report accurate.
+        await this.prisma.importJob.updateMany({
+          where: { id: jobId, heartbeatAt: lease.beat },
+          data: { processed: end, created, updated, skipped, failed, duplicateInFile, errors: errors as never },
+        });
+        return;
+      }
       lease.beat = next;
       await this.yieldTick();
     }
@@ -225,7 +312,8 @@ export class ImportRunnerService {
   }
 
   /** Writes one planned batch. Every step is idempotent so a replay is safe. */
-  private async apply(ws: string, ctx: ImportContext, plan: BatchPlan, kind: string): Promise<void> {
+  private async apply(ws: string, ctx: ImportContext, plan: BatchPlan, kind: string): Promise<boolean> {
+    let groupChanged = false;
     const { options } = ctx;
     const tagSets: { id: string; tags: string[] }[] = [];
     const customRows: { defId: string; contactId: string; value: unknown }[] = [];
@@ -260,8 +348,10 @@ export class ImportRunnerService {
 
     const updateOps = plan.updates.map((u) => {
       tagSets.push({ id: u.id, tags: [...baseTags, ...u.rec.tags] });
-      return this.prisma.contact.update({ where: { id: u.id }, data: updateData(u.rec) });
+      return this.prisma.contact.update({ where: { id: u.id }, data: updateData(u.rec, u.stored, ctx.mapping) });
     });
+    // Matched-but-unchanged contacts still get the job's tags and group.
+    for (const u of plan.unchanged) tagSets.push({ id: u.id, tags: baseTags });
     if (updateOps.length) await this.prisma.$transaction(updateOps);
 
     const overwrite = new Map<string, string[]>();
@@ -298,26 +388,46 @@ export class ImportRunnerService {
 
     const worked = [...createdHere.map((c) => c.id), ...plan.updates.map((u) => u.id)];
     if (options.groupId) {
-      const ids = kind === "audience" ? [...worked, ...plan.unchanged.map((u) => u.id)] : worked;
-      if (ids.length) await addManualMembers(this.prisma, this.outbound, ws, options.groupId, ids);
+      const ids = [...worked, ...plan.unchanged.map((u) => u.id)];
+      // The HJZ push happens once per run, not per batch.
+      if (ids.length) {
+        await addManualMembers(this.prisma, NOOP_OUTBOUND, ws, options.groupId, ids);
+        groupChanged = true;
+      }
     }
     if (options.pipeline && worked.length) {
-      await this.bulk.run(ws, {
-        ids: [...new Set(worked)],
-        op: "addToPipeline",
-        pipelineId: options.pipeline.pipelineId,
-        stageId: options.pipeline.stageId,
-      } as never);
+      await this.bulk.run(
+        ws,
+        Object.assign(new BulkContactsDto(), {
+          ids: [...new Set(worked)],
+          op: "addToPipeline" as const,
+          pipelineId: options.pipeline.pipelineId,
+          stageId: options.pipeline.stageId,
+        }),
+      );
     }
+    return groupChanged;
   }
 }
 
-function updateData(rec: NormalizedRow) {
+function updateData(rec: NormalizedRow, stored: StoredName, mapping: ImportMapping) {
   const data: Record<string, unknown> = {};
+  const partsMapped = Object.values(mapping).some((t) => t === "firstName" || t === "lastName");
   if (rec.firstName != null || rec.lastName != null) {
-    data.name = rec.name;
-    data.firstName = rec.firstName;
-    data.lastName = rec.lastName;
+    if (partsMapped) {
+      // Only the mapped, non-empty parts change; the rest stay as stored.
+      const cur = effectiveNameParts(stored);
+      const firstName = rec.firstName ?? cur.firstName;
+      const lastName = rec.lastName ?? cur.lastName;
+      data.firstName = firstName;
+      data.lastName = lastName;
+      data.name = joinName(firstName, lastName);
+    } else {
+      // A single "name" column replaces the whole name.
+      data.name = rec.name;
+      data.firstName = rec.firstName;
+      data.lastName = rec.lastName;
+    }
   }
   if (rec.phone) data.phone = rec.phone;
   if (rec.email) data.email = rec.email;

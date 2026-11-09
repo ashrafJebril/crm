@@ -1,10 +1,4 @@
-import { IsIn, IsObject, IsOptional, IsString } from "class-validator";
-
-export const IMPORT_KINDS = ["contacts", "audience"] as const;
-
-export class CreateImportDto {
-  @IsString() @IsIn(IMPORT_KINDS as unknown as string[]) kind!: string;
-}
+import { IsObject, IsOptional } from "class-validator";
 
 export class PreviewImportDto {
   /** Header name -> target ("phone", "custom:<defId>", "ignore", ...). */

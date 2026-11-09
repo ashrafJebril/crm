@@ -24,6 +24,7 @@ export const BASE_COLUMNS = [
   "owner",
   "source",
   "industry",
+  "value",
   "marketingOptOut",
   "notALead",
   "createdAt",
@@ -68,6 +69,27 @@ function customCell(type: string, value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * Custom-field column headers: the label, or `Label (key)` when the label
+ * collides with a base column or another field's label (case-insensitive),
+ * so an exported file maps back unambiguously on import.
+ */
+export function customHeaders(defs: { key: string; label: string }[]): string[] {
+  const norm = (h: string) => h.trim().toLowerCase();
+  const taken = new Map<string, number>();
+  for (const b of BASE_COLUMNS) taken.set(norm(b), (taken.get(norm(b)) ?? 0) + 1);
+  for (const d of defs) taken.set(norm(d.label), (taken.get(norm(d.label)) ?? 0) + 1);
+  const used = new Set<string>(BASE_COLUMNS.map(norm));
+  return defs.map((d) => {
+    let h = d.label;
+    if ((taken.get(norm(d.label)) ?? 0) > 1) h = `${d.label} (${d.key})`;
+    let n = 1;
+    while (used.has(norm(h))) h = `${d.label} (${d.key}) ${++n}`;
+    used.add(norm(h));
+    return h;
+  });
+}
+
 @Injectable()
 export class ContactsExportService {
   constructor(
@@ -91,7 +113,7 @@ export class ContactsExportService {
     const defs = await this.prisma.customFieldDef.findMany({
       where: { workspaceId, entity: "contact", archivedAt: null },
       orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-      select: { id: true, label: true, type: true },
+      select: { id: true, key: true, label: true, type: true },
     });
 
     const members = await this.prisma.workspaceMember.findMany({
@@ -100,19 +122,33 @@ export class ContactsExportService {
     });
     const owners = new Map(members.map((m) => [m.userId, m.user?.email ?? ""]));
 
-    const header = csvLine([...BASE_COLUMNS, ...defs.map((d) => d.label)]);
+    const header = csvLine([...BASE_COLUMNS, ...customHeaders(defs)]);
     const filename = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
 
     const run = async (sink: ExportSink) => {
       await sink.write(BOM + header);
-      let cursor: string | undefined;
+      let last: { id: string; createdAt: Date } | undefined;
       let rows = 0;
       while (!sink.aborted()) {
+        // Keyset paging: unlike a Prisma cursor it survives the last row of a
+        // page being deleted while the export is streaming.
+        const pageWhere: Prisma.ContactWhereInput = last
+          ? {
+              AND: [
+                where,
+                {
+                  OR: [
+                    { createdAt: { lt: last.createdAt } },
+                    { createdAt: last.createdAt, id: { lt: last.id } },
+                  ],
+                },
+              ],
+            }
+          : where;
         const page = await this.prisma.contact.findMany({
-          where,
+          where: pageWhere,
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           take: EXPORT_PAGE_SIZE,
-          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         });
         if (!page.length) break;
 
@@ -146,6 +182,7 @@ export class ContactsExportService {
             c.ownerId ? (owners.get(c.ownerId) ?? "") : "",
             c.source,
             c.industry,
+            c.value ?? "",
             c.marketingOptOut ? "true" : "false",
             c.notALead ? "true" : "false",
             c.createdAt.toISOString(),
@@ -155,7 +192,7 @@ export class ContactsExportService {
         rows += page.length;
         await sink.write(chunk);
         if (page.length < EXPORT_PAGE_SIZE) break;
-        cursor = page[page.length - 1].id;
+        last = page[page.length - 1];
       }
       return { rows };
     };

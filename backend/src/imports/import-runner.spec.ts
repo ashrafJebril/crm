@@ -257,9 +257,9 @@ describe("ImportResumeScheduler", () => {
     seedJob(prisma, { id: "stale", heartbeatAt: new Date(now.getTime() - 3 * 60_000) });
     seedJob(prisma, { id: "fresh", heartbeatAt: new Date(now.getTime() - 30_000) });
     seedJob(prisma, { id: "done", status: "done", heartbeatAt: new Date(now.getTime() - 10 * 60_000) });
-    const { runner } = makeRunner(prisma, csv());
+    const { runner, media } = makeRunner(prisma, csv());
     const kick = jest.spyOn(runner, "kick").mockImplementation(() => undefined);
-    const sched = new ImportResumeScheduler(prisma as never, runner);
+    const sched = new ImportResumeScheduler(prisma as never, runner, media as never);
     expect(await sched.sweep(now)).toBe(1);
     expect(kick).toHaveBeenCalledWith("stale");
     // heartbeat was claimed, so an immediate second sweep does nothing

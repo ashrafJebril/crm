@@ -15,7 +15,7 @@ import { readFile, unlink } from "node:fs/promises";
 import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
 import type { Viewer } from "../permissions/visibility";
 import { ImportsService } from "./imports.service";
-import { CreateImportDto, PreviewImportDto } from "./imports.dto";
+import { PreviewImportDto } from "./imports.dto";
 import { MAX_IMPORT_BYTES } from "./parse-file";
 
 @Controller("imports")
@@ -35,16 +35,19 @@ export class ImportsController {
   async create(
     @CurrentWorkspace() workspaceId: string,
     @CurrentViewer() viewer: Viewer,
-    @Body() dto: CreateImportDto,
+    @Body() body: Record<string, unknown>,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     try {
+      // Validated here, not by a DTO pipe: a pipe failure would skip this
+      // handler and leak the staged temp file.
+      const kind = typeof body?.kind === "string" ? body.kind : "";
       const buffer = file ? (file.buffer ?? (await readFile(file.path))) : undefined;
       return await this.svc.create(
         workspaceId,
         viewer,
         file && buffer ? { buffer, originalname: file.originalname } : undefined,
-        dto.kind,
+        kind,
       );
     } finally {
       if (file?.path) await unlink(file.path).catch(() => {});

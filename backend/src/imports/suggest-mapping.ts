@@ -22,11 +22,16 @@ export function suggestMapping(headers: string[], defs: FieldDef[] = []): Import
   const taken = new Set<string>();
   const lookup = new Map<string, string>();
   for (const [target, words] of Object.entries(SYNONYMS)) for (const w of words) lookup.set(norm(w), target);
+  // Plain custom labels never override a built-in synonym ("Name" stays the name).
   for (const d of defs) {
-    for (const w of [d.label, d.labelAr, d.key]) if (w) lookup.set(norm(w), `custom:${d.id}`);
+    for (const w of [d.label, d.labelAr, d.key]) if (w && !lookup.has(norm(w))) lookup.set(norm(w), `custom:${d.id}`);
   }
+  // The export's disambiguated form "Label (key)" always names the field.
+  const byKey = new Map(defs.map((d) => [d.key.toLowerCase(), d.id]));
   for (const h of headers) {
-    const t = lookup.get(norm(h));
+    const m = /\(([^()]+)\)\s*(?:\d+)?\s*$/.exec(h.trim());
+    const keyed = m ? byKey.get(m[1].trim().toLowerCase()) : undefined;
+    const t = keyed ? `custom:${keyed}` : lookup.get(norm(h));
     if (t && (t === "tags" || !taken.has(t))) {
       out[h] = t;
       taken.add(t);

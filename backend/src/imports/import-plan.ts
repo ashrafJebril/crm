@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { PrismaService } from "../prisma/prisma.service";
 import { requireManualGroup } from "../segments/segment-members";
-import { countryCodeForTimezone, normalizeImportPhone } from "./phone";
+import { countryCodeForTimezone } from "./phone";
 import {
   DupTracker,
   IMPORT_PIPELINE_CAP,
@@ -129,7 +129,11 @@ export async function loadContext(
   const ownersByName = new Map<string, string>();
   for (const m of members) {
     ownersByEmail.set(m.user.email.toLowerCase(), m.userId);
-    if (m.user.name) ownersByName.set(m.user.name.trim().toLowerCase(), m.userId);
+    if (m.user.name) {
+      const key = m.user.name.trim().toLowerCase();
+      // "" marks a name shared by several members (ambiguous: needs the email).
+      ownersByName.set(key, ownersByName.has(key) ? "" : m.userId);
+    }
   }
   if (options.ownerId && !members.some((m) => m.userId === options.ownerId)) {
     throw importError("imports.owner_invalid");
@@ -172,6 +176,13 @@ export interface ExistingMatch {
   id: string;
 }
 
+/** Stored name columns of a matched contact (so updates can merge name parts). */
+export interface StoredName {
+  name: string;
+  firstName: string | null;
+  lastName: string | null;
+}
+
 export interface BatchPlan {
   invalid: { row: number; errors: RowError[] }[];
   duplicates: number;
@@ -180,7 +191,7 @@ export interface BatchPlan {
   /** Rows whose contact this same job already created (a resumed batch). */
   resumed: { id: string; rec: NormalizedRow }[];
   /** Existing contacts matched when updateExisting is true. */
-  updates: { id: string; rec: NormalizedRow }[];
+  updates: { id: string; rec: NormalizedRow; stored: StoredName }[];
   /** Existing contacts matched but left alone (updateExisting false). */
   unchanged: { id: string }[];
 }
@@ -237,8 +248,10 @@ export async function planBatch(
   // "050-123-4567"), emails case-insensitively; one query per batch.
   const existing =
     digits.size || emails.size
-      ? await prisma.$queryRaw<{ id: string; phone: string | null; email: string | null }[]>`
-          SELECT "id", "phone", "email" FROM "Contact"
+      ? await prisma.$queryRaw<
+          { id: string; phone: string | null; email: string | null; name: string; firstName: string | null; lastName: string | null }[]
+        >`
+          SELECT "id", "phone", "email", "name", "firstName", "lastName" FROM "Contact"
           WHERE "workspaceId" = ${workspaceId}
             AND (
               regexp_replace(COALESCE("phone", ''), '[^0-9]', '', 'g') = ANY(${[...digits]}::text[])
@@ -246,21 +259,35 @@ export async function planBatch(
             )
           ORDER BY "createdAt" ASC, "id" ASC`
       : [];
-  const byPhone = new Map<string, string>();
-  const byEmail = new Map<string, string>();
+  // Keyed by the stored digits (not re-normalized: stored values may be bare
+  // digits such as "971501234567"); the oldest contact wins.
+  const byPhone = new Map<string, (typeof existing)[number]>();
+  const byEmail = new Map<string, (typeof existing)[number]>();
   for (const e of existing) {
-    const p = normalizeImportPhone(e.phone, ctx.cc);
-    if (p && !byPhone.has(p)) byPhone.set(p, e.id);
+    const p = e.phone ? e.phone.replace(/\D/g, "") : "";
+    if (p && !byPhone.has(p)) byPhone.set(p, e);
     const em = e.email?.toLowerCase();
-    if (em && !byEmail.has(em)) byEmail.set(em, e.id);
+    if (em && !byEmail.has(em)) byEmail.set(em, e);
   }
+  const findByPhone = (phone: string) => {
+    for (const v of phoneVariants(phone, ctx.cc)) {
+      const hit = byPhone.get(v.replace(/\D/g, ""));
+      if (hit) return hit;
+    }
+    return undefined;
+  };
   for (const { row, rec } of candidates) {
-    const id =
-      (rec.phone && matchBy !== "email" ? byPhone.get(rec.phone) : undefined) ??
+    const hit =
+      (rec.phone && matchBy !== "email" ? findByPhone(rec.phone) : undefined) ??
       (rec.email && matchBy !== "phone" ? byEmail.get(rec.email) : undefined);
-    if (!id) plan.news.push({ id: importContactId(resumeJobId ?? "preview", row), rec });
-    else if (updateExisting) plan.updates.push({ id, rec });
-    else plan.unchanged.push({ id });
+    if (!hit) plan.news.push({ id: importContactId(resumeJobId ?? "preview", row), rec });
+    else if (updateExisting) {
+      plan.updates.push({
+        id: hit.id,
+        rec,
+        stored: { name: hit.name ?? "", firstName: hit.firstName ?? null, lastName: hit.lastName ?? null },
+      });
+    } else plan.unchanged.push({ id: hit.id });
   }
   return plan;
 }

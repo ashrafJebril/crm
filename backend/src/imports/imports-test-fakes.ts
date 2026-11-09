@@ -155,6 +155,8 @@ export class FakePrisma {
       const rows = [...this.jobs.values()].filter((j) => {
         if (where.workspaceId && j.workspaceId !== where.workspaceId) return false;
         if (where.status && typeof where.status === "string" && j.status !== where.status) return false;
+        if (where.status?.in && !where.status.in.includes(j.status)) return false;
+        if (where.createdAt?.lt && !(j.createdAt < where.createdAt.lt)) return false;
         if (where.OR) {
           const cutoff = where.OR[0].heartbeatAt.lt as Date;
           return j.heartbeatAt ? j.heartbeatAt < cutoff : false;

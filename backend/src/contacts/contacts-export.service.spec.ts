@@ -24,10 +24,19 @@ const mkRow = (i: number, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** The id of the keyset clause `{ OR: [{createdAt<}, {createdAt=, id<}] }` added by the export, if any. */
+function keysetLastId(where: unknown): string | undefined {
+  const and = (where as { AND?: { OR?: { id?: { lt: string } }[] }[] })?.AND;
+  const clause = and?.[and.length - 1]?.OR;
+  return clause?.[1]?.id?.lt;
+}
+
 function makePrisma(rows: ReturnType<typeof mkRow>[], extra: Record<string, unknown> = {}) {
-  const findMany = jest.fn(async (args: { take?: number; cursor?: { id: string }; skip?: number }) => {
+  // Rows are kept in export order; the keyset clause is the last AND entry.
+  const findMany = jest.fn(async (args: { take?: number; where?: unknown }) => {
     let start = 0;
-    if (args.cursor) start = rows.findIndex((r) => r.id === args.cursor!.id) + (args.skip ?? 0);
+    const last = keysetLastId(args.where);
+    if (last) start = rows.findIndex((r) => r.id === last) + 1;
     return rows.slice(start, start + (args.take as number));
   });
   return {
@@ -84,10 +93,10 @@ describe("ContactsExportService", () => {
     expect(text.charCodeAt(0)).toBe(0xfeff);
     const lines = text.slice(1).split("\r\n");
     expect(lines[0]).toBe(
-      "id,firstName,lastName,name,phone,email,lifecycle,tags,owner,source,industry,marketingOptOut,notALead,createdAt,Budget,VIP?",
+      "id,firstName,lastName,name,phone,email,lifecycle,tags,owner,source,industry,value,marketingOptOut,notALead,createdAt,Budget,VIP?",
     );
     expect(lines[1]).toBe(
-      'c000001,Name,1,Name 1,,,lead,"VIP, Riyadh, KSA",o@x.io,manual,,false,false,2026-01-01T00:00:00.000Z,5000,',
+      'c000001,Name,1,Name 1,,,lead,"VIP, Riyadh, KSA",o@x.io,manual,,,false,false,2026-01-01T00:00:00.000Z,5000,',
     );
     expect(job.filename).toMatch(/^contacts-\d{4}-\d{2}-\d{2}\.csv$/);
     // Defs: non-archived, ordered, workspace-scoped.
@@ -97,6 +106,40 @@ describe("ContactsExportService", () => {
         orderBy: [{ order: "asc" }, { createdAt: "asc" }],
       }),
     );
+  });
+
+  it("keeps paging when the last row of a page is deleted mid-export (keyset, no cursor)", async () => {
+    const rows = Array.from({ length: 2500 }, (_, i) => mkRow(2499 - i)); // export order: id desc
+    const live = [...rows];
+    const prisma = makePrisma(rows);
+    prisma.contact.findMany.mockImplementation(async (args: { take?: number; where?: unknown }) => {
+      const last = keysetLastId(args.where);
+      const list = last ? live.filter((r) => r.id < last) : live;
+      const page = list.slice(0, args.take as number);
+      // another user deletes the last row of the first page right after it was read
+      if (!last) live.splice(live.indexOf(page[page.length - 1]), 1);
+      return page;
+    });
+    const { text, rows: count } = await exportAll(prisma);
+    expect(count).toBe(2500); // the deleted row was already read; paging continues past it
+    expect(text).toContain("c001499");
+    expect(text).toContain("c000000");
+    for (const [a] of prisma.contact.findMany.mock.calls) expect(a).not.toHaveProperty("cursor");
+  });
+
+  it("disambiguates custom-field headers that collide with base columns or each other", async () => {
+    const prisma = makePrisma([mkRow(1)]);
+    prisma.customFieldDef.findMany.mockResolvedValue([
+      { id: "d1", key: "nm", label: "Name", type: "text" },
+      { id: "d2", key: "a", label: "Plan", type: "text" },
+      { id: "d3", key: "b", label: "plan", type: "text" },
+      { id: "d4", key: "c", label: "Budget", type: "text" },
+      { id: "d5", key: "v", label: "Value", type: "text" },
+    ]);
+    const { text } = await exportAll(prisma);
+    const header = text.slice(1).split("\r\n")[0].split(",");
+    expect(header.slice(-5)).toEqual(["Name (nm)", "Plan (a)", "plan (b)", "Budget", "Value (v)"]);
+    expect(new Set(header.map((h) => h.toLowerCase())).size).toBe(header.length);
   });
 
   it("escapes quotes, commas and newlines inside real rows", async () => {
@@ -116,7 +159,19 @@ describe("ContactsExportService", () => {
     expect(calls.length).toBe(N / EXPORT_PAGE_SIZE + 1); // last page is full, so one extra empty probe
     for (const a of calls) expect(a.take).toBe(EXPORT_PAGE_SIZE);
     expect(calls[0].cursor).toBeUndefined();
-    expect(calls[1]).toMatchObject({ cursor: { id: rows[EXPORT_PAGE_SIZE - 1].id }, skip: 1 });
+    expect(calls[0].where).toEqual({ workspaceId: "ws1" });
+    expect(calls[1].cursor).toBeUndefined();
+    expect(calls[1].where).toEqual({
+      AND: [
+        { workspaceId: "ws1" },
+        {
+          OR: [
+            { createdAt: { lt: rows[EXPORT_PAGE_SIZE - 1].createdAt } },
+            { createdAt: rows[EXPORT_PAGE_SIZE - 1].createdAt, id: { lt: rows[EXPORT_PAGE_SIZE - 1].id } },
+          ],
+        },
+      ],
+    });
     expect(size).toBeGreaterThan(N * 10);
     expect(chunks).toHaveLength(0); // sink received data piecewise, nothing buffered by the service
   });

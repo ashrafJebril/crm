@@ -93,7 +93,7 @@ describe("parseFile", () => {
   it("aborts an XLSX over 50 000 rows", async () => {
     const rows: unknown[][] = [["n"]];
     for (let i = 0; i < 50_001; i++) rows.push([i]);
-    expect(await keyOf(parseFile(await xlsx(rows), "a.xlsx"))).toBe("imports.file_too_large");
+    expect(await keyOf(parseFile(await xlsx(rows), "a.xlsx"))).toBe("imports.too_many_rows");
   }, 60_000);
 
   it("reports 1-based source row numbers (header and blank rows count)", async () => {
@@ -130,13 +130,13 @@ describe("parseFile", () => {
     expect(await keyOf(parseFile(await xlsx([]), "a.xlsx"))).toBe("imports.file_empty");
   });
 
-  it("throws file_too_large above 50 000 data rows, accepts exactly 50 000", async () => {
+  it("throws too_many_rows above 50 000 data rows, accepts exactly 50 000", async () => {
     const lines = ["n,p"];
     for (let i = 0; i < 50_000; i++) lines.push(`n${i},${i}`);
     const ok = await parseFile(buf(lines.join("\n")), "a.csv");
     expect(ok.rows).toHaveLength(50_000);
     lines.push("x,1");
-    expect(await keyOf(parseFile(buf(lines.join("\n")), "a.csv"))).toBe("imports.file_too_large");
+    expect(await keyOf(parseFile(buf(lines.join("\n")), "a.csv"))).toBe("imports.too_many_rows");
   });
 
   it("throws file_too_large above 10 MB", async () => {

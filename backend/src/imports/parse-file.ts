@@ -7,6 +7,7 @@ export const MAX_IMPORT_ROWS = 50_000;
 export type ImportFileErrorKey =
   | "imports.file_empty"
   | "imports.file_too_large"
+  | "imports.too_many_rows"
   | "imports.unsupported_type"
   | "imports.file_invalid";
 
@@ -152,7 +153,7 @@ async function parseXlsx(buffer: Buffer): Promise<SourceRow[]> {
     }
     rows.push({ n: r.number, cells });
   });
-  if (tooLarge) throw new ImportFileError("imports.file_too_large");
+  if (tooLarge) throw new ImportFileError("imports.too_many_rows");
   return rows;
 }
 
@@ -218,7 +219,7 @@ function shape(table: SourceRow[]): ParsedFile {
   for (let r = headerIdx + 1; r < table.length; r++) {
     const src = table[r];
     if (isBlank(src)) continue;
-    if (rows.length >= MAX_IMPORT_ROWS) throw new ImportFileError("imports.file_too_large");
+    if (rows.length >= MAX_IMPORT_ROWS) throw new ImportFileError("imports.too_many_rows");
     rows.push(keep.map((i) => unescapeFormulaCell((src.cells[i] ?? "").trim())));
     rowNumbers.push(src.n);
   }

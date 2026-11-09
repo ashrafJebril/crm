@@ -33,8 +33,10 @@ const row = (i: number) => ({
 function setup(rows: ReturnType<typeof row>[]) {
   const prisma = {
     contact: {
-      findMany: jest.fn(async (a: { take: number; cursor?: { id: string }; skip?: number }) => {
-        const start = a.cursor ? rows.findIndex((r) => r.id === a.cursor!.id) + 1 : 0;
+      findMany: jest.fn(async (a: { take: number; where?: { AND?: { OR?: { id?: { lt: string } }[] }[] } }) => {
+        const and = a.where?.AND;
+        const last = and?.[and.length - 1]?.OR?.[1]?.id?.lt;
+        const start = last ? rows.findIndex((r) => r.id === last) + 1 : 0;
         return rows.slice(start, start + a.take);
       }),
     },
@@ -74,5 +76,28 @@ describe("ContactsController.export streaming", () => {
     expect((p2.contact.findMany.mock.calls[0][0] as unknown as { where: unknown }).where).toEqual({
       AND: [{ workspaceId: "ws1" }, { id: { in: ["a", "b"] } }],
     });
+  });
+
+  it("POST export takes ids in the JSON body (no URL limit) and streams the same CSV", async () => {
+    const { ctrl, prisma } = setup([row(1), row(2)]);
+    const ids = Array.from({ length: 5000 }, (_, i) => `id${i}`);
+    const res = new FakeRes();
+    await ctrl.exportPost("ws1", { ids, lifecycle: "lead" }, res as never);
+    expect(res.headers["Content-Type"]).toBe("text/csv; charset=utf-8");
+    expect(res.ended).toBe(true);
+    const where = (prisma.contact.findMany.mock.calls[0][0] as unknown as { where: { AND: unknown[] } }).where;
+    expect(where.AND[1]).toEqual({ id: { in: ids } });
+    expect(JSON.stringify(where.AND[0])).toContain("lead");
+  });
+
+  it("POST export with only a filter exports by filter; rejects bad or oversized ids", async () => {
+    const { ctrl, prisma } = setup([row(1)]);
+    await ctrl.exportPost("ws1", { q: "sara" }, new FakeRes() as never);
+    const where = (prisma.contact.findMany.mock.calls[0][0] as unknown as { where: { AND?: unknown[] } }).where;
+    expect(JSON.stringify(where)).toContain("sara");
+    expect(JSON.stringify(where)).not.toContain('"id":{"in"');
+    await expect(ctrl.exportPost("ws1", { ids: "a,b" }, new FakeRes() as never)).rejects.toThrow("ids must be an array");
+    const big = Array.from({ length: 10_001 }, (_, i) => `x${i}`);
+    await expect(ctrl.exportPost("ws1", { ids: big }, new FakeRes() as never)).rejects.toThrow("limited to 10000");
   });
 });
