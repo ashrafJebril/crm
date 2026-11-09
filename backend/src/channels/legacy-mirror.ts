@@ -55,62 +55,87 @@ export function isUniqueViolation(e: unknown): boolean {
   return (e as { code?: unknown } | null)?.code === "P2002";
 }
 
+/** statusReason of a channel disconnected because Zernio stopped listing it. */
+export const ZERNIO_MISSING = "zernio_account_missing";
+/** statusReason of a channel the user disconnected in the hub. Only an
+ *  explicit connect revives it — never a sync or a relink (R9). */
+export const USER_DISCONNECTED = "disconnected_by_user";
+/** statusReason of a channel whose legacy Integration was deleted through the
+ *  old Settings disconnect routes. A reconnect / sync that lists it revives it. */
+export const INTEGRATION_REMOVED = "integration_removed";
+/** Disconnect reasons a sync or relink may undo. */
+export const REVIVABLE_REASONS: ReadonlySet<string> = new Set([ZERNIO_MISSING, INTEGRATION_REMOVED]);
+
 /** Clears a disconnect: the shape every reactivation writes. */
 const REVIVE = { status: "active", statusReason: null, disconnectedAt: null } as const;
 
+/** The reactivation fields for `row`, or nothing. A row disconnected by the
+ *  user stays disconnected unless this is an explicit connect. */
+function revival(row: Pick<Channel, "status" | "statusReason">, explicit: boolean) {
+  if (row.status !== "disconnected") return {};
+  return explicit || REVIVABLE_REASONS.has(row.statusReason ?? "") ? { ...REVIVE } : {};
+}
+
 /**
  * Make the Integration's legacy channel match the Integration.
- *  - linked, same identity: unchanged (an `explicit` user connect revives a
- *    disconnected row; a plain resync never does);
- *  - linked, identity changed, no other row has the new identity: updated IN
- *    PLACE (provider/externalId) and reactivated;
- *  - a row with the new identity exists (a genuine other number became the
- *    primary, or the reconnected number's old row): the link moves to it and
- *    it is reactivated; the old slot keeps its threads;
+ *  - linked, same identity: unchanged (an `explicit` connect revives it);
+ *  - linked, identity changed, no other row has the new identity, and
+ *    `allowInPlace` (default true): updated IN PLACE (provider/externalId),
+ *    so its threads follow the Integration (re-auth, Meta↔Zernio switch);
+ *    with `allowInPlace: false` the slot stays on its old account;
+ *  - a row with the new identity exists (another number became the primary,
+ *    or the reconnected number's old row): the link moves to it; the old
+ *    slot keeps its threads;
  *  - nothing: create the deterministic `chi_` row.
+ * Reactivation (see `revival`) happens only on an explicit connect or for a
+ * revivable disconnect reason — never for a user's hub disconnect.
  * Callers run `ensureDefaultPerKind` afterwards.
  */
 export async function alignLegacyChannel(
   prisma: PrismaService,
   i: IntegrationLike,
-  opts: { explicit?: boolean } = {},
+  opts: { explicit?: boolean; allowInPlace?: boolean } = {},
 ): Promise<Channel | null> {
+  const explicit = opts.explicit === true;
   const want = channelFromIntegration(i);
   const linked = await prisma.channel.findFirst({ where: { integrationId: i.id } });
   if (linked && linked.provider === want.provider && linked.externalId === want.externalId) {
-    if (opts.explicit && linked.status === "disconnected") {
-      return prisma.channel.update({ where: { id: linked.id }, data: { ...REVIVE } });
-    }
-    return linked;
+    const data = revival(linked, explicit);
+    return Object.keys(data).length ? prisma.channel.update({ where: { id: linked.id }, data }) : linked;
   }
-  const twin = want.externalId
-    ? await prisma.channel.findFirst({
-        where: { workspaceId: i.workspaceId, provider: want.provider, externalId: want.externalId },
-      })
-    : null;
+  const findTwin = () =>
+    want.externalId
+      ? prisma.channel.findFirst({
+          where: { workspaceId: i.workspaceId, provider: want.provider, externalId: want.externalId },
+        })
+      : Promise.resolve(null);
+  const twin = await findTwin();
   if (linked && !twin) {
+    if (opts.allowInPlace === false) return linked;
     try {
       return await prisma.channel.update({
         where: { id: linked.id },
-        data: { provider: want.provider, externalId: want.externalId, kind: want.kind, ...REVIVE },
+        data: {
+          provider: want.provider,
+          externalId: want.externalId,
+          kind: want.kind,
+          ...revival(linked, explicit),
+        },
       });
     } catch (e) {
       if (!isUniqueViolation(e)) throw e; // a twin appeared concurrently: relink below
     }
   }
-  const target =
-    twin ??
-    (want.externalId
-      ? await prisma.channel.findFirst({
-          where: { workspaceId: i.workspaceId, provider: want.provider, externalId: want.externalId },
-        })
-      : null);
+  const target = twin ?? (await findTwin());
   if (target) {
     await prisma.channel.updateMany({
       where: { integrationId: i.id, id: { not: target.id } },
       data: { integrationId: null },
     });
-    return prisma.channel.update({ where: { id: target.id }, data: { integrationId: i.id, ...REVIVE } });
+    return prisma.channel.update({
+      where: { id: target.id },
+      data: { integrationId: i.id, ...revival(target, explicit) },
+    });
   }
   const hasDefault = await prisma.channel.findFirst({
     where: { workspaceId: i.workspaceId, kind: want.kind, isDefault: true },

@@ -47,6 +47,11 @@ DO $$ BEGIN
     FOREIGN KEY ("integrationId") REFERENCES "Integration"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- Inbound routing (ChannelResolver.forInbound) looks the legacy Integration up
+-- by its account id. An index only: the table and its constraints are not
+-- altered, so the deployed code is unaffected.
+CREATE INDEX IF NOT EXISTS "Integration_pageId_idx" ON "Integration"("pageId");
+
 ALTER TABLE "Conversation" ADD COLUMN IF NOT EXISTS "channelId" TEXT;
 CREATE INDEX IF NOT EXISTS "Conversation_workspaceId_channelId_idx" ON "Conversation"("workspaceId", "channelId");
 

@@ -607,6 +607,8 @@ model Integration {
 
   @@unique([workspaceId, platform])
   @@index([workspaceId])
+  /// SP-19: inbound routing looks a legacy row up by its account id.
+  @@index([pageId])
 }
 
 /// SP-19: one connected channel (a WhatsApp number, a page, a Telegram bot, a

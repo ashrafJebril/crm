@@ -200,10 +200,25 @@ export class ZernioService {
 
     const connected: Array<{ platform: string; accountId: string; name: string | null }> = [];
     const primaries: IntegrationLike[] = [];
+    // SP-19: the primary is STICKY — the account the Integration already
+    // points to stays primary while it is listed and healthy, whatever
+    // Zernio's list order. Otherwise connecting a second number that Zernio
+    // happens to list first would re-point number A's Integration (and, with
+    // it, the account its threads reply from) to B.
+    const current = new Map(
+      (
+        await this.prisma.integration.findMany({
+          where: { workspaceId, provider: "zernio" },
+          select: { platform: true, pageId: true },
+        })
+      ).map((r) => [r.platform, r.pageId]),
+    );
     for (const [platform, list] of byPlatform) {
+      const healthy = (a: ZernioAccount) => accountHealth(a).health === "ok";
       // After a reconnect Zernio can still list the revoked account first;
       // link the one that works.
-      const primary = list.find((a) => accountHealth(a).health === "ok") ?? list[0];
+      const primary =
+        list.find((a) => a._id === current.get(platform) && healthy(a)) ?? list.find(healthy) ?? list[0];
       const name = primary.displayName ?? primary.username ?? primary.name ?? null;
       const raw = JSON.stringify({
         zernioAccountId: primary._id,

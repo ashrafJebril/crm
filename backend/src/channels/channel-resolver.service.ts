@@ -26,6 +26,9 @@ export interface ChannelPick {
  *  agent platform; pre-SP-19 webchat threads have no visitor to address. */
 const NO_FALLBACK_KINDS = new Set(["l", "webchat"]);
 
+/** mirrorLegacy runs its writes at most this often per Integration. */
+const ALIGN_THROTTLE_MS = 60_000;
+
 /** Legacy Integration.provider values that mean "our own Meta app". */
 const NOT_META = ["zernio", "telegram", "native"];
 
@@ -90,8 +93,10 @@ export class ChannelResolver {
     //    possibly another, former workspace's — mirror the live Integration
     //    that holds this account now, if any (a number moved W1 → W2, or one
     //    connected by `main` and not mirrored yet).
+    //    A disconnected slot (hub-disconnected, Integration kept) never wins
+    //    over a live channel elsewhere; it is used only when nothing is live.
     const mirrored = await this.mirrorLegacy(provider, externalId, kind);
-    if (mirrored) return mirrored;
+    if (mirrored && (mirrored.status !== "disconnected" || !live.length)) return mirrored;
     // 3. Channel-only rows (Telegram, web chat, a second Meta number), then a
     //    disconnected row as the last resort so inbound is never dropped.
     if (live.length) return this.pickNewest(provider, externalId, live);
@@ -118,11 +123,21 @@ export class ChannelResolver {
       orderBy: { updatedAt: "desc" },
     });
     if (!integ) return null;
+    // Write work (align + default-per-kind) at most once a minute per
+    // Integration: a repeat within the window just reads its slot.
+    const last = this.alignedAt.get(integ.id) ?? 0;
+    if (Date.now() - last < ALIGN_THROTTLE_MS) {
+      return this.prisma.channel.findFirst({ where: { integrationId: integ.id } });
+    }
+    this.alignedAt.set(integ.id, Date.now());
     // The Integration's own slot follows it (in place when `main` re-pointed it).
     const ch = await alignLegacyChannel(this.prisma, integ);
     await ensureDefaultPerKind(this.prisma, integ.workspaceId);
     return ch ? ((await this.prisma.channel.findFirst({ where: { id: ch.id } })) ?? ch) : null;
   }
+
+  /** integrationId → when mirrorLegacy last aligned it (N4 throttle). */
+  private readonly alignedAt = new Map<string, number>();
 
   /** Effective channel (see pickEffectiveChannel); writes a resolved id back
    *  onto a null `channelId`, once, without reordering the inbox. */

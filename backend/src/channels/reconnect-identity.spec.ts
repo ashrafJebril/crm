@@ -178,7 +178,7 @@ describe("zernio re-auth with new account keeps existing threads replying and in
     const client = {
       // Zernio still lists the revoked account first after a re-auth.
       listAccounts: jest.fn(async () => [
-        { _id: "acc-old", platform: "whatsapp", needsReconnection: true },
+        { _id: "acc-old", platform: "whatsapp", displayName: "Shop", needsReconnection: true },
         { _id: "acc-new", platform: "whatsapp", displayName: "Shop" },
       ]),
       sendMessage: jest.fn(async () => ({ id: "out" })),
