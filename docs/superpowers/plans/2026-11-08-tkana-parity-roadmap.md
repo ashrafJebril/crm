@@ -205,8 +205,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `migration maps each Integration to one Channel`; `inbound on number B lands in B's conversations`; `widget rejects foreign origin`; `telegram webhook secret validated`.
 
 #### SP-12 Campaign recipients and reporting. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-12-sp12-campaign-recipients.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09 against a local Zernio stub. **Pending:** a read-only probe of the real Zernio recipients endpoint (paging, id scheme), plus a re-run of EXPLAIN once real tracked campaigns exist.
 - **Gaps:** a detail page per campaign; a per-recipient table (status, delivered/read/replied times, reply text, button tapped, failure reason, sending number) with an outcome filter and paging; recipient CSV export (all/filter/ticked); funnel; read-time chart; failure-reason breakdown; reply summary; follow-up actions (create group / add to group / tag from an outcome or ticked rows); filling `replied`/`conversions`.
 - **Read in Tkana:** `routes/marketing.campaigns.$id*.ts(x)`, `components/marketing/campaign-page/*`, `lib/marketing/{campaign-details.server,campaign-insights,campaign-failure-reason}.ts`.
 - **Data:** `CampaignRecipient {id, campaignId, contactId, channelId, phone, status:"queued"|"sent"|"delivered"|"read"|"replied"|"failed"|"skipped", messageId?, sentAt?, deliveredAt?, readAt?, repliedAt?, replyText?, buttonPayload?, failureCode?, failureReason?}` with an index on `(campaignId, status)`.
