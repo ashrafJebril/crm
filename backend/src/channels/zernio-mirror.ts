@@ -32,10 +32,15 @@ export { INTEGRATION_REMOVED, USER_DISCONNECTED, ZERNIO_MISSING } from "./legacy
  *    strong identity — the same WhatsApp phone, or the same IG/FB/TikTok
  *    username. Display names never count (two numbers of one business share
  *    the verified name). No strong identifier → no move;
- *  - once the old account is ABSENT (or the slot is a Meta row switched to
- *    Zernio), unless the user disconnected it: re-point in place when the new
- *    account has no row of its own, else merge the slot's conversations into
- *    the Integration's current channel and retire the slot (`merged`).
+ *  - once the old account is ABSENT, unless the user disconnected it — in TWO
+ *    PHASES: the first sync without it only marks it `zernio_account_missing`
+ *    (revivable); a later sync that still finds it missing re-points the slot
+ *    in place when the new account has no row of its own, else merges the
+ *    slot's conversations into the Integration's current channel and retires
+ *    the slot (`merged`). A Meta slot switched to Zernio moves at once (its
+ *    old id is not a Zernio account). A `merged` channel whose account is
+ *    listed again becomes its own active channel (step 2); threads merged
+ *    earlier stay with the Integration's channel.
  * This keeps `main`'s behaviour, where replies always followed the
  * Integration's pageId — including the accepted parity case "A deleted in
  * Zernio, a different B added → A's threads reply from B".
@@ -106,7 +111,11 @@ export async function mirrorZernioAccounts(
       }
       continue;
     }
-    if (row.status === "disconnected" && !REVIVABLE_REASONS.has(row.statusReason ?? "")) continue;
+    // A listed account comes back: revivable reasons, and a `merged` slot
+    // (its account returned after the merge — it becomes its own active
+    // channel again; threads merged earlier stay with the Integration's).
+    const back = REVIVABLE_REASONS.has(row.statusReason ?? "") || row.statusReason === MERGED;
+    if (row.status === "disconnected" && !back) continue;
     await prisma.channel.update({
       where: { id: row.id },
       data: { kind, displayName, status, statusReason: h.reason, disconnectedAt: null },
@@ -162,6 +171,13 @@ function slotMove(
   const kind = p.platform.toLowerCase();
   if (slot.kind !== kind) return "keep";
   const old = slot.provider === "zernio" && slot.externalId ? listed.get(slot.externalId) : undefined;
+  if (!old && slot.provider === "zernio") {
+    // Two-phase: an absent Zernio account is first only marked missing
+    // (step 5). The slot moves/merges on a LATER sync, and only if it was
+    // already missing before this one — one partial list never merges.
+    const missingBefore = slot.status === "disconnected" && slot.statusReason === ZERNIO_MISSING;
+    if (!missingBefore) return "keep";
+  }
   if (old) {
     // Old account still listed: move only when it provably is the same number.
     const a = strongIdentity(old, kind);

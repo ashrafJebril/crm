@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import type { Channel, Conversation } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { channelError } from "./channel-errors";
-import { alignLegacyChannel, ensureDefaultPerKind, ensureLegacyChannels } from "./legacy-mirror";
+import { alignLegacyChannel, ensureDefaultPerKind, ensureLegacyChannels, ZERNIO_MISSING } from "./legacy-mirror";
 
 /** The conversation fields the resolver needs. */
 export interface ConvRef {
@@ -130,8 +130,24 @@ export class ChannelResolver {
       return this.prisma.channel.findFirst({ where: { integrationId: integ.id } });
     }
     this.alignedAt.set(integ.id, Date.now());
-    // The Integration's own slot follows it (in place when `main` re-pointed it).
-    const ch = await alignLegacyChannel(this.prisma, integ);
+    // The Integration's own slot follows it in place when `main` re-pointed
+    // it — for Meta always (no account list exists; a re-pointed pageId is
+    // the user's own connect). For Zernio this webhook path has no account
+    // list, so the strong-identity rule of mirrorZernioAccounts cannot be
+    // applied here: re-point in place only when the slot's account is known
+    // gone (already `zernio_account_missing`). Otherwise the slot stays on
+    // its account and the event lands in the slot's threads, whose replies
+    // follow Integration.pageId (credentialsFor) — `main`'s behaviour; the
+    // next sync sorts out the per-account rows.
+    let allowInPlace = true;
+    if (integ.provider === "zernio") {
+      const slot = await this.prisma.channel.findFirst({
+        where: { integrationId: integ.id },
+        select: { status: true, statusReason: true },
+      });
+      allowInPlace = !slot || (slot.status === "disconnected" && slot.statusReason === ZERNIO_MISSING);
+    }
+    const ch = await alignLegacyChannel(this.prisma, integ, { allowInPlace });
     await ensureDefaultPerKind(this.prisma, integ.workspaceId);
     return ch ? ((await this.prisma.channel.findFirst({ where: { id: ch.id } })) ?? ch) : null;
   }
