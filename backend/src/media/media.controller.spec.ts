@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { MediaController } from "./media.controller";
+import { applyServeHeaders, MediaController } from "./media.controller";
 
 function fakeRes() {
   const headers: Record<string, string> = {};
@@ -14,22 +14,40 @@ function fakeRes() {
 }
 
 describe("MediaController.list query parsing", () => {
-  const build = () => {
-    const svc = { list: jest.fn(async () => []) };
+  const build = (nextBefore: string | null = null) => {
+    const svc = { listPage: jest.fn(async () => ({ items: [{ id: "a" }], nextBefore })) };
     return { svc, ctrl: new MediaController(svc as never) };
   };
   const viewer = { userId: "u" } as never;
 
-  it("passes kind, before and limit through", async () => {
+  it("passes kind, before and limit through and returns the plain array", async () => {
     const { svc, ctrl } = build();
-    await ctrl.list("ws", viewer, "document", "m9", "50");
-    expect(svc.list).toHaveBeenCalledWith("ws", viewer, { kind: "document", before: "m9", limit: 50 });
+    const res = fakeRes();
+    expect(await ctrl.list("ws", viewer, res as never, "document", "m9", "50")).toEqual([{ id: "a" }]);
+    expect(svc.listPage).toHaveBeenCalledWith("ws", viewer, { kind: "document", before: "m9", limit: 50 });
+  });
+
+  it("accepts kind=all", async () => {
+    const { svc, ctrl } = build();
+    await ctrl.list("ws", viewer, fakeRes() as never, "all");
+    expect(svc.listPage).toHaveBeenCalledWith("ws", viewer, { kind: "all", before: undefined, limit: undefined });
   });
 
   it("no query keeps today's default (array of up to 200, newest first)", async () => {
     const { svc, ctrl } = build();
-    await ctrl.list("ws", viewer);
-    expect(svc.list).toHaveBeenCalledWith("ws", viewer, { kind: undefined, before: undefined, limit: undefined });
+    await ctrl.list("ws", viewer, fakeRes() as never);
+    expect(svc.listPage).toHaveBeenCalledWith("ws", viewer, { kind: undefined, before: undefined, limit: undefined });
+  });
+
+  it("X-Media-Next-Before carries the scan position; absent at the true end", async () => {
+    const more = build("m7");
+    const res = fakeRes();
+    await more.ctrl.list("ws", viewer, res as never, "all", undefined, "60");
+    expect(res.headers["x-media-next-before"]).toBe("m7");
+    const end = build(null);
+    const res2 = fakeRes();
+    await end.ctrl.list("ws", viewer, res2 as never, "all", undefined, "60");
+    expect(res2.headers["x-media-next-before"]).toBeUndefined();
   });
 
   it("rejects a bad kind or limit with 400 media.invalid_query {param}", () => {
@@ -43,13 +61,27 @@ describe("MediaController.list query parsing", () => {
     ] as const) {
       let err: any;
       try {
-        ctrl.list("ws", viewer, ...(args as unknown as [string?, string?, string?]));
+        ctrl.list("ws", viewer, fakeRes() as never, ...(args as unknown as [string?, string?, string?]));
       } catch (e) {
         err = e;
       }
       expect(err).toBeInstanceOf(BadRequestException);
       expect(err.getResponse()).toMatchObject({ message: "media.invalid_query", param });
     }
+  });
+});
+
+describe("filename* is RFC 5987 encoded", () => {
+  it("percent-encodes ' ( ) * as well, with an Arabic name", () => {
+    const res = fakeRes();
+    applyServeHeaders(res as never, "application/pdf", "عرض O'Brien (final)*.pdf");
+    const star = res.headers["content-disposition"].split("filename*=UTF-8''")[1];
+    expect(star).toBe(
+      "%D8%B9%D8%B1%D8%B6%20O%27Brien%20%28final%29%2A.pdf",
+    );
+    // attr-char only: ALPHA / DIGIT / ! # $ & + - . ^ _ ` | ~ and pct-encoded
+    expect(star).toMatch(/^[A-Za-z0-9!#$&+\-.^_`|~%]+$/);
+    expect(decodeURIComponent(star)).toBe("عرض O'Brien (final)*.pdf");
   });
 });
 

@@ -869,7 +869,7 @@ describe("template create with headerMediaId submits header_handle from the libr
     { id: "foreign", workspaceId: "ws2", mimeType: "image/jpeg", sizeBytes: 1, uploadedById: "u" },
   ];
   const build = (row?: Record<string, unknown>) => {
-    const prisma = {
+    const prisma: any = {
       channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
       template: {
@@ -877,7 +877,15 @@ describe("template create with headerMediaId submits header_handle from the libr
         findFirst: jest.fn().mockResolvedValue(row ?? null),
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...row, ...data })),
       },
+      // SP-13 M1: the header write locks the media row and re-reads it.
+      media: {
+        findFirst: jest.fn(async ({ where }: any) =>
+          library.find((x) => x.id === where.id && x.workspaceId === where.workspaceId) ?? null,
+        ),
+      },
+      $executeRaw: jest.fn(async () => 0),
     };
+    prisma.$transaction = jest.fn(async (fn: any) => fn(prisma));
     const client = {
       createWhatsAppTemplate: jest.fn().mockResolvedValue({ id: "m1", name: "x", status: "PENDING", language: "en" }),
       updateWhatsAppTemplate: jest.fn().mockResolvedValue({ id: "m1", name: "x", status: "PENDING", language: "en" }),
@@ -1007,5 +1015,51 @@ describe("template create with headerMediaId submits header_handle from the libr
       example: { header_handle: ["https://cdn.example/img?sig"] },
     });
     expect(prisma.template.update.mock.calls[0][0].data.headerMediaId).toBeUndefined();
+  });
+
+  it("saving a header file takes the media lock in the same transaction as the write", async () => {
+    const { svc, prisma } = build();
+    const order: string[] = [];
+    prisma.$executeRaw.mockImplementation(async (s: TemplateStringsArray, ...v: any[]) => {
+      order.push(`${s.join("?")}|${v.join(",")}`);
+      return 0;
+    });
+    prisma.template.create.mockImplementation(({ data }: any) => {
+      order.push("create");
+      return Promise.resolve({ id: "t9", ...data });
+    });
+    await svc.create("ws1", { ...base, headerType: "image", headerMediaId: "img" });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["SELECT pg_advisory_xact_lock(hashtext(?))|media:img", "create"]);
+  });
+
+  it("a file deleted between the check and the write -> 404, nothing stored", async () => {
+    const { svc, prisma } = build();
+    prisma.media.findFirst.mockResolvedValueOnce(null);
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerMediaId: "img" })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(prisma.template.create).not.toHaveBeenCalled();
+  });
+
+  it("a media header with neither a file nor a sample URL -> 400 templates.header_media_required", async () => {
+    const { svc, client, prisma } = build({
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "approved", body: "Hi",
+      headerType: "image", headerMediaId: "img", metaTemplateId: "meta-1",
+    });
+    for (const headerType of ["image", "video", "document"]) {
+      await expect(svc.create("ws1", { ...base, headerType })).rejects.toMatchObject({
+        response: { statusCode: 400, message: "templates.header_media_required" },
+      });
+    }
+    // clearing the file on a media header without switching the type
+    await expect(svc.update("ws1", "t1", { headerMediaId: null })).rejects.toMatchObject({
+      response: { message: "templates.header_media_required" },
+    });
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(client.updateWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(prisma.template.update).not.toHaveBeenCalled();
+    // a legacy sample URL still counts as a sample
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerContent: "https://cdn/x.png" })).resolves.toBeTruthy();
   });
 });

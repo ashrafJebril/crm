@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import { promises as fsp } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { MediaService, MAX_PDF_BYTES } from "./media.service";
+import { lockMediaForReference, MediaService, MAX_PDF_BYTES } from "./media.service";
 import { makeFakePrisma } from "../channels/test-prisma";
 
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42isom")]);
@@ -280,8 +280,16 @@ describe("media list filters by kind and pages by before", () => {
   const svcOf = (prisma: any) => new MediaService(prisma, { kind: "local" } as never);
   const ids = (rows: any[]) => rows.map((r) => r.id);
 
-  it("default: every library file, newest first, CSV/XLSX import files never appear", async () => {
-    expect(ids(await svcOf(seed()).list("ws"))).toEqual(["pdf2", "img3", "img2", "pdf1", "vid1", "img1"]);
+  it("default (no kind) is unchanged from before SP-13: images and videos only, no PDFs, no CSV/XLSX", async () => {
+    const rows = await svcOf(seed()).list("ws");
+    expect(ids(rows)).toEqual(["img3", "img2", "vid1", "img1"]);
+    expect(rows.some((r: any) => r.mimeType === "application/pdf")).toBe(false);
+  });
+
+  it("kind=all is every library file (images, videos and PDFs), import files never", async () => {
+    expect(ids(await svcOf(seed()).list("ws", undefined, { kind: "all" }))).toEqual([
+      "pdf2", "img3", "img2", "pdf1", "vid1", "img1",
+    ]);
   });
 
   it("kind filters by mime family", async () => {
@@ -291,16 +299,21 @@ describe("media list filters by kind and pages by before", () => {
     expect(ids(await svc.list("ws", undefined, { kind: "document" }))).toEqual(["pdf2", "pdf1"]);
   });
 
-  it("before is a keyset on (createdAt, id); limit caps the page", async () => {
+  it("before is a keyset on (createdAt, id); nextBefore is set until the true end", async () => {
     const svc = svcOf(seed());
-    const p1 = await svc.list("ws", undefined, { limit: 2 });
-    expect(ids(p1)).toEqual(["pdf2", "img3"]);
-    const p2 = await svc.list("ws", undefined, { limit: 2, before: "img3" });
-    expect(ids(p2)).toEqual(["img2", "pdf1"]);
-    const p3 = await svc.list("ws", undefined, { limit: 2, before: "pdf1" });
-    expect(ids(p3)).toEqual(["vid1", "img1"]);
-    expect(await svc.list("ws", undefined, { limit: 2, before: "img1" })).toEqual([]);
+    const p1 = await svc.listPage("ws", undefined, { kind: "all", limit: 2 });
+    expect(ids(p1.items)).toEqual(["pdf2", "img3"]);
+    expect(p1.nextBefore).toBe("img3");
+    const p2 = await svc.listPage("ws", undefined, { kind: "all", limit: 2, before: "img3" });
+    expect(ids(p2.items)).toEqual(["img2", "pdf1"]);
+    expect(p2.nextBefore).toBe("pdf1");
+    const p3 = await svc.listPage("ws", undefined, { kind: "all", limit: 2, before: "pdf1" });
+    expect(ids(p3.items)).toEqual(["vid1", "img1"]);
+    // exactly `limit` rows left: still the true end, no cursor
+    expect(p3.nextBefore).toBeNull();
+    expect(await svc.listPage("ws", undefined, { kind: "all", limit: 2, before: "img1" })).toEqual({ items: [], nextBefore: null });
     expect(ids(await svc.list("ws", undefined, { kind: "image", before: "img3" }))).toEqual(["img2", "img1"]);
+    expect((await svc.listPage("ws", undefined, { kind: "image" })).nextBefore).toBeNull();
   });
 
   it("an unknown or foreign cursor -> 400 media.invalid_query {param: before}", async () => {
@@ -320,8 +333,45 @@ describe("media list filters by kind and pages by before", () => {
     const perm = { conversationScope: jest.fn(async () => ({ assigneeId: "me" })) };
     const svc = new MediaService(prisma, { kind: "local" } as never, perm as never);
     const viewer = { userId: "me" } as never;
-    expect(ids(await svc.list("ws", viewer, { limit: 2 }))).toEqual(["pdf2", "vid1"]);
-    expect(ids(await svc.list("ws", viewer, { limit: 2, before: "vid1" }))).toEqual(["img1"]);
+    const p1 = await svc.listPage("ws", viewer, { kind: "all", limit: 2 });
+    expect(ids(p1.items)).toEqual(["pdf2", "vid1"]);
+    expect(p1.nextBefore).toBe("vid1");
+    const p2 = await svc.listPage("ws", viewer, { kind: "all", limit: 2, before: "vid1" });
+    expect(p2).toMatchObject({ nextBefore: null });
+    expect(ids(p2.items)).toEqual(["img1"]);
+  });
+
+  it("visible rows beyond 20 x limit hidden rows are reachable by following nextBefore", async () => {
+    const hidden = Array.from({ length: 50 }, (_, i) => ({
+      id: `h${String(i).padStart(3, "0")}`,
+      workspaceId: "ws",
+      mimeType: "image/png",
+      uploadedById: null,
+      createdAt: new Date(Date.UTC(2026, 10, 2) + (100 - i) * 60_000),
+    }));
+    const prisma = makeFakePrisma({
+      media: [
+        ...hidden,
+        { id: "old1", workspaceId: "ws", mimeType: "image/png", uploadedById: "u", createdAt: new Date(Date.UTC(2026, 10, 1)) },
+      ],
+    });
+    prisma.message.findMany = jest.fn(async () => []);
+    const perm = { conversationScope: jest.fn(async () => ({ assigneeId: "me" })) };
+    const svc = new MediaService(prisma, { kind: "local" } as never, perm as never);
+    const viewer = { userId: "me" } as never;
+    // limit 2 x 20 scan pages = 40 raw rows < 50 hidden ones: the first page is empty, with a cursor
+    const first = await svc.listPage("ws", viewer, { limit: 2 });
+    expect(first.items).toEqual([]);
+    expect(first.nextBefore).toBe("h039");
+    const seen: string[] = [];
+    let before: string | null = first.nextBefore;
+    for (let i = 0; i < 5 && before; i++) {
+      const page = await svc.listPage("ws", viewer, { limit: 2, before });
+      seen.push(...ids(page.items));
+      before = page.nextBefore;
+    }
+    expect(seen).toEqual(["old1"]);
+    expect(before).toBeNull();
   });
 });
 
@@ -418,5 +468,32 @@ describe("media in use cannot be deleted", () => {
   it("a foreign media id is still 404", async () => {
     const { svc } = build({});
     await expect(svc.remove("other", "m1")).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("checks references and deletes inside one transaction holding the media lock", async () => {
+    const { prisma, svc } = build({});
+    const order: string[] = [];
+    prisma.$executeRaw.mockImplementation(async (strings: TemplateStringsArray, ...vals: any[]) => {
+      order.push(`lock:${strings.join("?")}:${vals.join(",")}`);
+      return 0;
+    });
+    const tplFind = prisma.template.findMany;
+    prisma.template.findMany = jest.fn((a: any) => {
+      order.push("refs");
+      return tplFind(a);
+    });
+    await svc.remove("ws", "m1");
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(order[0]).toMatch(/pg_advisory_xact_lock\(hashtext\(\?\)\):media:m1$/);
+    expect(order[1]).toBe("refs");
+  });
+
+  it("lockMediaForReference takes the same lock and 404s a media deleted meanwhile", async () => {
+    const { prisma } = build({});
+    const tx = { $executeRaw: jest.fn(async () => 0), media: prisma.media };
+    await expect(lockMediaForReference(tx as never, "ws", "m1")).resolves.toBeUndefined();
+    expect((tx.$executeRaw.mock.calls[0] as any[]).slice(1)).toEqual(["media:m1"]);
+    await expect(lockMediaForReference(tx as never, "ws", "gone")).rejects.toBeInstanceOf(NotFoundException);
+    await expect(lockMediaForReference(tx as never, "other", "m1")).rejects.toBeInstanceOf(NotFoundException);
   });
 });

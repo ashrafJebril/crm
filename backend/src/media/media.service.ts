@@ -36,12 +36,14 @@ export const MAX_PDF_BYTES = 100 * 1024 * 1024; // 100 MB — WhatsApp's documen
 /** Every type the library accepts on upload, in the order the error lists them. */
 export const LIBRARY_MIME_TYPES = [...ALLOWED_IMAGE, ...ALLOWED_VIDEO, ...ALLOWED_PDF];
 
-export type MediaKind = "image" | "video" | "document";
-export const MEDIA_KINDS: readonly MediaKind[] = ["image", "video", "document"];
+/** `all` = every library file (the Gallery). No kind = images and videos (pre-SP-13 pickers). */
+export type MediaKind = "image" | "video" | "document" | "all";
+export const MEDIA_KINDS: readonly MediaKind[] = ["image", "video", "document", "all"];
 const MIME_BY_KIND: Record<MediaKind, string[]> = {
   image: [...ALLOWED_IMAGE],
   video: [...ALLOWED_VIDEO],
   document: [...ALLOWED_PDF],
+  all: LIBRARY_MIME_TYPES,
 };
 
 /** Library page size: default and maximum (`GET /media?limit=1..200`). */
@@ -51,6 +53,28 @@ const MAX_SCAN_PAGES = 20;
 
 /** Campaign statuses whose header file must stay (ruling 10). */
 const LIVE_CAMPAIGN_STATUSES = ["draft", "launching", "scheduled", "running"];
+
+/** Advisory-lock key for one media row (SP-13 M1). */
+const mediaLockKey = (mediaId: string) => `media:${mediaId}`;
+
+type LockTx = {
+  $executeRaw: PrismaService["$executeRaw"];
+  media: Pick<PrismaService["media"], "findFirst">;
+};
+
+/**
+ * SP-13 (M1): serialize a header reference against `MediaService.remove`.
+ * Call it inside the `$transaction` that writes a `headerMediaId` (template,
+ * campaign), before the write: it takes the same transaction-scoped advisory
+ * lock as the delete, then re-reads the row (404 "Media not found" when it was
+ * deleted meanwhile, or is not in this workspace). Either the delete sees the
+ * new reference and answers 409 media.in_use, or the save sees the row gone.
+ */
+export async function lockMediaForReference(tx: LockTx, workspaceId: string, mediaId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mediaLockKey(mediaId)}))`;
+  const row = await tx.media.findFirst({ where: { id: mediaId, workspaceId }, select: { id: true } });
+  if (!row) throw new NotFoundException("Media not found");
+}
 
 /** The upload cap for a declared library mime type, or null outside the library. */
 function capOf(mime: string): number | null {
@@ -85,18 +109,39 @@ export class MediaService {
   ) {}
 
   /**
-   * The library, newest first (`(createdAt, id)` desc). Import files
-   * (CSV/XLSX) never appear. SP-13:
-   * - `kind` filters by mime family (image | video | document = PDF);
-   * - `before` is a keyset cursor: a media id of this workspace; only rows
+   * The library as a plain array (see `listPage`). Kept for callers that
+   * don't page.
+   */
+  async list(
+    workspaceId: string,
+    viewer?: Viewer,
+    opts: { kind?: MediaKind; before?: string; limit?: number } = {},
+  ) {
+    return (await this.listPage(workspaceId, viewer, opts)).items;
+  }
+
+  /**
+   * One page of the library, newest first (`(createdAt, id)` desc). Import
+   * files (CSV/XLSX) never appear.
+   * - no `kind`: images and videos only, as before SP-13 (the existing
+   *   pickers render every row as an image or a video);
+   * - `kind`: image | video | document (PDF) | all (all three);
+   * - `before`: keyset cursor, a media id of this workspace; only rows
    *   strictly older are returned (400 media.invalid_query {param: "before"}
    *   when unknown or foreign);
    * - `limit` 1..200, default 200.
-   * A restricted viewer gets full pages of what they may see: hidden rows are
-   * skipped and the scan continues (up to MAX_SCAN_PAGES raw pages), so a
-   * page shorter than `limit` means the end of the list.
+   *
+   * `nextBefore` is where the scan stopped: pass it as `before` for the next
+   * page. It is null only at the true end of the list, so paging never stops
+   * early. A restricted viewer's hidden rows are skipped; when MAX_SCAN_PAGES
+   * raw pages are scanned without filling the page, the (possibly short or
+   * empty) page returns with the cursor of the last row scanned.
+   *
+   * Visibility stays in code: it is "a message in a conversation the viewer
+   * can see has `attach` containing the id" (a LIKE over messages), which has
+   * no cheap SQL join; the cursor makes the cost bounded per request instead.
    */
-  async list(
+  async listPage(
     workspaceId: string,
     viewer?: Viewer,
     opts: { kind?: MediaKind; before?: string; limit?: number } = {},
@@ -104,7 +149,7 @@ export class MediaService {
     const limit = Math.min(Math.max(1, Math.floor(opts.limit ?? MEDIA_LIST_MAX)), MEDIA_LIST_MAX);
     const base = opts.kind
       ? { workspaceId, mimeType: { in: MIME_BY_KIND[opts.kind] } }
-      : { workspaceId, mimeType: { notIn: [...ALLOWED_DOCUMENT] } };
+      : { workspaceId, mimeType: { in: [...ALLOWED_IMAGE, ...ALLOWED_VIDEO] } };
 
     let cursor: { id: string; createdAt: Date } | null = null;
     if (opts.before) {
@@ -116,9 +161,10 @@ export class MediaService {
     }
 
     type Row = Awaited<ReturnType<PrismaService["media"]["findMany"]>>[number];
-    const out: Row[] = [];
+    const items: Row[] = [];
     for (let page = 0; page < MAX_SCAN_PAGES; page++) {
-      const rows: Row[] = await this.prisma.media.findMany({
+      // One extra row tells "more exist" from "exactly limit left".
+      const fetched: Row[] = await this.prisma.media.findMany({
         where: cursor
           ? {
               AND: [
@@ -133,15 +179,25 @@ export class MediaService {
             }
           : base,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: limit,
+        take: limit + 1,
       });
+      const hasMore = fetched.length > limit;
+      const rows = fetched.slice(0, limit);
       const visible = await this.visibleTo(workspaceId, rows, viewer);
-      out.push(...(visible ? rows.filter((r) => visible.has(r.id)) : rows));
-      if (!visible || rows.length < limit || out.length >= limit) break;
+      for (let i = 0; i < rows.length; i++) {
+        if (visible && !visible.has(rows[i].id)) continue;
+        items.push(rows[i]);
+        if (items.length === limit) {
+          const more = i < rows.length - 1 || hasMore;
+          return { items, nextBefore: more ? rows[i].id : null };
+        }
+      }
+      if (!hasMore) return { items, nextBefore: null };
       const last = rows[rows.length - 1];
       cursor = { id: last.id, createdAt: last.createdAt };
     }
-    return out.slice(0, limit);
+    // Scan budget spent: hand back the position so the client continues.
+    return { items, nextBefore: cursor?.id ?? null };
   }
 
   /**
@@ -463,20 +519,25 @@ export class MediaService {
    */
   async remove(workspaceId: string, id: string, viewer?: Viewer) {
     const row = await this.get(workspaceId, id, viewer);
-    const [templates, campaigns] = await Promise.all([
-      this.prisma.template.findMany({
+    // SP-13 (M1): the reference check and the delete run in one transaction
+    // under the media lock that every header save takes (lockMediaForReference),
+    // so a reference saved concurrently is either seen here (409) or finds the
+    // row gone (404) — never silently nulled by the FK.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mediaLockKey(row.id)}))`;
+      const templates = await tx.template.findMany({
         where: { workspaceId, headerMediaId: row.id },
         select: { id: true, name: true },
-      }),
-      this.prisma.campaign.findMany({
+      });
+      const campaigns = await tx.campaign.findMany({
         where: { workspaceId, headerMediaId: row.id, status: { in: LIVE_CAMPAIGN_STATUSES } },
         select: { id: true, name: true, status: true },
-      }),
-    ]);
-    if (templates.length > 0 || campaigns.length > 0) {
-      throw mediaError("media.in_use", { templates, campaigns });
-    }
-    await this.prisma.media.delete({ where: { id: row.id } });
+      });
+      if (templates.length > 0 || campaigns.length > 0) {
+        throw mediaError("media.in_use", { templates, campaigns });
+      }
+      await tx.media.delete({ where: { id: row.id } });
+    });
     // Delete from whichever backend originally stored it.
     if (row.storageKind === "spaces") {
       await this.storage.delete(row.storedPath);

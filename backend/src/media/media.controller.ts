@@ -35,6 +35,18 @@ const INLINE_TYPES = new Set([
   "video/quicktime",
 ]);
 
+/** Response header with the library's next-page cursor (SP-13 I2). */
+export const NEXT_BEFORE_HEADER = "X-Media-Next-Before";
+
+/**
+ * RFC 5987 `ext-value` encoding: encodeURIComponent leaves `'`, `(`, `)` and
+ * `*` alone, but they are not `attr-char`s, so strict parsers would drop the
+ * whole `filename*` (and fall back to the ASCII name).
+ */
+function rfc5987(value: string): string {
+  return encodeURIComponent(value).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
 /**
  * Serving headers for a media response. `nosniff` always; anything that is
  * not a library image or video (PDFs, legacy CSV/XLSX, unknown types) is sent
@@ -52,10 +64,7 @@ export function applyServeHeaders(
   const name = (fileName ?? "").trim() || "download";
   // ASCII fallback: printable ASCII only, no quote or backslash.
   const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
-  );
+  res.setHeader("Content-Disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${rfc5987(name)}`);
   res.setHeader("Content-Security-Policy", "sandbox");
 }
 
@@ -66,13 +75,17 @@ export class MediaController {
   constructor(private readonly svc: MediaService) {}
 
   /**
-   * `GET /media?kind=image|video|document&before=<id>&limit=1..200`. With no
-   * query the response is unchanged: an array of up to 200, newest first.
+   * `GET /media?kind=image|video|document|all&before=<id>&limit=1..200`.
+   * With no query the response is unchanged: an array of up to 200 images and
+   * videos, newest first. The body is always a plain array; the
+   * `X-Media-Next-Before` header carries the cursor for the next page and is
+   * absent at the true end of the list (no header = end).
    */
   @Get()
   list(
     @CurrentWorkspace() workspaceId: string,
     @CurrentViewer() viewer: Viewer,
+    @Res({ passthrough: true }) res: Response,
     @Query("kind") kind?: string,
     @Query("before") before?: string,
     @Query("limit") limit?: string,
@@ -87,11 +100,16 @@ export class MediaController {
         throw mediaError("media.invalid_query", { param: "limit" });
       }
     }
-    return this.svc.list(workspaceId, viewer, {
-      kind: kind as MediaKind | undefined,
-      before: before || undefined,
-      limit: n,
-    });
+    return this.svc
+      .listPage(workspaceId, viewer, {
+        kind: kind as MediaKind | undefined,
+        before: before || undefined,
+        limit: n,
+      })
+      .then(({ items, nextBefore }) => {
+        if (nextBefore) res.setHeader(NEXT_BEFORE_HEADER, nextBefore);
+        return items;
+      });
   }
 
   @Post("upload")

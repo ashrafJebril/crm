@@ -17,6 +17,8 @@ async function bootstrap() {
   app.enableCors({
     origin: process.env.CORS_ORIGIN?.split(",") ?? "http://localhost:5173",
     credentials: true,
+    // SP-13: the media library's next-page cursor (GET /media).
+    exposedHeaders: ["X-Media-Next-Before"],
   });
   app.useWebSocketAdapter(new IoAdapter(app));
   app.setGlobalPrefix("api");

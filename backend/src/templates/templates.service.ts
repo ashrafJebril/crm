@@ -9,9 +9,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient, ZernioWhatsAppTemplate } from "../integrations/zernio.client";
 import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
 import { campaignError } from "../campaigns/campaign-errors";
-import { MediaService } from "../media/media.service";
+import { lockMediaForReference, MediaService } from "../media/media.service";
 import type { Viewer } from "../permissions/visibility";
 import { assertHeaderMedia, HEADER_MEDIA_MISMATCH } from "../integrations/template-header";
+
+/** SP-13 (M3): a media header needs a file (or a legacy sample URL). */
+export const HEADER_MEDIA_REQUIRED = "templates.header_media_required";
 
 const MEDIA_HEADER_TYPES = new Set(["image", "video", "document"]);
 
@@ -154,7 +157,7 @@ export class TemplatesService {
 
     const status = this.mapStatus(created.status);
     const now = new Date();
-    return (await this.prisma.template.create({
+    return (await this.writeWithHeaderLock(workspaceId, header.headerMediaId, (db) => db.template.create({
       data: {
         workspaceId,
         name: input.name,
@@ -174,7 +177,7 @@ export class TemplatesService {
         submittedAt: now,
         reviewedAt: status === "approved" ? now : null,
       },
-    })) as unknown as TemplateRow;
+    }))) as unknown as TemplateRow;
   }
 
   /**
@@ -254,7 +257,8 @@ export class TemplatesService {
       status = this.mapStatus(updated.status);
     }
 
-    return (await this.prisma.template.update({
+    const lockId = touchesHeader ? header.headerMediaId : null;
+    return (await this.writeWithHeaderLock(workspaceId, lockId, (db) => db.template.update({
       where: { id },
       data: {
         name: input.name ?? undefined,
@@ -278,7 +282,7 @@ export class TemplatesService {
               : null,
         ...(touchesContent && existing.metaTemplateId ? { submittedAt: new Date() } : {}),
       },
-    })) as unknown as TemplateRow;
+    }))) as unknown as TemplateRow;
   }
 
   /**
@@ -369,7 +373,30 @@ export class TemplatesService {
     if (!type || type === "none") return { headerType: null, headerContent: null, headerMediaId: null };
     if (!isMedia) return { headerType: type, headerContent: headerContent ?? null, headerMediaId: null };
     if (headerMediaId) return { headerType: type, headerContent: null, headerMediaId };
-    return { headerType: type, headerContent: headerContent ?? null, headerMediaId: null };
+    // No file and no legacy sample URL: Meta would get `header_handle: [""]`.
+    if (!headerContent?.trim()) {
+      throw new BadRequestException({ statusCode: 400, message: HEADER_MEDIA_REQUIRED });
+    }
+    return { headerType: type, headerContent, headerMediaId: null };
+  }
+
+  /**
+   * Run the template write. With a header file it runs in a transaction that
+   * first takes the media lock (`lockMediaForReference`, shared with
+   * `MediaService.remove`) and re-reads the file, so a concurrent delete
+   * either sees this reference (409 media.in_use) or this save sees the file
+   * gone (404) instead of the FK silently nulling it.
+   */
+  private async writeWithHeaderLock<T>(
+    workspaceId: string,
+    mediaId: string | null,
+    write: (db: Pick<PrismaService, "template">) => Promise<T>,
+  ): Promise<T> {
+    if (!mediaId) return write(this.prisma);
+    return this.prisma.$transaction(async (tx) => {
+      await lockMediaForReference(tx, workspaceId, mediaId);
+      return write(tx as unknown as Pick<PrismaService, "template">);
+    });
   }
 
   /** The header file: workspace- and viewer-scoped (404), kind and size checked. */
