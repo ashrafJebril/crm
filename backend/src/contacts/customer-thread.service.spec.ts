@@ -160,6 +160,9 @@ describe("CustomerThreadService stitched thread", () => {
       { id: "m7", workspaceId: "ws", conversationId: "v3", from: "them", body: "y", createdAt: same },
     );
     f.ticketActivities = [{ id: "ta1", workspaceId: "ws", ticketId: "t1", kind: "stage_changed", fromStage: "a", toStage: "b", byUserId: "u1", createdAt: same }];
+    f.appointments = ["ap1", "ap2", "ap3"].map((id) => ({
+      id, workspaceId: "ws", contactId: "c1", service: id, serviceAr: id, status: "cancelled", startAt: same, createdAt: same, updatedAt: same,
+    }));
     const svc = build(f);
     const full = (await svc.thread("ws", "c1", viewer, { limit: 100 })).items.map((i: any) => `${i.type}:${i.id}`);
     for (const limit of [1, 2, 3]) {
@@ -172,6 +175,7 @@ describe("CustomerThreadService stitched thread", () => {
         before = r.nextBefore;
       }
       expect(seen).toEqual(full);
+      expect(seen.filter((x) => x.includes("ap1:"))).toHaveLength(2); // created + status, once each
       expect(new Set(seen).size).toBe(seen.length);
       expect(seen.filter((s) => s.startsWith("seam:")).sort()).toEqual(["seam:v1", "seam:v2", "seam:v3"]);
     }
@@ -268,6 +272,15 @@ describe("CustomerThreadService events", () => {
     f.tickets[0].stage = { key: "c" };
     r = await build(f).thread("ws", "c1", viewer, {});
     expect(by("latest").undoable).toBe(false);
+  });
+
+  it("a stage move out of a Lost stage is not undoable (matches the endpoint)", async () => {
+    f.stages.push({ key: "lostk", pipelineId: "p1", workspaceId: "ws", label: "Lost", labelAr: "خسارة", isTerminal: true, isWon: false });
+    f.ticketActivities = [
+      { id: "reopen", workspaceId: "ws", ticketId: "t1", kind: "stage_changed", fromStage: "lostk", toStage: "b", byUserId: "u1", createdAt: ago(1) },
+    ];
+    const r = await build(f).thread("ws", "c1", viewer, {});
+    expect(events(r).find((e: any) => e.id === "reopen").undoable).toBe(false);
   });
 
   it("a later close (won/lost) or an undo move makes the earlier stage move not undoable", async () => {

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
-import { UNDO_WINDOW_MS, undoRefusal } from "../tickets/undo-stage";
+import { UNDO_WINDOW_MS, isUndoNote, undoRefusal } from "../tickets/undo-stage";
 
 export type ThreadEventKind =
   | "stage_changed"
@@ -94,7 +94,9 @@ export class CustomerThreadService {
     if (!cur) return {};
     if (!cur.token || !cur.id || token > cur.token) return { [field]: { lt: cur.at } };
     if (token < cur.token) return { [field]: { lte: cur.at } };
-    return { OR: [{ [field]: { lt: cur.at } }, { [field]: cur.at, id: { lt: cur.id } }] };
+    // Booking entries carry synthetic ids "<apptId>:created|status"; compare on the raw row id.
+    const rawId = token.startsWith("xbooking") ? cur.id.replace(/:(created|status)$/, "") : cur.id;
+    return { OR: [{ [field]: { lt: cur.at } }, { [field]: cur.at, id: { lt: rawId } }] };
   }
 
   async thread(
@@ -192,7 +194,7 @@ export class CustomerThreadService {
     ]);
 
     // Stage labels for stage events (one lookup).
-    const labels = new Map<string, { label: string; labelAr: string }>();
+    const labels = new Map<string, { label: string; labelAr: string; lost: boolean }>();
     const pipelineIds = [...new Set(ticketActs.map((t: any) => t.ticket?.pipelineId).filter(Boolean))] as string[];
     const stageKeys = [
       ...new Set(ticketActs.flatMap((t: any) => [t.fromStage, t.toStage]).filter((k: unknown): k is string => !!k)),
@@ -201,7 +203,7 @@ export class CustomerThreadService {
       const stages = await this.prisma.ticketStage.findMany({
         where: { workspaceId, pipelineId: { in: pipelineIds }, key: { in: stageKeys } },
       });
-      for (const s of stages) labels.set(`${s.pipelineId}:${s.key}`, { label: s.label, labelAr: s.labelAr });
+      for (const s of stages) labels.set(`${s.pipelineId}:${s.key}`, { label: s.label, labelAr: s.labelAr, lost: s.isTerminal && !s.isWon });
     }
 
     const entries: Entry[] = [
@@ -227,7 +229,7 @@ export class CustomerThreadService {
           at,
           token: "xticket",
           id: t.id,
-          row: t,
+          row: { ...t, fromLost: !!from?.lost },
           item: {
             type: "event",
             id: t.id,
@@ -244,7 +246,8 @@ export class CustomerThreadService {
               toLabel: to?.label ?? null,
               toLabelAr: to?.labelAr ?? null,
               byUserId: t.byUserId ?? null,
-              note: t.note ?? null,
+              note: isUndoNote(t.note) ? null : (t.note ?? null),
+              isUndo: isUndoNote(t.note),
             },
           },
         };
@@ -332,6 +335,7 @@ export class CustomerThreadService {
           now,
           userId: viewer?.userId,
           canManage,
+          fromStageIsLost: !!e.row.fromLost,
         }) === null;
     }
   }

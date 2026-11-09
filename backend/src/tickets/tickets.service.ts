@@ -386,7 +386,11 @@ export class TicketsService {
     dto: MoveTicketDto,
     viewer?: Viewer,
     /** Runs inside the same transaction as the move (e.g. the bulk "not a lead" contact flag). */
-    opts?: { inTx?: (db: any) => Promise<unknown> },
+    opts?: {
+      inTx?: (db: any) => Promise<unknown>;
+      /** Only move if the ticket is still in this stage (409 tickets.undo_not_latest otherwise). */
+      expectStageId?: string;
+    },
   ) {
     const ticket = await this.prisma.ticket.findFirst({
       where: { id, workspaceId },
@@ -394,6 +398,9 @@ export class TicketsService {
     });
     if (!ticket) throw new NotFoundException("Ticket not found");
     await this.assertMoveAllowed(workspaceId, ticket.pipeline, viewer);
+    if (opts?.expectStageId && ticket.stageId !== opts.expectStageId) {
+      throw new ConflictException("tickets.undo_not_latest");
+    }
 
     const targetStage = await this.prisma.ticketStage.findFirst({
       where: { id: dto.stageId, workspaceId },
@@ -424,18 +431,22 @@ export class TicketsService {
     }
 
     const isLead = ticket.pipeline?.kind === "leads";
-    const write = (db: any) =>
-      db.ticket.update({
-        where: { id },
-        data: {
-          stageId: targetStage.id,
-          lostReason: isLost ? lostLabel : null,
-          lostReasonId: isLost ? lostReasonId : null,
-          closedAt: targetStage.isTerminal ? new Date() : null,
-          enteredStageAt: new Date(),
-        },
-        include: { contact: true, stage: true },
-      });
+    const moveData = {
+      stageId: targetStage.id,
+      lostReason: isLost ? lostLabel : null,
+      lostReasonId: isLost ? lostReasonId : null,
+      closedAt: targetStage.isTerminal ? new Date() : null,
+      enteredStageAt: new Date(),
+    };
+    const write = async (db: any) => {
+      if (opts?.expectStageId) {
+        // Conditional update: a concurrent move between our read and write wins.
+        const res = await db.ticket.updateMany({ where: { id, workspaceId, stageId: opts.expectStageId }, data: moveData });
+        if (res.count === 0) throw new ConflictException("tickets.undo_not_latest");
+        return db.ticket.findFirst({ where: { id }, include: { contact: true, stage: true } });
+      }
+      return db.ticket.update({ where: { id }, data: moveData, include: { contact: true, stage: true } });
+    };
     // Move + its activity + the lead lifecycle (or caller extra) commit together or not at all.
     const run = async (db: any) => {
       const row = await write(db);
@@ -458,7 +469,7 @@ export class TicketsService {
     const updated =
       isLead && ticket.stage.isTerminal && !targetStage.isTerminal
         ? await this.withLeadGuard(workspaceId, ticket.pipelineId, ticket.contactId, ticket.id, run)
-        : isLead || opts?.inTx
+        : isLead || opts?.inTx || opts?.expectStageId
           ? await this.prisma.$transaction((tx: any) => run(tx))
           : await run(this.prisma);
 
@@ -496,6 +507,11 @@ export class TicketsService {
       where: { ticketId, workspaceId, kind: { in: ["stage_changed", "won", "lost"] } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
+    const fromStage = latest?.fromStage
+      ? await this.prisma.ticketStage.findFirst({
+          where: { key: latest.fromStage, pipelineId: ticket.pipelineId, workspaceId },
+        })
+      : null;
     const canManage = this.perm ? await this.perm.viewerCan(workspaceId, viewer, "tickets.manage") : true;
     const refusal = undoRefusal({
       latest,
@@ -503,23 +519,19 @@ export class TicketsService {
       now: new Date(),
       userId: viewer?.userId,
       canManage,
+      fromStageIsLost: !!fromStage?.isTerminal && !fromStage.isWon,
     });
     if (refusal === "tickets.undo_not_author") {
       throw new ForbiddenException({ statusCode: 403, message: refusal });
     }
     if (refusal) throw new ConflictException(refusal);
-
-    const fromStage = latest?.fromStage
-      ? await this.prisma.ticketStage.findFirst({
-          where: { key: latest.fromStage, pipelineId: ticket.pipelineId, workspaceId },
-        })
-      : null;
     if (!fromStage) throw new ConflictException("tickets.undo_not_latest");
     return this.moveTicket(
       workspaceId,
       ticketId,
       { stageId: fromStage.id, note: UNDO_NOTE, byUserId: viewer?.userId },
       viewer,
+      { expectStageId: ticket.stageId },
     );
   }
 

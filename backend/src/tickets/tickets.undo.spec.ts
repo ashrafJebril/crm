@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { TicketsService } from "./tickets.service";
-import { UNDO_NOTE } from "./undo-stage";
+import { UNDO_NOTE, stripReservedMarker } from "./undo-stage";
 
 const NOW = new Date("2026-11-11T12:00:00Z");
 const ago = (min: number) => new Date(NOW.getTime() - min * 60_000);
@@ -11,6 +11,7 @@ function setup(o: {
   canManage?: boolean;
   moveError?: Error;
   ticket?: any;
+  fromStage?: any;
 } = {}) {
   const ticket =
     o.ticket === undefined
@@ -23,7 +24,7 @@ function setup(o: {
   const prisma: any = {
     ticket: { findFirst: jest.fn().mockResolvedValue(ticket) },
     ticketActivity: { findFirst: jest.fn().mockResolvedValue(latest) },
-    ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st_a", key: "a", pipelineId: "pl_1" }) },
+    ticketStage: { findFirst: jest.fn().mockResolvedValue(o.fromStage ?? { id: "st_a", key: "a", pipelineId: "pl_1", isTerminal: false, isWon: false }) },
   };
   const perm = { viewerCan: jest.fn().mockResolvedValue(o.canManage ?? false) };
   const svc = new TicketsService(prisma, { emitToWorkspace: jest.fn() } as any, undefined, undefined, perm as any);
@@ -48,7 +49,9 @@ describe("TicketsService.undoLastMove", () => {
     const { svc, move, prisma } = setup();
     const res = await svc.undoLastMove("ws", "tk_1", viewer);
     expect(res).toMatchObject({ id: "tk_1" });
-    expect(move).toHaveBeenCalledWith("ws", "tk_1", { stageId: "st_a", note: UNDO_NOTE, byUserId: "u1" }, viewer);
+    expect(move).toHaveBeenCalledWith("ws", "tk_1", { stageId: "st_a", note: UNDO_NOTE, byUserId: "u1" }, viewer, {
+      expectStageId: "st_b",
+    });
     expect((prisma.ticketStage.findFirst.mock.calls[0] as any)[0].where).toMatchObject({ key: "a", pipelineId: "pl_1", workspaceId: "ws" });
     expect((prisma.ticketActivity.findFirst.mock.calls[0] as any)[0].where).toMatchObject({
       ticketId: "tk_1",
@@ -97,6 +100,22 @@ describe("TicketsService.undoLastMove", () => {
     }
   });
 
+  it("409 tickets.undo_not_allowed when the move came out of a Lost stage", async () => {
+    const { svc, move } = setup({ fromStage: { id: "st_a", key: "a", pipelineId: "pl_1", isTerminal: true, isWon: false } });
+    await expect(svc.undoLastMove("ws", "tk_1", viewer)).rejects.toMatchObject({ message: "tickets.undo_not_allowed" });
+    expect(move).not.toHaveBeenCalled();
+    // a Won terminal stage is not blocked
+    await setup({ fromStage: { id: "st_a", key: "a", pipelineId: "pl_1", isTerminal: true, isWon: true } }).svc.undoLastMove("ws", "tk_1", viewer);
+  });
+
+  it("the reserved undo marker cannot be typed by users, and legacy undo rows stay non-undoable", async () => {
+    expect(stripReservedMarker(UNDO_NOTE)).toBe("undo");
+    const { svc } = setup({
+      latest: { kind: "stage_changed", fromStage: "b", toStage: "b", byUserId: "u1", note: "undo", createdAt: ago(1) },
+    });
+    await expect(svc.undoLastMove("ws", "tk_1", viewer)).rejects.toMatchObject({ message: "tickets.undo_not_latest" });
+  });
+
   it("an undo move is not itself undoable", async () => {
     const { svc } = setup({
       latest: { kind: "stage_changed", fromStage: "b", toStage: "b", byUserId: "u1", note: UNDO_NOTE, createdAt: ago(1) },
@@ -112,7 +131,7 @@ describe("TicketsService.undoLastMove", () => {
     const manager = setup({ canManage: true });
     await manager.svc.undoLastMove("ws", "tk_1", { userId: "u2" });
     expect(manager.perm.viewerCan).toHaveBeenCalledWith("ws", { userId: "u2" }, "tickets.manage");
-    expect(manager.move).toHaveBeenCalledWith("ws", "tk_1", expect.objectContaining({ byUserId: "u2" }), { userId: "u2" });
+    expect(manager.move).toHaveBeenCalledWith("ws", "tk_1", expect.objectContaining({ byUserId: "u2" }), { userId: "u2" }, { expectStageId: "st_b" });
   });
 
   it("a move with no recorded author is undoable only by a manager", async () => {
@@ -125,5 +144,45 @@ describe("TicketsService.undoLastMove", () => {
     const err = new ForbiddenException({ statusCode: 403, message: "Missing permission", permission: "pipelines.update" });
     const { svc } = setup({ moveError: err });
     await expect(svc.undoLastMove("ws", "tk_1", viewer)).rejects.toBe(err);
+  });
+});
+
+describe("TicketsService.moveTicket expectStageId (undo race)", () => {
+  function race(count: number, stageId = "st_b") {
+    const ticket = { id: "tk_1", pipelineId: "pl_1", stageId, workspaceId: "ws", contactId: "c", stage: { id: stageId, key: "b" }, pipeline: { agentCanMove: true, kind: "deals" } };
+    const prisma: any = {
+      ticket: {
+        findFirst: jest.fn().mockResolvedValue(ticket),
+        updateMany: jest.fn().mockResolvedValue({ count }),
+        update: jest.fn(),
+      },
+      ticketStage: { findFirst: jest.fn().mockResolvedValue({ id: "st_a", key: "a", pipelineId: "pl_1", isTerminal: false, isWon: false }) },
+      ticketActivity: { create: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn(async (fn: any) => fn(prisma)),
+    };
+    return { prisma, svc: new TicketsService(prisma, { emitToWorkspace: jest.fn() } as any) };
+  }
+
+  it("moves with a conditional update and logs the activity when the ticket is still in the expected stage", async () => {
+    const { svc, prisma } = race(1);
+    await svc.moveTicket("ws", "tk_1", { stageId: "st_a", note: UNDO_NOTE }, undefined, { expectStageId: "st_b" });
+    expect((prisma.ticket.updateMany.mock.calls[0] as any)[0].where).toMatchObject({ id: "tk_1", stageId: "st_b" });
+    expect(prisma.ticketActivity.create).toHaveBeenCalled();
+  });
+
+  it("409 tickets.undo_not_latest, no activity, when a concurrent move won (conditional update matched nothing)", async () => {
+    const { svc, prisma } = race(0);
+    await expect(
+      svc.moveTicket("ws", "tk_1", { stageId: "st_a" }, undefined, { expectStageId: "st_b" }),
+    ).rejects.toMatchObject({ message: "tickets.undo_not_latest" });
+    expect(prisma.ticketActivity.create).not.toHaveBeenCalled();
+  });
+
+  it("409 up front when the ticket already left the expected stage", async () => {
+    const { svc, prisma } = race(1, "st_c");
+    await expect(
+      svc.moveTicket("ws", "tk_1", { stageId: "st_a" }, undefined, { expectStageId: "st_b" }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.ticket.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
+import { stripReservedMarker } from "./undo-stage";
 import { TicketsService } from "./tickets.service";
 import { TicketsBulkService } from "./tickets-bulk.service";
 import {
@@ -110,7 +111,8 @@ export class TicketsController {
   ) {
     // The mover is the authenticated member (a client-supplied byUserId is not
     // trusted): the activity's author drives who may undo the move (SP-31).
-    return this.svc.moveTicket(workspaceId, id, viewer ? { ...dto, byUserId: viewer.userId } : dto, viewer);
+    const safe = { ...dto, note: stripReservedMarker(dto.note) };
+    return this.svc.moveTicket(workspaceId, id, viewer ? { ...safe, byUserId: viewer.userId } : safe, viewer);
   }
 
   /** SP-31: undo the latest stage move (10-minute window, author or manager). */

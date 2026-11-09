@@ -1529,8 +1529,6 @@ export class ZernioService {
     }
   }
 
-  /** Returns how many rows matched — 0 tells the caller this message isn't
-   *  ours (e.g. a reply typed in the platform's own mobile app). */
   /**
    * SP-31: a customer's emoji reaction. Updates only the reacted message (by
    * Zernio's or the platform's id, stored in metaMessageId) inside the
@@ -1542,6 +1540,8 @@ export class ZernioService {
     const ids = [r.messageId, r.platformMessageId].filter((v): v is string => !!v);
     const accountId = payload.account?.accountId ?? payload.account?.id;
     if (ids.length === 0 || !accountId) return;
+    // Only an explicit string counts; a missing emoji key is ignored, "" removes.
+    if (typeof r.emoji !== "string") return;
     const emoji = normalizeReaction(r.emoji);
     if (emoji === undefined) return;
     const integ = await this.prisma.integration.findFirst({
@@ -1557,6 +1557,8 @@ export class ZernioService {
     }
   }
 
+  /** Returns how many rows matched — 0 tells the caller this message isn't
+   *  ours (e.g. a reply typed in the platform's own mobile app). */
   private async applyStatus(type: string, payload: ZernioWebhookEvent): Promise<number> {
     // Status events carry the same top-level shape as message.received. Match
     // either id scheme: sends store Zernio's internal id, backfilled rows the

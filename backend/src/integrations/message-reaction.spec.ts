@@ -62,6 +62,13 @@ describe("Zernio reaction.received", () => {
     expect(none.prisma.message.updateMany).not.toHaveBeenCalled();
   });
 
+  it("a payload without an emoji key is ignored (only an explicit empty string removes)", async () => {
+    const { svc, prisma } = build();
+    await svc.handleEvent(evt({ messageId: "zm1" }) as never);
+    await svc.handleEvent(evt({ emoji: null, messageId: "zm1" }) as never);
+    expect(prisma.message.updateMany).not.toHaveBeenCalled();
+  });
+
   it("ignores events without a target id or with an oversize emoji", async () => {
     const { svc, prisma } = build();
     await svc.handleEvent(evt({ emoji: "👍" }) as never);

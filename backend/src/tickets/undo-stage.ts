@@ -2,9 +2,14 @@
  *  thread's `undoable` flag so they can never disagree. */
 export const UNDO_WINDOW_MS = 10 * 60 * 1000;
 /** Marker note written on the activity an undo creates; such a move is not itself undoable. */
-export const UNDO_NOTE = "undo";
+export const UNDO_NOTE = "\u2063undo";
+/** Pre-fix marker (bd64233); still recognised so existing undo rows stay non-undoable. */
+const LEGACY_UNDO_NOTE = "undo";
+export const isUndoNote = (note: string | null | undefined) => note === UNDO_NOTE || note === LEGACY_UNDO_NOTE;
+/** User-typed notes never carry the reserved marker (U+2063 is stripped at the API boundary). */
+export const stripReservedMarker = (note: string | undefined) => (note === undefined ? note : note.replace(/\u2063/g, ""));
 
-export type UndoRefusal = "tickets.undo_expired" | "tickets.undo_not_latest" | "tickets.undo_not_author";
+export type UndoRefusal = "tickets.undo_expired" | "tickets.undo_not_latest" | "tickets.undo_not_author" | "tickets.undo_not_allowed";
 
 export interface MoveActivityLike {
   kind: string;
@@ -21,11 +26,14 @@ export function undoRefusal(input: {
   now: Date;
   userId: string | null | undefined;
   canManage: boolean;
+  /** The stage the move came from is a terminal Lost stage: reopening a lost deal is not an undo. */
+  fromStageIsLost?: boolean;
 }): UndoRefusal | null {
   const { latest } = input;
-  if (!latest || latest.kind !== "stage_changed" || latest.note === UNDO_NOTE || latest.toStage !== input.ticketStageKey) {
+  if (!latest || latest.kind !== "stage_changed" || isUndoNote(latest.note) || latest.toStage !== input.ticketStageKey) {
     return "tickets.undo_not_latest";
   }
+  if (input.fromStageIsLost) return "tickets.undo_not_allowed";
   if (input.now.getTime() - latest.createdAt.getTime() > UNDO_WINDOW_MS) return "tickets.undo_expired";
   if (!input.canManage && (!latest.byUserId || latest.byUserId !== input.userId)) return "tickets.undo_not_author";
   return null;
