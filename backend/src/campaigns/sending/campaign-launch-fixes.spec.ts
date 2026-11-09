@@ -296,3 +296,84 @@ describe("m5: scheduler batches are ordered and skip in-flight launches", () => 
     void ME;
   });
 });
+
+describe("fix round 2", () => {
+  it("n1: a country/recipient-specific rejection fails only that row", async () => {
+    process.env.CAMPAIGN_MAX_PARTITIONS = "1";
+    const w = world({ senders: ["A", "B"], contacts: people(4) });
+    const real = w.zernio.sendTemplateToPhone.getMockImplementation()!;
+    w.zernio.sendTemplateToPhone.mockImplementationOnce(async () => {
+      throw new HttpException("(#130497) Business account is restricted from messaging users in this country.", 400);
+    });
+    w.zernio.sendTemplateToPhone.mockImplementation(real);
+    await w.launch();
+    expect(w.camp().status).toBe("running");
+    expect(w.rows().filter((r: any) => r.status === "failed")).toHaveLength(1);
+    expect(w.rows().filter((r: any) => r.status === "sent")).toHaveLength(3);
+  });
+
+  it("n2: a cancelled campaign whose stop could not be confirmed stays cancellable, and a retry stops it", async () => {
+    const w = world({ senders: ["A", "B"], contacts: people(4) });
+    const realSend = w.zernio.sendBroadcast.getMockImplementation()!;
+    w.zernio.sendBroadcast.mockImplementation(async (id: string) => {
+      await realSend(id);
+      await w.send.cancel(WS, "camp");
+    });
+    const realCancel = w.zernio.cancelBroadcast.getMockImplementation()!;
+    w.zernio.cancelBroadcast.mockRejectedValue(new HttpException("Zernio down", 502));
+    await w.launch();
+    await settle(w);
+    expect(w.camp().status).toBe("cancelled");
+    expect(await w.send.cancellable(WS, "camp")).toBe(true);
+    expect(await keyOf(w.send.assertDeletable(WS, "camp"))).toMatchObject({ message: "campaigns.has_live_broadcasts" });
+    w.zernio.cancelBroadcast.mockImplementation(realCancel);
+    expect((await w.send.cancel(WS, "camp")).status).toBe("cancelled");
+    const [sentId] = w.zernio.sendBroadcast.mock.calls[0];
+    expect(w.zernio.broadcasts.get(sentId).status).toBe("cancelled");
+    expect(await w.send.cancellable(WS, "camp")).toBe(false);
+  });
+
+  it("n3: on failure, a partition Zernio reports finished gets a terminal stage, so the failed campaign is not cancellable", async () => {
+    const w = world({ senders: ["A", "B"], contacts: people(4) });
+    const realSend = w.zernio.sendBroadcast.getMockImplementation()!;
+    let n = 0;
+    w.zernio.sendBroadcast.mockImplementation(async (id: string) => {
+      if (++n === 2) throw new HttpException("Template was deleted", 400);
+      await realSend(id);
+      w.zernio.broadcasts.get(id).status = "completed";
+    });
+    await w.launch();
+    expect(w.camp().status).toBe("failed");
+    const [doneId] = w.zernio.sendBroadcast.mock.calls[0];
+    expect(w.partitions().find((p: any) => p.zernioBroadcastId === doneId).stage).toBe("completed");
+    expect(w.zernio.cancelBroadcast).not.toHaveBeenCalled();
+    expect(await w.send.cancellable(WS, "camp")).toBe(false);
+    await expect(w.send.assertDeletable(WS, "camp")).resolves.toBeUndefined();
+  });
+
+  it("n4: an expired stored header link is refreshed; rows attempted under the old link become unconfirmed, the rest go with the new one", async () => {
+    const img = { id: "m1", workspaceId: WS, mimeType: "image/png", sizeBytes: 1000, uploadedById: "u1" };
+    const w = world({ contacts: people(3), campaign: { headerMediaId: "m1" }, template: { headerType: "image" }, media: [img] });
+    let sig = 0;
+    w.media.resolveExternalUrl.mockImplementation(async (_ws: string, id: string) => `https://cdn.test/${id}?sig=${++sig}`);
+    crashOnce(w.prisma.campaignRecipient, "updateMany", (a) => !!a.data?.messageId);
+    await w.launch();
+    expect(w.camp().status).toBe("launching");
+    // The stored link has expired by the time the job resumes.
+    const p = w.partitions()[0];
+    p.variables = { ...p.variables, __headerLinkExpiresAt: new Date(Date.now() - 1000).toISOString() };
+    await w.resume();
+    expect(w.camp().status).toBe("running");
+    expect(w.media.resolveExternalUrl).toHaveBeenCalledTimes(2);
+    expect(w.partitions()[0].variables.__headerLink).toBe("https://cdn.test/m1?sig=2");
+    const by = Object.fromEntries(w.rows().map((r: any) => [r.contactId, r]));
+    expect(by.c000).toMatchObject({ status: "failed", failureCode: "launch:unconfirmed" });
+    expect(by.c001).toMatchObject({ status: "sent" });
+    expect(by.c002).toMatchObject({ status: "sent" });
+    const calls = (w.zernio.sendTemplateToPhone.mock.calls as any[]).map(([i]) => [i.idempotencyKey, i.headerMedia.link]);
+    // c000 was sent once (old link) and never re-sent; the others went with the new link.
+    expect(calls.filter(([k]) => k === `crm-cr-${by.c000.id}`)).toEqual([[`crm-cr-${by.c000.id}`, "https://cdn.test/m1?sig=1"]]);
+    expect(calls.filter(([k]) => k !== `crm-cr-${by.c000.id}`).map(([, l]) => l)).toEqual(["https://cdn.test/m1?sig=2", "https://cdn.test/m1?sig=2"]);
+    expect([...deliveryCounts(w.zernio).values()]).toEqual([1, 1, 1]);
+  });
+});

@@ -62,7 +62,7 @@ interface Lease {
 }
 
 const PARTITION_ORDER = [{ createdAt: "asc" as const }, { id: "asc" as const }];
-const DONE_STAGES = ["sent", "scheduled", "cancelled", "failed"];
+const DONE_STAGES = ["sent", "scheduled", "completed", "cancelled", "failed"];
 
 /**
  * SP-13 background launch (SP-12 R10), on the SP-03 ImportRunner pattern.
@@ -342,8 +342,9 @@ export class CampaignLaunchRunner {
       for (const p of parts) {
         if (p.transport !== "direct" || p.stage === "sent") continue;
         job.setPartition(p.id);
-        const headerMedia = c.headerMediaId ? { link: await this.headerLink(job, p, ws, c.headerMediaId, scheduledAt) } : undefined;
-        await sendDirectPartition(job, p, { template: tpl, headerMedia });
+        const mediaId = c.headerMediaId;
+        const header = mediaId ? () => this.headerLink(job, p, ws, mediaId, scheduledAt) : undefined;
+        await sendDirectPartition(job, p, { template: tpl, header });
       }
       job.setPartition(null);
       await this.writeCampaign(lease, { status: "running", launchStage: "done", launchedAt: c.launchedAt ?? new Date(), lastError: null });
@@ -383,16 +384,40 @@ export class CampaignLaunchRunner {
    * ruling-9 TTL (72 h past the send, at most 7 days) covers the 23 h
    * resume window.
    */
-  private async headerLink(job: LaunchJob, p: PartitionRow, ws: string, mediaId: string, scheduledAt: Date | null): Promise<string> {
+  private async headerLink(
+    job: LaunchJob,
+    p: PartitionRow,
+    ws: string,
+    mediaId: string,
+    scheduledAt: Date | null,
+  ): Promise<{ link: string; issuedAt: Date }> {
     const vars = (p.variables && typeof p.variables === "object" ? p.variables : {}) as Record<string, unknown>;
-    if (typeof vars.__headerLink === "string" && vars.__headerLink) return vars.__headerLink;
+    const stored = typeof vars.__headerLink === "string" && vars.__headerLink ? vars.__headerLink : null;
+    const expires = typeof vars.__headerLinkExpiresAt === "string" ? Date.parse(vars.__headerLinkExpiresAt) : NaN;
+    // Fix round 2 (n4): reuse while valid (a missing expiry counts as valid);
+    // an expired link is replaced and stored with its issue time.
+    if (stored && !(Number.isFinite(expires) && expires <= Date.now())) {
+      const issued = typeof vars.__headerLinkIssuedAt === "string" ? Date.parse(vars.__headerLinkIssuedAt) : 0;
+      return { link: stored, issuedAt: new Date(Number.isFinite(issued) ? issued : 0) };
+    }
     if (!this.media) throw new HttpException("Media service unavailable", 500);
     const ttl = this.headerTtlSeconds(scheduledAt);
     const link = await this.media.resolveExternalUrl(ws, mediaId, ttl);
-    const next = { ...vars, __headerLink: link, __headerLinkExpiresAt: new Date(Date.now() + ttl * 1000).toISOString() };
+    const now = Date.now();
+    // The first link predates every attempt of this partition (it is stored
+    // before the first send), so it is issued "at the epoch". A replacement
+    // is issued strictly after every attempt made so far: those rows went
+    // out with the old link and are never re-sent with this one.
+    const issuedAt = new Date(stored ? now + 1 : 0);
+    const next = {
+      ...vars,
+      __headerLink: link,
+      __headerLinkIssuedAt: issuedAt.toISOString(),
+      __headerLinkExpiresAt: new Date(now + ttl * 1000).toISOString(),
+    };
     await job.updatePartition(p.id, { variables: next }, { progress: false });
     p.variables = next;
-    return link;
+    return { link, issuedAt };
   }
 
   /**
@@ -428,8 +453,16 @@ export class CampaignLaunchRunner {
       return "gone";
     }
     if (FINISHED_BROADCAST.includes(st.status)) {
-      if (opts.deleteDrafts) await write({ stage: "cancelled" });
+      // Fix round 2 (n3): terminal either way, so it no longer counts as live.
+      await write({ stage: opts.deleteDrafts ? "cancelled" : "completed" });
       return "finished";
+    }
+    // Fix round 2 (n2): record that it went out before trying to stop it, so
+    // a stop that fails leaves it visibly live (cancellable, undeletable).
+    if (p.stage !== "sent" && p.stage !== "scheduled") {
+      const out = st.status === "scheduled" ? "scheduled" : "sent";
+      await write({ stage: out });
+      p.stage = out;
     }
     await call(() => this.zernio.cancelBroadcast(id));
     await write({ stage: "cancelled" });

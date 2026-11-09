@@ -41,7 +41,7 @@ export const recipientSyncMaxPages = () => positiveInt(process.env.RECIPIENT_SYN
 const ACTIVE = ["scheduled", "running"];
 const FINISHED = ["completed", "failed", "cancelled"];
 /** SP-13: partitions Zernio has (or had) sending: swept and read for status. */
-const SWEPT_STAGES = ["sent", "scheduled", "cancelled"];
+const SWEPT_STAGES = ["sent", "scheduled", "completed", "cancelled"];
 
 interface SweepCampaign {
   id: string;
@@ -244,8 +244,9 @@ export class CampaignSendService {
     if (!c) throw campaignError("campaigns.not_found");
     if (c.status === "launching") return true;
     if (c.sendTransport === "direct") return c.status === "scheduled";
-    if (c.sendTransport === "broadcast" && ["scheduled", "running", "failed"].includes(c.status)) {
-      return (await this.livePartitions(workspaceId, id)).length > 0 || (c.status !== "failed" && !!c.zernioBroadcastId);
+    // Fix round 2 (n2): also a cancelled one whose stop could not be confirmed, so the user can retry.
+    if (c.sendTransport === "broadcast" && ["scheduled", "running", "failed", "cancelled"].includes(c.status)) {
+      return (await this.livePartitions(workspaceId, id)).length > 0 || (["scheduled", "running"].includes(c.status) && !!c.zernioBroadcastId);
     }
     return !!c.zernioBroadcastId && ["scheduled", "running"].includes(c.status);
   }
@@ -295,7 +296,7 @@ export class CampaignSendService {
     }
     // SP-13: every partition that may still send, also on a launch that
     // ended failed with one still live (fix round 1, I1).
-    if (campaign.sendTransport === "broadcast" && ["scheduled", "running", "failed"].includes(campaign.status)) {
+    if (campaign.sendTransport === "broadcast" && ["scheduled", "running", "failed", "cancelled"].includes(campaign.status)) {
       const parts = await this.livePartitions(workspaceId, id);
       if (parts.length > 0) {
         let firstError: unknown = null;

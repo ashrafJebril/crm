@@ -22,13 +22,32 @@ const isRowRejection = (e: unknown) => [400, 422].includes(statusOf(e) ?? 0);
  * template). The first one fails the job instead of failing every row.
  */
 const ACCOUNT_WIDE =
-  /whatsapp (connection|account)|removed by meta|reconnect whatsapp|unauthori[sz]ed|forbidden|access token|template[^.]*(not found|does not exist|paused|disabled|not approved)|(number|account|phone)[^.]*(blocked|banned|restricted|revoked|disabled)/i;
-export const isAccountWideRejection = (e: unknown) => isRowRejection(e) && ACCOUNT_WIDE.test((e as Error).message ?? "");
+  /whatsapp (connection|account)|removed by meta|reconnect whatsapp|unauthori[sz]ed|forbidden|access token|template[^.]*(not found|does not exist|paused|disabled|not approved)|(number|account|phone)[^.]*(blocked|banned|revoked|disabled)/i;
+/**
+ * Fix round 2 (n1): a rejection that depends on the destination (its
+ * country, the recipient, the user; for example Meta 130497 "restricted
+ * from messaging users in this country") fails that row only.
+ */
+const PER_RECIPIENT = /countr|recipient|\busers?\b/i;
+export const isAccountWideRejection = (e: unknown) => {
+  const msg = (e as Error)?.message ?? "";
+  return isRowRejection(e) && ACCOUNT_WIDE.test(msg) && !PER_RECIPIENT.test(msg);
+};
+
+/** The partition's stored header link (fix round 1 I4, round 2 n4). */
+export interface DirectHeader {
+  link: string;
+  /** When this link was resolved: an attempt made before it used an older link. */
+  issuedAt: Date;
+}
 
 export interface DirectContext {
   template: { name: string; lang: string };
-  /** Resolved once per partition and stored (`variables.__headerLink`), so the body never changes across retries. */
-  headerMedia?: { link: string };
+  /**
+   * The current header link, read before every send: the stored one while
+   * it is valid, else a fresh one that is stored (n4). Undefined: no header.
+   */
+  header?: () => Promise<DirectHeader>;
 }
 
 /**
@@ -78,6 +97,13 @@ export async function sendDirectPartition(job: LaunchJob, p: PartitionRow, ctx: 
         await resolve(r.id, { status: "failed", failureCode: LAUNCH_UNCONFIRMED });
         continue;
       }
+      const header = ctx.header ? await ctx.header() : undefined;
+      // n4: the earlier attempt went out with an older (expired) link; the
+      // body would differ under the same key, so it is never re-sent.
+      if (header && r.sendAttemptedAt && r.sendAttemptedAt.getTime() < header.issuedAt.getTime()) {
+        await resolve(r.id, { status: "failed", failureCode: LAUNCH_UNCONFIRMED });
+        continue;
+      }
       if (!prior) {
         await job.fence();
         const claim = await prisma.campaignRecipient.updateMany({
@@ -96,7 +122,7 @@ export async function sendDirectPartition(job: LaunchJob, p: PartitionRow, ctx: 
               templateName: ctx.template.name,
               templateLanguage: ctx.template.lang,
               templateParams: Array.isArray(r.templateParams) ? (r.templateParams as string[]) : [],
-              ...(ctx.headerMedia ? { headerMedia: ctx.headerMedia } : {}),
+              ...(header ? { headerMedia: { link: header.link } } : {}),
               idempotencyKey: directIdempotencyKey(r.id),
             }),
           { direct: true },
