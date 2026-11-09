@@ -67,7 +67,7 @@ export function BoardFilters({ tx, filters, onChange, team }: Props) {
             onChange={(e) => set({ from: e.target.value })}
             style={ctrl}
           />
-          <span style={{ color: "var(--ink-3)", fontSize: 12 }}>→</span>
+          <span style={{ color: "var(--ink-3)", fontSize: 12 }}>–</span>
           <input
             type="date"
             aria-label={tx("To", "إلى")}

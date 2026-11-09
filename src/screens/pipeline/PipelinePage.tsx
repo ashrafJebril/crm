@@ -10,6 +10,8 @@ import { openRecord } from "@/lib/openRecord";
 import { useQueryClient } from "@tanstack/react-query";
 import { NewTicketModal } from "./NewTicketModal";
 import { PipelineTable } from "./PipelineTable";
+import { useLocalDayKey } from "./hooks/useLocalDayKey";
+import { usePermissions } from "@/auth/usePermissions";
 import { BoardFilters } from "./BoardFilters";
 import { BoardBulkBar } from "./BoardBulkBar";
 import {
@@ -90,8 +92,11 @@ export default function PipelinePage() {
     }
   }, [view, filters]);
 
-  const filterQs = useMemo(() => toQuery(filters, null, { now: new Date(), tz }), [filters, tz]);
-  const tableQs = useMemo(() => toQuery(filters, sort, { now: new Date(), tz }), [filters, sort, tz]);
+  const { can } = usePermissions();
+  // "Today"-relative presets must not freeze while the page stays open past midnight.
+  const dayKey = useLocalDayKey(tz);
+  const filterQs = useMemo(() => toQuery(filters, null, { now: new Date(), tz }), [filters, tz, dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tableQs = useMemo(() => toQuery(filters, sort, { now: new Date(), tz }), [filters, sort, tz, dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bulk selection (cards and table rows). Anything that changes the visible set clears it.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -228,6 +233,7 @@ export default function PipelinePage() {
         ids={[...selected]}
         team={team}
         onClear={clearSelection}
+        moveLocked={pipeline.agentCanMove === false && !can("pipelines.update")}
       />
 
       {selectedTicket || deepTicketId ? (

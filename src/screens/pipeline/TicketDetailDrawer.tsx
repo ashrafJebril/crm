@@ -65,6 +65,8 @@ export function TicketDetailContent({
   const canDelete = can("tickets.delete");
   const noPerm = lang === "ar" ? NO_PERMISSION_AR : NO_PERMISSION_EN;
   const tx = makeTx(lang);
+  const moveLocked = q.data?.pipeline?.agentCanMove === false && !can("pipelines.update");
+  const lockedTip = tx("Only managers can move cards in this pipeline", "يمكن للمديرين فقط نقل البطاقات في هذا المسار");
   const { toast } = useToast();
   const reopen = useReopenTicket();
   const bulk = useBulkTickets(q.data?.pipelineId ?? "");
@@ -386,8 +388,8 @@ export function TicketDetailContent({
                   {t.closedAt ? (
                     <button
                       type="button"
-                      disabled={!canUpdate || reopen.isPending}
-                      title={canUpdate ? undefined : noPerm}
+                      disabled={!canUpdate || moveLocked || reopen.isPending}
+                      title={!canUpdate ? noPerm : moveLocked ? lockedTip : undefined}
                       onClick={() =>
                         reopen.mutate(t.id, {
                           onSuccess: () => toast(tx("Card reopened", "تمت إعادة فتح البطاقة"), "success"),
@@ -401,8 +403,8 @@ export function TicketDetailContent({
                   ) : t.pipeline?.kind === "leads" ? (
                     <button
                       type="button"
-                      disabled={!canUpdate || !can("contacts.update") || bulk.isPending}
-                      title={canUpdate && can("contacts.update") ? undefined : noPerm}
+                      disabled={!canUpdate || !can("contacts.update") || moveLocked || bulk.isPending}
+                      title={!(canUpdate && can("contacts.update")) ? noPerm : moveLocked ? lockedTip : undefined}
                       onClick={() =>
                         bulk.mutate(
                           { ids: [t.id], op: "notALead" },

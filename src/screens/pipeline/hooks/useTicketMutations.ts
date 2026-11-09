@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { qk } from "@/api/queryKeys";
+import { invalidateContactCaches } from "./useBoardData";
 import type {
   Ticket,
   TicketActivity,
@@ -61,6 +62,8 @@ interface MoveVars {
   lostReason?: string;
   lostReasonId?: string;
   optimisticTicket: Ticket; // current ticket snapshot for the optimistic prepend
+  /** Leads won / lost / reopen change the contact: refresh its caches. */
+  invalidateContacts?: boolean;
 }
 
 export function useMoveTicket() {
@@ -95,6 +98,7 @@ export function useMoveTicket() {
       ctx?.snap.forEach(([key, val]) => qc.setQueryData(key, val));
     },
     onSettled: (_data, _err, v) => {
+      if (v.invalidateContacts) invalidateContactCaches(qc);
       qc.invalidateQueries({
         queryKey: ["tickets", "stage", v.pipelineId],
       });

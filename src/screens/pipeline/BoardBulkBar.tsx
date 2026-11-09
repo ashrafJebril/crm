@@ -17,6 +17,8 @@ interface Props {
   ids: string[];
   team: TeamMember[];
   onClear: () => void;
+  /** Managers-only pipeline and the viewer cannot edit pipelines: closing cards is blocked. */
+  moveLocked?: boolean;
 }
 
 const btn = {
@@ -31,14 +33,15 @@ const btn = {
 } as const;
 
 /** Floating action bar for the selected cards/rows: assign, mark lost, not a lead. */
-export function BoardBulkBar({ tx, lang, pipelineId, isLeads, ids, team, onClear }: Props) {
+export function BoardBulkBar({ tx, lang, pipelineId, isLeads, ids, team, onClear, moveLocked = false }: Props) {
   const { can } = usePermissions();
   const { toast } = useToast();
   const bulk = useBulkTickets(pipelineId);
   const [lostOpen, setLostOpen] = useState(false);
   const canUpdate = can("tickets.update");
-  const canNotLead = isLeads && canUpdate && can("contacts.update");
+  const canNotLead = isLeads && canUpdate && can("contacts.update") && !moveLocked;
   const noPerm = tx("You don't have permission", "ليس لديك صلاحية");
+  const lockedTip = tx("Only managers can move cards in this pipeline", "يمكن للمديرين فقط نقل البطاقات في هذا المسار");
 
   if (ids.length === 0) return null;
 
@@ -59,7 +62,7 @@ export function BoardBulkBar({ tx, lang, pipelineId, isLeads, ids, team, onClear
         aria-label={tx("Bulk actions", "إجراءات جماعية")}
         style={{
           position: "fixed",
-          insetInlineStart: "50%",
+          left: "50%",
           transform: "translateX(-50%)",
           bottom: 20,
           zIndex: 50,
@@ -96,14 +99,14 @@ export function BoardBulkBar({ tx, lang, pipelineId, isLeads, ids, team, onClear
             </option>
           ))}
         </select>
-        <button type="button" disabled={!canUpdate || bulk.isPending} title={canUpdate ? undefined : noPerm} onClick={() => setLostOpen(true)} style={btn}>
+        <button type="button" disabled={!canUpdate || moveLocked || bulk.isPending} title={!canUpdate ? noPerm : moveLocked ? lockedTip : undefined} onClick={() => setLostOpen(true)} style={btn}>
           {tx("Mark lost", "تحديد كخاسرة")}
         </button>
         {isLeads ? (
           <button
             type="button"
             disabled={!canNotLead || bulk.isPending}
-            title={canNotLead ? undefined : noPerm}
+            title={canNotLead ? undefined : moveLocked ? lockedTip : noPerm}
             onClick={() => run({ ids, op: "notALead" })}
             style={btn}
           >

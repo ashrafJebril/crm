@@ -1,4 +1,4 @@
-import { memo, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { usePermissions } from "@/auth/usePermissions";
@@ -10,7 +10,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { daysInStage } from "./stale";
 import { NextStepChip, type NextStep } from "@/components/activities/NextStepChip";
-import { Popover } from "@/screens/inbox/Popover";
+import { LeadActionMenu } from "./LeadActionMenu";
 
 export type LeadAction = "won" | "lost" | "notALead" | "reopen";
 
@@ -82,6 +82,9 @@ export const TicketCard = memo(function TicketCard({
   const t = ticket;
   const moveBtnRef = useRef<HTMLButtonElement | null>(null);
   const [hovered, setHovered] = useState(false);
+  const leadBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [leadMenuRect, setLeadMenuRect] = useState<DOMRect | null>(null);
+  const closeLeadMenu = useCallback(() => setLeadMenuRect(null), []);
   const canUpdate = usePermissions().can("tickets.update");
   const canMove = canUpdate && !moveLocked;
   const canNotLead = canUpdate && usePermissions().can("contacts.update");
@@ -258,41 +261,46 @@ export const TicketCard = memo(function TicketCard({
             </button>
           ) : null}
           {onLeadAction && canUpdate ? (
-            <div onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-              <Popover
-                role="menu"
-                ariaLabel={tx("Card actions", "إجراءات البطاقة")}
-                trigger={<span aria-hidden="true">⋯</span>}
+            <>
+              <button
+                ref={leadBtnRef}
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={leadMenuRect != null}
+                aria-label={tx("Card actions", "إجراءات البطاقة")}
                 title={tx("Card actions", "إجراءات البطاقة")}
-                panelStyle={{ minWidth: 160, zIndex: 60 }}
-              >
-                {(close) => {
-                  const item = (action: LeadAction, label: string, enabled: boolean, tip?: string) => (
-                    <button
-                      key={action}
-                      type="button"
-                      role="menuitem"
-                      disabled={!enabled}
-                      title={enabled ? undefined : tip}
-                      onClick={() => {
-                        close();
-                        onLeadAction(t, action);
-                      }}
-                      style={{ display: "block", width: "100%", textAlign: "start", padding: "6px 8px", background: "transparent", border: 0, borderRadius: 6, color: "var(--ink)", fontSize: 12.5, cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.5 }}
-                    >
-                      {label}
-                    </button>
-                  );
-                  return closed
-                    ? [item("reopen", tx("Reopen", "إعادة فتح"), canMove, lockedTip)]
-                    : [
-                        item("won", tx("Won", "رابحة"), canMove, lockedTip),
-                        item("lost", tx("Lost", "خاسرة"), canMove, lockedTip),
-                        item("notALead", tx("Not a lead", "ليس عميلاً محتملاً"), canNotLead, tx("You don't have permission", "ليس لديك صلاحية")),
-                      ];
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (leadBtnRef.current) setLeadMenuRect(leadBtnRef.current.getBoundingClientRect());
                 }}
-              </Popover>
-            </div>
+                style={iconBtn}
+              >
+                <span aria-hidden="true">⋯</span>
+              </button>
+              {leadMenuRect ? (
+                <LeadActionMenu
+                  anchorRect={leadMenuRect}
+                  ariaLabel={tx("Card actions", "إجراءات البطاقة")}
+                  onClose={closeLeadMenu}
+                  items={
+                    closed
+                      ? [{ key: "reopen", label: tx("Reopen", "إعادة فتح"), enabled: canMove, tip: lockedTip, onPick: () => onLeadAction(t, "reopen") }]
+                      : [
+                          { key: "won", label: tx("Won", "رابحة"), enabled: canMove, tip: lockedTip, onPick: () => onLeadAction(t, "won") },
+                          { key: "lost", label: tx("Lost", "خاسرة"), enabled: canMove, tip: lockedTip, onPick: () => onLeadAction(t, "lost") },
+                          {
+                            key: "notALead",
+                            label: tx("Not a lead", "ليس عميلاً محتملاً"),
+                            enabled: canNotLead && canMove,
+                            tip: canNotLead ? lockedTip : tx("You don't have permission", "ليس لديك صلاحية"),
+                            onPick: () => onLeadAction(t, "notALead"),
+                          },
+                        ]
+                  }
+                />
+              ) : null}
+            </>
           ) : null}
         </div>
       </div>

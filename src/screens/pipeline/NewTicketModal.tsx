@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useCreateTicket, useCreateTicketFromConversation } from "./hooks/useTicketMutations";
 import { usePipelines } from "./hooks/usePipelineData";
 import { Modal } from "@/components/Modal";
+import { ApiError } from "@/api/client";
+import { makeTx } from "@/lib/tx";
+import { openRecord } from "@/lib/openRecord";
+import { ticketActionError } from "./boardQuery";
 import type { Lang, Pipeline, TicketStage } from "@/lib/types";
 
 interface BaseProps {
@@ -56,12 +60,16 @@ export function NewTicketModal(props: Props) {
     }
   }, [selectedPipeline, stageId]);
 
+  const tx = makeTx(lang);
+  const [error, setError] = useState<{ text: string; existingTicketId?: string } | null>(null);
+
   const submitting = create.isPending || createFromConv.isPending;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pipelineId || !stageId || !title) return;
 
+    setError(null);
     const numericValue = value ? Number(value) : undefined;
     try {
       if (props.mode === "from-conversation") {
@@ -87,8 +95,12 @@ export function NewTicketModal(props: Props) {
       localStorage.setItem(LAST_USED_KEY, pipelineId);
       onCreated?.();
       onClose();
-    } catch {
-      // Mutation already surfaces the error; UI stays open so user can retry
+    } catch (e) {
+      // Stay open so the user can retry; a 409 offers the card that already exists.
+      const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : "";
+      const body = e instanceof ApiError && e.body && typeof e.body === "object" ? (e.body as { ticketId?: unknown }) : null;
+      const existing = msg.includes("tickets.lead_exists") && typeof body?.ticketId === "string" ? body.ticketId : undefined;
+      setError({ text: ticketActionError(tx, msg), existingTicketId: existing });
     }
   };
 
@@ -182,6 +194,38 @@ export function NewTicketModal(props: Props) {
           onChange={(e) => setDescription(e.target.value)}
           style={{ ...inputStyle, resize: "vertical" }}
         />
+
+        {error ? (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              padding: 10,
+              fontSize: 12,
+              color: "var(--danger, #c0392b)",
+              background: "var(--bg-2)",
+              borderRadius: "var(--r)",
+            }}
+          >
+            <span>{error.text}</span>
+            {error.existingTicketId ? (
+              <button
+                type="button"
+                style={btnSecondary}
+                onClick={() => {
+                  const id = error.existingTicketId as string;
+                  onClose();
+                  openRecord("ticket", id);
+                }}
+              >
+                {tx("Open existing card", "فتح البطاقة الحالية")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>
           <button type="button" onClick={onClose} style={btnSecondary}>

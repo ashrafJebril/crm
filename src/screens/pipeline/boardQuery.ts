@@ -1,5 +1,6 @@
 import { decodeJson, encodeJson } from "@/lib/hashState";
 import type { Tx } from "@/lib/tx";
+import { NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { safeTz } from "@/screens/followups/followupsLogic";
 
 export type DatePreset = "today" | "7d" | "30d" | "month" | "custom";
@@ -43,7 +44,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const ymd = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
 
 /** The workspace-local calendar day of `now` as [y, m, d]. */
-function localDay(now: Date, tz: string): [number, number, number] {
+export function localDay(now: Date, tz: string): [number, number, number] {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: safeTz(tz),
     year: "numeric",
@@ -150,6 +151,7 @@ export function bulkResultText(tx: Tx, r: { affected: number; skipped: string[] 
 
 /** User-facing text for the lead/reopen/bulk error keys (real Arabic). */
 export function ticketActionError(tx: Tx, msg: string): string {
+  if (msg.includes("Missing permission")) return tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   if (msg.includes("tickets.lead_exists"))
     return tx("This contact already has an open lead card in this pipeline.", "لدى جهة الاتصال هذه بطاقة عميل محتمل مفتوحة في هذا المسار.");
   if (msg.includes("tickets.not_closed")) return tx("This card is not closed.", "هذه البطاقة غير مغلقة.");

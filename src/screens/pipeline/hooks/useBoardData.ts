@@ -35,9 +35,16 @@ export type BulkVars =
   | { ids: string[]; op: "lost"; lostReasonId: string }
   | { ids: string[]; op: "notALead" };
 
+/** Lead won / lost / not-a-lead / reopen change the contact (lifecycle, notALead flag). */
+export function invalidateContactCaches(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ["contacts"] });
+  void qc.invalidateQueries({ queryKey: ["record", "contact"] });
+}
+
 function useInvalidateBoard() {
   const qc = useQueryClient();
   return (pipelineId?: string) => {
+    invalidateContactCaches(qc);
     void qc.invalidateQueries({ queryKey: ["tickets"] });
     if (pipelineId) void qc.invalidateQueries({ queryKey: qk.summary(pipelineId) });
   };

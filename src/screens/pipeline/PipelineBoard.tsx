@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -90,15 +90,17 @@ export function PipelineBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  const tx = makeTx(lang);
+  const tx = useMemo(() => makeTx(lang), [lang]);
   const { toast } = useToast();
   const bulk = useBulkTickets(pipeline.id);
   const reopen = useReopenTicket();
   const isLeads = pipeline.kind === "leads";
-  const errText = (e: unknown) =>
-    ticketActionError(tx, e instanceof ApiError ? e.message : e instanceof Error ? e.message : "");
+  const errText = useCallback(
+    (e: unknown) => ticketActionError(tx, e instanceof ApiError ? e.message : e instanceof Error ? e.message : ""),
+    [tx],
+  );
 
-  const doMove = (ticket: Ticket, toStage: TicketStage) => {
+  const doMove = useCallback((ticket: Ticket, toStage: TicketStage) => {
     if (!canMove || toStage.id === ticket.stageId) return;
     if (toStage.isTerminal && !toStage.isWon) {
       setPendingLost({ ticket, toStage });
@@ -110,16 +112,19 @@ export function PipelineBoard({
       toStageId: toStage.id,
       pipelineId: pipeline.id,
       optimisticTicket: ticket,
+      invalidateContacts: isLeads && (toStage.isTerminal || !!ticket.closedAt),
     });
-  };
+  }, [canMove, move.mutate, pipeline.id, isLeads]);
 
-  const handleLeadAction = (ticket: Ticket, action: LeadAction) => {
+  const handleLeadAction = useCallback((ticket: Ticket, action: LeadAction) => {
     if (action === "won") {
       const to = pipeline.stages.find((s) => s.isTerminal && s.isWon);
       if (to) doMove(ticket, to);
     } else if (action === "lost") {
       const to = pipeline.stages.find((s) => s.isTerminal && !s.isWon);
       if (to) doMove(ticket, to);
+    } else if (moveLocked) {
+      return;
     } else if (action === "notALead") {
       bulk.mutate(
         { ids: [ticket.id], op: "notALead" },
@@ -134,7 +139,7 @@ export function PipelineBoard({
         onError: (e) => toast(errText(e), "error"),
       });
     }
-  };
+  }, [pipeline.stages, doMove, moveLocked, bulk.mutate, reopen.mutate, toast, tx, errText]);
 
   const handleDragStart = (e: DragStartEvent) => {
     const ticket = e.active.data.current?.ticket as Ticket | undefined;
@@ -249,6 +254,7 @@ export function PipelineBoard({
               lostReason: reason.label,
               lostReasonId: reason.id,
               optimisticTicket: pendingLost.ticket,
+              invalidateContacts: isLeads,
             });
             setPendingLost(null);
           }}
