@@ -6,6 +6,7 @@ import { TicketCard } from "./TicketCard";
 import { useNextSteps } from "@/components/activities/NextStepChip";
 import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { stageColor } from "./stageColors";
+import { isStaleTicket } from "./stale";
 import type { Ticket, TicketStage, Lang } from "@/lib/types";
 
 interface StageColumnProps {
@@ -21,6 +22,10 @@ interface StageColumnProps {
   onCardClick: (ticket: Ticket) => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenMoveMenu: (ticket: Ticket, anchorRect: DOMRect) => void;
+  /** Pipeline stale threshold in days (null = off). */
+  staleDays?: number | null;
+  /** Moves are disabled for this viewer (agentCanMove=false, no pipelines.update). */
+  moveLocked?: boolean;
 }
 
 export function StageColumn({
@@ -34,6 +39,8 @@ export function StageColumn({
   onCardClick,
   onOpenConversation,
   onOpenMoveMenu,
+  staleDays = null,
+  moveLocked = false,
 }: StageColumnProps) {
   const q = useStageTickets(pipelineId, stage.id, { ownerId: ownerFilter });
 
@@ -81,6 +88,8 @@ export function StageColumn({
     overscan: 6,
   });
 
+  // Re-evaluated whenever the list changes; stale is a day-scale threshold.
+  const nowTick = useMemo(() => Date.now(), [filtered]);
   const total = filtered.length;
   const label = lang === "ar" ? stage.labelAr : stage.label;
   const accent = stageColor[stage.color] ?? "var(--ink-3)";
@@ -279,6 +288,8 @@ export function StageColumn({
                     ticket={ticket}
                     lang={lang}
                     accent={accent}
+                    stale={isStaleTicket(ticket.enteredStageAt, staleDays, nowTick, stage.isTerminal)}
+                    moveLocked={moveLocked}
                     onClick={() => onCardClick(ticket)}
                     onOpenConversation={() =>
                       ticket.conversationId &&

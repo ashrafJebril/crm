@@ -59,6 +59,7 @@ interface MoveVars {
   toStageId: string;
   pipelineId: string;
   lostReason?: string;
+  lostReasonId?: string;
   optimisticTicket: Ticket; // current ticket snapshot for the optimistic prepend
 }
 
@@ -69,6 +70,7 @@ export function useMoveTicket() {
       api.post<Ticket>(`/tickets/${v.ticketId}/move`, {
         stageId: v.toStageId,
         lostReason: v.lostReason,
+        lostReasonId: v.lostReasonId,
       }),
     onMutate: async (v) => {
       // Snapshot every stage cache in this pipeline so rollback is complete

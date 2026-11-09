@@ -70,7 +70,11 @@ export function PipelineBoard({
   }, []);
 
   const move = useMoveTicket();
-  const canMove = usePermissions().can("tickets.update");
+  const { can } = usePermissions();
+  // Managers-only pipelines: without pipelines.update the server answers 403,
+  // so disable the move up front (drag, menu and drop) with an explanation.
+  const moveLocked = pipeline.agentCanMove === false && !can("pipelines.update");
+  const canMove = can("tickets.update") && !moveLocked;
 
   // 6px activation distance so a quick click on the card still fires onClick
   // (drawer) instead of starting a drag.
@@ -153,6 +157,8 @@ export function PipelineBoard({
               onInitialLoaded={reportStageLoaded}
               onCardClick={onCardClick}
               onOpenConversation={onOpenConversation}
+              staleDays={pipeline.staleDays ?? null}
+              moveLocked={moveLocked}
               onOpenMoveMenu={(ticket, anchorRect) =>
                 setMoveTarget({ ticket, anchorRect })
               }
@@ -191,6 +197,7 @@ export function PipelineBoard({
         <LostReasonModal
           lang={lang}
           ticket={pendingLost.ticket}
+          pipelineId={pipeline.id}
           onCancel={() => setPendingLost(null)}
           onConfirm={(reason) => {
             move.mutate({
@@ -198,7 +205,8 @@ export function PipelineBoard({
               fromStageId: pendingLost.ticket.stageId,
               toStageId: pendingLost.toStage.id,
               pipelineId: pipeline.id,
-              lostReason: reason,
+              lostReason: reason.label,
+              lostReasonId: reason.id,
               optimisticTicket: pendingLost.ticket,
             });
             setPendingLost(null);

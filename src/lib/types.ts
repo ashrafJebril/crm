@@ -56,6 +56,12 @@ export interface Pipeline {
   isDefault: boolean;
   stages: TicketStage[];
   _count?: { tickets: number };
+  version?: number;
+  archivedAt?: string | null;
+  staleDays?: number | null;
+  agentCanMove?: boolean;
+  assignsConversations?: boolean;
+  kind?: "deals" | "support" | string;
 }
 
 export interface TicketContact {

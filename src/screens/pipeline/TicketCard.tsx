@@ -6,6 +6,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { Avatar } from "@/components/Avatar";
 import { IconInbox } from "@/icons";
 import type { Ticket, Lang } from "@/lib/types";
+import { useTweaks } from "@/tweaks/context";
+import { makeTx } from "@/lib/tx";
+import { daysInStage } from "./stale";
 import { NextStepChip, type NextStep } from "@/components/activities/NextStepChip";
 
 interface TicketCardProps {
@@ -17,6 +20,10 @@ interface TicketCardProps {
   onOpenMoveMenu?: (anchorRect: DOMRect) => void;
   nextStep?: NextStep;
   onNextStepClick?: () => void;
+  /** Sat in this stage longer than the pipeline's stale threshold. */
+  stale?: boolean;
+  /** Moves disabled for this viewer (agentCanMove=false, no pipelines.update). */
+  moveLocked?: boolean;
 }
 
 const cardBase: CSSProperties = {
@@ -54,11 +61,20 @@ export const TicketCard = memo(function TicketCard({
   onOpenMoveMenu,
   nextStep,
   onNextStepClick,
+  stale = false,
+  moveLocked = false,
 }: TicketCardProps) {
+  const { t: tw } = useTweaks();
+  const tx = makeTx(tw.lang);
   const t = ticket;
   const moveBtnRef = useRef<HTMLButtonElement | null>(null);
   const [hovered, setHovered] = useState(false);
-  const canMove = usePermissions().can("tickets.update");
+  const canUpdate = usePermissions().can("tickets.update");
+  const canMove = canUpdate && !moveLocked;
+  const lockedTip = tx(
+    "Only managers can move cards in this pipeline",
+    "يمكن للمديرين فقط نقل البطاقات في هذا المسار",
+  );
 
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
@@ -69,13 +85,21 @@ export const TicketCard = memo(function TicketCard({
 
   const style: CSSProperties = {
     ...cardBase,
-    cursor: !canMove ? "pointer" : isDragging ? "grabbing" : "grab",
+    cursor: !canMove ? (canUpdate && moveLocked ? "not-allowed" : "pointer") : isDragging ? "grabbing" : "grab",
+    ...(stale
+      ? {
+          background: "color-mix(in srgb, var(--warn, #f59e0b) 10%, var(--bg-2))",
+          border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 55%, var(--line))",
+        }
+      : {}),
     transform: CSS.Translate.toString(transform),
     visibility: isDragging ? "hidden" : "visible",
     touchAction: "none",
-    borderColor: hovered
-      ? `color-mix(in srgb, ${accent} 45%, var(--line))`
-      : "var(--line)",
+    borderColor: stale
+      ? "color-mix(in srgb, var(--warn, #f59e0b) 55%, var(--line))"
+      : hovered
+        ? `color-mix(in srgb, ${accent} 45%, var(--line))`
+        : "var(--line)",
     boxShadow: hovered
       ? `0 2px 8px rgba(0,0,0,0.25), 0 0 0 1px color-mix(in srgb, ${accent} 30%, transparent)`
       : "0 1px 2px rgba(0,0,0,0.15)",
@@ -85,6 +109,8 @@ export const TicketCard = memo(function TicketCard({
     <div
       ref={setNodeRef}
       style={style}
+      title={canUpdate && moveLocked ? lockedTip : undefined}
+      data-stale={stale ? "true" : undefined}
       {...attributes}
       {...listeners}
       onMouseEnter={() => setHovered(true)}
@@ -127,6 +153,19 @@ export const TicketCard = memo(function TicketCard({
           }}
         >
           #{String(t.number).padStart(3, "0")}
+          {stale ? (
+            <span
+              style={{
+                marginInlineStart: 6,
+                fontSize: 10,
+                fontWeight: 600,
+                color: "var(--warn, #f59e0b)",
+              }}
+              title={tx("Stale: no movement past the pipeline's threshold", "راكدة: تجاوزت مدة الركود المحددة للمسار")}
+            >
+              {tx(`${daysInStage(t.enteredStageAt)}d in stage`, `${daysInStage(t.enteredStageAt)} يوم في المرحلة`)}
+            </span>
+          ) : null}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {t.conversationId ? (

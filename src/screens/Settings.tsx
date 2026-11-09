@@ -2,16 +2,18 @@ import { memo, useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { PageHeader } from "@/components/PageHeader";
 import { WorkspaceTab } from "./settings/WorkspaceTab";
 import { MembersTab } from "./settings/MembersTab";
 import { IntegrationsTab } from "./settings/IntegrationsTab";
 import { AiKnowledgeTab } from "./settings/AiKnowledgeTab";
 import { ProfileTab } from "./settings/ProfileTab";
+import { PipelinesTab } from "./settings/PipelinesTab";
 
-type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "profile";
+type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "profile";
 
-const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "profile"];
+const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "pipelines", "profile"];
 
 /**
  * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
@@ -43,6 +45,7 @@ function SettingsImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
+  const { can } = usePermissions();
 
   const [tab, setTabState] = useState<Tab>(parseTab);
 
@@ -64,6 +67,7 @@ function SettingsImpl() {
     { id: "members", label: "Members", ar: "الأعضاء" },
     { id: "integrations", label: "Integrations", ar: "التكاملات" },
     { id: "aiKnowledge", label: "AI Knowledge", ar: "معرفة الذكاء" },
+    ...(can("pipelines.view") ? [{ id: "pipelines" as const, label: "Pipelines", ar: "المسارات" }] : []),
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
@@ -95,11 +99,12 @@ function SettingsImpl() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-        <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ maxWidth: tab === "pipelines" ? 860 : 720, margin: "0 auto" }}>
           {tab === "workspace" && <WorkspaceTab />}
           {tab === "members" && <MembersTab />}
           {tab === "integrations" && <IntegrationsTab />}
           {tab === "aiKnowledge" && <AiKnowledgeTab />}
+          {tab === "pipelines" && <PipelinesTab />}
           {tab === "profile" && <ProfileTab />}
         </div>
       </div>
