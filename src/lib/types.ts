@@ -308,6 +308,9 @@ export interface Conversation {
   // WhatsApp-only: backend populates these when channel === "whatsapp".
   lastInboundAt?: string | null;
   waWindowOpen?: boolean;
+  /** SP-19: effective channel (null for l-agent threads) and its provider. */
+  channelId?: string | null;
+  channelProvider?: string | null;
 }
 
 export type AppointmentStatus =

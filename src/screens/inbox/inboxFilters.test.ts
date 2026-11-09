@@ -2,7 +2,7 @@ process.env.TZ = "Asia/Dubai";
 import { describe, it, expect } from "vitest";
 import type { Conversation } from "../../lib/types";
 import {
-  EMPTY_FILTER, matchesFilter, sortConversations, needsAttention, bucketCounts, activeFilterCount,
+  EMPTY_FILTER, matchesFilter, sortConversations, needsAttention, bucketCounts, activeFilterCount, numberTabs,
   type FilterCtx, type InboxFilter,
 } from "./inboxFilters";
 
@@ -101,5 +101,45 @@ describe("inboxFilters", () => {
   it("activeFilterCount excludes bucket", () => {
     expect(activeFilterCount(F({ bucket: "mine" }))).toBe(0);
     expect(activeFilterCount(F({ labelIds: ["a"], escalatedOnly: true, from: "2026-01-01", to: "2026-01-02" }))).toBe(3);
+  });
+});
+
+describe("number tabs (SP-19)", () => {
+  const ch = (id: string, kind: string, displayName = id, phoneNumber: string | null = null) =>
+    ({ id, kind, displayName, phoneNumber }) as any;
+  const two = [ch("w1", "whatsapp", "Main", "+971500000001"), ch("w2", "whatsapp", "", "+971500000002")];
+
+  it("number tab filters by channelId", () => {
+    expect(matchesFilter(mk({ id: "a", channelId: "w1" }), EMPTY_FILTER, ctx, "w1")).toBe(true);
+    expect(matchesFilter(mk({ id: "a", channelId: "w2" }), EMPTY_FILTER, ctx, "w1")).toBe(false);
+    expect(matchesFilter(mk({ id: "a", channelId: null }), EMPTY_FILTER, ctx, "w1")).toBe(false);
+    expect(matchesFilter(mk({ id: "a", channelId: null }), EMPTY_FILTER, ctx, null)).toBe(true);
+  });
+  it("channelIds filter intersects with tab", () => {
+    const f = F({ channelIds: ["w1", "w2"] });
+    expect(matchesFilter(mk({ id: "a", channelId: "w1" }), f, ctx, "w1")).toBe(true);
+    expect(matchesFilter(mk({ id: "a", channelId: "w2" }), f, ctx, "w1")).toBe(false);
+    expect(matchesFilter(mk({ id: "a", channelId: "w3" }), f, ctx, null)).toBe(false);
+    expect(matchesFilter(mk({ id: "a", channelId: "w2" }), F({ channelIds: ["w1"] }), ctx, "w2")).toBe(false);
+  });
+  it("counts the number filter as one active filter", () => {
+    expect(activeFilterCount(F({ channelIds: ["w1", "w2"] }))).toBe(1);
+  });
+  it("numberTabs counts only visible conversations", () => {
+    const visible = [
+      mk({ id: "1", channelId: "w1" }), mk({ id: "2", channelId: "w1" }),
+      mk({ id: "3", channelId: "w2" }), mk({ id: "4", channelId: null, channel: "l" }),
+    ];
+    expect(numberTabs(visible, two)).toEqual([
+      { id: null, label: "All", count: 4, kind: null },
+      { id: "w1", label: "Main", count: 2, kind: "whatsapp" },
+      { id: "w2", label: "+971500000002", count: 1, kind: "whatsapp" },
+    ]);
+  });
+  it("hides tabs below two numbers of one kind and ignores other kinds", () => {
+    expect(numberTabs([], [ch("w1", "whatsapp")])).toEqual([]);
+    expect(numberTabs([], [ch("w1", "whatsapp"), ch("t1", "telegram")])).toEqual([]);
+    const tabs = numberTabs([], [ch("w1", "whatsapp"), ch("w2", "whatsapp"), ch("t1", "telegram")]);
+    expect(tabs.map((t) => t.id)).toEqual([null, "w1", "w2"]);
   });
 });

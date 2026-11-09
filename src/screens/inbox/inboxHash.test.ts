@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_FILTER } from "./inboxFilters";
 import {
-  decodeFilter, encodeFilter, readFilterFromHash, readViewFromHash, writeFilterToHash, writeViewToHash,
+  decodeFilter, encodeFilter, readFilterFromHash, readViewFromHash, writeFilterToHash, writeViewToHash, readNumberFromHash, writeNumberToHash,
 } from "./inboxHash";
 
 describe("inboxHash", () => {
@@ -41,5 +41,27 @@ describe("inboxHash", () => {
     expect(readViewFromHash(h)).toBe("board");
     expect(readFilterFromHash(h)).toEqual(f);
     expect(writeViewToHash("#/inbox?v=board", "list")).toBe("#/inbox");
+  });
+});
+
+describe("inboxHash number tab and channelIds (SP-19)", () => {
+  it("round-trips channelIds", () => {
+    const f = { ...EMPTY_FILTER, channelIds: ["c1", "c2"] };
+    expect(decodeFilter(encodeFilter(f))).toEqual(f);
+  });
+  it("legacy hash decodes unchanged", () => {
+    const legacy = btoa(encodeURIComponent(JSON.stringify({ bucket: "mine", tags: ["a"] })));
+    expect(decodeFilter(legacy)).toEqual({ ...EMPTY_FILTER, bucket: "mine", tags: ["a"] });
+    expect(readNumberFromHash("#/inbox?v=table")).toBeNull();
+  });
+  it("drops non-string channelIds", () => {
+    const bad = btoa(encodeURIComponent(JSON.stringify({ channelIds: [1, "x"] })));
+    expect(decodeFilter(bad).channelIds).toEqual(["x"]);
+  });
+  it("writes n= and keeps other params", () => {
+    const h = writeNumberToHash("#/inbox?v=table", "w1");
+    expect(readNumberFromHash(h)).toBe("w1");
+    expect(new URLSearchParams(h.split("?")[1]).get("v")).toBe("table");
+    expect(readNumberFromHash(writeNumberToHash(h, null))).toBeNull();
   });
 });

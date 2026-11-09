@@ -24,6 +24,7 @@ export function decodeFilter(s: string | null | undefined): InboxFilter {
     labelIds: strs(o.labelIds),
     tags: strs(o.tags),
     lifecycles: strs(o.lifecycles),
+    channelIds: strs(o.channelIds),
     from: typeof o.from === "string" && o.from ? o.from : undefined,
     to: typeof o.to === "string" && o.to ? o.to : undefined,
     escalatedOnly: o.escalatedOnly === true,
@@ -51,4 +52,14 @@ export function readViewFromHash(hash: string): InboxView {
 /** Returns the hash with `v=` set (removed for "list"); other params are kept. */
 export function writeViewToHash(hash: string, v: InboxView): string {
   return setHashParam(hash, "v", v === "list" ? null : v);
+}
+
+/** Reads `n=`, the active number tab's channel id; null = All. */
+export function readNumberFromHash(hash: string): string | null {
+  return getHashParam(hash, "n") || null;
+}
+
+/** Returns the hash with `n=` set (removed for All); other params are kept. */
+export function writeNumberToHash(hash: string, id: string | null): string {
+  return setHashParam(hash, "n", id || null);
 }

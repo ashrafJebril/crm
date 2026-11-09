@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useFetch } from "@/api/useFetch";
 import { IconFilter } from "@/icons";
 import type { Tx } from "@/lib/tx";
-import type { ConversationLabel, TagRow, TeamMember } from "@/lib/types";
+import type { ChannelDto, ConversationLabel, TagRow, TeamMember } from "@/lib/types";
 import { activeFilterCount, EMPTY_FILTER, type InboxFilter } from "./inboxFilters";
 import { LABEL_COLOR_VAR } from "./LabelPicker";
 import { Popover } from "./Popover";
@@ -43,12 +43,14 @@ function Panel({
   onChange,
   team,
   labels,
+  channels,
   tx,
 }: {
   filter: InboxFilter;
   onChange: (f: InboxFilter) => void;
   team: TeamMember[];
   labels: ConversationLabel[];
+  channels: ChannelDto[];
   tx: Tx;
 }) {
   // Contact tags are only needed once the popover is open.
@@ -72,6 +74,19 @@ function Panel({
               onChange={() => set({ assigneeIds: toggle(filter.assigneeIds, m.id) })}
             >
               <span dir="auto">{m.name}</span>
+            </Check>
+          ))}
+        </Group>
+      )}
+      {channels.length > 0 && (
+        <Group title={tx("Number", "الرقم")}>
+          {channels.map((c) => (
+            <Check
+              key={c.id}
+              checked={filter.channelIds.includes(c.id)}
+              onChange={() => set({ channelIds: toggle(filter.channelIds, c.id) })}
+            >
+              <span dir="auto">{c.displayName || c.phoneNumber || c.kind}</span>
             </Check>
           ))}
         </Group>
@@ -156,12 +171,14 @@ export function InboxFilterMenu({
   onChange,
   team,
   labels,
+  channels,
   tx,
 }: {
   filter: InboxFilter;
   onChange: (f: InboxFilter) => void;
   team: TeamMember[];
   labels: ConversationLabel[];
+  channels: ChannelDto[];
   tx: Tx;
 }) {
   return (
@@ -172,7 +189,7 @@ export function InboxFilterMenu({
       role="dialog"
       badge={activeFilterCount(filter)}
     >
-      {() => <Panel filter={filter} onChange={onChange} team={team} labels={labels} tx={tx} />}
+      {() => <Panel filter={filter} onChange={onChange} team={team} labels={labels} channels={channels} tx={tx} />}
     </Popover>
   );
 }

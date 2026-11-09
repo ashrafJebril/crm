@@ -20,7 +20,7 @@ import {
   IconTemplate,
   IconX,
 } from "@/icons";
-import { API_BASE, api, tokenStore } from "@/api/client";
+import { API_BASE, ApiError, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { uploadMedia } from "@/api/uploadMedia";
 import { useRealtime } from "@/api/useRealtime";
@@ -44,10 +44,16 @@ import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
 import {
-  activeFilterCount, bucketCounts, type InboxView, EMPTY_FILTER, matchesFilter, needsAttention, sortConversations,
+  activeFilterCount, bucketCounts, type InboxView, EMPTY_FILTER, matchesFilter, needsAttention, sortConversations, numberTabs, type NumberTab,
   type FilterCtx, type InboxBucket, type InboxFilter, type InboxSort,
 } from "./inbox/inboxFilters";
-import { readFilterFromHash, readViewFromHash, writeFilterToHash, writeViewToHash } from "./inbox/inboxHash";
+import {
+  readFilterFromHash, readNumberFromHash, readViewFromHash, writeFilterToHash, writeNumberToHash, writeViewToHash,
+} from "./inbox/inboxHash";
+import { pickSendRoute, supportsTemplates } from "./inbox/sendRoute";
+import { invalidateChannels, useChannelsData } from "./channels/channelUi";
+import { useQueryClient } from "@tanstack/react-query";
+import { channelErrorText } from "./channels/channelErrors";
 import { AddFilteredToGroup } from "./inbox/AddFilteredToGroup";
 import { InboxBoard } from "./inbox/InboxBoard";
 import { InboxTable } from "./inbox/InboxTable";
@@ -58,7 +64,7 @@ import { LabelChips } from "./inbox/LabelChips";
 import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
-import type { Media } from "@/lib/types";
+import type { ChannelDto, Media } from "@/lib/types";
 import { CustomerThread } from "./inbox/thread/CustomerThread";
 import { useSavedReplies } from "./inbox/SavedRepliesPicker";
 import { LinkedItemsCard } from "./inbox/LinkedItemsCard";
@@ -89,7 +95,7 @@ function dayLabel(
 }
 type ConversationDetail = Conversation & { messages: Message[] };
 
-const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "l"];
+const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "telegram", "l"];
 /** Channels offered as filter toggles. TikTok is hidden until we support it;
  *  it stays in CHANNELS so the default filter never hides a conversation. */
 const FILTER_CHANNELS = CHANNELS.filter((ch) => ch !== "tiktok");
@@ -189,6 +195,14 @@ function WebIcon({ size = 10 }: GlyphProps) {
   );
 }
 
+function TgIcon({ size = 10 }: GlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M21 4 3 11l5.5 2L10 19l3-3.5 4.5 3.3L21 4z" fill="#fff" />
+    </svg>
+  );
+}
+
 function TtIcon({ size = 10 }: GlyphProps) {
   return (
     <svg
@@ -247,7 +261,9 @@ function ChannelMark({
           ? FbIcon
           : channel === "tiktok"
             ? TtIcon
-            : WebIcon;
+            : channel === "telegram"
+              ? TgIcon
+              : WebIcon;
   return (
     <span
       title={CHANNEL_LABEL[channel]}
@@ -286,6 +302,10 @@ interface InboxListProps {
   search: string;
   setSearch: (s: string) => void;
   visibleConvs: Conversation[];
+  numberTabList: NumberTab[];
+  numberTab: string | null;
+  setNumberTab: (id: string | null) => void;
+  numberChannels: ChannelDto[];
   contactById: Map<string, Contact>;
   loading: boolean;
   error: string | null;
@@ -308,6 +328,9 @@ interface ConversationPaneProps {
   onThreadView: (v: "conv" | "all") => void;
   sending: boolean;
   sendError: string | null;
+  /** SP-19: the conversation's channel, and whether its kind has several numbers. */
+  channel: ChannelDto | null;
+  multiNumber: boolean;
   onConvertToTicket: () => void;
   onConversationChanged: () => Promise<unknown>;
   messagesLoading: boolean;
@@ -826,6 +849,10 @@ function InboxList({
   search,
   setSearch,
   visibleConvs,
+  numberTabList,
+  numberTab,
+  setNumberTab,
+  numberChannels,
   contactById,
   loading,
   error,
@@ -886,7 +913,7 @@ function InboxList({
             </div>
           </div>
           <div style={{ display: "flex", gap: 4 }}>
-            <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} tx={tx} />
+            <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} channels={numberChannels} tx={tx} />
             <InboxSortMenu sort={sort} onChange={setSort} tx={tx} />
           </div>
         </div>
@@ -916,6 +943,27 @@ function InboxList({
           placeholder={tx("Search conversations…", "ابحث في المحادثات…")}
           aria-label={tx("Search conversations", "ابحث في المحادثات")}
         />
+        {numberTabList.length > 0 && (
+          <div
+            role="tablist"
+            aria-label={tx("Numbers", "الأرقام")}
+            style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}
+          >
+            {numberTabList.map((tab) => (
+              <button
+                key={tab.id ?? "all"}
+                type="button"
+                role="tab"
+                aria-selected={numberTab === tab.id}
+                className={`ix-pill ${numberTab === tab.id ? "active" : ""}`.trim()}
+                onClick={() => setNumberTab(tab.id)}
+              >
+                <span dir="auto">{tab.id === null ? tx("All numbers", "كل الأرقام") : tab.label}</span>
+                <span className="ct">{tab.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
           {filters.map((f) => (
             <button
@@ -1255,6 +1303,8 @@ function ConversationPane({
   onThreadView,
   sending,
   sendError,
+  channel,
+  multiNumber,
   onConvertToTicket,
   onConversationChanged,
   messagesLoading,
@@ -1295,6 +1345,13 @@ function ConversationPane({
   const isWhatsApp = conv.channel === "whatsapp";
   const waWindowOpen = conv.waWindowOpen !== false;
   const waBlocked = isWhatsApp && !waWindowOpen;
+  // SP-19: a disconnected channel keeps its history but cannot send.
+  const channelDown = channel?.status === "disconnected";
+  const numberName = channel ? channel.displayName || channel.phoneNumber || "" : "";
+  const channelDownText = tx(
+    "This channel is disconnected. Reconnect it to send replies.",
+    "هذه القناة مفصولة. أعد ربطها لإرسال الردود.",
+  );
 
   // Auto-scroll the thread to the latest message — but only when the user is
   // already near the bottom. Standard chat UX: if they've scrolled up to
@@ -1316,7 +1373,7 @@ function ConversationPane({
     setDraft,
     lang,
     tx,
-    disabled: !canCompose || waBlocked,
+    disabled: !canCompose || waBlocked || channelDown,
   });
 
   // Internal notes for this thread, shown inline between the messages. Same URL
@@ -1417,6 +1474,11 @@ function ConversationPane({
             >
               {CHANNEL_LABEL[conv.channel]}
             </span>
+            {multiNumber && numberName && (
+              <span className="ix-chpill" dir="auto" style={{ background: "var(--bg-elev)", color: "var(--ink-2)", border: "1px solid var(--line-soft)" }}>
+                {numberName}
+              </span>
+            )}
             <ResolutionBadge conv={conv} lang={lang} />
             <span className="ix-online">
               <span className="dot" />
@@ -1656,6 +1718,11 @@ function ConversationPane({
               fontFamily: "inherit",
             }}
           />
+          {channelDown && (
+            <div role="status" style={{ fontSize: 12, color: "var(--warn)", marginTop: 4 }}>
+              {channelDownText}
+            </div>
+          )}
           {sendError && (
             <div
               style={{
@@ -1772,13 +1839,22 @@ function ConversationPane({
             >
               <IconAttach w={14} />
             </button>
-            <button className="btn ghost icon sm">
-              <IconTemplate w={14} />
-            </button>
+            {supportsTemplates(conv) && (
+              <button className="btn ghost icon sm" aria-label={tx("Template", "قالب")}>
+                <IconTemplate w={14} />
+              </button>
+            )}
             <span
               className="muted mono"
               style={{ fontSize: 11, marginInlineStart: "auto" }}
             >
+              {multiNumber && numberName && (
+                <>
+                  {tx("Replying from", "الرد من")}{" "}
+                  <strong dir="auto" style={{ color: "var(--ink-1)" }}>{numberName}</strong>
+                  {" · "}
+                </>
+              )}
               {tx("Replying as", "يرد بصفة")}:{" "}
               <strong style={{ color: "var(--ink-1)" }}>
                 {user?.name ?? tx("you", "أنت")}
@@ -1792,6 +1868,7 @@ function ConversationPane({
                 !canCompose ||
                 sending ||
                 waBlocked ||
+                channelDown ||
                 (draft.trim().length === 0 && !attachedMedia)
               }
               aria-busy={sending}
@@ -2358,7 +2435,13 @@ interface IgMsg {
   at: string;
 }
 
+/** 409 channels.disconnected / not_connected: the channel's state changed under us. */
+const isChannelStateError = (e: unknown): boolean =>
+  e instanceof ApiError && e.status === 409 &&
+  [e.message, e.code].some((k) => k === "channels.disconnected" || k === "channels.not_connected");
+
 function InboxImpl() {
+  const qc = useQueryClient();
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const { user } = useAuth();
@@ -2366,6 +2449,17 @@ function InboxImpl() {
     readFilterFromHash(window.location.hash),
   );
   const [sort, setSort] = useState<InboxSort>("recent");
+  // Active number tab (channel id) lives in the hash as `n=`; null = All numbers.
+  const [numberTab, setNumberTabState] = useState<string | null>(() =>
+    readNumberFromHash(window.location.hash),
+  );
+  const setNumberTab = (id: string | null) => {
+    setNumberTabState(id);
+    const next = writeNumberToHash(window.location.hash, id);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
   // Persist the filter in the hash query without triggering hash navigation.
   const setFilter = (f: InboxFilter) => {
     setFilterState(f);
@@ -2421,7 +2515,15 @@ function InboxImpl() {
   // ─── Data ──────────────────────────────────────────────────────────────
   // Realtime push (socket.io) keeps the inbox in sync; the polls below are a
   // slow safety net for missed events (network blip, server restart).
-  const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 30000 });
+  // The Number filter narrows server-side via repeatable ?channelId=; the tab
+  // is applied client-side so every tab keeps its count.
+  const convsPath = filter.channelIds.length
+    ? `/conversations?${filter.channelIds.map((id) => `channelId=${encodeURIComponent(id)}`).join("&")}`
+    : "/conversations";
+  const convsQ = useFetch<Conversation[]>(convsPath, { pollMs: 30000 });
+  const channelsQ = useChannelsData(true).listQ;
+  const channelList = channelsQ.data ?? [];
+  const channelById = useMemo(() => new Map(channelList.map((c) => [c.id, c])), [channelList]);
   const contactsQ = useFetch<Contact[]>("/contacts");
 
   // Live Facebook Messenger: only fetch when integration is connected.
@@ -2491,7 +2593,7 @@ function InboxImpl() {
   // changes (WhatsApp webhook, Meta webhook, REST send/update). Each event
   // refetches the affected list and bumps `messageVersion` so the active
   // thread re-queries. activeId/conversationId routing keeps refetches scoped.
-  useRealtime<{ channel: string; conversationId?: string }>(
+  useRealtime<{ channel: string; conversationId?: string; channelId?: string | null }>(
     "inbox.activity",
     (evt) => {
       // All channels are DB-backed, so the event's conversationId is our own
@@ -2503,7 +2605,10 @@ function InboxImpl() {
       if (affectsActive) setMessageVersion((v) => v + 1);
       if (evt.channel === "facebook" && fbConnected) fbConvsQ.refetch();
       if (evt.channel === "instagram" && igConnected) igConvsQ.refetch();
+      // channelId (SP-19) only scopes which number's list changed; every
+      // list the viewer can see is one query, so a single refetch covers it.
       convsQ.refetch();
+      if (evt.channelId && !channelById.has(evt.channelId)) channelsQ.refetch();
     },
   );
 
@@ -2693,16 +2798,30 @@ function InboxImpl() {
     [conversations, filterCtx],
   );
 
+  // Number tabs: counts over the list as filtered by everything but the tab.
+  const tabBase = useMemo(
+    () => conversations.filter((c) => matchesFilter(c, filter, filterCtx, null) && (channels.size === 0 || channels.has(c.channel))),
+    [conversations, filter, filterCtx, channels],
+  );
+  const numberTabList = useMemo(() => numberTabs(tabBase, channelList), [tabBase, channelList]);
+  const numberChannels = useMemo(() => {
+    const ids = new Set(numberTabList.map((t) => t.id));
+    return channelList.filter((c) => ids.has(c.id));
+  }, [numberTabList, channelList]);
+  // A hash `n=` for a number that no longer has a tab must not filter invisibly.
+  const activeTab = numberTabList.some((t) => t.id === numberTab) ? numberTab : null;
+
   // matchesFilter + sort over the merged DB/FB/IG list; name/preview search
   // is applied afterwards inside InboxList.
   const filtered = useMemo<Conversation[]>(() => {
     const list = sortConversations(
-      conversations.filter((c) => matchesFilter(c, filter, filterCtx)),
+      conversations.filter((c) => matchesFilter(c, filter, filterCtx, activeTab)),
       sort,
     );
     if (channels.size === 0) return list;
     return list.filter((c) => channels.has(c.channel));
-  }, [filter, sort, filterCtx, channels, conversations]);
+  }, [filter, sort, filterCtx, channels, conversations, activeTab]);
+
 
   // Search narrows the filtered list; every view (list/table/board) and
   // "Add to group" share this exact list.
@@ -2859,7 +2978,30 @@ function InboxImpl() {
   const zernioOwnsConvChannel = (convId: string): boolean => {
     const conv = (convsQ.data ?? []).find((c) => c.id === convId);
     if (!conv) return false;
-    return (zernioStatusQ.data?.accounts ?? []).some((a) => a.platform === conv.channel);
+    return pickSendRoute(conv, zernioPlatformGuess(conv)) === "zernio";
+  };
+  // Only the fallback for rows without a channelProvider.
+  const zernioPlatformGuess = (conv: Conversation): boolean =>
+    (zernioStatusQ.data?.accounts ?? []).some((a) => a.platform === conv.channel);
+
+  // Telegram / web chat: POST /conversations/:id/send, errors localized.
+  const [nativeSend, setNativeSend] = useState<{ loading: boolean; error: string | null }>({
+    loading: false,
+    error: null,
+  });
+  const sendNative = async (conversationId: string, body: string) => {
+    setNativeSend({ loading: true, error: null });
+    try {
+      await api.post(`/conversations/${conversationId}/send`, { body });
+      setNativeSend({ loading: false, error: null });
+    } catch (e) {
+      setNativeSend({ loading: false, error: channelErrorText(e, tx) });
+      if (isChannelStateError(e)) {
+        invalidateChannels(qc);
+        void convsQ.refetch();
+      }
+      throw e;
+    }
   };
 
   const handleSend = async (body: string, mediaId?: string): Promise<void> => {
@@ -2885,15 +3027,17 @@ function InboxImpl() {
     // through Zernio — the legacy Meta services no longer hold a usable token
     // for them, since Zernio's sync replaced those Integration rows.
     const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
-    const zernioOwnsChannel = zernioOwnsConvChannel(activeId);
+    const route = conv ? pickSendRoute(conv, zernioPlatformGuess(conv)) : "legacy";
     // DB-backed sends round-trip Zernio + the remote DB (~2s) — show the
     // bubble immediately, same as the live-thread paths above.
     if (conv && body) addPending(activeId, body);
-    if (conv && zernioOwnsChannel) {
+    if (conv && route === "native") {
+      await sendNative(activeId, body);
+    } else if (conv && route === "zernio") {
       await sendZernioDbMessage.mutate({ conversationId: activeId, body, mediaId });
-    } else if (conv?.channel === "instagram") {
+    } else if (conv && route === "meta_ig") {
       await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
-    } else if (conv?.channel === "whatsapp") {
+    } else if (conv && route === "meta_wa") {
       await sendWaMessage.mutate({ conversationId: activeId, body, mediaId });
     } else {
       // Fallback: just write to DB (web chat, etc.)
@@ -2905,6 +3049,10 @@ function InboxImpl() {
     setMessageVersion((n) => n + 1);
     convsQ.refetch();
   };
+
+  // The detail payload may predate SP-19 fields; the list row is authoritative.
+  const activeChannelId =
+    conversations.find((c) => c.id === activeId)?.channelId ?? null;
 
   // Compute the active conversation: either the internal /conversations/:id
   // result, or a synthetic one assembled from live Facebook DMs.
@@ -3081,6 +3229,10 @@ function InboxImpl() {
           search={search}
           setSearch={setSearch}
           visibleConvs={visibleConvs}
+          numberTabList={numberTabList}
+          numberTab={activeTab}
+          setNumberTab={setNumberTab}
+          numberChannels={numberChannels}
           contactById={contactById}
           loading={initialLoading}
           error={convsQ.error ?? fbConvsQ.error ?? igConvsQ.error}
@@ -3167,8 +3319,11 @@ function InboxImpl() {
             sendZernioDbMessage.loading ||
             sendWaMessage.loading ||
             sendWaTemplate.loading ||
-            sendZernioDbTemplate.loading
+            sendZernioDbTemplate.loading ||
+            nativeSend.loading
           }
+          channel={activeChannelId ? (channelById.get(activeChannelId) ?? null) : null}
+          multiNumber={!!activeChannelId && numberChannels.some((c) => c.id === activeChannelId)}
           sendError={
             sendMessage.error ??
             sendFbMessage.error ??
@@ -3177,7 +3332,8 @@ function InboxImpl() {
             sendZernioDbMessage.error ??
             sendWaMessage.error ??
             sendWaTemplate.error ??
-            sendZernioDbTemplate.error
+            sendZernioDbTemplate.error ??
+            nativeSend.error
           }
           onConvertToTicket={() => setShowConvertModal(true)}
           onConversationChanged={() => Promise.all([convsQ.refetch(), activeQ.refetch()])}

@@ -1,4 +1,4 @@
-import type { Conversation } from "../../lib/types";
+import type { ChannelDto, Conversation } from "../../lib/types";
 
 export type InboxView = "list" | "table" | "board";
 export type InboxSort = "recent" | "oldest" | "unread";
@@ -12,13 +12,15 @@ export interface InboxFilter {
   labelIds: string[];
   tags: string[];
   lifecycles: string[];
+  /** SP-19 "Number" filter: effective channel ids (any of). */
+  channelIds: string[];
   from?: string;
   to?: string;
   escalatedOnly: boolean;
 }
 
 export const EMPTY_FILTER: InboxFilter = {
-  bucket: "all", assigneeIds: [], labelIds: [], tags: [], lifecycles: [], escalatedOnly: false,
+  bucket: "all", assigneeIds: [], labelIds: [], tags: [], lifecycles: [], channelIds: [], escalatedOnly: false,
 };
 
 export interface FilterCtx {
@@ -50,8 +52,13 @@ const localDay = (iso: string): string | null => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-export function matchesFilter(c: Conversation, f: InboxFilter, ctx: FilterCtx): boolean {
+/** `numberTab` is the active number tab's channel id (null = All); it intersects with `f.channelIds`. */
+export function matchesFilter(
+  c: Conversation, f: InboxFilter, ctx: FilterCtx, numberTab: string | null = null,
+): boolean {
   if (!inBucket(c, f.bucket, ctx)) return false;
+  if (numberTab && c.channelId !== numberTab) return false;
+  if (f.channelIds.length && !(c.channelId && f.channelIds.includes(c.channelId))) return false;
   if (f.assigneeIds.length && !(c.assigneeId && f.assigneeIds.includes(c.assigneeId))) return false;
   if (f.labelIds.length && !(c.labelIds ?? []).some((l) => f.labelIds.includes(l))) return false;
   if (f.escalatedOnly && !c.escalated) return false;
@@ -98,5 +105,39 @@ export function bucketCounts(list: Conversation[], ctx: FilterCtx): Record<Inbox
 
 export function activeFilterCount(f: InboxFilter): number {
   return (f.assigneeIds.length ? 1 : 0) + (f.labelIds.length ? 1 : 0) + (f.tags.length ? 1 : 0) +
-    (f.lifecycles.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0);
+    (f.lifecycles.length ? 1 : 0) + (f.channelIds.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0);
+}
+
+export interface NumberTab {
+  /** null = "All". */
+  id: string | null;
+  label: string;
+  count: number;
+  kind: string | null;
+}
+
+/**
+ * Tabs for channels whose kind has 2 or more numbers (e.g. two WhatsApp numbers).
+ * Counts come from the visible list; conversations without a channel (l-agent)
+ * only count under "All". Returns [] when no kind qualifies.
+ */
+export function numberTabs(
+  visible: Conversation[],
+  channels: Pick<ChannelDto, "id" | "kind" | "displayName" | "phoneNumber">[],
+): NumberTab[] {
+  const perKind = new Map<string, number>();
+  for (const ch of channels) perKind.set(ch.kind, (perKind.get(ch.kind) ?? 0) + 1);
+  const multi = channels.filter((ch) => (perKind.get(ch.kind) ?? 0) >= 2);
+  if (multi.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const c of visible) if (c.channelId) counts.set(c.channelId, (counts.get(c.channelId) ?? 0) + 1);
+  return [
+    { id: null, label: "All", count: visible.length, kind: null },
+    ...multi.map((ch) => ({
+      id: ch.id,
+      label: ch.displayName || ch.phoneNumber || ch.kind,
+      count: counts.get(ch.id) ?? 0,
+      kind: ch.kind,
+    })),
+  ];
 }
