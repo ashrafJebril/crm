@@ -142,6 +142,10 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /conversations/:id/messages": "conversations.create",
   "PUT /conversations/:id/labels": "conversations.update",
   "GET /conversation-labels": "conversations.view",
+  "GET /saved-replies": "conversations.view",
+  "POST /saved-replies": "conversations.manage",
+  "PATCH /saved-replies/:id": "conversations.manage",
+  "DELETE /saved-replies/:id": "conversations.manage",
   // Agents manage labels inline from the inbox label picker.
   "POST /conversation-labels": "conversations.update",
   "PATCH /conversation-labels/:id": "conversations.update",
@@ -208,6 +212,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /contacts/:id": "contacts.view",
   "GET /contacts/:id/summary": "contacts.view",
   "GET /contacts/:id/timeline": "contacts.view", // messages filtered by conversation scope
+  "GET /contacts/:id/thread": "conversations.view", // messages by conversation scope; events by tickets.view / bookings.view
   "GET /contacts/:id/tickets": "contacts.view",
   "GET /contacts/:id/appointments": "contacts.view",
   "POST /contacts": "contacts.create",
@@ -254,6 +259,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /tickets/:id/reopen": "tickets.update",
   "PATCH /tickets/:id": "tickets.update",
   "POST /tickets/:id/move": "tickets.update",
+  "POST /tickets/:id/undo-stage": "tickets.update", // author or tickets.manage, enforced in the service
   "POST /tickets/:id/notes": "tickets.update",
   "DELETE /tickets/:id": "tickets.delete",
 

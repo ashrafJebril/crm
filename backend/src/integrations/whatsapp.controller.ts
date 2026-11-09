@@ -114,6 +114,7 @@ export class WhatsAppController {
       dto.name,
       dto.language,
       dto.variables ?? [],
+      dto.header,
     );
     await this.handoff.humanReplied(workspaceId, conversationId);
     return res;

@@ -184,6 +184,9 @@ model Conversation {
   resolutionConfidence Float?
   resolutionSentiment  String?
   resolutionSummary    String?
+  /// SP-31: optional extras from the resolution verdict (string arrays).
+  topics               Json?
+  painPoints           Json?
   resolutionRationale  String?
   resolvedAt           DateTime?
   /// The sweep's claim + "judged up to here" marker: due again only once a
@@ -265,6 +268,10 @@ model Message {
   metaMessageId    String?
   deliveryStatus   String?   // sent | delivered | read | failed
   deliveryStatusAt DateTime?
+
+  /// SP-31: the customer's latest emoji reaction to this message (one kept).
+  reaction   String?
+  reactionAt DateTime?
 
   workspaceId  String
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -523,6 +530,23 @@ model LostReason {
   tickets  Ticket[]
 
   @@index([pipelineId])
+  @@index([workspaceId])
+}
+
+/// SP-31: per-workspace canned replies, inserted in the composer via /shortcut.
+model SavedReply {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  bodyAr    String?
+  shortcut  String   // [a-z0-9_-]{1,32}, unique per workspace
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceSavedReplies", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, shortcut])
   @@index([workspaceId])
 }
 
@@ -850,6 +874,7 @@ model Workspace {
   pipelines         Pipeline[]         @relation("WorkspacePipelines")
   ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")
   lostReasons       LostReason[]       @relation("WorkspaceLostReasons")
+  savedReplies      SavedReply[]       @relation("WorkspaceSavedReplies")
   tickets           Ticket[]           @relation("WorkspaceTickets")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")

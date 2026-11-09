@@ -5,6 +5,8 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { resolveTemplateHeader, type TemplateHeaderInput } from "./template-header";
+import { normalizeReaction } from "./message-reaction";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret, encryptSecret } from "../common/token-crypto";
@@ -41,6 +43,8 @@ interface WebhookEntryChangeValue {
     image?: { id: string; caption?: string; mime_type?: string };
     audio?: { id: string; mime_type?: string };
     document?: { id: string; filename?: string; mime_type?: string };
+    // type "reaction": the reacted message's wamid and the emoji ("" = removed).
+    reaction?: { message_id?: string; emoji?: string };
   }>;
   statuses?: Array<{
     id: string;
@@ -620,6 +624,7 @@ export class WhatsAppService {
     name: string,
     language: string,
     variables: string[],
+    header?: TemplateHeaderInput,
   ) {
     const { token, phoneNumberId } = await this.requireToken(workspaceId);
     const conv = await this.prisma.conversation.findFirst({
@@ -637,11 +642,16 @@ export class WhatsAppService {
       );
     }
 
-    interface Component {
-      type: "body";
-      parameters: Array<{ type: "text"; text: string }>;
-    }
+    // Header first (Meta's component order); validated before anything is sent.
+    const resolvedHeader = await resolveTemplateHeader(
+      { prisma: this.prisma, media: this.media },
+      workspaceId,
+      name,
+      header,
+    );
+    type Component = { type: "header" | "body"; parameters: Array<Record<string, unknown>> };
     const components: Component[] = [];
+    if (resolvedHeader) components.push(resolvedHeader.component);
     if (variables.length > 0) {
       components.push({
         type: "body",
@@ -688,6 +698,7 @@ export class WhatsAppService {
         from: "human",
         body: previewBody,
         t,
+        attach: resolvedHeader?.attach ?? null,
         metaMessageId: wamid || null,
         deliveryStatus: wamid ? "sent" : null,
         deliveryStatusAt: wamid ? new Date() : null,
@@ -850,6 +861,11 @@ export class WhatsAppService {
           profileByWaId.set(c.wa_id, c.profile?.name);
         }
         for (const msg of messages) {
+          if (msg.type === "reaction") {
+            await this.applyReaction(integ.workspaceId, msg.reaction);
+            processed += 1;
+            continue;
+          }
           await this.ingestInbound(integ.workspaceId, msg, profileByWaId.get(msg.from));
           processed += 1;
         }
@@ -884,6 +900,20 @@ export class WhatsAppService {
       }
     }
     return { ok: true, processed };
+  }
+
+  /** SP-31: a customer's emoji reaction to one of our (or their) messages. */
+  private async applyReaction(workspaceId: string, r: { message_id?: string; emoji?: string } | undefined) {
+    if (!r?.message_id) return;
+    const emoji = normalizeReaction(r.emoji);
+    if (emoji === undefined) return;
+    const updated = await this.prisma.message.updateMany({
+      where: { workspaceId, metaMessageId: r.message_id },
+      data: { reaction: emoji, reactionAt: emoji === null ? null : new Date() },
+    });
+    if (updated.count > 0) {
+      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: "whatsapp" });
+    }
   }
 
   /**

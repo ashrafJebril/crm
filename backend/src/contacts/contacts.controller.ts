@@ -3,6 +3,7 @@ import type { Response } from "express";
 import { ContactsExportService, EXPORT_IDS_CAP, type PreparedExport } from "./contacts-export.service";
 import { ContactsService } from "./contacts.service";
 import { ContactTimelineService } from "./contact-timeline.service";
+import { CustomerThreadService } from "./customer-thread.service";
 import { ContactsBulkService } from "./contacts-bulk.service";
 import { parseContactFilter } from "./contact-filter";
 import { BulkContactsDto, CreateContactDto, UpdateContactDto } from "./contacts.dto";
@@ -17,6 +18,7 @@ export class ContactsController {
     private readonly bulkSvc: ContactsBulkService,
     private readonly exportSvc: ContactsExportService,
     private readonly timelineSvc: ContactTimelineService,
+    private readonly threadSvc: CustomerThreadService,
   ) {}
 
   @Get()
@@ -157,6 +159,18 @@ export class ContactsController {
     @Query("limit") limit?: string,
   ) {
     return this.timelineSvc.timeline(workspaceId, id, viewer, { before, limit: limit ? Number(limit) : undefined });
+  }
+
+  /** SP-31: all of the contact's conversations stitched into one thread, plus events. */
+  @Get(":id/thread")
+  thread(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer: Viewer,
+    @Query("before") before?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.threadSvc.thread(workspaceId, id, viewer, { before, limit: limit ? Number(limit) : undefined });
   }
 
   @Get(":id/tickets")

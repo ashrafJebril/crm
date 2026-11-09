@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { ConversationResolutionService, type Verdict } from "./conversation-resolution.service";
 
 describe("ConversationResolutionService.apply", () => {
@@ -40,6 +41,21 @@ describe("ConversationResolutionService.apply", () => {
     await svc.apply("c1", "ws", { ...base, resolved: true, reason: "resolved", confidence: 0.6, issue_type: "complaint", issue_confidence: 0.6 });
     expect(data()).toMatchObject({ resolutionStatus: "open", resolution: null, resolutionIssue: "none" });
     expect(tickets.createTicket).not.toHaveBeenCalled();
+  });
+
+  it("stores topics and pain points from the verdict (trimmed strings, capped), clears them when absent", async () => {
+    await svc.apply("c1", "ws", {
+      ...base,
+      topics: ["pricing", " delivery ", "", 5 as never, ...Array.from({ length: 20 }, (_, i) => `t${i}`)],
+      pain_points: ["slow reply"],
+    } as never);
+    expect(data().topics).toHaveLength(10);
+    expect(data().topics.slice(0, 2)).toEqual(["pricing", "delivery"]);
+    expect(data().painPoints).toEqual(["slow reply"]);
+    raw.conversation.update.mockClear();
+    await svc.apply("c1", "ws", { ...base });
+    expect(data().topics).toBe(Prisma.DbNull);
+    expect(data().painPoints).toBe(Prisma.DbNull);
   });
 
   it("a complaint opens a Support ticket in the open stage", async () => {

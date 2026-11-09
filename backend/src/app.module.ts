@@ -33,6 +33,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
+import { SavedRepliesModule } from "./saved-replies/saved-replies.module";
 import { WorkflowsModule } from "./workflows/workflows.module";
 import { McpServerModule } from "./mcp-server/mcp-server.module";
 import { AdsModule } from "./ads/ads.module";
@@ -55,6 +56,7 @@ import { RolesModule } from "./roles/roles.module";
     HealthModule,
     SegmentsModule,
     TagsModule,
+    SavedRepliesModule,
     ContactsModule,
     ImportsModule,
     ActivitiesModule,

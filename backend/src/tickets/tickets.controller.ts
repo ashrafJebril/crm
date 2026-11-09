@@ -108,7 +108,19 @@ export class TicketsController {
     @Body() dto: MoveTicketDto,
     @CurrentViewer() viewer?: Viewer,
   ) {
-    return this.svc.moveTicket(workspaceId, id, dto, viewer);
+    // The mover is the authenticated member (a client-supplied byUserId is not
+    // trusted): the activity's author drives who may undo the move (SP-31).
+    return this.svc.moveTicket(workspaceId, id, viewer ? { ...dto, byUserId: viewer.userId } : dto, viewer);
+  }
+
+  /** SP-31: undo the latest stage move (10-minute window, author or manager). */
+  @Post("tickets/:id/undo-stage")
+  undoStage(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer: Viewer,
+  ) {
+    return this.svc.undoLastMove(workspaceId, id, viewer);
   }
 
   @Post("tickets/:id/reopen")

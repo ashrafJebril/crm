@@ -29,7 +29,21 @@ export type Verdict = {
   sentiment: "positive" | "neutral" | "negative";
   summary: string;
   ticket_title: string | null;
+  /** SP-31, optional: short topic labels and customer pain points the agent found. */
+  topics?: string[] | null;
+  pain_points?: string[] | null;
 };
+
+/** Up to 10 trimmed non-empty strings of at most 80 chars, or DbNull when none. */
+function stringList(v: unknown): string[] | typeof Prisma.DbNull {
+  if (!Array.isArray(v)) return Prisma.DbNull;
+  const out = v
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim().slice(0, 80))
+    .filter(Boolean)
+    .slice(0, 10);
+  return out.length > 0 ? out : Prisma.DbNull;
+}
 
 const GENUINE = new Set(["resolved", "customer_requested"]);
 const SENDER: Record<string, "customer" | "ai" | "staff"> = { them: "customer", ai: "ai", human: "staff" };
@@ -80,7 +94,8 @@ export class ConversationResolutionService {
       UPDATE "Conversation" c SET
         "resolutionStatus" = NULL, "resolution" = NULL, "resolvedAt" = NULL,
         "resolutionIssue" = NULL, "resolutionConfidence" = NULL, "resolutionSentiment" = NULL,
-        "resolutionSummary" = NULL, "resolutionRationale" = NULL
+        "resolutionSummary" = NULL, "resolutionRationale" = NULL,
+        "topics" = NULL, "painPoints" = NULL
       WHERE c."resolutionStatus" IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM "Message" m
@@ -194,6 +209,8 @@ export class ConversationResolutionService {
         resolutionConfidence: v.confidence,
         resolutionSentiment: v.sentiment,
         resolutionSummary: v.summary?.slice(0, 2000) ?? null,
+        topics: stringList(v.topics),
+        painPoints: stringList(v.pain_points),
         resolutionRationale: v.rationale?.slice(0, 2000) ?? null,
         resolutionError: null,
         resolutionAttempts: 0,

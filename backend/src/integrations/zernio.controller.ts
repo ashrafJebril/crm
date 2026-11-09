@@ -10,7 +10,9 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { IsArray, IsOptional, IsString } from "class-validator";
+import { Type } from "class-transformer";
+import { IsArray, IsOptional, IsString, ValidateNested } from "class-validator";
+import { TemplateHeaderDto } from "./whatsapp.dto";
 import { AiHandoffService } from "./ai-handoff.service";
 import { ZernioService } from "./zernio.service";
 import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
@@ -40,6 +42,8 @@ class ZernioDbSendTemplateDto {
   @IsString() name!: string;
   @IsString() language!: string;
   @IsOptional() @IsArray() @IsString({ each: true }) variables?: string[];
+  /** SP-31 header values (library media id, or text params). */
+  @IsOptional() @ValidateNested() @Type(() => TemplateHeaderDto) header?: TemplateHeaderDto;
 }
 
 class ZernioCommentReplyDto {
@@ -191,6 +195,7 @@ export class ZernioController {
       dto.name,
       dto.language,
       dto.variables ?? [],
+      dto.header,
     );
     await this.handoff.humanReplied(workspaceId, id);
     return res;

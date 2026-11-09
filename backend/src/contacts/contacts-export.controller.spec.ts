@@ -45,7 +45,7 @@ function setup(rows: ReturnType<typeof row>[]) {
     workspaceMember: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const exp = new ContactsExportService(prisma as never, new SegmentsService(prisma as never));
-  return { prisma, ctrl: new ContactsController({} as never, {} as never, exp, {} as never) };
+  return { prisma, ctrl: new ContactsController({} as never, {} as never, exp, {} as never, {} as never) };
 }
 
 describe("ContactsController.export streaming", () => {

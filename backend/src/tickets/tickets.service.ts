@@ -24,6 +24,7 @@ import {
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { DEFAULT_TZ } from "../activities/buckets";
 import { assignConversationToTicketOwner } from "./ticket-conversation-assign";
+import { UNDO_NOTE, undoRefusal } from "./undo-stage";
 import {
   TICKET_SORTS,
   buildTicketWhere,
@@ -461,6 +462,49 @@ export class TicketsService {
     } satisfies WorkflowTriggerEvent);
 
     return updated;
+  }
+
+  /**
+   * SP-31: undo the latest stage move made from the inbox. Only the newest
+   * move-type activity, within UNDO_WINDOW_MS, by its author (or a tickets.manage
+   * holder), and only while the ticket is still in that toStage. The undo is a
+   * normal moveTicket back (activity, realtime, workflow triggers, agentCanMove).
+   */
+  async undoLastMove(workspaceId: string, ticketId: string, viewer: Viewer) {
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id: ticketId, workspaceId },
+      include: { stage: true },
+    });
+    if (!ticket) throw new NotFoundException("Ticket not found");
+    const latest = await this.prisma.ticketActivity.findFirst({
+      where: { ticketId, workspaceId, kind: { in: ["stage_changed", "won", "lost"] } },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    });
+    const canManage = this.perm ? await this.perm.viewerCan(workspaceId, viewer, "tickets.manage") : true;
+    const refusal = undoRefusal({
+      latest,
+      ticketStageKey: ticket.stage.key,
+      now: new Date(),
+      userId: viewer?.userId,
+      canManage,
+    });
+    if (refusal === "tickets.undo_not_author") {
+      throw new ForbiddenException({ statusCode: 403, message: refusal });
+    }
+    if (refusal) throw new ConflictException(refusal);
+
+    const fromStage = latest?.fromStage
+      ? await this.prisma.ticketStage.findFirst({
+          where: { key: latest.fromStage, pipelineId: ticket.pipelineId, workspaceId },
+        })
+      : null;
+    if (!fromStage) throw new ConflictException("tickets.undo_not_latest");
+    return this.moveTicket(
+      workspaceId,
+      ticketId,
+      { stageId: fromStage.id, note: UNDO_NOTE, byUserId: viewer?.userId },
+      viewer,
+    );
   }
 
   /** SP-07: a pipeline can restrict moves to people who may edit pipelines

@@ -6,6 +6,8 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import { resolveTemplateHeader, type TemplateHeaderInput } from "./template-header";
+import { normalizeReaction } from "./message-reaction";
 import { randomBytes } from "crypto";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PaymentLockService } from "../billing/payment-lock.service";
@@ -761,6 +763,7 @@ export class ZernioService {
     name: string,
     language: string,
     variables: string[],
+    header?: TemplateHeaderInput,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -783,15 +786,22 @@ export class ZernioService {
 
     // Positional {{1}}, {{2}} … variables become Meta's body component. Left
     // absent when there are none — an empty parameters array is a 400 at Meta.
-    const components =
-      variables.length > 0
-        ? [
-            {
-              type: "body",
-              parameters: variables.map((v) => ({ type: "text", text: v })),
-            },
-          ]
-        : undefined;
+    // Header first (Meta's component order); validated before anything is sent.
+    const resolvedHeader = await resolveTemplateHeader(
+      { prisma: this.prisma, media: this.media },
+      workspaceId,
+      name,
+      header,
+    );
+    const componentList: Array<Record<string, unknown>> = [];
+    if (resolvedHeader) componentList.push(resolvedHeader.component);
+    if (variables.length > 0) {
+      componentList.push({
+        type: "body",
+        parameters: variables.map((v) => ({ type: "text", text: v })),
+      });
+    }
+    const components = componentList.length > 0 ? componentList : undefined;
 
     const { id } = await this.client.sendTemplateMessage(zernioConvId, accountId, {
       name,
@@ -815,6 +825,7 @@ export class ZernioService {
         from: "human",
         body: previewBody,
         t,
+        attach: resolvedHeader?.attach ?? null,
         metaMessageId: id,
       },
     });
@@ -1246,6 +1257,10 @@ export class ZernioService {
       }
       return { ok: true };
     }
+    if (type === "reaction.received") {
+      await this.applyReaction(payload);
+      return { ok: true };
+    }
     if (
       type === "message.sent" ||
       type === "message.delivered" ||
@@ -1516,6 +1531,32 @@ export class ZernioService {
 
   /** Returns how many rows matched — 0 tells the caller this message isn't
    *  ours (e.g. a reply typed in the platform's own mobile app). */
+  /**
+   * SP-31: a customer's emoji reaction. Updates only the reacted message (by
+   * Zernio's or the platform's id, stored in metaMessageId) inside the
+   * integration's workspace; unknown ids and oversize emoji are ignored, an
+   * empty emoji removes the reaction. Only the latest reaction is kept.
+   */
+  private async applyReaction(payload: ZernioWebhookEvent): Promise<void> {
+    const r = payload.reaction ?? {};
+    const ids = [r.messageId, r.platformMessageId].filter((v): v is string => !!v);
+    const accountId = payload.account?.accountId ?? payload.account?.id;
+    if (ids.length === 0 || !accountId) return;
+    const emoji = normalizeReaction(r.emoji);
+    if (emoji === undefined) return;
+    const integ = await this.prisma.integration.findFirst({
+      where: { provider: "zernio", pageId: accountId },
+    });
+    if (!integ) return;
+    const updated = await this.prisma.message.updateMany({
+      where: { workspaceId: integ.workspaceId, metaMessageId: { in: ids } },
+      data: { reaction: emoji, reactionAt: emoji === null ? null : new Date() },
+    });
+    if (updated.count > 0) {
+      this.realtime.emitToWorkspace(integ.workspaceId, "inbox.activity", { channel: integ.platform });
+    }
+  }
+
   private async applyStatus(type: string, payload: ZernioWebhookEvent): Promise<number> {
     // Status events carry the same top-level shape as message.received. Match
     // either id scheme: sends store Zernio's internal id, backfilled rows the
@@ -1657,6 +1698,12 @@ export interface ZernioWebhookEvent {
     sender?: { id?: string; name?: string; username?: string; contactId?: string };
     sentAt?: string;
     isRead?: boolean;
+  };
+  /** reaction.received: the emoji and the message it targets (empty emoji = removed). */
+  reaction?: {
+    emoji?: string | null;
+    messageId?: string;          // Zernio's id of the reacted message
+    platformMessageId?: string;  // the platform's (Meta) id of the reacted message
   };
   conversation?: {
     id?: string;
