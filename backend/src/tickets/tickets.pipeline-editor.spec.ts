@@ -113,3 +113,61 @@ describe("archived pipelines", () => {
     expect(prisma.ticket.findFirst).not.toHaveBeenCalledWith(expect.objectContaining({ orderBy: expect.anything() }));
   });
 });
+
+describe("assignsConversations", () => {
+  function build(assigns: boolean) {
+    const base = setup();
+    const { prisma } = base;
+    prisma.ticket.findFirst = jest.fn().mockResolvedValue({
+      id: "tk_1", pipelineId: "pl_1", workspaceId: "ws_1", ownerId: null, conversationId: "cv_1", value: null,
+    });
+    prisma.workspaceMember = { findFirst: jest.fn().mockResolvedValue({ id: "m" }) };
+    prisma.pipeline.findFirst = jest.fn().mockResolvedValue({ id: "pl_1", assignsConversations: assigns });
+    prisma.conversation = {
+      findFirst: jest.fn().mockResolvedValue({ id: "cv_1", channel: "whatsapp", contactId: "c1", assigneeId: null, updatedAt: new Date(0) }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    };
+    prisma.user = { findUnique: jest.fn().mockResolvedValue({ name: "Boss" }) };
+    const realtime = { emitToWorkspace: jest.fn() };
+    const notifications = { notify: jest.fn().mockResolvedValue(undefined) };
+    const svc = new TicketsService(prisma, realtime as any, undefined, notifications as any, undefined);
+    return { svc, prisma, realtime, notifications };
+  }
+
+  it("owner change on a flagged pipeline moves the conversation (version bump, inbox.activity, notification)", async () => {
+    const { svc, prisma, realtime, notifications } = build(true);
+    await svc.updateTicket("ws_1", "tk_1", { ownerId: "u2" } as any, "u1");
+    expect(prisma.conversation.updateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: "cv_1", workspaceId: "ws_1" },
+      data: { assigneeId: "u2", version: { increment: 1 } },
+    });
+    expect(realtime.emitToWorkspace).toHaveBeenCalledWith("ws_1", "inbox.activity", expect.objectContaining({ conversationId: "cv_1" }));
+    expect(notifications.notify).toHaveBeenCalledWith("ws_1", ["u2"], expect.objectContaining({ title: "assignment.conversation", recordId: "cv_1" }));
+  });
+
+  it("does nothing when the flag is off", async () => {
+    const { svc, prisma } = build(false);
+    await svc.updateTicket("ws_1", "tk_1", { ownerId: "u2" } as any, "u1");
+    expect(prisma.conversation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("skips an opaque (non-DB) conversation id without failing", async () => {
+    const { svc, prisma } = build(true);
+    prisma.conversation.findFirst.mockResolvedValue(null);
+    await expect(svc.updateTicket("ws_1", "tk_1", { ownerId: "u2" } as any, "u1")).resolves.toBeDefined();
+    expect(prisma.conversation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("createTicket with owner and conversation assigns it too", async () => {
+    const { svc, prisma } = build(true);
+    prisma.ticketStage.findFirst = jest.fn().mockResolvedValue({ id: "st_1", pipelineId: "pl_1", key: "new" });
+    prisma.pipeline.findFirst = jest.fn().mockResolvedValue({ archivedAt: null, kind: "deals", assignsConversations: true });
+    prisma.conversation.findFirst = jest.fn()
+      .mockResolvedValueOnce({ id: "cv_1" })
+      .mockResolvedValue({ id: "cv_1", channel: "whatsapp", contactId: "c1", assigneeId: null, updatedAt: new Date(0) });
+    prisma.ticket.findFirst = jest.fn().mockResolvedValue({ number: 1 });
+    prisma.ticket.create = jest.fn().mockResolvedValue({ id: "tk_9", title: "t" });
+    await svc.createTicket("ws_1", { pipelineId: "pl_1", stageId: "st_1", contactId: "c1", conversationId: "cv_1", ownerId: "u2", title: "t" } as any, "u1");
+    expect(prisma.conversation.updateMany).toHaveBeenCalledTimes(1);
+  });
+});

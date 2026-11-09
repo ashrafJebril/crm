@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { TicketsService } from "../tickets/tickets.service";
+import { ensureDefaultLostReasons } from "../pipelines/default-lost-reasons";
 import { SUPPORT_PIPELINE, SUPPORT_STAGES } from "./support-pipeline";
 
 /** No message from either side for this long → the thread is judged. tkana's window. */
@@ -256,7 +257,7 @@ export class ConversationResolutionService {
     const find = () =>
       this.prisma.raw.pipeline.findFirst({
         where: { workspaceId, key: SUPPORT_PIPELINE.key },
-        select: { id: true, archivedAt: true, stages: { where: { key: "open" }, select: { id: true } } },
+        select: { id: true, archivedAt: true, stages: { orderBy: { order: "asc" }, select: { id: true, key: true, isTerminal: true } } },
       });
     let p = await find();
     if (!p) {
@@ -276,10 +277,13 @@ export class ConversationResolutionService {
         if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
       }
       p = await find();
+      if (p) await ensureDefaultLostReasons(this.prisma.raw as any, workspaceId, p.id);
     }
     if (p?.archivedAt) return null;
-    if (!p?.stages[0]) throw new Error("Support pipeline has no open stage");
-    return { pipelineId: p.id, stageId: p.stages[0].id };
+    // `open` is protected by the editor, but never throw if it is somehow gone.
+    const stage = p?.stages.find((s) => s.key === "open") ?? p?.stages.find((s) => !s.isTerminal);
+    if (!p || !stage) throw new Error("Support pipeline has no usable stage");
+    return { pipelineId: p.id, stageId: stage.id };
   }
 }
 

@@ -18,6 +18,7 @@ describe("ConversationResolutionService.apply", () => {
         create: jest.fn(),
       },
       ticket: { findFirst: jest.fn().mockResolvedValue(null) },
+      lostReason: { count: jest.fn().mockResolvedValue(0), createMany: jest.fn().mockResolvedValue({ count: 5 }) },
     };
     tickets = { createTicket: jest.fn().mockResolvedValue({ id: "t1" }) };
     realtime = { emitToWorkspace: jest.fn() };
@@ -87,5 +88,14 @@ describe("ConversationResolutionService.apply", () => {
     const created = raw.pipeline.create.mock.calls[0][0].data;
     expect(created.key).toBe("support");
     expect(created.stages.create.map((s: any) => s.groupKey)).not.toContain("new");
+    expect(raw.lostReason.createMany.mock.calls[0][0].data[0]).toMatchObject({ workspaceId: "ws", pipelineId: "p-new" });
+  });
+
+  it("falls back to the first non-terminal stage when `open` is missing", async () => {
+    raw.pipeline.findFirst.mockResolvedValue({
+      id: "p1", archivedAt: null,
+      stages: [{ id: "s-done", key: "done", isTerminal: true }, { id: "s-w", key: "working", isTerminal: false }],
+    });
+    await expect(svc.supportPipeline("ws")).resolves.toEqual({ pipelineId: "p1", stageId: "s-w" });
   });
 });

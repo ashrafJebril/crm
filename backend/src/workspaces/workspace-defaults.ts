@@ -12,6 +12,8 @@
  * checks for what it would create first.
  */
 
+import { ensureDefaultLostReasons } from "../pipelines/default-lost-reasons";
+
 /** The default sales pipeline's stages. `groupKey` is what the inbound-message
  *  automation looks up ("new" on arrival, "contacted" once we reply), so those
  *  two keys must exist for it to work. */
@@ -62,6 +64,10 @@ interface DefaultsClient {
   ticketStage: {
     findMany(args: unknown): Promise<Array<{ key: string }>>;
     create(args: unknown): Promise<unknown>;
+  };
+  lostReason: {
+    count(args: unknown): Promise<number>;
+    createMany(args: unknown): Promise<unknown>;
   };
   segment: {
     findMany(args: unknown): Promise<Array<{ name: string }>>;
@@ -128,6 +134,8 @@ export async function seedWorkspaceDefaults(
     });
     stagesCreated += 1;
   }
+
+  await ensureDefaultLostReasons(db, workspaceId, pipeline.id);
 
   const haveSegments = new Set(
     (await db.segment.findMany({ where: { workspaceId }, select: { name: true } })).map(

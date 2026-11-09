@@ -67,6 +67,7 @@ export function makePrisma(f: PipeFixture) {
           .filter((r) => (a.where?.archivedAt === null ? r.archivedAt == null : true))
           .sort((x, y) => x.order - y.order),
       ),
+      count: rec("lostReason.count", () => f.reasons.length),
       createMany: rec("lostReason.createMany", (a) => ({ count: a.data.length })),
       update: rec("lostReason.update", () => ({})),
       updateMany: rec("lostReason.updateMany", () => ({ count: 1 })),

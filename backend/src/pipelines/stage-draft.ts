@@ -33,6 +33,8 @@ export interface CurrentLostReason {
 }
 
 export interface CurrentPipeline {
+  /** Pipeline.key. The real Support pipeline (key "support") keeps its `open` stage. */
+  key?: string;
   version: number;
   stages: CurrentStage[];
   lostReasons: CurrentLostReason[];
@@ -163,6 +165,16 @@ export function validateDraft(current: CurrentPipeline, draft: DraftInput): Draf
     }
   }
 
+  // The real Support pipeline: ticket creation depends on its non-terminal `open` stage.
+  if (current.key === "support") {
+    const open = current.stages.find((s) => s.key === "open");
+    if (open) {
+      if (removedIds.has(open.id)) return fail("pipelines.system_stage");
+      const kept = draft.stages.find((s) => s.id === open.id);
+      if (!kept || kept.isTerminal) return fail("pipelines.system_stage");
+    }
+  }
+
   // Order: a permutation of 0..n-1
   const orders = draft.stages.map((s) => s.order).sort((a, b) => a - b);
   if (!orders.every((o, i) => o === i)) return fail("pipelines.invalid_order");
@@ -186,7 +198,9 @@ export function validateDraft(current: CurrentPipeline, draft: DraftInput): Draf
     } else if (moveTo && !keptIds.has(moveTo)) {
       return fail("pipelines.move_target_required");
     }
-    stageDeletes.push({ stageId: r.stageId, moveTo: cur.ticketCount > 0 ? moveTo : null });
+    // A supplied valid target is kept even when the count was 0 at load: a card
+    // may have arrived since, and the service moves it instead of failing.
+    stageDeletes.push({ stageId: r.stageId, moveTo });
   }
 
   // Lost reasons

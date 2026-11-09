@@ -23,6 +23,7 @@ import {
 } from "./tickets.dto";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { DEFAULT_TZ } from "../activities/buckets";
+import { assignConversationToTicketOwner } from "./ticket-conversation-assign";
 import {
   TICKET_SORTS,
   buildTicketWhere,
@@ -167,7 +168,7 @@ export class TicketsService {
     // Archived pipelines are read-only for new work (their tickets stay readable).
     const pl = await this.prisma.pipeline.findFirst({
       where: { id: dto.pipelineId, workspaceId },
-      select: { archivedAt: true, kind: true },
+      select: { archivedAt: true, kind: true, assignsConversations: true },
     });
     if (pl?.archivedAt) throw new BadRequestException("pipelines.archived");
 
@@ -246,6 +247,10 @@ export class TicketsService {
 
     this.realtime.emitToWorkspace(workspaceId, "ticket.created", { ticket });
 
+    if (dto.ownerId && dto.conversationId && pl?.assignsConversations) {
+      await this.syncConversationOwner(workspaceId, dto.conversationId, dto.ownerId, actorId);
+    }
+
     if (dto.ownerId && dto.ownerId !== actorId) {
       await this.notifyTicketOwner(workspaceId, dto.ownerId, ticket.id, ticket.title, actorId);
     }
@@ -315,7 +320,32 @@ export class TicketsService {
       await this.notifyTicketOwner(workspaceId, dto.ownerId, id, updated.title, actorId);
     }
 
+    if (
+      typeof dto.ownerId === "string" &&
+      dto.ownerId !== existing.ownerId &&
+      existing.conversationId
+    ) {
+      const pl = await this.prisma.pipeline.findFirst({
+        where: { id: existing.pipelineId, workspaceId },
+        select: { assignsConversations: true },
+      });
+      if (pl?.assignsConversations) {
+        await this.syncConversationOwner(workspaceId, existing.conversationId, dto.ownerId, actorId);
+      }
+    }
+
     return updated;
+  }
+
+  /** assignsConversations: the linked conversation follows the ticket owner. Bulk assign goes through updateTicket, so it is covered too. */
+  private syncConversationOwner(workspaceId: string, conversationId: string, ownerId: string, actorId?: string) {
+    return assignConversationToTicketOwner(
+      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications },
+      workspaceId,
+      conversationId,
+      ownerId,
+      actorId,
+    );
   }
 
   /** Best-effort: a notification problem must never fail the ticket write. */

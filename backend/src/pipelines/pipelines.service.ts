@@ -1,16 +1,11 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePipelineDto } from "./pipelines.dto";
+import { DEFAULT_LOST_REASONS, ensureDefaultLostReasons } from "./default-lost-reasons";
 import { slugify, validateDraft, type CurrentPipeline, type DraftInput } from "./stage-draft";
 
-/** The lost reasons every new pipeline starts with (same set the old modal hardcoded). */
-export const DEFAULT_LOST_REASONS = [
-  { label: "Price too high", labelAr: "السعر مرتفع" },
-  { label: "Found cheaper alternative", labelAr: "وجد بديلاً أرخص" },
-  { label: "Customer went silent", labelAr: "توقف العميل" },
-  { label: "Wrong product fit", labelAr: "غير مناسب" },
-  { label: "Other", labelAr: "أخرى" },
-];
+export { DEFAULT_LOST_REASONS };
 
 @Injectable()
 export class PipelinesService {
@@ -55,6 +50,8 @@ export class PipelinesService {
   async lostReasons(workspaceId: string, id: string) {
     const p = await this.prisma.pipeline.findFirst({ where: { id, workspaceId }, select: { id: true } });
     if (!p) throw new NotFoundException("Pipeline not found");
+    // Pipelines made outside the editor (seed, Support auto-create) start empty.
+    await ensureDefaultLostReasons(this.prisma as any, workspaceId, id);
     return this.prisma.lostReason.findMany({
       where: { pipelineId: id, workspaceId, archivedAt: null },
       orderBy: { order: "asc" },
@@ -65,7 +62,10 @@ export class PipelinesService {
     const existing = await this.prisma.pipeline.findMany({ where: { workspaceId }, select: { key: true } });
     const used = new Set(existing.map((p: { key: string }) => p.key));
     const base = slugify(dto.name);
+    // "support" / "sales" are the system pipelines' keys.
+    const reserved = new Set(["support", "sales"]);
     let key = base;
+    if (reserved.has(key)) key = `${base}_2`;
     for (let n = 2; used.has(key); n++) key = `${base}_${n}`;
 
     // groupKey "custom_*" keeps PipelineAutomationService (which adopts the
@@ -79,7 +79,7 @@ export class PipelinesService {
         key,
         name: dto.name.trim(),
         nameAr: dto.nameAr.trim(),
-        kind: dto.kind ?? "deals",
+        kind: dto.kind === "leads" ? "leads" : "deals",
         isDefault: false,
         stages: {
           create: [
@@ -110,7 +110,10 @@ export class PipelinesService {
     const p = await this.load(workspaceId, id);
     if (draft.version !== p.version) throw this.conflict(await this.get(workspaceId, id));
 
+    if (p.archivedAt) throw new BadRequestException("pipelines.archived");
+
     const current: CurrentPipeline = {
+      key: p.key,
       version: p.version,
       stages: p.stages.map((s: any) => ({
         id: s.id, key: s.key, label: s.label, labelAr: s.labelAr, color: s.color, order: s.order,
@@ -201,6 +204,10 @@ export class PipelinesService {
         });
       }
     }).catch(async (e: unknown) => {
+      // A card landed in a "no cards" stage between load and commit (FK on delete).
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2003") {
+        throw new BadRequestException("pipelines.move_target_required");
+      }
       if (e instanceof ConflictException && (e.getResponse() as any)?.current === undefined) {
         throw this.conflict(await this.get(workspaceId, id));
       }
@@ -213,7 +220,7 @@ export class PipelinesService {
   async archive(workspaceId: string, id: string) {
     const p = await this.load(workspaceId, id);
     if (p.isDefault) throw new BadRequestException("pipelines.cannot_archive_default");
-    if (p.kind === "support") throw new BadRequestException("pipelines.cannot_archive_support");
+    if (p.key === "support") throw new BadRequestException("pipelines.cannot_archive_support");
     await this.prisma.pipeline.updateMany({
       where: { id, workspaceId },
       data: { archivedAt: p.archivedAt ?? new Date(), version: { increment: 1 } },

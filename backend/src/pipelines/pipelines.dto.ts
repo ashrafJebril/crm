@@ -11,12 +11,12 @@ import {
   ValidateNested,
 } from "class-validator";
 
-export const PIPELINE_KINDS = ["deals", "support"] as const;
+export const PIPELINE_KINDS = ["deals", "leads"] as const;
 
 export class CreatePipelineDto {
   @IsString() @IsNotEmpty() name!: string;
   @IsString() @IsNotEmpty() nameAr!: string;
-  @IsOptional() @IsIn(PIPELINE_KINDS as unknown as string[]) kind?: "deals" | "support";
+  @IsOptional() @IsIn(PIPELINE_KINDS as unknown as string[]) kind?: "deals" | "leads";
 }
 
 export class ListPipelinesQuery {

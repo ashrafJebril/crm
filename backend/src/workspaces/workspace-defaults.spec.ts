@@ -33,6 +33,10 @@ describe("seedWorkspaceDefaults", () => {
           return Promise.resolve({});
         }),
       },
+      lostReason: {
+        count: jest.fn().mockResolvedValue(0),
+        createMany: jest.fn().mockResolvedValue({ count: 5 }),
+      },
       segment: {
         findMany: jest
           .fn()
@@ -120,5 +124,17 @@ describe("seedWorkspaceDefaults", () => {
     expect(won?.name).toBe("Won deals");
     expect(won?.nameAr).toBe("صفقات تم الفوز");
     expect(contacted?.name).toBe("Contacted");
+  });
+
+  it("seeds default lost reasons for the sales pipeline, and not when some exist", async () => {
+    const { db } = build();
+    await seedWorkspaceDefaults(db as never, "ws1");
+    const arg = db.lostReason.createMany.mock.calls[0][0];
+    expect(arg.data.length).toBeGreaterThanOrEqual(1);
+    expect(arg.data[0]).toMatchObject({ workspaceId: "ws1", pipelineId: "pl-new" });
+    const again = build();
+    again.db.lostReason.count.mockResolvedValue(3);
+    await seedWorkspaceDefaults(again.db as never, "ws1");
+    expect(again.db.lostReason.createMany).not.toHaveBeenCalled();
   });
 });

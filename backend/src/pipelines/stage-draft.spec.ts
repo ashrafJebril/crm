@@ -220,3 +220,48 @@ describe("validateDraft", () => {
     expect(key(current(), d3)).toBe("ok");
   });
 });
+
+describe("support pipeline protection", () => {
+  const supportCurrent = (): CurrentPipeline => ({
+    ...current(),
+    key: "support",
+    stages: [stage("open", 0), stage("work", 1), stage("won", 2, { isTerminal: true, isWon: true })],
+  });
+  const supportDraft = (): DraftInput => ({
+    ...draft(),
+    stages: [ds("open", 0), ds("work", 1), ds("won", 2, { isWon: true, isTerminal: true })],
+  });
+
+  it("refuses to remove the open stage", () => {
+    const d = supportDraft();
+    d.stages = [ds("work", 0), ds("won", 1, { isWon: true, isTerminal: true })];
+    d.removed = [{ stageId: "open", moveTo: "work" }];
+    expect(validateDraft(supportCurrent(), d)).toEqual({ ok: false, key: "pipelines.system_stage" });
+  });
+
+  it("refuses to make the open stage terminal", () => {
+    const d = supportDraft();
+    d.stages[0] = ds("open", 0, { isTerminal: true });
+    expect(validateDraft(supportCurrent(), d)).toEqual({ ok: false, key: "pipelines.system_stage" });
+  });
+
+  it("allows renaming it and other stages; other pipelines are unrestricted", () => {
+    const d = supportDraft();
+    d.stages[0] = ds("open", 0, { label: "Fresh" });
+    expect(validateDraft(supportCurrent(), d).ok).toBe(true);
+    const other = { ...supportCurrent(), key: "renewals" };
+    const d2 = supportDraft();
+    d2.stages = [ds("work", 0), ds("won", 1, { isWon: true, isTerminal: true })];
+    d2.removed = [{ stageId: "open", moveTo: "work" }];
+    expect(validateDraft(other, d2).ok).toBe(true);
+  });
+
+  it("keeps a supplied valid moveTo even when the stage had no cards at load", () => {
+    const d = draft();
+    d.stages = d.stages.filter((s) => s.id !== "new");
+    d.stages.forEach((s, i) => (s.order = i));
+    d.removed = [{ stageId: "new", moveTo: "work" }];
+    const r = validateDraft(current(), d);
+    expect(r.ok && r.plan.stageDeletes).toEqual([{ stageId: "new", moveTo: "work" }]);
+  });
+});
