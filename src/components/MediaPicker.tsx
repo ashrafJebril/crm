@@ -5,6 +5,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { API_BASE, api, tokenStore } from "@/api/client";
 import { uploadMedia } from "@/api/uploadMedia";
+import { mediaErrorText } from "@/components/media/mediaErrors";
 import { IconPlus, IconX } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -51,7 +52,7 @@ export function MediaPicker({ open, onClose, onPick }: Props) {
       onClose();
       listQ.refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setError(mediaErrorText(e, tx, tx("Upload failed", "فشل الرفع")));
     } finally {
       setUploading(false);
     }

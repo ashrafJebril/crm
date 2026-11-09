@@ -1,23 +1,43 @@
-import { Fragment, memo, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, memo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
-import { Badge } from "@/components/Badge";
+import { Badge, statusKind } from "@/components/Badge";
 import { PhonePreview } from "@/components/PhonePreview";
 import {
   IconCheck,
   IconChev,
   IconPlus,
 } from "@/icons";
-import type { Campaign, CampaignPreview, CampaignVariable, Segment, Template } from "@/lib/types";
-import { mappingComplete, placeholderCount, renderCampaignPreview } from "./campaigns/campaignVars";
+import type { Campaign, CampaignPreviewV2, CustomFieldDef, Segment, Template, VarMap } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { usePermissions } from "@/auth/usePermissions";
 import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { WhatsAppGate, useWhatsAppConnection } from "@/components/WhatsAppGate";
+import { gatedTitle } from "@/components/whatsAppGateCopy";
+import { headerKind } from "@/components/media/mediaKinds";
 import { useHashParam } from "@/lib/useHashParam";
 import { InlineBar, MiniStat } from "./campaigns/ui";
 import { CampaignDetail } from "./campaigns/CampaignDetail";
+import { campaignErrorText, campaignKeyText, lastErrorText } from "./campaigns/campaignErrors";
+import { LAUNCH_POLL_MS, campaignStatusLabel } from "./campaigns/campaignDetailModel";
+import {
+  defaultVarMap,
+  normalizeVarMap,
+  placeholderCount,
+  renderTemplate,
+  renderWithLabels,
+  templateUnsupported,
+  varMapComplete,
+} from "./campaigns/varMap";
+import { effectiveSelection, senderText, showSendFrom } from "./campaigns/senderModel";
+import { useCampaignPreview, useCustomFields, type PreviewBody } from "./campaigns/useCampaignPreview";
+import { SendFromField } from "./campaigns/SendFromField";
+import { VariableMappingField } from "./campaigns/VariableMappingField";
+import { HEADER_MEDIA_MAX_DAYS, HeaderMediaField } from "./campaigns/HeaderMediaField";
+import { ReviewSamples } from "./campaigns/ReviewSamples";
+import { LaunchProgress } from "./campaigns/LaunchProgress";
 
 type View = "list" | "builder";
 type CampaignStatus = Campaign["status"];
@@ -121,25 +141,14 @@ interface MessageStepProps {
   templates: Template[];
   templateId: string | null;
   onSelect: (id: string | null) => void;
-  mapping: CampaignVariable[];
-  onMapping: (m: CampaignVariable[]) => void;
+  varMap: VarMap;
+  onVarMap: (m: VarMap) => void;
+  customDefs: CustomFieldDef[] | null;
+  missingByKey: CampaignPreviewV2["missingByKey"] | null;
+  header: ReactNode;
 }
 
-const fieldLabels = (tx: Tx): Record<CampaignVariable["field"], string> => ({
-  name: tx("Customer name", "اسم العميل"),
-  phone: tx("Customer phone", "هاتف العميل"),
-  custom: tx("Fixed text", "نص ثابت"),
-});
-
-function MessageStep({ tx, templates, templateId, onSelect, mapping, onMapping }: MessageStepProps) {
-  const selected = templates.find((t) => t.id === templateId) ?? null;
-  const count = placeholderCount(selected?.body);
-  const labels = fieldLabels(tx);
-  const setVar = (i: number, v: CampaignVariable) => {
-    const next = Array.from({ length: count }, (_, j) => mapping[j] ?? ({ field: "name" } as CampaignVariable));
-    next[i] = v;
-    onMapping(next);
-  };
+function MessageStep({ tx, templates, templateId, onSelect, varMap, onVarMap, customDefs, missingByKey, header }: MessageStepProps) {
   return (
     <div className="card">
       <div className="card-h">
@@ -150,65 +159,26 @@ function MessageStep({ tx, templates, templateId, onSelect, mapping, onMapping }
       </div>
       <div style={{ padding: 18, display: "grid", gap: 14 }}>
         <Field label={tx("Template", "القالب")}>
-          <select
-            style={INPUT_STYLE}
-            value={templateId ?? ""}
-            onChange={(e) => {
-              const id = e.target.value || null;
-              onSelect(id);
-              const t = templates.find((x) => x.id === id);
-              onMapping(Array.from({ length: placeholderCount(t?.body) }, () => ({ field: "name" }) as CampaignVariable));
-            }}
-          >
+          <select style={INPUT_STYLE} value={templateId ?? ""} onChange={(e) => onSelect(e.target.value || null)}>
             <option value="">{tx("Select a template…", "اختر قالبًا…")}</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id} disabled={t.status !== "approved"}>
-                {t.name} · {t.lang.toUpperCase()}
-                {t.status !== "approved" ? ` · ${tx("not approved yet", "غير معتمد بعد")}` : ""}
-              </option>
-            ))}
+            {templates.map((t) => {
+              const unsupported = templateUnsupported(t);
+              return (
+                <option key={t.id} value={t.id} disabled={t.status !== "approved" || unsupported}>
+                  {t.name} · {t.lang.toUpperCase()}
+                  {t.status !== "approved"
+                    ? ` · ${tx("not approved yet", "غير معتمد بعد")}`
+                    : unsupported
+                      ? ` · ${tx("Not supported for campaigns yet", "غير مدعوم في الحملات بعد")}`
+                      : ""}
+                </option>
+              );
+            })}
           </select>
         </Field>
 
-        {Array.from({ length: count }, (_, i) => {
-          const v = mapping[i] ?? ({ field: "name" } as CampaignVariable);
-          return (
-            <Field key={i} label={`${tx("Variable", "المتغير")} {{${i + 1}}}`}>
-              <div style={{ display: "flex", gap: 8 }}>
-                <select
-                  style={{ ...INPUT_STYLE, width: 170 }}
-                  value={v.field}
-                  onChange={(e) => {
-                    const field = e.target.value as CampaignVariable["field"];
-                    setVar(i, field === "custom" ? { field, customValue: "" } : { field });
-                  }}
-                >
-                  {(["name", "phone", "custom"] as const).map((f) => (
-                    <option key={f} value={f}>
-                      {labels[f]}
-                    </option>
-                  ))}
-                </select>
-                {v.field === "custom" && (
-                  <input
-                    style={{ ...INPUT_STYLE, flex: 1 }}
-                    value={v.customValue}
-                    onChange={(e) => setVar(i, { field: "custom", customValue: e.target.value })}
-                    placeholder={tx("Same for everyone, e.g. 20%", "نفس القيمة للجميع، مثل 20%")}
-                  />
-                )}
-              </div>
-            </Field>
-          );
-        })}
-        {count > 0 && (
-          <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-            {tx(
-              "Customer name and phone are filled in for each person. A contact without a name gets “Customer”.",
-              "يُملأ اسم العميل وهاتفه لكل شخص. جهة الاتصال بلا اسم تظهر كـ «Customer».",
-            )}
-          </div>
-        )}
+        <VariableMappingField tx={tx} value={varMap} onChange={onVarMap} customDefs={customDefs} missingByKey={missingByKey} />
+        {header}
 
         {templates.length > 0 && !templates.some((t) => t.status === "approved") && (
           <div style={{ fontSize: 12, color: "var(--warn)" }}>
@@ -236,6 +206,8 @@ interface ScheduleStepProps {
   onChoose: (c: ScheduleChoice) => void;
   when: string;
   onWhen: (v: string) => void;
+  /** A campaign with its own header file can be scheduled at most 6 days ahead (ruling 9). */
+  maxDays: number | null;
 }
 
 /** "YYYY-MM-DDTHH:mm" in local time, the format <input type="datetime-local"> uses. */
@@ -244,7 +216,7 @@ const toLocalInput = (d: Date) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-function ScheduleStep({ tx, choice, onChoose, when, onWhen }: ScheduleStepProps) {
+function ScheduleStep({ tx, choice, onChoose, when, onWhen, maxDays }: ScheduleStepProps) {
   const options = [
     { id: "now" as const, label: tx("Send now", "إرسال الآن"), sub: tx("Starts sending as soon as you confirm", "يبدأ الإرسال فور التأكيد") },
     { id: "later" as const, label: tx("Schedule for later", "جدولة لاحقاً"), sub: tx("Pick a date and time", "اختر التاريخ والوقت") },
@@ -283,9 +255,15 @@ function ScheduleStep({ tx, choice, onChoose, when, onWhen }: ScheduleStepProps)
               style={INPUT_STYLE}
               value={when}
               min={toLocalInput(new Date())}
+              max={maxDays ? toLocalInput(new Date(Date.now() + maxDays * 86_400_000)) : undefined}
               onChange={(e) => onWhen(e.target.value)}
             />
           </Field>
+        )}
+        {choice === "later" && maxDays && (
+          <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            {campaignKeyText("campaigns.header_media_schedule_too_far", { days: maxDays }, tx)}
+          </div>
         )}
         <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
           {tx(
@@ -301,28 +279,36 @@ function ScheduleStep({ tx, choice, onChoose, when, onWhen }: ScheduleStepProps)
 interface ReviewStepProps {
   tx: Tx;
   audienceLabel: string;
-  preview: CampaignPreview | null;
+  preview: CampaignPreviewV2 | null;
   previewLoading: boolean;
+  previewError: string | null;
   template: Template | null;
   scheduleLabel: string;
+  senderLabel: string | null;
+  samples: ReactNode;
 }
 
-function ReviewStep({ tx, audienceLabel, preview, previewLoading, template, scheduleLabel }: ReviewStepProps) {
+function ReviewStep({ tx, audienceLabel, preview, previewLoading, previewError, template, scheduleLabel, senderLabel, samples }: ReviewStepProps) {
   const reach = preview
     ? `${preview.reachable.toLocaleString()} ${tx("of", "من")} ${preview.total.toLocaleString()} ${tx("contacts", "جهة")}`
     : previewLoading
       ? tx("Counting…", "جارٍ العد…")
       : "—";
-  const skipped = preview ? preview.skipped.noPhone + preview.skipped.optedOut + preview.skipped.duplicate : 0;
+  const sk = preview?.skipped;
+  const skipped = sk ? sk.noPhone + sk.optedOut + sk.duplicate + sk.missingValue : 0;
   const rows: [string, string][] = [
     [tx("Audience", "الجمهور"), audienceLabel],
     [tx("Will receive it", "سيستلمها"), reach],
     [tx("Template", "القالب"), template ? `${template.name} · ${template.lang.toUpperCase()}` : tx("None selected", "لم يُختر")],
+    ...(senderLabel ? ([[tx("Send from", "الإرسال من"), senderLabel]] as [string, string][]) : []),
     [tx("Schedule", "الموعد"), scheduleLabel],
   ];
   return (
     <div className="card">
-      <div className="card-h"><h3>{tx("Review", "مراجعة")}</h3></div>
+      <div className="card-h">
+        <h3>{tx("Review", "مراجعة")}</h3>
+        {previewLoading && preview && <span className="sub">{tx("Updating…", "جارٍ التحديث…")}</span>}
+      </div>
       <div style={{ padding: 18, display: "grid", gap: 10 }}>
         {rows.map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
@@ -330,22 +316,28 @@ function ReviewStep({ tx, audienceLabel, preview, previewLoading, template, sche
             <span style={{ fontWeight: 500, textAlign: "end" }}>{v}</span>
           </div>
         ))}
-        {preview && skipped > 0 && (
+        {previewError && (
+          <div role="alert" style={{ fontSize: 12, color: "var(--bad)" }}>
+            {previewError}
+          </div>
+        )}
+        {sk && skipped > 0 && (
           <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
             {tx(
-              `Left out: ${preview.skipped.noPhone} without a phone number with a country code, ${preview.skipped.optedOut} opted out, ${preview.skipped.duplicate} duplicate numbers.`,
-              `مستبعدون: ${preview.skipped.noPhone} بلا رقم برمز الدولة، ${preview.skipped.optedOut} ألغوا الاشتراك، ${preview.skipped.duplicate} أرقام مكررة.`,
+              `Left out: ${sk.noPhone} without a phone number with a country code, ${sk.optedOut} opted out, ${sk.duplicate} duplicate numbers, ${sk.missingValue} missing a value without a fallback.`,
+              `مستبعدون: ${sk.noPhone} بلا رقم برمز الدولة، ${sk.optedOut} ألغوا الاشتراك، ${sk.duplicate} أرقام مكررة، ${sk.missingValue} بلا قيمة ولا بديل.`,
             )}
           </div>
         )}
         {preview && preview.reachable === 0 && (
           <div style={{ fontSize: 12, color: "var(--warn)" }}>
             {tx(
-              "No one in this audience has a WhatsApp number with a country code, so the campaign can't be sent.",
-              "لا أحد في هذا الجمهور لديه رقم واتساب برمز الدولة، لذا لا يمكن إرسال الحملة.",
+              "No one in this audience can receive it (no WhatsApp number with a country code, opted out, or a missing value without a fallback), so the campaign can't be sent.",
+              "لا أحد في هذا الجمهور يمكنه استلامها (لا رقم واتساب برمز الدولة، أو ألغى الاشتراك، أو قيمة ناقصة بلا بديل)، لذا لا يمكن إرسال الحملة.",
             )}
           </div>
         )}
+        {samples}
         {preview && preview.reachable > 0 && (
           <div
             style={{
@@ -369,10 +361,20 @@ function ReviewStep({ tx, audienceLabel, preview, previewLoading, template, sche
   );
 }
 
+/** Draft PATCH/POST takes the varMap's shape only: slots whose fixed value is still empty are left out until filled. */
+function draftVarMap(map: VarMap): VarMap {
+  const out: VarMap = {};
+  for (const [slot, s] of Object.entries(normalizeVarMap(map))) {
+    if (s.source === "static" && !s.value) continue;
+    out[slot] = s;
+  }
+  return out;
+}
+
 interface CampaignBuilderProps {
   tx: Tx;
   onBack: () => void;
-  onDone: (message: string) => void;
+  onDone: (message: string, openId?: string) => void;
 }
 
 function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
@@ -386,11 +388,17 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
 
   const segmentsQ = useFetch<Segment[]>("/segments");
   const templatesQ = useFetch<Template[]>("/templates");
+  const { connected, senders } = useWhatsAppConnection();
+  const { defs: customDefs, labels: customLabels } = useCustomFields();
 
   const [name, setName] = useState("");
   const [segmentId, setSegmentId] = useState<string | null>(null); // null = all contacts
   const [templateId, setTemplateId] = useState<string | null>(null);
-  const [mapping, setMapping] = useState<CampaignVariable[]>([]);
+  const [varMap, setVarMap] = useState<VarMap>({});
+  // [] = the default number.
+  const [senderIds, setSenderIds] = useState<string[]>([]);
+  const [headerOverride, setHeaderOverride] = useState(false);
+  const [headerMediaId, setHeaderMediaId] = useState<string | null>(null);
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice>("now");
   const [when, setWhen] = useState(() => toLocalInput(new Date(Date.now() + 3_600_000)));
   // A failed launch keeps its saved draft, so retrying doesn't create a second one.
@@ -398,20 +406,45 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const previewQ = useFetch<CampaignPreview>(
-    step === 4 ? `/campaigns/preview${segmentId ? `?segmentId=${encodeURIComponent(segmentId)}` : ""}` : null,
-  );
-
   const segments = segmentsQ.data ?? [];
   const templates = (templatesQ.data ?? []).filter((t) => !!t.body);
   const selectedSegment = segments.find((s) => s.id === segmentId) ?? null;
-  const audienceCount = previewQ.data?.total ?? selectedSegment?.count ?? 0;
   const audienceLabel = selectedSegment ? selectedSegment.name : tx("All contacts", "كل جهات الاتصال");
   const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
   const varCount = placeholderCount(selectedTemplate?.body);
+  const hKind = headerKind(selectedTemplate);
+  const mediaKind = hKind && hKind !== "text" ? hKind : null;
+  const customKeys = customDefs ? new Set(customDefs.filter((d) => !d.archivedAt).map((d) => d.key)) : null;
+  const mapOk = varMapComplete(varMap, varCount, customKeys);
+  const useHeaderFile = !!mediaKind && headerOverride && !!headerMediaId;
 
-  const previewBody = selectedTemplate?.body
-    ? renderCampaignPreview(selectedTemplate.body, mapping)
+  // POST /campaigns/preview: debounced, never per keystroke (it reads each sender's templates live).
+  const previewBody: PreviewBody = {
+    ...(segmentId ? { segmentId } : {}),
+    ...(templateId ? { templateId } : {}),
+    ...(senderIds.length ? { senderChannelIds: senderIds } : {}),
+    ...(templateId && varCount > 0 && mapOk ? { varMap: normalizeVarMap(varMap) } : {}),
+    ...(useHeaderFile ? { headerMediaId: headerMediaId! } : {}),
+  };
+  const preview = useCampaignPreview(previewBody);
+  const pv = preview.data;
+  const errCtx = { senders: senders?.senders ?? [] };
+  const audienceCount = pv?.total ?? selectedSegment?.count ?? 0;
+
+  const selectTemplate = (id: string | null) => {
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    setVarMap(defaultVarMap(placeholderCount(t?.body)));
+    setHeaderOverride(false);
+    setHeaderMediaId(null);
+  };
+
+  const body = selectedTemplate?.body ?? "";
+  const sample = preview.current ? pv?.samples.find((s) => !s.skippedFor) : undefined;
+  const previewBody_ = selectedTemplate?.body
+    ? sample
+      ? renderTemplate(body, sample.values)
+      : renderWithLabels(body, varMap, tx, customLabels)
     : tx("Select a template to preview it.", "اختر قالبًا للمعاينة.");
   let previewButtons: string[] = [];
   try {
@@ -420,7 +453,12 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   } catch { previewButtons = []; }
 
   const whenDate = scheduleChoice === "later" ? new Date(when) : null;
-  const whenValid = !whenDate || (!Number.isNaN(whenDate.getTime()) && whenDate.getTime() > Date.now());
+  const maxDays = useHeaderFile ? HEADER_MEDIA_MAX_DAYS : null;
+  const whenValid =
+    !whenDate ||
+    (!Number.isNaN(whenDate.getTime()) &&
+      whenDate.getTime() > Date.now() &&
+      (!maxDays || whenDate.getTime() <= Date.now() + maxDays * 86_400_000));
   const scheduleLabel =
     scheduleChoice === "now"
       ? tx("Send now", "إرسال الآن")
@@ -428,19 +466,40 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         ? whenDate.toLocaleString()
         : tx("Pick a time", "اختر الوقت");
 
+  const sendersList = senders?.senders ?? [];
+  const pickerShown = !!senders && showSendFrom(sendersList, senderIds);
+  const chosen = effectiveSelection(senderIds, sendersList);
+  const senderLabel = senders
+    ? chosen
+        .map((id) => sendersList.find((s) => s.channelId === id))
+        .filter((s) => !!s)
+        .map((s) => senderText(s))
+        .join(", ") || null
+    : null;
+
   const { can } = usePermissions();
   const mayLaunch = can("campaigns.manage");
   // saveDraft() PATCHes an existing draft (campaigns.update) or POSTs a new one (campaigns.create).
   const mayDraft = draftId ? can("campaigns.update") : can("campaigns.create");
   const noPerm = tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
+  const gate = gatedTitle(scheduleChoice === "now" ? "campaign.launch" : "campaign.schedule", connected === false || pv?.connected === false ? false : connected, tx);
   const canLaunch =
     mayLaunch &&
     mayDraft &&
+    !gate &&
     !!name.trim() &&
     selectedTemplate?.status === "approved" &&
-    mappingComplete(mapping, varCount) &&
+    !templateUnsupported(selectedTemplate) &&
+    mapOk &&
     whenValid &&
-    (previewQ.data?.reachable ?? 0) > 0;
+    (!mediaKind || !headerOverride || !!headerMediaId) &&
+    preview.current &&
+    !!pv &&
+    pv.connected &&
+    pv.reachable > 0 &&
+    pv.templateMissing.length === 0 &&
+    (pv.templateCheckFailed ?? []).length === 0 &&
+    pv.transport.kind !== "too_varied";
 
   const draftBody = () => ({
     name: name.trim(),
@@ -450,6 +509,9 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
     schedule: scheduleLabel,
     segmentId: segmentId ?? undefined,
     templateId: templateId ?? undefined,
+    senderChannelIds: senderIds,
+    varMap: varCount > 0 ? draftVarMap(varMap) : null,
+    headerMediaId: useHeaderFile ? headerMediaId : null,
   });
 
   async function saveDraft(): Promise<string> {
@@ -469,7 +531,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
       await saveDraft();
       onDone(tx("Draft saved", "تم حفظ المسودة"));
     } catch (e) {
-      setError((e as Error).message);
+      setError(campaignErrorText(e, tx, errCtx));
     } finally {
       setBusy(false);
     }
@@ -480,22 +542,29 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
     setError(null);
     try {
       const id = await saveDraft();
-      await api.post(`/campaigns/${id}/launch`, {
+      // 202: the campaign is `launching`; the background job plans and sends it (the varMap is stored on the draft).
+      await api.post<Campaign>(`/campaigns/${id}/launch`, {
         mode: scheduleChoice === "now" ? "now" : "schedule",
         scheduledAt: whenDate ? whenDate.toISOString() : undefined,
-        variables: mapping.slice(0, varCount),
       });
-      onDone(
-        scheduleChoice === "now"
-          ? tx("Campaign is sending", "بدأ إرسال الحملة")
-          : tx("Campaign scheduled", "تمت جدولة الحملة"),
-      );
+      onDone(tx("Preparing your campaign…", "جارٍ تجهيز حملتك…"), id);
     } catch (e) {
-      setError((e as Error).message);
+      setError(campaignErrorText(e, tx, errCtx));
     } finally {
       setBusy(false);
     }
   }
+
+  const headerField = mediaKind ? (
+    <HeaderMediaField
+      tx={tx}
+      kind={mediaKind}
+      value={headerMediaId}
+      onChange={setHeaderMediaId}
+      override={headerOverride}
+      onOverride={setHeaderOverride}
+    />
+  ) : null;
 
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
@@ -532,7 +601,13 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         </div>
       </div>
 
-      <div style={{ padding: "20px 24px 0", display: "flex", gap: 8 }}>
+      {(connected === false || pv?.connected === false) && (
+        <div style={{ padding: "16px 24px 0" }}>
+          <WhatsAppGate connected={false} tx={tx} />
+        </div>
+      )}
+
+      <div style={{ padding: "20px 24px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
         {steps.map((s, i) => {
           const done = step > s.id;
           const active = step === s.id;
@@ -580,35 +655,65 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         style={{
           padding: 24,
           display: "grid",
-          gridTemplateColumns: "1fr 360px",
+          gridTemplateColumns: "minmax(0, 1fr) 360px",
           gap: 24,
         }}
       >
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
           {step === 1 && (
-            <AudienceStep tx={tx} segments={segments} segmentId={segmentId} onSelect={setSegmentId} count={audienceCount} />
+            <>
+              <AudienceStep tx={tx} segments={segments} segmentId={segmentId} onSelect={setSegmentId} count={audienceCount} />
+              {pickerShown && senders && (
+                <SendFromField
+                  tx={tx}
+                  senders={senders}
+                  value={senderIds}
+                  onChange={setSenderIds}
+                  audienceCount={pv && preview.current ? pv.reachable : null}
+                />
+              )}
+            </>
           )}
           {step === 2 && (
             <MessageStep
               tx={tx}
               templates={templates}
               templateId={templateId}
-              onSelect={setTemplateId}
-              mapping={mapping}
-              onMapping={setMapping}
+              onSelect={selectTemplate}
+              varMap={varMap}
+              onVarMap={setVarMap}
+              customDefs={customDefs}
+              missingByKey={pv?.missingByKey ?? null}
+              header={headerField}
             />
           )}
           {step === 3 && (
-            <ScheduleStep tx={tx} choice={scheduleChoice} onChoose={setScheduleChoice} when={when} onWhen={setWhen} />
+            <ScheduleStep tx={tx} choice={scheduleChoice} onChoose={setScheduleChoice} when={when} onWhen={setWhen} maxDays={maxDays} />
           )}
           {step === 4 && (
             <ReviewStep
               tx={tx}
               audienceLabel={audienceLabel}
-              preview={previewQ.data}
-              previewLoading={previewQ.loading}
+              preview={pv}
+              previewLoading={preview.loading}
+              previewError={preview.error ? campaignErrorText(preview.error, tx, errCtx) : null}
               template={selectedTemplate}
               scheduleLabel={scheduleLabel}
+              senderLabel={pickerShown ? senderLabel : null}
+              samples={
+                pv && selectedTemplate ? (
+                  <ReviewSamples
+                    tx={tx}
+                    preview={pv}
+                    body={body}
+                    lang={selectedTemplate.lang}
+                    varMap={varMap}
+                    customLabels={customLabels}
+                    senders={sendersList}
+                    headerOverride={useHeaderFile}
+                  />
+                ) : null
+              }
             />
           )}
 
@@ -642,16 +747,25 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
             </button>
             {step === 4 ? (
               <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn" disabled={!mayDraft || !name.trim() || busy} title={mayDraft ? undefined : noPerm} onClick={onSaveDraft}>
-                  {tx("Save draft", "حفظ مسودة")}
-                </button>
-                <button className="btn primary" disabled={!canLaunch || busy} title={mayLaunch && mayDraft ? undefined : noPerm} onClick={onLaunch}>
-                  {busy
-                    ? tx("Working…", "جارٍ التنفيذ…")
-                    : scheduleChoice === "now"
-                      ? tx("Send campaign", "إرسال الحملة")
-                      : tx("Schedule campaign", "جدولة الحملة")}
-                </button>
+                {mayDraft && (
+                  <button className="btn" disabled={!name.trim() || busy} onClick={onSaveDraft}>
+                    {tx("Save draft", "حفظ مسودة")}
+                  </button>
+                )}
+                {mayLaunch && (
+                  <button
+                    className="btn primary"
+                    disabled={!canLaunch || busy}
+                    title={!mayDraft ? noPerm : (gate ?? undefined)}
+                    onClick={onLaunch}
+                  >
+                    {busy
+                      ? tx("Working…", "جارٍ التنفيذ…")
+                      : scheduleChoice === "now"
+                        ? tx("Send campaign", "إرسال الحملة")
+                        : tx("Schedule campaign", "جدولة الحملة")}
+                  </button>
+                )}
               </div>
             ) : (
               <button className="btn primary" onClick={() => setStep((s) => Math.min(4, s + 1))}>
@@ -662,10 +776,23 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
           </div>
         </div>
 
-        <PhonePreview body={previewBody} buttons={previewButtons} tx={tx} />
+        <PhonePreview
+          body={previewBody_}
+          buttons={previewButtons}
+          tx={tx}
+          dir={selectedTemplate?.lang === "ar" ? "rtl" : "ltr"}
+          caption={sample ? tx(`Preview for ${sample.name?.trim() || "a contact"}`, `معاينة لـ ${sample.name?.trim() || "جهة اتصال"}`) : undefined}
+        />
       </div>
     </div>
   );
+}
+
+/** A launching row polls its own campaign (GET /campaigns/:id carries `launch`) every 5 s. */
+function LaunchingRowProgress({ id, tx }: { id: string; tx: Tx }) {
+  const q = useFetch<Campaign>(`/campaigns/${encodeURIComponent(id)}`, { pollMs: LAUNCH_POLL_MS });
+  if (!q.data || q.data.status !== "launching") return null;
+  return <LaunchProgress tx={tx} campaign={q.data} compact />;
 }
 
 function CampaignsImpl() {
@@ -678,9 +805,12 @@ function CampaignsImpl() {
   const [openId, setOpenId] = useHashParam("id");
 
   const { toast } = useToast();
-  // Sending campaigns update every minute while the page is open.
-  const { data, loading, error, refetch } = useFetch<Campaign[]>("/campaigns", { pollMs: 60_000 });
+  // Sending campaigns update every minute while the page is open; every 5 s while one is launching.
+  const pollRef = useRef(60_000);
+  const { data, loading, error, refetch } = useFetch<Campaign[]>("/campaigns", { pollMs: pollRef.current });
   const campaigns: Campaign[] = data ?? [];
+  pollRef.current = campaigns.some((c) => c.status === "launching") ? LAUNCH_POLL_MS : 60_000;
+  const { connected } = useWhatsAppConnection(view === "list" && !openId);
   const totals = campaigns.reduce(
     (a, c) => ({
       sent: a.sent + c.sent,
@@ -710,10 +840,14 @@ function CampaignsImpl() {
         toast(ok, "success");
         refetch();
       })
-      .catch((e: Error) => toast(e.message, "error"));
+      .catch((e: unknown) => toast(campaignErrorText(e, tx), "error"));
 
+  // While launching, cancel is a request the background job finishes (it stays `launching` briefly).
   const handleCancel = (c: Campaign) =>
-    run(cancelCampaign.mutate({ id: c.id }), tx("Campaign cancelled", "تم إلغاء الحملة"));
+    run(
+      cancelCampaign.mutate({ id: c.id }),
+      c.status === "launching" ? tx("Cancelling the campaign…", "جارٍ إلغاء الحملة…") : tx("Campaign cancelled", "تم إلغاء الحملة"),
+    );
   const handleRefresh = (c: Campaign) =>
     run(refreshCampaign.mutate({ id: c.id }), tx("Stats updated", "تم تحديث الإحصاءات"));
   const handleDelete = (c: Campaign) =>
@@ -726,6 +860,9 @@ function CampaignsImpl() {
       label: tx("Running", "نشطة"),
       count: campaigns.filter((c) => c.status === "running").length,
     },
+    ...(campaigns.some((c) => c.status === "launching")
+      ? [{ id: "launching" as const, label: tx("Preparing", "قيد التحضير"), count: campaigns.filter((c) => c.status === "launching").length }]
+      : []),
     {
       id: "scheduled",
       label: tx("Scheduled", "مجدولة"),
@@ -766,10 +903,12 @@ function CampaignsImpl() {
           setView("list");
           refetch();
         }}
-        onDone={(msg) => {
+        onDone={(msg, id) => {
           toast(msg, "success");
           setView("list");
           refetch();
+          // A launched campaign opens its report, which shows the launch progress.
+          if (id) setOpenId(id);
         }}
       />
     );
@@ -785,15 +924,18 @@ function CampaignsImpl() {
         )}
         actions={
           <>
-            <button className="btn primary" disabled={!can("campaigns.create")} title={can("campaigns.create") ? undefined : noPerm} onClick={() => setView("builder")}>
-              <IconPlus w={13} />
-              {tx("New campaign", "حملة جديدة")}
-            </button>
+            {can("campaigns.create") && (
+              <button className="btn primary" onClick={() => setView("builder")}>
+                <IconPlus w={13} />
+                {tx("New campaign", "حملة جديدة")}
+              </button>
+            )}
           </>
         }
       />
 
       <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
+        <WhatsAppGate connected={connected} tx={tx} />
         <div
           style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}
         >
@@ -877,7 +1019,7 @@ function CampaignsImpl() {
               background: "var(--bg-1)",
             }}
           >
-            {error}
+            {campaignErrorText(new Error(error), tx)}
           </div>
         )}
 
@@ -931,8 +1073,11 @@ function CampaignsImpl() {
                       >
                         {c.name}
                       </a>
+                      {c.status === "launching" && <LaunchingRowProgress id={c.id} tx={tx} />}
                       {c.lastError && (
-                        <div style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>{c.lastError}</div>
+                        <div dir="auto" style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>
+                          {lastErrorText(c.lastError, tx)}
+                        </div>
                       )}
                       {!c.lastError && (c.skipped ?? 0) > 0 && (
                         <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
@@ -958,33 +1103,13 @@ function CampaignsImpl() {
                         : c.schedule}
                     </td>
                     <td>
-                      {c.status === "running" && (
-                        <Badge kind="ok" dot>
-                          running
-                        </Badge>
-                      )}
-                      {c.status === "scheduled" && (
-                        <Badge kind="info" dot>
-                          scheduled
-                        </Badge>
-                      )}
-                      {c.status === "draft" && <Badge dot>draft</Badge>}
-                      {c.status === "completed" && <Badge dot>completed</Badge>}
-                      {c.status === "failed" && (
-                        <Badge kind="bad" dot>
-                          failed
-                        </Badge>
-                      )}
-                      {c.status === "cancelled" && <Badge dot>cancelled</Badge>}
-                      {c.status === "paused" && (
-                        <Badge kind="warn" dot>
-                          paused
-                        </Badge>
-                      )}
+                      <Badge kind={statusKind(c.status)} dot>
+                        {campaignStatusLabel(c.status, tx)}
+                      </Badge>
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                        {c.status !== "draft" && (
+                        {c.status !== "draft" && c.status !== "launching" && (
                           <button
                             className="btn ghost sm"
                             onClick={(e) => {
@@ -1008,11 +1133,12 @@ function CampaignsImpl() {
                             {tx("Refresh", "تحديث")}
                           </button>
                         )}
-                        {(c.status === "running" || c.status === "scheduled") && c.zernioBroadcastId && (
+                        {(c.status === "launching" ||
+                          ((c.status === "running" || c.status === "scheduled") && (c.zernioBroadcastId || c.sendTransport === "direct"))) &&
+                          can("campaigns.manage") && (
                           <button
                             className="btn ghost sm danger"
-                            disabled={cancelCampaign.loading || !can("campaigns.manage")}
-                            title={can("campaigns.manage") ? undefined : noPerm}
+                            disabled={cancelCampaign.loading || !!c.cancelRequestedAt}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleCancel(c);
@@ -1026,11 +1152,17 @@ function CampaignsImpl() {
                           title={
                             !can("campaigns.delete")
                               ? noPerm
-                              : c.status === "running" || c.status === "scheduled"
+                              : c.status === "running" || c.status === "scheduled" || c.status === "launching"
                                 ? tx("Cancel it first", "ألغِها أولاً")
                                 : undefined
                           }
-                          disabled={deleteCampaign.loading || !can("campaigns.delete") || c.status === "running" || c.status === "scheduled"}
+                          disabled={
+                            deleteCampaign.loading ||
+                            !can("campaigns.delete") ||
+                            c.status === "running" ||
+                            c.status === "scheduled" ||
+                            c.status === "launching"
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDelete(c);

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
@@ -6,12 +6,14 @@ import { usePermissions } from "@/auth/usePermissions";
 import { Badge, statusKind } from "@/components/Badge";
 import { useToast } from "@/components/Toast";
 import { IconChev } from "@/icons";
-import { makeTx, type Tx } from "@/lib/tx";
-import type { Campaign, CampaignInsights, Lang } from "@/lib/types";
-import { useChannelsList } from "@/screens/channels/channelUi";
+import { makeTx } from "@/lib/tx";
+import type { Campaign, CampaignInsights, Lang, SendersResponse } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
-import { campaignErrorText } from "./campaignErrors";
-import { insightsPollMs, outcomeChips, type Outcome } from "./campaignDetailModel";
+import { campaignErrorText, lastErrorText } from "./campaignErrors";
+import { campaignPollMs, campaignStatusLabel, insightsPollMs, outcomeChips, type Outcome } from "./campaignDetailModel";
+import { LaunchProgress } from "./LaunchProgress";
+import { NumberSplitCard } from "./NumberSplitCard";
+import { useCustomFields } from "./useCampaignPreview";
 import { CampaignFunnel } from "./CampaignFunnel";
 import { ExportDialog } from "./ExportDialog";
 import { FailureReasonsCard } from "./FailureReasonsCard";
@@ -27,17 +29,6 @@ import { Notice, formatWhen } from "./ui";
  * backend exposes no such date (reported as a contract gap); set it at release.
  */
 export const PER_RECIPIENT_SINCE: string | null = null;
-
-const campaignStatusLabel = (s: Campaign["status"], tx: Tx): string =>
-  ({
-    running: tx("Sending", "قيد الإرسال"),
-    scheduled: tx("Scheduled", "مجدولة"),
-    draft: tx("Draft", "مسودة"),
-    completed: tx("Completed", "منتهية"),
-    failed: tx("Failed", "فشلت"),
-    cancelled: tx("Cancelled", "ملغاة"),
-    paused: tx("Paused", "متوقفة"),
-  })[s] ?? s;
 
 type Dialog =
   | { kind: "export"; ticked: boolean }
@@ -61,19 +52,16 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
   // pauses the interval while the tab is hidden.
   const campaignQ = useFetch<Campaign | null>(path, { pollMs: pollRef.current });
   const c = campaignQ.data ?? null;
+  // SP-13: every 5 s while the background launch runs, then the report's cadence.
+  pollRef.current = campaignPollMs(c, Date.now()) ?? undefined;
   const pollMs = insightsPollMs(c, Date.now()) ?? undefined;
-  pollRef.current = pollMs;
-  const insightsQ = useFetch<CampaignInsights>(c ? `${path}/insights` : null, { pollMs });
+  const insightsQ = useFetch<CampaignInsights>(c && c.status !== "launching" ? `${path}/insights` : null, { pollMs });
   const insights = insightsQ.data;
-
-  const channelsQ = useChannelsList(can("channels.view"));
-  const sender = useMemo(() => {
-    const list = channelsQ.data ?? [];
-    if (!c) return null;
-    return c.senderChannelId
-      ? (list.find((ch) => ch.id === c.senderChannelId) ?? null)
-      : (list.find((ch) => ch.kind === "whatsapp" && ch.isDefault) ?? null);
-  }, [channelsQ.data, c]);
+  // SP-13: the sending numbers come with the campaign (gap 3 closed); the default number decides the per-number table.
+  const sendersQ = useFetch<SendersResponse>(can("campaigns.view") ? "/campaigns/senders" : null);
+  const defaultChannelId = sendersQ.data?.senders.find((s) => s.isDefault)?.channelId ?? null;
+  const { labels: customLabels } = useCustomFields();
+  const [cancelling, setCancelling] = useState(false);
 
   const [outcome, setOutcomeState] = useState<Outcome>("all");
   const [ticked, setTicked] = useState<Set<string>>(() => new Set());
@@ -102,6 +90,19 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
     }
   };
 
+  const cancelLaunch = async () => {
+    setCancelling(true);
+    try {
+      await api.post(`${path}/cancel`);
+      await campaignQ.refetch();
+      toast(tx("Cancelling the campaign…", "جارٍ إلغاء الحملة…"), "success");
+    } catch (e) {
+      toast(campaignErrorText(e, tx), "error");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const back = (
     <button className="btn ghost icon" onClick={onBack} aria-label={tx("Back to campaigns", "العودة للحملات")}>
       <IconChev w={14} className="flip-rtl" style={{ transform: "rotate(180deg)" }} />
@@ -119,7 +120,10 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
               : campaignQ.error
                 ? campaignQ.error === "Missing permission" || /403/.test(campaignQ.error)
                   ? tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")
-                  : tx("Couldn't load this campaign.", "تعذّر تحميل هذه الحملة.")
+                  : // A deleted or foreign campaign is 404 campaigns.not_found since SP-13.
+                    campaignQ.error === "campaigns.not_found" || /404/.test(campaignQ.error)
+                    ? tx("This campaign no longer exists.", "هذه الحملة لم تعد موجودة.")
+                    : tx("Couldn't load this campaign.", "تعذّر تحميل هذه الحملة.")
                 : tx("This campaign no longer exists.", "هذه الحملة لم تعد موجودة.")}
           </span>
         </div>
@@ -128,7 +132,9 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
   }
 
   const tracked = insights ? insights.tracked : c.recipientTracking === true;
-  const neverSent = c.status === "draft";
+  const neverSent = c.status === "draft" || c.status === "launching";
+  const sender = c.senders?.[0] ?? null;
+  const extraSenders = Math.max(0, (c.senders?.length ?? 0) - 1);
   const funnel =
     insights?.funnel ?? {
       targeted: c.recipients,
@@ -179,6 +185,11 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
                       <bdi dir="ltr">{sender.phoneNumber}</bdi>
                     </span>
                   )}
+                  {extraSenders > 0 && (
+                    <span style={{ marginInlineStart: 6 }}>
+                      {tx(`and ${extraSenders} more`, `و${extraSenders} غيره`)}
+                    </span>
+                  )}
                 </>
               ) : c.senderChannelId ? (
                 tx("a WhatsApp number", "رقم واتساب")
@@ -207,10 +218,19 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
       </header>
 
       <div style={{ padding: "16px 24px 24px", display: "grid", gap: 14 }}>
-        {c.lastError && (
-          <Notice tone="warn">
-            <span dir="auto">{c.lastError}</span>
-          </Notice>
+        {c.status === "launching" || (c.status === "failed" && c.launchStage === "failed") ? (
+          <LaunchProgress
+            tx={tx}
+            campaign={c}
+            onCancel={can("campaigns.manage") ? () => void cancelLaunch() : undefined}
+            cancelling={cancelling}
+          />
+        ) : (
+          c.lastError && (
+            <Notice tone="warn">
+              <span dir="auto">{lastErrorText(c.lastError, tx)}</span>
+            </Notice>
+          )
         )}
         {insightsQ.error && (
           <div role="alert" style={{ fontSize: 12.5, color: "var(--bad)" }}>
@@ -219,7 +239,9 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
         )}
 
         {neverSent ? (
-          <Notice>{tx("This campaign hasn't been sent yet, so there is no report.", "لم تُرسل هذه الحملة بعد، لذا لا يوجد تقرير.")}</Notice>
+          c.status === "draft" && (
+            <Notice>{tx("This campaign hasn't been sent yet, so there is no report.", "لم تُرسل هذه الحملة بعد، لذا لا يوجد تقرير.")}</Notice>
+          )
         ) : (
           <>
             {!tracked && (
@@ -238,13 +260,21 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
 
             <CampaignFunnel funnel={funnel} tx={tx} />
 
+            {tracked && insights && <NumberSplitCard tx={tx} byNumber={insights.byNumber} defaultChannelId={defaultChannelId} />}
+
             {tracked && insights && (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14 }}>
                   <ReadTimeCard timing={insights.readTiming} tx={tx} />
                   <ReplySummaryCard replies={insights.replies} tx={tx} />
                 </div>
-                <FailureReasonsCard failures={insights.failures} unrecorded={insights.unrecorded} tx={tx} onPick={pickOutcome} />
+                <FailureReasonsCard
+                  failures={insights.failures}
+                  unrecorded={insights.unrecorded}
+                  tx={tx}
+                  onPick={pickOutcome}
+                  customLabels={customLabels}
+                />
               </>
             )}
 
@@ -269,6 +299,7 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
                   tx={tx}
                   lang={lang}
                   tz={tz}
+                  customLabels={customLabels}
                 />
               </div>
             )}

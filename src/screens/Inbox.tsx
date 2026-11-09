@@ -23,6 +23,7 @@ import {
 import { API_BASE, ApiError, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { uploadMedia } from "@/api/uploadMedia";
+import { mediaErrorText } from "@/components/media/mediaErrors";
 import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
 import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
@@ -1335,7 +1336,7 @@ function ConversationPane({
     try {
       setAttachedMedia(await uploadMedia(file));
     } catch (e) {
-      setAttachError(e instanceof Error ? e.message : "Upload failed");
+      setAttachError(mediaErrorText(e, tx, tx("Upload failed", "فشل الرفع")));
     } finally {
       setAttachUploading(false);
     }

@@ -1,3 +1,4 @@
+import { lastErrorText } from "@/screens/campaigns/campaignErrors";
 import type { Tx } from "./tx";
 
 export interface NotificationLike {
@@ -76,6 +77,17 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
       return out(
         title ? tx(`Activity assigned to you: ${title}`, `أُسند إليك نشاط: ${title}`) : tx("Activity assigned to you", "أُسند إليك نشاط"),
         contact,
+      );
+    }
+    case "campaign.launch_failed": {
+      // SP-13: the background launch failed; `error` is a campaigns.* key (or older provider text).
+      const name = str(p.name);
+      const error = lastErrorText(str(p.error), tx) ?? undefined;
+      return out(
+        name
+          ? tx(`Campaign “${name}” couldn't be sent`, `تعذّر إرسال الحملة «${name}»`)
+          : tx("A campaign couldn't be sent", "تعذّر إرسال حملة"),
+        error,
       );
     }
     case "import.failed":

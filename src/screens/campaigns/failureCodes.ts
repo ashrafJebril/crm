@@ -1,4 +1,6 @@
 import type { Tx } from "@/lib/tx";
+import { isolateLtr } from "./senderModel";
+import { fieldLabelOf, type CustomLabels } from "./varMap";
 
 /**
  * SP-12 failure-reason copy. Mirror of the backend CSV copy in
@@ -9,6 +11,8 @@ export const FAILURE_LABELS: Record<string, [en: string, ar: string]> = {
   "skip:opted_out": ["Opted out of marketing", "ألغى الاشتراك في الرسائل التسويقية"],
   "skip:no_phone": ["No usable phone number", "لا يوجد رقم هاتف صالح"],
   "provider:unknown": ["Provider error", "خطأ من مزوّد الخدمة"],
+  // SP-13: a direct send whose outcome was never confirmed within 23 h (never re-sent).
+  "launch:unconfirmed": ["Send not confirmed; not retried", "لم يتأكد الإرسال؛ لم تتم إعادة المحاولة"],
   "meta:131026": ["Message undeliverable", "تعذر توصيل الرسالة"],
   "meta:131047": ["More than 24 hours since the customer replied", "مرّ أكثر من 24 ساعة على آخر رد من العميل"],
   "meta:131049": ["Held by Meta (per-user marketing limit)", "أوقفتها ميتا (حد الرسائل التسويقية لكل مستخدم)"],
@@ -45,8 +49,10 @@ export function isShortTitle(s: string | null | undefined): boolean {
  * get the short provider title appended. Raw provider text is never shown
  * otherwise.
  */
-export function failureLabel(code: string | null, title: string | null, tx: Tx): string {
+export function failureLabel(code: string | null, title: string | null, tx: Tx, customLabels?: CustomLabels): string {
   if (!code) return "";
+  const missing = /^skip:missing_value:(field|custom)\.(.+)$/.exec(code);
+  if (missing) return missingValueLabel(missing[1] as "field" | "custom", missing[2]!, tx, customLabels);
   const known = FAILURE_LABELS[code];
   if (known && code !== PROVIDER_UNKNOWN) return tx(known[0], known[1]);
   const short = isShortTitle(title) ? title!.trim() : null;
@@ -64,3 +70,16 @@ export function failureLabel(code: string | null, title: string | null, tx: Tx):
 
 /** Failed or skipped rows whose code was never recorded (`unrecorded`). */
 export const unrecordedLabel = (tx: Tx): string => tx("Reason not recorded", "السبب غير مسجّل");
+
+/**
+ * SP-13 `skip:missing_value:<source>.<key>`: "No value for <label>" (backend
+ * campaign-export-labels.ts `missingValueLabel`, word for word). Custom
+ * labels come from the workspace's field list; an unknown key shows the raw
+ * key, isolated left to right.
+ */
+export function missingValueLabel(source: "field" | "custom", key: string, tx: Tx, customLabels?: CustomLabels): string {
+  const l = fieldLabelOf(source, key, customLabels);
+  const en = l.known ? l.label : isolateLtr(key);
+  const ar = l.known ? l.labelAr : isolateLtr(key);
+  return tx(`No value for ${en}`, `لا توجد قيمة لـ ${ar}`);
+}

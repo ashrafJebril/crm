@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { AuthorizedImage } from "@/components/AuthorizedImage";
-import { API_BASE, tokenStore } from "@/api/client";
+import { MediaPicker } from "@/components/media/MediaPicker";
+import { mediaKeyText } from "@/components/media/mediaErrors";
+import { headerKind } from "@/components/media/mediaKinds";
+import { API_BASE, ApiError, tokenStore } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
-import { uploadMedia } from "@/api/uploadMedia";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import type { Media } from "@/lib/types";
+
+// SP-13: the header kinds and the picker moved to src/components/media; re-exported for existing imports.
+export { headerKind, mediaMatchesHeader } from "@/components/media/mediaKinds";
 
 export interface ApprovedTemplate {
   id: string;
@@ -27,19 +32,6 @@ export interface TemplateHeaderValue {
   params?: string[];
 }
 
-type HeaderKind = "text" | "image" | "video" | "document";
-
-const HEADER_MIMES: Record<Exclude<HeaderKind, "text">, string[]> = {
-  image: ["image/jpeg", "image/png"],
-  video: ["video/mp4"],
-  document: ["application/pdf"],
-};
-
-export function headerKind(t: Pick<ApprovedTemplate, "headerType"> | null): HeaderKind | null {
-  const v = t?.headerType?.toLowerCase();
-  return v === "text" || v === "image" || v === "video" || v === "document" ? v : null;
-}
-
 /** Highest {{n}} placeholder in a string. */
 export function placeholderCount(s: string | null | undefined): number {
   let max = 0;
@@ -47,20 +39,14 @@ export function placeholderCount(s: string | null | undefined): number {
   return max;
 }
 
-export const mediaMatchesHeader = (m: Pick<Media, "mimeType">, kind: HeaderKind): boolean =>
-  kind !== "text" && HEADER_MIMES[kind].includes(m.mimeType);
-
 const fill = (s: string, vals: string[]): string =>
   s.replace(/\{\{(\d+)\}\}/g, (_, idx: string) => vals[parseInt(idx, 10) - 1]?.trim() || `{{${idx}}}`);
 
 function sendErrorText(e: unknown, tx: Tx): string {
   const msg = e instanceof Error ? e.message : "";
-  if (msg === "templates.header_media_mismatch") {
-    return tx(
-      "The header file does not match the template's header type. Pick a matching file.",
-      "ملف الترويسة لا يطابق نوع ترويسة القالب. اختر ملفًا مطابقًا.",
-    );
-  }
+  // templates.header_media_mismatch / _too_large / Media not found (SP-13 keyed copy).
+  const keyed = mediaKeyText(msg, e instanceof ApiError ? e.body : undefined, tx);
+  if (keyed) return keyed;
   return msg || tx("Send failed", "فشل الإرسال");
 }
 
@@ -83,144 +69,6 @@ const INPUT: React.CSSProperties = {
   outline: "none",
   fontFamily: "inherit",
 };
-
-/** Media-library picker for an IMAGE / VIDEO / DOCUMENT template header: only
- *  files whose type matches the header are offered, and a new file can be uploaded. */
-function HeaderMediaPicker({
-  kind,
-  value,
-  onChange,
-  tx,
-}: {
-  kind: Exclude<HeaderKind, "text">;
-  value: Media | null;
-  onChange: (m: Media | null) => void;
-  tx: Tx;
-}) {
-  const listQ = useFetch<Media[]>("/media");
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const items = (listQ.data ?? []).filter((m) => mediaMatchesHeader(m, kind));
-  const token = tokenStore.get();
-
-  const upload = async (file: File) => {
-    setUploading(true);
-    setError(null);
-    try {
-      const m = await uploadMedia(file);
-      if (!mediaMatchesHeader(m, kind)) {
-        setError(
-          tx(
-            "That file type can't be used for this header.",
-            "لا يمكن استخدام نوع هذا الملف لهذه الترويسة.",
-          ),
-        );
-        return;
-      }
-      onChange(m);
-      void listQ.refetch();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : tx("Upload failed", "فشل الرفع"));
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const kindName = {
-    image: tx("image (JPG or PNG)", "صورة (JPG أو PNG)"),
-    video: tx("video (MP4)", "فيديو (MP4)"),
-    document: tx("document (PDF)", "مستند (PDF)"),
-  }[kind];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={CAPTION}>{tx("Header", "الترويسة")}: {kindName}</span>
-        <button
-          type="button"
-          className="btn sm"
-          style={{ marginInlineStart: "auto" }}
-          disabled={uploading}
-          onClick={() => fileRef.current?.click()}
-        >
-          {uploading ? tx("Uploading…", "جارٍ الرفع…") : tx("Upload new", "رفع جديد")}
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept={HEADER_MIMES[kind].join(",")}
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = "";
-            if (f) void upload(f);
-          }}
-        />
-      </div>
-      {error && (
-        <div role="alert" style={{ marginTop: 6, fontSize: 11.5, color: "var(--bad)" }}>
-          {error}
-        </div>
-      )}
-      <div
-        style={{
-          marginTop: 8,
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))",
-          gap: 6,
-          maxHeight: 190,
-          overflowY: "auto",
-        }}
-      >
-        {listQ.loading && items.length === 0 ? (
-          <span className="muted" style={{ fontSize: 11 }}>{tx("loading…", "جارٍ التحميل…")}</span>
-        ) : items.length === 0 ? (
-          <span className="muted" style={{ fontSize: 11.5, gridColumn: "1 / -1" }}>
-            {tx(
-              "No matching files in the media library. Upload one.",
-              "لا توجد ملفات مطابقة في مكتبة الوسائط. ارفع ملفًا.",
-            )}
-          </span>
-        ) : (
-          items.map((m) => {
-            const on = value?.id === m.id;
-            return (
-              <button
-                key={m.id}
-                type="button"
-                aria-pressed={on}
-                title={m.fileName}
-                onClick={() => onChange(on ? null : m)}
-                style={{
-                  position: "relative",
-                  aspectRatio: "1",
-                  padding: 0,
-                  overflow: "hidden",
-                  borderRadius: 8,
-                  border: on ? "2px solid var(--accent)" : "1px solid var(--line-soft)",
-                  background: "var(--bg-2)",
-                  cursor: "pointer",
-                  color: "var(--ink-2)",
-                  fontSize: 10.5,
-                }}
-              >
-                {kind === "image" ? (
-                  <AuthorizedImage url={`${API_BASE}/media/${m.id}/file`} alt={m.fileName} token={token} retryable={false} />
-                ) : (
-                  <span dir="auto" style={{ display: "block", padding: 6, overflowWrap: "anywhere" }}>
-                    {kind === "video" ? "🎬 " : "📄 "}
-                    {m.fileName}
-                  </span>
-                )}
-              </button>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
 
 /**
  * Modal that lists APPROVED WhatsApp templates. Step 1 fills the header (media
@@ -493,7 +341,7 @@ export function TemplateSendDialog({
               )}
               {hKind && hKind !== "text" && (
                 <div style={{ marginBottom: 16 }}>
-                  <HeaderMediaPicker kind={hKind} value={headerMedia} onChange={setHeaderMedia} tx={tx} />
+                  <MediaPicker kind={hKind} value={headerMedia?.id ?? null} onChange={setHeaderMedia} tx={tx} />
                 </div>
               )}
 

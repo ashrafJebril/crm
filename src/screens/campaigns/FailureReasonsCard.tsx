@@ -3,6 +3,7 @@ import type { CampaignInsights, RecipientStatus } from "@/lib/types";
 import { barPct } from "./campaignDetailModel";
 import { failureLabel, unrecordedLabel } from "./failureCodes";
 import { Card, HBars, fmtNum, type BarRow } from "./ui";
+import type { CustomLabels } from "./varMap";
 
 interface Props {
   failures: CampaignInsights["failures"];
@@ -10,10 +11,12 @@ interface Props {
   tx: Tx;
   /** Opens the table filtered to the outcome that line belongs to. */
   onPick: (status: Extract<RecipientStatus, "failed" | "skipped">) => void;
+  /** SP-13: custom field labels for `skip:missing_value:custom.*`. */
+  customLabels?: CustomLabels;
 }
 
 /** Why people did not get it: bilingual reason per code, warning hue, each line opens the table. */
-export function FailureReasonsCard({ failures, unrecorded, tx, onPick }: Props) {
+export function FailureReasonsCard({ failures, unrecorded, tx, onPick, customLabels }: Props) {
   const title = tx("Failure reasons", "أسباب الفشل");
   const total = failures.reduce((a, f) => a + f.count, 0) + unrecorded;
   if (total === 0) {
@@ -26,7 +29,7 @@ export function FailureReasonsCard({ failures, unrecorded, tx, onPick }: Props) 
   const max = Math.max(unrecorded, ...failures.map((f) => f.count));
   const rows: BarRow[] = failures.map((f) => {
     const status = f.code.startsWith("skip:") ? "skipped" : "failed";
-    const label = failureLabel(f.code, f.title, tx);
+    const label = failureLabel(f.code, f.title, tx, customLabels);
     return {
       key: f.code,
       label,

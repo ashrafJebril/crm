@@ -44,6 +44,26 @@ describe("notificationText", () => {
     const r = notificationText(en, { type: "campaign_finished", title: "campaign.done_x", body: null, recordKind: null, recordId: null });
     expect(r.title).toBe("A campaign has finished");
   });
+  it("renders campaign.launch_failed with the campaign name and the worded error", () => {
+    const n = {
+      type: "campaign_finished",
+      title: "campaign.launch_failed",
+      body: JSON.stringify({ name: "Eid offer", error: "campaigns.no_reachable_recipients" }),
+      recordKind: "campaign",
+      recordId: "c1",
+    };
+    const e = notificationText(en, n);
+    expect(e.title).toBe("Campaign “Eid offer” couldn't be sent");
+    expect(e.body).toBe(
+      "No one in the audience could receive it: no usable number, opted out, or a missing value without a fallback.",
+    );
+    const a = notificationText(ar, n);
+    expect(a.title).toMatch(/[؀-ۿ]/);
+    expect(a.title).toContain("Eid offer");
+    expect(a.body).toMatch(/[؀-ۿ]/);
+    // No name, no error: still worded, never the raw key.
+    expect(notificationText(en, { ...n, body: null })).toEqual({ title: "A campaign couldn't be sent" });
+  });
   it("shows raw title for unknown plain text", () => {
     expect(notificationText(en, { type: "weird", title: "Hello there", body: null, recordKind: null, recordId: null })).toEqual({ title: "Hello there" });
   });

@@ -15,6 +15,7 @@ import {
   type OutcomeChip,
 } from "./campaignDetailModel";
 import { failureLabel } from "./failureCodes";
+import type { CustomLabels } from "./varMap";
 import { formatWhen, fmtNum } from "./ui";
 
 interface Props {
@@ -29,6 +30,8 @@ interface Props {
   tx: Tx;
   lang: Lang;
   tz: string | null;
+  /** SP-13: custom field labels for `skip:missing_value:custom.*`. */
+  customLabels?: CustomLabels;
 }
 
 const KIND: Record<RecipientStatus, BadgeKind> = {
@@ -51,7 +54,7 @@ const stickyCell = (head: boolean): CSSProperties => ({
 });
 
 /** Outcome chips, the recipients table with cursor "Load more", and row ticks. */
-export function RecipientsTable({ campaignId, outcome, onOutcome, chips, selected, onSelected, reloadKey, tx, lang, tz }: Props) {
+export function RecipientsTable({ campaignId, outcome, onOutcome, chips, selected, onSelected, reloadKey, tx, lang, tz, customLabels }: Props) {
   const [rows, setRows] = useState<CampaignRecipientRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -237,7 +240,7 @@ export function RecipientsTable({ campaignId, outcome, onOutcome, chips, selecte
                   <td style={{ maxWidth: 240 }}>
                     {r.failureCode ? (
                       <span title={r.failureCode} style={{ fontSize: 12, color: r.status === "skipped" ? "var(--ink-2)" : "var(--bad)" }}>
-                        {failureLabel(r.failureCode, r.failureTitle, tx)}
+                        {failureLabel(r.failureCode, r.failureTitle, tx, customLabels)}
                       </span>
                     ) : (
                       <span className="muted">—</span>

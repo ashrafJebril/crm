@@ -4,7 +4,6 @@ import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
-import { PhotoSlot } from "@/components/PhotoSlot";
 import {
   IconFilter,
   IconMore,
@@ -12,7 +11,6 @@ import {
   IconSearch,
 } from "@/icons";
 import {
-  MEDIA_ASSETS,
   QUICK_REPLIES,
   TPL_LIBRARY,
   type TemplateCategory,
@@ -24,9 +22,12 @@ import { useToast } from "@/components/Toast";
 import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { Modal } from "@/components/Modal";
 import { TemplateEditor } from "./templates/TemplateEditor";
+import { GalleryTab } from "./templates/GalleryTab";
+import { WhatsAppGate, useWhatsAppConnection } from "@/components/WhatsAppGate";
+import { gatedTitle } from "@/components/whatsAppGateCopy";
 import type { Template } from "@/lib/types";
 
-type Tab = "library" | "quick" | "media";
+type Tab = "library" | "quick" | "gallery";
 type CategoryFilter = "ALL" | TemplateCategory;
 
 const CATEGORY_FILTERS: CategoryFilter[] = [
@@ -277,6 +278,10 @@ function TemplatesImpl() {
   const tx = makeTx(t.lang);
   const { can } = usePermissions();
   const canDeleteTpl = can("templates.delete");
+  const canCreateTpl = can("templates.create");
+  // SP-13: one banner, and submitting to Meta is disabled while WhatsApp isn't connected.
+  const { connected } = useWhatsAppConnection();
+  const createGate = gatedTitle("template.create", connected, tx);
   const isAr = t.lang === "ar";
 
   const [tab, setTab] = useState<Tab>("library");
@@ -393,16 +398,26 @@ function TemplatesImpl() {
               <IconFilter w={14} />
               {tx("Filter", "تصفية")}
             </button>
-            <button
-              className="btn primary"
-              onClick={() => setEditor({ mode: "create" })}
-            >
-              <IconPlus w={14} />
-              {tx("New template", "قالب جديد")}
-            </button>
+            {canCreateTpl && (
+              <button
+                className="btn primary"
+                disabled={!!createGate}
+                title={createGate ?? undefined}
+                onClick={() => setEditor({ mode: "create" })}
+              >
+                <IconPlus w={14} />
+                {tx("New template", "قالب جديد")}
+              </button>
+            )}
           </>
         }
       />
+
+      {connected === false && (
+        <div style={{ padding: "0 20px 12px" }}>
+          <WhatsAppGate connected={connected} tx={tx} />
+        </div>
+      )}
 
       <div className="tabs">
         <div
@@ -420,10 +435,10 @@ function TemplatesImpl() {
           <span className="count">{QUICK_REPLIES.length}</span>
         </div>
         <div
-          className={`tab ${tab === "media" ? "active" : ""}`}
-          onClick={() => setTab("media")}
+          className={`tab ${tab === "gallery" ? "active" : ""}`}
+          onClick={() => setTab("gallery")}
         >
-          {tx("Media", "الوسائط")} <span className="count">{MEDIA_ASSETS.length}</span>
+          {tx("Gallery", "المعرض")}
         </div>
       </div>
 
@@ -739,44 +754,12 @@ function TemplatesImpl() {
         </div>
       )}
 
-      {tab === "media" && (
-        <div
-          style={{
-            padding: 20,
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 12,
-          }}
-        >
-          {MEDIA_ASSETS.map((m) => (
-            <div key={m.label} className="card" style={{ padding: 12 }}>
-              <PhotoSlot label={m.label} h={120} />
-              <div
-                style={{
-                  marginTop: 10,
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div className="mono" style={{ fontSize: 11 }}>
-                  {m.label}.jpg
-                </div>
-                <span
-                  className="mono"
-                  style={{ fontSize: 10, color: "var(--ink-3)" }}
-                >
-                  {m.size}KB
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {tab === "gallery" && <GalleryTab tx={tx} />}
 
       {editor && (
         <TemplateEditor
           lang={t.lang}
+          connected={connected}
           mode={editor.mode}
           initial={
             editor.mode === "edit"

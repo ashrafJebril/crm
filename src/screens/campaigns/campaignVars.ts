@@ -1,12 +1,9 @@
-// Template placeholder mapping for campaign broadcasts. Zernio fills each
-// {{n}} per recipient from their contact (name, phone) or with one fixed value.
+// Pre-SP-13 placeholder mapping (the legacy launch body `variables`). SP-13
+// replaced it with `varMap.ts`; this module keeps the legacy helpers and
+// re-exports the shared ones for any remaining imports.
 import type { CampaignVariable } from "@/lib/types";
 
-export function placeholderCount(body: string | null | undefined): number {
-  let max = 0;
-  for (const m of (body ?? "").matchAll(/\{\{\s*(\d+)\s*\}\}/g)) max = Math.max(max, Number(m[1]));
-  return max;
-}
+export { legacyToVarMap, placeholderCount } from "./varMap";
 
 const SAMPLE: Record<"name" | "phone", string> = { name: "Lina", phone: "+962 79 123 4567" };
 

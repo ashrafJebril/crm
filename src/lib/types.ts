@@ -343,7 +343,7 @@ export interface Campaign {
   id: string;
   name: string;
   /** "paused" only exists on rows from before campaigns could really send. */
-  status: "running" | "scheduled" | "draft" | "completed" | "failed" | "cancelled" | "paused";
+  status: "running" | "scheduled" | "draft" | "completed" | "failed" | "cancelled" | "paused" | "launching";
   audience: string;
   recipients: number;
   sent: number;
@@ -367,6 +367,109 @@ export interface Campaign {
   recipientTracking?: boolean;
   recipientsSyncedAt?: string | null;
   statsSyncedAt?: string | null;
+  /** SP-13: the sending numbers in order ([0] = primary); [] = legacy senderChannelId, else the default number. */
+  senderChannelIds?: string[];
+  /** SP-13: how each {{n}} is filled; null on campaigns from before SP-13 (they keep variableMapping). */
+  varMap?: VarMap | null;
+  /** SP-13: a library file overriding the template's header sample; null = the template's own file. */
+  headerMediaId?: string | null;
+  /** SP-13 background launch: planning | sending | done | failed. */
+  launchStage?: "planning" | "sending" | "done" | "failed" | null;
+  sendTransport?: "broadcast" | "direct" | null;
+  /** SP-13: cancel was asked for while launching; the runner finishes it. */
+  cancelRequestedAt?: string | null;
+  /** SP-13 (GET /campaigns/:id only): the sending numbers in order; a deleted channel is absent. */
+  senders?: CampaignSender[];
+  /** SP-13 (GET /campaigns/:id only): non-null only while status is "launching". */
+  launch?: CampaignLaunchProgress | null;
+}
+
+// ─── SP-13 campaign sending ───────────────────────────────────────────────
+
+export type VarField = "name" | "firstName" | "lastName" | "phone" | "email";
+
+/** One template placeholder: a contact field, a custom field, or one fixed value. */
+export type VarSlot =
+  | { source: "field"; key: VarField; fallback?: string }
+  | { source: "custom"; key: string; fallback?: string }
+  | { source: "static"; value: string };
+
+/** `{"1": slot, "2": slot, …}` (backend sending/var-map.ts). */
+export type VarMap = Record<string, VarSlot>;
+
+/** `senders` on GET /campaigns/:id. */
+export interface CampaignSender {
+  channelId: string;
+  displayName: string;
+  phoneNumber: string | null;
+}
+
+export interface SenderOption extends CampaignSender {
+  isDefault: boolean;
+  provider: string;
+  eligible: boolean;
+  reason: null | "provider_meta" | "not_active";
+}
+
+/** GET /campaigns/senders */
+export interface SendersResponse {
+  connected: boolean;
+  limit: number;
+  senders: SenderOption[];
+}
+
+export type TransportKind = "broadcast" | "direct" | "too_varied";
+
+/** POST /campaigns/preview */
+export interface CampaignPreviewV2 {
+  connected: boolean;
+  total: number;
+  reachable: number;
+  skipped: { noPhone: number; optedOut: number; duplicate: number; missingValue: number };
+  missingByKey: { source: "field" | "custom"; key: string; label: string; labelAr: string; count: number }[];
+  /** Largest first. */
+  split: { channelId: string; displayName: string; phoneNumber: string | null; recipients: number }[];
+  transport: { kind: TransportKind; partitions: number; limit: number; directLimit: number };
+  /** Channel ids of senders without the approved template. */
+  templateMissing: string[];
+  /** Channel ids whose templates could not be read. */
+  templateCheckFailed?: string[];
+  /** Empty without contacts.view (ruling 18). */
+  samples: {
+    contactId: string;
+    name: string | null;
+    rendered: string;
+    values: string[];
+    /** 1-based slot numbers. */
+    usedFallback: number[];
+    skippedFor: { source: "field" | "custom"; key: string } | null;
+  }[];
+  estimate: { usd: number; unpriced: number };
+}
+
+/** `launch` on GET /campaigns/:id while launching. */
+export interface CampaignLaunchProgress {
+  stage: "planning" | "sending" | "done" | "failed" | string;
+  planned: number;
+  partitionsTotal: number;
+  partitionsDone: number;
+  directSent: number;
+}
+
+/** One line of insights.byNumber. */
+export interface NumberTotals {
+  channelId: string | null;
+  displayName: string | null;
+  phoneNumber: string | null;
+  /** The channel was deleted. */
+  unknown: boolean;
+  total: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+  failed: number;
+  skipped: number;
 }
 
 // ─── SP-12 campaign recipients and report ─────────────────────────────────
@@ -425,6 +528,8 @@ export interface CampaignInsights {
   unrecorded: number;
   recipientsSyncedAt: string | null;
   statsSyncedAt: string | null;
+  /** SP-13: per sending number, largest first; [] for untracked campaigns. */
+  byNumber?: NumberTotals[];
 }
 
 /** POST /campaigns/:id/follow-up/* */
@@ -472,6 +577,8 @@ export interface Template {
   footer?: string | null;
   headerType?: string | null;
   headerContent?: string | null;
+  /** SP-13: the library file used as the media header's sample. */
+  headerMediaId?: string | null;
   // Stored as JSON string on the server; the API hands it back unparsed.
   buttons?: string | null;
 }

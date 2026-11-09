@@ -7,6 +7,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { Modal } from "@/components/Modal";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { API_BASE, api, tokenStore } from "@/api/client";
+import { uploadMedia } from "@/api/uploadMedia";
+import { mediaErrorText } from "@/components/media/mediaErrors";
 import { IconPlus, IconTrash } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -46,32 +48,10 @@ function MediaImpl() {
     setUploading(true);
     setUploadError(null);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      // We need a raw fetch here because the `api` helper sends JSON only.
-      const base = API_BASE;
-      const tok = tokenStore.get();
-      const resp = await fetch(`${base}/media/upload`, {
-        method: "POST",
-        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-        body: form,
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        let msg = `Upload failed (${resp.status})`;
-        try {
-          const j = JSON.parse(txt) as { message?: string | string[] };
-          msg = Array.isArray(j.message)
-            ? j.message.join(", ")
-            : j.message ?? msg;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
+      await uploadMedia(file);
       listQ.refetch();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setUploadError(mediaErrorText(err, tx, tx("Upload failed", "فشل الرفع")));
     } finally {
       setUploading(false);
     }
@@ -89,9 +69,8 @@ function MediaImpl() {
       setConfirmTarget(null);
       listQ.refetch();
     } catch (err) {
-      setConfirmError(
-        err instanceof Error ? err.message : tx("Delete failed.", "فشل الحذف."),
-      );
+      // 409 media.in_use names the templates and campaigns that still use the file.
+      setConfirmError(mediaErrorText(err, tx, tx("Delete failed.", "فشل الحذف.")));
     }
   };
 

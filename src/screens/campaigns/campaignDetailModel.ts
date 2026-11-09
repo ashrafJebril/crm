@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/tx";
+import { lastErrorText } from "./campaignErrors";
 import type {
   Campaign,
   CampaignFunnel,
@@ -227,6 +228,90 @@ export function insightsPollMs(
   const sentAt = base ? Date.parse(base) : NaN;
   if (Number.isFinite(sentAt) && now - sentAt < TRACKING_WINDOW_MS) return INSIGHTS_POLL_MS;
   return null;
+}
+
+// ── SP-13 background launch ───────────────────────────────────────────────
+
+export const LAUNCH_POLL_MS = 5_000;
+
+export const CAMPAIGN_STATUSES: readonly Campaign["status"][] = [
+  "draft",
+  "launching",
+  "scheduled",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+  "paused",
+];
+
+export function campaignStatusLabel(s: Campaign["status"], tx: Tx): string {
+  const labels: Record<Campaign["status"], string> = {
+    running: tx("Sending", "قيد الإرسال"),
+    scheduled: tx("Scheduled", "مجدولة"),
+    draft: tx("Draft", "مسودة"),
+    completed: tx("Completed", "منتهية"),
+    failed: tx("Failed", "فشلت"),
+    cancelled: tx("Cancelled", "ملغاة"),
+    paused: tx("Paused", "متوقفة"),
+    launching: tx("Preparing", "قيد التحضير"),
+  };
+  return labels[s] ?? s;
+}
+
+/** Poll the campaign every 5 s while the background launch runs; stop once it has moved on. */
+export const launchPollMs = (c: Pick<Campaign, "status"> | null): number | null =>
+  c?.status === "launching" ? LAUNCH_POLL_MS : null;
+
+/** The campaign query's interval: the launch's while launching, else the report's. */
+export function campaignPollMs(
+  c: Pick<Campaign, "status" | "launchedAt" | "scheduledAt"> | null,
+  now: number,
+): number | null {
+  return launchPollMs(c) ?? insightsPollMs(c, now);
+}
+
+export interface LaunchProgressView {
+  /** Still launching (shows the spinner and Cancel). */
+  active: boolean;
+  stage: string;
+  lines: string[];
+  /** 0..100 when the total is known. */
+  pct: number | null;
+  /** The stored lastError, worded, when the launch failed. */
+  error: string | null;
+}
+
+const n = (v: number) => (v ?? 0).toLocaleString("en-US");
+
+export function launchProgressView(
+  c: Pick<Campaign, "status" | "launchStage" | "sendTransport" | "lastError" | "launch">,
+  tx: Tx,
+): LaunchProgressView {
+  const active = c.status === "launching";
+  const p = c.launch ?? null;
+  const stageKey = p?.stage ?? c.launchStage ?? (active ? "planning" : null);
+  const stage = !active && c.status === "failed"
+    ? tx("Couldn't start", "تعذّر البدء")
+    : stageKey === "sending"
+      ? tx("Sending", "جارٍ الإرسال")
+      : tx("Preparing the recipient list", "جارٍ تجهيز قائمة المستلمين");
+  const lines: string[] = [];
+  let pct: number | null = null;
+  if (active && p) {
+    lines.push(tx(`${n(p.planned)} recipients planned`, `${n(p.planned)} مستلم مخطط`));
+    if (p.stage === "sending") {
+      if (c.sendTransport === "direct") {
+        lines.push(tx(`${n(p.directSent)} of ${n(p.planned)} messages sent`, `أُرسلت ${n(p.directSent)} من ${n(p.planned)} رسالة`));
+        pct = p.planned > 0 ? Math.min(100, Math.round((p.directSent / p.planned) * 100)) : null;
+      } else if (p.partitionsTotal > 0) {
+        lines.push(tx(`${n(p.partitionsDone)} of ${n(p.partitionsTotal)} batches sent`, `أُرسلت ${n(p.partitionsDone)} من ${n(p.partitionsTotal)} دفعات`));
+        pct = Math.min(100, Math.round((p.partitionsDone / p.partitionsTotal) * 100));
+      }
+    }
+  }
+  const error = c.status === "failed" ? lastErrorText(c.lastError, tx) : null;
+  return { active, stage, lines, pct, error };
 }
 
 // ── export and follow-ups ─────────────────────────────────────────────────

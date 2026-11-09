@@ -52,18 +52,3 @@ export const QUICK_REPLIES: QuickReply[] = [
   { id: "q5", short: "/eid_promo", body: "🌙 Eid promo: 15% off all orders > SAR 250 with code EID26.", used: 211 },
 ];
 
-export interface MediaAsset {
-  label: string;
-  size: number; // KB
-}
-
-export const MEDIA_ASSETS: MediaAsset[] = [
-  { label: "product-shot-eid",       size: 248 },
-  { label: "menu-cover-ar",          size: 412 },
-  { label: "clinic-room-1",          size: 188 },
-  { label: "gym-trainer-portrait",   size: 624 },
-  { label: "tower-floorplan",        size: 821 },
-  { label: "trial-coupon",           size: 132 },
-  { label: "shipping-label",         size: 96 },
-  { label: "thank-you-card",         size: 274 },
-];

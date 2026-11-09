@@ -1,6 +1,10 @@
 import { ApiError } from "@/api/client";
 import { NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
+import { mediaKeyText } from "@/components/media/mediaErrors";
+import { GATE_AR, GATE_EN } from "@/components/whatsAppGateCopy";
 import type { Tx } from "@/lib/tx";
+import { senderText } from "./senderModel";
+import { varMapReasonText } from "./varMap";
 
 /**
  * Localized copy for every SP-12 error key (backend campaign-errors.ts) and the
@@ -11,7 +15,11 @@ import type { Tx } from "@/lib/tx";
  */
 
 type Extra = Record<string, unknown>;
-type CopyFn = (x: Extra) => [en: string, ar: string];
+/** Names the numbers in `template_missing_on_number` / `template_check_failed`. */
+export interface ErrorContext {
+  senders?: readonly { channelId: string; displayName?: string | null; phoneNumber?: string | null }[];
+}
+type CopyFn = (x: Extra, ctx: ErrorContext) => [en: string, ar: string];
 
 const num = (v: unknown): string | null => {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
@@ -69,23 +77,142 @@ export const CAMPAIGN_ERROR_COPY: Record<string, CopyFn> = {
     "The group name must be 1 to 120 characters.",
     "يجب أن يكون اسم المجموعة من 1 إلى 120 حرفًا.",
   ],
+
+  // ── SP-13 sending ──
+  "campaigns.whatsapp_not_connected": () => [GATE_EN, GATE_AR],
+  "campaigns.already_launched": () => [
+    "This campaign was already launched. Refresh to see it.",
+    "تم إطلاق هذه الحملة مسبقًا. حدّث الصفحة لرؤيتها.",
+  ],
+  "campaigns.sender_conflict": () => [
+    "The sending numbers changed. Pick them again.",
+    "تغيّرت أرقام الإرسال. اخترها مرة أخرى.",
+  ],
+  "campaigns.too_many_senders": (x) => {
+    const limit = num(x.limit);
+    return limit
+      ? [`Your plan allows up to ${limit} numbers per campaign.`, `تسمح خطتك بـ ${limit} أرقام كحد أقصى لكل حملة.`]
+      : ["Too many sending numbers for your plan.", "عدد أرقام الإرسال أكبر مما تسمح به خطتك."];
+  },
+  "campaigns.template_missing_on_number": (x, ctx) => {
+    const n = numbers(x.channelIds, ctx);
+    const many = plural(x.channelIds);
+    return n
+      ? [
+          `The template isn't approved on ${n}. Remove ${many ? "those numbers" : "that number"} or get the template approved there.`,
+          `القالب غير معتمد على ${n}. أزل ${many ? "هذه الأرقام" : "هذا الرقم"} أو اعتمد القالب هناك.`,
+        ]
+      : [
+          "The template isn't approved on some of the chosen numbers. Remove them or get the template approved there.",
+          "القالب غير معتمد على بعض الأرقام المختارة. أزلها أو اعتمد القالب عليها.",
+        ];
+  },
+  "campaigns.template_check_failed": (x, ctx) => {
+    const n = numbers(x.channelIds, ctx);
+    return n
+      ? [`Couldn't check the template on ${n}. Try again in a moment.`, `تعذّر التحقق من القالب على ${n}. حاول مجددًا بعد قليل.`]
+      : [
+          "Couldn't check the template on the chosen numbers. Try again in a moment.",
+          "تعذّر التحقق من القالب على الأرقام المختارة. حاول مجددًا بعد قليل.",
+        ];
+  },
+  "campaigns.template_not_approved": () => ["Choose a template Meta has approved.", "اختر قالبًا معتمدًا من ميتا."],
+  "campaigns.template_unsupported": () => [
+    "This template has header variables or a dynamic link button, which campaigns can't fill yet. Choose another template.",
+    "يحتوي هذا القالب على متغيرات في الترويسة أو زر رابط متغير، ولا تستطيع الحملات تعبئتها بعد. اختر قالبًا آخر.",
+  ],
+  "campaigns.schedule_invalid": () => ["Pick a send time in the future.", "اختر وقت إرسال في المستقبل."],
+  "campaigns.var_map_invalid": (x) => {
+    const slot = typeof x.slot === "string" ? x.slot : null;
+    const reason = typeof x.reason === "string" ? x.reason : "";
+    return [varMapReasonText(reason, slot, (en) => en), varMapReasonText(reason, slot, (_en, ar) => ar)];
+  },
+  "campaigns.var_map_too_varied": (x) => {
+    const parts = num(x.partitions);
+    const limit = num(x.limit) ?? "25";
+    const direct = num(x.directLimit) ?? "5,000";
+    return [
+      `The variables make ${parts ? `${parts} different messages` : "too many different messages"} (at most ${limit}), and the audience is over ${direct} people. Use fewer per-person fields, or a smaller audience.`,
+      `تُنتج المتغيرات ${parts ? `${parts} رسالة مختلفة` : "رسائل مختلفة كثيرة"} (الحد ${limit})، والجمهور أكبر من ${direct} شخص. استخدم حقولًا شخصية أقل، أو جمهورًا أصغر.`,
+    ];
+  },
+  "campaigns.no_reachable_recipients": () => [
+    "No one in the audience could receive it: no usable number, opted out, or a missing value without a fallback.",
+    "لا أحد في الجمهور يمكنه استلامها: لا رقم صالح، أو ألغى الاشتراك، أو قيمة ناقصة بلا بديل.",
+  ],
+  "campaigns.header_media_schedule_too_far": (x) => {
+    const days = num(x.days) ?? "6";
+    return [
+      `With a header file, a campaign can be scheduled at most ${days} days ahead.`,
+      `مع ملف الترويسة، يمكن جدولة الحملة قبل ${days} أيام على الأكثر.`,
+    ];
+  },
+  "campaigns.not_cancellable": () => [
+    "This campaign isn't sending, so there is nothing to cancel.",
+    "هذه الحملة لا تُرسل الآن، لذا لا يوجد ما يُلغى.",
+  ],
+  "campaigns.launch_failed": () => [
+    "The campaign couldn't be sent. Create a new campaign to try again.",
+    "تعذّر إرسال الحملة. أنشئ حملة جديدة للمحاولة مجددًا.",
+  ],
+  // SP-13 Task 2 fix round 1 (backend, in review): DELETE refused while a broadcast may still send.
+  "campaigns.has_live_broadcasts": () => [
+    "Part of this campaign may still send, so it can't be deleted yet. Cancel it first.",
+    "قد يُرسل جزء من هذه الحملة، لذا لا يمكن حذفها بعد. ألغِها أولًا.",
+  ],
+  "channels.sender_invalid": () => [
+    "One of the chosen numbers can't send campaigns any more. Pick the numbers again.",
+    "أحد الأرقام المختارة لم يعد يستطيع إرسال الحملات. اختر الأرقام مرة أخرى.",
+  ],
 };
+
+const plural = (ids: unknown): boolean => Array.isArray(ids) && ids.length > 1;
+
+/** The numbers named by `channelIds`, as "Name · +962…" with the number isolated; null when any is unknown. */
+function numbers(ids: unknown, ctx: ErrorContext): string | null {
+  if (!Array.isArray(ids) || ids.length === 0) return null;
+  const list = ids.map((id) => {
+    const s = ctx.senders?.find((x) => x.channelId === id);
+    return s ? senderText(s) : "";
+  });
+  if (list.some((x) => !x)) return null;
+  return list.join(", ");
+}
 
 const isObject = (v: unknown): v is Extra => typeof v === "object" && v !== null;
 
-/** User-facing text for any error from the SP-12 routes. */
-export function campaignErrorText(err: unknown, tx: Tx): string {
+/** Copy for a campaign (or media / template-header) key with its extras; null when the key is unknown. */
+export function campaignKeyText(key: string, extra: unknown, tx: Tx, ctx: ErrorContext = {}): string | null {
+  const copy = CAMPAIGN_ERROR_COPY[key];
+  if (copy) {
+    const [en, ar] = copy(isObject(extra) ? extra : {}, ctx);
+    return tx(en, ar);
+  }
+  return mediaKeyText(key, extra, tx);
+}
+
+/** User-facing text for any error from the campaign routes (SP-12 and SP-13). */
+export function campaignErrorText(err: unknown, tx: Tx, ctx: ErrorContext = {}): string {
   if (err instanceof ApiError && err.status === 403) return tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const message = err instanceof Error ? err.message : "";
   // The client joins a validation array with ", "; its first key is enough.
   const key = message.split(", ")[0] ?? "";
-  const copy = CAMPAIGN_ERROR_COPY[key] ?? CAMPAIGN_ERROR_COPY[message];
-  if (copy) {
-    const body = err instanceof ApiError && isObject(err.body) ? err.body : {};
-    const [en, ar] = copy(body);
-    return tx(en, ar);
-  }
-  return tx("Something went wrong. Try again.", "حدث خطأ ما. حاول مجددًا.");
+  const body = err instanceof ApiError ? err.body : undefined;
+  return (
+    campaignKeyText(key, body, tx, ctx) ??
+    campaignKeyText(message, body, tx, ctx) ??
+    tx("Something went wrong. Try again.", "حدث خطأ ما. حاول مجددًا.")
+  );
+}
+
+/**
+ * A campaign's stored `lastError`: a launch-failure key (SP-13) is worded;
+ * anything else (an older provider message) is shown as stored.
+ */
+export function lastErrorText(lastError: string | null | undefined, tx: Tx): string | null {
+  const v = lastError?.trim();
+  if (!v) return null;
+  return campaignKeyText(v, {}, tx) ?? v;
 }
 
 /**

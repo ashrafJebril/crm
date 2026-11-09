@@ -11,6 +11,7 @@ const CODES = [
   "skip:opted_out",
   "skip:no_phone",
   "provider:unknown",
+  "launch:unconfirmed",
   ...[
     131026, 131047, 131049, 131050, 131056, 131048, 131042, 131031, 131051, 131052, 131053, 132000, 132001, 132015,
     132016, 130472, 131000, 368,
@@ -64,5 +65,25 @@ describe("failureLabel", () => {
   it("has an unrecorded label in both languages", () => {
     expect(unrecordedLabel(en)).toBe("Reason not recorded");
     expect(unrecordedLabel(ar)).toMatch(ARABIC);
+  });
+
+  it("failureLabel renders missing value with field label in both languages", () => {
+    const labels = new Map([["service_due", { label: "Service due", labelAr: "موعد الخدمة" }]]);
+    // A custom field uses its own labels.
+    expect(failureLabel("skip:missing_value:custom.service_due", null, en, labels)).toBe("No value for Service due");
+    expect(failureLabel("skip:missing_value:custom.service_due", null, ar, labels)).toBe("لا توجد قيمة لـ موعد الخدمة");
+    // A built-in field is bilingual without any list.
+    expect(failureLabel("skip:missing_value:field.email", null, en)).toBe("No value for Email");
+    expect(failureLabel("skip:missing_value:field.firstName", null, ar)).toBe("لا توجد قيمة لـ الاسم الأول");
+    // An unknown key (no contacts.view, or the field was deleted) shows the raw key, isolated left to right.
+    expect(failureLabel("skip:missing_value:custom.gone", null, en)).toBe("No value for \u2066gone\u2069");
+    expect(failureLabel("skip:missing_value:custom.gone", null, ar)).toBe("لا توجد قيمة لـ \u2066gone\u2069");
+    // The provider title is never appended to a skip.
+    expect(failureLabel("skip:missing_value:field.email", "x", en)).toBe("No value for Email");
+  });
+
+  it("labels an unconfirmed direct send", () => {
+    expect(failureLabel("launch:unconfirmed", null, en)).toBe("Send not confirmed; not retried");
+    expect(failureLabel("launch:unconfirmed", null, ar)).toBe("لم يتأكد الإرسال؛ لم تتم إعادة المحاولة");
   });
 });

@@ -1,13 +1,35 @@
 import { useState } from "react";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
+import { NO_PERMISSION_AR, NO_PERMISSION_EN, usePermissions } from "@/auth/usePermissions";
 import { Modal } from "@/components/Modal";
+import { MediaPicker } from "@/components/media/MediaPicker";
+import { mediaKeyText } from "@/components/media/mediaErrors";
+import { headerKind, type HeaderMediaKind } from "@/components/media/mediaKinds";
+import { gatedTitle, isWhatsAppNotConnected, whatsAppGateText } from "@/components/whatsAppGateCopy";
+import { makeTx, type Tx } from "@/lib/tx";
 import type { Lang, Template, TemplateButtonDef, TemplateButtonType } from "@/lib/types";
+
+type HeaderChoice = "none" | "text" | HeaderMediaKind;
+/** Meta's limit for a text header. */
+export const HEADER_TEXT_MAX = 60;
+
+/** Save errors: the gate and header keys are worded; Meta's own rejection text is shown as before. */
+function saveErrorText(err: unknown, tx: Tx): string {
+  if (err instanceof ApiError && err.status === 403) return tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
+  if (isWhatsAppNotConnected(err)) return whatsAppGateText(tx);
+  const message = err instanceof Error ? err.message : "";
+  const keyed = mediaKeyText(message, err instanceof ApiError ? err.body : undefined, tx);
+  if (keyed) return keyed;
+  return message || tx("Save failed", "فشل الحفظ");
+}
 
 type Category = "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
 const CATEGORIES: Category[] = ["TRANSACTIONAL", "UTILITY", "MARKETING", "AUTHENTICATION"];
 
 interface Props {
   lang: Lang;
+  /** SP-13: false disables submitting to Meta (GET /campaigns/senders); null = unknown. */
+  connected?: boolean | null;
   mode: "create" | "edit";
   // When editing, the template to load values from. When creating, optionally
   // pre-fill (e.g. for duplicate where we want a fresh row pre-populated).
@@ -16,8 +38,24 @@ interface Props {
   onSaved: (saved: Template) => void;
 }
 
-export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props) {
+export function TemplateEditor({ lang, connected = null, mode, initial, onClose, onSaved }: Props) {
   const ar = lang === "ar";
+  const tx = makeTx(lang);
+  const { can } = usePermissions();
+  const mayEditHeader = mode === "create" ? can("templates.create") : can("templates.update");
+  const gate = gatedTitle(mode === "create" ? "template.create" : "template.update", connected, tx);
+
+  // SP-13 header: none / text / a library file (image, video, PDF).
+  const initialHeader: HeaderChoice = (headerKind(initial) ?? "none") as HeaderChoice;
+  const initialText = initialHeader === "text" ? (initial?.headerContent ?? "") : "";
+  const initialMediaId = initial?.headerMediaId ?? null;
+  const [headerType, setHeaderType] = useState<HeaderChoice>(initialHeader);
+  const [headerText, setHeaderText] = useState(initialText);
+  const [headerMediaId, setHeaderMediaId] = useState<string | null>(initialMediaId);
+  const headerChanged =
+    headerType !== initialHeader ||
+    (headerType === "text" && headerText.trim() !== initialText.trim()) ||
+    (headerType !== "none" && headerType !== "text" && headerMediaId !== initialMediaId);
 
   const [name, setName] = useState(initial?.name ?? "");
   const [tLang, setTLang] = useState<"en" | "ar">((initial?.lang as "en" | "ar") ?? "en");
@@ -46,10 +84,25 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !body.trim()) return;
+    // The header goes out on create, and on edit only when it changed: any header field resubmits to Meta.
+    const sendHeader = mode === "create" || headerChanged;
+    const mediaHeader = headerType !== "none" && headerType !== "text";
+    if (sendHeader && mediaHeader && !headerMediaId) {
+      setError(mediaKeyText("templates.header_media_required", {}, tx));
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
+      const header = !sendHeader
+        ? {}
+        : headerType === "text"
+          ? { headerType: "text", headerContent: headerText.trim() }
+          : mediaHeader
+            ? { headerType, headerMediaId }
+            : { headerType: "none" };
       const payload = {
+        ...header,
         name: name.trim(),
         lang: tLang,
         category,
@@ -72,7 +125,7 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
       onSaved(saved);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(saveErrorText(err, tx));
     } finally {
       setSubmitting(false);
     }
@@ -152,6 +205,52 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
             style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-mono)" }}
           />
         </Field>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <Field label={tx("Header", "الترويسة")}>
+            <select
+              value={headerType}
+              disabled={!mayEditHeader}
+              onChange={(e) => setHeaderType(e.target.value as HeaderChoice)}
+              style={inputStyle}
+            >
+              <option value="none">{tx("None", "بدون")}</option>
+              <option value="text">{tx("Text", "نص")}</option>
+              <option value="image">{tx("Image", "صورة")}</option>
+              <option value="video">{tx("Video", "فيديو")}</option>
+              <option value="document">{tx("Document (PDF)", "مستند (PDF)")}</option>
+            </select>
+          </Field>
+          {headerType === "text" && (
+            <div style={{ display: "grid", gap: 2 }}>
+              <input
+                type="text"
+                dir="auto"
+                value={headerText}
+                maxLength={HEADER_TEXT_MAX}
+                disabled={!mayEditHeader}
+                onChange={(e) => setHeaderText(e.target.value)}
+                placeholder={tx("Header text", "نص الترويسة")}
+                style={inputStyle}
+              />
+              <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)", textAlign: "end" }}>
+                <bdi dir="ltr">{`${headerText.length}/${HEADER_TEXT_MAX}`}</bdi>
+              </span>
+            </div>
+          )}
+          {headerType !== "none" && headerType !== "text" && mayEditHeader && (
+            <MediaPicker
+              kind={headerType}
+              value={headerMediaId}
+              onChange={(m) => setHeaderMediaId(m?.id ?? null)}
+              tx={tx}
+              caption={tx(
+                "Choose the sample file Meta reviews. Campaigns send it unless they choose another.",
+                "اختر الملف النموذجي الذي تراجعه ميتا. ترسله الحملات ما لم تختر ملفًا آخر.",
+              )}
+            />
+          )}
+        </div>
 
         <Field label={ar ? "تذييل (اختياري، 60 حرفًا)" : "Footer (optional, 60 chars)"}>
           <input
@@ -256,8 +355,14 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
           ))}
         </div>
 
+        {gate && (
+          <div role="status" style={{ fontSize: 12, color: "var(--warn)" }}>
+            {gate}
+          </div>
+        )}
         {error && (
           <div
+            role="alert"
             style={{
               padding: "8px 10px",
               background: "color-mix(in oklab, var(--bad) 12%, var(--bg-2))",
@@ -277,7 +382,12 @@ export function TemplateEditor({ lang, mode, initial, onClose, onSaved }: Props)
           <button type="button" onClick={onClose} style={btnSecondary}>
             {ar ? "إلغاء" : "Cancel"}
           </button>
-          <button type="submit" disabled={submitting} style={btnPrimary}>
+          <button
+            type="submit"
+            disabled={submitting || !!gate}
+            title={gate ?? undefined}
+            style={{ ...btnPrimary, opacity: gate ? 0.6 : 1, cursor: gate ? "not-allowed" : "pointer" }}
+          >
             {submitting
               ? ar
                 ? "جارٍ الحفظ…"

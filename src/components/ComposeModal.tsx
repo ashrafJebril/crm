@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { uploadMedia } from "@/api/uploadMedia";
+import { mediaErrorText } from "@/components/media/mediaErrors";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
@@ -602,34 +604,12 @@ function MediaPicker({
     setUploading(true);
     setUploadError(null);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const base = API_BASE;
-      const tok = tokenStore.get();
-      const resp = await fetch(`${base}/media/upload`, {
-        method: "POST",
-        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-        body: form,
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        let msg = `Upload failed (${resp.status})`;
-        try {
-          const j = JSON.parse(txt) as { id?: string; message?: string | string[] };
-          msg = Array.isArray(j.message)
-            ? j.message.join(", ")
-            : j.message ?? msg;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
-      const created = (await resp.json()) as Media;
+      const created = await uploadMedia(file);
       onUploaded();
       onSelect(created.id);
       setPickerOpen(false);
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setUploadError(mediaErrorText(err, tx, tx("Upload failed", "فشل الرفع")));
     } finally {
       setUploading(false);
     }
