@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -21,6 +22,20 @@ import {
   UpdateTicketDto,
 } from "./tickets.dto";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { DEFAULT_TZ } from "../activities/buckets";
+import {
+  TICKET_SORTS,
+  buildTicketWhere,
+  decodeCursor,
+  encodeCursor,
+  ticketCursorWhere,
+  ticketOrderBy,
+  type SortDir,
+  type TicketSort,
+} from "./ticket-filter";
+
+/** Marker activity: this card changed the contact's lifecycle (note "lifecycle:<from>-><to>"). */
+export const LIFECYCLE_ACTIVITY = "lifecycle_changed";
 
 @Injectable()
 export class TicketsService {
@@ -39,15 +54,35 @@ export class TicketsService {
   // ─── Tickets ───────────────────────────────────────────────────────────
   async listTickets(workspaceId: string, query: ListTicketsQuery) {
     const take = query.limit ?? 50;
+    // One builder for table and kanban, so the same filters always match the same tickets.
+    const tz = query.from || query.to ? await this.workspaceTimezone(workspaceId) : DEFAULT_TZ;
+    const where = buildTicketWhere(workspaceId, query, tz);
+
+    if (query.view === "table") {
+      const sort: TicketSort = (query.sort ?? "updatedAt") as TicketSort;
+      if (!TICKET_SORTS.includes(sort)) throw new BadRequestException("Unknown sort field");
+      const dir: SortDir = query.dir === "asc" ? "asc" : "desc";
+      const after = query.cursor ? ticketCursorWhere(sort, dir, decodeCursor(query.cursor, sort)) : undefined;
+      const [rows, total] = await Promise.all([
+        this.prisma.ticket.findMany({
+          where: after ? { AND: [where, after] } : where,
+          orderBy: ticketOrderBy(sort, dir),
+          take: take + 1,
+          include: { contact: true, stage: true },
+        }),
+        this.prisma.ticket.count({ where }),
+      ]);
+      const hasMore = rows.length > take;
+      const page = hasMore ? rows.slice(0, take) : rows;
+      return {
+        items: page,
+        nextCursor: hasMore ? encodeCursor(sort, page[page.length - 1]) : null,
+        total,
+      };
+    }
+
     const items = await this.prisma.ticket.findMany({
-      where: {
-        workspaceId,
-        pipelineId: query.pipelineId,
-        stageId: query.stageId,
-        contactId: query.contactId,
-        conversationId: query.conversationId,
-        ownerId: query.ownerId,
-      },
+      where,
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       take: take + 1,
       cursor: query.cursor ? { id: query.cursor } : undefined,
@@ -63,6 +98,11 @@ export class TicketsService {
       items: page,
       nextCursor: hasMore ? page[page.length - 1].id : null,
     };
+  }
+
+  private async workspaceTimezone(workspaceId: string): Promise<string> {
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } });
+    return ws?.timezone || DEFAULT_TZ;
   }
 
   async getTicket(workspaceId: string, id: string) {
@@ -127,7 +167,7 @@ export class TicketsService {
     // Archived pipelines are read-only for new work (their tickets stay readable).
     const pl = await this.prisma.pipeline.findFirst({
       where: { id: dto.pipelineId, workspaceId },
-      select: { archivedAt: true },
+      select: { archivedAt: true, kind: true },
     });
     if (pl?.archivedAt) throw new BadRequestException("pipelines.archived");
 
@@ -144,32 +184,39 @@ export class TicketsService {
     // races under concurrent creates and collides on @@unique([pipelineId,
     // number]); retry on that specific conflict with a freshly recomputed
     // number instead of 500-ing / losing the ticket.
-    let ticket: Prisma.PromiseReturnType<typeof this.prisma.ticket.create> | null =
-      null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const lastInPipeline = await this.prisma.ticket.findFirst({
+    const insert = async (db: any) => {
+      const lastInPipeline = await db.ticket.findFirst({
         where: { pipelineId: dto.pipelineId, workspaceId },
         orderBy: { number: "desc" },
         select: { number: true },
       });
       const number = (lastInPipeline?.number ?? 0) + 1;
+      return db.ticket.create({
+        data: {
+          workspaceId,
+          number,
+          pipelineId: dto.pipelineId,
+          stageId: dto.stageId,
+          contactId: dto.contactId,
+          conversationId: dto.conversationId ?? null,
+          ownerId: dto.ownerId ?? null,
+          title: dto.title,
+          description: dto.description ?? null,
+          value: dto.value ?? null,
+          currency: "SAR",
+        },
+        include: { contact: true, stage: true },
+      });
+    };
+    // SP-08: a leads pipeline keeps one open card per contact (see withLeadGuard).
+    const isLeads = pl?.kind === "leads";
+    let ticket: Prisma.PromiseReturnType<typeof this.prisma.ticket.create> | null =
+      null;
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        ticket = await this.prisma.ticket.create({
-          data: {
-            workspaceId,
-            number,
-            pipelineId: dto.pipelineId,
-            stageId: dto.stageId,
-            contactId: dto.contactId,
-            conversationId: dto.conversationId ?? null,
-            ownerId: dto.ownerId ?? null,
-            title: dto.title,
-            description: dto.description ?? null,
-            value: dto.value ?? null,
-            currency: "SAR",
-          },
-          include: { contact: true, stage: true },
-        });
+        ticket = isLeads
+          ? await this.withLeadGuard(workspaceId, dto.pipelineId, dto.contactId, undefined, insert)
+          : await insert(this.prisma);
         break;
       } catch (e) {
         if (
@@ -303,17 +350,10 @@ export class TicketsService {
   async moveTicket(workspaceId: string, id: string, dto: MoveTicketDto, viewer?: Viewer) {
     const ticket = await this.prisma.ticket.findFirst({
       where: { id, workspaceId },
-      include: { stage: true, pipeline: { select: { agentCanMove: true } } },
+      include: { stage: true, pipeline: { select: { agentCanMove: true, kind: true } } },
     });
     if (!ticket) throw new NotFoundException("Ticket not found");
-
-    // SP-07: a pipeline can restrict moves to people who may edit pipelines
-    // (owner/admin). Internal callers pass no viewer and are never gated.
-    if (ticket.pipeline && ticket.pipeline.agentCanMove === false && viewer && this.perm) {
-      if (!(await this.perm.viewerCan(workspaceId, viewer, "pipelines.update"))) {
-        throw new ForbiddenException({ statusCode: 403, message: "Missing permission", permission: "pipelines.update" });
-      }
-    }
+    await this.assertMoveAllowed(workspaceId, ticket.pipeline, viewer);
 
     const targetStage = await this.prisma.ticketStage.findFirst({
       where: { id: dto.stageId, workspaceId },
@@ -343,17 +383,24 @@ export class TicketsService {
       throw new BadRequestException("lostReason is required when moving to a Lost stage");
     }
 
-    const updated = await this.prisma.ticket.update({
-      where: { id },
-      data: {
-        stageId: targetStage.id,
-        lostReason: isLost ? lostLabel : null,
-        lostReasonId: isLost ? lostReasonId : null,
-        closedAt: targetStage.isTerminal ? new Date() : null,
-        enteredStageAt: new Date(),
-      },
-      include: { contact: true, stage: true },
-    });
+    const isLead = ticket.pipeline?.kind === "leads";
+    const write = (db: any) =>
+      db.ticket.update({
+        where: { id },
+        data: {
+          stageId: targetStage.id,
+          lostReason: isLost ? lostLabel : null,
+          lostReasonId: isLost ? lostReasonId : null,
+          closedAt: targetStage.isTerminal ? new Date() : null,
+          enteredStageAt: new Date(),
+        },
+        include: { contact: true, stage: true },
+      });
+    // Dragging a closed lead back into an open stage reopens it: the one-open-card rule applies.
+    const updated =
+      isLead && ticket.stage.isTerminal && !targetStage.isTerminal
+        ? await this.withLeadGuard(workspaceId, ticket.pipelineId, ticket.contactId, ticket.id, write)
+        : await write(this.prisma);
 
     await this.prisma.ticketActivity.create({
       data: {
@@ -366,6 +413,7 @@ export class TicketsService {
         byUserId: dto.byUserId ?? null,
       },
     });
+    if (isLead) await this.syncLeadLifecycle(workspaceId, id, ticket.contactId, ticket.stage, targetStage);
 
     // Broadcast to every other connected client in this workspace so their
     // pipeline boards reflect the move without a refetch. The author's own
@@ -382,6 +430,180 @@ export class TicketsService {
       payload: { ticket: updated },
     } satisfies WorkflowTriggerEvent);
 
+    return updated;
+  }
+
+  /** SP-07: a pipeline can restrict moves to people who may edit pipelines
+   *  (owner/admin). Internal callers pass no viewer and are never gated. */
+  private async assertMoveAllowed(
+    workspaceId: string,
+    pipeline: { agentCanMove?: boolean } | null | undefined,
+    viewer?: Viewer,
+  ) {
+    if (pipeline && pipeline.agentCanMove === false && viewer && this.perm) {
+      if (!(await this.perm.viewerCan(workspaceId, viewer, "pipelines.update"))) {
+        throw new ForbiddenException({ statusCode: 403, message: "Missing permission", permission: "pipelines.update" });
+      }
+    }
+  }
+
+  /**
+   * SP-08 lead uniqueness: one open card per contact per leads pipeline.
+   * Chosen approach: an interactive transaction that takes a transaction-scoped
+   * Postgres advisory lock keyed on (pipeline, contact), re-checks for an open
+   * card, then runs `fn` with the transaction client. Concurrent creates for
+   * the same contact queue on the lock, so the loser's re-check sees the
+   * winner's card and gets 409 (no serialization-failure retries). A partial
+   * unique index can't express "pipeline.kind = leads", hence not used.
+   * Callers retry P2002 (ticket number clash) around this whole call, since a
+   * failed statement aborts the transaction.
+   */
+  private withLeadGuard<T>(
+    workspaceId: string,
+    pipelineId: string,
+    contactId: string,
+    excludeTicketId: string | undefined,
+    fn: (db: any) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(async (tx: any) => {
+      const key = `lead:${pipelineId}:${contactId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+      const existing = await tx.ticket.findFirst({
+        where: {
+          workspaceId,
+          pipelineId,
+          contactId,
+          closedAt: null,
+          ...(excludeTicketId ? { id: { not: excludeTicketId } } : {}),
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new ConflictException({ statusCode: 409, message: "tickets.lead_exists", ticketId: existing.id });
+      }
+      return fn(tx);
+    });
+  }
+
+  /**
+   * Leads pipelines tie the contact's lifecycle to the card: won -> customer;
+   * lost -> unchanged. A marker activity records that THIS card made the
+   * change, so leaving Won restores `lead` only when the contact is still
+   * `customer` and this card set it.
+   */
+  private async syncLeadLifecycle(
+    workspaceId: string,
+    ticketId: string,
+    contactId: string,
+    from: { isTerminal: boolean; isWon: boolean },
+    to: { isTerminal: boolean; isWon: boolean },
+  ) {
+    const wasWon = from.isTerminal && from.isWon;
+    const isWon = to.isTerminal && to.isWon;
+    if (isWon === wasWon) return;
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, workspaceId },
+      select: { lifecycle: true },
+    });
+    if (!contact) return;
+    const current = (contact.lifecycle ?? "").toLowerCase();
+    if (isWon) {
+      if (current === "customer") return;
+      await this.prisma.contact.update({ where: { id: contactId }, data: { lifecycle: "customer" } });
+      await this.prisma.ticketActivity.create({
+        data: { workspaceId, ticketId, kind: LIFECYCLE_ACTIVITY, note: `lifecycle:${current || "none"}->customer` },
+      });
+      return;
+    }
+    const marker = await this.prisma.ticketActivity.findFirst({
+      where: { workspaceId, ticketId, kind: LIFECYCLE_ACTIVITY },
+      orderBy: { createdAt: "desc" },
+      select: { note: true },
+    });
+    if (!marker?.note?.endsWith("->customer") || current !== "customer") return;
+    await this.prisma.contact.update({ where: { id: contactId }, data: { lifecycle: "lead" } });
+    await this.prisma.ticketActivity.create({
+      data: { workspaceId, ticketId, kind: LIFECYCLE_ACTIVITY, note: "lifecycle:customer->lead" },
+    });
+  }
+
+  /**
+   * Returns a closed ticket to the open stage it was in before closing (read
+   * from its latest won/lost activity, else its last stage_changed target;
+   * first open stage if that stage no longer exists), clearing closedAt and
+   * the lost reason.
+   */
+  async reopenTicket(workspaceId: string, id: string, viewer?: Viewer, actorId?: string) {
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id, workspaceId },
+      include: { stage: true, pipeline: { select: { agentCanMove: true, kind: true, archivedAt: true } } },
+    });
+    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (!ticket.stage.isTerminal && !ticket.closedAt) throw new BadRequestException("tickets.not_closed");
+    if (ticket.pipeline?.archivedAt) throw new BadRequestException("pipelines.archived");
+    await this.assertMoveAllowed(workspaceId, ticket.pipeline, viewer);
+
+    const openStageByKey = (key: string) =>
+      this.prisma.ticketStage.findFirst({
+        where: { workspaceId, pipelineId: ticket.pipelineId, key, isTerminal: false },
+      });
+    const closing = await this.prisma.ticketActivity.findFirst({
+      where: { workspaceId, ticketId: id, kind: { in: ["won", "lost"] } },
+      orderBy: { createdAt: "desc" },
+      select: { fromStage: true },
+    });
+    let target = closing?.fromStage ? await openStageByKey(closing.fromStage) : null;
+    if (!target) {
+      const last = await this.prisma.ticketActivity.findFirst({
+        where: { workspaceId, ticketId: id, kind: "stage_changed" },
+        orderBy: { createdAt: "desc" },
+        select: { toStage: true },
+      });
+      if (last?.toStage) target = await openStageByKey(last.toStage);
+    }
+    if (!target) {
+      target = await this.prisma.ticketStage.findFirst({
+        where: { workspaceId, pipelineId: ticket.pipelineId, isTerminal: false },
+        orderBy: { order: "asc" },
+      });
+    }
+    if (!target) throw new BadRequestException("Pipeline has no open stage");
+    const stage = target;
+
+    const isLead = ticket.pipeline?.kind === "leads";
+    const write = async (db: any) => {
+      const row = await db.ticket.update({
+        where: { id },
+        data: { stageId: stage.id, closedAt: null, lostReason: null, lostReasonId: null, enteredStageAt: new Date() },
+        include: { contact: true, stage: true },
+      });
+      await db.ticketActivity.create({
+        data: {
+          workspaceId,
+          ticketId: id,
+          kind: "reopened",
+          fromStage: ticket.stage.key,
+          toStage: stage.key,
+          byUserId: actorId ?? null,
+        },
+      });
+      return row;
+    };
+    const updated = isLead
+      ? await this.withLeadGuard(workspaceId, ticket.pipelineId, ticket.contactId, id, write)
+      : await write(this.prisma);
+    if (isLead) await this.syncLeadLifecycle(workspaceId, id, ticket.contactId, ticket.stage, stage);
+
+    this.realtime.emitToWorkspace(workspaceId, "ticket.moved", {
+      ticket: updated,
+      fromStageId: ticket.stageId,
+      toStageId: stage.id,
+    });
+    this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+      workspaceId,
+      triggerType: "ticket_stage_changed",
+      payload: { ticket: updated },
+    } satisfies WorkflowTriggerEvent);
     return updated;
   }
 

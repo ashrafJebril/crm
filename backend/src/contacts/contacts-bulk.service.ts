@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { MarketingOutboundService } from "../segments/marketing-outbound.service";
 import { addManualMembers } from "../segments/segment-members";
@@ -152,13 +152,20 @@ export class ContactsBulkService {
     let created = 0;
     // Sequential: ticket numbers are allocated per pipeline.
     for (const contactId of todo) {
-      await this.tickets.createTicket(workspaceId, {
-        pipelineId: dto.pipelineId,
-        stageId,
-        contactId,
-        title: names.get(contactId) ?? "Ticket",
-      });
-      created += 1;
+      try {
+        await this.tickets.createTicket(workspaceId, {
+          pipelineId: dto.pipelineId,
+          stageId,
+          contactId,
+          title: names.get(contactId) ?? "Ticket",
+        });
+        created += 1;
+      } catch (e) {
+        // Leads pipelines keep one open card per contact (SP-08). The pre-check above
+        // covers the normal case; this covers a card opened concurrently since then.
+        if (e instanceof ConflictException) continue;
+        throw e;
+      }
     }
     return { affected: created, created, skipped: ids.length - created };
   }

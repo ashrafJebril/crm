@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { BULK_IDS_CAP, ContactsBulkService, PIPELINE_BULK_CAP } from "./contacts-bulk.service";
@@ -145,6 +145,20 @@ describe("ContactsBulkService", () => {
       title: "N-a",
     });
     expect(res).toEqual({ affected: 2, created: 2, skipped: 1 });
+  });
+
+  it("addToPipeline skips a contact that races into an open lead card (409 tickets.lead_exists)", async () => {
+    tickets.createTicket.mockImplementation(async (_ws: string, dto: { contactId: string }) => {
+      if (dto.contactId === "b") throw new ConflictException({ statusCode: 409, message: "tickets.lead_exists", ticketId: "t0" });
+      return { id: "t" };
+    });
+    const res = await svc.run("ws1", { ids: ["a", "b", "c"], op: "addToPipeline", pipelineId: "p1" });
+    expect(res).toEqual({ affected: 2, created: 2, skipped: 1 });
+  });
+
+  it("addToPipeline still propagates unexpected create errors", async () => {
+    tickets.createTicket.mockRejectedValue(new Error("db down"));
+    await expect(svc.run("ws1", { ids: ["a"], op: "addToPipeline", pipelineId: "p1" })).rejects.toThrow("db down");
   });
 
   it("addToPipeline honours an explicit stageId and 404s a foreign pipeline", async () => {

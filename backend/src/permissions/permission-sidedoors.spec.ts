@@ -297,7 +297,7 @@ describe("assigned-only conversation visibility: side doors", () => {
   describe("other readers of a DB conversation by id", () => {
     it("tickets/from-conversation: hidden -> 404 before creating", async () => {
       const svc = { createFromConversation: jest.fn().mockResolvedValue({ id: "t" }) };
-      const c = new TicketsController(svc as never, perm);
+      const c = new TicketsController(svc as never, {} as never, perm);
       await expect(c.createFromConversation(WS, ME, NONE, {} as never, viewer)).rejects.toThrow(NotFoundException);
       expect(svc.createFromConversation).not.toHaveBeenCalled();
       await expect(c.createFromConversation(WS, ME, MINE, {} as never, viewer)).resolves.toBeDefined();
@@ -412,7 +412,7 @@ describe("assigned-only conversation visibility: side doors", () => {
   describe("ticket creation", () => {
     it("POST /tickets with a hidden conversationId -> 404 before creating", async () => {
       const svc = { createTicket: jest.fn().mockResolvedValue({ id: "t" }) };
-      const c = new TicketsController(svc as never, perm);
+      const c = new TicketsController(svc as never, {} as never, perm);
       await expect(c.createTicket(WS, ME, { conversationId: NONE } as never, viewer)).rejects.toThrow(NotFoundException);
       expect(svc.createTicket).not.toHaveBeenCalled();
       await expect(c.createTicket(WS, ME, { conversationId: MINE } as never, viewer)).resolves.toBeDefined();

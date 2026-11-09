@@ -250,6 +250,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /tickets/:id": "tickets.view",
   "POST /tickets": "tickets.create",
   "POST /tickets/from-conversation/:conversationId": "tickets.create",
+  "POST /tickets/bulk": "tickets.update",
+  "POST /tickets/:id/reopen": "tickets.update",
   "PATCH /tickets/:id": "tickets.update",
   "POST /tickets/:id/move": "tickets.update",
   "POST /tickets/:id/notes": "tickets.update",

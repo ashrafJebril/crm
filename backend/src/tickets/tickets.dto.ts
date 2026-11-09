@@ -1,5 +1,9 @@
 import { Type } from "class-transformer";
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsNumber,
@@ -45,9 +49,33 @@ export class ListTicketsQuery {
   @IsOptional() @IsString() stageId?: string;
   @IsOptional() @IsString() contactId?: string;
   @IsOptional() @IsString() conversationId?: string;
+  /** A user id, or "none" for unassigned. */
   @IsOptional() @IsString() ownerId?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
   @IsOptional() @IsString() cursor?: string;
+
+  // SP-08 board filters (shared by the table and the kanban)
+  @IsOptional() @IsIn(["open", "won", "lost"]) status?: "open" | "won" | "lost";
+  @IsOptional() @IsString() q?: string;
+  /** Inclusive local days (YYYY-MM-DD) in the workspace timezone, on createdAt. */
+  @IsOptional() @IsString() from?: string;
+  @IsOptional() @IsString() to?: string;
+  /** "table" switches to the sorted, keyset-paged response with a total. */
+  @IsOptional() @IsIn(["table"]) view?: "table";
+  @IsOptional() @IsIn(["createdAt", "updatedAt", "value", "enteredStageAt"]) sort?: "createdAt" | "updatedAt" | "value" | "enteredStageAt";
+  @IsOptional() @IsIn(["asc", "desc"]) dir?: "asc" | "desc";
+}
+
+export const TICKET_BULK_OPS = ["assign", "lost", "notALead"] as const;
+export const TICKET_BULK_CAP = 500;
+
+export class BulkTicketsDto {
+  @IsArray() @ArrayNotEmpty() @ArrayMaxSize(TICKET_BULK_CAP) @IsString({ each: true }) ids!: string[];
+  @IsIn(TICKET_BULK_OPS as unknown as string[]) op!: (typeof TICKET_BULK_OPS)[number];
+  /** assign: a member user id, or null to unassign. */
+  @IsOptional() @IsString() ownerId?: string | null;
+  /** lost: a LostReason of each ticket's pipeline. */
+  @IsOptional() @IsString() lostReasonId?: string;
 }
 
 export class CreateFromConversationDto {

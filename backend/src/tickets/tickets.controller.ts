@@ -10,8 +10,10 @@ import {
   Query,
 } from "@nestjs/common";
 import { TicketsService } from "./tickets.service";
+import { TicketsBulkService } from "./tickets-bulk.service";
 import {
   AddNoteDto,
+  BulkTicketsDto,
   CreateFromConversationDto,
   CreateTicketDto,
   ListTicketsQuery,
@@ -26,6 +28,7 @@ import type { Viewer } from "../permissions/visibility";
 export class TicketsController {
   constructor(
     private readonly svc: TicketsService,
+    private readonly bulkSvc: TicketsBulkService,
     @Optional() private readonly perm?: PermissionService,
   ) {}
 
@@ -43,6 +46,17 @@ export class TicketsController {
     @Query("pipelineId") pipelineId?: string,
   ) {
     return this.svc.dashboardSummary(workspaceId, pipelineId);
+  }
+
+  /** Bulk assign / lost / not-a-lead (SP-08). */
+  @Post("tickets/bulk")
+  bulk(
+    @CurrentWorkspace() workspaceId: string,
+    @CurrentUserId() userId: string,
+    @Body() dto: BulkTicketsDto,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    return this.bulkSvc.run(workspaceId, dto, viewer, userId);
   }
 
   @Get("tickets/:id")
@@ -95,6 +109,16 @@ export class TicketsController {
     @CurrentViewer() viewer?: Viewer,
   ) {
     return this.svc.moveTicket(workspaceId, id, dto, viewer);
+  }
+
+  @Post("tickets/:id/reopen")
+  reopen(
+    @CurrentWorkspace() workspaceId: string,
+    @CurrentUserId() userId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    return this.svc.reopenTicket(workspaceId, id, viewer, userId);
   }
 
   @Post("tickets/:id/notes")
