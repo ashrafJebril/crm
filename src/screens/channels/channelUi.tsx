@@ -3,7 +3,6 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { API_BASE } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { useRealtime } from "@/api/useRealtime";
-import { getHashParam, setHashParam } from "@/lib/hashState";
 import type { Tx } from "@/lib/tx";
 import type { ChannelDto, ChannelLimits, EmbeddedSignupConfig } from "@/lib/types";
 import { Modal } from "@/components/Modal";
@@ -59,24 +58,8 @@ export function useChannelsList(enabled: boolean) {
   return listQ;
 }
 
-/** A hash query param (`#/channels?id=…`), kept in sync with hashchange. */
-export function useHashParam(key: string): [string | null, (v: string | null) => void] {
-  const [value, setValue] = useState<string | null>(() => getHashParam(window.location.hash, key));
-  useEffect(() => {
-    const on = () => setValue(getHashParam(window.location.hash, key));
-    window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
-  }, [key]);
-  const set = useCallback(
-    (v: string | null) => {
-      const next = setHashParam(window.location.hash, key, v);
-      if (next !== window.location.hash) window.location.hash = next;
-      setValue(v);
-    },
-    [key],
-  );
-  return [value, set];
-}
+/** Moved to `@/lib/useHashParam` (SP-12); re-exported so SP-19 imports keep working. */
+export { useHashParam } from "@/lib/useHashParam";
 
 export async function copyText(text: string): Promise<boolean> {
   try {

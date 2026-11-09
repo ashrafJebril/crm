@@ -15,6 +15,9 @@ import { useFetch, useMutation } from "@/api/useFetch";
 import { usePermissions } from "@/auth/usePermissions";
 import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { useHashParam } from "@/lib/useHashParam";
+import { InlineBar, MiniStat } from "./campaigns/ui";
+import { CampaignDetail } from "./campaigns/CampaignDetail";
 
 type View = "list" | "builder";
 type CampaignStatus = Campaign["status"];
@@ -50,53 +53,6 @@ function Field({ label, children }: FieldProps) {
       <span style={{ fontSize: 12, color: "var(--ink-2)" }}>{label}</span>
       {children}
     </label>
-  );
-}
-
-interface MiniStatProps {
-  label: string;
-  value: string;
-  sub: string;
-}
-
-function MiniStat({ label, value, sub }: MiniStatProps) {
-  return (
-    <div className="stat" style={{ padding: 14 }}>
-      <div className="label">{label}</div>
-      <div className="value" style={{ fontSize: 22 }}>
-        {value}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{sub}</div>
-    </div>
-  );
-}
-
-interface InlineBarProps {
-  pct: number;
-  label: string;
-  color?: string;
-}
-
-function InlineBar({ pct, label, color = "var(--accent)" }: InlineBarProps) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 90 }}>
-      <div
-        style={{
-          flex: 1,
-          height: 4,
-          background: "var(--bg-2)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{ width: `${pct}%`, height: "100%", background: color, opacity: 0.7 }}
-        />
-      </div>
-      <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-        {label}
-      </span>
-    </div>
   );
 }
 
@@ -718,6 +674,8 @@ function CampaignsImpl() {
   const [view, setView] = useState<View>("list");
   const [tab, setTab] = useState<TabId>("all");
   const [query, setQuery] = useState("");
+  // SP-12: `#/campaigns?id=<id>` opens the report; Back (hash history) returns here.
+  const [openId, setOpenId] = useHashParam("id");
 
   const { toast } = useToast();
   // Sending campaigns update every minute while the page is open.
@@ -787,6 +745,18 @@ function CampaignsImpl() {
   const filtered = (tab === "all" ? campaigns : campaigns.filter((c) => c.status === tab)).filter(
     (c) => c.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
+
+  if (openId) {
+    return (
+      <CampaignDetail
+        id={openId}
+        onBack={() => {
+          setOpenId(null);
+          refetch();
+        }}
+      />
+    );
+  }
 
   if (view === "builder") {
     return (
@@ -947,9 +917,20 @@ function CampaignsImpl() {
                 const deliveredPct = pct(c.delivered);
                 const when = c.scheduledAt ?? c.launchedAt;
                 return (
-                  <tr key={c.id} style={{ cursor: "pointer" }}>
+                  <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => setOpenId(c.id)}>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{c.name}</div>
+                      <a
+                        href={`#/campaigns?id=${encodeURIComponent(c.id)}`}
+                        dir="auto"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpenId(c.id);
+                        }}
+                        style={{ fontWeight: 500, color: "inherit", textDecoration: "none" }}
+                      >
+                        {c.name}
+                      </a>
                       {c.lastError && (
                         <div style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>{c.lastError}</div>
                       )}
@@ -1003,6 +984,17 @@ function CampaignsImpl() {
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        {c.status !== "draft" && (
+                          <button
+                            className="btn ghost sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenId(c.id);
+                            }}
+                          >
+                            {tx("View report", "عرض التقرير")}
+                          </button>
+                        )}
                         {c.zernioBroadcastId && (
                           <button
                             className="btn ghost sm"

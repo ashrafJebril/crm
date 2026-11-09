@@ -361,6 +361,78 @@ export interface Campaign {
   failed?: number;
   skipped?: number;
   lastError?: string | null;
+  /** SP-19: the WhatsApp channel it goes out from; null = the default number. */
+  senderChannelId?: string | null;
+  /** SP-12: true once launch wrote one recipient row per audience member. */
+  recipientTracking?: boolean;
+  recipientsSyncedAt?: string | null;
+  statsSyncedAt?: string | null;
+}
+
+// ─── SP-12 campaign recipients and report ─────────────────────────────────
+
+export type RecipientStatus = "queued" | "sent" | "delivered" | "read" | "replied" | "failed" | "skipped";
+
+export interface CampaignRecipientRow {
+  id: string;
+  contactId: string | null;
+  name: string | null;
+  phone: string | null;
+  status: RecipientStatus;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  repliedAt: string | null;
+  replyText: string | null;
+  buttonPayload: string | null;
+  replyMessageId: string | null;
+  failureCode: string | null;
+  failureTitle: string | null;
+  channel: { id: string; displayName: string; phoneNumber: string | null } | null;
+}
+
+/** GET /campaigns/:id/recipients */
+export interface RecipientsPage {
+  tracked: boolean;
+  items: CampaignRecipientRow[];
+  nextCursor: string | null;
+}
+
+export interface CampaignFunnel {
+  targeted: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+}
+
+export interface ReadTiming {
+  withinHour: number;
+  oneToSix: number;
+  sixToDay: number;
+  afterDay: number;
+}
+
+/** GET /campaigns/:id/insights */
+export interface CampaignInsights {
+  tracked: boolean;
+  total: number;
+  counts: Record<RecipientStatus, number>;
+  funnel: CampaignFunnel;
+  readTiming: ReadTiming;
+  replies: { payload: string | null; label: string | null; count: number }[];
+  failures: { code: string; title: string | null; count: number }[];
+  unrecorded: number;
+  recipientsSyncedAt: string | null;
+  statsSyncedAt: string | null;
+}
+
+/** POST /campaigns/:id/follow-up/* */
+export interface FollowUpResult {
+  added: number;
+  already: number;
+  leftOut: number;
+  groupId?: string;
 }
 
 /** Value for one template placeholder in a campaign broadcast. */
