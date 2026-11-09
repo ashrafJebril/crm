@@ -215,8 +215,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `recipients-cursor.spec.ts` (Review Focus 3); `delivery webhook out of order (read before delivered) keeps both timestamps`; `reply attribution window 72h`.
 
 #### SP-13 Campaign sending options and media picker. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-13-sp13-campaign-sending.md`)
+- [x] Shipped on `feat/tkana-parity`; migrations applied and live-verified 2026-11-09 against a local Zernio stub (157/164 checks; the one failure fixed in d2993c6). **Pending:** about 12 Zernio behaviours need a real check (broadcast statuses, draft listing, Idempotency-Key replay, Retry-After format, header fallback, field names). Includes the SP-12 R10 background launch. Rollback runbook: `docs/runbooks/campaign-launch-rollback.md`.
 - **Gaps:** "Send from" number picker with a per-number split in preview and report; template variables mapped to any contact/custom field with fallbacks; clear "WhatsApp not connected" gating (AR/EN) on marketing actions; a media library picker in the template editor and campaign header; a Gallery tab.
 - **Depends on:** SP-19, SP-02.
 - **Read in Tkana:** `components/marketing/{CampaignSenders,CustomerFieldFallbacks,MediaLibrary}.tsx`, `lib/marketing/{campaign-senders,campaign-custom-fields,samples}.ts`, `routes/media.library.ts`.
