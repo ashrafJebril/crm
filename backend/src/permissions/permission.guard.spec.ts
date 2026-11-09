@@ -188,7 +188,7 @@ describe("PermissionGuard", () => {
 
   it("contacts bulk delete needs contacts.delete, not just the route's contacts.update", async () => {
     const bulkSvc = { run: jest.fn().mockResolvedValue({ ok: true }) };
-    const ctrl = new ContactsController({} as never, bulkSvc as never, {} as never);
+    const ctrl = new ContactsController({} as never, bulkSvc as never, {} as never, {} as never);
     const reqAs = (role: SystemRoleKey) => ({
       user,
       permissions: { roleId: "r", key: role, name: role, nameAr: role, permissions: SYSTEM_ROLES[role].permissions, conversationVisibility: "all" },

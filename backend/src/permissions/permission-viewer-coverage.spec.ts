@@ -72,7 +72,7 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["records", RecordsController, ["get"]],
   ["search", SearchController, ["search"]],
   ["dashboard", DashboardController, ["summary"]],
-  ["contacts", ContactsController, ["summary"]],
+  ["contacts", ContactsController, ["summary", "timeline"]],
   ["tickets", TicketsController, ["createTicket", "createFromConversation"]],
   ["whatsapp", WhatsAppController, ["sendInConversation", "sendTemplateInConversation"]],
   ["zernio", ZernioController, ["conversations", "messages", "send", "sendInDbConversation", "sendTemplateInDbConversation"]],

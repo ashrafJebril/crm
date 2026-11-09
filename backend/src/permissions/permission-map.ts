@@ -206,6 +206,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /contacts/stats": "contacts.view",
   "GET /contacts/:id": "contacts.view",
   "GET /contacts/:id/summary": "contacts.view",
+  "GET /contacts/:id/timeline": "contacts.view", // messages filtered by conversation scope
   "GET /contacts/:id/tickets": "contacts.view",
   "GET /contacts/:id/appointments": "contacts.view",
   "POST /contacts": "contacts.create",

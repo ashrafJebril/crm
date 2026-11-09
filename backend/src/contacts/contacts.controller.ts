@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res } fr
 import type { Response } from "express";
 import { ContactsExportService } from "./contacts-export.service";
 import { ContactsService } from "./contacts.service";
+import { ContactTimelineService } from "./contact-timeline.service";
 import { ContactsBulkService } from "./contacts-bulk.service";
 import { parseContactFilter } from "./contact-filter";
 import { BulkContactsDto, CreateContactDto, UpdateContactDto } from "./contacts.dto";
@@ -15,6 +16,7 @@ export class ContactsController {
     private readonly svc: ContactsService,
     private readonly bulkSvc: ContactsBulkService,
     private readonly exportSvc: ContactsExportService,
+    private readonly timelineSvc: ContactTimelineService,
   ) {}
 
   @Get()
@@ -116,6 +118,17 @@ export class ContactsController {
   @Get(":id/summary")
   summary(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @CurrentViewer() viewer: Viewer) {
     return this.svc.summary(workspaceId, id, viewer);
+  }
+
+  @Get(":id/timeline")
+  timeline(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer: Viewer,
+    @Query("before") before?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.timelineSvc.timeline(workspaceId, id, viewer, { before, limit: limit ? Number(limit) : undefined });
   }
 
   @Get(":id/tickets")
