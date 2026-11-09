@@ -6,6 +6,8 @@ import { RealtimeService } from "../realtime/realtime.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { stampLastInbound } from "./channel-resolver.service";
+import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
+import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
 
 export interface InboundRecord {
   workspaceId: string;
@@ -35,12 +37,18 @@ export interface InboundRecord {
  */
 @Injectable()
 export class InboundSinkService {
+  private readonly attributor: CampaignReplyAttributor;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly pipelineAutomation: PipelineAutomationService,
     @Optional() private readonly events?: EventEmitter2,
-  ) {}
+    // SP-12, from CampaignTrackingModule; hand-built specs get one over the same Prisma.
+    @Optional() attributor?: CampaignReplyAttributor,
+  ) {
+    this.attributor = attributor ?? new CampaignReplyAttributor(prisma, new RecipientTrackerService(prisma));
+  }
 
   async record(input: InboundRecord): Promise<{ conversationId: string; messageId: string; duplicate: boolean }> {
     const { workspaceId, channel } = input;
@@ -119,6 +127,18 @@ export class InboundSinkService {
       },
     });
     await stampLastInbound(this.prisma, channel.id);
+
+    // SP-12: no campaign sends on these channels today, but the reply rule
+    // lives in one place. Never throws.
+    await this.attributor.onInbound({
+      workspaceId,
+      channelId: channel.id,
+      contactId: contact.id,
+      phone: input.phone ?? contact.phone,
+      text: input.text,
+      inboundMessageId: message.id,
+      at,
+    });
 
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: kind,

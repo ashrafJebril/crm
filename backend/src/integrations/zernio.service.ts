@@ -28,6 +28,9 @@ import { credentialsFor } from "../channels/channel-credentials";
 import { assertWhatsappCapacity } from "../channels/channel-limits";
 import { channelError } from "../channels/channel-errors";
 import type { Channel } from "@prisma/client";
+import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
+import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
+import { zernioReplyParts } from "../campaigns/tracking/inbound-reply";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -66,6 +69,9 @@ export class ZernioService {
   private readonly healthCache = new Map<string, { at: number; accounts: ZernioAccount[] | null }>();
   /** SP-19: every inbound/outbound path resolves its Channel here. */
   private readonly channels: ChannelResolver;
+  /** SP-12: per-recipient delivery state and reply attribution. */
+  private readonly tracker: RecipientTrackerService;
+  private readonly attributor: CampaignReplyAttributor;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -80,8 +86,14 @@ export class ZernioService {
     // Provided by the global ChannelsCoreModule; unit specs that build the
     // service by hand get a resolver over the same Prisma double.
     @Optional() channelResolver?: ChannelResolver,
+    // SP-12, from CampaignTrackingModule; hand-built specs get instances over
+    // the same Prisma double.
+    @Optional() tracker?: RecipientTrackerService,
+    @Optional() attributor?: CampaignReplyAttributor,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
+    this.tracker = tracker ?? new RecipientTrackerService(prisma);
+    this.attributor = attributor ?? new CampaignReplyAttributor(prisma, this.tracker);
   }
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -1464,7 +1476,10 @@ export class ZernioService {
       type === "message.read" ||
       type === "message.failed"
     ) {
-      const updated = await this.applyStatus(type, payload);
+      const { updated, channel } = await this.applyStatus(type, payload);
+      // SP-12: the same event updates campaign recipient rows (and may stamp
+      // a queued one by phone, ruling 2). Never throws.
+      if (channel) await this.trackRecipientStatus(type, payload, channel, updated);
       // message.sent with no matching row = an outbound composed OUTSIDE the
       // platform (the business replying from the Instagram/WhatsApp app on
       // their phone). Persist it, or the thread shows a hole on our side.
@@ -1646,7 +1661,7 @@ export class ZernioService {
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    await this.prisma.message.create({
+    const created = await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId: conv.id,
@@ -1665,6 +1680,22 @@ export class ZernioService {
       conversationId: conv.id,
     });
     if (!isOutbound) await this.channels.touchInbound(channelId);
+
+    // SP-12: a customer message may be a reply to a campaign sent from this
+    // number within 72 h. The attributor never throws.
+    if (!isOutbound) {
+      const parts = zernioReplyParts(evt);
+      await this.attributor.onInbound({
+        workspaceId,
+        channelId,
+        contactId: contact.id,
+        phone: phoneFromParticipantId(channel, participantId) ?? contact.phone,
+        text: parts.text.trim() || text,
+        buttonPayload: parts.buttonPayload,
+        inboundMessageId: created?.id ?? null,
+        at: now,
+      });
+    }
 
     // Our own outbound echo is not something to answer, and a thread only
     // auto-replies once someone has switched it into AI mode — and stops while
@@ -1762,8 +1793,12 @@ export class ZernioService {
   }
 
   /** Returns how many rows matched — 0 tells the caller this message isn't
-   *  ours (e.g. a reply typed in the platform's own mobile app). */
-  private async applyStatus(type: string, payload: ZernioWebhookEvent): Promise<number> {
+   *  ours (e.g. a reply typed in the platform's own mobile app) — and the
+   *  channel the event resolved to (SP-12 scopes recipient updates by it). */
+  private async applyStatus(
+    type: string,
+    payload: ZernioWebhookEvent,
+  ): Promise<{ updated: number; channel: Channel | null }> {
     // Status events carry the same top-level shape as message.received. Match
     // either id scheme: sends store Zernio's internal id, backfilled rows the
     // platform's.
@@ -1771,10 +1806,10 @@ export class ZernioService {
       (v): v is string => !!v,
     );
     const accountId = payload.account?.accountId ?? payload.account?.id;
-    if (ids.length === 0 || !accountId) return 0;
+    if (ids.length === 0 || !accountId) return { updated: 0, channel: null };
     const status = type.split(".").pop(); // sent | delivered | read | failed
     const ch = await this.channels.forInbound("zernio", accountId);
-    if (!ch) return 0;
+    if (!ch) return { updated: 0, channel: null };
     const updated = await this.prisma.message.updateMany({
       where: { workspaceId: ch.workspaceId, metaMessageId: { in: ids } },
       data: { deliveryStatus: status, deliveryStatusAt: new Date() },
@@ -1785,7 +1820,48 @@ export class ZernioService {
         channelId: ch.id,
       });
     }
-    return updated.count;
+    return { updated: updated.count, channel: ch };
+  }
+
+  /**
+   * SP-12: apply a Zernio `message.*` status to campaign recipient rows in
+   * the channel's workspace, matched on either id. `at` is the event's
+   * `message.sentAt` for `sent`; for delivered/read/failed it is the arrival
+   * time, because `message.sentAt` is the send time, not the event's. A
+   * `message.sent` that matched no Message row and no recipient may stamp a
+   * queued recipient by phone (ruling 2). Never throws.
+   */
+  private async trackRecipientStatus(
+    type: string,
+    payload: ZernioWebhookEvent,
+    ch: Channel,
+    messagesUpdated: number,
+  ): Promise<void> {
+    try {
+      const kind = type.split(".").pop() as "sent" | "delivered" | "read" | "failed";
+      const ids = [payload.message?.id, payload.message?.platformMessageId];
+      const sentAt = payload.message?.sentAt ? new Date(payload.message.sentAt) : null;
+      const at = kind === "sent" && sentAt && Number.isFinite(sentAt.getTime()) ? sentAt : new Date();
+      const changed = await this.tracker.applyProviderStatus({ workspaceId: ch.workspaceId, ids, kind, at });
+      if (
+        kind === "sent" &&
+        changed === 0 &&
+        messagesUpdated === 0 &&
+        payload.message?.direction === "outgoing" &&
+        ch.kind === "whatsapp"
+      ) {
+        const participantId = String(payload.conversation?.participantId ?? "");
+        await this.tracker.stampByPhone({
+          workspaceId: ch.workspaceId,
+          channelId: ch.id,
+          phone: phoneFromParticipantId("whatsapp", participantId),
+          messageId: payload.message?.id ?? payload.message?.platformMessageId ?? null,
+          at,
+        });
+      }
+    } catch (e) {
+      this.log.warn(`campaign recipient tracking failed for ${type}: ${(e as Error).message}`);
+    }
   }
 
   /**
@@ -1903,6 +1979,8 @@ export interface ZernioWebhookEvent {
     sender?: { id?: string; name?: string; username?: string; contactId?: string };
     sentAt?: string;
     isRead?: boolean;
+    /** SP-12 (ruling 7): a tapped button's payload, only when Zernio sends it. */
+    metadata?: { buttonPayload?: string; postbackPayload?: string } | null;
   };
   /** reaction.received: the emoji and the message it targets (empty emoji = removed). */
   reaction?: {

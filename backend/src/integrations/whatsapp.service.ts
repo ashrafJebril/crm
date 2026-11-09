@@ -29,6 +29,11 @@ import { EmbeddedSignupService } from "../channels/whatsapp/embedded-signup.serv
 import { MetaGraphClient } from "../channels/whatsapp/meta-graph.client";
 import { addsWhatsappSlot, assertSecretsStorable, attachMetaNumber, NOT_META } from "../channels/whatsapp/meta-number";
 
+import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
+import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
+import { metaReplyParts } from "../campaigns/tracking/inbound-reply";
+import { providerFailure } from "../campaigns/tracking/failure-codes";
+
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 interface WaPhoneInfo {
@@ -58,12 +63,22 @@ interface WebhookEntryChangeValue {
     document?: { id: string; filename?: string; mime_type?: string };
     // type "reaction": the reacted message's wamid and the emoji ("" = removed).
     reaction?: { message_id?: string; emoji?: string };
+    // type "button": a template quick-reply tap.
+    button?: { text?: string; payload?: string };
+    // type "interactive": an interactive button or list reply.
+    interactive?: {
+      type?: string;
+      button_reply?: { id?: string; title?: string };
+      list_reply?: { id?: string; title?: string; description?: string };
+    };
   }>;
   statuses?: Array<{
     id: string;
     status: "sent" | "delivered" | "read" | "failed";
     timestamp: string;
     recipient_id: string;
+    // On "failed": Meta's error(s).
+    errors?: Array<{ code?: number; title?: string; message?: string; error_data?: { details?: string } }>;
   }>;
 }
 
@@ -141,11 +156,19 @@ export class WhatsAppService {
     // SP-19 T4: the embedded signup lives in channels/whatsapp; the old
     // exchange route delegates to it.
     @Optional() embeddedSignup?: EmbeddedSignupService,
+    // SP-12, from CampaignTrackingModule; hand-built specs get instances over
+    // the same Prisma double.
+    @Optional() tracker?: RecipientTrackerService,
+    @Optional() attributor?: CampaignReplyAttributor,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
+    this.tracker = tracker ?? new RecipientTrackerService(prisma);
+    this.attributor = attributor ?? new CampaignReplyAttributor(prisma, this.tracker);
     this.embeddedSignup = embeddedSignup ?? new EmbeddedSignupService(prisma, new MetaGraphClient(), realtime);
   }
   private readonly embeddedSignup: EmbeddedSignupService;
+  private readonly tracker: RecipientTrackerService;
+  private readonly attributor: CampaignReplyAttributor;
 
   // ─── Public REST API ───────────────────────────────────────────────────
   /**
@@ -1037,6 +1060,20 @@ export class WhatsAppService {
                 channelId: ch.id,
               });
             }
+            // SP-12: the same rule as Zernio for campaign recipient rows
+            // (monotonic, first timestamp wins). Meta numbers are not campaign
+            // senders yet (SP-19 ruling 6), so this is a no-op until SP-13.
+            // Never throws.
+            const err = s.status === "failed" ? s.errors?.[0] : undefined;
+            await this.tracker.applyProviderStatus({
+              workspaceId,
+              ids: [s.id],
+              kind: s.status,
+              at: Number.isFinite(at.getTime()) ? at : new Date(),
+              ...(s.status === "failed"
+                ? providerFailure(err?.title ?? err?.message, err?.code, err?.error_data?.details ?? err?.message)
+                : {}),
+            });
           }
         }
         // `main` reads this on the legacy row; channel-only numbers have none.
@@ -1252,7 +1289,7 @@ export class WhatsAppService {
     const ts = Number(msg.timestamp) * 1000;
     const d = Number.isFinite(ts) ? new Date(ts) : new Date();
     const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    await this.prisma.message.create({
+    const created = await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId: conv.id,
@@ -1261,6 +1298,19 @@ export class WhatsAppService {
         t,
         metaMessageId: wamid ?? null,
       },
+    });
+    // SP-12: a reply to a campaign sent from this number within 72 h,
+    // with the tapped button's payload. The attributor never throws.
+    const parts = metaReplyParts(msg);
+    await this.attributor.onInbound({
+      workspaceId,
+      channelId: channel.id,
+      contactId: contact.id,
+      phone: `+${waId}`,
+      text: parts.text || body || `[${msg.type} message]`,
+      buttonPayload: parts.buttonPayload,
+      inboundMessageId: created?.id ?? null,
+      at: d,
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "whatsapp",
@@ -1302,11 +1352,9 @@ export class WhatsAppService {
     }
   }
 
+  /** SP-12: a button or interactive reply shows the tapped text, not "[button message]". */
   private extractBody(msg: NonNullable<WebhookEntryChangeValue["messages"]>[number]): string {
-    if (msg.type === "text") return msg.text?.body ?? "";
-    if (msg.type === "image") return msg.image?.caption ?? "";
-    if (msg.type === "document") return msg.document?.filename ?? "";
-    return "";
+    return metaReplyParts(msg).text;
   }
 
   private maskPhone(waId: string): string {

@@ -28,6 +28,7 @@ import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import type { ZernioBroadcastVariable } from "../integrations/zernio.client";
 import { CampaignSendService } from "./campaign-send.service";
+import { CampaignTrackingModule } from "./tracking/campaign-tracking.module";
 
 class CreateCampaignDto {
   @IsString() @IsNotEmpty() name!: string;
@@ -154,7 +155,7 @@ class CampaignsController {
 }
 
 @Module({
-  imports: [IntegrationsModule],
+  imports: [IntegrationsModule, CampaignTrackingModule],
   controllers: [CampaignsController],
   providers: [CampaignSendService],
 })

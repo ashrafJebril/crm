@@ -27,8 +27,10 @@ function matchValue(v: any, cond: any): boolean {
     }
     if ("equals" in cond && v !== cond.equals) return false;
     if ("contains" in cond && !String(v ?? "").includes(cond.contains)) return false;
-    if ("gt" in cond && !(v > cond.gt)) return false;
-    if ("lt" in cond && !(v < cond.lt)) return false;
+    if ("gt" in cond && !(v != null && v > cond.gt)) return false;
+    if ("lt" in cond && !(v != null && v < cond.lt)) return false;
+    if ("gte" in cond && !(v != null && v >= cond.gte)) return false;
+    if ("lte" in cond && !(v != null && v <= cond.lte)) return false;
     return true;
   }
   return v === cond;
@@ -130,7 +132,31 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   integration: () => ({ provider: "meta", pageId: null, pageName: null, accessToken: null, raw: null }),
   conversation: () => ({ channelId: null, externalId: null, aiEnabled: false, aiPausedAt: null, unread: 0 }),
+  // SP-12
+  campaign: () => ({ recipientTracking: false, recipientsSyncedAt: null, recipientSyncSkip: 0, scheduledAt: null, launchedAt: null }),
+  campaignRecipient: () => ({
+    contactId: null,
+    channelId: null,
+    phone: null,
+    contactName: null,
+    status: "queued",
+    messageId: null,
+    sentAt: null,
+    deliveredAt: null,
+    readAt: null,
+    repliedAt: null,
+    replyText: null,
+    buttonPayload: null,
+    replyMessageId: null,
+    failureCode: null,
+    failureReason: null,
+  }),
 };
+
+/** SP-12: @@unique([campaignId, phone]) (NULL phones are distinct, as in Postgres). */
+function recipientClash(rows: Row[], row: Row): boolean {
+  return row.phone != null && rows.some((o) => o !== row && o.campaignId === row.campaignId && o.phone === row.phone);
+}
 
 function project(row: Row, select?: any, include?: any, db?: Tables): Row {
   let out: Row = { ...row };
@@ -160,6 +186,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     workspace: [],
     campaign: [],
     template: [],
+    campaignRecipient: [],
     ...seed,
   } as Tables;
 
@@ -187,7 +214,39 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         return r ? project(r, a.select, a.include, db) : null;
       }),
       count: op((a) => rows().filter((x) => matches(x, a.where, db, name)).length),
-      groupBy: op(() => []),
+      // Supports `by: [field]` with `_count: { _all: true }` (what SP-12 uses).
+      groupBy: op((a) => {
+        const hit = rows().filter((x) => matches(x, a.where, db, name));
+        const by: string[] = a.by ?? [];
+        const groups = new Map<string, Row>();
+        for (const x of hit) {
+          const key = JSON.stringify(by.map((k) => x[k]));
+          const g = groups.get(key) ?? Object.fromEntries([...by.map((k) => [k, x[k]]), ["_count", { _all: 0 }]]);
+          g._count._all++;
+          groups.set(key, g);
+        }
+        return [...groups.values()];
+      }),
+      createMany: op((a) => {
+        let count = 0;
+        for (const d of a.data as Row[]) {
+          const row: Row = {
+            id: d.id ?? nextId(name),
+            ...(DEFAULTS[name]?.() ?? {}),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            ...d,
+          };
+          if (name === "campaignRecipient" && recipientClash(rows(), row)) {
+            if (a.skipDuplicates) continue;
+            throw p2002("CampaignRecipient_campaignId_phone_key");
+          }
+          write(row);
+          rows().push(row);
+          count++;
+        }
+        return { count };
+      }),
       create: op((a) => {
         const row: Row = {
           id: a.data.id ?? nextId(name),
@@ -254,6 +313,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
   function onDeleted(row: Row) {
     // Channel.integrationId → Integration ON DELETE SET NULL
     for (const c of db.channel ?? []) if (c.integrationId === row.id) c.integrationId = null;
+    // SP-12: CampaignRecipient.contactId / channelId → SET NULL, campaignId → CASCADE.
+    // (Ids are unique across tables in these specs, so matching by id is enough.)
+    for (const r of db.campaignRecipient ?? []) {
+      if (r.contactId === row.id) r.contactId = null;
+      if (r.channelId === row.id) r.channelId = null;
+    }
+    if (db.campaignRecipient) db.campaignRecipient = db.campaignRecipient.filter((r) => r.campaignId !== row.id);
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -281,6 +347,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     campaign: model("campaign"),
     template: model("template"),
     workspaceMember: model("workspaceMember"),
+    campaignRecipient: model("campaignRecipient"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();
@@ -309,6 +376,29 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         const row = db.conversation.find((c) => c.id === id && c.workspaceId === workspaceId && !c.channelId);
         if (row) row.channelId = channelId;
         return row ? 1 : 0;
+      }
+      if (/UPDATE "CampaignRecipient"/.test(sql) && /jsonb_to_recordset/.test(sql)) {
+        // SP-12 compare-and-set batch: vals = [json rows, workspaceId, campaignId]
+        const [json, workspaceId, campaignId] = vals;
+        const dates = ["prevUpdatedAt", "sentAt", "deliveredAt", "readAt"];
+        let n = 0;
+        for (const v of JSON.parse(json) as Row[]) {
+          for (const k of dates) v[k] = v[k] == null ? null : new Date(v[k]);
+          const r = db.campaignRecipient.find(
+            (x) =>
+              x.id === v.id &&
+              x.workspaceId === workspaceId &&
+              x.campaignId === campaignId &&
+              x.status === v.prevStatus &&
+              x.updatedAt instanceof Date &&
+              x.updatedAt.getTime() === v.prevUpdatedAt.getTime(),
+          );
+          if (!r) continue;
+          for (const k of ["status", "messageId", "sentAt", "deliveredAt", "readAt", "failureCode", "failureReason"]) r[k] = v[k];
+          r.updatedAt = new Date(Math.max(Date.now(), r.updatedAt.getTime() + 1));
+          n++;
+        }
+        return n;
       }
       if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {
         const [id] = vals;

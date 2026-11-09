@@ -93,6 +93,7 @@ model Contact {
   notes         Note[]
   activities    Activity[]
   segmentMembers SegmentMember[]
+  campaignRecipients CampaignRecipient[] @relation("ContactCampaignRecipients")
 
   // Structured name (name stays the display name), email, owner, consent.
   firstName       String?
@@ -641,6 +642,7 @@ model Channel {
 
   conversations Conversation[] @relation("ConversationChannel")
   campaigns     Campaign[]     @relation("CampaignSenderChannel")
+  campaignRecipients CampaignRecipient[] @relation("ChannelCampaignRecipients")
 
   @@unique([workspaceId, provider, externalId])
   @@index([workspaceId, kind])
@@ -681,6 +683,15 @@ model Campaign {
   /// active Zernio WhatsApp channel. Null = the default WhatsApp channel.
   senderChannelId   String?
   senderChannel     Channel?  @relation("CampaignSenderChannel", fields: [senderChannelId], references: [id], onDelete: SetNull)
+  /// SP-12: true once launch wrote one CampaignRecipient row per audience
+  /// member. False on every campaign launched before SP-12 (aggregate only).
+  recipientTracking  Boolean   @default(false)
+  /// SP-12: last completed pull sweep of Zernio's per-recipient list.
+  recipientsSyncedAt DateTime?
+  /// SP-12: the pull sweep's resume offset (Zernio `skip`).
+  recipientSyncSkip  Int       @default(0)
+  /// SP-12 rows. Named recipientRows: `recipients` is already the Int count.
+  recipientRows      CampaignRecipient[]
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -689,6 +700,51 @@ model Campaign {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+}
+
+/// SP-12: one row per audience member per campaign (reachable = queued,
+/// left out = skipped). Status only moves forward; see
+/// src/campaigns/tracking/recipient-status.ts.
+model CampaignRecipient {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation("WorkspaceCampaignRecipients", fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaignId     String
+  campaign       Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  /// Null once the contact is deleted; the row (and the campaign's history) stays.
+  contactId      String?
+  contact        Contact?  @relation("ContactCampaignRecipients", fields: [contactId], references: [id], onDelete: SetNull)
+  /// The sending number. SP-13 splits a campaign over several.
+  channelId      String?
+  channel        Channel?  @relation("ChannelCampaignRecipients", fields: [channelId], references: [id], onDelete: SetNull)
+  /// E.164 (normalizePhone). Null only on skipped rows with no usable number.
+  phone          String?
+  /// Snapshot at launch, for the table and export after a contact is renamed/deleted.
+  contactName    String?
+  status         String    @default("queued") // queued | sent | delivered | read | replied | failed | skipped
+  /// Provider message id (Zernio's id or Meta's wamid, as the provider reports it).
+  messageId      String?
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  repliedAt      DateTime?
+  replyText      String? // <= 1000 chars
+  buttonPayload  String? // <= 256 chars
+  /// The inbound Message.id that attributed the reply (deep link into the thread).
+  replyMessageId String?
+  /// Namespaced: "meta:<n>" | "skip:<reason>" | "provider:unknown". See failure-codes.ts.
+  failureCode    String?
+  /// Provider text (errorExplanation ?? error), one line, <= 300 chars. Never shown unless short.
+  failureReason  String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([campaignId, phone])
+  @@index([campaignId, status, id])
+  @@index([campaignId, id])
+  @@index([workspaceId, messageId])
+  @@index([channelId, phone])
+  @@index([contactId])
 }
 
 // ─── Workflows ────────────────────────────────────────────────────────────
@@ -935,6 +991,7 @@ model Workspace {
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
   channels          Channel[]          @relation("WorkspaceChannels")
+  campaignRecipients CampaignRecipient[] @relation("WorkspaceCampaignRecipients")
   notes             Note[]             @relation("WorkspaceNotes")
   notifications     Notification[]     @relation("WorkspaceNotifications")
   notificationPreferences NotificationPreference[] @relation("WorkspaceNotificationPreferences")

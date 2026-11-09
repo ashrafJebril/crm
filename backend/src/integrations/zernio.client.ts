@@ -665,6 +665,54 @@ export class ZernioClient {
     await this.request("POST", `/broadcasts/${encodeURIComponent(broadcastId)}/cancel`, {});
   }
 
+  /**
+   * SP-12: one page of a broadcast's per-recipient state (read-only GET
+   * /broadcasts/{id}/recipients?skip&limit&status). Every field is typed
+   * from Zernio's documentation and read defensively: the id scheme of
+   * `messageId` (Zernio's or Meta's wamid), the maximum `limit` and the
+   * ordering are unverified until the Task 4 probe (ruling 1).
+   */
+  async listBroadcastRecipients(
+    broadcastId: string,
+    opts: { skip: number; limit: number; status?: ZernioBroadcastRecipientStatus },
+  ): Promise<ZernioBroadcastRecipientsPage> {
+    const res = await this.request<{
+      recipients?: Array<Record<string, unknown>>;
+      pagination?: { total?: number; limit?: number; skip?: number; hasMore?: boolean };
+      summary?: Record<string, unknown>;
+    }>("GET", `/broadcasts/${encodeURIComponent(broadcastId)}/recipients`, {
+      query: { skip: String(opts.skip), limit: String(opts.limit), status: opts.status },
+    });
+    const s = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+    const recipients: ZernioBroadcastRecipient[] = (Array.isArray(res?.recipients) ? res.recipients : []).map((r) => ({
+      id: s(r.id) ?? s(r._id) ?? "",
+      contactId: s(r.contactId),
+      channelId: s(r.channelId),
+      platformIdentifier: s(r.platformIdentifier) ?? s(r.phone),
+      contactName: s(r.contactName),
+      status: s(r.status) ?? "pending",
+      messageId: s(r.messageId),
+      error: s(r.error),
+      errorCode: typeof r.errorCode === "number" || typeof r.errorCode === "string" ? r.errorCode : null,
+      errorExplanation: s(r.errorExplanation),
+      errorTraceId: s(r.errorTraceId),
+      sentAt: s(r.sentAt),
+      deliveredAt: s(r.deliveredAt),
+      readAt: s(r.readAt),
+    }));
+    const p = res?.pagination ?? {};
+    return {
+      recipients,
+      pagination: {
+        total: typeof p.total === "number" ? p.total : opts.skip + recipients.length,
+        limit: typeof p.limit === "number" ? p.limit : opts.limit,
+        skip: typeof p.skip === "number" ? p.skip : opts.skip,
+        hasMore: p.hasMore === true,
+      },
+      summary: res?.summary && typeof res.summary === "object" ? res.summary : {},
+    };
+  }
+
   async getBroadcast(broadcastId: string): Promise<ZernioBroadcastStats> {
     const res = await this.request<{
       broadcast?: {
@@ -981,6 +1029,35 @@ export interface ZernioWhatsAppNumbers {
 export type ZernioBroadcastVariable =
   | { field: "name" | "phone" | "email" | "company" }
   | { field: "custom"; customValue: string };
+
+export type ZernioBroadcastRecipientStatus = "pending" | "sent" | "delivered" | "read" | "failed";
+
+/** One row of GET /broadcasts/{id}/recipients (SP-12). Timestamps are ISO strings. */
+export interface ZernioBroadcastRecipient {
+  id: string;
+  contactId: string | null;
+  channelId: string | null;
+  /** The phone (E.164 with or without '+'). */
+  platformIdentifier: string | null;
+  contactName: string | null;
+  /** pending | sent | delivered | read | failed (unknown values are kept verbatim). */
+  status: string;
+  /** Zernio's id or Meta's wamid; unverified (ruling 1). */
+  messageId: string | null;
+  error: string | null;
+  errorCode: number | string | null;
+  errorExplanation: string | null;
+  errorTraceId: string | null;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+}
+
+export interface ZernioBroadcastRecipientsPage {
+  recipients: ZernioBroadcastRecipient[];
+  pagination: { total: number; limit: number; skip: number; hasMore: boolean };
+  summary: Record<string, unknown>;
+}
 
 export interface ZernioBroadcastStats {
   /** draft | scheduled | sending | completed | failed | cancelled */

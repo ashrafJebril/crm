@@ -124,6 +124,65 @@ describe("ZernioClient broadcasts", () => {
     expect(call()).toMatchObject({ url: "https://zernio.com/api/v1/broadcasts/b1", method: "GET" });
     expect(b).toEqual({ status: "completed", recipientCount: 10, sent: 9, delivered: 8, read: 5, failed: 1 });
   });
+
+  it("lists a broadcast's recipients a page at a time (read-only GET)", async () => {
+    reply({
+      success: true,
+      recipients: [
+        {
+          id: "r1",
+          contactId: "zc1",
+          channelId: "zch1",
+          platformIdentifier: "962790000001",
+          contactName: "Lina",
+          status: "failed",
+          messageId: "wamid.1",
+          error: "Message failed",
+          errorCode: 131026,
+          errorExplanation: "Message undeliverable",
+          errorTraceId: "tr",
+          sentAt: "2026-11-09T10:00:00.000Z",
+          deliveredAt: null,
+          readAt: null,
+        },
+        { _id: "r2", platformIdentifier: "+962790000002", status: "read", readAt: "2026-11-09T10:05:00.000Z" },
+      ],
+      pagination: { total: 250, limit: 100, skip: 100, hasMore: true },
+      summary: { total: 250, sent: 200 },
+    });
+    const res = await client.listBroadcastRecipients("b 1", { skip: 100, limit: 100 });
+    const { url, method, body } = call();
+    expect(method).toBe("GET");
+    expect(body).toBeUndefined();
+    expect(url).toBe("https://zernio.com/api/v1/broadcasts/b%201/recipients?skip=100&limit=100");
+    expect(res.pagination).toEqual({ total: 250, limit: 100, skip: 100, hasMore: true });
+    expect(res.summary).toEqual({ total: 250, sent: 200 });
+    expect(res.recipients[0]).toEqual({
+      id: "r1",
+      contactId: "zc1",
+      channelId: "zch1",
+      platformIdentifier: "962790000001",
+      contactName: "Lina",
+      status: "failed",
+      messageId: "wamid.1",
+      error: "Message failed",
+      errorCode: 131026,
+      errorExplanation: "Message undeliverable",
+      errorTraceId: "tr",
+      sentAt: "2026-11-09T10:00:00.000Z",
+      deliveredAt: null,
+      readAt: null,
+    });
+    expect(res.recipients[1]).toMatchObject({ id: "r2", platformIdentifier: "+962790000002", status: "read", messageId: null, errorCode: null });
+  });
+
+  it("passes the status filter and tolerates a missing pagination block", async () => {
+    reply({ success: true, recipients: [{ id: "r1", platformIdentifier: "1", status: "sent" }] });
+    const res = await client.listBroadcastRecipients("b1", { skip: 0, limit: 50, status: "failed" });
+    expect(call().url).toBe("https://zernio.com/api/v1/broadcasts/b1/recipients?skip=0&limit=50&status=failed");
+    expect(res.pagination).toEqual({ total: 1, limit: 50, skip: 0, hasMore: false });
+    expect(res.summary).toEqual({});
+  });
 });
 
 describe("ZernioClient errors", () => {

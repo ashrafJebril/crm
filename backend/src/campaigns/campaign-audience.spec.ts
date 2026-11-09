@@ -62,6 +62,23 @@ describe("buildRecipients marketing opt-out", () => {
     expect(recipients).toEqual([{ name: "Omar", phone: "+962790000002" }]);
     expect(skipped.optedOut).toBe(1);
   });
+
+  it("returns one skipped row per opted-out or phoneless member, none for duplicates (ruling 11)", () => {
+    const { recipients, skippedRows, skipped } = buildRecipients([
+      { id: "lina", name: "Lina", phone: "962790000001", lifecycle: "lead", marketingOptOut: true },
+      { id: "gone", name: "Gone", phone: null, lifecycle: "churned" },
+      { id: "sara", name: "Sara", phone: null, lifecycle: "lead" },
+      { id: "omar", name: "Omar", phone: "962790000002", lifecycle: "lead" },
+      { id: "twin", name: "Twin", phone: "+962790000002", lifecycle: "lead" },
+    ]);
+    expect(recipients).toEqual([{ contactId: "omar", name: "Omar", phone: "+962790000002" }]);
+    expect(skippedRows).toEqual([
+      { contactId: "lina", name: "Lina", phone: "+962790000001", reason: "opted_out" },
+      { contactId: "gone", name: "Gone", phone: null, reason: "opted_out" },
+      { contactId: "sara", name: "Sara", phone: null, reason: "no_phone" },
+    ]);
+    expect(skipped).toEqual({ noPhone: 1, optedOut: 2, duplicate: 1 });
+  });
 });
 
 describe("estimateMetaCost", () => {

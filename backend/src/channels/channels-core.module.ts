@@ -7,6 +7,7 @@ import { InboundSinkService } from "./inbound-sink.service";
 import { MetaGraphClient } from "./whatsapp/meta-graph.client";
 import { EmbeddedSignupService } from "./whatsapp/embedded-signup.service";
 import { LandlineService } from "./whatsapp/landline.service";
+import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.module";
 
 /**
  * The routing building blocks every sender/receiver needs (Zernio, Meta,
@@ -23,7 +24,7 @@ import { LandlineService } from "./whatsapp/landline.service";
  */
 @Global()
 @Module({
-  imports: [RealtimeModule, TicketsModule],
+  imports: [RealtimeModule, TicketsModule, CampaignTrackingModule],
   providers: [
     ChannelResolver,
     ChannelTransportRegistry,
