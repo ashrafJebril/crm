@@ -22,6 +22,8 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const { can } = usePermissions();
   // Follow-ups needs a record permission to be of any use.
   const canFollowUps = can("contacts.view") || can("tickets.view");
+  // SP-19: the channels hub needs channels.view (owner/admin/agent/viewer by default).
+  const canChannels = can("channels.view");
 
   // Live unread-count for the Inbox nav item. All channels are DB-backed now
   // (the Zernio webhook persists FB/IG/WA inbound), so one cheap DB query
@@ -41,7 +43,9 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
     const filtered = NAV.filter(
       (n) =>
         isSection(n) ||
-        ((!n.superAdminOnly || user?.isSuperAdmin) && (n.id !== "followups" || canFollowUps)),
+        ((!n.superAdminOnly || user?.isSuperAdmin) &&
+          (n.id !== "followups" || canFollowUps) &&
+          (n.id !== "channels" || canChannels)),
     );
     const out: NavEntry[] = [];
     for (let i = 0; i < filtered.length; i++) {
@@ -53,7 +57,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
       out.push(cur);
     }
     return out;
-  }, [user?.isSuperAdmin, canFollowUps]);
+  }, [user?.isSuperAdmin, canFollowUps, canChannels]);
 
   return (
     <aside className="side">

@@ -28,6 +28,7 @@ export type RouteId =
   | "team"
   | "agent"
   | "settings"
+  | "channels"
   | "admin";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
@@ -133,6 +134,7 @@ export type ConvChannel =
   | "facebook"
   | "tiktok"
   | "webchat"
+  | "telegram"
   | "l";
 
 export const CHANNEL_LABEL: Record<ConvChannel, string> = {
@@ -141,6 +143,7 @@ export const CHANNEL_LABEL: Record<ConvChannel, string> = {
   facebook:  "Facebook",
   tiktok:    "TikTok",
   webchat:   "Web chat",
+  telegram:  "Telegram",
   l:         "AI Agent",
 };
 
@@ -731,4 +734,59 @@ export interface WorkflowRun {
   error: string | null;
   startedAt: string;
   completedAt: string | null;
+}
+
+// ─── Channels hub (SP-19) ─────────────────────────────────────────────────
+
+export type ChannelStatus = "active" | "pending" | "needs_attention" | "disconnected" | "error";
+
+export type VerificationStage = "needs_number" | "awaiting_code" | "needs_registration";
+
+/** Non-secret channel settings, as whitelisted by the backend's `toChannelDto`. */
+export interface ChannelConfig {
+  allowedOrigins?: string[];
+  greeting?: string | null;
+  greetingAr?: string | null;
+  color?: string | null;
+  position?: "start" | "end";
+  askName?: boolean;
+  lang?: "en" | "ar" | null;
+  wabaId?: string;
+  verification?: { stage?: VerificationStage; resendAt?: string; method?: string; verifiedAt?: string } | null;
+  botUsername?: string;
+}
+
+export interface ChannelDto {
+  id: string;
+  /** whatsapp | telegram | webchat | facebook | instagram | tiktok, others verbatim. */
+  kind: string;
+  /** zernio | meta | telegram | native, legacy values verbatim (e.g. kapso). */
+  provider: string;
+  externalId: string | null;
+  displayName: string;
+  phoneNumber: string | null;
+  status: ChannelStatus | string;
+  statusReason: string | null;
+  isDefault: boolean;
+  config: ChannelConfig | null;
+  lastInboundAt: string | null;
+  createdAt: string;
+  conversationCount?: number;
+}
+
+export interface ChannelLimits {
+  whatsapp: { used: number; limit: number; plan: string };
+  /** Only present for channels.update holders. */
+  secretsEncryption?: "on" | "off";
+}
+
+export interface EmbeddedSignupConfig {
+  enabled: boolean;
+  appId?: string;
+  configId?: string;
+  solutionId?: string;
+  graphVersion: string;
+  reason?: string;
+  /** Env names only, and only for channels.update holders. */
+  missing?: string[];
 }

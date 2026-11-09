@@ -18,6 +18,7 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   team: lazy(() => import("@/screens/Team")),
   agent: lazy(() => import("@/screens/KewyAgent")),
   settings: lazy(() => import("@/screens/Settings")),
+  channels: lazy(() => import("@/screens/channels/ChannelsPage")),
   admin: lazy(() => import("@/screens/Admin")),
 };
 

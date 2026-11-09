@@ -181,7 +181,9 @@ export class ZernioService {
       process.env.FRONTEND_PUBLIC_URL ??
       process.env.APP_PUBLIC_URL ??
       "http://localhost:5174";
-    const redirectUrl = `${base}/#/settings?zernio=connected&platform=${encodeURIComponent(p)}`;
+    // SP-19 T5: land on the channels hub. ZernioRedirectCapture and the embed
+    // callback still accept the old `#/settings?zernio=…` links in flight.
+    const redirectUrl = `${base}/#/channels?zernio=connected&platform=${encodeURIComponent(p)}`;
     return this.client.getConnectUrl(p, profileId, redirectUrl);
   }
 

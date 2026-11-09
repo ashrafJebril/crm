@@ -181,7 +181,7 @@ export function connectCallbackProvider(loc: {
   const q = h.indexOf("?");
   if (q >= 0) {
     const route = h.slice(0, q).replace(/^\/+/, "");
-    if (route === "settings" && new URLSearchParams(h.slice(q + 1)).get("zernio") === "connected") {
+    if ((route === "settings" || route === "channels") && new URLSearchParams(h.slice(q + 1)).get("zernio") === "connected") {
       return "zernio";
     }
   }

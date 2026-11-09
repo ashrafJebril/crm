@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconCampaign, IconUsers,
   IconChart, IconTemplate, IconTeam, IconCog, IconCal, IconGlobe,
-  IconCheckCircle, IconLayers, IconBolt, IconAttach, IconBot, IconFlow,
+  IconCheckCircle, IconLayers, IconBolt, IconAttach, IconBot, IconFlow, IconRadar,
 } from "@/icons";
 
 interface NavItem {
@@ -40,6 +40,7 @@ export const NAV: NavEntry[] = [
   { id: "media",       label: "Media",       ar: "الوسائط",        Icon: IconAttach },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "agent",       label: "Kewy AI",     ar: "كيوي الذكاء",    Icon: IconBot },
+  { id: "channels",    label: "Channels",    ar: "القنوات",       Icon: IconRadar },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },
   { section: "Kewy ops" },
   { id: "admin",       label: "Admin portal", ar: "بوابة الإدارة",  Icon: IconBolt, superAdminOnly: true },
@@ -61,5 +62,6 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   team:        { en: "Team",            ar: "الفريق" },
   agent:       { en: "Kewy AI agent",   ar: "وكيل كيوي الذكاء" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
+  channels:    { en: "Channels",        ar: "القنوات" },
   admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
 };

@@ -286,6 +286,12 @@ describe("number limit blocks add flows but not zernio mirror", () => {
       const { svc, client } = zernio(prisma);
       await expect(svc.getConnectUrl("ws1", "whatsapp")).resolves.toEqual({ authUrl: "https://zernio.example/connect" });
       expect(client.getConnectUrl).toHaveBeenCalledTimes(1);
+      // SP-19 T5: Zernio sends the customer back to the channels hub.
+      expect(client.getConnectUrl).toHaveBeenCalledWith(
+        "whatsapp",
+        expect.anything(),
+        expect.stringMatching(/\/#\/channels\?zernio=connected&platform=whatsapp$/),
+      );
     }
   });
 

@@ -102,6 +102,7 @@ const CHANNEL_DOT: Record<ConvChannel, string> = {
   facebook: "#4267b2",
   tiktok: "#7a7a7a",
   webchat: "#5A8FD4",
+  telegram: "#229ED9",
   l: "#8b5cf6",
 };
 
@@ -225,6 +226,7 @@ const CHANNEL_BG: Record<ConvChannel, string> = {
   facebook: "#1877F2",
   tiktok: "#000000",
   webchat: "var(--info)",
+  telegram: "#229ED9",
   l: "#8b5cf6",
 };
 

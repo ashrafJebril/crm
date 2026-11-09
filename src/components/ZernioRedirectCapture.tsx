@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { makeTx } from "@/lib/tx";
 import { useTweaks } from "@/tweaks/context";
 import { useToast } from "./Toast";
+import { channelErrorText } from "@/screens/channels/channelErrors";
 
 interface SyncResult {
   connected: Array<{ platform: string; accountId: string; name: string | null }>;
@@ -25,7 +26,8 @@ const labelFor = (platform: string) =>
  * Captures Zernio's hosted-connect success redirect.
  *
  * After a customer authenticates a platform through Zernio, the browser returns
- * to our app at `…/#/settings?zernio=connected&platform=<p>`. Zernio knows about
+ * to our app at `…/#/channels?zernio=connected&platform=<p>` (older links:
+ * `#/settings?…`). Zernio knows about
  * the connection but our backend doesn't until we reconcile — so on load we
  * detect those params, POST /integrations/zernio/sync (upserts the connected
  * accounts against the current workspace), toast, then strip the params.
@@ -62,10 +64,12 @@ export function ZernioRedirectCapture() {
         // "not connected" answer that React Query won't refetch on its own.
         // Dropping those entries is what makes the Settings cards flip to Live
         // on their own, instead of only after a manual page reload.
+        // The channels hub (SP-19) reads /channels*, which the sync mirrors too.
         void qc.invalidateQueries({
           predicate: (q) =>
             typeof q.queryKey[0] === "string" &&
-            (q.queryKey[0] as string).startsWith("/integrations"),
+            ((q.queryKey[0] as string).startsWith("/integrations") ||
+              (q.queryKey[0] as string).startsWith("/channels")),
         });
 
         // Zernio redirects back with `zernio=connected` even when the customer
@@ -97,8 +101,8 @@ export function ZernioRedirectCapture() {
       })
       .catch((e) =>
         toast(
-          e instanceof Error
-            ? e.message
+          e instanceof Error && e.message
+            ? channelErrorText(e, tx)
             : tx(
                 "Couldn't record the Zernio connection",
                 "تعذّر تسجيل الاتصال عبر Zernio",

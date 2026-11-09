@@ -62,6 +62,7 @@ const CHANNEL_FILL: Record<ConvChannel, string> = {
   facebook:  "#1877F2",
   tiktok:    "#000000",
   webchat:   "var(--info)",
+  telegram:  "#229ED9",
   l:         "#8b5cf6",
 };
 
@@ -71,6 +72,7 @@ const CHANNEL_DOT: Record<ConvChannel, string> = {
   facebook:  "#1877F2",
   tiktok:    "#000000",
   webchat:   "var(--info)",
+  telegram:  "#229ED9",
   l:         "#8b5cf6",
 };
 
@@ -194,6 +196,7 @@ function DashboardImpl() {
       facebook:  0,
       tiktok:    0,
       webchat:   0,
+      telegram:  0,
       l:         0,
     };
     if (conversations) {
