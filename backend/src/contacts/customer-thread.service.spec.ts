@@ -87,7 +87,7 @@ class Fake {
   ticketStage = { findMany: jest.fn(async ({ where }: any) => this.stages.filter((s) => this.match(s, where))) };
   appointment = {
     findMany: jest.fn(async (a: any) => {
-      const field = a.orderBy?.[0] && "updatedAt" in a.orderBy[0] ? "updatedAt" : "createdAt";
+      const field = a.orderBy?.[0] && "statusChangedAt" in a.orderBy[0] ? "statusChangedAt" : "createdAt";
       return this.find(this.appointments, a, field);
     }),
   };
@@ -161,7 +161,7 @@ describe("CustomerThreadService stitched thread", () => {
     );
     f.ticketActivities = [{ id: "ta1", workspaceId: "ws", ticketId: "t1", kind: "stage_changed", fromStage: "a", toStage: "b", byUserId: "u1", createdAt: same }];
     f.appointments = ["ap1", "ap2", "ap3"].map((id) => ({
-      id, workspaceId: "ws", contactId: "c1", service: id, serviceAr: id, status: "cancelled", startAt: same, createdAt: same, updatedAt: same,
+      id, workspaceId: "ws", contactId: "c1", service: id, serviceAr: id, status: "cancelled", startAt: same, createdAt: same, updatedAt: same, statusChangedAt: same,
     }));
     const svc = build(f);
     const full = (await svc.thread("ws", "c1", viewer, { limit: 100 })).items.map((i: any) => `${i.type}:${i.id}`);
@@ -292,10 +292,54 @@ describe("CustomerThreadService events", () => {
     expect(events(r).find((e: any) => e.id === "mv").undoable).toBe(false);
   });
 
+  it("booking_status is dated and paged by statusChangedAt: an updatedAt-only change does not move it, null rows are skipped", async () => {
+    const statusAt = ts("2026-01-02T11:00:00Z");
+    f.appointments = [
+      { id: "ap1", workspaceId: "ws", contactId: "c1", service: "Cut", serviceAr: "x", status: "cancelled", startAt: statusAt, createdAt: ts("2026-01-01T00:00:00Z"), updatedAt: ts("2026-03-01T00:00:00Z"), statusChangedAt: statusAt },
+      { id: "ap2", workspaceId: "ws", contactId: "c1", service: "Dye", serviceAr: "y", status: "completed", startAt: statusAt, createdAt: ts("2026-01-01T00:00:00Z"), updatedAt: ts("2026-03-02T00:00:00Z"), statusChangedAt: null },
+    ];
+    const svc = build(f);
+    const r = await svc.thread("ws", "c1", viewer, { limit: 100 });
+    const st = events(r).filter((e: any) => e.kind === "booking_status");
+    expect(st.map((e: any) => [e.id, e.at])).toEqual([["ap1:status", statusAt.toISOString()]]);
+    f.appointments[0].updatedAt = ts("2026-06-01T00:00:00Z");
+    const r2 = await svc.thread("ws", "c1", viewer, { limit: 100 });
+    expect(events(r2).find((e: any) => e.id === "ap1:status").at).toBe(statusAt.toISOString());
+    const seen: string[] = [];
+    let before: string | undefined;
+    for (let i = 0; i < 50; i++) {
+      const p = await svc.thread("ws", "c1", viewer, { before, limit: 1 });
+      seen.push(...p.items.map((x: any) => `${x.type}:${x.id}`));
+      if (!p.nextBefore) break;
+      before = p.nextBefore;
+    }
+    expect(seen.filter((x) => x === "event:ap1:status")).toHaveLength(1);
+    expect(seen.some((x) => x.includes("ap2:status"))).toBe(false);
+  });
+
+  it("a move whose from-stage no longer exists is not undoable (matches the endpoint)", async () => {
+    f.stages = f.stages.filter((s) => s.key !== "a");
+    f.ticketActivities = [
+      { id: "mv", workspaceId: "ws", ticketId: "t1", kind: "stage_changed", fromStage: "a", toStage: "b", byUserId: "u1", createdAt: ago(1) },
+    ];
+    const r = await build(f).thread("ws", "c1", viewer, {});
+    expect(events(r).find((e: any) => e.id === "mv").undoable).toBe(false);
+  });
+
+  it("a user note undo is shown as a note, not treated as an undo marker", async () => {
+    f.ticketActivities = [
+      { id: "mv", workspaceId: "ws", ticketId: "t1", kind: "stage_changed", fromStage: "a", toStage: "b", byUserId: "u1", note: "undo", createdAt: ago(1) },
+    ];
+    const r = await build(f).thread("ws", "c1", viewer, {});
+    const e = events(r).find((x: any) => x.id === "mv");
+    expect(e.data).toMatchObject({ isUndo: false, note: "undo" });
+    expect(e.undoable).toBe(true);
+  });
+
   it("booking events need bookings.view; activity_done follows the link permissions", async () => {
     f.appointments = [
       { id: "ap1", workspaceId: "ws", contactId: "c1", service: "Cut", serviceAr: "قص", status: "confirmed", startAt: ts("2026-02-01"), createdAt: ts("2026-01-02T10:00:00Z"), updatedAt: ts("2026-01-02T10:00:00Z") },
-      { id: "ap2", workspaceId: "ws", contactId: "c1", service: "Dye", serviceAr: "صبغ", status: "cancelled", startAt: ts("2026-02-02"), createdAt: ts("2026-01-02T08:00:00Z"), updatedAt: ts("2026-01-02T11:00:00Z") },
+      { id: "ap2", workspaceId: "ws", contactId: "c1", service: "Dye", serviceAr: "صبغ", status: "cancelled", startAt: ts("2026-02-02"), createdAt: ts("2026-01-02T08:00:00Z"), updatedAt: ts("2026-01-02T11:00:00Z"), statusChangedAt: ts("2026-01-02T11:00:00Z") },
     ];
     f.activities = [
       { id: "ac1", workspaceId: "ws", contactId: "c1", kind: "call", title: "Called", doneAt: ts("2026-01-02T12:00:00Z"), createdAt: ts("2026-01-01"), ticketId: null, bookingId: null },

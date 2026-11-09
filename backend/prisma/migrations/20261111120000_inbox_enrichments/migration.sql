@@ -26,3 +26,21 @@ DO $$ BEGIN
   ALTER TABLE "SavedReply" ADD CONSTRAINT "SavedReply_workspaceId_fkey"
     FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- When a booking's status last changed. A BEFORE UPDATE trigger keeps every
+-- writer (app, HJZ sync, webhooks) correct; deployed code never reads it.
+ALTER TABLE "Appointment" ADD COLUMN IF NOT EXISTS "statusChangedAt" TIMESTAMP(3);
+
+CREATE OR REPLACE FUNCTION "appointment_status_changed_at"() RETURNS trigger AS $$
+BEGIN
+  IF NEW."status" IS DISTINCT FROM OLD."status" THEN
+    NEW."statusChangedAt" = now();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "Appointment_status_changed_at" ON "Appointment";
+CREATE TRIGGER "Appointment_status_changed_at"
+  BEFORE UPDATE ON "Appointment"
+  FOR EACH ROW EXECUTE FUNCTION "appointment_status_changed_at"();

@@ -1,7 +1,8 @@
 import type { Tx } from "@/lib/tx";
 
-const clean = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+/** Non-empty strings, de-duplicated (they are used as React keys). */
+export const clean = (v: unknown): string[] =>
+  Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && x.trim() !== ""))] : [];
 
 const Label = ({ children }: { children: string }) => (
   <div

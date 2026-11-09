@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { TicketsService } from "./tickets.service";
-import { UNDO_NOTE, stripReservedMarker } from "./undo-stage";
+import { UNDO_NOTE, isUndoNote, stripReservedMarker } from "./undo-stage";
+import { WORKFLOW_TRIGGER_EVENT } from "../workflows/workflow-events";
 
 const NOW = new Date("2026-11-11T12:00:00Z");
 const ago = (min: number) => new Date(NOW.getTime() - min * 60_000);
@@ -108,12 +109,49 @@ describe("TicketsService.undoLastMove", () => {
     await setup({ fromStage: { id: "st_a", key: "a", pipelineId: "pl_1", isTerminal: true, isWon: true } }).svc.undoLastMove("ws", "tk_1", viewer);
   });
 
-  it("the reserved undo marker cannot be typed by users, and legacy undo rows stay non-undoable", async () => {
+  it("the reserved undo marker cannot be typed by users; a user note undo is an ordinary, undoable move", async () => {
     expect(stripReservedMarker(UNDO_NOTE)).toBe("undo");
-    const { svc } = setup({
-      latest: { kind: "stage_changed", fromStage: "b", toStage: "b", byUserId: "u1", note: "undo", createdAt: ago(1) },
+    expect(isUndoNote("undo")).toBe(false);
+    expect(isUndoNote(UNDO_NOTE)).toBe(true);
+    const { svc, move } = setup({
+      latest: { kind: "stage_changed", fromStage: "a", toStage: "b", byUserId: "u1", note: "undo", createdAt: ago(1) },
     });
-    await expect(svc.undoLastMove("ws", "tk_1", viewer)).rejects.toMatchObject({ message: "tickets.undo_not_latest" });
+    await svc.undoLastMove("ws", "tk_1", viewer);
+    expect(move).toHaveBeenCalled();
+  });
+
+  it("409 tickets.undo_not_allowed when the from-stage no longer exists", async () => {
+    const { svc, move, prisma } = setup();
+    prisma.ticketStage.findFirst.mockResolvedValue(null);
+    await expect(svc.undoLastMove("ws", "tk_1", viewer)).rejects.toMatchObject({ message: "tickets.undo_not_allowed" });
+    expect(move).not.toHaveBeenCalled();
+  });
+
+  it("a real undo (moveTicket not mocked) writes the UNDO_NOTE activity, emits ticket.moved and fires the workflow trigger", async () => {
+    const stageB = { id: "st_b", key: "b", pipelineId: "pl_1", isTerminal: false, isWon: false };
+    const stageA = { id: "st_a", key: "a", pipelineId: "pl_1", workspaceId: "ws", isTerminal: false, isWon: false };
+    const ticket = { id: "tk_1", pipelineId: "pl_1", workspaceId: "ws", stageId: "st_b", contactId: "c1", stage: stageB, pipeline: { kind: "tickets", agentCanMove: true } };
+    const latest = { kind: "stage_changed", fromStage: "a", toStage: "b", byUserId: "u1", note: null, createdAt: ago(2) };
+    const updated = { ...ticket, stageId: "st_a", stage: stageA };
+    const tx: any = {
+      ticket: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findFirst: jest.fn().mockResolvedValue(updated) },
+      ticketActivity: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma: any = {
+      ticket: { findFirst: jest.fn().mockResolvedValue(ticket) },
+      ticketActivity: { findFirst: jest.fn().mockResolvedValue(latest) },
+      ticketStage: { findFirst: jest.fn().mockResolvedValue(stageA) },
+      $transaction: jest.fn(async (fn: any) => fn(tx)),
+    };
+    const realtime = { emitToWorkspace: jest.fn() };
+    const events = { emit: jest.fn() };
+    const svc = new TicketsService(prisma, realtime as any, events as any, undefined, { viewerCan: jest.fn().mockResolvedValue(false) } as any);
+    await svc.undoLastMove("ws", "tk_1", viewer);
+    expect(tx.ticketActivity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ kind: "stage_changed", fromStage: "b", toStage: "a", note: UNDO_NOTE, byUserId: "u1" }),
+    });
+    expect(realtime.emitToWorkspace).toHaveBeenCalledWith("ws", "ticket.moved", expect.objectContaining({ fromStageId: "st_b", toStageId: "st_a" }));
+    expect(events.emit).toHaveBeenCalledWith(WORKFLOW_TRIGGER_EVENT, expect.objectContaining({ triggerType: "ticket_stage_changed" }));
   });
 
   it("an undo move is not itself undoable", async () => {

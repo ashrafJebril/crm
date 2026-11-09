@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import type { Viewer } from "../permissions/visibility";
 import { resolveTemplateHeader, type TemplateHeaderInput } from "./template-header";
 import { normalizeReaction } from "./message-reaction";
 import { randomBytes } from "crypto";
@@ -764,6 +765,7 @@ export class ZernioService {
     language: string,
     variables: string[],
     header?: TemplateHeaderInput,
+    viewer?: Viewer,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -792,6 +794,7 @@ export class ZernioService {
       workspaceId,
       name,
       header,
+      { language, viewer },
     );
     const componentList: Array<Record<string, unknown>> = [];
     if (resolvedHeader) componentList.push(resolvedHeader.component);

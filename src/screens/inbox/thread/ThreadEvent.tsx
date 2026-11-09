@@ -60,6 +60,8 @@ export function ThreadEvent({
       await api.post(`/tickets/${event.ticketId}/undo-stage`, {});
       void qc.invalidateQueries({ queryKey: ["thread"] });
       void qc.invalidateQueries({ queryKey: ["tickets"] });
+      // LinkedItemsCard reads /contacts/:id/tickets through useFetch; the author's own socket skips ticket.moved.
+      void qc.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/contacts/") });
       void qc.invalidateQueries({ queryKey: ["record", "ticket", event.ticketId] });
       void qc.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/conversations") });
       onUndone?.();

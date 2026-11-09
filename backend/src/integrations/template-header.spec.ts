@@ -35,7 +35,20 @@ describe("resolveTemplateHeader", () => {
       component: { type: "header", parameters: [{ type: "image", image: { link: "https://cdn.example/m.png" } }] },
       attach: "m1",
     });
-    expect(d.media.get).toHaveBeenCalledWith("ws", "m1");
+    expect(d.media.get).toHaveBeenCalledWith("ws", "m1", undefined);
+  });
+
+  it("looks the Template up by name AND language", async () => {
+    const d = deps();
+    await resolveTemplateHeader(d as never, "ws", "promo", { mediaId: "m1" }, { language: "ar" });
+    expect((d.prisma.template.findFirst.mock.calls[0] as any)[0].where).toEqual({ workspaceId: "ws", name: "promo", lang: "ar" });
+  });
+
+  it("passes the viewer to media.get so visibility rules apply (a hidden media is a 404)", async () => {
+    const d = deps();
+    const viewer = { userId: "u1" };
+    await resolveTemplateHeader(d as never, "ws", "promo", { mediaId: "m1" }, { language: "en", viewer: viewer as never });
+    expect(d.media.get).toHaveBeenCalledWith("ws", "m1", viewer);
   });
 
   it("builds video and document headers", async () => {

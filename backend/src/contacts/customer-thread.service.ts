@@ -169,9 +169,11 @@ export class CustomerThreadService {
               workspaceId,
               contactId,
               status: { in: BOOKING_STATUS_EVENTS },
-              ...this.cursorWhere("xbooking_status", cur, "updatedAt"),
+              // Dated by when the status last changed (DB trigger), not updatedAt, which moves on any write.
+              statusChangedAt: { not: null },
+              ...this.cursorWhere("xbooking_status", cur, "statusChangedAt"),
             },
-            orderBy: desc("updatedAt"),
+            orderBy: desc("statusChangedAt"),
             take,
           })
         : Promise.resolve([]),
@@ -229,7 +231,7 @@ export class CustomerThreadService {
           at,
           token: "xticket",
           id: t.id,
-          row: { ...t, fromLost: !!from?.lost },
+          row: { ...t, fromLost: !!from?.lost, fromExists: !!from },
           item: {
             type: "event",
             id: t.id,
@@ -253,7 +255,7 @@ export class CustomerThreadService {
         };
       }),
       ...apptCreated.map((a: any): Entry => this.bookingEntry(a, "xbooking_created", "booking_created", a.createdAt)),
-      ...apptStatus.map((a: any): Entry => this.bookingEntry(a, "xbooking_status", "booking_status", a.updatedAt)),
+      ...apptStatus.map((a: any): Entry => this.bookingEntry(a, "xbooking_status", "booking_status", a.statusChangedAt)),
       ...activities.map((a: any): Entry => ({
         at: a.doneAt.toISOString(),
         token: "xactivity",
@@ -336,6 +338,7 @@ export class CustomerThreadService {
           userId: viewer?.userId,
           canManage,
           fromStageIsLost: !!e.row.fromLost,
+          fromStageExists: !!e.row.fromExists,
         }) === null;
     }
   }

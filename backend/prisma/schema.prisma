@@ -310,6 +310,10 @@ model Appointment {
   hjzSyncAttemptAt DateTime?
   hjzSyncError     String?
 
+  // SP-31: when `status` last changed (set by a DB trigger, so every writer is
+  // covered). Dates the thread's booking_status event; null until a change.
+  statusChangedAt DateTime?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
 

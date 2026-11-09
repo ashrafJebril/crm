@@ -43,6 +43,12 @@ describe("ConversationResolutionService.apply", () => {
     expect(tickets.createTicket).not.toHaveBeenCalled();
   });
 
+  it("de-duplicates topics and pain points (after trimming)", async () => {
+    await svc.apply("c1", "ws", { ...base, topics: ["pricing", "pricing", " pricing ", "delivery"], pain_points: ["slow", "slow"] } as never);
+    expect(data().topics).toEqual(["pricing", "delivery"]);
+    expect(data().painPoints).toEqual(["slow"]);
+  });
+
   it("stores topics and pain points from the verdict (trimmed strings, capped), clears them when absent", async () => {
     await svc.apply("c1", "ws", {
       ...base,

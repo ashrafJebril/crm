@@ -37,11 +37,11 @@ export type Verdict = {
 /** Up to 10 trimmed non-empty strings of at most 80 chars, or DbNull when none. */
 function stringList(v: unknown): string[] | typeof Prisma.DbNull {
   if (!Array.isArray(v)) return Prisma.DbNull;
-  const out = v
+  const trimmed = v
     .filter((x): x is string => typeof x === "string")
     .map((x) => x.trim().slice(0, 80))
-    .filter(Boolean)
-    .slice(0, 10);
+    .filter(Boolean);
+  const out = [...new Set(trimmed)].slice(0, 10);
   return out.length > 0 ? out : Prisma.DbNull;
 }
 

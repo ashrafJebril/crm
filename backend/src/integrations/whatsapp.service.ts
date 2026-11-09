@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import type { Viewer } from "../permissions/visibility";
 import { resolveTemplateHeader, type TemplateHeaderInput } from "./template-header";
 import { normalizeReaction } from "./message-reaction";
 import { PrismaService } from "../prisma/prisma.service";
@@ -625,6 +626,7 @@ export class WhatsAppService {
     language: string,
     variables: string[],
     header?: TemplateHeaderInput,
+    viewer?: Viewer,
   ) {
     const { token, phoneNumberId } = await this.requireToken(workspaceId);
     const conv = await this.prisma.conversation.findFirst({
@@ -648,6 +650,7 @@ export class WhatsAppService {
       workspaceId,
       name,
       header,
+      { language, viewer },
     );
     type Component = { type: "header" | "body"; parameters: Array<Record<string, unknown>> };
     const components: Component[] = [];

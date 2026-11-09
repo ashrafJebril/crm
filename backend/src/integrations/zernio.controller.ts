@@ -196,6 +196,7 @@ export class ZernioController {
       dto.language,
       dto.variables ?? [],
       dto.header,
+      viewer,
     );
     await this.handoff.humanReplied(workspaceId, id);
     return res;

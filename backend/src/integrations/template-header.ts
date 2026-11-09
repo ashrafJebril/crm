@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { MediaService } from "../media/media.service";
+import type { Viewer } from "../permissions/visibility";
 
 export const HEADER_MEDIA_MISMATCH = "templates.header_media_mismatch";
 
@@ -40,25 +41,28 @@ function kindOfMime(mime: string): MediaKind | null {
  *   templates.header_media_mismatch). Without a local Template row the type is
  *   inferred from the mime.
  * - params: only for TEXT headers.
+ * The Template row is matched on (name, language) since the same name exists
+ * per language, and media is read as the sending viewer so visibility applies.
  */
 export async function resolveTemplateHeader(
   deps: { prisma: Pick<PrismaService, "template">; media: Pick<MediaService, "get" | "resolveExternalUrl"> },
   workspaceId: string,
   templateName: string,
   header: TemplateHeaderInput | undefined,
+  opts: { language?: string; viewer?: Viewer } = {},
 ): Promise<ResolvedTemplateHeader | undefined> {
   const mediaId = header?.mediaId?.trim();
   const params = (header?.params ?? []).filter((p) => typeof p === "string");
   if (!mediaId && params.length === 0) return undefined;
 
   const tpl = await deps.prisma.template.findFirst({
-    where: { workspaceId, name: templateName },
+    where: { workspaceId, name: templateName, ...(opts.language ? { lang: opts.language } : {}) },
     select: { headerType: true },
   });
   const declared = tpl?.headerType ? tpl.headerType.toLowerCase() : null;
 
   if (mediaId) {
-    const row = await deps.media.get(workspaceId, mediaId); // 404 across workspaces
+    const row = await deps.media.get(workspaceId, mediaId, opts.viewer); // 404 across workspaces
     const kind = kindOfMime(row.mimeType);
     const expected = declared ?? kind;
     if (!kind || !expected || expected !== kind || !(expected in MIME_BY_KIND)) {

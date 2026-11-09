@@ -520,12 +520,13 @@ export class TicketsService {
       userId: viewer?.userId,
       canManage,
       fromStageIsLost: !!fromStage?.isTerminal && !fromStage.isWon,
+      fromStageExists: !!fromStage,
     });
     if (refusal === "tickets.undo_not_author") {
       throw new ForbiddenException({ statusCode: 403, message: refusal });
     }
     if (refusal) throw new ConflictException(refusal);
-    if (!fromStage) throw new ConflictException("tickets.undo_not_latest");
+    if (!fromStage) throw new ConflictException("tickets.undo_not_allowed"); // unreachable: undoRefusal covers it
     return this.moveTicket(
       workspaceId,
       ticketId,

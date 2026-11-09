@@ -15,7 +15,7 @@ interface TicketRow {
   title: string;
   value: string | number | null;
   currency: string;
-  stage: { label: string; color: string } | null;
+  stage: { label: string; labelAr?: string | null; color: string } | null;
 }
 
 const STATUS: Record<string, [string, string]> = {
@@ -116,7 +116,7 @@ export function LinkedItemsCard({ contactId, lang, tx }: { contactId: string; la
                       >
                         {t.title}
                       </span>
-                      {t.stage && <span style={{ fontSize: 11, color: "var(--ink-3)", flex: "0 0 auto" }}>{t.stage.label}</span>}
+                      {t.stage && <span style={{ fontSize: 11, color: "var(--ink-3)", flex: "0 0 auto" }}>{lang === "ar" ? t.stage.labelAr || t.stage.label : t.stage.label}</span>}
                     </button>
                   ))}
             {more(ticketsQ.data?.total ?? 0)}
