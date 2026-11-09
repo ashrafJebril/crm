@@ -10,6 +10,9 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { daysInStage } from "./stale";
 import { NextStepChip, type NextStep } from "@/components/activities/NextStepChip";
+import { Popover } from "@/screens/inbox/Popover";
+
+export type LeadAction = "won" | "lost" | "notALead" | "reopen";
 
 interface TicketCardProps {
   ticket: Ticket;
@@ -24,6 +27,12 @@ interface TicketCardProps {
   stale?: boolean;
   /** Moves disabled for this viewer (agentCanMove=false, no pipelines.update). */
   moveLocked?: boolean;
+  /** Bulk selection state; the checkbox shows on hover or while anything is selected. */
+  selected?: boolean;
+  selectionActive?: boolean;
+  onToggleSelect?: (id: string) => void;
+  /** Leads pipelines: Won / Lost / Not a lead / Reopen menu. */
+  onLeadAction?: (ticket: Ticket, action: LeadAction) => void;
 }
 
 const cardBase: CSSProperties = {
@@ -63,6 +72,10 @@ export const TicketCard = memo(function TicketCard({
   onNextStepClick,
   stale = false,
   moveLocked = false,
+  selected = false,
+  selectionActive = false,
+  onToggleSelect,
+  onLeadAction,
 }: TicketCardProps) {
   const { t: tw } = useTweaks();
   const tx = makeTx(tw.lang);
@@ -71,6 +84,8 @@ export const TicketCard = memo(function TicketCard({
   const [hovered, setHovered] = useState(false);
   const canUpdate = usePermissions().can("tickets.update");
   const canMove = canUpdate && !moveLocked;
+  const canNotLead = canUpdate && usePermissions().can("contacts.update");
+  const closed = !!ticket.closedAt;
   const lockedTip = tx(
     "Only managers can move cards in this pipeline",
     "يمكن للمديرين فقط نقل البطاقات في هذا المسار",
@@ -95,7 +110,9 @@ export const TicketCard = memo(function TicketCard({
     transform: CSS.Translate.toString(transform),
     visibility: isDragging ? "hidden" : "visible",
     touchAction: "none",
-    borderColor: stale
+    borderColor: selected
+      ? "var(--accent)"
+      : stale
       ? "color-mix(in srgb, var(--warn, #f59e0b) 55%, var(--line))"
       : hovered
         ? `color-mix(in srgb, ${accent} 45%, var(--line))`
@@ -152,6 +169,17 @@ export const TicketCard = memo(function TicketCard({
             fontWeight: 500,
           }}
         >
+          {onToggleSelect && canUpdate && (hovered || selected || selectionActive) ? (
+            <input
+              type="checkbox"
+              checked={selected}
+              aria-label={tx(`Select ticket ${t.number}`, `تحديد التذكرة ${t.number}`)}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => onToggleSelect(t.id)}
+              style={{ marginInlineEnd: 6, verticalAlign: "middle" }}
+            />
+          ) : null}
           #{String(t.number).padStart(3, "0")}
           {stale ? (
             <span
@@ -228,6 +256,43 @@ export const TicketCard = memo(function TicketCard({
             >
               {lang === "ar" ? "نقل ▾" : "Move ▾"}
             </button>
+          ) : null}
+          {onLeadAction && canUpdate ? (
+            <div onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+              <Popover
+                role="menu"
+                ariaLabel={tx("Card actions", "إجراءات البطاقة")}
+                trigger={<span aria-hidden="true">⋯</span>}
+                title={tx("Card actions", "إجراءات البطاقة")}
+                panelStyle={{ minWidth: 160, zIndex: 60 }}
+              >
+                {(close) => {
+                  const item = (action: LeadAction, label: string, enabled: boolean, tip?: string) => (
+                    <button
+                      key={action}
+                      type="button"
+                      role="menuitem"
+                      disabled={!enabled}
+                      title={enabled ? undefined : tip}
+                      onClick={() => {
+                        close();
+                        onLeadAction(t, action);
+                      }}
+                      style={{ display: "block", width: "100%", textAlign: "start", padding: "6px 8px", background: "transparent", border: 0, borderRadius: 6, color: "var(--ink)", fontSize: 12.5, cursor: enabled ? "pointer" : "not-allowed", opacity: enabled ? 1 : 0.5 }}
+                    >
+                      {label}
+                    </button>
+                  );
+                  return closed
+                    ? [item("reopen", tx("Reopen", "إعادة فتح"), canMove, lockedTip)]
+                    : [
+                        item("won", tx("Won", "رابحة"), canMove, lockedTip),
+                        item("lost", tx("Lost", "خاسرة"), canMove, lockedTip),
+                        item("notALead", tx("Not a lead", "ليس عميلاً محتملاً"), canNotLead, tx("You don't have permission", "ليس لديك صلاحية")),
+                      ];
+                }}
+              </Popover>
+            </div>
           ) : null}
         </div>
       </div>

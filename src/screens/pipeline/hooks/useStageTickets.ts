@@ -4,8 +4,8 @@ import { qk } from "@/api/queryKeys";
 import type { TicketsListPage } from "@/lib/types";
 
 interface StageTicketsFilters {
-  ownerId?: string;
-  q?: string; // client-side search, kept in the key so cache stays stable
+  /** Server filter query string from boardQuery.toQuery (no view/sort). */
+  qs?: string;
 }
 
 export function useStageTickets(
@@ -24,7 +24,7 @@ export function useStageTickets(
       params.set("pipelineId", pipelineId!);
       params.set("stageId", stageId!);
       params.set("limit", "50");
-      if (filters.ownerId) params.set("ownerId", filters.ownerId);
+      if (filters.qs) new URLSearchParams(filters.qs).forEach((v, k) => params.set(k, v));
       if (pageParam) params.set("cursor", pageParam as string);
       return api.get<TicketsListPage>(`/tickets?${params.toString()}`, signal);
     },

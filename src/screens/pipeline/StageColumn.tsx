@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStageTickets } from "./hooks/useStageTickets";
-import { TicketCard } from "./TicketCard";
+import { TicketCard, type LeadAction } from "./TicketCard";
 import { useNextSteps } from "@/components/activities/NextStepChip";
 import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { stageColor } from "./stageColors";
@@ -13,8 +13,8 @@ interface StageColumnProps {
   stage: TicketStage;
   pipelineId: string;
   lang: Lang;
-  ownerFilter?: string;
-  searchQuery: string;
+  /** Server filter query string (boardQuery.toQuery without sort). */
+  filterQs?: string;
   /** True once every sibling column has completed its first fetch. */
   boardReady: boolean;
   /** Fired exactly once when this column's first fetch settles. */
@@ -26,14 +26,16 @@ interface StageColumnProps {
   staleDays?: number | null;
   /** Moves are disabled for this viewer (agentCanMove=false, no pipelines.update). */
   moveLocked?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onLeadAction?: (ticket: Ticket, action: LeadAction) => void;
 }
 
 export function StageColumn({
   stage,
   pipelineId,
   lang,
-  ownerFilter,
-  searchQuery,
+  filterQs,
   boardReady,
   onInitialLoaded,
   onCardClick,
@@ -41,8 +43,11 @@ export function StageColumn({
   onOpenMoveMenu,
   staleDays = null,
   moveLocked = false,
+  selectedIds,
+  onToggleSelect,
+  onLeadAction,
 }: StageColumnProps) {
-  const q = useStageTickets(pipelineId, stage.id, { ownerId: ownerFilter });
+  const q = useStageTickets(pipelineId, stage.id, { qs: filterQs });
 
   // Report up to the board the moment we settle our first fetch (success OR
   // error — either way the column has "finished loading" from the user's POV).
@@ -60,16 +65,8 @@ export function StageColumn({
     [q.data],
   );
 
-  const filtered = useMemo(() => {
-    if (!searchQuery) return allTickets;
-    const needle = searchQuery.toLowerCase();
-    return allTickets.filter(
-      (t) =>
-        t.title.toLowerCase().includes(needle) ||
-        t.contact?.name.toLowerCase().includes(needle) ||
-        String(t.number).includes(needle),
-    );
-  }, [allTickets, searchQuery]);
+  // Search and every other filter run on the server (same builder as the table view).
+  const filtered = allTickets;
 
   // One batched next-step request per column.
   const nextSteps = useNextSteps("ticketIds", useMemo(() => allTickets.map((t) => t.id), [allTickets]));
@@ -290,6 +287,10 @@ export function StageColumn({
                     accent={accent}
                     stale={isStaleTicket(ticket.enteredStageAt, staleDays, nowTick, stage.isTerminal)}
                     moveLocked={moveLocked}
+                    selected={selectedIds?.has(ticket.id) ?? false}
+                    selectionActive={(selectedIds?.size ?? 0) > 0}
+                    onToggleSelect={onToggleSelect}
+                    onLeadAction={onLeadAction}
                     onClick={() => onCardClick(ticket)}
                     onOpenConversation={() =>
                       ticket.conversationId &&

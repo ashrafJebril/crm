@@ -14,14 +14,16 @@ export interface LostReasonOption {
 }
 
 interface Props {
-  ticket: Ticket;
+  ticket?: Ticket;
+  /** Overrides the default per-ticket heading (bulk use). */
+  heading?: string;
   lang: Lang;
   pipelineId: string;
   onCancel: () => void;
   onConfirm: (reason: { id: string; label: string }) => void;
 }
 
-export function LostReasonModal({ ticket, lang, pipelineId, onCancel, onConfirm }: Props) {
+export function LostReasonModal({ ticket, heading, lang, pipelineId, onCancel, onConfirm }: Props) {
   const ar = lang === "ar";
   const tx = makeTx(lang);
   const { can } = usePermissions();
@@ -41,7 +43,7 @@ export function LostReasonModal({ ticket, lang, pipelineId, onCancel, onConfirm 
     <Modal onClose={onCancel} width={420} label="Lost reason">
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
-          {lang === "ar" ? `سبب الخسارة لـ #${ticket.number}` : `Lost reason for #${ticket.number}`}
+          {heading ?? (lang === "ar" ? `سبب الخسارة لـ #${ticket?.number}` : `Lost reason for #${ticket?.number}`)}
         </h3>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {q.isPending ? (

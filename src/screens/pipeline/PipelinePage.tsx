@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { usePipelines, usePipelineSummary } from "./hooks/usePipelineData";
 import { useTicketRealtime } from "./hooks/useTicketRealtime";
@@ -9,7 +9,22 @@ import { useOpenParam } from "@/lib/useOpenParam";
 import { openRecord } from "@/lib/openRecord";
 import { useQueryClient } from "@tanstack/react-query";
 import { NewTicketModal } from "./NewTicketModal";
-import { TEAM } from "@/data/team";
+import { PipelineTable } from "./PipelineTable";
+import { BoardFilters } from "./BoardFilters";
+import { BoardBulkBar } from "./BoardBulkBar";
+import {
+  DEFAULT_SORT,
+  decodeBoardFilters,
+  encodeBoardFilters,
+  filtersActive,
+  nextSort,
+  toQuery,
+  type BoardFilters as Filters,
+  type Sort,
+} from "./boardQuery";
+import { getHashParam, setHashParam } from "@/lib/hashState";
+import { makeTx } from "@/lib/tx";
+import { useTeam, useWorkspaceTz } from "@/components/activities/activityApi";
 import type { Ticket } from "@/lib/types";
 
 const LAST_USED_KEY = "pipeline:lastUsed";
@@ -51,8 +66,56 @@ export default function PipelinePage() {
     return () => window.removeEventListener("record:changed", onChanged);
   }, [qc]);
 
-  const [search, setSearch] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState<string>("");
+  const tx = makeTx(lang);
+  const tz = useWorkspaceTz();
+  const team = useTeam();
+
+  // View and filters live in the hash (?pv=table, ?pf=<base64 json>) so a reload or link keeps them.
+  const [view, setView] = useState<"board" | "table">(() =>
+    getHashParam(window.location.hash, "pv") === "table" ? "table" : "board",
+  );
+  const [filters, setFilters] = useState<Filters>(() => decodeBoardFilters(getHashParam(window.location.hash, "pf")));
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
+  const [search, setSearch] = useState(filters.q);
+  useEffect(() => {
+    const h = window.setTimeout(() => setFilters((f) => (f.q === search ? f : { ...f, q: search })), 250);
+    return () => window.clearTimeout(h);
+  }, [search]);
+  useEffect(() => {
+    let h = window.location.hash;
+    h = setHashParam(h, "pv", view === "table" ? "table" : null);
+    h = setHashParam(h, "pf", filtersActive(filters) ? encodeBoardFilters(filters) : null);
+    if (h !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + h);
+    }
+  }, [view, filters]);
+
+  const filterQs = useMemo(() => toQuery(filters, null, { now: new Date(), tz }), [filters, tz]);
+  const tableQs = useMemo(() => toQuery(filters, sort, { now: new Date(), tz }), [filters, sort, tz]);
+
+  // Bulk selection (cards and table rows). Anything that changes the visible set clears it.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const toggleAll = useCallback((ids: string[], on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+  useEffect(clearSelection, [pipelineId, view, filterQs, clearSelection]);
+
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [showNew, setShowNew] = useState(false);
   // Deep link from a notification: `#/pipeline?open=<ticketId>`.
@@ -114,23 +177,58 @@ export default function PipelinePage() {
         summary={summary}
         search={search}
         onSearchChange={setSearch}
-        ownerFilter={ownerFilter}
-        onOwnerChange={setOwnerFilter}
+        view={view}
+        onViewChange={setView}
         onNewTicket={() => setShowNew(true)}
-        owners={TEAM.map((m) => ({ id: m.id, name: m.name }))}
+      />
+      <BoardFilters
+        tx={tx}
+        filters={filters}
+        team={team}
+        onChange={(f) => {
+          if (f.q !== filters.q) setSearch(f.q);
+          setFilters(f);
+        }}
       />
       <div style={{ flex: 1, minHeight: 0 }}>
-        <PipelineBoard
-          pipeline={pipeline}
-          lang={lang}
-          ownerFilter={ownerFilter || undefined}
-          searchQuery={search}
-          onCardClick={setSelectedTicket}
-          onOpenConversation={(cid) => {
-            window.location.hash = `#/inbox?open=${encodeURIComponent(cid)}`;
-          }}
-        />
+        {view === "table" ? (
+          <PipelineTable
+            tx={tx}
+            lang={lang}
+            tz={tz}
+            pipelineId={pipeline.id}
+            stages={pipeline.stages}
+            team={team}
+            qs={tableQs}
+            sort={sort}
+            onSort={(k) => setSort((s) => nextSort(s, k))}
+            selected={selected}
+            onToggle={toggleSelect}
+            onToggleAll={toggleAll}
+          />
+        ) : (
+          <PipelineBoard
+            pipeline={pipeline}
+            lang={lang}
+            filterQs={filterQs}
+            selectedIds={selected}
+            onToggleSelect={toggleSelect}
+            onCardClick={setSelectedTicket}
+            onOpenConversation={(cid) => {
+              window.location.hash = `#/inbox?open=${encodeURIComponent(cid)}`;
+            }}
+          />
+        )}
       </div>
+      <BoardBulkBar
+        tx={tx}
+        lang={lang}
+        pipelineId={pipeline.id}
+        isLeads={pipeline.kind === "leads"}
+        ids={[...selected]}
+        team={team}
+        onClear={clearSelection}
+      />
 
       {selectedTicket || deepTicketId ? (
         <TicketDetailDrawer

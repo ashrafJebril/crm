@@ -10,10 +10,9 @@ interface Props {
   summary: TicketsDashboardSummary | undefined;
   search: string;
   onSearchChange: (q: string) => void;
-  ownerFilter: string;
-  onOwnerChange: (id: string) => void;
+  view: "board" | "table";
+  onViewChange: (v: "board" | "table") => void;
   onNewTicket: () => void;
-  owners: Array<{ id: string; name: string }>;
 }
 
 export function PipelineHeader({
@@ -24,10 +23,9 @@ export function PipelineHeader({
   summary,
   search,
   onSearchChange,
-  ownerFilter,
-  onOwnerChange,
+  view,
+  onViewChange,
   onNewTicket,
-  owners,
 }: Props) {
   const { can } = usePermissions();
   const canCreate = can("tickets.create");
@@ -132,20 +130,25 @@ export function PipelineHeader({
           </div>
         </div>
 
-        <select
-          value={ownerFilter}
-          onChange={(e) => onOwnerChange(e.target.value)}
-          style={ctrl}
-        >
-          <option value="">
-            {lang === "ar" ? "كل المالكين" : "All owners"}
-          </option>
-          {owners.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
+        <div role="group" aria-label={lang === "ar" ? "طريقة العرض" : "View"} style={{ display: "inline-flex", gap: 4 }}>
+          {(["board", "table"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              onClick={() => onViewChange(v)}
+              style={{
+                ...ctrl,
+                cursor: "pointer",
+                background: view === v ? "var(--accent)" : "var(--bg-2)",
+                color: view === v ? "white" : "var(--ink-2)",
+                fontWeight: view === v ? 600 : 500,
+              }}
+            >
+              {v === "board" ? (lang === "ar" ? "لوحة" : "Board") : lang === "ar" ? "جدول" : "Table"}
+            </button>
           ))}
-        </select>
+        </div>
 
         <button
           type="button"

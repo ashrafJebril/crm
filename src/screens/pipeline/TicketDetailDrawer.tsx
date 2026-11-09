@@ -10,6 +10,11 @@ import {
   useUpdateTicket,
 } from "./hooks/useTicketMutations";
 import { stageColor } from "./stageColors";
+import { useBulkTickets, useReopenTicket } from "./hooks/useBoardData";
+import { bulkResultText, ticketActionError } from "./boardQuery";
+import { useToast } from "@/components/Toast";
+import { ApiError } from "@/api/client";
+import { makeTx } from "@/lib/tx";
 import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type {
   Lang,
@@ -59,6 +64,12 @@ export function TicketDetailContent({
   const canUpdate = can("tickets.update");
   const canDelete = can("tickets.delete");
   const noPerm = lang === "ar" ? NO_PERMISSION_AR : NO_PERMISSION_EN;
+  const tx = makeTx(lang);
+  const { toast } = useToast();
+  const reopen = useReopenTicket();
+  const bulk = useBulkTickets(q.data?.pipelineId ?? "");
+  const errText = (e: unknown) =>
+    ticketActionError(tx, e instanceof ApiError ? e.message : e instanceof Error ? e.message : "");
 
   const [noteText, setNoteText] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -370,6 +381,44 @@ export function TicketDetailContent({
                 gap: 8,
               }}
             >
+              {t.closedAt || t.pipeline?.kind === "leads" ? (
+                <div style={{ display: "flex", gap: 8, marginInlineEnd: "auto" }}>
+                  {t.closedAt ? (
+                    <button
+                      type="button"
+                      disabled={!canUpdate || reopen.isPending}
+                      title={canUpdate ? undefined : noPerm}
+                      onClick={() =>
+                        reopen.mutate(t.id, {
+                          onSuccess: () => toast(tx("Card reopened", "تمت إعادة فتح البطاقة"), "success"),
+                          onError: (e) => toast(errText(e), "error"),
+                        })
+                      }
+                      style={ghostBtn}
+                    >
+                      {tx("Reopen", "إعادة فتح")}
+                    </button>
+                  ) : t.pipeline?.kind === "leads" ? (
+                    <button
+                      type="button"
+                      disabled={!canUpdate || !can("contacts.update") || bulk.isPending}
+                      title={canUpdate && can("contacts.update") ? undefined : noPerm}
+                      onClick={() =>
+                        bulk.mutate(
+                          { ids: [t.id], op: "notALead" },
+                          {
+                            onSuccess: (r) => toast(bulkResultText(tx, r), r.affected > 0 ? "success" : "info"),
+                            onError: (e) => toast(errText(e), "error"),
+                          },
+                        )
+                      }
+                      style={ghostBtn}
+                    >
+                      {tx("Not a lead", "ليس عميلاً محتملاً")}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {confirmDelete ? (
                 <>
                   <span

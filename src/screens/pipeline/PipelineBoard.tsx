@@ -12,7 +12,12 @@ import {
 } from "@dnd-kit/core";
 import { StageColumn } from "./StageColumn";
 import { MoveStageMenu } from "./MoveStageMenu";
-import { TicketCardOverlay } from "./TicketCard";
+import { TicketCardOverlay, type LeadAction } from "./TicketCard";
+import { useBulkTickets, useReopenTicket } from "./hooks/useBoardData";
+import { bulkResultText, ticketActionError } from "./boardQuery";
+import { useToast } from "@/components/Toast";
+import { ApiError } from "@/api/client";
+import { makeTx } from "@/lib/tx";
 import { stageColor } from "./stageColors";
 import { useMoveTicket } from "./hooks/useTicketMutations";
 import { usePermissions } from "@/auth/usePermissions";
@@ -22,8 +27,10 @@ import type { Pipeline, Ticket, TicketStage, Lang } from "@/lib/types";
 interface PipelineBoardProps {
   pipeline: Pipeline & { stages: TicketStage[] };
   lang: Lang;
-  ownerFilter?: string;
-  searchQuery: string;
+  /** Server filter query string (boardQuery.toQuery without sort). */
+  filterQs: string;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
   onCardClick: (ticket: Ticket) => void;
   onOpenConversation: (conversationId: string) => void;
 }
@@ -31,8 +38,9 @@ interface PipelineBoardProps {
 export function PipelineBoard({
   pipeline,
   lang,
-  ownerFilter,
-  searchQuery,
+  filterQs,
+  selectedIds,
+  onToggleSelect,
   onCardClick,
   onOpenConversation,
 }: PipelineBoardProps) {
@@ -82,6 +90,14 @@ export function PipelineBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
+  const tx = makeTx(lang);
+  const { toast } = useToast();
+  const bulk = useBulkTickets(pipeline.id);
+  const reopen = useReopenTicket();
+  const isLeads = pipeline.kind === "leads";
+  const errText = (e: unknown) =>
+    ticketActionError(tx, e instanceof ApiError ? e.message : e instanceof Error ? e.message : "");
+
   const doMove = (ticket: Ticket, toStage: TicketStage) => {
     if (!canMove || toStage.id === ticket.stageId) return;
     if (toStage.isTerminal && !toStage.isWon) {
@@ -95,6 +111,29 @@ export function PipelineBoard({
       pipelineId: pipeline.id,
       optimisticTicket: ticket,
     });
+  };
+
+  const handleLeadAction = (ticket: Ticket, action: LeadAction) => {
+    if (action === "won") {
+      const to = pipeline.stages.find((s) => s.isTerminal && s.isWon);
+      if (to) doMove(ticket, to);
+    } else if (action === "lost") {
+      const to = pipeline.stages.find((s) => s.isTerminal && !s.isWon);
+      if (to) doMove(ticket, to);
+    } else if (action === "notALead") {
+      bulk.mutate(
+        { ids: [ticket.id], op: "notALead" },
+        {
+          onSuccess: (r) => toast(bulkResultText(tx, r), r.affected > 0 ? "success" : "info"),
+          onError: (e) => toast(errText(e), "error"),
+        },
+      );
+    } else {
+      reopen.mutate(ticket.id, {
+        onSuccess: () => toast(tx("Card reopened", "تمت إعادة فتح البطاقة"), "success"),
+        onError: (e) => toast(errText(e), "error"),
+      });
+    }
   };
 
   const handleDragStart = (e: DragStartEvent) => {
@@ -151,14 +190,16 @@ export function PipelineBoard({
               stage={stage}
               pipelineId={pipeline.id}
               lang={lang}
-              ownerFilter={ownerFilter}
-              searchQuery={searchQuery}
+              filterQs={filterQs}
               boardReady={boardReady}
               onInitialLoaded={reportStageLoaded}
               onCardClick={onCardClick}
               onOpenConversation={onOpenConversation}
               staleDays={pipeline.staleDays ?? null}
               moveLocked={moveLocked}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
+              onLeadAction={isLeads ? handleLeadAction : undefined}
               onOpenMoveMenu={(ticket, anchorRect) =>
                 setMoveTarget({ ticket, anchorRect })
               }
