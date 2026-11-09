@@ -27,6 +27,8 @@ import { GroupsTab } from "./contacts/GroupsTab";
 import { TagsTab } from "./contacts/TagsTab";
 import { FieldsTab } from "./contacts/FieldsTab";
 import { NewContactModal } from "./contacts/NewContactModal";
+import { ImportWizard, ImportChip } from "./contacts/import/ImportWizard";
+import { downloadContactsExport } from "./contacts/import/importApi";
 import { ContactFilterBar } from "./contacts/ContactFilterBar";
 import { BulkBar, PIPELINE_BULK_CAP, type BulkAction } from "./contacts/BulkBar";
 import {
@@ -445,6 +447,9 @@ function ContactsImpl() {
   const [view, setView] = useState<View>("table");
   const [selected, setSelected] = useState<Set<string>>(new Set<string>());
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importWatchId, setImportWatchId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const { can } = usePermissions();
   const canManageFields = can("settings.manage");
@@ -611,6 +616,16 @@ function ContactsImpl() {
     void run();
   };
 
+  const EXPORT_IDS_CAP = 10_000;
+  const runExport = () => {
+    if (exporting) return;
+    setExporting(true);
+    // The current filter, narrowed to the selection when rows are selected.
+    downloadContactsExport(filterQuery, Array.from(selected))
+      .catch((err) => showStatus(err instanceof Error ? err.message : tx("Export failed.", "فشل التصدير.")))
+      .finally(() => setExporting(false));
+  };
+
   const selectAllMatching = () => {
     if (selectingAll) return;
     setSelectingAll(true);
@@ -743,6 +758,33 @@ function ContactsImpl() {
                 {tx("Pipeline", "المسار")}
               </button>
             </div>
+            <ImportChip tx={tx} watchId={importWatchId} onFinished={() => { setImportWatchId(null); refetch(); }} />
+            <button
+              className="btn"
+              onClick={() => setShowImport(true)}
+              disabled={!can("contacts.create")}
+              title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}
+            >
+              {tx("Import", "استيراد")}
+            </button>
+            <button
+              className="btn"
+              onClick={runExport}
+              disabled={!can("contacts.manage") || exporting || selected.size > EXPORT_IDS_CAP}
+              title={
+                !can("contacts.manage")
+                  ? tx("Only owners and admins can export", "التصدير متاح للمالكين والمسؤولين فقط")
+                  : selected.size > EXPORT_IDS_CAP
+                    ? tx("Select at most 10,000 contacts to export", "حدد 10,000 جهة كحد أقصى للتصدير")
+                    : undefined
+              }
+            >
+              {exporting
+                ? tx("Exporting…", "جارٍ التصدير…")
+                : selected.size > 0
+                  ? tx(`Export selected (${selected.size.toLocaleString()})`, `تصدير المحدد (${selected.size.toLocaleString("ar")})`)
+                  : tx("Export", "تصدير")}
+            </button>
             <button className="btn primary" onClick={() => setShowNew(true)} disabled={!can("contacts.create")} title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
               <IconPlus w={13} />
               {tx("New contact", "جهة جديدة")}
@@ -939,6 +981,23 @@ function ContactsImpl() {
           onChanged={() => {
             void fieldDefsQ.refetch();
             refetch();
+          }}
+        />
+      )}
+
+      {showImport && (
+        <ImportWizard
+          tx={tx}
+          lang={t.lang}
+          kind="contacts"
+          onClose={(runningId) => {
+            setShowImport(false);
+            if (runningId) setImportWatchId(runningId);
+          }}
+          onImported={() => {
+            setActiveSegmentId(null);
+            refetch();
+            refetchSegments();
           }}
         />
       )}

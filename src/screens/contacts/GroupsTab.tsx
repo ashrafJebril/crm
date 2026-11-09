@@ -4,6 +4,8 @@ import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
 import { IconPlus, IconX } from "@/icons";
+import { usePermissions } from "@/auth/usePermissions";
+import { ImportWizard } from "./import/ImportWizard";
 
 interface MemberRow {
   id: string;
@@ -27,6 +29,8 @@ export function GroupsTab({ tx, lang, contacts }: GroupsTabProps) {
   const segmentsQ = useFetch<Segment[]>("/segments");
   const [openGroup, setOpenGroup] = useState<Segment | null>(null);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const { can } = usePermissions();
 
   const rows = segmentsQ.data ?? [];
   const groups = rows.filter((s) => s.origin === "manual");
@@ -37,6 +41,16 @@ export function GroupsTab({ tx, lang, contacts }: GroupsTabProps) {
       <section>
         <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", textTransform: "uppercase", margin: "6px 0 10px" }}>
           {tx("Your groups", "مجموعاتك")} · {groups.length}
+          <button
+            type="button"
+            className="btn sm"
+            style={{ marginInlineStart: 12, textTransform: "none" }}
+            onClick={() => setImporting(true)}
+            disabled={!can("audiences.create")}
+            title={can("audiences.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}
+          >
+            {tx("Import file", "استيراد ملف")}
+          </button>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
           <button
@@ -83,6 +97,16 @@ export function GroupsTab({ tx, lang, contacts }: GroupsTabProps) {
             setCreating(false);
             segmentsQ.refetch();
           }}
+        />
+      )}
+
+      {importing && (
+        <ImportWizard
+          tx={tx}
+          lang={lang}
+          kind="audience"
+          onClose={() => setImporting(false)}
+          onImported={() => segmentsQ.refetch()}
         />
       )}
 
