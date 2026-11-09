@@ -3,6 +3,7 @@ import { NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { mediaKeyText } from "@/components/media/mediaErrors";
 import { GATE_AR, GATE_EN } from "@/components/whatsAppGateCopy";
 import type { Tx } from "@/lib/tx";
+import { isShortTitle } from "./failureCodes";
 import { senderText } from "./senderModel";
 import { varMapReasonText } from "./varMap";
 
@@ -155,10 +156,10 @@ export const CAMPAIGN_ERROR_COPY: Record<string, CopyFn> = {
     "The campaign couldn't be sent. Create a new campaign to try again.",
     "تعذّر إرسال الحملة. أنشئ حملة جديدة للمحاولة مجددًا.",
   ],
-  // SP-13 Task 2 fix round 1 (backend, in review): DELETE refused while a broadcast may still send.
+  // SP-13 Task 2 fix round 1 (12a94da): DELETE refused while a broadcast may still send.
   "campaigns.has_live_broadcasts": () => [
-    "Part of this campaign may still send, so it can't be deleted yet. Cancel it first.",
-    "قد يُرسل جزء من هذه الحملة، لذا لا يمكن حذفها بعد. ألغِها أولًا.",
+    "This campaign may still be sending. Cancel it first.",
+    "قد تكون هذه الحملة لا تزال قيد الإرسال. ألغِها أولاً.",
   ],
   "channels.sender_invalid": () => [
     "One of the chosen numbers can't send campaigns any more. Pick the numbers again.",
@@ -203,6 +204,21 @@ export function campaignErrorText(err: unknown, tx: Tx, ctx: ErrorContext = {}):
     campaignKeyText(message, body, tx, ctx) ??
     tx("Something went wrong. Try again.", "حدث خطأ ما. حاول مجددًا.")
   );
+}
+
+/**
+ * A failed cancel (SP-13 12a94da): when a partition can't be stopped the
+ * backend passes Zernio's error through and the status doesn't change. A
+ * keyed error is worded; a short provider text is shown after a bilingual
+ * lead so the user knows to retry; anything else reads as the generic copy.
+ */
+export function cancelErrorText(err: unknown, tx: Tx): string {
+  if (err instanceof ApiError && err.status === 403) return tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
+  const message = err instanceof Error ? err.message : "";
+  const keyed = campaignKeyText(message.split(", ")[0] ?? "", err instanceof ApiError ? err.body : undefined, tx);
+  if (keyed) return keyed;
+  const lead = tx("Couldn't cancel every part of the campaign. Try again.", "تعذّر إلغاء كل أجزاء الحملة. حاول مجددًا.");
+  return isShortTitle(message) && !/^HTTP \d+$/.test(message) ? `${lead} (${message.trim()})` : lead;
 }
 
 /**

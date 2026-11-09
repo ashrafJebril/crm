@@ -20,7 +20,7 @@ import { headerKind } from "@/components/media/mediaKinds";
 import { useHashParam } from "@/lib/useHashParam";
 import { InlineBar, MiniStat } from "./campaigns/ui";
 import { CampaignDetail } from "./campaigns/CampaignDetail";
-import { campaignErrorText, campaignKeyText, lastErrorText } from "./campaigns/campaignErrors";
+import { campaignErrorText, campaignKeyText, cancelErrorText, lastErrorText } from "./campaigns/campaignErrors";
 import { LAUNCH_POLL_MS, campaignStatusLabel } from "./campaigns/campaignDetailModel";
 import {
   defaultVarMap,
@@ -834,19 +834,23 @@ function CampaignsImpl() {
     api.delete<{ ok: true }>(`/campaigns/${id}`),
   );
 
-  const run = (p: Promise<unknown>, ok: string) =>
+  const run = (p: Promise<unknown>, ok: string, errText: (e: unknown) => string = (e) => campaignErrorText(e, tx)) =>
     p
       .then(() => {
         toast(ok, "success");
         refetch();
       })
-      .catch((e: unknown) => toast(campaignErrorText(e, tx), "error"));
+      .catch((e: unknown) => {
+        toast(errText(e), "error");
+        refetch();
+      });
 
   // While launching, cancel is a request the background job finishes (it stays `launching` briefly).
   const handleCancel = (c: Campaign) =>
     run(
       cancelCampaign.mutate({ id: c.id }),
       c.status === "launching" ? tx("Cancelling the campaign…", "جارٍ إلغاء الحملة…") : tx("Campaign cancelled", "تم إلغاء الحملة"),
+      (e) => cancelErrorText(e, tx),
     );
   const handleRefresh = (c: Campaign) =>
     run(refreshCampaign.mutate({ id: c.id }), tx("Stats updated", "تم تحديث الإحصاءات"));

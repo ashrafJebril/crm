@@ -376,6 +376,8 @@ export interface Campaign {
   /** SP-13 background launch: planning | sending | done | failed. */
   launchStage?: "planning" | "sending" | "done" | "failed" | null;
   sendTransport?: "broadcast" | "direct" | null;
+  /** SP-13 (GET /campaigns/:id only): cancel has something to stop. Also true for a failed launch whose broadcasts may still send. */
+  canCancel?: boolean;
   /** SP-13: cancel was asked for while launching; the runner finishes it. */
   cancelRequestedAt?: string | null;
   /** SP-13 (GET /campaigns/:id only): the sending numbers in order; a deleted channel is absent. */

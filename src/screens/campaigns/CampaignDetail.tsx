@@ -9,7 +9,7 @@ import { IconChev } from "@/icons";
 import { makeTx } from "@/lib/tx";
 import type { Campaign, CampaignInsights, Lang, SendersResponse } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
-import { campaignErrorText, lastErrorText } from "./campaignErrors";
+import { campaignErrorText, cancelErrorText, lastErrorText } from "./campaignErrors";
 import { campaignPollMs, campaignStatusLabel, insightsPollMs, outcomeChips, type Outcome } from "./campaignDetailModel";
 import { LaunchProgress } from "./LaunchProgress";
 import { NumberSplitCard } from "./NumberSplitCard";
@@ -90,14 +90,22 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
     }
   };
 
-  const cancelLaunch = async () => {
+  // SP-13 12a94da: Cancel follows `canCancel` (also true for a failed launch whose
+  // broadcasts may still send). A partition Zernio can't stop leaves the status
+  // as it was: the error is shown and Cancel stays available to retry.
+  const cancelCampaign = async () => {
+    const wasLaunching = c?.status === "launching";
     setCancelling(true);
     try {
       await api.post(`${path}/cancel`);
       await campaignQ.refetch();
-      toast(tx("Cancelling the campaign…", "جارٍ إلغاء الحملة…"), "success");
+      toast(
+        wasLaunching ? tx("Cancelling the campaign…", "جارٍ إلغاء الحملة…") : tx("Campaign cancelled", "تم إلغاء الحملة"),
+        "success",
+      );
     } catch (e) {
-      toast(campaignErrorText(e, tx), "error");
+      toast(cancelErrorText(e, tx), "error");
+      void campaignQ.refetch();
     } finally {
       setCancelling(false);
     }
@@ -134,6 +142,10 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
   const tracked = insights ? insights.tracked : c.recipientTracking === true;
   const neverSent = c.status === "draft" || c.status === "launching";
   const sender = c.senders?.[0] ?? null;
+  // Older backends send no canCancel: fall back to the status rule.
+  const mayCancel =
+    can("campaigns.manage") &&
+    (c.canCancel ?? (c.status === "launching" || c.status === "running" || c.status === "scheduled"));
   const extraSenders = Math.max(0, (c.senders?.length ?? 0) - 1);
   const funnel =
     insights?.funnel ?? {
@@ -210,6 +222,11 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
             )}
           </div>
         </div>
+        {mayCancel && c.status !== "launching" && (
+          <button className="btn danger" disabled={cancelling} onClick={() => void cancelCampaign()}>
+            {cancelling ? tx("Cancelling…", "جارٍ الإلغاء…") : tx("Cancel campaign", "إلغاء الحملة")}
+          </button>
+        )}
         {!neverSent && (
           <button className="btn" disabled={refreshing} onClick={() => void refresh()}>
             {refreshing ? tx("Refreshing…", "جارٍ التحديث…") : tx("Refresh", "تحديث")}
@@ -222,7 +239,7 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
           <LaunchProgress
             tx={tx}
             campaign={c}
-            onCancel={can("campaigns.manage") ? () => void cancelLaunch() : undefined}
+            onCancel={mayCancel ? () => void cancelCampaign() : undefined}
             cancelling={cancelling}
           />
         ) : (

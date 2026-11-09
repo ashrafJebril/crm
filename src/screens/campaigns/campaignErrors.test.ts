@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/api/client";
 import { makeTx } from "@/lib/tx";
-import { CAMPAIGN_ERROR_COPY, campaignErrorText, lastErrorText, partialGroup, partialGroupText } from "./campaignErrors";
+import { CAMPAIGN_ERROR_COPY, campaignErrorText, cancelErrorText, lastErrorText, partialGroup, partialGroupText } from "./campaignErrors";
 
 const en = makeTx("en");
 const ar = makeTx("ar");
@@ -156,6 +156,24 @@ describe("campaignErrorText", () => {
     });
     expect(campaignErrorText(varied, en)).toContain("40 different messages");
     expect(campaignErrorText(varied, en)).toContain("5,000");
+  });
+
+  it("words a failed cancel and keeps a short provider reason so the user can retry", () => {
+    expect(campaignErrorText(new ApiError("campaigns.has_live_broadcasts", 400), en)).toBe(
+      "This campaign may still be sending. Cancel it first.",
+    );
+    expect(campaignErrorText(new ApiError("campaigns.has_live_broadcasts", 400), ar)).toBe(
+      "قد تكون هذه الحملة لا تزال قيد الإرسال. ألغِها أولاً.",
+    );
+    expect(cancelErrorText(new ApiError("Broadcast is already sending", 502), en)).toBe(
+      "Couldn't cancel every part of the campaign. Try again. (Broadcast is already sending)",
+    );
+    expect(cancelErrorText(new ApiError("Broadcast is already sending", 502), ar)).toMatch(ARABIC);
+    expect(cancelErrorText(new ApiError("HTTP 502", 502), en)).toBe("Couldn't cancel every part of the campaign. Try again.");
+    expect(cancelErrorText(new ApiError('{"error":"x"}', 502), en)).toBe("Couldn't cancel every part of the campaign. Try again.");
+    expect(cancelErrorText(new ApiError("campaigns.not_cancellable", 400), en)).toBe(
+      "This campaign isn't sending, so there is nothing to cancel.",
+    );
   });
 
   it("words a stored lastError key and keeps an older provider message", () => {
