@@ -49,6 +49,7 @@ model User {
   uploadedMedia Media[] @relation("UserMediaUploads")
   assignedConversations Conversation[] @relation("ConversationAssignee")
   ownedContacts Contact[] @relation("ContactOwner")
+  assignedActivities Activity[] @relation("ActivityAssignee")
   notifications Notification[] @relation("UserNotifications")
 
   createdAt DateTime @default(now())
@@ -90,6 +91,7 @@ model Contact {
   appointments  Appointment[]
   tickets       Ticket[]
   notes         Note[]
+  activities    Activity[]
   segmentMembers SegmentMember[]
 
   // Structured name (name stays the display name), email, owner, consent.
@@ -305,6 +307,7 @@ model Appointment {
   workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  activities Activity[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -483,6 +486,7 @@ model Ticket {
   contact    Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
   activities TicketActivity[]
   notes      Note[]
+  followUps  Activity[]
 
   @@unique([pipelineId, number])
   @@index([contactId])
@@ -800,6 +804,7 @@ model Workspace {
   members WorkspaceMember[]
   roles   Role[]            @relation("WorkspaceRoles")
   importJobs ImportJob[]        @relation("WorkspaceImportJobs")
+  activities Activity[]         @relation("WorkspaceActivities")
 
   contacts          Contact[]          @relation("WorkspaceContacts")
   conversations     Conversation[]     @relation("WorkspaceConversations")
@@ -911,6 +916,38 @@ model ImportJob {
 
   @@index([workspaceId, createdAt])
   @@index([status, heartbeatAt])
+}
+
+// ─── Activities & follow-ups (SP-04) ─────────────────────────────────────
+// kind: follow_up | call | meeting | task | note_log. Open = doneAt null.
+// createdById is an audit string, not a FK (survives the creator leaving).
+model Activity {
+  id          String    @id @default(cuid())
+  workspaceId String
+  kind        String
+  title       String
+  notes       String?
+  dueAt       DateTime?
+  doneAt      DateTime?
+  outcome     String?
+  notifiedAt  DateTime?
+  assigneeId  String?
+  contactId   String?
+  ticketId    String?
+  bookingId   String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace    @relation("WorkspaceActivities", fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignee  User?        @relation("ActivityAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  contact   Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  ticket    Ticket?      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  booking   Appointment? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, assigneeId, doneAt, dueAt])
+  @@index([workspaceId, contactId])
+  @@index([workspaceId, ticketId])
 }
 
 // ─── Media library ────────────────────────────────────────────────────────

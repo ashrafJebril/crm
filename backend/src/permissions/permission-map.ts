@@ -149,6 +149,16 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // Notes live on conversations/contacts/tickets. Edit/delete additionally
   // require being the note's author, or holding conversations.manage
   // (NotesService.assertCanChange), else 403.
+  // Activities (SP-04): permission follows the link (contacts.* or tickets.*)
+  // and is checked per activity inside ActivitiesService, so "authenticated" here.
+  "GET /activities": "authenticated",
+  "GET /activities/queue": "authenticated",
+  "GET /activities/next-steps": "authenticated",
+  "POST /activities": "authenticated",
+  "POST /activities/bulk": "authenticated",
+  "PATCH /activities/:id": "authenticated",
+  "POST /activities/:id/complete": "authenticated",
+  "DELETE /activities/:id": "authenticated",
   "GET /notes": "conversations.view",
   "POST /notes": "conversations.create",
   "PATCH /notes/:id": "conversations.update",
