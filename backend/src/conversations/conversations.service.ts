@@ -12,6 +12,7 @@ import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { applyConversationAssignment } from "./assign-conversation";
 import { LOutboundService } from "../integrations/l-outbound.service";
 import {
   CreateConversationDto,
@@ -168,7 +169,6 @@ export class ConversationsService {
     if (dto.pinned !== undefined) data.pinned = dto.pinned;
     if (dto.unread !== undefined) data.unread = dto.unread;
     if (dto.aiEnabled !== undefined) data.aiEnabled = dto.aiEnabled;
-    if (dto.assigneeId !== undefined) data.assigneeId = dto.assigneeId;
     if (dto.escalated === true) {
       const given = dto.escalateReason?.trim();
       const kept = row.escalated ? row.escalateReason?.trim() : undefined;
@@ -185,9 +185,8 @@ export class ConversationsService {
     if (dto.status !== undefined && dto.status !== row.status) {
       data.statusChangedAt = new Date();
     }
-    data.version = { increment: 1 };
-    // Ownership actions must not reorder the inbox (list sorts by updatedAt).
-    data.updatedAt = row.updatedAt;
+    // version bump + updatedAt preservation (ownership actions must not reorder
+    // the inbox) are applied by applyConversationAssignment.
 
     if (dto.version !== undefined && dto.version !== row.version) {
       throw this.conflict(row);
@@ -199,57 +198,22 @@ export class ConversationsService {
       if (!member) throw new BadRequestException("assignee is not a member");
     }
 
-    const res = await this.prisma.conversation.updateMany({
-      where: { id, workspaceId, version: row.version },
-      data,
-    });
-    const fresh = await this.prisma.conversation.findFirst({
-      where: { id, workspaceId },
-      include: { labels: { select: { labelId: true } } },
-    });
-    if (!fresh) throw new NotFoundException("Conversation not found");
-    if (res.count === 0) throw this.conflict(fresh);
-    this.emitActivity(workspaceId, fresh.channel, fresh.id);
-    if (
-      typeof dto.assigneeId === "string" &&
-      dto.assigneeId !== row.assigneeId &&
-      dto.assigneeId !== actorId
-    ) {
-      await this.notifyAssignment(workspaceId, fresh, dto.assigneeId, actorId);
-    }
-    return this.mapLabels(fresh);
-  }
-
-  /** Best-effort: a notification problem must never fail the assignment. */
-  private async notifyAssignment(
-    workspaceId: string,
-    conv: { id: string; contactId: string },
-    assigneeId: string,
-    actorId?: string,
-  ): Promise<void> {
-    if (!this.notifications) return;
-    try {
-      const contact = await this.prisma.contact.findFirst({
-        where: { id: conv.contactId, workspaceId },
-        select: { name: true },
-      });
-      const actor = actorId
-        ? await this.prisma.user.findUnique({ where: { id: actorId }, select: { name: true } })
-        : null;
-      await this.notifications.notify(workspaceId, [assigneeId], {
-        type: "assignment",
-        title: "assignment.conversation",
-        body: JSON.stringify({
-          contactName: contact?.name ?? "",
-          ...(actor?.name ? { actorName: actor.name } : {}),
-        }),
-        recordKind: "conversation",
-        recordId: conv.id,
+    const { count, fresh } = await applyConversationAssignment(
+      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications },
+      {
+        workspaceId,
+        conversationId: id,
+        assigneeId: dto.assigneeId,
         actorId,
-      });
-    } catch (err) {
-      this.logger.warn(`assignment notification failed: ${(err as Error)?.message}`);
-    }
+        extraData: data,
+        enforceVersion: row.version,
+        preserveUpdatedAt: true,
+        current: { assigneeId: row.assigneeId, updatedAt: row.updatedAt, version: row.version },
+      },
+    );
+    if (!fresh) throw new NotFoundException("Conversation not found");
+    if (count === 0) throw this.conflict(fresh);
+    return this.mapLabels(fresh);
   }
 
   private mapLabels<T extends { labels: { labelId: string }[] }>(c: T) {

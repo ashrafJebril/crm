@@ -427,7 +427,7 @@ model Pipeline {
   staleDays            Int?
   agentCanMove         Boolean   @default(true)
   assignsConversations Boolean   @default(false)
-  kind                 String    @default("deals") // "deals" | "support"
+  kind                 String    @default("deals") // "deals" | "leads" | "support"
 
   workspaceId String
   workspace   Workspace @relation("WorkspacePipelines", fields: [workspaceId], references: [id], onDelete: Cascade)
