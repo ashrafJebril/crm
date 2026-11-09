@@ -10,6 +10,7 @@ import { TelegramController } from "./telegram/telegram.controller";
 import { TelegramService } from "./telegram/telegram.service";
 import { TelegramWebhookGuard } from "./telegram/telegram-webhook.guard";
 import { WebchatController } from "./webchat/webchat.controller";
+import { WhatsappChannelsController } from "./whatsapp/whatsapp-channels.controller";
 import { WebchatService } from "./webchat/webchat.service";
 import { WidgetGateway } from "./webchat/widget.gateway";
 import { WidgetOriginGuard } from "./webchat/widget-origin.guard";
@@ -17,10 +18,12 @@ import { WidgetRateLimitGuard, widgetRateLimiterProvider } from "./webchat/widge
 
 /** SP-19 channels hub (`/channels`), Telegram (T2) and the website chat
  *  widget (T3: loader, hosted page, visitor API, `/widget` socket
- *  namespace). T4 adds the WhatsApp signup flows here. */
+ *  namespace) and the WhatsApp add flows (T4: embedded signup, manual
+ *  multi-number, landline verification; their services are in
+ *  ChannelsCoreModule). */
 @Module({
   imports: [ChannelsCoreModule, IntegrationsModule, MediaModule, RealtimeModule],
-  controllers: [ChannelsController, TelegramController, WebchatController],
+  controllers: [ChannelsController, TelegramController, WebchatController, WhatsappChannelsController],
   providers: [
     ChannelsService,
     TelegramClient,

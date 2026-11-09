@@ -11,18 +11,23 @@ import { resolveTemplateHeader, type TemplateHeaderInput } from "./template-head
 import { normalizeReaction } from "./message-reaction";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
-import { decryptSecret, encryptSecret } from "../common/token-crypto";
+import { decryptSecret } from "../common/token-crypto";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { AiBridgeService } from "./ai-bridge.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
-import { timingSafeEqual } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import type { Channel } from "@prisma/client";
 import { ChannelResolver } from "../channels/channel-resolver.service";
 import { credentialsFor } from "../channels/channel-credentials";
-import { alignLegacyChannel, ensureDefaultPerKind } from "../channels/legacy-mirror";
+import { ensureDefaultPerKind, ensureLegacyChannels } from "../channels/legacy-mirror";
 import { INTEGRATION_REMOVED } from "../channels/zernio-mirror";
+import { channelError, type ChannelErrorKey } from "../channels/channel-errors";
+import { assertWhatsappCapacity } from "../channels/channel-limits";
+import { EmbeddedSignupService } from "../channels/whatsapp/embedded-signup.service";
+import { MetaGraphClient } from "../channels/whatsapp/meta-graph.client";
+import { addsWhatsappSlot, assertSecretsStorable, attachMetaNumber, NOT_META } from "../channels/whatsapp/meta-number";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -108,6 +113,17 @@ const LANG_TO_META: Record<"en" | "ar", string> = {
   ar: "ar",
 };
 
+/**
+ * How connect errors are reported. "legacy" keeps the English messages the
+ * old Settings card shows; "keys" (the channels hub, `POST
+ * /channels/whatsapp/manual`) throws `channels.*` keys the frontend maps
+ * through `tx`.
+ */
+export type ConnectErrorStyle = "legacy" | "keys";
+export interface ConnectOptions {
+  errorStyle?: ConnectErrorStyle;
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly log = new Logger(WhatsAppService.name);
@@ -122,9 +138,14 @@ export class WhatsAppService {
     // Provided by the global ChannelsCoreModule; hand-built specs get a
     // resolver over the same Prisma double.
     @Optional() channelResolver?: ChannelResolver,
+    // SP-19 T4: the embedded signup lives in channels/whatsapp; the old
+    // exchange route delegates to it.
+    @Optional() embeddedSignup?: EmbeddedSignupService,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
+    this.embeddedSignup = embeddedSignup ?? new EmbeddedSignupService(prisma, new MetaGraphClient(), realtime);
   }
+  private readonly embeddedSignup: EmbeddedSignupService;
 
   // ─── Public REST API ───────────────────────────────────────────────────
   /**
@@ -148,9 +169,11 @@ export class WhatsAppService {
   }
 
   /**
-   * Complete WhatsApp Embedded Signup: exchange the `code` returned by Meta's
-   * embedded signup popup for an access token, then store the credentials.
-   * The popup gives us phoneNumberId + wabaId out-of-band via window.message.
+   * The old embedded-signup route (`POST /integrations/whatsapp/oauth/exchange`).
+   * SP-19 T4: delegates to `EmbeddedSignupService` (config check, plan limit,
+   * code exchange, WABA subscribe, register, channel-aware attach) and
+   * returns its ChannelDto. The popup's `phoneNumberId` + `wabaId` arrive
+   * out-of-band via window.message.
    */
   async embeddedSignupExchange(
     workspaceId: string,
@@ -158,35 +181,11 @@ export class WhatsAppService {
     phoneNumberId: string,
     wabaId: string,
   ) {
-    const appId = process.env.META_APP_ID_WA ?? process.env.META_APP_ID;
-    const appSecret = process.env.META_APP_SECRET_WA ?? process.env.META_APP_SECRET;
-    if (!appId || !appSecret) {
-      throw new BadRequestException(
-        "META_APP_ID_WA / META_APP_SECRET_WA not configured for WhatsApp app",
-      );
-    }
-
-    const tokenUrl =
-      `${GRAPH}/oauth/access_token?client_id=${appId}` +
-      `&client_secret=${appSecret}` +
-      `&code=${encodeURIComponent(code)}`;
-    const tokenRes = await this.fetchJson<{
-      access_token: string;
-      token_type?: string;
-      expires_in?: number;
-    }>(tokenUrl, { method: "GET" });
-    if (!tokenRes.access_token) {
-      throw new BadRequestException("Meta did not return an access token");
-    }
-
-    // Generate a verify token now — used when we configure webhooks later.
-    const verifyToken = `aram-wa-${Math.random().toString(36).slice(2, 10)}`;
-
-    return this.connect(workspaceId, {
+    return this.embeddedSignup.signup(workspaceId, {
+      code,
       phoneNumberId,
       wabaId,
-      accessToken: tokenRes.access_token,
-      verifyToken,
+      signupEvent: phoneNumberId ? "FINISH" : "FINISH_ONLY_WABA",
     });
   }
 
@@ -205,10 +204,16 @@ export class WhatsAppService {
    *      surface a picker, but the immediate save uses the first match.
    *   4. If nothing found → clear error pointing the customer to API Setup.
    */
-  async connectByToken(workspaceId: string, accessToken: string) {
-    const token = accessToken.trim();
+  async connectByToken(
+    workspaceId: string,
+    accessToken: string,
+    opts: ConnectOptions & { phoneNumberId?: string } = {},
+  ) {
+    const bad = (key: ChannelErrorKey, english: string) =>
+      opts.errorStyle === "keys" ? channelError(key) : new BadRequestException(english);
+    const token = (accessToken ?? "").trim();
     if (!token || token.length < 20) {
-      throw new BadRequestException("Token looks too short to be a Meta access token");
+      throw bad("channels.meta_token_invalid", "Token looks too short to be a Meta access token");
     }
 
     // Step 1: prove the token is valid by hitting /me. We use the debug_token
@@ -221,12 +226,13 @@ export class WhatsAppService {
         token,
       );
     } catch (e) {
-      throw new BadRequestException(
+      throw bad(
+        "channels.meta_token_invalid",
         `Token rejected by Meta: ${(e as Error).message}. Make sure you copied the WhatsApp temporary access token from WhatsApp Manager → API Setup, not a Facebook user token.`,
       );
     }
     if (!me?.id) {
-      throw new BadRequestException("Token did not resolve to a Meta account");
+      throw bad("channels.meta_token_invalid", "Token did not resolve to a Meta account");
     }
 
     interface DiscoveredPhone {
@@ -274,7 +280,8 @@ export class WhatsAppService {
           { method: "GET" },
         );
         if (debugRes.data?.is_valid === false) {
-          throw new BadRequestException(
+          throw bad(
+            "channels.meta_token_invalid",
             "Meta rejected this token (debug_token reports it as invalid). Make sure you copied the freshly generated temporary access token.",
           );
         }
@@ -316,7 +323,8 @@ export class WhatsAppService {
     }
 
     if (wabaIds.size === 0) {
-      throw new BadRequestException(
+      throw bad(
+        "channels.meta_no_waba",
         "No WhatsApp Business Account found on this token. Open Meta's WhatsApp Manager, go to API Setup, and copy the temporary access token shown there.",
       );
     }
@@ -345,31 +353,61 @@ export class WhatsAppService {
       }
     }
     if (wabas.length === 0) {
-      throw new BadRequestException(
+      throw bad(
+        "channels.meta_no_waba",
         "Found WhatsApp Business Account ids on the token but couldn't fetch details. Token may be missing the required permissions.",
       );
     }
-    const waba = wabas[0];
-    const phone = waba.phone_numbers?.data?.[0];
-    if (!phone?.id) {
-      throw new BadRequestException(
-        `WhatsApp Business Account "${waba.name ?? waba.id}" has no registered phone number. Register a phone in Meta's WhatsApp Manager before connecting.`,
+
+    // SP-19 T4: pick the requested number, else the first number this
+    // workspace does not hold yet (a token for a WABA with several numbers
+    // adds the next one instead of re-saving the first), else the first.
+    const candidates = wabas.flatMap((w) =>
+      (w.phone_numbers?.data ?? []).filter((p) => p?.id).map((p) => ({ waba: w, phone: p })),
+    );
+    let pick: { waba: DiscoveredWaba; phone: DiscoveredPhone } | undefined;
+    if (opts.phoneNumberId) {
+      pick = candidates.find((c) => c.phone.id === opts.phoneNumberId);
+      if (!pick) {
+        throw bad("channels.meta_no_number", "This token cannot access the requested WhatsApp phone number.");
+      }
+    } else {
+      const held = new Set(
+        (
+          await this.prisma.channel.findMany({
+            where: { workspaceId, kind: "whatsapp", provider: { notIn: NOT_META }, status: { not: "disconnected" } },
+            select: { externalId: true },
+          })
+        ).map((c) => c.externalId),
+      );
+      pick = candidates.find((c) => !held.has(c.phone.id)) ?? candidates[0];
+    }
+    if (!pick) {
+      const first = wabas[0];
+      throw bad(
+        "channels.meta_no_number",
+        `WhatsApp Business Account "${first.name ?? first.id}" has no registered phone number. Register a phone in Meta's WhatsApp Manager before connecting.`,
       );
     }
+    const { waba, phone } = pick;
 
     // Generate a fresh verify token so webhooks can be wired later.
-    const verifyToken = `aram-wa-${Math.random().toString(36).slice(2, 10)}`;
+    const verifyToken = `aram-wa-${randomBytes(6).toString("hex")}`;
 
-    // Step 3: reuse the existing connect() path so token validation,
-    // webhook subscription, and Integration upsert all happen exactly the
-    // same way as the manual-paste flow.
-    const result = await this.connect(workspaceId, {
-      phoneNumberId: phone.id,
-      wabaId: waba.id,
-      accessToken: token,
-      verifyToken,
-      displayPhoneNumber: phone.display_phone_number,
-    });
+    // Step 3: reuse the connect() path so token validation, webhook
+    // subscription and the channel-aware attach happen exactly the same way
+    // as the manual-paste flow.
+    const result = await this.connect(
+      workspaceId,
+      {
+        phoneNumberId: phone.id,
+        wabaId: waba.id,
+        accessToken: token,
+        verifyToken,
+        displayPhoneNumber: phone.display_phone_number,
+      },
+      { errorStyle: opts.errorStyle },
+    );
 
     return {
       ...result,
@@ -389,13 +427,36 @@ export class WhatsAppService {
     };
   }
 
-  async connect(workspaceId: string, dto: ConnectWhatsAppDto) {
+  /**
+   * Connect one Meta number (phone number id + WABA + token).
+   *
+   * SP-19 T4 (ruling 4): channel-aware and limit-checked. The first number
+   * becomes the legacy Integration as before, the same number again refreshes
+   * it in place, and a DIFFERENT number is added as its own channel (token in
+   * `secretsEnc`) instead of overwriting the first. A number that takes a new
+   * slot needs room under the plan limit (409 channels.limit_reached, checked
+   * before Meta is called).
+   */
+  async connect(workspaceId: string, dto: ConnectWhatsAppDto, opts: ConnectOptions = {}) {
+    await ensureLegacyChannels(this.prisma, workspaceId);
+    if (await addsWhatsappSlot(this.prisma, workspaceId, dto.phoneNumberId)) {
+      await assertWhatsappCapacity(this.prisma, workspaceId);
+    }
+    assertSecretsStorable();
+
     // Validate the credentials by fetching the phone-number record from Meta.
-    const info = await this.graphGet<WaPhoneInfo>(
-      `/${dto.phoneNumberId}?fields=id,display_phone_number,verified_name`,
-      dto.accessToken,
-    );
+    let info: WaPhoneInfo;
+    try {
+      info = await this.graphGet<WaPhoneInfo>(
+        `/${encodeURIComponent(dto.phoneNumberId)}?fields=id,display_phone_number,verified_name`,
+        dto.accessToken,
+      );
+    } catch (e) {
+      if (opts.errorStyle === "keys") throw channelError("channels.meta_token_invalid");
+      throw e;
+    }
     if (info?.id !== dto.phoneNumberId) {
+      if (opts.errorStyle === "keys") throw channelError("channels.meta_token_invalid");
       throw new BadRequestException("Token did not resolve to this phone-number id");
     }
     const displayName =
@@ -404,31 +465,19 @@ export class WhatsAppService {
       info.verified_name ??
       "WhatsApp number";
 
-    const data = {
-      platform: "whatsapp",
-      pageId: dto.phoneNumberId,
-      pageName: displayName,
-      accessToken: encryptSecret(dto.accessToken),
-      scopes: null,
-      expiresAt: null,
-      raw: JSON.stringify({
-        wabaId: dto.wabaId,
-        verifyToken: dto.verifyToken,
-        displayPhoneNumber: info.display_phone_number ?? null,
-        verifiedName: info.verified_name ?? null,
-      }),
-    };
-
-    const existing = await this.find(workspaceId);
-    const row = existing
-      ? await this.prisma.integration.update({ where: { id: existing.id }, data })
-      : await this.prisma.integration.create({ data: { ...data, workspaceId } });
-
-    // SP-19: mirror the number now (inbound routes to this workspace from the
-    // first webhook) and treat the connect as an explicit reconnect: the
-    // channel is reactivated even if it was disconnected before.
-    await alignLegacyChannel(this.prisma, row, { explicit: true });
-    await ensureDefaultPerKind(this.prisma, workspaceId);
+    const { channel, legacy } = await attachMetaNumber(this.prisma, workspaceId, {
+      phoneNumberId: dto.phoneNumberId,
+      wabaId: dto.wabaId,
+      accessToken: dto.accessToken,
+      displayName,
+      displayPhoneNumber: info.display_phone_number ?? dto.displayPhoneNumber ?? null,
+      verifiedName: info.verified_name ?? null,
+      status: "active",
+      statusReason: null,
+      verification: null,
+      verifyToken: dto.verifyToken,
+    });
+    this.realtime.emitToWorkspace?.(workspaceId, "channels.updated", { channelId: channel.id });
 
     // Subscribe our Meta app to this WABA so webhooks actually fire. Without
     // this call the customer would see "connected" in tkana but inbound
@@ -439,10 +488,12 @@ export class WhatsAppService {
 
     return {
       connected: true,
-      phoneNumberId: row.pageId,
+      channelId: channel.id,
+      phoneNumberId: dto.phoneNumberId,
       displayPhoneNumber: displayName,
       wabaId: dto.wabaId,
-      verifyToken: dto.verifyToken,
+      // The Integration's webhook verify token; a channel-only number has none.
+      ...(legacy ? { verifyToken: dto.verifyToken } : {}),
       webhookSubscribed: subscribed.ok,
       webhookError: subscribed.ok ? undefined : subscribed.error,
     };

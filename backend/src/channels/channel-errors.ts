@@ -28,6 +28,18 @@ export type ChannelErrorKey =
   | "channels.telegram_needs_public_url"
   | "channels.telegram_send_failed"
   | "channels.webhook_forbidden"
+  | "channels.embedded_signup_unavailable"
+  | "channels.embedded_signup_failed"
+  | "channels.meta_token_invalid"
+  | "channels.meta_no_waba"
+  | "channels.meta_no_number"
+  | "channels.landline_wrong_code"
+  | "channels.landline_rate_limited"
+  | "channels.landline_cooldown"
+  | "channels.landline_number_in_use"
+  | "channels.landline_invalid_input"
+  | "channels.landline_wrong_state"
+  | "channels.landline_meta_error"
   | "widget.origin_forbidden"
   | "widget.rate_limited"
   | "widget.channel_unavailable"
@@ -52,6 +64,19 @@ const STATUS: Record<ChannelErrorKey, number> = {
   "channels.telegram_needs_public_url": 400,
   "channels.telegram_send_failed": 502,
   "channels.webhook_forbidden": 403,
+  // SP-19 T4: WhatsApp embedded signup, manual connect and landline numbers.
+  "channels.embedded_signup_unavailable": 400, // {reason}
+  "channels.embedded_signup_failed": 400, // {step: exchange | waba | phone, metaCode?}
+  "channels.meta_token_invalid": 400,
+  "channels.meta_no_waba": 400,
+  "channels.meta_no_number": 400,
+  "channels.landline_wrong_code": 400, // {metaCode}
+  "channels.landline_rate_limited": 429, // {metaCode}
+  "channels.landline_cooldown": 429, // {retryAfter (s), resendAt (ISO)}
+  "channels.landline_number_in_use": 400, // {metaCode}
+  "channels.landline_invalid_input": 400, // {field} or {metaCode}
+  "channels.landline_wrong_state": 409, // {stage}
+  "channels.landline_meta_error": 502, // {metaCode}
   // SP-19 T3: the public web chat widget.
   "widget.origin_forbidden": 403,
   "widget.rate_limited": 429,

@@ -4,6 +4,7 @@ import { ChannelsModule } from "./channels.module";
 import { ChannelsCoreModule } from "./channels-core.module";
 import { ChannelsController } from "./channels.controller";
 import { TelegramController } from "./telegram/telegram.controller";
+import { WhatsappChannelsController } from "./whatsapp/whatsapp-channels.controller";
 import { TelegramService } from "./telegram/telegram.service";
 import { TelegramClient } from "./telegram/telegram.client";
 import { TelegramWebhookGuard } from "./telegram/telegram-webhook.guard";
@@ -25,7 +26,7 @@ describe("channels modules", () => {
   });
 
   it("the feature module serves the hub, Telegram and web chat controllers", () => {
-    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, ChannelsModule)).toEqual([ChannelsController, TelegramController, WebchatController]);
+    expect(Reflect.getMetadata(MODULE_METADATA.CONTROLLERS, ChannelsModule)).toEqual([ChannelsController, TelegramController, WebchatController, WhatsappChannelsController]);
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ChannelsModule)).toEqual(
       expect.arrayContaining([TelegramService, TelegramClient, TelegramWebhookGuard, WebchatService, WidgetGateway, WidgetOriginGuard, WidgetRateLimitGuard]),
     );

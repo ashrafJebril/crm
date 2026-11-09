@@ -25,6 +25,7 @@ import { ChannelResolver } from "../channels/channel-resolver.service";
 import { INTEGRATION_REMOVED, mirrorZernioAccounts } from "../channels/zernio-mirror";
 import { ensureDefaultPerKind, type IntegrationLike } from "../channels/legacy-mirror";
 import { credentialsFor } from "../channels/channel-credentials";
+import { assertWhatsappCapacity } from "../channels/channel-limits";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -166,6 +167,10 @@ export class ZernioService {
         "Snapchat via Zernio is not yet available (Zernio has it in beta).",
       );
     }
+    // SP-19 T4: a WhatsApp connect link adds a number, so it needs a free
+    // slot under the plan limit (409 channels.limit_reached). Accounts that
+    // already exist at Zernio are still mirrored by every sync.
+    if (p === "whatsapp") await assertWhatsappCapacity(this.prisma, workspaceId);
     const profileId = await this.ensureProfile(workspaceId);
     const base =
       process.env.ZERNIO_REDIRECT_BASE ??

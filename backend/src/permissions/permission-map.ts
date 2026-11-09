@@ -398,6 +398,14 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /channels/:id/reconnect": "channels.update", // T2: Telegram re-registers its webhook
   "POST /channels/telegram": "channels.create",
   "DELETE /channels/:id": "channels.delete", // soft disconnect
+  // SP-19 T4: WhatsApp embedded signup, manual multi-number, landline numbers
+  "GET /channels/whatsapp/embedded-signup/config": "channels.view", // `missing` only for channels.update
+  "POST /channels/whatsapp/embedded-signup": "channels.create",
+  "POST /channels/whatsapp/manual": "channels.create",
+  "POST /channels/:id/landline/number": "channels.update",
+  "POST /channels/:id/landline/request-code": "channels.update",
+  "POST /channels/:id/landline/verify": "channels.update",
+  "POST /channels/:id/landline/register": "channels.update",
 
   // ── Members & workspace settings ──────────────────────────────────────
   "GET /roles": "roles.view",

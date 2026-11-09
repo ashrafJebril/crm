@@ -1,12 +1,15 @@
 import type { PrismaService } from "../prisma/prisma.service";
 import { channelError } from "./channel-errors";
+import { ensureLegacyChannels } from "./legacy-mirror";
 
 /**
  * WhatsApp numbers per workspace, by `Workspace.plan` (ruling R3, values
  * pending user confirmation). `CHANNEL_WHATSAPP_LIMIT` overrides every plan.
  *
- * Counts non-disconnected WhatsApp channels. Gates only OUR add flows
- * (embedded signup, manual token, Zernio connect link — T4). Accounts that
+ * Counts non-disconnected WhatsApp channels (pending landline numbers
+ * included). Gates only OUR add flows (T4: embedded signup, manual token
+ * connect, the Zernio WhatsApp connect link, reviving a disconnected Meta
+ * number). Accounts that
  * already exist at a provider are always mirrored and inbound is never
  * dropped because of the limit.
  */
@@ -35,8 +38,11 @@ export async function whatsappUsage(
   return { used, limit: whatsappLimit(plan), plan };
 }
 
-/** 409 channels.limit_reached {limit, plan} when no WhatsApp slot is left. */
+/** 409 channels.limit_reached {limit, plan} when no WhatsApp slot is left.
+ *  A legacy Integration `main` wrote and nobody mirrored yet is mirrored
+ *  first, so it counts (one query when there is nothing to mirror). */
 export async function assertWhatsappCapacity(prisma: PrismaService, workspaceId: string): Promise<void> {
+  await ensureLegacyChannels(prisma, workspaceId);
   const { used, limit, plan } = await whatsappUsage(prisma, workspaceId);
   if (used >= limit) throw channelError("channels.limit_reached", { limit, plan });
 }
