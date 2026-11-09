@@ -182,6 +182,12 @@ describe("var-map", () => {
     }
     expect(reason(() => validateVarMapShape({ "1": "name" }))).toMatchObject({ slot: "1", reason: "bad_source" });
     expect(reason(() => validateVarMapShape({ "1": { source: "custom", key: "" } }))).toMatchObject({ slot: "1", reason: "bad_key" });
+    // Fix M1: SP-02 keys are slugify(label) with labels up to 80 characters, plus a "_2" collision suffix.
+    const longKey = `${"a".repeat(80)}_99`;
+    expect(longKey).toHaveLength(83);
+    expect(validateVarMapShape({ "1": { source: "custom", key: longKey } })).toEqual({ "1": { source: "custom", key: longKey } });
+    expect(validateVarMapShape({ "1": { source: "custom", key: "k".repeat(100) } })["1"]).toBeDefined();
+    expect(reason(() => validateVarMapShape({ "1": { source: "custom", key: "k".repeat(101) } }))).toMatchObject({ slot: "1", reason: "bad_key" });
     expect(reason(() => validateVarMapShape({ a: { source: "field", key: "name" } }))).toMatchObject({ slot: "a", reason: "extra_slot" });
     const many: Record<string, unknown> = {};
     for (let i = 1; i <= 101; i++) many[String(i)] = { source: "static", value: "x" };
@@ -215,6 +221,14 @@ describe("var-map", () => {
     expect(isNativeSlot({ source: "field", key: "email" })).toBe(false);
     expect(isNativeSlot({ source: "custom", key: "city" })).toBe(false);
     expect(zernioVariableFor({ source: "static", value: "x" }, "x")).toEqual({ field: "custom", customValue: "x" });
+    // Fix I1: a static value is sent exactly as preview and direct sends resolve it (Meta-safe).
+    for (const raw of ["a\tb", "a\nb", "a\r\nb", "a    b", "a\t\n     b"]) {
+      const slot = { source: "static" as const, value: raw };
+      const resolved = resolveSlot(slot, contact, {}, { lang: "en", defs })!.value;
+      expect(zernioVariableFor(slot, resolved)).toEqual({ field: "custom", customValue: resolved });
+      expect(zernioVariableFor(slot, "ignored")).toEqual({ field: "custom", customValue: metaSafe(raw) });
+    }
+    expect(zernioVariableFor({ source: "static", value: "a\tb\n    c" }, "")).toEqual({ field: "custom", customValue: "a b   c" });
     expect(zernioVariableFor({ source: "field", key: "phone" }, "+9627")).toEqual({ field: "phone" });
     expect(zernioVariableFor({ source: "field", key: "name" }, "Sara")).toEqual({ field: "name" });
     expect(zernioVariableFor({ source: "custom", key: "city" }, "Amman")).toEqual({ field: "custom", customValue: "Amman" });

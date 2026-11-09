@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioBroadcastVariable, ZernioClient } from "../integrations/zernio.client";
-import { campaignSender, campaignSenderAccountId } from "../channels/default-channel";
+import { campaignSender } from "../channels/default-channel";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { SKIP_CODES } from "./tracking/failure-codes";
 import { campaignError } from "./campaign-errors";
@@ -74,11 +74,6 @@ export class CampaignSendService {
       where: segmentId ? { workspaceId, segmentMembers: { some: { segmentId } } } : { workspaceId },
       select: { id: true, name: true, phone: true, lifecycle: true, marketingOptOut: true },
     });
-  }
-
-  /** Create/update guard for `senderChannelId` (null/undefined = default). */
-  async validateSender(workspaceId: string, senderChannelId: string | null | undefined): Promise<void> {
-    if (senderChannelId) await campaignSenderAccountId(this.prisma, workspaceId, senderChannelId);
   }
 
   /** Who a segment (or everyone) would reach, and roughly what Meta will charge. */

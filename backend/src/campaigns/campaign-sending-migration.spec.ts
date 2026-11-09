@@ -1,10 +1,13 @@
 import { execFileSync } from "child_process";
+import { createHash } from "crypto";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 
 const MIGRATIONS = join(__dirname, "..", "..", "prisma", "migrations");
 const FOLDER = "20261114120000_campaign_sending";
 const SP12 = "20261113120000_campaign_recipients";
+/** sha256 of the file as applied (LF line endings, as committed). */
+const APPLIED_SHA256 = "d4386bf26cade581a040cf7fa9f4df2d0079cf6b2df5b73190ce3826de111795";
 
 describe("SP-13 campaign sending migration", () => {
   const sql = readFileSync(join(MIGRATIONS, FOLDER, "migration.sql"), "utf8");
@@ -128,11 +131,17 @@ describe("SP-13 campaign sending migration", () => {
     expect(table).toMatch(/"recipientSyncSkip" INTEGER NOT NULL DEFAULT 0/);
     expect(table).toMatch(/"createdAt" TIMESTAMP\(3\) NOT NULL DEFAULT CURRENT_TIMESTAMP/);
 
-    // Ordered after SP-12's migration, and the newest folder.
+    // Ordered right after SP-12's migration; later migrations may follow it.
     expect(FOLDER.slice(0, 14) > "20261113120000").toBe(true);
     const folders = readdirSync(MIGRATIONS).filter((f) => /^\d{14}_/.test(f)).sort();
-    expect(folders.at(-1)).toBe(FOLDER);
-    expect(folders.at(-2)).toBe(SP12);
+    expect(folders[folders.indexOf(FOLDER) - 1]).toBe(SP12);
+  });
+
+  it("the applied SP-13 migration file is pinned (sha256 Prisma checks on deploy)", () => {
+    // Applied in production on 2026-11-09: any edit would break `migrate deploy`.
+    // A schema change goes into a NEW migration instead.
+    const bytes = readFileSync(join(MIGRATIONS, FOLDER, "migration.sql"));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(APPLIED_SHA256);
   });
 
   it("the SP-12 migration file is byte-identical to HEAD", () => {

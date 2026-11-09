@@ -1,8 +1,11 @@
+import { createHash } from "crypto";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
 
 const MIGRATIONS = join(__dirname, "..", "..", "prisma", "migrations");
 const FOLDER = "20261113120000_campaign_recipients";
+/** sha256 of the file as applied in production (LF line endings, as committed). */
+const APPLIED_SHA256 = "05a78c6094555cbfda206940f9cf94001f89c7e924d49461c23a195e4173de6c";
 
 describe("SP-12 campaign recipients migration", () => {
   const sql = readFileSync(join(MIGRATIONS, FOLDER, "migration.sql"), "utf8");
@@ -77,6 +80,11 @@ describe("SP-12 campaign recipients migration", () => {
     const folders = readdirSync(MIGRATIONS).filter((f) => /^\d{14}_/.test(f)).sort();
     // SP-13 adds 20261114120000 after it; nothing may slip in before it.
     expect(folders[folders.indexOf(FOLDER) - 1]).toBe("20261112120000_channels");
+  });
+
+  it("the applied SP-12 migration file is pinned (sha256 Prisma checks on deploy)", () => {
+    const bytes = readFileSync(join(MIGRATIONS, FOLDER, "migration.sql"));
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(APPLIED_SHA256);
   });
 
   it("schema.prisma declares the same model and Campaign columns", () => {

@@ -1,4 +1,5 @@
 import { makeFakePrisma } from "../../channels/test-prisma";
+import { MediaService } from "../../media/media.service";
 import { CampaignPreviewService } from "./campaign-preview.service";
 
 const ch = (id: string, over: Record<string, unknown> = {}) => ({
@@ -72,7 +73,7 @@ function fixture(opts: { profile?: string | null } = {}) {
   const zernio = {
     whatsappTemplates: jest.fn(async (acc: string) => (acc === "acc-C" ? [] : [approved])),
   };
-  const svc = new CampaignPreviewService(prisma, zernio as never);
+  const svc = new CampaignPreviewService(prisma, zernio as never, new MediaService(prisma, {} as never));
   return { prisma, zernio, svc };
 }
 

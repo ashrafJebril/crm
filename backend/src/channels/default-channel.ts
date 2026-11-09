@@ -5,6 +5,16 @@ import { whatsappLimit } from "./channel-limits";
 import { ensureLegacyChannels } from "./legacy-mirror";
 
 /**
+ * SP-13 fix round 1 (M3): the one "connected" rule. A WhatsApp channel
+ * counts as connected while it is `active` or `needs_attention` (Zernio
+ * health warning, still sending). `pending`, `error` and `disconnected` do
+ * not. Used by the default number (template submission and the campaign
+ * launch gate) and by `connected` on GET /campaigns/senders and the preview,
+ * so the banner and the gates always agree.
+ */
+export const CONNECTED_CHANNEL_STATUSES: readonly string[] = ["active", "needs_attention"];
+
+/**
  * The Zernio account id of the workspace's default WhatsApp number: the
  * connected (not disconnected or pending) Zernio WhatsApp channel, default
  * first, then the most recently
@@ -18,7 +28,7 @@ export async function defaultZernioWhatsappAccountId(
   workspaceId: string,
 ): Promise<string | null> {
   const ch = await prisma.channel.findFirst({
-    where: { workspaceId, kind: "whatsapp", provider: "zernio", status: { notIn: ["disconnected", "pending"] } },
+    where: { workspaceId, kind: "whatsapp", provider: "zernio", status: { in: [...CONNECTED_CHANNEL_STATUSES] } },
     orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
     select: { externalId: true },
   });
@@ -84,7 +94,7 @@ export async function campaignSender(
     return { accountId: ch.externalId, channelId: ch.id };
   }
   const live = await prisma.channel.findFirst({
-    where: { workspaceId, kind: "whatsapp", provider: "zernio", status: { notIn: ["disconnected", "pending"] } },
+    where: { workspaceId, kind: "whatsapp", provider: "zernio", status: { in: [...CONNECTED_CHANNEL_STATUSES] } },
     orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
     select: { id: true, externalId: true },
   });
@@ -93,7 +103,7 @@ export async function campaignSender(
   if (!accountId) return null;
   await ensureLegacyChannels(prisma, workspaceId);
   const mirrored = await prisma.channel.findFirst({
-    where: { workspaceId, provider: "zernio", externalId: accountId, status: { notIn: ["disconnected", "pending"] } },
+    where: { workspaceId, provider: "zernio", externalId: accountId, status: { in: [...CONNECTED_CHANNEL_STATUSES] } },
     select: { id: true },
   });
   return { accountId, channelId: mirrored?.id ?? null };
@@ -172,8 +182,10 @@ export interface CampaignSenderOption {
 /**
  * SP-13 `GET /campaigns/senders`: the workspace's WhatsApp numbers (not
  * disconnected), default first, each with whether it can send campaigns.
- * `connected` holds when at least one eligible sender exists and the
- * workspace has its Zernio profile (the launch gate's two conditions).
+ * `connected` holds when the workspace has its Zernio profile and a Zernio
+ * WhatsApp number that is connected (`CONNECTED_CHANNEL_STATUSES`): the
+ * same rule as the launch gate and template submission. A `needs_attention`
+ * number connects but is not offered as an explicit sender (`not_active`).
  * A legacy Integration-only number is mirrored first, as at launch.
  */
 export async function campaignSenderOptions(
@@ -209,7 +221,9 @@ export async function campaignSenderOptions(
     };
   });
   return {
-    connected: !!ws?.zernioProfileId && senders.some((s) => s.eligible),
+    connected:
+      !!ws?.zernioProfileId &&
+      rows.some((r) => r.provider === "zernio" && !!r.externalId && CONNECTED_CHANNEL_STATUSES.includes(r.status)),
     limit: Math.min(CAMPAIGN_SENDERS_MAX, whatsappLimit(ws?.plan ?? "free")),
     senders,
   };

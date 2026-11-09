@@ -1,4 +1,5 @@
 import { makeFakePrisma } from "../channels/test-prisma";
+import { MediaService } from "../media/media.service";
 import { TemplatesService } from "../templates/templates.service";
 import { CampaignSendService } from "./campaign-send.service";
 import { CampaignsController } from "./campaigns.module";
@@ -51,9 +52,12 @@ function build(opts: { profile?: string | null; channels?: Record<string, unknow
     template: [{ id: "tpl", workspaceId: "ws1", name: "eid", lang: "ar", status: "approved", body: "Hi" }],
     contact: [{ id: "c", workspaceId: "ws1", name: "C", phone: "+962790000009", lifecycle: "lead", marketingOptOut: false }],
     media: [
-      { id: "m1", workspaceId: "ws1", mimeType: "image/png" },
-      { id: "m2", workspaceId: "ws2", mimeType: "image/png" },
+      { id: "m1", workspaceId: "ws1", mimeType: "image/png", uploadedById: "u-owner" },
+      { id: "m2", workspaceId: "ws2", mimeType: "image/png", uploadedById: "u-other" },
+      // An inbound customer attachment (no uploader), in no conversation the restricted agent sees.
+      { id: "m-inbound", workspaceId: "ws1", mimeType: "image/jpeg", uploadedById: null },
     ],
+    message: [],
   });
   const zernio = {
     whatsappTemplates: jest.fn(async () => [{ id: "t", name: "eid", language: "ar", status: "APPROVED", category: "MARKETING", components: [{ type: "BODY", text: "Hi" }] }]),
@@ -67,8 +71,13 @@ function build(opts: { profile?: string | null; channels?: Record<string, unknow
     whatsappLibraryTemplate: jest.fn(async () => ({})),
   };
   const send = new CampaignSendService(prisma, zernio as never, { isLocked: async () => false } as never);
-  const previewSvc = new CampaignPreviewService(prisma, zernio as never);
-  const ctrl = new CampaignsController(prisma, send, previewSvc);
+  // Assigned-only visibility for "u-restricted"; everyone else sees everything.
+  const perm = {
+    conversationScope: jest.fn(async (_ws: string, v?: { userId: string }) => (v?.userId === "u-restricted" ? { assigneeId: "u-restricted" } : {})),
+  };
+  const media = new MediaService(prisma, {} as never, perm as never);
+  const previewSvc = new CampaignPreviewService(prisma, zernio as never, media);
+  const ctrl = new CampaignsController(prisma, send, previewSvc, media);
   const templates = new TemplatesService(prisma, zernio as never);
   return { prisma, zernio, send, ctrl, templates };
 }
@@ -101,6 +110,62 @@ describe("SP-13 campaign routes", () => {
     expect(await err(ctrl.create("ws1", { name: "n", audience: "a", channel: "Broadcast", headerMediaId: "m2" }))).toMatchObject({
       status: 404,
     });
+  });
+
+  it("header media goes through MediaService.get with the viewer (fix M2)", async () => {
+    const { ctrl } = build();
+    const restricted = { userId: "u-restricted" };
+    const owner = { userId: "u-owner" };
+    // A library file is fine for anyone in the workspace.
+    await expect(ctrl.update("ws1", "mine", { headerMediaId: "m1" }, restricted)).resolves.toMatchObject({ headerMediaId: "m1" });
+    // An inbound attachment from a conversation the viewer cannot see is 404, on PATCH, create and preview.
+    expect(await err(ctrl.update("ws1", "mine", { headerMediaId: "m-inbound" }, restricted))).toMatchObject({
+      status: 404,
+      message: "Media not found",
+    });
+    expect(await err(ctrl.create("ws1", { name: "n", audience: "a", channel: "Broadcast", headerMediaId: "m-inbound" }, restricted))).toMatchObject({
+      status: 404,
+    });
+    expect(
+      await err(ctrl.previewV2("ws1", { headerMediaId: "m-inbound" }, req({ campaigns: ["view"] }), restricted)),
+    ).toMatchObject({ status: 404 });
+    // An unrestricted member may use it.
+    await expect(ctrl.update("ws1", "mine", { headerMediaId: "m-inbound" }, owner)).resolves.toMatchObject({ headerMediaId: "m-inbound" });
+    await expect(ctrl.previewV2("ws1", { headerMediaId: "m-inbound" }, req({ campaigns: ["view"] }), owner)).resolves.toMatchObject({
+      connected: true,
+    });
+  });
+
+  it("one connected rule: active or needs_attention connects; any other status does not (fix M3)", async () => {
+    const notConnected = { status: 409, message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" };
+    // needs_attention: connected for the banner, the launch gate and template submission.
+    const na = build({ channels: [ch("N", { isDefault: true, status: "needs_attention" })] });
+    const s = await na.ctrl.senders("ws1");
+    expect(s.connected).toBe(true);
+    // The picker still explains why it is not offered as an explicit sender.
+    expect(s.senders).toEqual([expect.objectContaining({ channelId: "N", eligible: false, reason: "not_active" })]);
+    expect((await na.ctrl.previewV2("ws1", { templateId: "tpl" }, req({ campaigns: ["view"] }))).connected).toBe(true);
+    await expect(na.ctrl.launch("ws1", "mine", { mode: "now" })).resolves.toMatchObject({ status: "running" });
+    expect(na.zernio.createWhatsAppBroadcast).toHaveBeenCalledWith(expect.objectContaining({ accountId: "acc-N" }));
+    await expect(na.templates.create("ws1", { name: "x", lang: "en", category: "MARKETING", body: "Hi" })).resolves.toBeDefined();
+    expect(na.zernio.createWhatsAppTemplate).toHaveBeenCalledWith(expect.objectContaining({ accountId: "acc-N" }));
+
+    // error / pending / disconnected: not connected anywhere.
+    for (const status of ["error", "pending", "disconnected"]) {
+      const b = build({ channels: [ch("E", { isDefault: true, status })] });
+      expect({ status, connected: (await b.ctrl.senders("ws1")).connected }).toEqual({ status, connected: false });
+      expect({ status, p: (await b.ctrl.previewV2("ws1", { templateId: "tpl" }, req({ campaigns: ["view"] }))).connected }).toEqual({
+        status,
+        p: false,
+      });
+      expect({ status, e: await err(b.ctrl.launch("ws1", "mine", { mode: "now" })) }).toEqual({ status, e: expect.objectContaining(notConnected) });
+      expect({ status, e: await err(b.templates.create("ws1", { name: "x", lang: "en", category: "MARKETING", body: "Hi" })) }).toEqual({
+        status,
+        e: expect.objectContaining(notConnected),
+      });
+      expect(b.zernio.createWhatsAppBroadcast).not.toHaveBeenCalled();
+      expect(b.zernio.createWhatsAppTemplate).not.toHaveBeenCalled();
+    }
   });
 
   it("GET :id returns the campaign with its senders", async () => {

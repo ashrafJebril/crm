@@ -70,7 +70,10 @@ export const VAR_VALUE_MAX = 1024;
 /** Upper bound on slots accepted in a stored map (templates use far fewer). */
 export const VAR_SLOTS_MAX = 100;
 
-const CUSTOM_KEY = /^[a-z0-9_]{1,64}$/i;
+/** SP-02 keys are slugify(label) (labels up to 80 characters) plus a
+ *  collision suffix such as "_2"; 100 leaves room (fix round 1, M1). */
+export const CUSTOM_KEY_MAX = 100;
+const CUSTOM_KEY = new RegExp(`^[a-z0-9_]{1,${CUSTOM_KEY_MAX}}$`, "i");
 const SLOT_KEY = /^[1-9]\d{0,2}$/;
 
 const invalid = (slot: string | undefined, reason: VarMapInvalidReason) =>
@@ -281,9 +284,13 @@ export function isNativeSlot(slot: VarSlot): boolean {
   return slot.source === "static" || (slot.source === "field" && (slot.key === "phone" || slot.key === "name"));
 }
 
-/** The Zernio broadcast variable for one slot of a partition. */
+/**
+ * The Zernio broadcast variable for one slot of a partition. A fixed value
+ * is sent Meta-safe, exactly as `resolveSlot` gives it to the preview, the
+ * rows and direct sends (fix round 1, I1).
+ */
 export function zernioVariableFor(slot: VarSlot, value: string): ZernioBroadcastVariable {
-  if (slot.source === "static") return { field: "custom", customValue: slot.value };
+  if (slot.source === "static") return { field: "custom", customValue: metaSafe(slot.value.trim()) };
   if (slot.source === "field" && slot.key === "phone") return { field: "phone" };
   if (slot.source === "field" && slot.key === "name") return { field: "name" };
   return { field: "custom", customValue: value };

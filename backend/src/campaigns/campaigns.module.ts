@@ -5,7 +5,6 @@ import {
   Delete,
   Get,
   Module,
-  NotFoundException,
   Param,
   Patch,
   Post,
@@ -29,7 +28,10 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PrismaService } from "../prisma/prisma.service";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { MediaModule } from "../media/media.module";
+import { MediaService } from "../media/media.service";
+import type { Viewer } from "../permissions/visibility";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import type { ZernioBroadcastVariable } from "../integrations/zernio.client";
 import { CampaignSendService } from "./campaign-send.service";
@@ -120,6 +122,7 @@ export class CampaignsController {
     private readonly prisma: PrismaService,
     private readonly send: CampaignSendService,
     private readonly previewer: CampaignPreviewService,
+    private readonly media: MediaService,
   ) {}
 
   /**
@@ -128,10 +131,11 @@ export class CampaignsController {
    * is always the primary) and `campaignSenders` (each an active Zernio
    * WhatsApp channel of this workspace, within the plan limit). The varMap
    * is checked for shape only (the template may still change). The header
-   * file must be this workspace's media (404 otherwise). Absent fields are
-   * not touched. Everything is validated before anything is written.
+   * file goes through `MediaService.get` with the viewer (404 when foreign,
+   * unknown or invisible to an assigned-only member). Absent fields are not
+   * touched. Everything is validated before anything is written.
    */
-  private async sendingFields(workspaceId: string, dto: SendingFieldsDto) {
+  private async sendingFields(workspaceId: string, dto: SendingFieldsDto, viewer?: Viewer) {
     const data: {
       senderChannelIds?: string[];
       senderChannelId?: string | null;
@@ -148,10 +152,7 @@ export class CampaignsController {
       data.varMap = dto.varMap === null ? Prisma.DbNull : (validateVarMapShape(dto.varMap) as unknown as Prisma.InputJsonValue);
     }
     if (dto.headerMediaId !== undefined) {
-      if (dto.headerMediaId) {
-        const media = await this.prisma.media.findFirst({ where: { id: dto.headerMediaId, workspaceId }, select: { id: true } });
-        if (!media) throw new NotFoundException("Media not found");
-      }
+      if (dto.headerMediaId) await this.media.get(workspaceId, dto.headerMediaId, viewer);
       data.headerMediaId = dto.headerMediaId || null;
     }
     return data;
@@ -192,14 +193,19 @@ export class CampaignsController {
    * contacts.view, ruling 18). Writes nothing; declared before :id.
    */
   @Post("preview")
-  previewV2(@CurrentWorkspace() workspaceId: string, @Body() dto: PreviewCampaignDto, @Req() req: PermissionRequest) {
+  previewV2(
+    @CurrentWorkspace() workspaceId: string,
+    @Body() dto: PreviewCampaignDto,
+    @Req() req: PermissionRequest,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
     let canViewContacts = true;
     try {
       assertRequestPermission(req, "contacts.view");
     } catch {
       canViewContacts = false;
     }
-    return this.previewer.preview(workspaceId, dto, { canViewContacts });
+    return this.previewer.preview(workspaceId, dto, { canViewContacts, viewer });
   }
 
   /**
@@ -233,8 +239,8 @@ export class CampaignsController {
   }
 
   @Post()
-  async create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto) {
-    const sending = await this.sendingFields(workspaceId, dto);
+  async create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto, @CurrentViewer() viewer?: Viewer) {
+    const sending = await this.sendingFields(workspaceId, dto, viewer);
     return this.prisma.campaign.create({
       data: {
         ...this.plainFields(dto),
@@ -251,11 +257,12 @@ export class CampaignsController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Body() dto: UpdateCampaignDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
     const existing = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!existing) throw campaignError("campaigns.not_found");
     if (existing.status !== "draft") throw new BadRequestException("Only draft campaigns can be edited.");
-    const sending = await this.sendingFields(workspaceId, dto);
+    const sending = await this.sendingFields(workspaceId, dto, viewer);
     return this.prisma.campaign.update({ where: { id }, data: { ...this.plainFields(dto), ...sending } });
   }
 
@@ -291,7 +298,8 @@ export class CampaignsController {
 
 @Module({
   // SP-12: SegmentsModule (MarketingOutboundService) and TagsModule (TagsService) for follow-ups.
-  imports: [IntegrationsModule, CampaignTrackingModule, SegmentsModule, TagsModule],
+  // SP-13: MediaModule (MediaService.get for header media, with viewer visibility).
+  imports: [IntegrationsModule, CampaignTrackingModule, SegmentsModule, TagsModule, MediaModule],
   // CampaignsController first, so its literal GET preview is registered before any :id route.
   controllers: [CampaignsController, CampaignReportController],
   providers: [CampaignSendService, CampaignReportService, CampaignFollowUpService, CampaignPreviewService],

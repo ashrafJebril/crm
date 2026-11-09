@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { MediaService } from "../../media/media.service";
+import type { Viewer } from "../../permissions/visibility";
 import { PrismaService } from "../../prisma/prisma.service";
 import { ZernioClient } from "../../integrations/zernio.client";
 import { campaignSender, campaignSenderOptions, campaignSenders } from "../../channels/default-channel";
@@ -82,9 +84,14 @@ export class CampaignPreviewService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly zernio: ZernioClient,
+    private readonly media: MediaService,
   ) {}
 
-  async preview(workspaceId: string, body: CampaignPreviewBody, opts: { canViewContacts: boolean }): Promise<CampaignPreview> {
+  async preview(
+    workspaceId: string,
+    body: CampaignPreviewBody,
+    opts: { canViewContacts: boolean; viewer?: Viewer },
+  ): Promise<CampaignPreview> {
     const senderWrite = normalizeSenderWrite({
       senderChannelIds: body.senderChannelIds ?? undefined,
       senderChannelId: body.senderChannelId,
@@ -99,11 +106,9 @@ export class CampaignPreviewService {
     // A body id never 404s (ruling 11): unknown or foreign → 400.
     if (body.templateId && !template) throw campaignError("campaigns.template_not_approved");
 
-    // Media is looked up in this workspace only; foreign or unknown → 404.
-    if (body.headerMediaId) {
-      const media = await this.prisma.media.findFirst({ where: { id: body.headerMediaId, workspaceId }, select: { id: true } });
-      if (!media) throw new NotFoundException("Media not found");
-    }
+    // Through MediaService.get with the viewer: foreign, unknown or (for an
+    // assigned-only member) invisible media → 404 (fix round 1, M2).
+    if (body.headerMediaId) await this.media.get(workspaceId, body.headerMediaId, opts.viewer);
 
     const map = await this.loadVarMap(workspaceId, body.varMap, template);
     const defs = map.defs;

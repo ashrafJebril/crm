@@ -64,11 +64,11 @@ describe("campaign senderChannelId must be an active zernio whatsapp channel", (
     expect(zernio.createWhatsAppBroadcast).not.toHaveBeenCalled();
   });
 
-  it("validateSender guards create/update too", async () => {
-    const { svc } = build(null);
-    await expect(svc.validateSender("ws1", "B")).resolves.toBeUndefined();
-    await expect(svc.validateSender("ws1", null)).resolves.toBeUndefined();
-    await expect(svc.validateSender("ws1", "META")).rejects.toMatchObject({ response: { message: "channels.sender_invalid" } });
+  it("create/update guard: campaignSenders (validateSender was removed in SP-13 fix round 1)", async () => {
+    const { prisma } = build(null);
+    await expect(campaignSenders(prisma, "ws1", ["B"])).resolves.toHaveLength(1);
+    await expect(campaignSenders(prisma, "ws1", [])).resolves.toEqual([]);
+    await expect(campaignSenders(prisma, "ws1", ["META"])).rejects.toMatchObject({ response: { message: "channels.sender_invalid" } });
   });
 });
 
