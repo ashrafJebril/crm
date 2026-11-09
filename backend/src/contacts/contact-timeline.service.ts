@@ -73,13 +73,18 @@ export class ContactTimelineService {
     }
     if (!openable) throw new NotFoundException("Contact not found");
 
+    const can = async (p: string) => (this.perm ? this.perm.viewerCan(workspaceId, viewer, p) : true);
+    const [canTickets, canConversations] = await Promise.all([can("tickets.view"), can("conversations.view")]);
+
     const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
     const restricted = Object.keys(scope).length > 0;
 
     // Notes may sit on a conversation the viewer cannot see (or on an opaque
     // provider thread id): keep only contact-level notes and visible ones.
     let noteScope: Record<string, unknown> = {};
-    if (restricted) {
+    if (!canConversations) {
+      noteScope = { conversationId: null };
+    } else if (restricted) {
       const visible = await this.prisma.conversation.findMany({
         where: { workspaceId, contactId, ...scope },
         select: { id: true },
@@ -92,7 +97,12 @@ export class ContactTimelineService {
 
     const [activities, notes, ticketActivities, messages] = await Promise.all([
       this.prisma.activity.findMany({
-        where: { workspaceId, contactId, ...this.cursorWhere("activity", cur) },
+        where: {
+          workspaceId,
+          contactId,
+          ...(canTickets ? {} : { ticketId: null }),
+          ...this.cursorWhere("activity", cur),
+        },
         orderBy: order,
         take,
       }),
@@ -103,17 +113,25 @@ export class ContactTimelineService {
         orderBy: order,
         take,
       }),
-      this.prisma.ticketActivity.findMany({
-        where: { workspaceId, ticket: { contactId, workspaceId }, ...this.cursorWhere("ticket_activity", cur) },
-        orderBy: order,
-        take,
-      }),
-      this.prisma.message.findMany({
-        where: { workspaceId, conversation: { contactId, workspaceId, ...scope }, ...this.cursorWhere("message", cur) },
-        orderBy: order,
-        take,
-        include: { conversation: { select: { id: true, channel: true } } },
-      }),
+      canTickets
+        ? this.prisma.ticketActivity.findMany({
+            where: { workspaceId, ticket: { contactId, workspaceId }, ...this.cursorWhere("ticket_activity", cur) },
+            orderBy: order,
+            take,
+          })
+        : Promise.resolve([]),
+      canConversations
+        ? this.prisma.message.findMany({
+            where: {
+              workspaceId,
+              conversation: { contactId, workspaceId, ...scope },
+              ...this.cursorWhere("message", cur),
+            },
+            orderBy: order,
+            take,
+            include: { conversation: { select: { id: true, channel: true } } },
+          })
+        : Promise.resolve([]),
     ]);
 
     const merged: TimelineItem[] = [
@@ -125,7 +143,7 @@ export class ContactTimelineService {
         id: t.id,
         data: { ...t },
       })),
-      ...messages.map(({ conversation, ...m }) => ({
+      ...messages.map(({ conversation, metaMessageId: _omit, ...m }) => ({
         type: "message" as const,
         at: m.createdAt.toISOString(),
         id: m.id,

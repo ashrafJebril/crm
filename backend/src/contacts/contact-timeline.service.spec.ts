@@ -68,8 +68,9 @@ class Fake {
   };
 }
 
-function build(f: Fake, scope: Row = {}) {
+function build(f: Fake, scope: Row = {}, granted?: string[]) {
   const perm = {
+    viewerCan: jest.fn(async (_w: string, _v: unknown, p: string) => !granted || granted.includes(p)),
     conversationScope: jest.fn(async () => scope),
     effective: jest.fn(async () => ({ permissions: ["contacts.view"], conversationVisibility: "all" })),
     can: jest.fn(() => true),
@@ -141,6 +142,22 @@ describe("ContactTimelineService", () => {
     f.ticketActivities.push({ id: "ta2", workspaceId: "ws", ticketId: "t2", kind: "created", createdAt: ts("2026-01-09") });
     const r = await build(f).timeline("ws", "c1", viewer, {});
     expect(r.items.map((i) => i.id)).not.toContain("ta2");
+  });
+
+  it("a contacts.view-only viewer gets no ticket, ticket-linked, message or conversation-note data", async () => {
+    f.activities.push({ id: "a2", workspaceId: "ws", contactId: "c1", ticketId: "t1", kind: "task", title: "T", createdAt: ts("2026-01-07") });
+    f.notes.push({ id: "n2", workspaceId: "ws", contactId: "c1", parentId: null, conversationId: "v1", body: "conv", createdAt: ts("2026-01-08") });
+    const r = await build(f, {}, ["contacts.view"]).timeline("ws", "c1", viewer, {});
+    expect(r.items.map((i) => i.id).sort()).toEqual(["a1", "n1"]);
+    expect(f.ticketActivity.findMany).not.toHaveBeenCalled();
+    expect(f.message.findMany).not.toHaveBeenCalled();
+  });
+
+  it("a viewer with everything is unchanged and message payloads omit metaMessageId", async () => {
+    f.messages[0].metaMessageId = "wamid.X";
+    const r = await build(f, {}, ["contacts.view", "tickets.view", "conversations.view"]).timeline("ws", "c1", viewer, {});
+    expect(r.items.map((i) => i.id)).toEqual(["a1", "n1", "ta1", "m1"]);
+    expect(r.items[3].data).not.toHaveProperty("metaMessageId");
   });
 
   it("404s for a contact outside the workspace", async () => {
