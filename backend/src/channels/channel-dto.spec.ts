@@ -95,7 +95,7 @@ describe("channel DTOs and logs never contain secrets", () => {
     const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => {});
     const prisma = makeFakePrisma();
     const creds = await credentialsFor(prisma, { ...secretRow(), integrationId: null, secretsEnc: `not-json ${TOKEN}` });
-    expect(creds).toEqual({ externalId: "123456" });
+    expect(creds).toEqual({ provider: "telegram", externalId: "123456" });
     for (const call of warn.mock.calls) expect(JSON.stringify(call)).not.toContain(TOKEN);
     warn.mockRestore();
   });

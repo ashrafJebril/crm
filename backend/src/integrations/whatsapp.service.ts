@@ -21,8 +21,8 @@ import { timingSafeEqual } from "crypto";
 import type { Channel } from "@prisma/client";
 import { ChannelResolver } from "../channels/channel-resolver.service";
 import { credentialsFor } from "../channels/channel-credentials";
-import { ensureDefaultPerKind } from "../channels/legacy-mirror";
-import { USER_DISCONNECTED } from "../channels/zernio-mirror";
+import { alignLegacyChannel, ensureDefaultPerKind } from "../channels/legacy-mirror";
+import { INTEGRATION_REMOVED } from "../channels/zernio-mirror";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -424,6 +424,12 @@ export class WhatsAppService {
       ? await this.prisma.integration.update({ where: { id: existing.id }, data })
       : await this.prisma.integration.create({ data: { ...data, workspaceId } });
 
+    // SP-19: mirror the number now (inbound routes to this workspace from the
+    // first webhook) and treat the connect as an explicit reconnect: the
+    // channel is reactivated even if it was disconnected before.
+    await alignLegacyChannel(this.prisma, row, { explicit: true });
+    await ensureDefaultPerKind(this.prisma, workspaceId);
+
     // Subscribe our Meta app to this WABA so webhooks actually fire. Without
     // this call the customer would see "connected" in tkana but inbound
     // messages would silently never arrive — exactly the symptom we hit in
@@ -455,10 +461,11 @@ export class WhatsAppService {
         this.log.warn(`Unsubscribe failed (continuing delete): ${(e as Error).message}`);
       }
     }
-    // SP-19: the mirrored channel stops sending (soft: history stays).
+    // SP-19: the mirrored channel stops sending (soft: history stays). A
+    // later connect of the same number reactivates it.
     await this.prisma.channel.updateMany({
       where: { integrationId: integ.id, status: { not: "disconnected" } },
-      data: { status: "disconnected", statusReason: USER_DISCONNECTED, disconnectedAt: new Date(), isDefault: false },
+      data: { status: "disconnected", statusReason: INTEGRATION_REMOVED, disconnectedAt: new Date(), isDefault: false },
     });
     await this.prisma.integration.delete({ where: { id: integ.id } });
     await ensureDefaultPerKind(this.prisma, workspaceId);
@@ -518,8 +525,8 @@ export class WhatsAppService {
     conv: { id: string; channel: string; channelId?: string | null },
   ): Promise<{ token: string; phoneNumberId: string; channel: Channel }> {
     const channel = await this.channels.forSend(workspaceId, conv);
-    const creds = channel.provider === "zernio" ? null : await credentialsFor(this.prisma, channel);
-    if (!creds?.accessToken || !creds.externalId) {
+    const creds = await credentialsFor(this.prisma, channel);
+    if (creds.provider === "zernio" || !creds.accessToken || !creds.externalId) {
       throw new NotFoundException("WhatsApp is not connected");
     }
     return { token: creds.accessToken, phoneNumberId: creds.externalId, channel };

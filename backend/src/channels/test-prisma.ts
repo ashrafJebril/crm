@@ -128,6 +128,7 @@ const DEFAULTS: Record<string, () => Row> = {
     disconnectedAt: null,
     health: null,
   }),
+  integration: () => ({ provider: "meta", pageId: null, pageName: null, accessToken: null, raw: null }),
   conversation: () => ({ channelId: null, externalId: null, aiEnabled: false, aiPausedAt: null, unread: 0 }),
 };
 
@@ -167,24 +168,27 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     const write = (row: Row) => {
       if (name === "channel") checkChannelUniques(rows(), row);
     };
+    // Like Prisma, every call returns a LAZY thenable: nothing runs until it
+    // is awaited, so an array $transaction can snapshot first and roll back.
+    const op = (fn: (a: any) => any) => jest.fn((a: any = {}) => lazy(() => fn(a)));
     return {
-      findMany: jest.fn(async (a: any = {}) => {
+      findMany: op((a) => {
         let r = rows().filter((x) => matches(x, a.where, db, name));
         r = sortRows(r, a.orderBy);
         if (a.take) r = r.slice(0, a.take);
         return r.map((x) => project(x, a.select, a.include, db));
       }),
-      findFirst: jest.fn(async (a: any = {}) => {
+      findFirst: op((a) => {
         const r = sortRows(rows().filter((x) => matches(x, a.where, db, name)), a.orderBy)[0];
         return r ? project(r, a.select, a.include, db) : null;
       }),
-      findUnique: jest.fn(async (a: any = {}) => {
+      findUnique: op((a) => {
         const r = rows().find((x) => matches(x, a.where, db, name));
         return r ? project(r, a.select, a.include, db) : null;
       }),
-      count: jest.fn(async (a: any = {}) => rows().filter((x) => matches(x, a.where, db, name)).length),
-      groupBy: jest.fn(async () => []),
-      create: jest.fn(async (a: any) => {
+      count: op((a) => rows().filter((x) => matches(x, a.where, db, name)).length),
+      groupBy: op(() => []),
+      create: op((a) => {
         const row: Row = {
           id: a.data.id ?? nextId(name),
           ...(DEFAULTS[name]?.() ?? {}),
@@ -196,19 +200,15 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         rows().push(row);
         return project(row, a.select, a.include, db);
       }),
-      update: jest.fn(async (a: any) => {
+      update: op((a) => {
         const row = rows().find((x) => matches(x, a.where, db, name));
-        if (!row) {
-          const e = new Error("Record to update not found") as Error & { code: string };
-          e.code = "P2025";
-          throw e;
-        }
+        if (!row) throw p2025();
         const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
         if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
         Object.assign(row, next);
         return project(row, a.select, a.include, db);
       }),
-      updateMany: jest.fn(async (a: any) => {
+      updateMany: op((a) => {
         const hit = rows().filter((x) => matches(x, a.where, db, name));
         for (const row of hit) {
           const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
@@ -217,7 +217,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         }
         return { count: hit.length };
       }),
-      upsert: jest.fn(async (a: any) => {
+      upsert: op((a) => {
         const row = rows().find((x) => matches(x, a.where, db, name));
         if (row) {
           Object.assign(row, applyData(row, a.update), { updatedAt: new Date() });
@@ -234,13 +234,41 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         rows().push(created);
         return project(created);
       }),
-      delete: jest.fn(async (a: any) => {
+      delete: op((a) => {
         const i = rows().findIndex((x) => matches(x, a.where, db, name));
+        if (i < 0) throw p2025();
         const [row] = rows().splice(i, 1);
+        onDeleted(row);
         return row;
+      }),
+      deleteMany: op((a) => {
+        const hit = rows().filter((x) => matches(x, a.where, db, name));
+        db[name] = rows().filter((x) => !hit.includes(x));
+        hit.forEach(onDeleted);
+        return { count: hit.length };
       }),
     };
   };
+
+  /** FK actions Postgres applies on delete. */
+  function onDeleted(row: Row) {
+    // Channel.integrationId → Integration ON DELETE SET NULL
+    for (const c of db.channel ?? []) if (c.integrationId === row.id) c.integrationId = null;
+  }
+
+  /** Snapshot every row (keeping object identity) so a failed array
+   *  transaction can be undone like a Postgres rollback. */
+  function snapshot() {
+    const saved = Object.entries(db).map(([k, list]) => [k, list.map((r) => [r, { ...r }] as const)] as const);
+    return () => {
+      for (const [k, list] of saved) {
+        db[k] = list.map(([ref, copy]) => {
+          for (const key of Object.keys(ref)) delete ref[key];
+          return Object.assign(ref, copy);
+        });
+      }
+    };
+  }
 
   const prisma: any = {
     db,
@@ -253,8 +281,20 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     campaign: model("campaign"),
     template: model("template"),
     workspaceMember: model("workspaceMember"),
-    $transaction: jest.fn(async (arg: any) => (typeof arg === "function" ? arg(prisma) : Promise.all(arg))),
-    // Only the channel write-back is issued as raw SQL by the channel code.
+    $transaction: jest.fn(async (arg: any) => {
+      if (typeof arg === "function") return arg(prisma);
+      const restore = snapshot();
+      const out: unknown[] = [];
+      try {
+        for (const q of arg) out.push(await q);
+      } catch (e) {
+        restore();
+        throw e;
+      }
+      return out;
+    }),
+    // Raw SQL the channel code issues: the channelId write-back and the
+    // lastInboundAt stamp (neither bumps updatedAt, as in Postgres).
     $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...vals: any[]) => {
       const sql = strings.join("?");
       if (/UPDATE "Conversation" SET "channelId"/.test(sql)) {
@@ -263,10 +303,31 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         if (row) row.channelId = channelId;
         return row ? 1 : 0;
       }
+      if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {
+        const [id] = vals;
+        const row = db.channel.find((c) => c.id === id);
+        if (row) row.lastInboundAt = new Date();
+        return row ? 1 : 0;
+      }
       return 0;
     }),
   };
   return prisma;
+}
+
+function lazy<T>(run: () => T): PromiseLike<T> & { catch: Promise<T>["catch"] } {
+  let p: Promise<T> | undefined;
+  const get = () => (p ??= Promise.resolve().then(run));
+  return {
+    then: (ok, bad) => get().then(ok, bad),
+    catch: (bad) => get().catch(bad),
+  } as PromiseLike<T> & { catch: Promise<T>["catch"] };
+}
+
+function p2025(): Error {
+  const e = new Error("Record to update not found") as Error & { code: string };
+  e.code = "P2025";
+  return e;
 }
 
 function applyData(row: Row, data: Row): Row {

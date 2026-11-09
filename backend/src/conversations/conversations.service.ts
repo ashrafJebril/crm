@@ -45,6 +45,18 @@ export class ConversationsService {
 
   private readonly channels: ChannelResolver;
   private readonly transports: ChannelTransportRegistry;
+  /** workspaceId → when the inbox list last ran the legacy mirror (M4). */
+  private readonly mirroredAt = new Map<string, number>();
+
+  /** The legacy Integration mirror, at most once a minute per workspace: the
+   *  inbound, send and /channels paths mirror on their own, so the list only
+   *  needs to catch rows `main` wrote recently. */
+  private async mirrorLegacyThrottled(workspaceId: string): Promise<void> {
+    const now = Date.now();
+    if (now - (this.mirroredAt.get(workspaceId) ?? 0) < 60_000) return;
+    this.mirroredAt.set(workspaceId, now);
+    await ensureLegacyChannels(this.prisma, workspaceId);
+  }
 
   /** Which conversations `viewer` may see. No viewer = internal caller. */
   private scope(workspaceId: string, viewer?: Viewer): Promise<Prisma.ConversationWhereInput> {
@@ -71,7 +83,7 @@ export class ConversationsService {
   async list(workspaceId: string, viewer?: Viewer, filter: { channelIds?: string[] } = {}) {
     const scope = await this.scope(workspaceId, viewer);
     const channelIds = (filter.channelIds ?? []).filter(Boolean);
-    await ensureLegacyChannels(this.prisma, workspaceId);
+    await this.mirrorLegacyThrottled(workspaceId);
     const where: Prisma.ConversationWhereInput = channelIds.length
       ? { AND: [{ workspaceId }, scope, { OR: [{ channelId: { in: channelIds } }, { channelId: null }] }] }
       : { workspaceId, ...scope };

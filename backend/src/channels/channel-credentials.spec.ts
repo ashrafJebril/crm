@@ -5,6 +5,7 @@ import { makeFakePrisma } from "./test-prisma";
 
 const base = {
   id: "ch",
+  provider: "meta",
   workspaceId: "ws1",
   externalId: "pn-B",
   integrationId: null as string | null,
@@ -28,7 +29,7 @@ describe("credentialsFor", () => {
       integration: [{ id: "int", workspaceId: "ws1", pageId: "pn-new", accessToken: encryptSecret("TOKEN-A") }],
     });
     const c = await credentialsFor(prisma, { ...base, integrationId: "int", externalId: "pn-old" });
-    expect(c).toEqual({ accessToken: "TOKEN-A", externalId: "pn-new" });
+    expect(c).toEqual({ provider: "meta", accessToken: "TOKEN-A", externalId: "pn-new" });
   });
 
   it("a channel-only row decrypts secretsEnc", async () => {
@@ -37,11 +38,11 @@ describe("credentialsFor", () => {
       ...base,
       secretsEnc: encryptSecret(JSON.stringify({ accessToken: "TOKEN-B", registrationPin: "123456" })),
     });
-    expect(c).toEqual({ accessToken: "TOKEN-B", registrationPin: "123456", externalId: "pn-B" });
+    expect(c).toEqual({ provider: "meta", accessToken: "TOKEN-B", registrationPin: "123456", externalId: "pn-B" });
   });
 
   it("no secrets: only the external id", async () => {
-    expect(await credentialsFor(makeFakePrisma(), base)).toEqual({ externalId: "pn-B" });
+    expect(await credentialsFor(makeFakePrisma(), base)).toEqual({ provider: "meta", externalId: "pn-B" });
   });
 });
 

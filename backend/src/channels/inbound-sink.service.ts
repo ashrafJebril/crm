@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { stampLastInbound } from "./channel-resolver.service";
 
 export interface InboundRecord {
   workspaceId: string;
@@ -117,7 +118,7 @@ export class InboundSinkService {
         createdAt: at,
       },
     });
-    await this.prisma.channel.updateMany({ where: { id: channel.id }, data: { lastInboundAt: new Date() } });
+    await stampLastInbound(this.prisma, channel.id);
 
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: kind,

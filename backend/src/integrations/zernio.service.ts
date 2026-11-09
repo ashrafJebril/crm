@@ -22,8 +22,9 @@ import { PipelineAutomationService } from "../tickets/pipeline-automation.servic
 import { LAgentService } from "./l-agent.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { ChannelResolver } from "../channels/channel-resolver.service";
-import { mirrorZernioAccounts, USER_DISCONNECTED } from "../channels/zernio-mirror";
-import { ensureDefaultPerKind } from "../channels/legacy-mirror";
+import { INTEGRATION_REMOVED, mirrorZernioAccounts } from "../channels/zernio-mirror";
+import { ensureDefaultPerKind, type IntegrationLike } from "../channels/legacy-mirror";
+import { credentialsFor } from "../channels/channel-credentials";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -198,7 +199,7 @@ export class ZernioService {
     }
 
     const connected: Array<{ platform: string; accountId: string; name: string | null }> = [];
-    const primaries: Array<{ integrationId: string; accountId: string }> = [];
+    const primaries: IntegrationLike[] = [];
     for (const [platform, list] of byPlatform) {
       // After a reconnect Zernio can still list the revoked account first;
       // link the one that works.
@@ -237,11 +238,13 @@ export class ZernioService {
         },
       });
       connected.push({ platform, accountId: primary._id, name });
-      primaries.push({ integrationId: integ.id, accountId: primary._id });
+      primaries.push(integ);
     }
 
     // SP-19 (ruling 2): one Channel per Zernio account, missing ones
-    // disconnected, each Integration linked to its primary's channel.
+    // disconnected. Each Integration's own channel follows it in place first
+    // (re-auth onto a new account, Meta→Zernio switch), so existing threads
+    // keep replying; a fresh link (reconnect) reactivates it.
     await mirrorZernioAccounts(this.prisma, workspaceId, accounts, primaries);
 
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
@@ -384,14 +387,21 @@ export class ZernioService {
    */
   private async ownAccount(workspaceId: string, accountId: string): Promise<{ platform: string } | null> {
     const ch = await this.prisma.channel.findFirst({
-      where: { workspaceId, provider: "zernio", externalId: accountId, status: { not: "disconnected" } },
-      select: { kind: true },
+      where: { workspaceId, provider: "zernio", externalId: accountId },
+      select: { kind: true, status: true },
     });
-    if (ch) return { platform: ch.kind };
+    // R9: a channel disconnected in the hub never sends, even though its
+    // legacy Integration row is still there.
+    if (ch) return ch.status === "disconnected" ? null : { platform: ch.kind };
     const integ = await this.prisma.integration.findFirst({
       where: { workspaceId, provider: "zernio", pageId: accountId },
     });
-    return integ ? { platform: integ.platform } : null;
+    if (!integ) return null;
+    const slot = await this.prisma.channel.findFirst({
+      where: { integrationId: integ.id },
+      select: { status: true },
+    });
+    return slot?.status === "disconnected" ? null : { platform: integ.platform };
   }
 
   /**
@@ -707,10 +717,11 @@ export class ZernioService {
     });
     if (!integ) return { ok: true, removed: false };
     // SP-19: the platform's Zernio channels stop sending too (soft: history
-    // and conversation.channelId stay; a later sync will not revive them).
+    // and conversation.channelId stay). Reconnecting — any later sync that
+    // lists the account, exactly as on `main` — reactivates them.
     await this.prisma.channel.updateMany({
       where: { workspaceId, provider: "zernio", kind: platform.toLowerCase(), status: { not: "disconnected" } },
-      data: { status: "disconnected", statusReason: USER_DISCONNECTED, disconnectedAt: new Date(), isDefault: false },
+      data: { status: "disconnected", statusReason: INTEGRATION_REMOVED, disconnectedAt: new Date(), isDefault: false },
     });
     await this.prisma.integration.delete({ where: { id: integ.id } });
     await ensureDefaultPerKind(this.prisma, workspaceId);
@@ -912,10 +923,13 @@ export class ZernioService {
     // SP-19: send from the account the conversation belongs to (its channel),
     // never "the" platform integration. Disconnected → 409, never rerouted.
     const ch = await this.channels.forSend(workspaceId, conv);
-    if (ch.provider !== "zernio" || !ch.externalId) {
+    // An Integration-linked channel sends from the Integration's CURRENT
+    // account (as `main` does), even before the channel is re-aligned.
+    const creds = await credentialsFor(this.prisma, ch);
+    if (creds.provider !== "zernio" || !creds.externalId) {
       throw new NotFoundException(`${channel} is not connected via Zernio`);
     }
-    const accountId = ch.externalId;
+    const accountId = creds.externalId;
 
     let zernioConvId = conv.externalId;
     if (!zernioConvId) {
@@ -1066,6 +1080,8 @@ export class ZernioService {
       messagesInserted: 0,
       messagesSkipped: 0,
       attachmentsSaved: 0,
+      /** Threads of an account with no channel in this workspace (SP-19). */
+      conversationsSkipped: 0,
       errors: [] as string[],
     };
 
@@ -1074,6 +1090,16 @@ export class ZernioService {
         const channel = (zc.platform ?? "").toLowerCase();
         const participantId = String(zc.participantId ?? "");
         if (!channel || !participantId) continue;
+
+        // SP-19: resolve the thread's account exactly like the webhook does
+        // (mirroring a legacy Integration on the fly). An account with no
+        // channel in THIS workspace is skipped — never merged into another
+        // number's thread.
+        const ch = zc.accountId ? await this.channels.forInbound("zernio", zc.accountId) : null;
+        if (!ch || ch.workspaceId !== workspaceId) {
+          counts.conversationsSkipped++;
+          continue;
+        }
 
         const contact = await this.prisma.contact.upsert({
           where: {
@@ -1104,24 +1130,16 @@ export class ZernioService {
           }
         }
 
-        // SP-19: the thread's account picks its channel, like the webhook.
-        const ch = zc.accountId
-          ? await this.prisma.channel.findFirst({
-              where: { workspaceId, provider: "zernio", externalId: zc.accountId },
-              select: { id: true },
-            })
-          : null;
-        let conv = ch
-          ? await this.channels.findOrAdoptConversation(workspaceId, contact.id, { id: ch.id, kind: channel })
-          : await this.prisma.conversation.findFirst({
-              where: { workspaceId, contactId: contact.id, channel },
-            });
+        let conv = await this.channels.findOrAdoptConversation(workspaceId, contact.id, {
+          id: ch.id,
+          kind: channel,
+        });
         if (!conv) {
           conv = await this.prisma.conversation.create({
             data: {
               workspaceId,
               contactId: contact.id,
-              channelId: ch?.id ?? null,
+              channelId: ch.id,
               unread: 0,
               pinned: false,
               lastAt: "—",

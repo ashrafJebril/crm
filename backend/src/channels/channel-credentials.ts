@@ -11,8 +11,10 @@ export interface ChannelSecrets {
   registrationPin?: string;
 }
 
-/** Secrets plus the provider id to address (Meta phone_number_id, bot id…). */
+/** Secrets plus the provider and the id to address (Meta phone_number_id,
+ *  Zernio account id, bot id…). */
 export interface ChannelCredentials extends ChannelSecrets {
+  provider: string;
   externalId: string | null;
 }
 
@@ -22,26 +24,30 @@ let warnedPlaintext = false;
 /**
  * Credentials for sending on a channel.
  *  - Integration-linked (legacy) channels: the Integration row stays the
- *    credential store, exactly as `main` uses it. Its pageId is authoritative
- *    too — `main` may have re-pointed the row since it was mirrored.
+ *    credential store, exactly as `main` uses it. Its provider and pageId are
+ *    authoritative too — `main` may have re-pointed the row (Zernio re-auth,
+ *    Meta↔Zernio switch) since the channel was last aligned.
  *  - Channel-only rows: decrypt `secretsEnc`.
  * Never logs secret material, even when it cannot be parsed.
  */
 export async function credentialsFor(
   prisma: PrismaService,
-  channel: Pick<Channel, "id" | "externalId" | "integrationId" | "secretsEnc">,
+  channel: Pick<Channel, "id" | "provider" | "externalId" | "integrationId" | "secretsEnc">,
 ): Promise<ChannelCredentials> {
   if (channel.integrationId) {
     const integ = await prisma.integration.findFirst({
       where: { id: channel.integrationId },
-      select: { pageId: true, accessToken: true },
+      select: { pageId: true, accessToken: true, provider: true },
     });
-    const out: ChannelCredentials = { externalId: integ?.pageId ?? channel.externalId ?? null };
+    const out: ChannelCredentials = {
+      provider: integ?.provider ?? channel.provider,
+      externalId: integ?.pageId ?? channel.externalId ?? null,
+    };
     const token = integ?.accessToken ? decryptSecret(integ.accessToken) : null;
     if (token) out.accessToken = token;
     return out;
   }
-  const out: ChannelCredentials = { externalId: channel.externalId ?? null };
+  const out: ChannelCredentials = { provider: channel.provider, externalId: channel.externalId ?? null };
   if (!channel.secretsEnc) return out;
   try {
     const parsed = JSON.parse(decryptSecret(channel.secretsEnc)) as ChannelSecrets;

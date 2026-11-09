@@ -3,9 +3,11 @@ import { channelError } from "./channel-errors";
 
 /**
  * The Zernio account id of the workspace's default WhatsApp number: the
- * active Zernio WhatsApp channel, default first, then the most recently
- * updated. Falls back to the legacy Integration row while nothing is
- * mirrored yet (exactly `main`'s behaviour). Templates (R8) and campaigns
+ * connected (not disconnected or pending) Zernio WhatsApp channel, default
+ * first, then the most recently
+ * updated. Falls back to the legacy Integration row only while that number
+ * has no channel at all (exactly `main`'s behaviour); a disconnected channel
+ * is honoured (R9). Templates (R8) and campaigns
  * with no sender use it.
  */
 export async function defaultZernioWhatsappAccountId(
@@ -13,7 +15,7 @@ export async function defaultZernioWhatsappAccountId(
   workspaceId: string,
 ): Promise<string | null> {
   const ch = await prisma.channel.findFirst({
-    where: { workspaceId, kind: "whatsapp", provider: "zernio", status: "active" },
+    where: { workspaceId, kind: "whatsapp", provider: "zernio", status: { notIn: ["disconnected", "pending"] } },
     orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
     select: { externalId: true },
   });
@@ -21,7 +23,14 @@ export async function defaultZernioWhatsappAccountId(
   const integ = await prisma.integration.findFirst({
     where: { workspaceId, provider: "zernio", platform: "whatsapp" },
   });
-  return integ?.pageId ?? null;
+  if (!integ?.pageId) return null;
+  // R9: once the number has a channel, the channel decides. A channel
+  // disconnected in the hub must not keep sending through its Integration.
+  const mirrored = await prisma.channel.findFirst({
+    where: { workspaceId, OR: [{ integrationId: integ.id }, { provider: "zernio", externalId: integ.pageId }] },
+    select: { id: true },
+  });
+  return mirrored ? null : integ.pageId;
 }
 
 /**

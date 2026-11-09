@@ -27,7 +27,7 @@ function build(
     // SP-19: the account's channel decides workspace and thread.
     channel: {
       findMany: jest.fn().mockResolvedValue([
-        { id: "ch1", workspaceId: WS, kind: "facebook", provider: "zernio", externalId: "page-1", status: "active" },
+        { id: "ch1", workspaceId: WS, kind: "facebook", provider: "zernio", externalId: "page-1", status: "active", integrationId: "i1" },
       ]),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },

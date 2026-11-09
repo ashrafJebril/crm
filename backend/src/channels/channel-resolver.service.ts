@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import type { Channel, Conversation } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { channelError } from "./channel-errors";
-import { ensureLegacyChannels } from "./legacy-mirror";
+import { alignLegacyChannel, ensureDefaultPerKind, ensureLegacyChannels } from "./legacy-mirror";
 
 /** The conversation fields the resolver needs. */
 export interface ConvRef {
@@ -65,11 +65,12 @@ export class ChannelResolver {
    * The channel an inbound provider event belongs to.
    * provider: "zernio" (externalId = account id), "meta" (phone_number_id;
    * matches any legacy non-Zernio provider such as "kapso"), "telegram",
-   * "native". When several workspaces claim the same account it warns and
-   * picks the most recently updated non-disconnected row — today's
-   * `findFirst` behaviour, now logged. A disconnected match is used only as
-   * a last resort so inbound is never dropped. With no channel but a
-   * matching legacy Integration, it mirrors that row and goes on.
+   * "native". Ranking: live rows backed by a legacy Integration; else the
+   * live Integration holding the account (mirrored/aligned on the fly, so a
+   * number moved to another workspace routes there on its first webhook);
+   * else other live rows; else a disconnected row as the last resort so
+   * inbound is never dropped. Several workspaces in one tier: warn and pick
+   * the most recently updated (today's `findFirst` behaviour, now logged).
    */
   async forInbound(provider: string, externalId: string, kind?: string): Promise<Channel | null> {
     if (!externalId) return null;
@@ -82,14 +83,29 @@ export class ChannelResolver {
       orderBy: { updatedAt: "desc" },
     });
     const live = rows.filter((r) => r.status !== "disconnected");
-    if (new Set(live.map((r) => r.workspaceId)).size > 1) {
+    // 1. Rows backed by a live legacy Integration are the current owners.
+    const backed = live.filter((r) => r.integrationId);
+    if (backed.length) return this.pickNewest(provider, externalId, backed);
+    // 2. Before trusting an orphan (no Integration) or a disconnected row —
+    //    possibly another, former workspace's — mirror the live Integration
+    //    that holds this account now, if any (a number moved W1 → W2, or one
+    //    connected by `main` and not mirrored yet).
+    const mirrored = await this.mirrorLegacy(provider, externalId, kind);
+    if (mirrored) return mirrored;
+    // 3. Channel-only rows (Telegram, web chat, a second Meta number), then a
+    //    disconnected row as the last resort so inbound is never dropped.
+    if (live.length) return this.pickNewest(provider, externalId, live);
+    return rows[0] ?? null;
+  }
+
+  private pickNewest(provider: string, externalId: string, rows: Channel[]): Channel {
+    const workspaces = new Set(rows.map((r) => r.workspaceId)).size;
+    if (workspaces > 1) {
       this.log.warn(
-        `${provider} account ${externalId} is connected in ${new Set(live.map((r) => r.workspaceId)).size} workspaces; routing to the most recently updated`,
+        `${provider} account ${externalId} is connected in ${workspaces} workspaces; routing to the most recently updated`,
       );
     }
-    if (live[0]) return live[0];
-    if (rows[0]) return rows[0];
-    return this.mirrorLegacy(provider, externalId, kind);
+    return rows[0];
   }
 
   private async mirrorLegacy(provider: string, externalId: string, kind?: string): Promise<Channel | null> {
@@ -102,18 +118,10 @@ export class ChannelResolver {
       orderBy: { updatedAt: "desc" },
     });
     if (!integ) return null;
-    await ensureLegacyChannels(this.prisma, integ.workspaceId);
-    const ch = await this.prisma.channel.findFirst({ where: { integrationId: integ.id } });
-    if (ch && ch.externalId !== externalId) {
-      // `main` re-pointed the Integration (e.g. reconnected another number):
-      // follow it, so replies use the id the provider now reports.
-      try {
-        return await this.prisma.channel.update({ where: { id: ch.id }, data: { externalId } });
-      } catch {
-        return ch;
-      }
-    }
-    return ch;
+    // The Integration's own slot follows it (in place when `main` re-pointed it).
+    const ch = await alignLegacyChannel(this.prisma, integ);
+    await ensureDefaultPerKind(this.prisma, integ.workspaceId);
+    return ch ? ((await this.prisma.channel.findFirst({ where: { id: ch.id } })) ?? ch) : null;
   }
 
   /** Effective channel (see pickEffectiveChannel); writes a resolved id back
@@ -195,7 +203,7 @@ export class ChannelResolver {
   /** Best-effort `lastInboundAt` stamp; never fails an ingest. */
   async touchInbound(channelId: string): Promise<void> {
     try {
-      await this.prisma.channel.updateMany({ where: { id: channelId }, data: { lastInboundAt: new Date() } });
+      await stampLastInbound(this.prisma, channelId);
     } catch (e) {
       this.log.warn(`lastInboundAt update failed for channel ${channelId}: ${(e as Error).message}`);
     }
@@ -214,4 +222,13 @@ export class ChannelResolver {
       this.log.warn(`channelId write-back failed for conversation ${conv.id}: ${(e as Error).message}`);
     }
   }
+}
+
+/**
+ * Stamp `Channel.lastInboundAt` with raw SQL: a model update would bump
+ * `updatedAt`, which forInbound uses to break multi-workspace ties, so busy
+ * channels would win by traffic instead of by their last (re)connect.
+ */
+export async function stampLastInbound(prisma: PrismaService, channelId: string): Promise<void> {
+  await prisma.$executeRaw`UPDATE "Channel" SET "lastInboundAt" = NOW() WHERE "id" = ${channelId}`;
 }

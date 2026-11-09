@@ -9,7 +9,7 @@ import { toChannelDto, type ChannelDto } from "./channel-dto";
 import { ChannelTransportRegistry } from "./channel-transport";
 import { whatsappUsage } from "./channel-limits";
 import { secretsEncryptionEnabled } from "./channel-credentials";
-import { ensureDefaultPerKind, ensureLegacyChannels } from "./legacy-mirror";
+import { ensureDefaultPerKind, ensureLegacyChannels, isUniqueViolation } from "./legacy-mirror";
 import { USER_DISCONNECTED } from "./zernio-mirror";
 import type { ChannelLimitsDto, CreateChannelDto, UpdateChannelDto } from "./channels.dto";
 
@@ -17,10 +17,27 @@ import type { ChannelLimitsDto, CreateChannelDto, UpdateChannelDto } from "./cha
  *  botUsername) are written only by the connect flows. */
 const EDITABLE_CONFIG_KEYS = ["allowedOrigins", "greeting", "greetingAr", "color", "position", "askName", "lang"] as const;
 
+/** `scheme://host[:port]`, nothing else (no path, query, wildcard or `*`). */
+const ORIGIN_RE = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i;
+
+/**
+ * Basic web chat config validation (SP-19 T1): `allowedOrigins` is an array
+ * of at most 20 http(s) origins. T3 tightens it (https outside localhost,
+ * `*.domain` wildcards, greeting length, colour) and must re-validate stored
+ * values when it reads them.
+ */
 function editableConfig(config: Record<string, unknown> | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!config) return out;
   for (const k of EDITABLE_CONFIG_KEYS) if (config[k] !== undefined) out[k] = config[k];
+  if (out.allowedOrigins !== undefined) {
+    const list = out.allowedOrigins;
+    const ok =
+      Array.isArray(list) &&
+      list.length <= 20 &&
+      list.every((o) => typeof o === "string" && ORIGIN_RE.test(o) && new URL(o).origin === o.toLowerCase());
+    if (!ok) throw channelError("channels.invalid_config", { field: "allowedOrigins" });
+  }
   return out;
 }
 
@@ -59,18 +76,23 @@ export class ChannelsService {
       where: { workspaceId, kind: "webchat", isDefault: true },
       select: { id: true },
     });
-    const row = await this.prisma.channel.create({
-      data: {
-        workspaceId,
-        kind: "webchat",
-        provider: "native",
-        externalId: null,
-        displayName: dto.displayName.trim(),
-        status: "active",
-        isDefault: !hasDefault,
-        config: editableConfig(dto.config) as Prisma.InputJsonValue,
-      },
-    });
+    const data = {
+      workspaceId,
+      kind: "webchat",
+      provider: "native",
+      externalId: null,
+      displayName: dto.displayName.trim(),
+      status: "active",
+      config: editableConfig(dto.config) as Prisma.InputJsonValue,
+    };
+    let row: Channel;
+    try {
+      row = await this.prisma.channel.create({ data: { ...data, isDefault: !hasDefault } });
+    } catch (e) {
+      // A concurrent first create took the default: this one is not.
+      if (hasDefault || !isUniqueViolation(e)) throw e;
+      row = await this.prisma.channel.create({ data: { ...data, isDefault: false } });
+    }
     this.changed(workspaceId, row.id);
     return toChannelDto(row);
   }
@@ -87,17 +109,25 @@ export class ChannelsService {
     if (dto.isDefault === true && !row.isDefault) {
       if (row.status !== "active") throw channelError("channels.default_requires_active");
       // One transaction: clear the kind's other default, then set this one
-      // (the partial unique index rejects two defaults at any instant).
-      const [, next] = await this.prisma.$transaction([
-        this.prisma.channel.updateMany({
-          where: { workspaceId, kind: row.kind, isDefault: true, id: { not: row.id } },
-          data: { isDefault: false },
-        }),
-        this.prisma.channel.update({ where: { id: row.id }, data: { ...data, isDefault: true } }),
-      ]);
-      updated = next;
+      // (the partial unique index rejects two defaults at any instant). A
+      // concurrent make-default makes one of them lose: 409, rolled back.
+      try {
+        const [, next] = await this.prisma.$transaction([
+          this.prisma.channel.updateMany({
+            where: { workspaceId, kind: row.kind, isDefault: true, id: { not: row.id } },
+            data: { isDefault: false },
+          }),
+          this.prisma.channel.update({ where: { id: row.id }, data: { ...data, isDefault: true } }),
+        ]);
+        updated = next;
+      } catch (e) {
+        if (isUniqueViolation(e)) throw channelError("channels.default_conflict");
+        throw e;
+      }
     } else {
-      if (dto.isDefault === false) data.isDefault = false;
+      // A kind keeps exactly one default: to move it, make another channel
+      // the default. Unsetting the current one is refused (M1).
+      if (dto.isDefault === false && row.isDefault) throw channelError("channels.default_required");
       updated = await this.prisma.channel.update({ where: { id: row.id }, data });
     }
     this.changed(workspaceId, row.id);

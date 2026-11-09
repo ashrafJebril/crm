@@ -17,6 +17,8 @@ export type ChannelErrorKey =
   | "channels.already_connected"
   | "channels.connected_elsewhere"
   | "channels.default_requires_active"
+  | "channels.default_conflict"
+  | "channels.default_required"
   | "channels.sender_invalid"
   | "channels.encryption_unavailable"
   | "channels.transport_unavailable"
@@ -30,6 +32,8 @@ const STATUS: Record<ChannelErrorKey, number> = {
   "channels.already_connected": 409,
   "channels.connected_elsewhere": 409,
   "channels.default_requires_active": 409,
+  "channels.default_conflict": 409,
+  "channels.default_required": 400,
   "channels.sender_invalid": 400,
   "channels.encryption_unavailable": 400,
   "channels.transport_unavailable": 400,

@@ -1,14 +1,22 @@
 import { Logger } from "@nestjs/common";
+import type { Channel } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 
 /**
  * Legacy Integration → Channel mirroring.
  *
  * `main` still writes `Integration` (one row per platform per workspace). Each
- * Integration owns exactly one Channel (`integrationId`). The migration SQL
- * backfills existing rows; `ensureLegacyChannels` mirrors rows written after
- * it. Both use the SAME mapping — `channelFromIntegration` is the TS copy of
- * the SQL INSERT in 20261112120000_channels, pinned by legacy-mirror.spec.ts.
+ * Integration owns exactly one Channel (`integrationId`): its "legacy slot".
+ * The migration SQL backfills existing rows; `ensureLegacyChannels` mirrors
+ * rows written after it. Both use the SAME mapping — `channelFromIntegration`
+ * is the TS copy of the SQL INSERT in 20261112120000_channels, pinned by
+ * legacy-mirror.spec.ts.
+ *
+ * The slot follows its Integration (`alignLegacyChannel`): when `main` re-points
+ * the row (Zernio re-auth, Meta↔Zernio switch, new pageId) the SAME channel is
+ * updated in place, so stamped conversations keep replying and new inbound
+ * keeps landing in them. A fresh link (reconnect after a legacy disconnect)
+ * or an identity change reactivates the channel.
  */
 
 const log = new Logger("LegacyChannelMirror");
@@ -47,48 +55,96 @@ export function isUniqueViolation(e: unknown): boolean {
   return (e as { code?: unknown } | null)?.code === "P2002";
 }
 
+/** Clears a disconnect: the shape every reactivation writes. */
+const REVIVE = { status: "active", statusReason: null, disconnectedAt: null } as const;
+
+/**
+ * Make the Integration's legacy channel match the Integration.
+ *  - linked, same identity: unchanged (an `explicit` user connect revives a
+ *    disconnected row; a plain resync never does);
+ *  - linked, identity changed, no other row has the new identity: updated IN
+ *    PLACE (provider/externalId) and reactivated;
+ *  - a row with the new identity exists (a genuine other number became the
+ *    primary, or the reconnected number's old row): the link moves to it and
+ *    it is reactivated; the old slot keeps its threads;
+ *  - nothing: create the deterministic `chi_` row.
+ * Callers run `ensureDefaultPerKind` afterwards.
+ */
+export async function alignLegacyChannel(
+  prisma: PrismaService,
+  i: IntegrationLike,
+  opts: { explicit?: boolean } = {},
+): Promise<Channel | null> {
+  const want = channelFromIntegration(i);
+  const linked = await prisma.channel.findFirst({ where: { integrationId: i.id } });
+  if (linked && linked.provider === want.provider && linked.externalId === want.externalId) {
+    if (opts.explicit && linked.status === "disconnected") {
+      return prisma.channel.update({ where: { id: linked.id }, data: { ...REVIVE } });
+    }
+    return linked;
+  }
+  const twin = want.externalId
+    ? await prisma.channel.findFirst({
+        where: { workspaceId: i.workspaceId, provider: want.provider, externalId: want.externalId },
+      })
+    : null;
+  if (linked && !twin) {
+    try {
+      return await prisma.channel.update({
+        where: { id: linked.id },
+        data: { provider: want.provider, externalId: want.externalId, kind: want.kind, ...REVIVE },
+      });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e; // a twin appeared concurrently: relink below
+    }
+  }
+  const target =
+    twin ??
+    (want.externalId
+      ? await prisma.channel.findFirst({
+          where: { workspaceId: i.workspaceId, provider: want.provider, externalId: want.externalId },
+        })
+      : null);
+  if (target) {
+    await prisma.channel.updateMany({
+      where: { integrationId: i.id, id: { not: target.id } },
+      data: { integrationId: null },
+    });
+    return prisma.channel.update({ where: { id: target.id }, data: { integrationId: i.id, ...REVIVE } });
+  }
+  const hasDefault = await prisma.channel.findFirst({
+    where: { workspaceId: i.workspaceId, kind: want.kind, isDefault: true },
+    select: { id: true },
+  });
+  for (const isDefault of hasDefault ? [false] : [true, false]) {
+    try {
+      return await prisma.channel.create({ data: { ...want, isDefault } });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+    }
+  }
+  // Lost every race: a concurrent caller mirrored it. Fine when it exists.
+  const now = await prisma.channel.findFirst({ where: { integrationId: i.id } });
+  if (!now) log.warn(`could not mirror integration ${i.id} (${want.kind}/${want.provider}) — will retry`);
+  else log.debug(`integration ${i.id} was mirrored concurrently`);
+  return now;
+}
+
 /**
  * Mirror every Integration of the workspace that has no Channel yet. Costs one
- * indexed query when there is nothing to do. Returns how many were created.
+ * indexed query when there is nothing to do. Returns how many were mirrored
+ * (created or linked).
  */
 export async function ensureLegacyChannels(prisma: PrismaService, workspaceId: string): Promise<number> {
   const missing = (await prisma.integration.findMany({
     where: { workspaceId, channel: { is: null } },
   })) as IntegrationLike[];
-  let created = 0;
+  let mirrored = 0;
   for (const i of missing) {
-    const row = channelFromIntegration(i);
-    const hasDefault = await prisma.channel.findFirst({
-      where: { workspaceId, kind: row.kind, isDefault: true },
-      select: { id: true },
-    });
-    try {
-      await prisma.channel.create({ data: { ...row, isDefault: !hasDefault } });
-      created++;
-      continue;
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-    }
-    // A channel for the same provider account already exists (e.g. created
-    // by a Zernio sync): link it instead of duplicating it.
-    if (row.externalId) {
-      const linked = await prisma.channel.updateMany({
-        where: { workspaceId, provider: row.provider, externalId: row.externalId, integrationId: null },
-        data: { integrationId: i.id },
-      });
-      if (linked.count > 0) continue;
-    }
-    // Lost a race on the one-default index (or the deterministic id): once
-    // more as a non-default row, then give up quietly — the next call retries.
-    try {
-      await prisma.channel.create({ data: { ...row, isDefault: false } });
-      created++;
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-      log.warn(`could not mirror integration ${i.id} (${row.kind}/${row.provider}) — will retry`);
-    }
+    if (await alignLegacyChannel(prisma, i)) mirrored++;
   }
-  return created;
+  if (mirrored > 0) await ensureDefaultPerKind(prisma, workspaceId);
+  return mirrored;
 }
 
 /**

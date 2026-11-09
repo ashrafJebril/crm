@@ -110,7 +110,7 @@ describe("ZernioService comment ownership guard", () => {
     await svc.replyToComment(workspaceId, "c1", "hi", "acc-second");
     expect(prisma.channel.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { workspaceId, provider: "zernio", externalId: "acc-second", status: { not: "disconnected" } },
+        where: { workspaceId, provider: "zernio", externalId: "acc-second" },
       }),
     );
     expect(client.replyToComment).toHaveBeenCalledWith("p1", "acc-second", "hi", "c1");

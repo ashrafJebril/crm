@@ -21,7 +21,7 @@ describe("Zernio reaction.received", () => {
       channel: {
         findMany: jest.fn(async () =>
           integ
-            ? [{ id: "ch1", workspaceId: integ.workspaceId, kind: integ.platform, provider: "zernio", externalId: integ.pageId, status: "active" }]
+            ? [{ id: "ch1", workspaceId: integ.workspaceId, kind: integ.platform, provider: "zernio", externalId: integ.pageId, status: "active", integrationId: "i1" }]
             : [],
         ),
       },
