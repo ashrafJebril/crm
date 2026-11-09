@@ -16,12 +16,12 @@
  *   channel's configured colour.
  * The API base is derived from the script's own src. The iframe is created
  * on the first click: /api/chat/<id>?embed=1&parent=<location.origin>&lang=.
- * The page asks to close via postMessage({type:"tk-widget:close"}), which is
+ * The page asks to close via postMessage({type:"aram-widget:close"}), which is
  * accepted only from the iframe's window and the API origin.
- * `window.tkanaChat.open()/close()/toggle()` drive it from the host page.
+ * `window.aramChat.open()/close()/toggle()` drive it from the host page.
  */
 export const WIDGET_JS = String.raw`(function(){"use strict";
-var s=document.currentScript;if(!s||window.tkanaChat)return;
+var s=document.currentScript;if(!s||window.aramChat)return;
 var id=s.getAttribute("data-channel")||"";if(!/^[A-Za-z0-9_-]{1,64}$/.test(id))return;
 var src=s.src||"",base=src.replace(/\/widget\.js(?:[?#].*)?$/,"");if(!src||base===src)return;
 var api;try{api=new URL(src).origin}catch(e){return}
@@ -48,9 +48,9 @@ frame.style.setProperty(side,"20px");document.body.appendChild(frame);}
 function set(v){if(v&&!frame)make();open=v;if(frame)frame.style.display=v?"block":"none";
 btn.setAttribute("aria-expanded",v?"true":"false");btn.setAttribute("aria-label",v?L.c:L.o);btn.replaceChild(icon(v?X:CHAT),btn.firstChild);}
 btn.addEventListener("click",function(){set(!open)});
-window.addEventListener("message",function(e){if(!frame||e.source!==frame.contentWindow||e.origin!==api)return;var d=e.data;if(d&&d.type==="tk-widget:close")set(false)});
+window.addEventListener("message",function(e){if(!frame||e.source!==frame.contentWindow||e.origin!==api)return;var d=e.data;if(d&&d.type==="aram-widget:close")set(false)});
 function mount(){document.body.appendChild(btn)}
 if(document.body)mount();else document.addEventListener("DOMContentLoaded",mount);
-window.tkanaChat={open:function(){set(true)},close:function(){set(false)},toggle:function(){set(!open)}};
+window.aramChat={open:function(){set(true)},close:function(){set(false)},toggle:function(){set(!open)}};
 })();
 `;

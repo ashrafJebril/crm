@@ -77,13 +77,15 @@ interface Call {
   query?: Record<string, unknown>;
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
+  /** Sent as the X-Visitor-Token header. */
+  token?: string;
   ip?: string;
 }
 
 /** The Nest pipeline for one public widget route: rate-limit guard, origin
  *  guard, then the handler. Returns {status, body, headers}. */
 async function call(b: B, route: "page" | "config" | "messages" | "send", c: Call = {}) {
-  const headers: Record<string, string> = { host: "api.example.com", "x-forwarded-proto": "https", ...(c.headers ?? {}) };
+  const headers: Record<string, string> = { host: "api.example.com", "x-forwarded-proto": "https", ...(c.token !== undefined ? { "x-visitor-token": c.token } : {}), ...(c.headers ?? {}) };
   const req: Record<string, unknown> = {
     method: c.method ?? (route === "send" ? "POST" : "GET"),
     params: { channelId: c.channelId ?? "W1" },
@@ -99,7 +101,10 @@ async function call(b: B, route: "page" | "config" | "messages" | "send", c: Cal
     await b.rate.canActivate(context);
     await b.origin.canActivate(context);
     let out: unknown;
-    if (route === "page") out = await b.ctrl.page(req as never, (c.query ?? {}) as never, res);
+    if (route === "page") {
+      const q = (c.query ?? {}) as Record<string, string | undefined>;
+      out = await b.ctrl.page(req as never, q.embed, q.lang, q.parent, res);
+    }
     if (route === "config") out = await b.ctrl.config(req as never, (c.query ?? {}) as never, res);
     if (route === "messages") out = await b.ctrl.messages(req as never, (c.query ?? {}) as never, res);
     if (route === "send") out = await b.ctrl.send(req as never, (c.body ?? {}) as never, res);
@@ -195,14 +200,14 @@ describe("widget rate limit returns 429", () => {
     // The minting message counts against the IP bucket only (the visitor did
     // not exist yet); then 10 verified posts per minute per visitor.
     for (let i = 1; i <= 10; i++) {
-      const r = await call(b, "send", { body: { body: `m${i}`, visitorId, visitorToken }, ip: `10.0.1.${i}` });
+      const r = await call(b, "send", { body: { body: `m${i}`, visitorId }, token: visitorToken, ip: `10.0.1.${i}` });
       expect(r.status).toBe(200);
     }
-    const r = await call(b, "send", { body: { body: "too many", visitorId, visitorToken }, ip: "10.0.2.1" });
+    const r = await call(b, "send", { body: { body: "too many", visitorId }, token: visitorToken, ip: "10.0.2.1" });
     expect(r).toMatchObject({ status: 429, key: "widget.rate_limited" });
     expect(Number(r.headers["retry-after"])).toBeGreaterThan(0);
     b.clock.advance(61_000);
-    expect((await call(b, "send", { body: { body: "later", visitorId, visitorToken } })).status).toBe(200);
+    expect((await call(b, "send", { body: { body: "later", visitorId }, token: visitorToken })).status).toBe(200);
   });
 
   it("POST: 30/min per IP and channel, across new visitors", async () => {
@@ -219,9 +224,9 @@ describe("widget rate limit returns 429", () => {
     const first = await call(b, "send", { body: { body: "m0" } });
     const { visitorId, visitorToken } = first.body as { visitorId: string; visitorToken: string };
     for (let i = 0; i < 20; i++) {
-      await call(b, "send", { body: { body: "spoof", visitorId, visitorToken: "A".repeat(43) }, ip: `10.3.0.${i}` });
+      await call(b, "send", { body: { body: "spoof", visitorId }, token: "A".repeat(43), ip: `10.3.0.${i}` });
     }
-    expect((await call(b, "send", { body: { body: "mine", visitorId, visitorToken }, ip: "10.4.0.1" })).status).toBe(200);
+    expect((await call(b, "send", { body: { body: "mine", visitorId }, token: visitorToken, ip: "10.4.0.1" })).status).toBe(200);
   });
 
   it("GET: 120/min per IP, using Fly-Client-IP when present", async () => {
@@ -241,7 +246,7 @@ describe("widget visitor token required to read history", () => {
     const { visitorId, visitorToken } = a.body as { visitorId: string; visitorToken: string };
     const other = await call(b, "send", { body: { body: "from B" }, ip: "10.0.0.2" });
 
-    const ok = await call(b, "messages", { query: { visitorId, visitorToken } });
+    const ok = await call(b, "messages", { query: { visitorId }, token: visitorToken });
     expect(ok.status).toBe(200);
     expect((ok.body as { items: { body: string; from: string }[] }).items).toEqual([
       expect.objectContaining({ body: "from A", from: "visitor" }),
@@ -249,11 +254,11 @@ describe("widget visitor token required to read history", () => {
 
     const noToken = await call(b, "messages", { query: { visitorId } });
     expect(noToken).toMatchObject({ status: 403, key: "widget.visitor_forbidden" });
-    const wrong = await call(b, "messages", { query: { visitorId, visitorToken: (other.body as { visitorToken: string }).visitorToken } });
+    const wrong = await call(b, "messages", { query: { visitorId }, token: (other.body as { visitorToken: string }).visitorToken });
     expect(wrong).toMatchObject({ status: 403, key: "widget.visitor_forbidden" });
     // a token minted for another channel does not open this channel's thread
     const foreign = mintVisitor("W9");
-    const cross = await call(b, "messages", { query: { visitorId: foreign.visitorId, visitorToken: foreign.visitorToken } });
+    const cross = await call(b, "messages", { query: { visitorId: foreign.visitorId }, token: foreign.visitorToken });
     expect(cross).toMatchObject({ status: 403 });
   });
 
@@ -261,7 +266,7 @@ describe("widget visitor token required to read history", () => {
     const b = build();
     const a = await call(b, "send", { body: { body: "hi" } });
     const { visitorId } = a.body as { visitorId: string };
-    const r = await call(b, "send", { body: { body: "hijack", visitorId, visitorToken: "B".repeat(43) } });
+    const r = await call(b, "send", { body: { body: "hijack", visitorId }, token: "B".repeat(43) });
     expect(r).toMatchObject({ status: 403, key: "widget.visitor_forbidden" });
     expect(b.prisma.db.message.map((m: { body: string }) => m.body)).toEqual(["hi"]);
   });
@@ -280,11 +285,11 @@ describe("widget visitor token required to read history", () => {
     expect(conv).toMatchObject({ workspaceId: "ws_secret_1", channelId: "W1", channel: "webchat", contactId: contact.id });
     expect(b.realtime.emitToWorkspace).toHaveBeenCalledWith("ws_secret_1", "inbox.activity", expect.objectContaining({ channelId: "W1" }));
 
-    await call(b, "send", { body: { body: "again", visitorId: out.visitorId, visitorToken: out.visitorToken } });
+    await call(b, "send", { body: { body: "again", visitorId: out.visitorId }, token: out.visitorToken });
     expect(b.prisma.db.conversation).toHaveLength(1);
     expect(b.prisma.db.message).toHaveLength(2);
 
-    const after = await call(b, "messages", { query: { visitorId: out.visitorId, visitorToken: out.visitorToken, after: new Date(0).toISOString() } });
+    const after = await call(b, "messages", { query: { visitorId: out.visitorId, after: new Date(0).toISOString() }, token: out.visitorToken });
     expect((after.body as { items: unknown[] }).items).toHaveLength(2);
   });
 
@@ -313,7 +318,7 @@ describe("widget visitor token required to read history", () => {
     // a W3 conversation for the same contact must not leak into W1's history
     b.prisma.db.conversation.push({ id: "cvX", workspaceId: "ws_secret_1", contactId: b.prisma.db.contact[0].id, channelId: "W3", channel: "webchat", updatedAt: new Date(Date.now() + 1000) });
     b.prisma.db.message.push({ id: "mX", workspaceId: "ws_secret_1", conversationId: "cvX", from: "human", body: "W3 secret", createdAt: new Date() });
-    const r = await call(b, "messages", { query: { visitorId, visitorToken: (a.body as { visitorToken: string }).visitorToken } });
+    const r = await call(b, "messages", { query: { visitorId }, token: (a.body as { visitorToken: string }).visitorToken });
     expect(JSON.stringify(r.body)).not.toContain("W3 secret");
   });
 });
@@ -344,7 +349,7 @@ describe("public widget responses contain no secrets or workspace ids", () => {
     });
     const sent = await call(b, "send", { body: { body: "hi" } });
     const { visitorId, visitorToken } = sent.body as { visitorId: string; visitorToken: string };
-    const history = await call(b, "messages", { query: { visitorId, visitorToken } });
+    const history = await call(b, "messages", { query: { visitorId }, token: visitorToken });
     const page = await call(b, "page", { query: { embed: "1", parent: "https://shop.example" } });
     const contactId = b.prisma.db.contact[0].id;
     const convId = b.prisma.db.conversation[0].id;
@@ -411,3 +416,68 @@ describe("hosted page route", () => {
     );
   });
 });
+
+describe("fix round 1", () => {
+  it("I2: the hosted link tolerates tracking params (fbclid, utm_*) and ignores a bad lang/embed", async () => {
+    const b = build();
+    const r = await call(b, "page", { query: { fbclid: "x", utm_source: "y" } });
+    expect(r.status).toBe(200);
+    expect(String(r.body)).toContain("<!doctype html>");
+    const odd = await call(b, "page", { query: { lang: "fr", embed: "yes" } });
+    expect(odd.status).toBe(200);
+    expect(odd.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+    // a repeated (array) query value is not a string: ignored, never thrown
+    const arr = await b.ctrl.page({ ...(await guarded(b)), headers: { host: "api.example.com" } } as never, ["1", "0"] as never, ["ar"] as never, undefined, { setHeader: () => {} });
+    expect(arr).toContain('data-embed="0"');
+  });
+
+  it("m5: history takes the token from X-Visitor-Token only; the query param is refused", async () => {
+    const b = build();
+    const a = await call(b, "send", { body: { body: "hi" } });
+    const { visitorId, visitorToken } = a.body as { visitorId: string; visitorToken: string };
+    expect((await call(b, "messages", { query: { visitorId }, token: visitorToken })).status).toBe(200);
+    const inQuery = await call(b, "messages", { query: { visitorId, visitorToken } });
+    expect(inQuery).toMatchObject({ status: 403, key: "widget.visitor_forbidden" });
+  });
+
+  it("m5: posting as an existing visitor takes the token from the header; a body token is ignored", async () => {
+    const b = build();
+    const a = await call(b, "send", { body: { body: "hi" } });
+    const { visitorId, visitorToken } = a.body as { visitorId: string; visitorToken: string };
+    expect((await call(b, "send", { body: { body: "2", visitorId }, token: visitorToken })).status).toBe(200);
+    const inBody = await call(b, "send", { body: { body: "3", visitorId, visitorToken } });
+    expect(inBody).toMatchObject({ status: 403, key: "widget.visitor_forbidden" });
+  });
+
+  it("m1: a malformed channel id is 404 before any bucket is counted", async () => {
+    const b = build();
+    for (let i = 0; i < 200; i++) {
+      const r = await call(b, "send", { channelId: "../bad id", body: { body: "x" } });
+      expect(r).toMatchObject({ status: 404, key: "widget.channel_unavailable" });
+    }
+    expect((await call(b, "send", { body: { body: "ok" } })).status).toBe(200);
+    expect((await call(b, "config")).status).toBe(200);
+  });
+
+  it("m1: POSTs from one IP share a bucket across channel ids (60/min)", async () => {
+    const b = build();
+    let limited = 0;
+    for (let i = 0; i < 61; i++) {
+      const r = await call(b, "send", { channelId: `junk${i}`, body: { body: "x" } });
+      if (r.status === 429) limited++;
+      else expect(r).toMatchObject({ status: 404 });
+    }
+    expect(limited).toBe(1);
+    // the real channel is now refused from that IP too, but not from another IP
+    expect(await call(b, "send", { body: { body: "x" } })).toMatchObject({ status: 429, key: "widget.rate_limited" });
+    expect((await call(b, "send", { body: { body: "x" }, ip: "10.7.7.7" })).status).toBe(200);
+  });
+});
+
+/** A request that passed both guards for W1 (for direct handler calls). */
+async function guarded(b: B) {
+  const req: Record<string, unknown> = { method: "GET", params: { channelId: "W1" }, query: {}, headers: { host: "api.example.com" }, ip: "10.0.0.50" };
+  const context = { switchToHttp: () => ({ getRequest: () => req, getResponse: () => ({ setHeader: () => {} }) }) } as unknown as ExecutionContext;
+  await b.origin.canActivate(context);
+  return req;
+}

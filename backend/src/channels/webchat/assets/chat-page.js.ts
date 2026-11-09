@@ -8,9 +8,10 @@
  * ""), api (the API path prefix, "/api").
  *
  * - fetches GET {api}/widget/:id/config?parent= for greeting/colour/askName;
- * - keeps {visitorId, visitorToken} in localStorage["tkw:<id>"] (wrapped in
+ * - keeps {visitorId, visitorToken} in localStorage["aramw:<id>"] (wrapped in
  *   try/catch, with an in-memory fallback for blocked storage);
- * - sends with POST {api}/widget/:id/messages and renders the reply;
+ * - sends with POST {api}/widget/:id/messages and renders the reply; the
+ *   visitor token travels only in the X-Visitor-Token header (never in a URL);
  * - live replies: socket.io namespace /widget (client script served by the
  *   API at {api}/socket.io/socket.io.js), auth {channelId, visitorId,
  *   visitorToken}. Polling GET .../messages?after= every 4 s is the fallback
@@ -22,7 +23,7 @@ var T={en:{fail:"Couldn't send. Please try again.",slow:"Too many messages. Plea
 ar:{fail:"تعذّر الإرسال. حاول مرة أخرى.",slow:"رسائل كثيرة. انتظر قليلًا.",gone:"هذه المحادثة غير متاحة.",long:"الرسالة طويلة جدًا."}}[lang];
 function $(i){return document.getElementById(i)}
 var log=$("wc-log"),form=$("wc-form"),input=$("wc-input"),nameEl=$("wc-name"),status=$("wc-status"),sendBtn=$("wc-send"),closeBtn=$("wc-close");
-var KEY="tkw:"+ch,mem=null,seen={},last="",sock=null,timer=null,greeting="";
+var KEY="aramw:"+ch,mem=null,seen={},last="",sock=null,timer=null,greeting="";
 function load(){try{var v=JSON.parse(localStorage.getItem(KEY)||"null");if(v&&typeof v.visitorId==="string"&&typeof v.visitorToken==="string")return v}catch(e){}return mem}
 function save(v){mem=v;try{localStorage.setItem(KEY,JSON.stringify(v))}catch(e){}}
 function qs(o){var p=[];for(var k in o){if(o[k]!==undefined&&o[k]!==null&&o[k]!=="")p.push(encodeURIComponent(k)+"="+encodeURIComponent(o[k]))}return p.length?"?"+p.join("&"):""}
@@ -35,7 +36,7 @@ log.appendChild(row);if(typeof m.at==="string"&&m.at>last)last=m.at;log.scrollTo
 async function getJson(u,opt){var r=await fetch(u,Object.assign({credentials:"omit",cache:"no-store"},opt||{}));var j=null;try{j=await r.json()}catch(e){}return{ok:r.ok,status:r.status,body:j}}
 function err(r){if(r.status===429)return T.slow;if(r.status===404)return T.gone;if(r.body&&r.body.message==="widget.invalid_message")return T.long;return T.fail}
 async function history(after){var v=load();if(!v)return;
-var r=await getJson(url("/messages",{visitorId:v.visitorId,visitorToken:v.visitorToken,after:after||undefined,parent:parent}));
+var r=await getJson(url("/messages",{visitorId:v.visitorId,after:after||undefined,parent:parent}),{headers:{"X-Visitor-Token":v.visitorToken}});
 if(r.ok&&r.body&&Array.isArray(r.body.items))r.body.items.forEach(add);
 else if(r.status===403&&!after){try{localStorage.removeItem(KEY)}catch(e){}mem=null}}
 function poll(){if(timer)return;timer=setInterval(function(){history(last).catch(function(){})},4000)}
@@ -57,17 +58,17 @@ if(c.askName&&!load())nameEl.hidden=false;
 if(load()){await history();connect()}}
 form.addEventListener("submit",async function(e){e.preventDefault();var text=input.value.trim();if(!text)return;
 if(text.length>2000){say(T.long);return}
-var v=load(),payload={body:text,parent:parent||undefined};
-if(v){payload.visitorId=v.visitorId;payload.visitorToken=v.visitorToken}
+var v=load(),payload={body:text,parent:parent||undefined},hdr={"Content-Type":"application/json"};
+if(v){payload.visitorId=v.visitorId;hdr["X-Visitor-Token"]=v.visitorToken}
 else if(!nameEl.hidden&&nameEl.value.trim())payload.name=nameEl.value.trim().slice(0,80);
 sendBtn.disabled=true;say("");
-try{var r=await getJson(url("/messages"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+try{var r=await getJson(url("/messages"),{method:"POST",headers:hdr,body:JSON.stringify(payload)});
 if(!r.ok){say(err(r));if(r.status===403&&v){try{localStorage.removeItem(KEY)}catch(x){}mem=null}return}
 var first=!v;save({visitorId:r.body.visitorId,visitorToken:r.body.visitorToken});
 input.value="";nameEl.hidden=true;add(r.body.message);if(first)connect()}
 catch(x){say(T.fail)}finally{sendBtn.disabled=false;input.focus()}});
 input.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();form.requestSubmit?form.requestSubmit():sendBtn.click()}});
-if(embed&&parent&&window.parent!==window){closeBtn.hidden=false;closeBtn.addEventListener("click",function(){window.parent.postMessage({type:"tk-widget:close"},parent)})}
+if(embed&&parent&&window.parent!==window){closeBtn.hidden=false;closeBtn.addEventListener("click",function(){window.parent.postMessage({type:"aram-widget:close"},parent)})}
 boot().catch(function(){say(T.fail)});
 })();
 `;

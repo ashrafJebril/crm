@@ -120,15 +120,15 @@ describe("widget.js loader", () => {
     const env = loaderEnv({ "data-channel": "W1" });
     await env.button.fire("click");
     const f = env.iframe()!;
-    env.post({ source: {}, origin: "https://api.example.com", data: { type: "tk-widget:close" } });
-    env.post({ source: f.contentWindow, origin: "https://evil.example", data: { type: "tk-widget:close" } });
+    env.post({ source: {}, origin: "https://api.example.com", data: { type: "aram-widget:close" } });
+    env.post({ source: f.contentWindow, origin: "https://evil.example", data: { type: "aram-widget:close" } });
     expect(f.styles.display).toBe("block");
-    env.post({ source: f.contentWindow, origin: "https://api.example.com", data: { type: "tk-widget:close" } });
+    env.post({ source: f.contentWindow, origin: "https://api.example.com", data: { type: "aram-widget:close" } });
     expect(f.styles.display).toBe("none");
   });
 });
 
-function pageEnv(opts: { storage: "ok" | "blocked"; config?: any; posts?: any[] }) {
+function pageEnv(opts: { storage: "ok" | "blocked"; config?: any; posts?: any[]; stored?: any }) {
   const ids = ["wc-log", "wc-form", "wc-input", "wc-name", "wc-status", "wc-send", "wc-close"];
   const els: Record<string, El> = Object.fromEntries(ids.map((i) => [i, new El(i)]));
   els["wc-name"].hidden = true;
@@ -137,6 +137,7 @@ function pageEnv(opts: { storage: "ok" | "blocked"; config?: any; posts?: any[] 
   const body = new El("body");
   body.dataset = { channel: "W1", lang: "en", embed: "0", parent: "", api: "/api" };
   const store = new Map<string, string>();
+  if (opts.stored) store.set("aramw:W1", JSON.stringify(opts.stored));
   const localStorage =
     opts.storage === "ok"
       ? { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) }
@@ -184,6 +185,26 @@ function pageEnv(opts: { storage: "ok" | "blocked"; config?: any; posts?: any[] 
   return { els, head, calls, store, flush, intervals, docEl };
 }
 
+describe("fix round 1: brand and token transport", () => {
+  it("I1: the shipped scripts carry the Aram names and no other brand", async () => {
+    const env = loaderEnv({ "data-channel": "W1" });
+    expect(typeof env.sandbox.aramChat.open).toBe("function");
+    expect(env.sandbox.tkanaChat).toBeUndefined();
+    for (const src of [WIDGET_JS, CHAT_PAGE_JS]) expect(src.toLowerCase()).not.toMatch(/tkana|tk-widget|"tkw:/);
+    expect(CHAT_PAGE_JS).toContain('"aramw:"+ch');
+    expect(CHAT_PAGE_JS).toContain('"aram-widget:close"');
+  });
+
+  it("m5: a stored visitor loads history with the X-Visitor-Token header, never in the URL", async () => {
+    const env = pageEnv({ storage: "ok", stored: { visitorId: "V".repeat(22), visitorToken: "T".repeat(43) } });
+    await env.flush();
+    const hist = env.calls.find((c) => c.url.includes("/messages"))!;
+    expect(hist.url).toContain("visitorId=" + "V".repeat(22));
+    expect(hist.url).not.toContain("T".repeat(43));
+    expect(hist.init.headers["X-Visitor-Token"]).toBe("T".repeat(43));
+  });
+});
+
 describe("chat-page.js client", () => {
   const visitor = { visitorId: "V".repeat(22), visitorToken: "T".repeat(43) };
 
@@ -212,7 +233,7 @@ describe("chat-page.js client", () => {
     await env.els["wc-form"].fire("submit");
     const first = JSON.parse(env.calls[1].init.body);
     expect(first).toEqual({ body: "hello", name: "Sara" });
-    expect(JSON.parse(env.store.get("tkw:W1")!)).toEqual(visitor);
+    expect(JSON.parse(env.store.get("aramw:W1")!)).toEqual(visitor);
     const script = env.head.children[0];
     expect(script.src).toBe("/api/socket.io/socket.io.js");
     script.onerror!();
@@ -220,7 +241,9 @@ describe("chat-page.js client", () => {
 
     env.els["wc-input"].value = "again";
     await env.els["wc-form"].fire("submit");
-    expect(JSON.parse(env.calls[2].init.body)).toEqual({ body: "again", ...visitor });
+    expect(JSON.parse(env.calls[2].init.body)).toEqual({ body: "again", visitorId: visitor.visitorId });
+    expect(env.calls[2].init.headers["X-Visitor-Token"]).toBe(visitor.visitorToken);
+    expect(env.calls.every((c) => !c.url.includes("visitorToken") && !String(c.init.body ?? "").includes(visitor.visitorToken))).toBe(true);
     expect(env.els["wc-log"].children.map((r) => r.children[0].textContent)).toEqual(["<img src=x onerror=alert(1)>", "hello", "again"]);
   });
 
@@ -237,7 +260,8 @@ describe("chat-page.js client", () => {
     await env.els["wc-form"].fire("submit");
     env.els["wc-input"].value = "b";
     await env.els["wc-form"].fire("submit");
-    expect(JSON.parse(env.calls[2].init.body)).toMatchObject(visitor);
+    expect(JSON.parse(env.calls[2].init.body)).toMatchObject({ visitorId: visitor.visitorId });
+    expect(env.calls[2].init.headers["X-Visitor-Token"]).toBe(visitor.visitorToken);
   });
 
   it("shows a localized error for 429 and an unavailable channel", async () => {

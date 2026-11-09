@@ -18,7 +18,15 @@ export interface WidgetRequest {
   widgetParent?: string | null;
 }
 
-const CHANNEL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export const CHANNEL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** The header that carries the visitor token on HTTP routes (never a URL). */
+export const VISITOR_TOKEN_HEADER = "x-visitor-token";
+
+/** The visitor token from the X-Visitor-Token header, if any. */
+export function visitorTokenHeader(req: { headers: Record<string, string | string[] | undefined> }): string | undefined {
+  const v = req.headers?.[VISITOR_TOKEN_HEADER];
+  return typeof v === "string" ? v : undefined;
+}
 const HOST_RE = /^[a-z0-9.-]+(?::\d{1,5})?$/;
 
 const one = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);

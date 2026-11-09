@@ -37,9 +37,11 @@ describe("WidgetRateLimitGuard", () => {
   it("POST counts per IP+channel, and per visitor only when the token verifies", () => {
     const guard = new WidgetRateLimitGuard(new WidgetRateLimiter(() => 0));
     const v = mintVisitor("W1");
-    const post = (ip: string, body: unknown, channelId = "W1") => {
+    const post = (ip: string, body: { visitorId?: string; visitorToken?: string }, channelId = "W1") => {
+      const { visitorToken, ...rest } = body;
+      const headers = visitorToken ? { "x-visitor-token": visitorToken } : {};
       try {
-        return guard.canActivate(ctx({ method: "POST", params: { channelId }, headers: {}, ip, body }).context);
+        return guard.canActivate(ctx({ method: "POST", params: { channelId }, headers, ip, body: rest }).context);
       } catch (e) {
         return channelErrorKey(e);
       }
@@ -50,6 +52,22 @@ describe("WidgetRateLimitGuard", () => {
     for (let i = 0; i < 30; i++) expect(post("same", {}, "W2")).toBe(true);
     expect(post("same", {}, "W2")).toBe("widget.rate_limited");
     expect(post("same", {}, "W3")).toBe(true);
+  });
+
+  it("m1: a malformed channel id is 404 and counts nothing; POSTs share a 60/min per-IP bucket", () => {
+    const limiter = new WidgetRateLimiter(() => 0);
+    const guard = new WidgetRateLimitGuard(limiter);
+    const run = (channelId: string, method = "POST") => {
+      try {
+        return guard.canActivate(ctx({ method, params: { channelId }, headers: {}, ip: "6.6.6.6", body: {} }).context);
+      } catch (e) {
+        return channelErrorKey(e);
+      }
+    };
+    for (const bad of ["", "a b", "../x", "x".repeat(65)]) expect(run(bad)).toBe("widget.channel_unavailable");
+    expect(limiter.postPerIpAll.size() + limiter.postPerIp.size() + limiter.readPerIp.size()).toBe(0);
+    for (let i = 0; i < 60; i++) expect(run(`c${i}`)).toBe(true);
+    expect(run("c61")).toBe("widget.rate_limited");
   });
 
   it("the module provider builds a real-clock limiter", () => {
