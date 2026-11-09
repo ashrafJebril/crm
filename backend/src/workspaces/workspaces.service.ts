@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
@@ -12,7 +13,7 @@ import { PermissionService, type Actor } from "../permissions/permission.service
 import { sanitizePermissions, type PermissionsJson } from "../permissions/catalog";
 import { isEffectiveOwner } from "../permissions/member-role";
 import { SYSTEM_ROLES, isSystemRoleKey } from "../permissions/system-roles";
-import { seedWorkspaceDefaults } from "./workspace-defaults";
+import { seedWorkspaceDefaults, WORKSPACE_TX_OPTIONS } from "./workspace-defaults";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
@@ -89,23 +90,59 @@ export class WorkspacesService {
     }
     // Wrapped in a transaction so we never leave an orphaned Workspace if the
     // owner-membership insert fails (e.g. invalid userId FK).
+    return this.prisma.$transaction(
+      (tx) => this.provision(tx, dto, slug, ownerUserId),
+      WORKSPACE_TX_OPTIONS,
+    );
+  }
+
+  /**
+   * Self-service signup: the new owner User, the Workspace, the owner
+   * membership and the seeded defaults are ONE transaction, so any failure
+   * leaves no user row behind and the visitor can simply retry.
+   */
+  async createWithNewOwner(
+    dto: CreateWorkspaceDto,
+    userData: Prisma.UserCreateInput,
+  ) {
+    const baseSlug = toSlug(dto.name);
+    let slug = baseSlug;
+    let suffix = 0;
+    while (await this.prisma.workspace.findUnique({ where: { slug } })) {
+      suffix += 1;
+      slug = `${baseSlug}-${suffix}`;
+    }
     return this.prisma.$transaction(async (tx) => {
-      const ws = await tx.workspace.create({
-        data: {
-          name: dto.name,
-          slug,
-          timezone: dto.timezone ?? "Asia/Riyadh",
-          lang: dto.lang ?? "ar",
-        },
-      });
-      await tx.workspaceMember.create({
-        data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
-      });
-      // Same defaults every workspace gets: sales pipeline + stages (which the
-      // inbound-message automation needs) and the starter/stage smart groups.
-      await seedWorkspaceDefaults(tx, ws.id);
-      return ws;
+      const user = await tx.user.create({ data: userData });
+      const ws = await this.provision(tx, dto, slug, user.id);
+      // Mirror to Kewy last, inside the transaction: if it refuses (strict
+      // AUTH_SOURCE) the whole signup, user included, rolls back.
+      await this.kewySync.userCreated(user);
+      return { workspace: ws, user };
+    }, WORKSPACE_TX_OPTIONS);
+  }
+
+  private async provision(
+    tx: Parameters<Parameters<PrismaService["$transaction"]>[0]>[0],
+    dto: CreateWorkspaceDto,
+    slug: string,
+    ownerUserId: string,
+  ) {
+    const ws = await tx.workspace.create({
+      data: {
+        name: dto.name,
+        slug,
+        timezone: dto.timezone ?? "Asia/Riyadh",
+        lang: dto.lang ?? "ar",
+      },
     });
+    await tx.workspaceMember.create({
+      data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
+    });
+    // Same defaults every workspace gets: sales pipeline + stages (which the
+    // inbound-message automation needs) and the starter/stage smart groups.
+    await seedWorkspaceDefaults(tx, ws.id);
+    return ws;
   }
 
   async update(id: string, dto: UpdateWorkspaceDto) {

@@ -9,7 +9,7 @@ import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import type { JwtPayload } from "../auth/auth.guard";
-import { seedWorkspaceDefaults } from "../workspaces/workspace-defaults";
+import { seedWorkspaceDefaults, WORKSPACE_TX_OPTIONS } from "../workspaces/workspace-defaults";
 import { ProvisionClientDto, SuspendWorkspaceDto, UpdateWorkspaceAdminDto } from "./admin.dto";
 
 function toSlug(name: string): string {
@@ -295,7 +295,7 @@ export class AdminService {
         };
       },
       // Room for the Kewy call (5s timeout) on top of the seeding.
-      { timeout: 15_000 },
+      { ...WORKSPACE_TX_OPTIONS },
     );
   }
 

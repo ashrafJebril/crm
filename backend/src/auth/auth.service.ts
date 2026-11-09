@@ -248,8 +248,11 @@ export class AuthService {
       .join("")
       .slice(0, 2)
       .toUpperCase();
-    const user = await this.prisma.user.create({
-      data: {
+    // One transaction: user + workspace + membership + seeded defaults. A
+    // failure anywhere rolls the user back too, so a retry is not a 409.
+    const { workspace: ws, user } = await this.workspaces.createWithNewOwner(
+      { name: dto.workspaceName ?? `${dto.name}'s workspace` },
+      {
         email: dto.email,
         password: await bcrypt.hash(dto.password, 10),
         name: dto.name,
@@ -257,13 +260,6 @@ export class AuthService {
         color: dto.color ?? "200",
         initials,
       },
-    });
-    await this.kewySync.userCreated(user, () =>
-      this.prisma.user.delete({ where: { id: user.id } }),
-    );
-    const ws = await this.workspaces.create(
-      { name: dto.workspaceName ?? `${dto.name}'s workspace` },
-      user.id,
     );
     const memberships = await this.workspaces.listForUser(user.id);
     return this.issue(user, ws.id, memberships);
