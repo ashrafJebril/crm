@@ -84,6 +84,21 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-12 routes", () => {
+    const sp12: Record<string, string> = {
+      "GET /campaigns/:id/recipients": "campaigns.view",
+      "GET /campaigns/:id/insights": "campaigns.view",
+      "GET /campaigns/:id/export": "contacts.manage",
+      "POST /campaigns/:id/export": "contacts.manage",
+      "POST /campaigns/:id/follow-up/create-group": "audiences.create",
+      "POST /campaigns/:id/follow-up/add-to-group": "audiences.update",
+      "POST /campaigns/:id/follow-up/tag": "contacts.update",
+    };
+    for (const [k, p] of Object.entries(sp12)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+  });
+
   it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

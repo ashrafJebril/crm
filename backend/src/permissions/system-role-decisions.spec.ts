@@ -1,6 +1,8 @@
 import { ROUTE_PERMISSIONS } from "./permission-map";
 import { SYSTEM_ROLES, SystemRoleKey } from "./system-roles";
 import { hasPermission } from "./permission.service";
+import { blockedForImpersonation } from "./impersonation";
+import { assertRequestPermission } from "./permission.guard";
 
 /** Review Focus 3: the system roles reproduce today's decisions. */
 function allowed(role: SystemRoleKey, key: string): boolean {
@@ -172,6 +174,42 @@ describe("system-role decision table", () => {
 
   it("viewer non-GET exceptions are read-only permissions", () => {
     for (const k of VIEWER_SAFE_NON_GET) expect(ROUTE_PERMISSIONS[k]).toMatch(/\.view$/);
+  });
+
+  // SP-12: campaign recipients, insights, export and follow-ups.
+  describe("SP-12 campaign report routes", () => {
+    const VIEW = ["GET /campaigns/:id/recipients", "GET /campaigns/:id/insights"];
+    const EXPORT = ["GET /campaigns/:id/export", "POST /campaigns/:id/export"];
+    const FOLLOW_UP = [
+      "POST /campaigns/:id/follow-up/tag",
+      "POST /campaigns/:id/follow-up/create-group",
+      "POST /campaigns/:id/follow-up/add-to-group",
+    ];
+
+    it.each([...VIEW, ...FOLLOW_UP])("agent can %s", (key) => {
+      expect(allowed("agent", key)).toBe(true);
+    });
+
+    it.each(EXPORT)("agent cannot %s (contacts.manage); owner and admin can", (key) => {
+      expect(allowed("agent", key)).toBe(false);
+      expect(allowed("owner", key)).toBe(true);
+      expect(allowed("admin", key)).toBe(true);
+    });
+
+    it.each(VIEW)("viewer can %s", (key) => expect(allowed("viewer", key)).toBe(true));
+    it.each([...FOLLOW_UP, ...EXPORT])("viewer cannot %s", (key) => expect(allowed("viewer", key)).toBe(false));
+
+    it("impersonation may export and follow up, but launch stays blocked", () => {
+      const imp = { user: { workspaceId: "ws1", impersonating: true } } as never;
+      for (const k of [...EXPORT, ...FOLLOW_UP, ...VIEW]) {
+        const p = ROUTE_PERMISSIONS[k] as string;
+        expect({ k, blocked: blockedForImpersonation(p) }).toEqual({ k, blocked: false });
+      }
+      // The in-service campaigns.view assertion on export passes for a support session.
+      expect(() => assertRequestPermission(imp, "campaigns.view")).not.toThrow();
+      expect(blockedForImpersonation(ROUTE_PERMISSIONS["POST /campaigns/:id/launch"] as string)).toBe(true);
+      expect(() => assertRequestPermission(imp, "campaigns.manage")).toThrow();
+    });
   });
 
   it("billing.manage and roles.manage are owner-only", () => {

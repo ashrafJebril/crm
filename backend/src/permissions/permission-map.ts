@@ -299,6 +299,16 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /campaigns/:id/cancel": "campaigns.manage",
   "POST /campaigns/:id/refresh": "campaigns.update",
   "DELETE /campaigns/:id": "campaigns.delete",
+  // SP-12 (ruling 8): report reads, export and three follow-up routes. None
+  // uses campaigns.manage (impersonation-blocked spending). Export is bulk
+  // personal data, owner/admin only like SP-03 (service also asserts campaigns.view).
+  "GET /campaigns/:id/recipients": "campaigns.view",
+  "GET /campaigns/:id/insights": "campaigns.view",
+  "GET /campaigns/:id/export": "contacts.manage",
+  "POST /campaigns/:id/export": "contacts.manage",
+  "POST /campaigns/:id/follow-up/create-group": "audiences.create",
+  "POST /campaigns/:id/follow-up/add-to-group": "audiences.update",
+  "POST /campaigns/:id/follow-up/tag": "contacts.update",
   "POST /social/publish": "campaigns.create",
   "GET /social/scheduled": "campaigns.view",
   "GET /social/analytics/overview": "reports.view",

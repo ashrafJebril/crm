@@ -40,3 +40,28 @@ export async function addManualMembers(
   void outbound.emitSegmentUpserted(workspaceId, segmentId);
   return { added: res.count };
 }
+
+export const GROUP_NAME_MAX = 120;
+
+/**
+ * Create a manual group (origin "manual", empty filter) and emit it to HJZ.
+ * Shared by the SP-12 campaign follow-up "create group" action. The name is
+ * trimmed and must be 1-120 characters (400 otherwise).
+ */
+export async function createManualGroup(
+  prisma: Pick<PrismaService, "segment">,
+  outbound: Pick<MarketingOutboundService, "emitSegmentUpserted">,
+  workspaceId: string,
+  input: { name: string; nameAr?: string | null },
+) {
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!name || name.length > GROUP_NAME_MAX) {
+    throw new BadRequestException(`Group name must be 1-${GROUP_NAME_MAX} characters`);
+  }
+  const nameAr = typeof input.nameAr === "string" && input.nameAr.trim() ? input.nameAr.trim() : null;
+  const seg = await prisma.segment.create({
+    data: { workspaceId, name, nameAr, color: null, filter: "{}", origin: "manual" },
+  });
+  void outbound.emitSegmentUpserted(workspaceId, seg.id);
+  return seg;
+}

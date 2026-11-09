@@ -67,3 +67,27 @@ describe("SegmentsController manual-group members", () => {
     expect(rows[0].origin).toBeDefined();
   });
 });
+
+describe("createManualGroup (SP-12 follow-up helper)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createManualGroup } = require("./segment-members") as typeof import("./segment-members");
+
+  it("creates a manual group with an empty filter, trims the name and emits once", async () => {
+    const create = jest.fn(async (a: { data: Record<string, unknown> }) => ({ id: "g1", ...a.data }));
+    const outbound = { emitSegmentUpserted: jest.fn(async () => true) };
+    const seg = await createManualGroup({ segment: { create } } as never, outbound, "ws1", { name: "  Readers ", nameAr: " القراء " });
+    expect(create).toHaveBeenCalledWith({
+      data: { workspaceId: "ws1", name: "Readers", nameAr: "القراء", color: null, filter: "{}", origin: "manual" },
+    });
+    expect(seg.id).toBe("g1");
+    expect(outbound.emitSegmentUpserted).toHaveBeenCalledWith("ws1", "g1");
+  });
+
+  it("rejects a blank or over-long name with 400 and creates nothing", async () => {
+    const create = jest.fn();
+    const outbound = { emitSegmentUpserted: jest.fn() };
+    await expect(createManualGroup({ segment: { create } } as never, outbound, "ws1", { name: "  " })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(createManualGroup({ segment: { create } } as never, outbound, "ws1", { name: "x".repeat(121) })).rejects.toBeInstanceOf(BadRequestException);
+    expect(create).not.toHaveBeenCalled();
+  });
+});

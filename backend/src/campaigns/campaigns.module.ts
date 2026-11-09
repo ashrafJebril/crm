@@ -29,6 +29,11 @@ import { IntegrationsModule } from "../integrations/integrations.module";
 import type { ZernioBroadcastVariable } from "../integrations/zernio.client";
 import { CampaignSendService } from "./campaign-send.service";
 import { CampaignTrackingModule } from "./tracking/campaign-tracking.module";
+import { SegmentsModule } from "../segments/segments.module";
+import { TagsModule } from "../tags/tags.module";
+import { CampaignReportController } from "./campaign-report.controller";
+import { CampaignReportService } from "./campaign-report.service";
+import { CampaignFollowUpService } from "./campaign-follow-up.service";
 
 class CreateCampaignDto {
   @IsString() @IsNotEmpty() name!: string;
@@ -155,8 +160,10 @@ class CampaignsController {
 }
 
 @Module({
-  imports: [IntegrationsModule, CampaignTrackingModule],
-  controllers: [CampaignsController],
-  providers: [CampaignSendService],
+  // SP-12: SegmentsModule (MarketingOutboundService) and TagsModule (TagsService) for follow-ups.
+  imports: [IntegrationsModule, CampaignTrackingModule, SegmentsModule, TagsModule],
+  // CampaignsController first, so its literal GET preview is registered before any :id route.
+  controllers: [CampaignsController, CampaignReportController],
+  providers: [CampaignSendService, CampaignReportService, CampaignFollowUpService],
 })
 export class CampaignsModule {}

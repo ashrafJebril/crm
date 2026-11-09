@@ -30,17 +30,8 @@ export const BASE_COLUMNS = [
   "createdAt",
 ] as const;
 
-export interface ExportSink {
-  /** Awaited so the caller can apply backpressure. */
-  write(chunk: string): Promise<void> | void;
-  /** True once the client went away; the cursor loop stops. */
-  aborted(): boolean;
-}
-
-export interface PreparedExport {
-  filename: string;
-  run(sink: ExportSink): Promise<{ rows: number }>;
-}
+import type { ExportSink, PreparedExport } from "../common/csv-stream";
+export type { ExportSink, PreparedExport } from "../common/csv-stream";
 
 /** RFC4180: quote when the cell holds a comma, quote, CR or LF. */
 export function csvCell(v: unknown): string {
