@@ -20,6 +20,8 @@ import {
 export const RECIPIENT_WRITE_CHUNK = 1000;
 /** A finished tracked campaign is still swept this long after launch, for late reads and failure codes. */
 export const RECIPIENT_SWEEP_TAIL_MS = 72 * 3_600_000;
+/** A finished campaign whose pass already ended is swept again at most this often (fix round 2, R1). */
+export const RECIPIENT_TAIL_INTERVAL_MS = 3_600_000;
 
 const positiveInt = (raw: string | undefined, fallback: number) => {
   const n = Number(raw);
@@ -256,6 +258,11 @@ export class CampaignSendService {
 
   /** Re-entrancy guard: @nestjs/schedule does not prevent overlapping ticks. */
   private syncing = false;
+  /** R1: when each campaign last got a page in this process (a sequence number), for rotation. */
+  private readonly lastPagedAt = new Map<string, number>();
+  private pageSeq = 0;
+  /** R1: when each campaign's last pass ended in this process (covered or not), for the hourly tail. */
+  private readonly passEndedAt = new Map<string, number>();
 
   /**
    * Every 5 minutes, in two phases (fix I3):
@@ -293,6 +300,7 @@ export class CampaignSendService {
           recipientTracking: true,
           recipientSyncSkip: true,
           recipientsSyncedAt: true,
+          recipients: true,
         },
       });
       for (const c of rows) {
@@ -325,20 +333,46 @@ export class CampaignSendService {
    * the pass ended, is recounted: exactly after a first full pass, otherwise
    * only upwards while Zernio's aggregates are still in use. A failing
    * campaign keeps its offset and does not stop the others.
+   *
+   * Fix round 2:
+   * - R1 fairness: campaigns are taken least-recently-paged first (this
+   *   process's memory), then `recipientsSyncedAt` ASC NULLS FIRST, then id,
+   *   so the start rotates every tick. A finished (tail) campaign whose pass
+   *   ended less than an hour ago is not swept at all.
+   * - R2: an explicit `hasMore` is trusted; the short-page and total rules
+   *   apply only when Zernio does not report it.
+   * - R3: `recipientsSyncedAt` is set only when the ended pass covered at
+   *   least `Campaign.recipients` rows; otherwise the pass restarts at 0 and
+   *   Zernio's counters stay in use.
    */
   private async sweepAll(
     campaigns: Array<{
       id: string;
       workspaceId: string;
       zernioBroadcastId: string | null;
+      status?: string | null;
+      recipients?: number | null;
       recipientSyncSkip?: number | null;
       recipientsSyncedAt?: Date | null;
     }>,
   ): Promise<void> {
     const limit = recipientPageSize();
     let budget = recipientSyncMaxPages();
+    const now = Date.now();
+    const tailDue = (c: (typeof campaigns)[number]) => {
+      if (!FINISHED.includes(c.status as string)) return true;
+      const lastEnd = Math.max(c.recipientsSyncedAt?.getTime() ?? 0, this.passEndedAt.get(c.id) ?? 0);
+      return now - lastEnd >= RECIPIENT_TAIL_INTERVAL_MS;
+    };
+    const synced = (c: (typeof campaigns)[number]) => c.recipientsSyncedAt?.getTime() ?? -1;
     const state = campaigns
-      .filter((c) => c.zernioBroadcastId)
+      .filter((c) => c.zernioBroadcastId && tailDue(c))
+      .sort(
+        (a, b) =>
+          (this.lastPagedAt.get(a.id) ?? 0) - (this.lastPagedAt.get(b.id) ?? 0) ||
+          synced(a) - synced(b) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      )
       .map((c) => ({ c, skip: c.recipientSyncSkip ?? 0, finished: false, failed: false, changed: 0, pages: 0 }));
     let open = state;
     while (budget > 0 && open.length > 0) {
@@ -346,6 +380,7 @@ export class CampaignSendService {
         if (budget <= 0) break;
         budget--;
         s.pages++;
+        this.lastPagedAt.set(s.c.id, ++this.pageSeq);
         try {
           const res = await this.zernio.listBroadcastRecipients(s.c.zernioBroadcastId!, { skip: s.skip, limit });
           const applied = await this.tracker.applyBroadcastPage({ id: s.c.id, workspaceId: s.c.workspaceId }, res);
@@ -354,11 +389,11 @@ export class CampaignSendService {
           s.skip += n;
           const pageSize = res.pagination.limit > 0 ? Math.min(res.pagination.limit, limit) : limit;
           const total = res.pagination.total;
+          const hasMore = res.pagination.hasMore;
           s.finished =
             n === 0 ||
-            res.pagination.hasMore === false ||
-            n < pageSize ||
-            (typeof total === "number" && s.skip >= total);
+            hasMore === false ||
+            (hasMore == null && (n < pageSize || (typeof total === "number" && s.skip >= total)));
         } catch (e) {
           s.failed = true;
           this.log.warn(`campaign ${s.c.id} recipient sweep failed: ${(e as Error).message}`);
@@ -369,12 +404,18 @@ export class CampaignSendService {
     for (const s of state) {
       if (s.pages === 0) continue;
       try {
+        // R3: a pass that saw fewer rows than were sent (e.g. a silent page
+        // cap) does not count as complete; it restarts and the aggregates stay.
+        const covered = s.finished && s.skip >= (s.c.recipients ?? 0);
+        if (s.finished) this.passEndedAt.set(s.c.id, Date.now());
         await this.prisma.campaign.update({
           where: { id: s.c.id },
-          data: s.finished ? { recipientSyncSkip: 0, recipientsSyncedAt: new Date() } : { recipientSyncSkip: s.skip },
+          data: s.finished
+            ? { recipientSyncSkip: 0, ...(covered ? { recipientsSyncedAt: new Date() } : {}) }
+            : { recipientSyncSkip: s.skip },
         });
         if (s.finished || s.changed > 0) {
-          const firstPassDone = s.finished || !!s.c.recipientsSyncedAt;
+          const firstPassDone = covered || !!s.c.recipientsSyncedAt;
           await this.tracker.recountCampaign(s.c.id, { floor: !firstPassDone });
         }
       } catch (e) {

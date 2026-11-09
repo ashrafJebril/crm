@@ -307,6 +307,13 @@ export class RecipientTrackerService {
         };
       }
     }
-    await this.prisma.campaign.update({ where: { id: campaignId }, data });
+    // Fix round 2 (R4): `replied` is also incremented by the attributor on
+    // the inbound path, possibly between our groupBy and this write. Writing
+    // it as GREATEST(current, rows) in one statement cannot lose such an
+    // increment; replies are terminal and increments are one per first
+    // reply, so `current` never exceeds the true count.
+    const { replied: repliedRows, ...rest } = data;
+    await this.prisma.campaign.update({ where: { id: campaignId }, data: rest });
+    await this.prisma.$executeRaw`UPDATE "Campaign" SET "replied" = GREATEST("replied", ${repliedRows}::int) WHERE "id" = ${campaignId}`;
   }
 }

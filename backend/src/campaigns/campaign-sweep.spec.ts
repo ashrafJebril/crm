@@ -1,6 +1,7 @@
 import { CampaignSendService } from "./campaign-send.service";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
+import { CampaignReplyAttributor } from "./tracking/reply-attributor.service";
 
 /** SP-12 Task 1 fix round 1: sweep counters, paging, scheduled tail, cron guard and ordering. */
 
@@ -249,5 +250,113 @@ describe("cron ordering, guard and budget (I3)", () => {
     const by = Object.fromEntries(prisma.db.campaign.map((c: any) => [c.id, c]));
     expect(by.bad.recipientSyncSkip).toBe(40);
     expect(by.ok.recipientsSyncedAt).toEqual(NOW);
+  });
+});
+
+describe("fix round 2", () => {
+  it("R1: with a budget of 2 and 3 campaigns, all three are swept across two ticks", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "2";
+    const { zernio, svc } = build({
+      campaign: [campaign("a"), campaign("b"), campaign("c")],
+      campaignRecipient: [...rows("a", 1), ...rows("b", 1), ...rows("c", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    jest.setSystemTime(new Date(NOW.getTime() + 5 * 60_000));
+    await svc.syncActive();
+    const swept = new Set(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[0]));
+    expect([...swept].sort()).toEqual(["b-a", "b-b", "b-c"]);
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(4);
+  });
+
+  it("R1: tail campaigns whose pass completed are swept at most hourly and do not eat the budget", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    const { zernio, svc } = build({
+      campaign: [
+        campaign("t1", { status: "completed", recipientsSyncedAt: ago(10 * 60_000) }),
+        campaign("t2", { status: "completed", recipientsSyncedAt: ago(20 * 60_000) }),
+        campaign("live", { recipientsSyncedAt: ago(5 * 60_000) }),
+      ],
+      campaignRecipient: [...rows("t1", 1), ...rows("t2", 1), ...rows("live", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    // The tail campaigns synced < 1 h ago are not swept; the live one gets the only page.
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[0])).toEqual(["b-live"]);
+
+    // An hour later the tail campaigns are due again (oldest-synced first).
+    jest.setSystemTime(new Date(NOW.getTime() + 61 * 60_000));
+    zernio.listBroadcastRecipients.mockClear();
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[0])).toEqual(["b-t2"]);
+  });
+
+  it("R2: an explicit hasMore:true is trusted even on a short page", async () => {
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1")], campaignRecipient: rows("c1", 100) });
+    zernio.listBroadcastRecipients.mockImplementation(async (_b: string, { skip }: { skip: number }) =>
+      skip === 0
+        ? { recipients: Array.from({ length: 95 }, (_, k) => zr(k)), pagination: { total: 100, limit: 100, skip: 0, hasMore: true }, summary: {} }
+        : { recipients: Array.from({ length: 5 }, (_, k) => zr(95 + k)), pagination: { total: 100, limit: 100, skip, hasMore: false }, summary: {} },
+    );
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[1].skip)).toEqual([0, 95]);
+    expect(prisma.db.campaign[0].recipientsSyncedAt).toEqual(NOW);
+    expect(prisma.db.campaignRecipient.every((r: { status: string }) => r.status === "delivered")).toBe(true);
+  });
+
+  it("R3: a pass that covered fewer rows than Campaign.recipients does not end the first pass", async () => {
+    // Zernio silently caps the page at 50 and sends no pagination block.
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1", { recipients: 250 })], campaignRecipient: rows("c1", 250) });
+    zernio.listBroadcastRecipients.mockImplementation(async (_b: string, { skip, limit }: { skip: number; limit: number }) => ({
+      recipients: Array.from({ length: 50 }, (_, k) => zr(skip + k)),
+      pagination: { total: null, limit, skip, hasMore: null },
+      summary: {},
+    }));
+    await svc.syncActive();
+    const c = prisma.db.campaign[0];
+    expect(c.recipientsSyncedAt).toBeNull(); // Zernio's counters stay in use
+    expect(c.recipientSyncSkip).toBe(0); // the pass restarts
+    expect(c).toMatchObject({ sent: 240, delivered: 200, read: 120, failed: 3 });
+  });
+
+  it("R4: a reply marked while a recount is in flight is not lost", async () => {
+    const { prisma, svc } = build({
+      campaign: [campaign("c1", { recipientsSyncedAt: ago(H), replied: 0 })],
+      campaignRecipient: rows("c1", 2, "delivered").map((r) => ({ ...r, sentAt: ago(H) })),
+    });
+    const tracker = new RecipientTrackerService(prisma);
+    const attributor = new CampaignReplyAttributor(prisma, tracker);
+    const realGroupBy = prisma.campaignRecipient.groupBy.getMockImplementation();
+    let raced = false;
+    prisma.campaignRecipient.groupBy.mockImplementation((a: unknown) => {
+      const read = realGroupBy!(a);
+      return {
+        then: async (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => {
+          try {
+            const v = await read; // the recount has read its counts…
+            if (!raced) {
+              raced = true; // …then a reply lands before it writes
+              const res = await attributor.onInbound({
+                workspaceId: "ws1",
+                channelId: "chA",
+                contactId: null,
+                phone: phone(0),
+                text: "yes",
+                inboundMessageId: "m1",
+                at: NOW,
+              });
+              expect(res).not.toBeNull();
+            }
+            return ok(v);
+          } catch (e) {
+            return bad(e);
+          }
+        },
+      };
+    });
+    await tracker.recountCampaign("c1");
+    expect(prisma.db.campaignRecipient[0].status).toBe("replied");
+    expect(prisma.db.campaign[0].replied).toBe(1);
+    void svc;
   });
 });

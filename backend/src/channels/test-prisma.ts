@@ -241,6 +241,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
             if (a.skipDuplicates) continue;
             throw p2002("CampaignRecipient_campaignId_phone_key");
           }
+          // SP-12 T2: SegmentMember @@id([segmentId, contactId]).
+          if (name === "segmentMember" && rows().some((o) => o.segmentId === row.segmentId && o.contactId === row.contactId)) {
+            if (a.skipDuplicates) continue;
+            throw p2002("SegmentMember_pkey");
+          }
           write(row);
           rows().push(row);
           count++;
@@ -348,6 +353,10 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     template: model("template"),
     workspaceMember: model("workspaceMember"),
     campaignRecipient: model("campaignRecipient"),
+    // SP-12 T2: follow-up actions (groups and tags).
+    segment: model("segment"),
+    segmentMember: model("segmentMember"),
+    tag: model("tag"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();
@@ -399,6 +408,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
           n++;
         }
         return n;
+      }
+      if (/UPDATE "Campaign" SET "replied" = GREATEST\("replied", \?::int\)/.test(sql)) {
+        // SP-12 R4: atomic GREATEST write of Campaign.replied
+        const [n, id] = vals;
+        const row = db.campaign.find((c) => c.id === id);
+        if (row) row.replied = Math.max(row.replied ?? 0, Number(n));
+        return row ? 1 : 0;
       }
       if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {
         const [id] = vals;
