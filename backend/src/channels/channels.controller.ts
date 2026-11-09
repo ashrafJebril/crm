@@ -49,6 +49,12 @@ export class ChannelsController {
     return this.svc.update(workspaceId, id, dto);
   }
 
+  /** Re-run the provider registration (T2: Telegram). channels.update. */
+  @Post(":id/reconnect")
+  reconnect(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.reconnect(workspaceId, id);
+  }
+
   /** Soft disconnect (R9). */
   @Delete(":id")
   remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {

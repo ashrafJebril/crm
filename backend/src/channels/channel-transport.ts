@@ -26,6 +26,12 @@ export interface TransportConversation {
  *     e.g. to emit `widget.message` with the real message id.
  *  3. `disconnect` (optional) is the provider-side teardown on a soft
  *     disconnect (`DELETE /channels/:id`), best effort.
+ *  4. `reconnect` (optional) backs `POST /channels/:id/reconnect`: re-runs the
+ *     provider registration (Telegram: rotate the secret, setWebhook) and
+ *     returns the updated row — `active`, or `error` with a `statusReason`
+ *     when the provider step failed. It throws a channels.* HttpException for
+ *     a request that cannot proceed (bad token, connected elsewhere). A
+ *     provider without it answers 400 channels.transport_unavailable.
  */
 export interface ChannelTransport {
   readonly provider: string;
@@ -36,6 +42,7 @@ export interface ChannelTransport {
   ): Promise<{ providerMessageId: string | null }>;
   delivered?(channel: Channel, conv: TransportConversation, message: Message): Promise<void> | void;
   disconnect?(channel: Channel): Promise<void>;
+  reconnect?(channel: Channel): Promise<Channel>;
 }
 
 @Injectable()

@@ -160,6 +160,22 @@ export class ChannelsService {
     return toChannelDto(updated);
   }
 
+  /**
+   * `POST /channels/:id/reconnect`: re-run the provider registration through
+   * the transport's `reconnect` hook (Telegram: rotate the webhook secret and
+   * setWebhook again). Reactivates a soft-disconnected row (R9) or retries an
+   * `error` one. Providers without a hook: 400 channels.transport_unavailable.
+   */
+  async reconnect(workspaceId: string, id: string): Promise<ChannelDto> {
+    const row = await this.load(workspaceId, id);
+    const transport = this.transports.get(row.provider);
+    if (!transport?.reconnect) throw channelError("channels.transport_unavailable", { provider: row.provider });
+    const updated = await transport.reconnect(row);
+    await ensureDefaultPerKind(this.prisma, workspaceId);
+    this.changed(workspaceId, row.id);
+    return toChannelDto((await this.prisma.channel.findFirst({ where: { id: row.id, workspaceId } })) ?? updated);
+  }
+
   /** Zernio resync (one channel per account) plus the legacy mirror. */
   async sync(workspaceId: string): Promise<ChannelDto[]> {
     if (this.zernio) await this.zernio.syncAccounts(workspaceId);

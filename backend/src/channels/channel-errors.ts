@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   NotFoundException,
 } from "@nestjs/common";
@@ -22,7 +23,11 @@ export type ChannelErrorKey =
   | "channels.sender_invalid"
   | "channels.encryption_unavailable"
   | "channels.transport_unavailable"
-  | "channels.invalid_config";
+  | "channels.invalid_config"
+  | "channels.telegram_invalid_token"
+  | "channels.telegram_needs_public_url"
+  | "channels.telegram_send_failed"
+  | "channels.webhook_forbidden";
 
 const STATUS: Record<ChannelErrorKey, number> = {
   "channels.not_found": 404,
@@ -38,6 +43,10 @@ const STATUS: Record<ChannelErrorKey, number> = {
   "channels.encryption_unavailable": 400,
   "channels.transport_unavailable": 400,
   "channels.invalid_config": 400,
+  "channels.telegram_invalid_token": 400,
+  "channels.telegram_needs_public_url": 400,
+  "channels.telegram_send_failed": 502,
+  "channels.webhook_forbidden": 403,
 };
 
 export function channelError(key: ChannelErrorKey, extra: Record<string, unknown> = {}): HttpException {
@@ -46,6 +55,7 @@ export function channelError(key: ChannelErrorKey, extra: Record<string, unknown
   if (statusCode === 404) return new NotFoundException(body);
   if (statusCode === 409) return new ConflictException(body);
   if (statusCode === 400) return new BadRequestException(body);
+  if (statusCode === 403) return new ForbiddenException(body);
   return new HttpException(body, statusCode);
 }
 

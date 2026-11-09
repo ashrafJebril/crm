@@ -14,6 +14,7 @@ describe("ChannelsController", () => {
       "GET /channels/limits": "channels.view",
       "PATCH /channels/:id": "channels.update",
       "POST /channels": "channels.create",
+      "POST /channels/:id/reconnect": "channels.update",
       "POST /channels/sync": "channels.update",
     });
   });

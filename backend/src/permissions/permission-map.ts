@@ -115,6 +115,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /webhooks/whatsapp": "public",
   "POST /webhooks/whatsapp": "public",
   "POST /webhooks/zernio": "public",
+  "POST /webhooks/telegram/:channelId": "public", // TelegramWebhookGuard: secret header
   "GET /webhooks/meta": "public",
   "POST /webhooks/meta": "public",
   "POST /webhooks/l/messages": "public",
@@ -388,6 +389,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /channels": "channels.create", // web chat only
   "PATCH /channels/:id": "channels.update",
   "POST /channels/sync": "channels.update",
+  "POST /channels/:id/reconnect": "channels.update", // T2: Telegram re-registers its webhook
+  "POST /channels/telegram": "channels.create",
   "DELETE /channels/:id": "channels.delete", // soft disconnect
 
   // ── Members & workspace settings ──────────────────────────────────────

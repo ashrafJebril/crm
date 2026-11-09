@@ -8,6 +8,13 @@ export class CreateChannelDto {
   @IsOptional() @IsObject() config?: Record<string, unknown>;
 }
 
+/** `POST /channels/telegram`. The token's shape is checked in the service
+ *  (400 channels.telegram_invalid_token); it is never echoed back. */
+export class ConnectTelegramDto {
+  @IsString() @IsNotEmpty() @MaxLength(200) botToken!: string;
+  @IsOptional() @IsString() @MaxLength(80) displayName?: string;
+}
+
 /** `PATCH /channels/:id`. */
 export class UpdateChannelDto {
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(80) displayName?: string;
