@@ -1,4 +1,5 @@
 import type { ChannelDto, Conversation } from "../../lib/types";
+import { channelLabels } from "../channels/channelModel";
 
 export type InboxView = "list" | "table" | "board";
 export type InboxSort = "recent" | "oldest" | "unread";
@@ -116,26 +117,33 @@ export interface NumberTab {
   kind: string | null;
 }
 
+/** m3: channels that get a number tab (live ones; not disconnected, merged or pending). */
+const TAB_STATUSES: ReadonlySet<string> = new Set(["active", "needs_attention"]);
+
 /**
- * Tabs for channels whose kind has 2 or more numbers (e.g. two WhatsApp numbers).
- * Counts come from the visible list; conversations without a channel (l-agent)
- * only count under "All". Returns [] when no kind qualifies.
+ * Tabs for channels whose kind has 2 or more live numbers (status active or
+ * needs_attention; e.g. two WhatsApp numbers). Counts come from the visible
+ * list; conversations without a channel (l-agent) only count under "All".
+ * Labels tell apart numbers sharing a name (channelLabels). Returns [] when
+ * no kind qualifies.
  */
 export function numberTabs(
   visible: Conversation[],
-  channels: Pick<ChannelDto, "id" | "kind" | "displayName" | "phoneNumber">[],
+  channels: Pick<ChannelDto, "id" | "kind" | "displayName" | "phoneNumber" | "externalId" | "status">[],
 ): NumberTab[] {
+  const live = channels.filter((ch) => TAB_STATUSES.has(ch.status));
   const perKind = new Map<string, number>();
-  for (const ch of channels) perKind.set(ch.kind, (perKind.get(ch.kind) ?? 0) + 1);
-  const multi = channels.filter((ch) => (perKind.get(ch.kind) ?? 0) >= 2);
+  for (const ch of live) perKind.set(ch.kind, (perKind.get(ch.kind) ?? 0) + 1);
+  const multi = live.filter((ch) => (perKind.get(ch.kind) ?? 0) >= 2);
   if (multi.length === 0) return [];
+  const labels = channelLabels(multi);
   const counts = new Map<string, number>();
   for (const c of visible) if (c.channelId) counts.set(c.channelId, (counts.get(c.channelId) ?? 0) + 1);
   return [
     { id: null, label: "All", count: visible.length, kind: null },
     ...multi.map((ch) => ({
       id: ch.id,
-      label: ch.displayName || ch.phoneNumber || ch.kind,
+      label: labels.get(ch.id) ?? ch.kind,
       count: counts.get(ch.id) ?? 0,
       kind: ch.kind,
     })),

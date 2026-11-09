@@ -6,6 +6,7 @@ import {
   STATUS_REASON_COPY,
   channelErrorCopy,
   channelErrorText,
+  sendErrorText,
   errorField,
   statusReasonCopy,
 } from "./channelErrors";
@@ -149,5 +150,18 @@ describe("statusReasonCopy", () => {
     const c = statusReasonCopy("weird upstream thing")!;
     expect(c.en).toBe("weird upstream thing");
     expect(ARABIC.test(c.ar)).toBe(true);
+  });
+});
+
+describe("sendErrorText (SP-19 m1)", () => {
+  it("localizes a known channel key from a Zernio/Meta send, keeps other text", () => {
+    const en = makeTx("en");
+    const ar = makeTx("ar");
+    expect(sendErrorText(null, en)).toBeNull();
+    const nc = channelErrorCopy("channels.not_connected")!;
+    expect(sendErrorText("channels.not_connected", en)).toBe(nc.en);
+    expect(sendErrorText("channels.not_connected", ar)).toBe(nc.ar);
+    expect(sendErrorText("channels.disconnected", en)).toBe(channelErrorCopy("channels.disconnected")!.en);
+    expect(sendErrorText("Message failed to send", en)).toBe("Message failed to send");
   });
 });

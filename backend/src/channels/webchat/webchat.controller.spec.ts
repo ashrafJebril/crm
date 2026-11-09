@@ -210,13 +210,52 @@ describe("widget rate limit returns 429", () => {
     expect((await call(b, "send", { body: { body: "later", visitorId }, token: visitorToken })).status).toBe(200);
   });
 
-  it("POST: 30/min per IP and channel, across new visitors", async () => {
+  it("POST: 30/min per IP and channel, across visitors", async () => {
     const b = build();
-    for (let i = 0; i < 30; i++) expect((await call(b, "send", { body: { body: `m${i}` } })).status).toBe(200);
-    const r = await call(b, "send", { body: { body: "x" } });
-    expect(r).toMatchObject({ status: 429, key: "widget.rate_limited" });
+    // 30 verified visitors (minted from distinct IPs), then all post from one IP
+    const visitors: Array<{ visitorId: string; visitorToken: string }> = [];
+    for (let i = 0; i < 31; i++) {
+      const r = await call(b, "send", { body: { body: `hi${i}` }, ip: `10.8.${i}.1` });
+      visitors.push(r.body as { visitorId: string; visitorToken: string });
+    }
+    const post = (v: { visitorId: string; visitorToken: string }, ip = "10.0.0.1") =>
+      call(b, "send", { body: { body: "m", visitorId: v.visitorId }, token: v.visitorToken, ip });
+    for (let i = 0; i < 30; i++) expect((await post(visitors[i])).status).toBe(200);
+    expect(await post(visitors[30])).toMatchObject({ status: 429, key: "widget.rate_limited" });
     // another IP is unaffected
+    expect((await post(visitors[30], "10.9.9.9")).status).toBe(200);
+  });
+
+  it("POST without visitorId: 5 new visitors per hour per IP and channel (I2)", async () => {
+    const b = build();
+    for (let i = 0; i < 5; i++) expect((await call(b, "send", { body: { body: `m${i}` } })).status).toBe(200);
+    const r = await call(b, "send", { body: { body: "x" } });
+    expect(r).toMatchObject({ status: 429, key: "widget.rate_limited", body: { retryAfter: expect.any(Number) } });
+    expect((r.body as { retryAfter: number }).retryAfter).toBeGreaterThan(60);
+    expect(r.headers["retry-after"]).toBe(String((r.body as { retryAfter: number }).retryAfter));
+    // no extra contact/conversation was created by the refused request
+    expect(b.prisma.db.conversation).toHaveLength(5);
+    // another IP may still start a chat; the same IP may again after the hour
     expect((await call(b, "send", { body: { body: "x" }, ip: "10.9.9.9" })).status).toBe(200);
+    b.clock.advance(60 * 60_000 + 1);
+    expect((await call(b, "send", { body: { body: "x" } })).status).toBe(200);
+  });
+
+  it("POST without visitorId: at most 200 new visitors per hour per channel, whatever the IPs (I2)", async () => {
+    const b = build();
+    const known = (await call(b, "send", { body: { body: "first" }, ip: "10.250.9.9" })).body as {
+      visitorId: string;
+      visitorToken: string;
+    };
+    for (let i = 1; i < 200; i++) {
+      expect((await call(b, "send", { body: { body: "x" }, ip: `10.20.${i}.9` })).status).toBe(200);
+      if (i % 25 === 0) b.clock.advance(61_000); // stay clear of the per-minute buckets
+    }
+    const r = await call(b, "send", { body: { body: "x" }, ip: "10.250.0.1" });
+    expect(r).toMatchObject({ status: 429, key: "widget.rate_limited", body: { retryAfter: expect.any(Number) } });
+    // a known visitor keeps chatting while new ones are capped
+    const again = await call(b, "send", { body: { body: "still here", visitorId: known.visitorId }, token: known.visitorToken, ip: "10.250.0.1" });
+    expect(again.status).toBe(200);
   });
 
   it("an unverified visitor id cannot drain someone else's bucket", async () => {

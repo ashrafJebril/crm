@@ -105,8 +105,8 @@ describe("inboxFilters", () => {
 });
 
 describe("number tabs (SP-19)", () => {
-  const ch = (id: string, kind: string, displayName = id, phoneNumber: string | null = null) =>
-    ({ id, kind, displayName, phoneNumber }) as any;
+  const ch = (id: string, kind: string, displayName = id, phoneNumber: string | null = null, status = "active") =>
+    ({ id, kind, displayName, phoneNumber, status, externalId: `ext-${id}` }) as any;
   const two = [ch("w1", "whatsapp", "Main", "+971500000001"), ch("w2", "whatsapp", "", "+971500000002")];
 
   it("number tab filters by channelId", () => {
@@ -141,5 +141,20 @@ describe("number tabs (SP-19)", () => {
     expect(numberTabs([], [ch("w1", "whatsapp"), ch("t1", "telegram")])).toEqual([]);
     const tabs = numberTabs([], [ch("w1", "whatsapp"), ch("w2", "whatsapp"), ch("t1", "telegram")]);
     expect(tabs.map((t) => t.id)).toEqual([null, "w1", "w2"]);
+  });
+  it("m3: only active or needs_attention channels get a tab", () => {
+    const tabs = numberTabs([], [
+      ch("w1", "whatsapp", "Main", null, "active"),
+      ch("w2", "whatsapp", "Old", null, "disconnected"),
+      ch("w3", "whatsapp", "Merged", null, "merged"),
+      ch("w4", "whatsapp", "Pending", null, "pending"),
+    ]);
+    expect(tabs).toEqual([]);
+    const two = numberTabs([], [ch("w1", "whatsapp", "Main"), ch("w2", "whatsapp", "Two", null, "needs_attention"), ch("w3", "whatsapp", "Gone", null, "disconnected")]);
+    expect(two.map((t) => t.id)).toEqual([null, "w1", "w2"]);
+  });
+  it("I1: tabs for two numbers sharing a name are told apart", () => {
+    const tabs = numberTabs([], [ch("w1", "whatsapp", "Shop", "+971500000001"), ch("w2", "whatsapp", "Shop", null)]);
+    expect(tabs.map((t) => t.label)).toEqual(["All", "Shop · +971500000001", "Shop · #t-w2"]);
   });
 });

@@ -3,6 +3,7 @@ import { useFetch } from "@/api/useFetch";
 import { IconFilter } from "@/icons";
 import type { Tx } from "@/lib/tx";
 import type { ChannelDto, ConversationLabel, TagRow, TeamMember } from "@/lib/types";
+import { channelLabels } from "../channels/channelModel";
 import { activeFilterCount, EMPTY_FILTER, type InboxFilter } from "./inboxFilters";
 import { LABEL_COLOR_VAR } from "./LabelPicker";
 import { Popover } from "./Popover";
@@ -63,6 +64,7 @@ function Panel({
   ];
   const set = (patch: Partial<InboxFilter>) => onChange({ ...filter, ...patch });
   const dateStyle = { flex: 1, minWidth: 0, boxSizing: "border-box" as const };
+  const numberLabels = channelLabels(channels);
   return (
     <div style={{ minWidth: 250 }}>
       {team.length > 0 && (
@@ -86,7 +88,7 @@ function Panel({
               checked={filter.channelIds.includes(c.id)}
               onChange={() => set({ channelIds: toggle(filter.channelIds, c.id) })}
             >
-              <span dir="auto">{c.displayName || c.phoneNumber || c.kind}</span>
+              <span dir="auto">{numberLabels.get(c.id) ?? c.kind}</span>
             </Check>
           ))}
         </Group>

@@ -103,6 +103,13 @@ describe("CampaignSendService", () => {
       ).rejects.toThrow(/future/);
     });
 
+    it("SP-19 m6: with no WhatsApp sender it points to Channels, not Settings → Integrations", async () => {
+      prisma.integration.findFirst.mockResolvedValue(null);
+      const err = await svc.launch("ws1", "camp1", { mode: "now", variables: vars }).catch((e) => e);
+      expect(err.message).toMatch(/Channels/);
+      expect(err.message).not.toMatch(/Integrations/);
+    });
+
     it("refuses while the workspace is locked for an unpaid subscription", async () => {
       isLocked.mockResolvedValue(true);
       await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/payment/i);

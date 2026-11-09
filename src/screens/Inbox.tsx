@@ -51,9 +51,9 @@ import {
   readFilterFromHash, readNumberFromHash, readViewFromHash, writeFilterToHash, writeNumberToHash, writeViewToHash,
 } from "./inbox/inboxHash";
 import { pickSendRoute, supportsTemplates } from "./inbox/sendRoute";
-import { invalidateChannels, useChannelsData } from "./channels/channelUi";
+import { invalidateChannels, useChannelsList } from "./channels/channelUi";
 import { useQueryClient } from "@tanstack/react-query";
-import { channelErrorText } from "./channels/channelErrors";
+import { channelErrorText, sendErrorText } from "./channels/channelErrors";
 import { AddFilteredToGroup } from "./inbox/AddFilteredToGroup";
 import { InboxBoard } from "./inbox/InboxBoard";
 import { InboxTable } from "./inbox/InboxTable";
@@ -331,6 +331,8 @@ interface ConversationPaneProps {
   /** SP-19: the conversation's channel, and whether its kind has several numbers. */
   channel: ChannelDto | null;
   multiNumber: boolean;
+  /** I1: the channel's label among the number tabs (tells apart numbers sharing a name). */
+  numberLabel?: string | null;
   onConvertToTicket: () => void;
   onConversationChanged: () => Promise<unknown>;
   messagesLoading: boolean;
@@ -1305,6 +1307,7 @@ function ConversationPane({
   sendError,
   channel,
   multiNumber,
+  numberLabel,
   onConvertToTicket,
   onConversationChanged,
   messagesLoading,
@@ -1347,7 +1350,7 @@ function ConversationPane({
   const waBlocked = isWhatsApp && !waWindowOpen;
   // SP-19: a disconnected channel keeps its history but cannot send.
   const channelDown = channel?.status === "disconnected";
-  const numberName = channel ? channel.displayName || channel.phoneNumber || "" : "";
+  const numberName = numberLabel || (channel ? channel.displayName || channel.phoneNumber || "" : "");
   const channelDownText = tx(
     "This channel is disconnected. Reconnect it to send replies.",
     "هذه القناة مفصولة. أعد ربطها لإرسال الردود.",
@@ -2521,7 +2524,9 @@ function InboxImpl() {
     ? `/conversations?${filter.channelIds.map((id) => `channelId=${encodeURIComponent(id)}`).join("&")}`
     : "/conversations";
   const convsQ = useFetch<Conversation[]>(convsPath, { pollMs: 30000 });
-  const channelsQ = useChannelsData(true).listQ;
+  // m4: list only (no limits / signup config), and only for channels.view.
+  const canViewChannels = usePermissions().can("channels.view");
+  const channelsQ = useChannelsList(canViewChannels);
   const channelList = channelsQ.data ?? [];
   const channelById = useMemo(() => new Map(channelList.map((c) => [c.id, c])), [channelList]);
   const contactsQ = useFetch<Contact[]>("/contacts");
@@ -2808,6 +2813,10 @@ function InboxImpl() {
     const ids = new Set(numberTabList.map((t) => t.id));
     return channelList.filter((c) => ids.has(c.id));
   }, [numberTabList, channelList]);
+  const numberLabels = useMemo(
+    () => new Map(numberTabList.flatMap((t) => (t.id ? [[t.id, t.label] as const] : []))),
+    [numberTabList],
+  );
   // A hash `n=` for a number that no longer has a tab must not filter invisibly.
   const activeTab = numberTabList.some((t) => t.id === numberTab) ? numberTab : null;
 
@@ -3004,6 +3013,16 @@ function InboxImpl() {
     }
   };
 
+  // m1: Zernio / Meta sends refresh the channel list and threads when the
+  // channel's state changed under us (409 channels.disconnected / not_connected).
+  const refreshOnChannelState = (e: unknown): never => {
+    if (isChannelStateError(e)) {
+      invalidateChannels(qc);
+      void convsQ.refetch();
+    }
+    throw e;
+  };
+
   const handleSend = async (body: string, mediaId?: string): Promise<void> => {
     if (!activeId) return;
     if (isFbConvId(activeId)) {
@@ -3034,11 +3053,11 @@ function InboxImpl() {
     if (conv && route === "native") {
       await sendNative(activeId, body);
     } else if (conv && route === "zernio") {
-      await sendZernioDbMessage.mutate({ conversationId: activeId, body, mediaId });
+      await sendZernioDbMessage.mutate({ conversationId: activeId, body, mediaId }).catch(refreshOnChannelState);
     } else if (conv && route === "meta_ig") {
       await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
     } else if (conv && route === "meta_wa") {
-      await sendWaMessage.mutate({ conversationId: activeId, body, mediaId });
+      await sendWaMessage.mutate({ conversationId: activeId, body, mediaId }).catch(refreshOnChannelState);
     } else {
       // Fallback: just write to DB (web chat, etc.)
       await sendMessage.mutate({ conversationId: activeId, body });
@@ -3291,21 +3310,25 @@ function InboxImpl() {
             // through Zernio, which carries templates on its normal send
             // endpoint. Only a direct Meta connection uses the Cloud API path.
             if (zernioOwnsConvChannel(activeId)) {
-              await sendZernioDbTemplate.mutate({
-                conversationId: activeId,
-                name,
-                language,
-                variables,
-                header,
-              });
+              await sendZernioDbTemplate
+                .mutate({
+                  conversationId: activeId,
+                  name,
+                  language,
+                  variables,
+                  header,
+                })
+                .catch(refreshOnChannelState);
             } else {
-              await sendWaTemplate.mutate({
-                conversationId: activeId,
-                name,
-                language,
-                variables,
-                header,
-              });
+              await sendWaTemplate
+                .mutate({
+                  conversationId: activeId,
+                  name,
+                  language,
+                  variables,
+                  header,
+                })
+                .catch(refreshOnChannelState);
             }
             // messageVersion bump refetches the thread via the new queryKey.
             setMessageVersion((n) => n + 1);
@@ -3324,17 +3347,19 @@ function InboxImpl() {
           }
           channel={activeChannelId ? (channelById.get(activeChannelId) ?? null) : null}
           multiNumber={!!activeChannelId && numberChannels.some((c) => c.id === activeChannelId)}
-          sendError={
+          numberLabel={activeChannelId ? (numberLabels.get(activeChannelId) ?? null) : null}
+          sendError={sendErrorText(
             sendMessage.error ??
-            sendFbMessage.error ??
-            sendIgMessage.error ??
-            sendIgLiveMessage.error ??
-            sendZernioDbMessage.error ??
-            sendWaMessage.error ??
-            sendWaTemplate.error ??
-            sendZernioDbTemplate.error ??
-            nativeSend.error
-          }
+              sendFbMessage.error ??
+              sendIgMessage.error ??
+              sendIgLiveMessage.error ??
+              sendZernioDbMessage.error ??
+              sendWaMessage.error ??
+              sendWaTemplate.error ??
+              sendZernioDbTemplate.error ??
+              nativeSend.error,
+            tx,
+          )}
           onConvertToTicket={() => setShowConvertModal(true)}
           onConversationChanged={() => Promise.all([convsQ.refetch(), activeQ.refetch()])}
           messagesLoading={

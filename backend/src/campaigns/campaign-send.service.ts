@@ -98,7 +98,7 @@ export class CampaignSendService {
       : await defaultZernioWhatsappAccountId(this.prisma, workspaceId);
     const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { zernioProfileId: true } });
     if (!workspace?.zernioProfileId || !senderAccountId) {
-      throw new BadRequestException("Connect WhatsApp in Settings → Integrations before sending a campaign.");
+      throw new BadRequestException("Connect a WhatsApp number in Channels before sending a campaign.");
     }
     const profileId = workspace.zernioProfileId;
     const accountId = senderAccountId;

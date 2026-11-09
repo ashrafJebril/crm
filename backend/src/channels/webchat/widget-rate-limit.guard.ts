@@ -5,11 +5,15 @@ import { verifyVisitorToken } from "./visitor-token";
 import { CHANNEL_ID_RE, clientIp, visitorTokenHeader, type WidgetRequest } from "./widget-origin.guard";
 
 const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
 /**
  * The widget's in-memory limits (Global Constraints, per machine):
  *  - `POST /widget/:id/messages`: 60/min per IP across all channels, 30/min
  *    per IP and channel, and 10/min per verified visitor;
+ *  - a POST without a `visitorId` mints a visitor (contact, conversation,
+ *    ticket, workflow run): 5/hour per IP and channel, and 200/hour per
+ *    channel whatever the IPs;
  *  - reads (config, history, hosted page, socket handshakes): 120/min per IP.
  * Built by a factory provider so specs can pass a fake clock.
  */
@@ -17,12 +21,16 @@ export class WidgetRateLimiter {
   readonly postPerIpAll: SlidingWindowLimiter;
   readonly postPerIp: SlidingWindowLimiter;
   readonly postPerVisitor: SlidingWindowLimiter;
+  readonly newVisitorPerIp: SlidingWindowLimiter;
+  readonly newVisitorPerChannel: SlidingWindowLimiter;
   readonly readPerIp: SlidingWindowLimiter;
 
   constructor(now: () => number = Date.now) {
     this.postPerIpAll = new SlidingWindowLimiter({ limit: 60, windowMs: MINUTE, now });
     this.postPerIp = new SlidingWindowLimiter({ limit: 30, windowMs: MINUTE, now });
     this.postPerVisitor = new SlidingWindowLimiter({ limit: 10, windowMs: MINUTE, now });
+    this.newVisitorPerIp = new SlidingWindowLimiter({ limit: 5, windowMs: HOUR, now });
+    this.newVisitorPerChannel = new SlidingWindowLimiter({ limit: 200, windowMs: HOUR, now });
     this.readPerIp = new SlidingWindowLimiter({ limit: 120, windowMs: MINUTE, now });
   }
 }
@@ -67,7 +75,14 @@ export class WidgetRateLimitGuard implements CanActivate {
       const byIp = this.limits.postPerIp.hit(`${ip}|${channelId}`);
       if (!byIp.ok) refuse(byIp.retryAfterSec);
       const body = (req.body && typeof req.body === "object" ? req.body : {}) as { visitorId?: unknown };
-      if (body.visitorId !== undefined && verifyVisitorToken(channelId, body.visitorId, visitorTokenHeader(req))) {
+      if (body.visitorId === undefined || body.visitorId === null || body.visitorId === "") {
+        // A new visitor (WebchatService.postMessage mints one): the per-IP
+        // bucket first, so one IP cannot spend the channel's whole budget.
+        const fresh = this.limits.newVisitorPerIp.hit(`${ip}|${channelId}`);
+        if (!fresh.ok) refuse(fresh.retryAfterSec);
+        const perChannel = this.limits.newVisitorPerChannel.hit(channelId);
+        if (!perChannel.ok) refuse(perChannel.retryAfterSec);
+      } else if (verifyVisitorToken(channelId, body.visitorId, visitorTokenHeader(req))) {
         const byVisitor = this.limits.postPerVisitor.hit(`${channelId}|${String(body.visitorId)}`);
         if (!byVisitor.ok) refuse(byVisitor.retryAfterSec);
       }

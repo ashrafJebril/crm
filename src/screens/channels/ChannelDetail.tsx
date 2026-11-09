@@ -11,6 +11,7 @@ import {
   PROVIDER_LABEL,
   canMakeDefault,
   canReconnect,
+  disconnectConfirmBody,
   kindLabel,
   needsSync,
   statusBadge,
@@ -316,10 +317,7 @@ export function ChannelDetail({
                   "The number stops waiting for verification and no longer counts toward your WhatsApp limit. You can add it again later.",
                   "يتوقف الرقم عن انتظار التحقق ولا يُحتسب ضمن حد أرقام واتساب. يمكنك إضافته مجددًا لاحقًا.",
                 )
-              : tx(
-                  "Conversation history stays in the inbox, but new messages stop arriving and replies from this channel are blocked until you reconnect it. Nothing is sent from another number instead.",
-                  "يبقى سجل المحادثات في صندوق الرسائل، لكن تتوقف الرسائل الجديدة وتُمنع الردود من هذه القناة حتى تعيد ربطها. لن يُرسل شيء من رقم آخر بدلًا منها.",
-                )
+              : disconnectConfirmBody(channel, tx)
           }
           confirmLabel={stage ? tx("Remove", "إزالة") : tx("Disconnect", "فصل")}
           busy={busy === "disconnect"}

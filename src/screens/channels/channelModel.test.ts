@@ -6,7 +6,9 @@ import {
   buildSnippet,
   canMakeDefault,
   canReconnect,
+  channelLabels,
   chatPageUrl,
+  disconnectConfirmBody,
   groupChannels,
   landlineView,
   limitState,
@@ -298,5 +300,47 @@ describe("action availability", () => {
     expect(canReconnect(ch({ provider: "telegram", status: "active" }))).toBe(false);
     // A landline row is driven by its card, not by reconnect.
     expect(canReconnect(ch({ provider: "meta", status: "pending", config: { verification: { stage: "needs_number" } } }))).toBe(false);
+  });
+});
+
+describe("channelLabels (SP-19 I1)", () => {
+  it("a unique name is shown as is, falling back to the phone, then the kind", () => {
+    const m = channelLabels([
+      ch({ id: "a", displayName: "Sales", phoneNumber: "+971500000001" }),
+      ch({ id: "b", displayName: "", phoneNumber: "+971500000002" }),
+      ch({ id: "c", kind: "telegram", displayName: "", phoneNumber: null }),
+    ]);
+    expect(m.get("a")).toBe("Sales");
+    expect(m.get("b")).toBe("+971500000002");
+    expect(m.get("c")).toBe("telegram");
+  });
+  it("two channels sharing a name show name · phone, else name · #last 4 of the external id", () => {
+    const m = channelLabels([
+      ch({ id: "a", displayName: "Shop", phoneNumber: "+971500000001", externalId: "acc-1111" }),
+      ch({ id: "b", displayName: "Shop", phoneNumber: null, externalId: "acc-98765" }),
+      ch({ id: "c", displayName: " shop ", phoneNumber: null, externalId: null }),
+      ch({ id: "d", displayName: "Support", phoneNumber: "+971500000004" }),
+    ]);
+    expect(m.get("a")).toBe("Shop · +971500000001");
+    expect(m.get("b")).toBe("Shop · #8765");
+    expect(m.get("c")).toBe("shop");
+    expect(m.get("d")).toBe("Support");
+  });
+});
+
+describe("disconnectConfirmBody (SP-19 m2)", () => {
+  const tx = (en: string, ar: string) => `${en}|${ar}`;
+  it("Zernio and Meta numbers: replies blocked, incoming may still arrive (EN/AR)", () => {
+    for (const provider of ["zernio", "meta"]) {
+      const [en, ar] = disconnectConfirmBody(ch({ provider, kind: "whatsapp" }), tx).split("|");
+      expect(en).toMatch(/Replies from this number will be blocked; incoming messages may still arrive/);
+      expect(en).not.toMatch(/stop arriving/);
+      expect(ar).toMatch(ARABIC);
+    }
+  });
+  it("Telegram and web chat keep the stop-arriving text", () => {
+    for (const c of [ch({ provider: "telegram", kind: "telegram" }), ch({ provider: "native", kind: "webchat" })]) {
+      expect(disconnectConfirmBody(c, tx)).toMatch(/new messages stop arriving/);
+    }
   });
 });

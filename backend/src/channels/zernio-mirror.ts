@@ -1,7 +1,7 @@
 import type { PrismaService } from "../prisma/prisma.service";
 import type { ZernioAccount } from "../integrations/zernio.client";
 import { accountHealth } from "../integrations/zernio-account-health";
-import type { Channel } from "@prisma/client";
+import type { Channel, Prisma } from "@prisma/client";
 import {
   alignLegacyChannel,
   MERGED,
@@ -99,12 +99,24 @@ export async function mirrorZernioAccounts(
     const kind = a.platform.toLowerCase();
     const h = accountHealth(a);
     const status = h.health === "ok" ? "active" : "needs_attention";
-    const displayName = a.displayName ?? a.username ?? a.name ?? initcap(kind);
+    const providerName = a.displayName ?? a.username ?? a.name ?? initcap(kind);
+    const digits = kind === "whatsapp" ? strongIdentity(a, "whatsapp") : null;
+    const phone = digits ? { phoneNumber: `+${digits}` } : {};
     const row = byExternal.get(a._id);
     if (!row) {
       try {
         await prisma.channel.create({
-          data: { workspaceId, kind, provider: "zernio", externalId: a._id, displayName, status, statusReason: h.reason },
+          data: {
+            workspaceId,
+            kind,
+            provider: "zernio",
+            externalId: a._id,
+            displayName: providerName,
+            ...phone,
+            config: { providerName },
+            status,
+            statusReason: h.reason,
+          },
         });
       } catch (e) {
         if (!isUniqueViolation(e)) throw e; // created concurrently (webhook + redirect sync)
@@ -116,9 +128,25 @@ export async function mirrorZernioAccounts(
     // channel again; threads merged earlier stay with the Integration's).
     const back = REVIVABLE_REASONS.has(row.statusReason ?? "") || row.statusReason === MERGED;
     if (row.status === "disconnected" && !back) continue;
+    // The name is the user's once created (a hub rename survives every sync,
+    // like Meta's finish()): follow Zernio's name only while the row still
+    // carries the last one Zernio gave (`config.providerName`). A row with no
+    // recorded provider name keeps its name and starts tracking Zernio's.
+    const config = asObject(row.config);
+    const last = typeof config.providerName === "string" ? config.providerName : undefined;
+    const naming =
+      last !== undefined && row.displayName === last && providerName !== last ? { displayName: providerName } : {};
     await prisma.channel.update({
       where: { id: row.id },
-      data: { kind, displayName, status, statusReason: h.reason, disconnectedAt: null },
+      data: {
+        kind,
+        ...naming,
+        ...phone,
+        config: { ...config, providerName } as Prisma.InputJsonValue,
+        status,
+        statusReason: h.reason,
+        disconnectedAt: null,
+      },
     });
   }
 
@@ -154,6 +182,10 @@ export async function mirrorZernioAccounts(
   }
 
   await ensureDefaultPerKind(prisma, workspaceId);
+}
+
+function asObject(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : {};
 }
 
 /** What happens to an Integration's legacy slot during a sync (see

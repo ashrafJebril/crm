@@ -22,7 +22,7 @@ import { PipelineAutomationService } from "../tickets/pipeline-automation.servic
 import { LAgentService } from "./l-agent.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { ChannelResolver } from "../channels/channel-resolver.service";
-import { INTEGRATION_REMOVED, mirrorZernioAccounts } from "../channels/zernio-mirror";
+import { INTEGRATION_REMOVED, mirrorZernioAccounts, USER_DISCONNECTED } from "../channels/zernio-mirror";
 import { ensureDefaultPerKind, ZERNIO_MISSING, type IntegrationLike } from "../channels/legacy-mirror";
 import { credentialsFor } from "../channels/channel-credentials";
 import { assertWhatsappCapacity } from "../channels/channel-limits";
@@ -1384,8 +1384,27 @@ export class ZernioService {
     const rows = await this.prisma.integration.findMany({
       where: { workspaceId, provider: "zernio", platform: { in: wanted } },
     });
+    // SP-19 m7 (R9): an account whose channel the user disconnected in the
+    // hub is not posted to. Other disconnect reasons keep `main`'s behaviour.
+    const pageIds = rows.map((r) => r.pageId).filter((id): id is string => !!id);
+    const blocked = new Set(
+      pageIds.length
+        ? (
+            await this.prisma.channel.findMany({
+              where: {
+                workspaceId,
+                provider: "zernio",
+                externalId: { in: pageIds },
+                status: "disconnected",
+                statusReason: USER_DISCONNECTED,
+              },
+              select: { externalId: true },
+            })
+          ).map((c) => c.externalId)
+        : [],
+    );
     const platforms = rows
-      .filter((r) => r.pageId)
+      .filter((r) => r.pageId && !blocked.has(r.pageId))
       .map((r) => ({ platform: r.platform, accountId: r.pageId! }));
     if (platforms.length === 0) {
       throw new BadRequestException("No connected Zernio accounts for the requested platforms");

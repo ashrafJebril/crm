@@ -1,5 +1,6 @@
 import type { BadgeKind } from "@/components/Badge";
 import type { ChannelConfig, ChannelDto, ChannelLimits, VerificationStage } from "@/lib/types";
+import type { Tx } from "@/lib/tx";
 
 /**
  * Pure view logic for the channels hub (SP-19 T5). No React, no fetch: every
@@ -90,7 +91,57 @@ export function groupChannels(list: ChannelDto[]): GroupedChannels {
   return { groups, disconnected, total: list.length };
 }
 
+/* ── Labels ─────────────────────────────────────────────────────────────── */
+
+type LabelSource = Pick<ChannelDto, "id" | "kind" | "displayName" | "phoneNumber" | "externalId">;
+
+/**
+ * I1: the label of each channel where several are listed together (inbox
+ * number tabs, Number filter, "Replying from"): its name, else its phone,
+ * else its kind. Two numbers of one business often share the verified name,
+ * so a name used by more than one channel in `list` gets `name · phone`, or
+ * `name · #<last 4 of externalId>` when the phone is unknown.
+ */
+export function channelLabels(list: LabelSource[]): Map<string, string> {
+  const key = (c: LabelSource) => c.displayName.trim().toLowerCase();
+  const uses = new Map<string, number>();
+  for (const c of list) if (key(c)) uses.set(key(c), (uses.get(key(c)) ?? 0) + 1);
+  const out = new Map<string, string>();
+  for (const c of list) {
+    const name = c.displayName.trim();
+    if (!name) {
+      out.set(c.id, c.phoneNumber || c.kind);
+      continue;
+    }
+    if ((uses.get(key(c)) ?? 0) < 2) {
+      out.set(c.id, name);
+      continue;
+    }
+    const suffix = c.phoneNumber ? c.phoneNumber : c.externalId ? `#${c.externalId.slice(-4)}` : null;
+    out.set(c.id, suffix ? `${name} · ${suffix}` : name);
+  }
+  return out;
+}
+
 /* ── Actions ────────────────────────────────────────────────────────────── */
+
+/**
+ * m2: the Disconnect confirmation body. Telegram (webhook removed) and web
+ * chat (404) really stop receiving; a Zernio or Meta number keeps receiving
+ * (R9: inbound lands in its threads), only replies are refused.
+ */
+export function disconnectConfirmBody(c: Pick<ChannelDto, "provider" | "kind">, tx: Tx): string {
+  if (c.provider === "telegram" || c.provider === "native" || c.kind === "webchat") {
+    return tx(
+      "Conversation history stays in the inbox, but new messages stop arriving and replies from this channel are blocked until you reconnect it. Nothing is sent from another number instead.",
+      "يبقى سجل المحادثات في صندوق الرسائل، لكن تتوقف الرسائل الجديدة وتُمنع الردود من هذه القناة حتى تعيد ربطها. لن يُرسل شيء من رقم آخر بدلًا منها.",
+    );
+  }
+  return tx(
+    "Conversation history stays in the inbox. Replies from this number will be blocked; incoming messages may still arrive until you reconnect it. Nothing is sent from another number instead.",
+    "يبقى سجل المحادثات في صندوق الرسائل. ستُمنع الردود من هذا الرقم، وقد تستمر الرسائل الواردة بالوصول حتى تعيد ربطه. لن يُرسل شيء من رقم آخر بدلًا منه.",
+  );
+}
 
 /** M-d: Zernio stopped listing the account; a sync may bring it back. */
 export const needsSync = (c: ChannelDto) => c.statusReason === "zernio_account_missing";

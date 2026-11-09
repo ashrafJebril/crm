@@ -366,6 +366,17 @@ export function channelErrorText(e: unknown, tx: Tx): string {
   return tx(message, ar ?? message);
 }
 
+/**
+ * m1: a send error kept as a string by useMutation (Zernio / Meta routes).
+ * A known channel key (`channels.not_connected`, `channels.disconnected`…)
+ * gets its localized copy; any other text is shown unchanged.
+ */
+export function sendErrorText(message: string | null, tx: Tx): string | null {
+  if (!message) return null;
+  const copy = channelErrorCopy(message);
+  return copy ? tx(copy.en, copy.ar) : message;
+}
+
 /** The `field` an invalid_config / landline_invalid_input error points at. */
 export function errorField(e: unknown): string | null {
   const f = errorExtras(e).field;

@@ -45,6 +45,20 @@ export function useChannelsData(enabled: boolean) {
   return { listQ, limitsQ, esQ, refresh };
 }
 
+/**
+ * m4: the channel list alone (GET /channels), refreshed on `channels.updated`.
+ * For screens outside the hub (the Inbox): no limits or signup-config calls,
+ * and nothing at all when `enabled` is false (no channels.view → no 403s).
+ */
+export function useChannelsList(enabled: boolean) {
+  const qc = useQueryClient();
+  const listQ = useFetch<ChannelDto[]>(enabled ? CHANNELS_PATH : null);
+  useRealtime("channels.updated", () => {
+    if (enabled) invalidateChannels(qc);
+  });
+  return listQ;
+}
+
 /** A hash query param (`#/channels?id=…`), kept in sync with hashchange. */
 export function useHashParam(key: string): [string | null, (v: string | null) => void] {
   const [value, setValue] = useState<string | null>(() => getHashParam(window.location.hash, key));
