@@ -40,6 +40,7 @@ export type ChannelErrorKey =
   | "channels.landline_invalid_input"
   | "channels.landline_wrong_state"
   | "channels.landline_meta_error"
+  | "channels.zernio_reauth_required"
   | "widget.origin_forbidden"
   | "widget.rate_limited"
   | "widget.channel_unavailable"
@@ -77,6 +78,8 @@ const STATUS: Record<ChannelErrorKey, number> = {
   "channels.landline_invalid_input": 400, // {field} or {metaCode}
   "channels.landline_wrong_state": 409, // {stage}
   "channels.landline_meta_error": 502, // {metaCode}
+  // SP-19 T5 fix round 1: the Zernio account needs a fresh OAuth sign-in.
+  "channels.zernio_reauth_required": 409, // {platform}
   // SP-19 T3: the public web chat widget.
   "widget.origin_forbidden": 403,
   "widget.rate_limited": 429,

@@ -188,6 +188,43 @@ describe("embedded signup", () => {
     expect(JSON.parse(prisma.db.channel[0].secretsEnc).accessToken).toBe("NEWER-TOKEN-xyz");
   });
 
+  describe("code-only signup (no session event, no number) picks the single Cloud API number (m2)", () => {
+    const list = (data: unknown[]): GraphHandler => [/GET \S+\/waba-B\/phone_numbers/, { body: { data } }];
+    const pnB = { id: "pn-B", display_phone_number: "+962 7 9000 0002", verified_name: "Shop B", platform_type: "CLOUD_API" };
+
+    it("attaches the WABA's only Cloud API number instead of a pending row", async () => {
+      const { svc, g } = build(growth);
+      g.prepend(list([pnB]), [/GET \S+\/pn-B\?fields=/, { body: pnB }]);
+      const dto = await svc.signup("ws1", { code: "c", wabaId: "waba-B" });
+      expect(dto).toMatchObject({ externalId: "pn-B", status: "active" });
+      expect(dto.config?.verification).toBeUndefined();
+      expect(g.called("/phone_numbers")).toHaveLength(1);
+      expect(g.called("/register")).toHaveLength(0);
+    });
+
+    it("stays a pending row when the WABA has several numbers, none on Cloud API, or the list fails", async () => {
+      for (const h of [
+        list([pnB, { ...pnB, id: "pn-C" }]),
+        list([{ ...pnB, platform_type: "NOT_APPLICABLE" }]),
+        list([]),
+        [/GET \S+\/waba-B\/phone_numbers/, graphError(100, "nope")] as GraphHandler,
+      ]) {
+        const { svc, g } = build(growth);
+        g.prepend(h);
+        const dto = await svc.signup("ws1", { code: "c", wabaId: "waba-B" });
+        expect(dto).toMatchObject({ status: "pending", externalId: null, config: { verification: { stage: "needs_number" } } });
+      }
+    });
+
+    it("an explicit FINISH_ONLY_WABA never lists numbers", async () => {
+      const { svc, g } = build(growth);
+      g.prepend(list([pnB]));
+      const dto = await svc.signup("ws1", { code: "c", wabaId: "waba-B", signupEvent: "FINISH_ONLY_WABA" });
+      expect(dto.status).toBe("pending");
+      expect(g.called("/phone_numbers")).toHaveLength(0);
+    });
+  });
+
   it("FINISH without a phoneNumberId also waits for a number", async () => {
     const { svc } = build(growth);
     const dto = await svc.signup("ws1", { code: "c", wabaId: "waba-B", signupEvent: "FINISH" });

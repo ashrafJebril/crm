@@ -8,14 +8,21 @@ import type { Tx } from "@/lib/tx";
 import type { ChannelDto, ChannelLimits, EmbeddedSignupConfig } from "@/lib/types";
 import { Modal } from "@/components/Modal";
 import { IconGlobe } from "@/icons";
-import { apiOriginFrom, kindLabel } from "./channelModel";
+import { kindLabel, publicOrigin } from "./channelModel";
 
 export const CHANNELS_PATH = "/channels";
 export const LIMITS_PATH = "/channels/limits";
 export const ES_CONFIG_PATH = "/channels/whatsapp/embedded-signup/config";
 
-/** The backend's public origin, for the widget snippet and the hosted chat link. */
-export const API_ORIGIN = apiOriginFrom(API_BASE, typeof window === "undefined" ? "http://localhost" : window.location.origin);
+/**
+ * The backend's public origin for the widget snippet and the hosted chat link
+ * (m1): `publicBaseUrl` from GET /channels/limits (shared cache with the hub),
+ * else the client's API base.
+ */
+export function useChannelOrigin(): string {
+  const limitsQ = useFetch<ChannelLimits>(LIMITS_PATH);
+  return publicOrigin(limitsQ.data?.publicBaseUrl, API_BASE, window.location.origin);
+}
 
 /** The frontend mirror of the backend's origin rule. The server stays authoritative. */
 export const ORIGIN_OPTS = { production: import.meta.env.PROD === true };

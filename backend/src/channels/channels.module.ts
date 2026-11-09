@@ -15,6 +15,7 @@ import { WebchatService } from "./webchat/webchat.service";
 import { WidgetGateway } from "./webchat/widget.gateway";
 import { WidgetOriginGuard } from "./webchat/widget-origin.guard";
 import { WidgetRateLimitGuard, widgetRateLimiterProvider } from "./webchat/widget-rate-limit.guard";
+import { ZernioChannelTransport } from "./zernio-transport";
 
 /** SP-19 channels hub (`/channels`), Telegram (T2) and the website chat
  *  widget (T3: loader, hosted page, visitor API, `/widget` socket
@@ -34,6 +35,7 @@ import { WidgetRateLimitGuard, widgetRateLimiterProvider } from "./webchat/widge
     WidgetOriginGuard,
     WidgetRateLimitGuard,
     widgetRateLimiterProvider,
+    ZernioChannelTransport,
   ],
   exports: [ChannelsService],
 })

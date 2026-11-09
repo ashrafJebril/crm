@@ -1,12 +1,13 @@
 import { useState } from "react";
 import type { Tx } from "@/lib/tx";
 import { chatPageUrl } from "./channelModel";
-import { API_ORIGIN, CopyButton, fieldLabel } from "./channelUi";
+import { CopyButton, fieldLabel, useChannelOrigin } from "./channelUi";
 
 /** The public hosted chat page (`{API}/api/chat/{id}`), with copy and open. */
 export function ChatPageLink({ channelId, tx, disabled }: { channelId: string; tx: Tx; disabled?: boolean }) {
   const [lang, setLang] = useState<"" | "en" | "ar">("");
-  const url = chatPageUrl(API_ORIGIN, channelId, lang || null);
+  const origin = useChannelOrigin();
+  const url = chatPageUrl(origin, channelId, lang || null);
   return (
     <div style={{ display: "grid", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>

@@ -26,6 +26,8 @@ import { INTEGRATION_REMOVED, mirrorZernioAccounts } from "../channels/zernio-mi
 import { ensureDefaultPerKind, ZERNIO_MISSING, type IntegrationLike } from "../channels/legacy-mirror";
 import { credentialsFor } from "../channels/channel-credentials";
 import { assertWhatsappCapacity } from "../channels/channel-limits";
+import { channelError } from "../channels/channel-errors";
+import type { Channel } from "@prisma/client";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -157,7 +159,11 @@ export class ZernioService {
   ]);
 
   /** Build the hosted connect URL for the customer to authenticate through. */
-  async getConnectUrl(workspaceId: string, platform: string): Promise<{ authUrl: string }> {
+  async getConnectUrl(
+    workspaceId: string,
+    platform: string,
+    opts: { reconnectChannelId?: string } = {},
+  ): Promise<{ authUrl: string }> {
     const p = platform.toLowerCase();
     if (!ZernioService.SUPPORTED.has(p)) {
       throw new BadRequestException(`Unsupported platform: ${platform}`);
@@ -172,7 +178,14 @@ export class ZernioService {
     // the number the workspace already holds (sign-in expired, access
     // revoked, account dropped by Zernio) is a reconnect and is never gated.
     // Accounts that already exist at Zernio are still mirrored by every sync.
-    if (p === "whatsapp" && !(await this.zernioWhatsappNeedsReconnect(workspaceId))) {
+    // SP-19 T5 (I1): the hub's Reconnect on a held Zernio channel names it.
+    // It must be this workspace's Zernio channel of the same platform (else
+    // 404); the link then re-authorises a number already held, so it is not
+    // gated either, even after a hub disconnect (`disconnected_by_user`).
+    const reconnecting = opts.reconnectChannelId
+      ? await this.assertReconnectTarget(workspaceId, p, opts.reconnectChannelId)
+      : false;
+    if (p === "whatsapp" && !reconnecting && !(await this.zernioWhatsappNeedsReconnect(workspaceId))) {
       await assertWhatsappCapacity(this.prisma, workspaceId);
     }
     const profileId = await this.ensureProfile(workspaceId);
@@ -185,6 +198,45 @@ export class ZernioService {
     // callback still accept the old `#/settings?zernio=…` links in flight.
     const redirectUrl = `${base}/#/channels?zernio=connected&platform=${encodeURIComponent(p)}`;
     return this.client.getConnectUrl(p, profileId, redirectUrl);
+  }
+
+  private async assertReconnectTarget(workspaceId: string, platform: string, channelId: string): Promise<true> {
+    const row = await this.prisma.channel.findFirst({
+      where: { id: channelId, workspaceId, provider: "zernio", kind: platform },
+      select: { id: true },
+    });
+    if (!row) throw channelError("channels.not_found");
+    return true;
+  }
+
+  /**
+   * SP-19 T5 (I1): the `zernio` transport's reconnect hook, behind
+   * `POST /channels/:id/reconnect`. A hub disconnect never touches Zernio, so
+   * the account usually still works: resync, and when Zernio lists the
+   * channel's account as healthy, reactivate the row explicitly (a user's
+   * explicit reconnect may revive `disconnected_by_user`). Reviving a
+   * disconnected WhatsApp number takes a slot (409 limit_reached, like Meta).
+   * Otherwise 409 `channels.zernio_reauth_required`: the hub falls back to
+   * the OAuth link (`getConnectUrl` with `reconnectChannelId`).
+   */
+  async reconnectChannel(row: Channel): Promise<Channel> {
+    const { workspaceId } = row;
+    const reauth = () => channelError("channels.zernio_reauth_required", { platform: row.kind });
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId || !row.externalId) throw reauth();
+    await this.syncAccounts(workspaceId);
+    const listed = (this.healthCache.get(profileId)?.accounts ?? []).find((a) => a._id === row.externalId);
+    if (!listed || accountHealth(listed).health !== "ok") throw reauth();
+    const fresh = await this.prisma.channel.findFirst({ where: { id: row.id, workspaceId } });
+    if (!fresh) throw channelError("channels.not_found");
+    if (fresh.status === "active" && !fresh.statusReason) return fresh;
+    if (fresh.status === "disconnected" && fresh.kind === "whatsapp") {
+      await assertWhatsappCapacity(this.prisma, workspaceId);
+    }
+    return this.prisma.channel.update({
+      where: { id: fresh.id },
+      data: { status: "active", statusReason: null, disconnectedAt: null },
+    });
   }
 
   /** A held Zernio WhatsApp channel that is not healthy-active: the connect

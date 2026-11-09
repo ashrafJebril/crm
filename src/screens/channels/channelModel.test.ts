@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChannelDto } from "@/lib/types";
 import {
   apiOriginFrom,
+  publicOrigin,
   buildSnippet,
   canMakeDefault,
   canReconnect,
@@ -82,6 +83,18 @@ describe("apiOriginFrom", () => {
   });
   it("resolves a relative base against the page origin", () => {
     expect(apiOriginFrom("/api", "https://app.kewy.io")).toBe("https://app.kewy.io");
+  });
+});
+
+describe("publicOrigin (m1)", () => {
+  it("prefers the backend's publicBaseUrl", () => {
+    expect(publicOrigin("https://api.kewy.ai/", "/api", "https://app.kewy.ai")).toBe("https://api.kewy.ai");
+    expect(publicOrigin("https://api.kewy.ai", "http://localhost:4100/api", "http://localhost:5174")).toBe("https://api.kewy.ai");
+  });
+  it("falls back to the API base when it is missing or malformed", () => {
+    expect(publicOrigin(undefined, "http://localhost:4100/api", "http://localhost:5174")).toBe("http://localhost:4100");
+    expect(publicOrigin("javascript:alert(1)", "/api", "https://app.kewy.ai")).toBe("https://app.kewy.ai");
+    expect(publicOrigin("not a url", "/api", "https://app.kewy.ai")).toBe("https://app.kewy.ai");
   });
 });
 
@@ -276,7 +289,12 @@ describe("action availability", () => {
     expect(canReconnect(ch({ provider: "telegram", status: "error" }))).toBe(true);
     expect(canReconnect(ch({ provider: "meta", status: "disconnected" }))).toBe(true);
     expect(canReconnect(ch({ provider: "zernio", status: "needs_attention" }))).toBe(true);
-    expect(canReconnect(ch({ provider: "native", kind: "webchat", status: "disconnected" }))).toBe(false);
+    // m5: web chat has a native reconnect hook now.
+    expect(canReconnect(ch({ provider: "native", kind: "webchat", status: "disconnected" }))).toBe(true);
+    expect(canReconnect(ch({ provider: "native", kind: "webchat", status: "active" }))).toBe(false);
+    // I1: a hub-disconnected Zernio channel offers Reconnect.
+    expect(canReconnect(ch({ provider: "zernio", status: "disconnected", statusReason: "disconnected_by_user" }))).toBe(true);
+    expect(canReconnect(ch({ provider: "kapso", status: "disconnected" }))).toBe(false);
     expect(canReconnect(ch({ provider: "telegram", status: "active" }))).toBe(false);
     // A landline row is driven by its card, not by reconnect.
     expect(canReconnect(ch({ provider: "meta", status: "pending", config: { verification: { stage: "needs_number" } } }))).toBe(false);

@@ -105,10 +105,34 @@ describe("ChannelsService", () => {
     expect((await svc.list("ws1", "facebook")).map((c) => c.id)).toEqual(["chi_i1"]);
   });
 
+  it("limits returns the public base URL origin for the widget snippet and chat link (m1)", async () => {
+    const prev = process.env.PUBLIC_BASE_URL;
+    try {
+      const { svc } = build();
+      process.env.PUBLIC_BASE_URL = "https://api.example.com/";
+      expect(await svc.limits("ws1", false)).toMatchObject({ publicBaseUrl: "https://api.example.com" });
+      process.env.PUBLIC_BASE_URL = "not a url";
+      expect(await svc.limits("ws1", false)).not.toHaveProperty("publicBaseUrl");
+      process.env.PUBLIC_BASE_URL = "ftp://api.example.com";
+      expect(await svc.limits("ws1", false)).not.toHaveProperty("publicBaseUrl");
+      delete process.env.PUBLIC_BASE_URL;
+      expect(await svc.limits("ws1", false)).not.toHaveProperty("publicBaseUrl");
+    } finally {
+      if (prev === undefined) delete process.env.PUBLIC_BASE_URL;
+      else process.env.PUBLIC_BASE_URL = prev;
+    }
+  });
+
   it("limits counts non-disconnected WhatsApp channels against the plan", async () => {
-    const { svc } = build({ channel: [ch("A"), ch("B", { status: "disconnected" }), ch("F", { kind: "facebook" })] });
-    expect(await svc.limits("ws1", false)).toEqual({ whatsapp: { used: 1, limit: 3, plan: "growth" } });
-    expect(await svc.limits("ws1", true)).toMatchObject({ secretsEncryption: expect.stringMatching(/on|off/) });
+    const prev = process.env.PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    try {
+      const { svc } = build({ channel: [ch("A"), ch("B", { status: "disconnected" }), ch("F", { kind: "facebook" })] });
+      expect(await svc.limits("ws1", false)).toEqual({ whatsapp: { used: 1, limit: 3, plan: "growth" } });
+      expect(await svc.limits("ws1", true)).toMatchObject({ secretsEncryption: expect.stringMatching(/on|off/) });
+    } finally {
+      if (prev !== undefined) process.env.PUBLIC_BASE_URL = prev;
+    }
   });
 
   it("sync runs the Zernio resync and the legacy mirror", async () => {

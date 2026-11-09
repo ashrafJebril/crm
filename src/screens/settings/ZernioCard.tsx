@@ -31,21 +31,50 @@ export const ZERNIO_PLATFORMS: ZernioPlatform[] = [
   { key: "tiktok", label: "TikTok", color: "#000000" },
 ];
 
+const RECONNECT_KEY = "aram.zernio.reconnect";
+
+/** The channel a Zernio OAuth round trip is reconnecting (survives the redirect). */
+export function rememberZernioReconnect(channelId: string): void {
+  try {
+    sessionStorage.setItem(RECONNECT_KEY, channelId);
+  } catch {
+    /* storage blocked: the user can press Reconnect again after the redirect */
+  }
+}
+
+/** Read and clear the pending reconnect, if any. */
+export function takeZernioReconnect(): string | null {
+  try {
+    const id = sessionStorage.getItem(RECONNECT_KEY);
+    sessionStorage.removeItem(RECONNECT_KEY);
+    return id;
+  } catch {
+    return null;
+  }
+}
+
 export function useZernioConnect(tx: Tx) {
   const connect = useConnectFlow();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /** Open Zernio's OAuth. `reconnectChannelId` names a held channel being
+   *  re-authorised: the backend exempts that link from the number limit, and
+   *  the redirect capture reconnects the channel once the sync has run. */
   const start = useCallback(
-    async (platform: string) => {
+    async (platform: string, opts: { reconnectChannelId?: string } = {}) => {
       setError(null);
       setBusy(platform);
       try {
         await connect(async () => {
+          const qs = opts.reconnectChannelId
+            ? `?reconnectChannelId=${encodeURIComponent(opts.reconnectChannelId)}`
+            : "";
           const { authUrl } = await api.get<{ authUrl: string }>(
-            `/integrations/zernio/connect/${encodeURIComponent(platform)}`,
+            `/integrations/zernio/connect/${encodeURIComponent(platform)}${qs}`,
           );
+          if (opts.reconnectChannelId) rememberZernioReconnect(opts.reconnectChannelId);
           return authUrl;
         });
       } catch (e) {

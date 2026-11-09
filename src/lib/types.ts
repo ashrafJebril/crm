@@ -781,6 +781,8 @@ export interface ChannelLimits {
   whatsapp: { used: number; limit: number; plan: string };
   /** Only present for channels.update holders. */
   secretsEncryption?: "on" | "off";
+  /** The backend's PUBLIC_BASE_URL origin, for the widget snippet and chat link. */
+  publicBaseUrl?: string;
 }
 
 export interface EmbeddedSignupConfig {

@@ -234,6 +234,10 @@ export const CHANNEL_ERROR_COPY: Record<string, CopyFn> = {
     const m = metaRef(x);
     return { en: `Meta refused this step.${m.en} Try again later.`, ar: `رفضت Meta هذه الخطوة.${m.ar} حاول لاحقًا.` };
   },
+  "channels.zernio_reauth_required": () => ({
+    en: "Zernio needs you to sign in to this account again.",
+    ar: "يطلب Zernio تسجيل الدخول إلى هذا الحساب مجددًا.",
+  }),
   "widget.origin_forbidden": () => ({
     en: "This website isn't in the chat's allowed websites.",
     ar: "هذا الموقع ليس ضمن المواقع المسموح لها بالمحادثة.",

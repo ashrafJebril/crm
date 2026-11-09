@@ -3,12 +3,13 @@ import { Modal } from "@/components/Modal";
 import type { Tx } from "@/lib/tx";
 import type { ChannelDto } from "@/lib/types";
 import { buildSnippet } from "./channelModel";
-import { API_ORIGIN, Banner, CopyButton } from "./channelUi";
+import { Banner, CopyButton, useChannelOrigin } from "./channelUi";
 
 /** The `<script>` embed for a website chat channel, with copy and install steps. */
 export function WidgetSnippetDialog({ channel, tx, onClose }: { channel: ChannelDto; tx: Tx; onClose: () => void }) {
   const [lang, setLang] = useState<"" | "en" | "ar">("");
-  const snippet = buildSnippet(API_ORIGIN, channel.id, lang || null);
+  const origin = useChannelOrigin();
+  const snippet = buildSnippet(origin, channel.id, lang || null);
   const origins = channel.config?.allowedOrigins ?? [];
   const title = tx("Add the chat to your website", "أضف المحادثة إلى موقعك");
 
@@ -89,7 +90,7 @@ export function WidgetSnippetDialog({ channel, tx, onClose }: { channel: Channel
             "Sites with a strict Content-Security-Policy must allow this script and frame from ",
             "المواقع التي تستخدم سياسة أمان محتوى صارمة يجب أن تسمح بهذا السكربت والإطار من ",
           )}
-          <bdi dir="ltr" className="mono">{API_ORIGIN}</bdi>
+          <bdi dir="ltr" className="mono">{origin}</bdi>
           {tx(". You can also open the chat from your own button with window.aramChat.open().", ". يمكنك أيضًا فتح المحادثة من زر خاص بك عبر window.aramChat.open().")}
         </div>
 

@@ -103,9 +103,10 @@ export function verificationStage(config: ChannelConfig | null | undefined): Ver
 }
 
 /**
- * Reconnect is offered where it can do something: the generic
- * `POST /channels/:id/reconnect` hook (telegram, meta) or Zernio's re-auth
- * link. Web chat has no hook, and a landline row is driven by its card.
+ * Reconnect is offered where `POST /channels/:id/reconnect` has a hook:
+ * telegram, meta, zernio (resync and revive, else Zernio's OAuth link) and
+ * native web chat (revive a disconnected one). A landline row is driven by
+ * its card; legacy providers (e.g. kapso) have no hook.
  */
 export function canReconnect(c: ChannelDto): boolean {
   if (verificationStage(c.config)) return false;
@@ -115,6 +116,7 @@ export function canReconnect(c: ChannelDto): boolean {
     c.statusReason === "meta_register_failed" ||
     c.statusReason === "meta_subscribe_failed";
   if (!repairable) return false;
+  if (c.provider === "native") return c.status === "disconnected";
   return c.provider === "telegram" || c.provider === "meta" || c.provider === "zernio";
 }
 
@@ -130,6 +132,23 @@ export function apiOriginFrom(apiBase: string, pageOrigin: string): string {
   }
   const path = url.pathname.replace(/\/+$/, "").replace(/\/api$/, "");
   return `${url.origin}${path}`;
+}
+
+/**
+ * The origin the widget snippet and the hosted chat link use (m1): the
+ * backend's `publicBaseUrl` from GET /channels/limits when it is a valid
+ * http(s) URL, else the client's API base.
+ */
+export function publicOrigin(publicBaseUrl: string | null | undefined, apiBase: string, pageOrigin: string): string {
+  if (publicBaseUrl) {
+    try {
+      const u = new URL(publicBaseUrl);
+      if (u.protocol === "https:" || u.protocol === "http:") return u.origin;
+    } catch {
+      /* fall back */
+    }
+  }
+  return apiOriginFrom(apiBase, pageOrigin);
 }
 
 const escapeAttr = (s: string) =>

@@ -44,6 +44,7 @@ const ERROR_KEYS = [
   "channels.landline_invalid_input",
   "channels.landline_wrong_state",
   "channels.landline_meta_error",
+  "channels.zernio_reauth_required",
   "widget.origin_forbidden",
   "widget.rate_limited",
   "widget.channel_unavailable",

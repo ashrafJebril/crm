@@ -26,6 +26,8 @@ export class UpdateChannelDto {
 export interface ChannelLimitsDto {
   whatsapp: { used: number; limit: number; plan: string };
   secretsEncryption?: "on" | "off";
+  /** The origin of PUBLIC_BASE_URL (m1), for the widget snippet and chat link. */
+  publicBaseUrl?: string;
 }
 
 /** `POST /channels/whatsapp/embedded-signup`: what Meta's popup hands the

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { Badge } from "@/components/Badge";
 import { Modal } from "@/components/Modal";
@@ -117,12 +117,30 @@ export function ChannelDetail({
     act("rename", () => api.patch<ChannelDto>(path, { displayName: name.trim() }), tx("Name saved.", "تم حفظ الاسم."));
   const makeDefault = () =>
     act("default", () => api.patch<ChannelDto>(path, { isDefault: true }), tx("This is now the default.", "أصبحت هذه القناة الافتراضية."));
-  const reconnect = () => {
-    if (channel.provider === "zernio") {
-      void zernio.start(channel.kind);
-      return;
+  // Every provider with a hook goes through POST /channels/:id/reconnect.
+  // Zernio resyncs and revives the row while its account still works; only
+  // when Zernio needs a fresh sign-in does it fall back to the OAuth link,
+  // which names this channel (exempt from the number limit; the redirect
+  // capture reconnects it after the sync).
+  const reconnect = async () => {
+    setBusy("reconnect");
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await api.post<ChannelDto>(`${path}/reconnect`);
+      if (r && r.id === channel.id) setLocal(r);
+      setNotice(tx("Reconnected.", "تمت إعادة الربط."));
+      onChanged();
+    } catch (e) {
+      if (channel.provider === "zernio" && e instanceof ApiError && e.message === "channels.zernio_reauth_required") {
+        setNotice(tx("Zernio needs a fresh sign-in for this account. Opening Zernio…", "يطلب Zernio تسجيل دخول جديدًا لهذا الحساب. جارٍ فتح Zernio…"));
+        await zernio.start(channel.kind, { reconnectChannelId: channel.id });
+        return;
+      }
+      setError(channelErrorText(e, tx));
+    } finally {
+      setBusy(null);
     }
-    void act("reconnect", () => api.post<ChannelDto>(`${path}/reconnect`), tx("Reconnected.", "تمت إعادة الربط."));
   };
   const sync = async () => {
     setNotice(null);

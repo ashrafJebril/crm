@@ -186,12 +186,28 @@ export class EmbeddedSignupService {
       this.log.warn(`subscribed_apps failed for a signup WABA: code=${(e as MetaGraphError).code ?? "-"}`);
     }
 
-    const row = withNumber
-      ? await this.attachNumber(workspaceId, { token, wabaId, phoneNumberId: phoneNumberId!, subscribed, displayName: input.displayName })
+    // m2: a code-only submit (the session event was lost, so no event and no
+    // number) attaches the WABA's number when it has exactly one on Cloud
+    // API, instead of parking a WABA-only row for the landline card.
+    const soleNumber = !withNumber && !input.signupEvent ? await this.soleCloudNumber(wabaId, token) : null;
+
+    const row = withNumber || soleNumber
+      ? await this.attachNumber(workspaceId, { token, wabaId, phoneNumberId: (phoneNumberId ?? soleNumber)!, subscribed, displayName: input.displayName })
       : await this.pendingNumber(workspaceId, { token, wabaId, subscribed, reuse: reuse ?? (await this.pendingFor(workspaceId, wabaId)), displayName: input.displayName });
 
     this.realtime.emitToWorkspace(workspaceId, "channels.updated", { channelId: row.id });
     return toChannelDto(row);
+  }
+
+  /** The id of the WABA's only Cloud API number, or null (none, several, or the list failed). */
+  private async soleCloudNumber(wabaId: string, token: string): Promise<string | null> {
+    try {
+      const cloud = (await this.graph.listPhoneNumbers(wabaId, token)).filter((p) => p.platform_type === "CLOUD_API" && p.id);
+      return cloud.length === 1 ? cloud[0].id : null;
+    } catch (e) {
+      this.log.warn(`phone_numbers list failed for a code-only signup: code=${(e as MetaGraphError).code ?? "-"}`);
+      return null;
+    }
   }
 
   /** 4. FINISH with a number: read it, register it, attach it. */

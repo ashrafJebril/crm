@@ -104,6 +104,19 @@ describe("agent reply reaches visitor room", () => {
     expect(channelErrorKey(err)).toBe("channels.not_connected");
   });
 
+  it("native reconnect revives a disconnected web chat channel through POST /channels/:id/reconnect (m5)", async () => {
+    const { ChannelsService } = await import("../channels.service");
+    const b = build({ channel: [wc("W1", { status: "disconnected", statusReason: "disconnected_by_user", disconnectedAt: new Date(), isDefault: false })] });
+    const hub = new ChannelsService(b.prisma, b.transports, b.realtime as never);
+    const dto = await hub.reconnect("ws1", "W1");
+    expect(dto).toMatchObject({ id: "W1", status: "active", statusReason: null, isDefault: true });
+    expect(b.prisma.db.channel[0].disconnectedAt).toBeNull();
+    expect(b.realtime.emitToWorkspace).toHaveBeenCalledWith("ws1", "channels.updated", { channelId: "W1" });
+    // an active channel is left as it is
+    const again = await hub.reconnect("ws1", "W1");
+    expect(again.status).toBe("active");
+  });
+
   it("registers the native transport once", () => {
     const b = build();
     expect(b.transports.providers()).toEqual(["native"]);

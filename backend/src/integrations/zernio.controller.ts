@@ -72,8 +72,15 @@ export class ZernioController {
 
   /** Returns the hosted OAuth URL for the customer to authenticate through. */
   @Get("integrations/zernio/connect/:platform")
-  connect(@CurrentWorkspace() workspaceId: string, @Param("platform") platform: string) {
-    return this.zernio.getConnectUrl(workspaceId, platform);
+  connect(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("platform") platform: string,
+    // SP-19 T5 (I1): the hub's Reconnect names the held channel it re-authorises.
+    @Query("reconnectChannelId") reconnectChannelId?: string,
+  ) {
+    return this.zernio.getConnectUrl(workspaceId, platform, {
+      reconnectChannelId: typeof reconnectChannelId === "string" && reconnectChannelId ? reconnectChannelId : undefined,
+    });
   }
 
   /** Reconcile connected accounts (called by the frontend after the redirect). */

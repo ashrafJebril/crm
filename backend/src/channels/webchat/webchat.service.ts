@@ -95,6 +95,21 @@ export class WebchatService implements OnModuleInit {
       provider: "native",
       sendText: (channel, conv) => this.sendText(channel, conv),
       delivered: (channel, conv, message) => this.delivered(channel, conv, message),
+      reconnect: (channel) => this.reconnect(channel),
+    });
+  }
+
+  /**
+   * m5: `POST /channels/:id/reconnect` for web chat. There is no provider
+   * side, so reconnecting a soft-disconnected channel (R9) just makes it
+   * active again with its history; the hub then re-runs the default per
+   * kind. Any other status is returned unchanged.
+   */
+  private async reconnect(channel: Channel): Promise<Channel> {
+    if (channel.status !== "disconnected") return channel;
+    return this.prisma.channel.update({
+      where: { id: channel.id },
+      data: { status: "active", statusReason: null, disconnectedAt: null },
     });
   }
 

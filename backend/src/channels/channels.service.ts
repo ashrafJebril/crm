@@ -170,9 +170,13 @@ export class ChannelsService {
 
   async limits(workspaceId: string, includeWarnings: boolean): Promise<ChannelLimitsDto> {
     const whatsapp = await whatsappUsage(this.prisma, workspaceId);
-    return includeWarnings
-      ? { whatsapp, secretsEncryption: secretsEncryptionEnabled() ? "on" : "off" }
-      : { whatsapp };
+    const base: ChannelLimitsDto = { whatsapp };
+    // m1: the backend's public origin, so the widget snippet and the hosted
+    // chat link match what the API serves. Not a secret.
+    const publicBaseUrl = publicBaseOrigin(process.env.PUBLIC_BASE_URL);
+    if (publicBaseUrl) base.publicBaseUrl = publicBaseUrl;
+    if (includeWarnings) base.secretsEncryption = secretsEncryptionEnabled() ? "on" : "off";
+    return base;
   }
 
   private async load(workspaceId: string, id: string): Promise<Channel> {
@@ -183,5 +187,16 @@ export class ChannelsService {
 
   private changed(workspaceId: string, channelId: string): void {
     this.realtime.emitToWorkspace(workspaceId, "channels.updated", { channelId });
+  }
+}
+
+/** The http(s) origin of PUBLIC_BASE_URL, or null when unset or malformed. */
+export function publicBaseOrigin(raw: string | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw.trim());
+    return u.protocol === "https:" || u.protocol === "http:" ? u.origin : null;
+  } catch {
+    return null;
   }
 }
