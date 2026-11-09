@@ -10,10 +10,11 @@ import { IntegrationsTab } from "./settings/IntegrationsTab";
 import { AiKnowledgeTab } from "./settings/AiKnowledgeTab";
 import { ProfileTab } from "./settings/ProfileTab";
 import { PipelinesTab } from "./settings/PipelinesTab";
+import { SavedRepliesTab } from "./settings/SavedRepliesTab";
 
-type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "profile";
+type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "savedReplies" | "profile";
 
-const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "pipelines", "profile"];
+const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "pipelines", "savedReplies", "profile"];
 
 /**
  * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
@@ -68,6 +69,7 @@ function SettingsImpl() {
     { id: "integrations", label: "Integrations", ar: "التكاملات" },
     { id: "aiKnowledge", label: "AI Knowledge", ar: "معرفة الذكاء" },
     ...(can("pipelines.view") ? [{ id: "pipelines" as const, label: "Pipelines", ar: "المسارات" }] : []),
+    ...(can("conversations.manage") ? [{ id: "savedReplies" as const, label: "Saved replies", ar: "الردود المحفوظة" }] : []),
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
@@ -105,6 +107,7 @@ function SettingsImpl() {
           {tab === "integrations" && <IntegrationsTab />}
           {tab === "aiKnowledge" && <AiKnowledgeTab />}
           {tab === "pipelines" && <PipelinesTab />}
+          {tab === "savedReplies" && <SavedRepliesTab />}
           {tab === "profile" && <ProfileTab />}
         </div>
       </div>

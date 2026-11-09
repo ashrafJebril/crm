@@ -5,7 +5,7 @@ import { mergeByTime } from "@/lib/mentions";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
-import { Badge, type BadgeKind } from "@/components/Badge";
+import { type BadgeKind } from "@/components/Badge";
 import { ResolutionBadge } from "./inbox/ResolutionBadge";
 import { Modal } from "@/components/Modal";
 import { ConvRowSkeleton, MessageSkeleton } from "@/components/Skeleton";
@@ -37,10 +37,8 @@ import {
   type Lang,
   type Message,
   type Pipeline,
-  type StageColor,
   type Ticket,
   type TicketStage,
-  type TicketsListPage,
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
@@ -61,6 +59,12 @@ import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
 import type { Media } from "@/lib/types";
+import { CustomerThread } from "./inbox/thread/CustomerThread";
+import { useSavedReplies } from "./inbox/SavedRepliesPicker";
+import { LinkedItemsCard } from "./inbox/LinkedItemsCard";
+import { TopicsCard } from "./inbox/TopicsCard";
+import { TemplateSendDialog, type TemplateHeaderValue } from "./inbox/TemplateSendDialog";
+import { getHashParam, setHashParam } from "@/lib/hashState";
 
 
 /** Day label for thread separators: Today / Yesterday / a localized date.
@@ -295,7 +299,11 @@ interface ConversationPaneProps {
     name: string,
     language: string,
     variables: string[],
+    header?: TemplateHeaderValue,
   ) => Promise<void>;
+  /** "conv" = this conversation only, "all" = the customer's stitched thread (`?tv=all`). */
+  threadView: "conv" | "all";
+  onThreadView: (v: "conv" | "all") => void;
   sending: boolean;
   sendError: string | null;
   onConvertToTicket: () => void;
@@ -530,16 +538,6 @@ const ticketLabelStyle: CSSProperties = {
   color: "var(--ink-3)",
   marginTop: 12,
   display: "block",
-};
-
-const STAGE_BADGE_KIND: Record<StageColor, BadgeKind> = {
-  ink: "",
-  info: "info",
-  ok: "ok",
-  warn: "warn",
-  bad: "bad",
-  accent: "accent",
-  human: "human",
 };
 
 interface ConvertTicketModalProps {
@@ -800,102 +798,6 @@ function ConvertTicketModal({
           </button>
         </div>
     </Modal>
-  );
-}
-
-interface ContactTicketsProps {
-  contactId: string;
-  tx: Tx;
-}
-
-function ContactTickets({ contactId, tx }: ContactTicketsProps) {
-  const ticketsQ = useFetch<TicketsListPage>(`/tickets?contactId=${contactId}`);
-  // Don't render the section on error.
-  if (ticketsQ.error) return null;
-
-  const tickets = ticketsQ.data?.items ?? [];
-
-  return (
-    <div>
-      <SectionLabel>{tx("Tickets", "التذاكر")}</SectionLabel>
-      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-        {ticketsQ.loading && tickets.length === 0 && (
-          <div
-            className="mono"
-            style={{ fontSize: 11, color: "var(--ink-3)", opacity: 0.7 }}
-          >
-            {tx("loading…", "جارٍ التحميل…")}
-          </div>
-        )}
-        {!ticketsQ.loading && tickets.length === 0 && (
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 10,
-              background: "var(--bg-2)",
-              border: "1px dashed var(--line-soft)",
-              fontSize: 12,
-              color: "var(--ink-3)",
-              textAlign: "center",
-            }}
-          >
-            {tx("No tickets yet", "لا توجد تذاكر")}
-          </div>
-        )}
-        {tickets.map((t) => {
-          const stageColor: StageColor = t.stage?.color ?? "ink";
-          const kind: BadgeKind = STAGE_BADGE_KIND[stageColor] ?? "";
-          return (
-            <div
-              key={t.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--line-soft)",
-                background: "var(--bg-2)",
-              }}
-            >
-              <span
-                className="mono"
-                style={{ fontSize: 11, color: "var(--ink-3)", flex: "0 0 auto" }}
-              >
-                #{t.number}
-              </span>
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 12,
-                  color: "var(--ink-1)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                title={t.title}
-              >
-                {t.title}
-              </span>
-              {t.stage && (
-                <Badge kind={kind} dot>
-                  {t.stage.label}
-                </Badge>
-              )}
-              {typeof t.value === "number" && (
-                <span
-                  className="mono"
-                  style={{ fontSize: 11, color: "var(--ink-2)", flex: "0 0 auto" }}
-                >
-                  {t.currency} {t.value.toLocaleString()}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -1299,6 +1201,33 @@ function Bubble({ m }: BubbleProps) {
           )}
           {m.attach && <MessageAttachment value={m.attach} />}
         </div>
+        {m.reaction && (
+          <div
+            title={tx("Customer reaction", "تفاعل العميل")}
+            aria-label={tx(`Customer reacted ${m.reaction}`, `تفاعل العميل ${m.reaction}`)}
+            style={{
+              display: "flex",
+              justifyContent: isOut ? "flex-end" : "flex-start",
+              marginTop: -8,
+              paddingInline: 10,
+              position: "relative",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 14,
+                lineHeight: 1,
+                padding: "2px 6px",
+                borderRadius: 999,
+                background: "var(--bg-elev)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--ix-shadow)",
+              }}
+            >
+              {m.reaction}
+            </span>
+          </div>
+        )}
         <div
           style={{
             fontSize: 10.5,
@@ -1320,6 +1249,8 @@ function ConversationPane({
   contactById,
   onSend,
   onSendTemplate,
+  threadView,
+  onThreadView,
   sending,
   sendError,
   onConvertToTicket,
@@ -1375,6 +1306,16 @@ function ConversationPane({
   // the real ones came back empty — demo scaffolding that rendered on top of
   // live customer conversations and read as though the AI had answered them.
   const messages: Message[] = conv.messages;
+  // The stitched customer thread needs DB conversations; live FB/IG threads have no contact thread.
+  const canStitch = !isLiveThreadId(conv.id) && !!conv.contactId;
+  const showAll = threadView === "all" && canStitch;
+  const saved = useSavedReplies({
+    draft,
+    setDraft,
+    lang,
+    tx,
+    disabled: !canCompose || waBlocked,
+  });
 
   // Internal notes for this thread, shown inline between the messages. Same URL
   // as the NotesPanel composer below, so React Query shares the cache and a new
@@ -1495,6 +1436,36 @@ function ConversationPane({
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {canStitch && (
+            <div
+              role="group"
+              aria-label={tx("Thread view", "عرض المحادثة")}
+              style={{ display: "inline-flex", border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden" }}
+            >
+              {(
+                [
+                  ["conv", tx("This conversation", "هذه المحادثة")],
+                  ["all", tx("All conversations", "كل المحادثات")],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  className="btn sm"
+                  aria-pressed={(showAll ? "all" : "conv") === v}
+                  onClick={() => onThreadView(v)}
+                  style={{
+                    borderRadius: 0,
+                    border: 0,
+                    background: (showAll ? "all" : "conv") === v ? "var(--accent-soft)" : "transparent",
+                    color: (showAll ? "all" : "conv") === v ? "var(--accent)" : undefined,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <ConversationAiToggle
             conversationId={conv.id}
             enabled={conv.aiEnabled ?? false}
@@ -1547,7 +1518,18 @@ function ConversationPane({
           backgroundPosition: "0 0",
         }}
       >
-        {messagesLoading && messages.length === 0 ? (
+        {showAll ? (
+          <CustomerThread
+            contactId={conv.contactId}
+            lang={lang}
+            tx={tx}
+            scrollerRef={scrollerRef}
+            refreshToken={`${conv.updatedAt ?? ""}|${messages.length}`}
+            renderMessage={(m) => <Bubble m={m} />}
+            dayLabel={(iso) => dayLabel(iso, lang, tx)}
+            onChanged={() => void onConversationChanged()}
+          />
+        ) : messagesLoading && messages.length === 0 ? (
           <div
             aria-label={tx("Loading messages", "جارٍ تحميل الرسائل")}
             style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 8 }}
@@ -1621,32 +1603,15 @@ function ConversationPane({
       </details>
 
       <div style={{ padding: "12px 18px 16px", borderTop: "1px solid var(--line-soft)" }}>
-        {!waBlocked && (
-          <div style={{ display: "flex", gap: 7, marginBottom: 10, flexWrap: "wrap" }}>
-            {[
-              tx("Ahlan! How can we help?", "أهلاً وسهلاً"),
-              tx("Your order is on its way", "الطلب بطريقه اليك"),
-              tx("Thanks for reaching out", "شكراً لتواصلك معنا"),
-            ].map((qr) => (
-              <button
-                key={qr}
-                type="button"
-                className="ix-quick"
-                dir="auto"
-                disabled={!canCompose}
-                onClick={() => setDraft((d) => (d ? d : qr))}
-              >
-                {qr}
-              </button>
-            ))}
-          </div>
-        )}
+        {!waBlocked && saved.strip}
+        {saved.slashMenu}
         <div className="ix-composer">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (waBlocked || !canCompose) return;
+              if (saved.onKeyDown(e)) return;
               // Enter sends, Shift+Enter inserts a newline (standard chat UX).
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -1867,11 +1832,11 @@ function ConversationPane({
       />
 
       {isWhatsApp && (
-        <WhatsAppTemplatePicker
+        <TemplateSendDialog
           open={templatePickerOpen}
           onClose={() => setTemplatePickerOpen(false)}
-          onSend={async (name, language, variables) => {
-            await onSendTemplate(name, language, variables);
+          onSend={async (name, language, variables, header) => {
+            await onSendTemplate(name, language, variables, header);
             setTemplatePickerOpen(false);
           }}
         />
@@ -2090,367 +2055,6 @@ function InboxMediaImage({
   );
 }
 
-interface ApprovedTemplate {
-  id: string;
-  name: string;
-  lang: string;
-  category: string;
-  status: string;
-  body?: string | null;
-}
-
-/**
- * Modal that lists APPROVED WhatsApp templates and lets the operator fill the
- * BODY component's {{1}}, {{2}}, … placeholders before sending. Only templates
- * with status === "approved" can actually be delivered; we filter the list
- * accordingly so the user can't pick a pending/rejected one and get a Meta
- * error at send time.
- */
-function WhatsAppTemplatePicker({
-  open,
-  onClose,
-  onSend,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSend: (name: string, language: string, variables: string[]) => Promise<void>;
-}) {
-  const { t } = useTweaks();
-  const tx = makeTx(t.lang);
-  const listQ = useFetch<ApprovedTemplate[]>(open ? "/templates" : null);
-  const items = (listQ.data ?? []).filter((tpl) => tpl.status === "approved");
-
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [vars, setVars] = useState<string[]>([]);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const selected = items.find((tpl) => tpl.id === selectedId) ?? null;
-
-  // Parse {{1}}, {{2}}, … placeholders out of the body so we know how many
-  // variable inputs to show. Returns the highest index seen.
-  const variableCount = useMemo(() => {
-    if (!selected?.body) return 0;
-    const matches = selected.body.matchAll(/\{\{(\d+)\}\}/g);
-    let max = 0;
-    for (const m of matches) {
-      const n = parseInt(m[1], 10);
-      if (n > max) max = n;
-    }
-    return max;
-  }, [selected]);
-
-  useEffect(() => {
-    // Reset variable inputs when a different template is picked.
-    setVars(Array.from({ length: variableCount }, () => ""));
-    setError(null);
-  }, [selectedId, variableCount]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !sending) onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, sending, onClose]);
-
-  // Live preview of what the customer will see, with variables substituted.
-  //
-  // MUST stay ABOVE the `if (!open)` early return below. It used to sit further
-  // down next to the render, so a closed picker ran 20 hooks and an open one ran
-  // 21 — React threw "Rendered more hooks than during the previous render" and
-  // tore down the whole Inbox the moment you clicked Use template.
-  const preview = useMemo(() => {
-    if (!selected?.body) return "";
-    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
-      const i = parseInt(idx, 10) - 1;
-      const v = vars[i]?.trim();
-      return v || `{{${idx}}}`;
-    });
-  }, [selected, vars]);
-
-  if (!open) return null;
-
-  const canSend =
-    selected !== null &&
-    !sending &&
-    vars.slice(0, variableCount).every((v) => v.trim().length > 0);
-
-  const handleSend = async () => {
-    if (!selected) return;
-    setSending(true);
-    setError(null);
-    try {
-      await onSend(
-        selected.name,
-        selected.lang,
-        vars.slice(0, variableCount).map((v) => v.trim()),
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Send failed");
-    } finally {
-      setSending(false);
-    }
-  };
-
-
-  return (
-    <Modal
-      onClose={sending ? () => {} : onClose}
-      width={640}
-      label={tx("Send a WhatsApp template", "أرسل قالب واتساب")}
-      panelStyle={{
-        padding: 0,
-        maxHeight: "min(640px, 88vh)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
-        <div
-          style={{
-            padding: "14px 16px",
-            borderBottom: "1px solid var(--line-soft)",
-          }}
-        >
-          <h3 style={{ margin: 0, fontSize: 15 }}>
-            {tx("Send a WhatsApp template", "أرسل قالب واتساب")}
-          </h3>
-          <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 4 }}>
-            {tx(
-              "Templates must be APPROVED by Meta. Submit new ones from the Templates screen.",
-              "يجب أن تكون القوالب معتمدة من Meta. أضف قوالب جديدة من شاشة القوالب.",
-            )}
-          </div>
-        </div>
-
-        <div
-          style={{
-            flex: 1,
-            display: "grid",
-            gridTemplateColumns: "minmax(180px, 220px) 1fr",
-            minHeight: 0,
-          }}
-        >
-          {/* Template list */}
-          <div
-            style={{
-              borderInlineEnd: "1px solid var(--line-soft)",
-              overflowY: "auto",
-              padding: 8,
-            }}
-          >
-            {listQ.loading && items.length === 0 ? (
-              <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
-                {tx("loading…", "جارٍ التحميل…")}
-              </div>
-            ) : items.length === 0 ? (
-              <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
-                {tx(
-                  "No Meta-approved templates yet. Create one on the Templates screen — Meta has to approve it before it can be sent.",
-                  "لا توجد قوالب معتمدة من Meta بعد. أنشئ قالبًا من شاشة القوالب — يجب أن تعتمده Meta قبل الإرسال.",
-                )}
-              </div>
-            ) : (
-              items.map((tpl) => {
-                const isActive = selectedId === tpl.id;
-                return (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => setSelectedId(tpl.id)}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "start",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      background: isActive ? "var(--accent-soft)" : "transparent",
-                      border: isActive
-                        ? "1px solid var(--accent-ring)"
-                        : "1px solid transparent",
-                      cursor: "pointer",
-                      marginBottom: 2,
-                      fontFamily: "inherit",
-                      color: "var(--ink)",
-                    }}
-                  >
-                    <div style={{ fontSize: 12, fontWeight: 500 }}>
-                      {tpl.name}
-                    </div>
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color: "var(--ink-3)",
-                        marginTop: 2,
-                      }}
-                    >
-                      {tpl.lang.toUpperCase()} · {tpl.category.toLowerCase()}
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-
-          {/* Preview + variables */}
-          <div style={{ overflowY: "auto", padding: 16 }}>
-            {!selected ? (
-              <div
-                className="mono muted"
-                style={{ fontSize: 12, opacity: 0.7 }}
-              >
-                {tx(
-                  "Pick a template on the left.",
-                  "اختر قالبًا من القائمة.",
-                )}
-              </div>
-            ) : (
-              <>
-                <div
-                  className="mono"
-                  style={{
-                    fontSize: 10,
-                    color: "var(--ink-3)",
-                    textTransform: "uppercase",
-                    letterSpacing: 0.06,
-                  }}
-                >
-                  {tx("Preview", "معاينة")}
-                </div>
-                <div
-                  style={{
-                    marginTop: 6,
-                    padding: 10,
-                    background: "var(--bg-2)",
-                    border: "1px solid var(--line-soft)",
-                    borderRadius: 8,
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  {preview || (
-                    <span className="muted">
-                      {tx("(empty body)", "(بدون نص)")}
-                    </span>
-                  )}
-                </div>
-
-                {variableCount > 0 && (
-                  <>
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color: "var(--ink-3)",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.06,
-                        marginTop: 16,
-                      }}
-                    >
-                      {tx("Variables", "المتغيرات")}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 6,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      {Array.from({ length: variableCount }, (_, i) => (
-                        <label
-                          key={i}
-                          style={{ display: "flex", flexDirection: "column", gap: 2 }}
-                        >
-                          <span
-                            className="mono"
-                            style={{ fontSize: 10, color: "var(--ink-3)" }}
-                          >
-                            {`{{${i + 1}}}`}
-                          </span>
-                          <input
-                            value={vars[i] ?? ""}
-                            onChange={(e) => {
-                              const next = [...vars];
-                              next[i] = e.target.value;
-                              setVars(next);
-                            }}
-                            placeholder={tx(
-                              `Value for {{${i + 1}}}`,
-                              `قيمة {{${i + 1}}}`,
-                            )}
-                            style={{
-                              height: 30,
-                              padding: "0 10px",
-                              background: "var(--bg-1)",
-                              border: "1px solid var(--line)",
-                              borderRadius: 6,
-                              color: "var(--ink)",
-                              fontSize: 13,
-                              outline: "none",
-                              fontFamily: "inherit",
-                            }}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {error && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      background: "color-mix(in oklch, var(--bad) 10%, transparent)",
-                      color: "var(--bad)",
-                      fontSize: 12,
-                      border: "1px solid color-mix(in oklch, var(--bad) 30%, transparent)",
-                    }}
-                  >
-                    {error}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        <div
-          style={{
-            padding: "10px 14px",
-            borderTop: "1px solid var(--line-soft)",
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-          }}
-        >
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={onClose}
-            disabled={sending}
-          >
-            {tx("Cancel", "إلغاء")}
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={handleSend}
-            disabled={!canSend}
-          >
-            {sending ? tx("Sending…", "جارٍ الإرسال…") : tx("Send template", "إرسال القالب")}
-          </button>
-        </div>
-    </Modal>
-  );
-}
-
 function AttachmentPreview({
   media,
   onRemove,
@@ -2574,6 +2178,8 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
 
 function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactRightRailProps) {
   const contact = contactById.get(conv.contactId);
+  const { t: tweaks } = useTweaks();
+  const lang = tweaks.lang;
 
   const lifecycleStages: string[] = [
     tx("Lead", "عميل محتمل"),
@@ -2655,8 +2261,10 @@ function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactR
       </div>
 
       {contact && contact.industry !== "facebook-dm" && (
-        <ContactTickets contactId={contact.id} tx={tx} />
+        <LinkedItemsCard contactId={contact.id} lang={lang} tx={tx} />
       )}
+
+      <TopicsCard topics={conv.topics} painPoints={conv.painPoints} tx={tx} />
 
       <div>
         <SectionLabel>{tx("Internal notes", "ملاحظات داخلية")}</SectionLabel>
@@ -2768,6 +2376,17 @@ function InboxImpl() {
   const setView = (v: InboxView) => {
     setViewState(v);
     const next = writeViewToHash(window.location.hash, v);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  // "This conversation" vs the customer's stitched thread; kept in the hash as `?tv=all`.
+  const [threadView, setThreadViewState] = useState<"conv" | "all">(() =>
+    getHashParam(window.location.hash, "tv") === "all" ? "all" : "conv",
+  );
+  const setThreadView = (v: "conv" | "all") => {
+    setThreadViewState(v);
+    const next = setHashParam(window.location.hash, "tv", v === "all" ? "all" : null);
     if (next !== window.location.hash) {
       window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
     }
@@ -3176,6 +2795,7 @@ function InboxImpl() {
       name: string;
       language: string;
       variables: string[];
+      header?: TemplateHeaderValue;
     },
     { ok: true; wamid?: string }
   >((input) =>
@@ -3185,6 +2805,7 @@ function InboxImpl() {
         name: input.name,
         language: input.language,
         variables: input.variables,
+        header: input.header,
       },
     ),
   );
@@ -3199,6 +2820,7 @@ function InboxImpl() {
       name: string;
       language: string;
       variables: string[];
+      header?: TemplateHeaderValue;
     },
     { ok: true; id?: string | null }
   >((input) =>
@@ -3206,6 +2828,7 @@ function InboxImpl() {
       name: input.name,
       language: input.language,
       variables: input.variables,
+      header: input.header,
     }),
   );
 
@@ -3506,7 +3129,9 @@ function InboxImpl() {
           conv={active}
           contactById={contactById}
           onSend={handleSend}
-          onSendTemplate={async (name, language, variables) => {
+          threadView={threadView}
+          onThreadView={setThreadView}
+          onSendTemplate={async (name, language, variables, header) => {
             if (!activeId) return;
             // Same transport routing as handleSend: Zernio-owned WhatsApp goes
             // through Zernio, which carries templates on its normal send
@@ -3517,6 +3142,7 @@ function InboxImpl() {
                 name,
                 language,
                 variables,
+                header,
               });
             } else {
               await sendWaTemplate.mutate({
@@ -3524,6 +3150,7 @@ function InboxImpl() {
                 name,
                 language,
                 variables,
+                header,
               });
             }
             // messageVersion bump refetches the thread via the new queryKey.

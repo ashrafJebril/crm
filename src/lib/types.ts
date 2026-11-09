@@ -262,6 +262,11 @@ export interface Message {
   metaMessageId?: string | null;
   deliveryStatus?: DeliveryStatus | null;
   deliveryStatusAt?: string | null;
+  /** Message row id (present on thread items). */
+  id?: string;
+  /** SP-31: the customer's latest emoji reaction to this message. */
+  reaction?: string | null;
+  reactionAt?: string | null;
 }
 
 export interface Conversation {
@@ -293,6 +298,9 @@ export interface Conversation {
   resolutionIssue?: "complaint" | "escalation" | "none" | null;
   resolutionSummary?: string | null;
   resolvedAt?: string | null;
+  /** SP-31: AI topics / pain points from the resolution verdict. */
+  topics?: string[] | null;
+  painPoints?: string[] | null;
   messages?: Message[];
   // WhatsApp-only: backend populates these when channel === "whatsapp".
   lastInboundAt?: string | null;
