@@ -16,6 +16,7 @@ import {
   UpdateActivityDto,
 } from "./activities.dto";
 import { localDayBounds } from "./buckets";
+import { canOpenRecord } from "../notifications/record-access";
 
 const INCLUDE = {
   contact: { select: { id: true, name: true } },
@@ -83,12 +84,23 @@ export class ActivitiesService {
     return d;
   }
 
+  private canAssigneeOpen(ws: string, userId: string, a: { ticketId?: string | null; contactId?: string | null }) {
+    const id = a.ticketId ?? a.contactId;
+    if (!id) return Promise.resolve(false);
+    return canOpenRecord(this.prisma, ws, userId, a.ticketId ? "ticket" : "contact", id, this.perm);
+  }
+
+  private async assertAssigneeAccess(ws: string, userId: string, a: { ticketId?: string | null; contactId?: string | null }) {
+    if (!(await this.canAssigneeOpen(ws, userId, a))) throw new BadRequestException("activities.assignee_no_access");
+  }
+
   private async notifyAssigned(
     ws: string,
     act: { assigneeId?: string | null; title: string; ticketId?: string | null; contactId?: string | null; contact?: { name: string } | null },
     actorId: string | null,
   ) {
     if (!act.assigneeId || act.assigneeId === actorId) return;
+    if (!(await this.canAssigneeOpen(ws, act.assigneeId, act))) return;
     const kind = act.ticketId ? "ticket" : "contact";
     const id = act.ticketId ?? act.contactId;
     if (!id) return;
@@ -126,7 +138,10 @@ export class ActivitiesService {
       if (!b) throw new NotFoundException("Booking not found");
     }
     const assigneeId = dto.assigneeId ?? actorId ?? null;
-    if (dto.assigneeId) await this.assertMember(ws, dto.assigneeId);
+    if (dto.assigneeId) {
+      await this.assertMember(ws, dto.assigneeId);
+      await this.assertAssigneeAccess(ws, dto.assigneeId, { ticketId, contactId });
+    }
     await this.assertCan(ws, viewer, { ticketId }, "update");
 
     const now = this.now();
@@ -173,7 +188,10 @@ export class ActivitiesService {
     }
     let newAssignee: string | null = null;
     if (dto.assigneeId !== undefined) {
-      if (dto.assigneeId !== null) await this.assertMember(ws, dto.assigneeId);
+      if (dto.assigneeId !== null && dto.assigneeId !== existing.assigneeId) {
+        await this.assertMember(ws, dto.assigneeId);
+        await this.assertAssigneeAccess(ws, dto.assigneeId, existing);
+      }
       data.assigneeId = dto.assigneeId;
       if (dto.assigneeId !== existing.assigneeId) {
         rearm = true;
@@ -252,19 +270,9 @@ export class ActivitiesService {
       and.push({ assigneeId: userId });
     } else {
       if (q.assigneeId) and.push({ assigneeId: q.assigneeId });
-      // Assigned-only members see team items only on records they can open:
-      // their own assignments, contacts/tickets they own, and contacts they
-      // have an assigned conversation with.
-      if (eff !== "all" && eff && eff.conversationVisibility === "assigned" && userId) {
-        and.push({
-          OR: [
-            { assigneeId: userId },
-            { contact: { ownerId: userId } },
-            { ticket: { ownerId: userId } },
-            { contact: { conversations: { some: { assigneeId: userId } } } },
-          ],
-        });
-      }
+      // Team scope is every activity on a record the viewer may open: the
+      // contacts.view / tickets.view gates below are the access rule (contacts
+      // and tickets are not row-scoped by conversation visibility).
     }
     if (q.kind) and.push({ kind: q.kind });
     if (q.pipelineId) and.push({ ticket: { pipelineId: q.pipelineId } });
@@ -328,7 +336,12 @@ export class ActivitiesService {
       select: { id: true, ticketId: true, contactId: true, title: true },
     });
     const eff = await this.eff(ws, viewer);
-    const allowed = rows.filter((r) => this.can(eff, this.permFor(r, "update")));
+    let allowed = rows.filter((r) => this.can(eff, this.permFor(r, "update")));
+    // A reassign target that cannot open a record is skipped for that row.
+    if (dto.op === "reassign") {
+      const ok = await Promise.all(allowed.map((r) => this.canAssigneeOpen(ws, dto.assigneeId!, r)));
+      allowed = allowed.filter((_, i) => ok[i]);
+    }
     const target = allowed.map((r) => r.id);
     if (target.length === 0) return { affected: 0, skipped: ids.length };
 

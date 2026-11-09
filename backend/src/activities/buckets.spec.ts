@@ -49,3 +49,24 @@ describe("localDayBounds", () => {
     expect(start.toISOString()).toBe("2026-11-10T00:00:00.000Z");
   });
 });
+
+describe("Africa/Cairo DST", () => {
+  // 2026 Egypt DST: starts Fri 24 Apr (00:00 -> 01:00, 23h day), ends Thu 29 Oct (24:00 -> 23:00, 25h day).
+  it("spring forward: the 23h day starts at +2 and ends at +3", () => {
+    const { start, end } = localDayBounds(new Date("2026-04-24T10:00:00Z"), "Africa/Cairo");
+    expect(start.toISOString()).toBe("2026-04-23T22:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-04-24T21:00:00.000Z");
+    expect(end.getTime() - start.getTime()).toBe(23 * 3600_000);
+  });
+  it("fall back: the 25h day starts at +3 and ends at +2", () => {
+    const { start, end } = localDayBounds(new Date("2026-10-29T10:00:00Z"), "Africa/Cairo");
+    expect(start.toISOString()).toBe("2026-10-28T21:00:00.000Z");
+    expect(end.toISOString()).toBe("2026-10-29T22:00:00.000Z");
+    expect(end.getTime() - start.getTime()).toBe(25 * 3600_000);
+  });
+  it("buckets straddle the transition correctly", () => {
+    const now = new Date("2026-04-24T10:00:00Z");
+    expect(bucketOf(new Date("2026-04-24T20:59:00Z"), now, "Africa/Cairo")).toBe("today");
+    expect(bucketOf(new Date("2026-04-24T21:00:00Z"), now, "Africa/Cairo")).toBe("upcoming");
+  });
+});

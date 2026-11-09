@@ -68,6 +68,33 @@ describe("ActivityDueScheduler", () => {
     expect(notifications.notify).not.toHaveBeenCalled();
   });
 
+  it("a notify failure reverts the claim and the sweep carries on", async () => {
+    const { prisma, notifications, sched } = setup();
+    prisma.seed({ id: "a", dueAt: new Date(NOW.getTime() - 120_000) });
+    prisma.seed({ id: "b", dueAt: new Date(NOW.getTime() - 60_000) });
+    notifications.notify.mockRejectedValueOnce(new Error("boom"));
+    expect(await sched.sweep(NOW)).toBe(1);
+    expect(prisma.activities.find((x) => x.id === "a")!.notifiedAt).toBeNull();
+    expect(prisma.activities.find((x) => x.id === "b")!.notifiedAt).toEqual(NOW);
+    expect(await sched.sweep(NOW)).toBe(1); // a retried
+  });
+
+  it("an assignee who cannot open the record is not notified but the row is marked", async () => {
+    const { prisma, notifications, sched } = setup();
+    prisma.seed({ id: "a", assigneeId: "ghost", dueAt: new Date(NOW.getTime() - 60_000) });
+    expect(await sched.sweep(NOW)).toBe(0);
+    expect(notifications.notify).not.toHaveBeenCalled();
+    expect(prisma.activities[0].notifiedAt).toEqual(NOW);
+  });
+
+  it("the claim is guarded by the assignee read", async () => {
+    const { prisma, sched } = setup();
+    prisma.seed({ id: "a", dueAt: new Date(NOW.getTime() - 60_000) });
+    await sched.sweep(NOW);
+    const claim = prisma.activity.updateMany.mock.calls.map((c) => c[0]).find((c) => c.where.id === "a");
+    expect(claim.where.assigneeId).toBe("u1");
+  });
+
   it("rescheduling re-arms the notification", async () => {
     const { prisma, notifications, sched } = setup();
     const perm = { effective: async () => ({ permissions: ["contacts.update"] }), can: (e: any, p: string) => e.permissions.includes(p) };

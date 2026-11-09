@@ -9,6 +9,7 @@ function setup(perms: Record<string, { perms: string[]; vis?: string }> = {}) {
   const prisma = new FakePrisma();
   const notifications = { notify: jest.fn().mockResolvedValue(1) };
   const effs: Record<string, any> = {};
+  if (!("u2" in perms)) perms = { ...perms, u2: { perms: ALL } };
   for (const [u, p] of Object.entries(perms)) effs[u] = { permissions: p.perms, conversationVisibility: p.vis ?? "all" };
   const perm = {
     effective: jest.fn(async (_w: string, u: string) => effs[u] ?? null),
@@ -86,6 +87,23 @@ describe("ActivitiesService CRUD", () => {
     notifications.notify.mockClear();
     await svc.create("ws", { kind: "follow_up", title: "Ring", dueAt: "2026-11-11T08:00:00Z", contactId: "c1" }, "u1", me);
     expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
+  it("assigning to a member who cannot open the record -> 400 activities.assignee_no_access", async () => {
+    const { svc, prisma } = setup({ u1: { perms: ALL }, u2: { perms: [] } });
+    await expect(
+      svc.create("ws", { kind: "follow_up", title: "x", dueAt: "2026-11-11T08:00:00Z", contactId: "c1", assigneeId: "u2" }, "u1", me),
+    ).rejects.toThrow("activities.assignee_no_access");
+    const row = prisma.seed();
+    await expect(svc.update("ws", row.id, { assigneeId: "u2" }, "u1", me)).rejects.toThrow("activities.assignee_no_access");
+  });
+
+  it("bulk reassign skips records the new assignee cannot open", async () => {
+    const { svc, prisma, notifications } = setup({ u1: { perms: ALL }, u2: { perms: ["contacts.view"] } });
+    prisma.seed({ id: "a" });
+    prisma.seed({ id: "b", ticketId: "t1" });
+    expect(await svc.bulk("ws", { ids: ["a", "b"], op: "reassign", assigneeId: "u2" }, "u1", me)).toEqual({ affected: 1, skipped: 1 });
+    expect(notifications.notify).toHaveBeenCalledTimes(1);
   });
 
   it("update: reschedule and reassign clear notifiedAt; assignee change notifies", async () => {
@@ -193,14 +211,14 @@ describe("queue", () => {
     expect(q).toHaveProperty("nextCursorUpcoming");
   });
 
-  it("assigned-only viewer: team scope is limited to records they can open", async () => {
+  it("assigned-only viewer with contacts.view sees teammates' activities on shared contacts", async () => {
     const { svc, prisma } = setup({ u1: { perms: ALL, vis: "assigned" } });
     seedAll(prisma);
-    await svc.queue("ws", { scope: "team" }, me);
-    const where = prisma.activity.findMany.mock.calls[0][0].where;
-    expect(JSON.stringify(where)).toContain('"assigneeId":"u1"');
-    expect(JSON.stringify(where)).toContain('"ownerId":"u1"');
-    expect(JSON.stringify(where)).toContain('"conversations":{"some":{"assigneeId":"u1"}}');
+    const q = await svc.queue("ws", { scope: "team" }, me);
+    expect(q.counts.today).toBe(2); // includes u2's activity
+    const where = JSON.stringify(prisma.activity.findMany.mock.calls[0][0].where);
+    expect(where).not.toContain("conversations");
+    expect(where).not.toContain("ownerId");
   });
 
   it("a viewer without tickets.view never sees ticket-linked rows; with neither view, nothing", async () => {
