@@ -132,7 +132,7 @@ export function TemplateEditor({ lang, connected = null, mode, initial, onClose,
   };
 
   return (
-    <Modal onClose={onClose} width={520} label={mode === "create" ? "New template" : "Edit template"}>
+    <Modal onClose={onClose} width={520} label={mode === "create" ? tx("New template", "قالب جديد") : tx("Edit template", "تعديل القالب")}>
       <form
         onSubmit={onSubmit}
         style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -339,7 +339,7 @@ export function TemplateEditor({ lang, connected = null, mode, initial, onClose,
               <button
                 type="button"
                 onClick={() => removeButton(i)}
-                aria-label="Remove"
+                aria-label={tx("Remove", "إزالة")}
                 style={{
                   ...btnSecondary,
                   padding: 0,

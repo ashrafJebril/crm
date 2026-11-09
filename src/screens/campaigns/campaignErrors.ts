@@ -234,9 +234,16 @@ export function cancelErrorText(err: unknown, tx: Tx): string {
  * A campaign's stored `lastError`: a launch-failure key (SP-13) is worded;
  * anything else (an older provider message) is shown as stored.
  */
-export function lastErrorText(lastError: string | null | undefined, tx: Tx): string | null {
+export function lastErrorText(lastError: string | null | undefined, tx: Tx, canCancel = false): string | null {
   const v = lastError?.trim();
   if (!v) return null;
+  // A failed launch whose broadcasts may still send: don't point to a new campaign while Cancel is offered.
+  if (canCancel && v === "campaigns.launch_failed") {
+    return tx(
+      "The campaign couldn't be sent in full. It may still be sending and can be cancelled.",
+      "تعذّر إرسال الحملة بالكامل. قد تكون لا تزال قيد الإرسال ويمكن إلغاؤها.",
+    );
+  }
   return campaignKeyText(v, {}, tx) ?? v;
 }
 

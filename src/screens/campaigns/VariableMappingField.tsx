@@ -149,7 +149,7 @@ export function VariableMappingField({
       {(missingByKey ?? []).filter((m) => m.count > 0).map((m) => (
         <div key={`${m.source}.${m.key}`} role="status" style={{ fontSize: 12, color: "var(--warn)" }}>
           {tx(
-            `${fmtNum(m.count)} recipients will be skipped: no value for ${m.label}`,
+            `${fmtNum(m.count)} ${m.count === 1 ? "recipient" : "recipients"} will be skipped: no value for ${m.label}`,
             `سيُستبعد ${fmtNum(m.count)} مستلم: لا توجد قيمة لـ ${m.labelAr || m.label}`,
           )}
         </div>

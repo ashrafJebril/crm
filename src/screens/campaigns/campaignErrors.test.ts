@@ -194,6 +194,9 @@ describe("campaignErrorText", () => {
       "No one in the audience could receive it: no usable number, opted out, or a missing value without a fallback.",
     );
     expect(lastErrorText("campaigns.launch_failed", ar)).toMatch(ARABIC);
+    expect(lastErrorText("campaigns.launch_failed", en, true)).toMatch(/may still be sending and can be cancelled/);
+    expect(lastErrorText("campaigns.launch_failed", en, true)).not.toMatch(/Create a new campaign/);
+    expect(lastErrorText("campaigns.launch_failed", ar, true)).toMatch(ARABIC);
     expect(lastErrorText("Zernio said no", en)).toBe("Zernio said no");
     expect(lastErrorText(null, en)).toBeNull();
     expect(lastErrorText("  ", en)).toBeNull();

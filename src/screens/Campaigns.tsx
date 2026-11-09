@@ -1074,13 +1074,13 @@ function CampaignsImpl() {
                       {c.status === "launching" && <LaunchProgress tx={tx} campaign={c} compact />}
                       {c.lastError && (
                         <div dir="auto" style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>
-                          {lastErrorText(c.lastError, tx)}
+                          {lastErrorText(c.lastError, tx, listMayCancel(c))}
                         </div>
                       )}
                       {!c.lastError && (c.skipped ?? 0) > 0 && (
                         <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
                           {tx(
-                            `${c.skipped} contacts left out (no number or opted out)`,
+                            `${c.skipped} ${c.skipped === 1 ? "contact" : "contacts"} left out (no number or opted out)`,
                             `${c.skipped} جهات مستبعدة (بلا رقم أو ألغت الاشتراك)`,
                           )}
                         </div>

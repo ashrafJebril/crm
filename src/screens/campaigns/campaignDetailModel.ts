@@ -301,7 +301,7 @@ export interface LaunchProgressView {
 const n = (v: number) => (v ?? 0).toLocaleString("en-US");
 
 export function launchProgressView(
-  c: Pick<Campaign, "status" | "launchStage" | "sendTransport" | "lastError" | "launch">,
+  c: Pick<Campaign, "status" | "launchStage" | "sendTransport" | "lastError" | "launch"> & { canCancel?: boolean },
   tx: Tx,
 ): LaunchProgressView {
   const active = c.status === "launching";
@@ -315,7 +315,7 @@ export function launchProgressView(
   const lines: string[] = [];
   let pct: number | null = null;
   if (active && p) {
-    lines.push(tx(`${n(p.planned)} recipients planned`, `${n(p.planned)} مستلم مخطط`));
+    lines.push(tx(`${n(p.planned)} ${p.planned === 1 ? "recipient" : "recipients"} planned`, `${n(p.planned)} مستلم مخطط`));
     if (p.stage === "sending") {
       if (c.sendTransport === "direct") {
         lines.push(tx(`${n(p.directSent)} of ${n(p.planned)} messages sent`, `أُرسلت ${n(p.directSent)} من ${n(p.planned)} رسالة`));
@@ -326,7 +326,7 @@ export function launchProgressView(
       }
     }
   }
-  const error = c.status === "failed" ? lastErrorText(c.lastError, tx) : null;
+  const error = c.status === "failed" ? lastErrorText(c.lastError, tx, c.canCancel === true) : null;
   return { active, stage, lines, pct, error };
 }
 

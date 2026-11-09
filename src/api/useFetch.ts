@@ -20,14 +20,24 @@ interface FetchState<T> {
   setData: (updater: DataUpdater<T>) => void;
 }
 
-interface FetchOpts {
+interface FetchOpts<T> {
   enabled?: boolean;
   // Bumping `key` forces re-fetch (use after a mutation invalidates cache).
   key?: string | number;
   // When set, refetch every N milliseconds. Polling pauses while the document
   // is hidden (background tab) to avoid burning quota — handled natively by
   // React Query's refetchIntervalInBackground:false.
-  pollMs?: number;
+  // May be a function of the latest data, read on every tick, so the interval
+  // follows what was just fetched with no render in between.
+  pollMs?: PollMs<T>;
+}
+
+export type PollMs<T> = number | undefined | ((data: T | undefined) => number | null | undefined);
+
+/** The effective refetch interval: a positive number, else false (no polling). */
+export function resolvePollMs<T>(pollMs: PollMs<T> | undefined, data: T | undefined): number | false {
+  const v = typeof pollMs === "function" ? pollMs(data) : pollMs;
+  return typeof v === "number" && v > 0 ? v : false;
 }
 
 /** GET hook backed by React Query. Two components asking for the same URL
@@ -35,7 +45,7 @@ interface FetchOpts {
  *  Path = null disables the query. */
 export function useFetch<T>(
   path: string | null,
-  opts: FetchOpts = {},
+  opts: FetchOpts<T> = {},
 ): FetchState<T> {
   const enabled = opts.enabled !== false && path !== null;
   const queryClient = useQueryClient();
@@ -59,8 +69,7 @@ export function useFetch<T>(
       return api.get<T>(path, signal);
     },
     enabled,
-    refetchInterval:
-      opts.pollMs && opts.pollMs > 0 ? opts.pollMs : false,
+    refetchInterval: (query) => resolvePollMs(opts.pollMs, query.state.data),
     refetchIntervalInBackground: false,
     // When a consumer bumps `opts.key` to invalidate, React Query treats the
     // new queryKey as a brand-new cache entry with no data. keepPreviousData

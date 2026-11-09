@@ -46,14 +46,12 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
   const tz = activeWorkspace?.timezone ?? null;
 
   const path = `/campaigns/${encodeURIComponent(id)}`;
-  const pollRef = useRef<number | undefined>(undefined);
-  // The poll interval comes from the last known campaign; both queries follow it,
-  // so a campaign that finishes stops polling on the next tick. React Query
-  // pauses the interval while the tab is hidden.
-  const campaignQ = useFetch<Campaign | null>(path, { pollMs: pollRef.current });
+  // The interval is a function of the latest fetched campaign, read by useFetch
+  // on every tick: a freshly launched campaign polls every 5 s from the first
+  // response, with no stale-ref render in between. React Query pauses the
+  // interval while the tab is hidden.
+  const campaignQ = useFetch<Campaign | null>(path, { pollMs: (data) => campaignPollMs(data ?? null, Date.now()) });
   const c = campaignQ.data ?? null;
-  // SP-13: every 5 s while the background launch runs, then the report's cadence.
-  pollRef.current = campaignPollMs(c, Date.now()) ?? undefined;
   const pollMs = insightsPollMs(c, Date.now()) ?? undefined;
   const insightsQ = useFetch<CampaignInsights>(c && c.status !== "launching" ? `${path}/insights` : null, { pollMs });
   const insights = insightsQ.data;
@@ -238,14 +236,14 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
         {c.status === "launching" || (c.status === "failed" && c.launchStage === "failed") ? (
           <LaunchProgress
             tx={tx}
-            campaign={c}
+            campaign={{ ...c, canCancel: mayCancel }}
             onCancel={mayCancel ? () => void cancelCampaign() : undefined}
             cancelling={cancelling}
           />
         ) : (
           c.lastError && (
             <Notice tone="warn">
-              <span dir="auto">{lastErrorText(c.lastError, tx)}</span>
+              <span dir="auto">{lastErrorText(c.lastError, tx, mayCancel)}</span>
             </Notice>
           )
         )}

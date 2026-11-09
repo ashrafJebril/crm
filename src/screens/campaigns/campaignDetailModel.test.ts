@@ -230,6 +230,10 @@ describe("launch progress", () => {
     expect(campaignPollMs({ status: "running", launchedAt: null, scheduledAt: null }, now)).toBe(30_000);
     expect(campaignPollMs({ status: "failed", launchedAt: null, scheduledAt: null }, now)).toBeNull();
     expect(campaignPollMs(null, now)).toBeNull();
+    // A freshly launched campaign (no launchedAt yet) always polls on the first render.
+    for (const launchedAt of [null, new Date(now).toISOString()]) {
+      expect(campaignPollMs({ status: "launching", launchedAt, scheduledAt: null }, now)).toBeGreaterThan(0);
+    }
   });
 
   it("shows the stage and counts while launching, and the stored error when it failed", () => {
@@ -257,6 +261,13 @@ describe("launch progress", () => {
     expect(direct.lines.join(" ")).toMatch(ARABIC);
     expect(direct.lines.join(" ")).toContain("100");
     expect(direct.pct).toBe(25);
+
+    expect(
+      launchProgressView(
+        { status: "launching", launchStage: "sending", sendTransport: "direct", lastError: null, launch: { stage: "sending", planned: 1, partitionsTotal: 1, partitionsDone: 0, directSent: 0 } },
+        en,
+      ).lines[0],
+    ).toBe("1 recipient planned");
 
     // Progress missing (a list row or an older backend): the stage alone, no crash.
     expect(launchProgressView({ status: "launching", launchStage: null, sendTransport: null, lastError: null, launch: null }, en).lines).toEqual([]);

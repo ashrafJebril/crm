@@ -16,7 +16,7 @@ export function LaunchProgress({
   compact,
 }: {
   tx: Tx;
-  campaign: Pick<Campaign, "status" | "launchStage" | "sendTransport" | "lastError" | "launch" | "cancelRequestedAt">;
+  campaign: Pick<Campaign, "status" | "launchStage" | "sendTransport" | "lastError" | "launch" | "cancelRequestedAt" | "canCancel">;
   /** Omitted when the role may not cancel. */
   onCancel?: () => void;
   cancelling?: boolean;
