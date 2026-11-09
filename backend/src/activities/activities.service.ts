@@ -412,6 +412,7 @@ export class ActivitiesService {
         title: string;
         dueAt: Date;
         overdue: boolean;
+        ticketId: string | null;
         assigneeId: string | null;
         notes: string | null;
         outcome: string | null;
@@ -428,6 +429,7 @@ export class ActivitiesService {
         title: r.title,
         dueAt: r.dueAt,
         overdue: r.dueAt.getTime() < now,
+        ticketId: r.ticketId ?? null,
         assigneeId: r.assigneeId ?? null,
         notes: r.notes ?? null,
         outcome: r.outcome ?? null,

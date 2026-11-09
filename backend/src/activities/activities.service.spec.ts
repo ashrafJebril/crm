@@ -316,6 +316,7 @@ describe("next-steps", () => {
         title: "Sooner",
         dueAt: new Date("2026-11-09T08:00:00Z"),
         overdue: true,
+        ticketId: null,
         assigneeId: "u1",
         notes: null,
         outcome: null,
