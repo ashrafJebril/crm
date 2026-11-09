@@ -5,7 +5,7 @@ import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
 import { IconPlus, IconX } from "@/icons";
 import { usePermissions } from "@/auth/usePermissions";
-import { ImportWizard } from "./import/ImportWizard";
+import { ImportChip, ImportWizard } from "./import/ImportWizard";
 
 interface MemberRow {
   id: string;
@@ -30,7 +30,11 @@ export function GroupsTab({ tx, lang, contacts }: GroupsTabProps) {
   const [openGroup, setOpenGroup] = useState<Segment | null>(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importWatchId, setImportWatchId] = useState<string | null>(null);
   const { can } = usePermissions();
+
+  // Creating a new group needs audiences.create; adding to an existing one, audiences.update.
+  const canImport = can("audiences.create") || can("audiences.update");
 
   const rows = segmentsQ.data ?? [];
   const groups = rows.filter((s) => s.origin === "manual");
@@ -46,11 +50,14 @@ export function GroupsTab({ tx, lang, contacts }: GroupsTabProps) {
             className="btn sm"
             style={{ marginInlineStart: 12, textTransform: "none" }}
             onClick={() => setImporting(true)}
-            disabled={!can("audiences.create")}
-            title={can("audiences.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}
+            disabled={!canImport}
+            title={canImport ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}
           >
             {tx("Import file", "استيراد ملف")}
           </button>
+          <span style={{ marginInlineStart: 8, textTransform: "none" }}>
+            <ImportChip tx={tx} watchId={importWatchId} onFinished={() => { setImportWatchId(null); segmentsQ.refetch(); }} />
+          </span>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
           <button
@@ -105,7 +112,10 @@ export function GroupsTab({ tx, lang, contacts }: GroupsTabProps) {
           tx={tx}
           lang={lang}
           kind="audience"
-          onClose={() => setImporting(false)}
+          onClose={(runningId) => {
+            setImporting(false);
+            if (runningId) setImportWatchId(runningId);
+          }}
           onImported={() => segmentsQ.refetch()}
         />
       )}

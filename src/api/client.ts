@@ -77,14 +77,16 @@ interface RequestOpts {
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // FormData goes out as multipart: the browser must set the Content-Type (with its boundary).
+  const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
+  const headers: Record<string, string> = isForm ? {} : { "Content-Type": "application/json" };
   const tok = tokenStore.get();
   if (tok) headers.Authorization = `Bearer ${tok}`;
 
   const res = await fetch(`${BASE}${path}`, {
     method: opts.method ?? "GET",
     headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body: opts.body === undefined ? undefined : isForm ? (opts.body as FormData) : JSON.stringify(opts.body),
     signal: opts.signal,
   });
 
@@ -102,6 +104,27 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
 
   if (!res.ok) throw errorFromBody(data, res.status, !opts.localPaymentError);
   return data as T;
+}
+
+// POST with a JSON body whose successful response is a file (e.g. a CSV
+// export): same token, 401 and error handling as request(), but the body is
+// returned as a Blob together with the server's filename.
+async function postBlob(path: string, body?: unknown): Promise<{ blob: Blob; filename: string | null }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const tok = tokenStore.get();
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401 && tok) onUnauthorized?.();
+  if (!res.ok) {
+    const raw = await res.text();
+    throw errorFromBody(raw ? safeJson(raw) : undefined, res.status);
+  }
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  return { blob: await res.blob(), filename: /filename="?([^";]+)"?/i.exec(cd)?.[1] ?? null };
 }
 
 function safeJson(s: string): unknown {
@@ -209,6 +232,8 @@ export const api = {
   get:        <T,>(path: string, signal?: AbortSignal) => request<T>(path, { method: "GET", signal }),
   post:       <T,>(path: string, body?: unknown, o?: { localPaymentError?: boolean }) =>
     request<T>(path, { method: "POST", body, localPaymentError: o?.localPaymentError }),
+  postForm:   <T,>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
+  postBlob:   (path: string, body?: unknown) => postBlob(path, body),
   patch:      <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
   put:        <T,>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
   delete:     <T,>(path: string) => request<T>(path, { method: "DELETE" }),

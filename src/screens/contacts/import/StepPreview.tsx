@@ -21,7 +21,7 @@ export function ErrorTable({ tx, rows }: { tx: Tx; rows: { row: number; column: 
         <tbody>
           {rows.map((r, i) => (
             <tr key={`${r.row}-${i}`}>
-              <td className="mono">{r.row}</td>
+              <td className="mono">{r.row > 0 ? r.row : "—"}</td>
               <td dir="auto">{r.column ?? "—"}</td>
               <td>{messageText(r.key, tx)}</td>
             </tr>

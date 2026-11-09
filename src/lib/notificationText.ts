@@ -55,6 +55,8 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
       }
       return out(tx("Ticket assigned to you", "تم إسناد تذكرة إليك"), ticket);
     }
+    case "import.failed":
+      return out(tx("An import failed", "فشل الاستيراد"));
     case "mention.note": {
       const actor = str(p.actorName);
       const excerpt = str(p.excerpt);

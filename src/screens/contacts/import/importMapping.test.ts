@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { errorsToCsv, targetsFor, validateMapping } from "./importMapping";
-import { messageText } from "./importMessages";
+import { errorsToCsv, shouldDiscardUpload, targetsFor, validateMapping } from "./importMapping";
+import { exportErrorText, messageText } from "./importMessages";
 import type { CustomFieldDef } from "@/lib/types";
 
 const def = (id: string, label: string, archivedAt: string | null = null): CustomFieldDef => ({
@@ -47,7 +47,8 @@ describe("messageText", () => {
     "imports.mapping_duplicate", "imports.mapping_required", "imports.custom_field_invalid",
     "imports.owner_invalid", "imports.pipeline_invalid", "imports.pipeline_too_large", "imports.forbidden",
     "imports.err.no_identity", "imports.err.bad_email", "imports.err.bad_phone",
-    "imports.err.bad_custom_value", "imports.err.owner_not_found",
+    "imports.err.bad_custom_value", "imports.err.owner_not_found", "imports.too_many_rows",
+    "imports.err.owner_ambiguous", "imports.err.job_failed",
   ];
   it("has English and Arabic text for every backend key", () => {
     for (const k of keys) {
@@ -70,5 +71,29 @@ describe("errorsToCsv", () => {
     expect(lines[0]).toBe("Row,Column,Reason");
     expect(lines[1]).toBe('3,Email,"bad, ""x"""');
     expect(lines[2]).toBe("4,,'=SUM(A1)");
+  });
+});
+
+describe("shouldDiscardUpload", () => {
+  it("discards an uploaded file unless the import already started", () => {
+    expect(shouldDiscardUpload(0, "j1")).toBe(true); // replaced / went back to upload
+    expect(shouldDiscardUpload(1, "j1")).toBe(true); // closed at Map
+    expect(shouldDiscardUpload(2, "j1")).toBe(true); // closed at Preview
+    expect(shouldDiscardUpload(3, "j1")).toBe(false); // running or finished: server owns it
+    expect(shouldDiscardUpload(1, null)).toBe(false);
+  });
+});
+
+describe("exportErrorText", () => {
+  const ar = (_a: string, b: string) => b;
+  const en = (a: string) => a;
+  const err = (status: number, message: string) => Object.assign(new Error(message), { status });
+  it("maps statuses to bilingual messages, never the raw server text", () => {
+    expect(exportErrorText(err(403, "Forbidden resource"), en)).toMatch(/permission/);
+    expect(exportErrorText(err(400, "ids is limited to 10000"), en)).toMatch(/10,000/);
+    expect(exportErrorText(err(500, "boom"), en)).toBe("Export failed. Try again.");
+    for (const e of [err(403, "x"), err(400, "ids is limited to 10000"), err(500, "x")]) {
+      expect(exportErrorText(e, ar)).toMatch(/[؀-ۿ]/);
+    }
   });
 });

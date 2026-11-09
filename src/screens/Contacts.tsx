@@ -29,6 +29,7 @@ import { FieldsTab } from "./contacts/FieldsTab";
 import { NewContactModal } from "./contacts/NewContactModal";
 import { ImportWizard, ImportChip } from "./contacts/import/ImportWizard";
 import { downloadContactsExport } from "./contacts/import/importApi";
+import { exportErrorText } from "./contacts/import/importMessages";
 import { ContactFilterBar } from "./contacts/ContactFilterBar";
 import { BulkBar, PIPELINE_BULK_CAP, type BulkAction } from "./contacts/BulkBar";
 import {
@@ -466,6 +467,8 @@ function ContactsImpl() {
   };
   const [selectingAll, setSelectingAll] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  // True when the selection came from "select all matching": the export then sends only the filter.
+  const [selectionIsAll, setSelectionIsAll] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<
@@ -498,10 +501,11 @@ function ContactsImpl() {
   // Bumped on every selection change so a late select-all response can be discarded.
   const selVersionRef = useRef(0);
   /** The only way the selection changes: bumps the version so an in-flight select-all can't overwrite it. */
-  const setSelection = (next: Set<string>, nextTruncated = false) => {
+  const setSelection = (next: Set<string>, nextTruncated = false, fromSelectAll = false) => {
     selVersionRef.current++;
     setSelected(next);
     setTruncated(nextTruncated);
+    setSelectionIsAll(fromSelectAll);
   };
   // A selection (esp. "all matching") belongs to the listing it was made on.
   useEffect(() => {
@@ -621,8 +625,8 @@ function ContactsImpl() {
     if (exporting) return;
     setExporting(true);
     // The current filter, narrowed to the selection when rows are selected.
-    downloadContactsExport(filterQuery, Array.from(selected))
-      .catch((err) => showStatus(err instanceof Error ? err.message : tx("Export failed.", "فشل التصدير.")))
+    downloadContactsExport(filterQuery, Array.from(selected), selectionIsAll)
+      .catch((err) => showStatus(exportErrorText(err, tx)))
       .finally(() => setExporting(false));
   };
 
@@ -636,7 +640,7 @@ function ContactsImpl() {
       .then((r) => {
         // Ignore a response for a listing/selection that has since changed.
         if (!isSelectAllCurrent(start, { query: queryRef.current, selectionVersion: selVersionRef.current })) return;
-        setSelection(new Set(r.ids), r.truncated);
+        setSelection(new Set(r.ids), r.truncated, true);
       })
       .catch((err) => setBulkError(err instanceof Error ? err.message : tx("Request failed", "فشل الطلب")))
       .finally(() => setSelectingAll(false));

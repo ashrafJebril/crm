@@ -4,7 +4,8 @@ const M: Record<string, [string, string]> = {
   "imports.file_empty": ["The file is empty.", "الملف فارغ."],
   "imports.file_too_large": ["The file is larger than 10 MB.", "حجم الملف أكبر من 10 ميغابايت."],
   "imports.unsupported_type": ["Only .csv and .xlsx files are supported.", "الملفات المدعومة هي csv و xlsx فقط."],
-  "imports.file_invalid": ["The file could not be read, or has more than 50,000 rows.", "تعذّرت قراءة الملف أو أنه يتجاوز 50,000 صف."],
+  "imports.file_invalid": ["The file could not be read.", "تعذّرت قراءة الملف."],
+  "imports.too_many_rows": ["The file has more than 50,000 rows. Split it into smaller files.", "يحتوي الملف على أكثر من 50,000 صف. قسّمه إلى ملفات أصغر."],
   "imports.file_missing": ["Choose a file to upload.", "اختر ملفًا للرفع."],
   "imports.invalid_kind": ["Unknown import type.", "نوع الاستيراد غير معروف."],
   "imports.invalid_state": ["This import can no longer be changed.", "لا يمكن تعديل هذا الاستيراد بعد الآن."],
@@ -25,10 +26,22 @@ const M: Record<string, [string, string]> = {
   "imports.err.bad_phone": ["Invalid phone number.", "رقم هاتف غير صالح."],
   "imports.err.bad_custom_value": ["Invalid value for a custom field.", "قيمة غير صالحة لحقل مخصص."],
   "imports.err.owner_not_found": ["Owner not found in this workspace.", "المسؤول غير موجود في مساحة العمل."],
+  "imports.err.owner_ambiguous": ["Several members have this name. Use the owner's email instead.", "عدة أعضاء لهم هذا الاسم. استخدم بريد المسؤول بدلًا منه."],
+  "imports.err.job_failed": ["The import stopped because of an error. Start it again from a new upload.", "توقف الاستيراد بسبب خطأ. ابدأه من جديد برفع الملف مرة أخرى."],
 };
 
 /** Translates a backend import message key; unknown keys get a generic message. */
 export function messageText(key: string | undefined | null, tx: Tx): string {
   const m = key ? M[key] : undefined;
   return m ? tx(m[0], m[1]) : tx("Something went wrong with the import.", "حدث خطأ في الاستيراد.");
+}
+
+/** Bilingual text for a failed contacts export (the export endpoint answers with plain messages, not keys). */
+export function exportErrorText(e: unknown, tx: Tx): string {
+  const status = (e as { status?: number } | null)?.status;
+  const msg = e instanceof Error ? e.message : "";
+  if (status === 403) return tx("You don't have permission to export contacts.", "ليست لديك صلاحية لتصدير جهات الاتصال.");
+  if (status === 401) return tx("Your session expired. Sign in again.", "انتهت الجلسة. سجّل الدخول من جديد.");
+  if (/limited to/i.test(msg)) return tx("Export is limited to 10,000 selected contacts. Narrow the selection or use the filters.", "التصدير محدود بـ 10,000 جهة محددة. قلّص التحديد أو استخدم المرشحات.");
+  return tx("Export failed. Try again.", "فشل التصدير. حاول مرة أخرى.");
 }

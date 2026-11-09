@@ -5,10 +5,10 @@ import { usePermissions } from "@/auth/usePermissions";
 import type { Tx } from "@/lib/tx";
 import type { Permission } from "@/lib/permissions";
 import type { CustomFieldDef, Lang, Pipeline, Segment, TeamMember } from "@/lib/types";
-import { validateMapping } from "./importMapping";
+import { shouldDiscardUpload, validateMapping } from "./importMapping";
 import { messageText } from "./importMessages";
 import {
-  errorKey, listImports, previewImport, runImport, uploadImport,
+  cancelImport, errorKey, listImports, previewImport, runImport, uploadImport,
   type ImportKind, type ImportPreview, type ImportUpload,
 } from "./importApi";
 import { StepUpload } from "./StepUpload";
@@ -68,11 +68,15 @@ export function ImportWizard({ tx, lang, kind, onClose, onImported }: Props) {
 
   const fail = (e: unknown) => setError(messageText(errorKey(e), tx));
 
+  // Cancelling deletes the stored upload (personal data); best effort, the server also sweeps abandoned ones.
+  const discard = (id: string) => { void cancelImport(id).catch(() => undefined); };
+
   const onFile = async (file: File) => {
     setBusy(true);
     setError(null);
     try {
       const u = await uploadImport(file, kind);
+      if (upload) discard(upload.id); // the previous upload is replaced
       setUpload(u);
       setMapping({ ...u.suggestedMapping });
       setStep(1);
@@ -107,7 +111,10 @@ export function ImportWizard({ tx, lang, kind, onClose, onImported }: Props) {
 
   // The run step owns polling and reports whether the job is still going, so closing can hand it off.
   const [running, setRunning] = useState(true);
-  const close = () => onClose(step === 3 && running ? jobId : null);
+  const close = () => {
+    if (shouldDiscardUpload(step, upload?.id)) discard(upload!.id);
+    onClose(step === 3 && running ? jobId : null);
+  };
   const viewResult = () => { onImported(); onClose(null); };
 
   return (

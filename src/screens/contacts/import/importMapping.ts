@@ -66,3 +66,12 @@ export function errorsToCsv(rows: ErrorRow[], header: [string, string, string]):
   const lines = [header, ...rows.map((r) => [String(r.row), r.column ?? "", r.reason])].map((r) => r.map(cell).join(","));
   return "﻿" + lines.join("\r\n");
 }
+
+/**
+ * An uploaded file holds personal data, so the wizard cancels (and so deletes)
+ * the job whenever it is closed before the import started.
+ * Step 3 means the job is running or finished: the server owns it from there.
+ */
+export function shouldDiscardUpload(step: number, uploadId: string | null | undefined): uploadId is string {
+  return !!uploadId && step !== 3;
+}

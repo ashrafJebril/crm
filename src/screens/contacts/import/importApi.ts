@@ -1,4 +1,4 @@
-import { API_BASE, ApiError, api, tokenStore } from "@/api/client";
+import { ApiError, api } from "@/api/client";
 
 export type ImportKind = "contacts" | "audience";
 export type ImportStatus = "uploaded" | "previewed" | "running" | "done" | "failed" | "cancelled";
@@ -56,25 +56,12 @@ export function errorKey(e: unknown): string | undefined {
   return undefined;
 }
 
-/** Multipart upload; goes around the JSON client. */
-export async function uploadImport(file: File, kind: ImportKind): Promise<ImportUpload> {
+/** Multipart upload through the shared client (token, 401 logout and error handling). */
+export function uploadImport(file: File, kind: ImportKind): Promise<ImportUpload> {
   const fd = new FormData();
   fd.append("kind", kind);
   fd.append("file", file);
-  const token = tokenStore.get();
-  const res = await fetch(`${API_BASE}/imports`, {
-    method: "POST",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    body: fd,
-  });
-  const raw = await res.text();
-  let data: unknown;
-  try { data = raw ? JSON.parse(raw) : undefined; } catch { data = undefined; }
-  if (!res.ok) {
-    const b = (data ?? {}) as { message?: string; messageKey?: string };
-    throw new ApiError(b.messageKey ?? (typeof b.message === "string" ? b.message : `HTTP ${res.status}`), res.status, undefined, data);
-  }
-  return data as ImportUpload;
+  return api.postForm<ImportUpload>("/imports", fd);
 }
 
 export const previewImport = (id: string, mapping: Record<string, string>, options: ImportOptions) =>
@@ -95,20 +82,20 @@ export function saveBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** The token travels in the Authorization header, so fetch a blob and save it (never put it in a URL). */
-export async function downloadContactsExport(filterQuery: string, ids: string[]): Promise<void> {
-  const p = new URLSearchParams(filterQuery);
-  if (ids.length) p.set("ids", ids.join(","));
-  const token = tokenStore.get();
-  const res = await fetch(`${API_BASE}/contacts/export?${p.toString()}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try { const j = (await res.json()) as { message?: string }; if (j.message) msg = j.message; } catch { /* keep */ }
-    throw new ApiError(msg, res.status);
-  }
-  const cd = res.headers.get("Content-Disposition") ?? "";
-  const m = /filename="?([^";]+)"?/i.exec(cd);
-  saveBlob(await res.blob(), m?.[1] ?? "contacts.csv");
+/**
+ * POST /contacts/export: the JSON body carries the filter and, for an explicit
+ * selection, its ids (no URL length limit). `filterOnly` is used when the
+ * selection came from "select all matching", so the server applies the filter
+ * itself instead of receiving up to 10 000 ids.
+ */
+export function exportBody(filterQuery: string, ids: string[], filterOnly: boolean): Record<string, unknown> {
+  const body: Record<string, unknown> = Object.fromEntries(new URLSearchParams(filterQuery));
+  if (ids.length && !filterOnly) body.ids = ids;
+  return body;
+}
+
+/** Goes through the shared client, so the token never appears in a URL and a 401 logs out. */
+export async function downloadContactsExport(filterQuery: string, ids: string[], filterOnly = false): Promise<void> {
+  const { blob, filename } = await api.postBlob("/contacts/export", exportBody(filterQuery, ids, filterOnly));
+  saveBlob(blob, filename ?? "contacts.csv");
 }

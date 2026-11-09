@@ -31,6 +31,11 @@ describe("notificationText", () => {
     const mn = { type: "mention", title: "mention.note", body: JSON.stringify({ actorName: "Sara", excerpt: "hi" }), recordKind: null, recordId: null };
     expect(notificationText(en, mn)).toEqual({ title: "Sara mentioned you in a note", body: "hi" });
   });
+  it("maps import.failed in both languages", () => {
+    const n = { type: "import_finished", title: "import.failed", body: "{}", recordKind: null, recordId: null };
+    expect(notificationText(en, n)).toEqual({ title: "An import failed" });
+    expect(notificationText(ar, n)).toEqual({ title: "فشل الاستيراد" });
+  });
   it("tolerates missing or malformed body", () => {
     expect(notificationText(en, { ...base, title: "assignment.ticket", body: "{oops" }).body).toBeUndefined();
     expect(notificationText(en, { ...base, title: "assignment.ticket", body: null }).body).toBeUndefined();
