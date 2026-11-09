@@ -180,7 +180,8 @@ describe("ZernioClient broadcasts", () => {
     reply({ success: true, recipients: [{ id: "r1", platformIdentifier: "1", status: "sent" }] });
     const res = await client.listBroadcastRecipients("b1", { skip: 0, limit: 50, status: "failed" });
     expect(call().url).toBe("https://zernio.com/api/v1/broadcasts/b1/recipients?skip=0&limit=50&status=failed");
-    expect(res.pagination).toEqual({ total: 1, limit: 50, skip: 0, hasMore: false });
+    // Unreported fields stay null; the sweep decides (a full page with no hasMore means more).
+    expect(res.pagination).toEqual({ total: null, limit: 50, skip: 0, hasMore: null });
     expect(res.summary).toEqual({});
   });
 });

@@ -144,13 +144,18 @@ describe("reply attribution window 72h", () => {
     expect(prisma.db.campaignRecipient[0]).toMatchObject({ status: "replied", failureCode: "meta:131026" });
   });
 
-  it("Campaign.replied is recounted", async () => {
+  it("Campaign.replied is incremented by one per first reply, without a full recount (fix M2)", async () => {
     const { attributor, prisma } = build({
-      campaign: [campaign("c1")],
+      campaign: [campaign("c1", { replied: 4, read: 7, delivered: 9, sent: 10 })],
       campaignRecipient: [row("r1"), row("r2", { phone: "+962790000002", contactId: "other", status: "read" })],
     });
     await attributor.onInbound(reply(at(H)));
-    expect(prisma.db.campaign[0]).toMatchObject({ replied: 1, read: 2, delivered: 2, sent: 2 });
+    // Only `replied` moves; the sweep's recount reconciles the rest.
+    expect(prisma.db.campaign[0]).toMatchObject({ replied: 5, read: 7, delivered: 9, sent: 10 });
+    expect(prisma.campaignRecipient.groupBy).not.toHaveBeenCalled();
+    // A second reply (first reply wins) does not increment again.
+    await attributor.onInbound(reply(at(2 * H), { inboundMessageId: "msg-in-2" }));
+    expect(prisma.db.campaign[0].replied).toBe(5);
   });
 
   it("attributor never throws into inbound: a DB error is logged and null returned", async () => {

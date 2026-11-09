@@ -204,21 +204,26 @@ describe("CampaignSendService", () => {
       expect(sizes).toHaveLength(100);
       expect(Math.max(...sizes)).toBe(1000);
       expect(sizes.reduce((a: number, b: number) => a + b, 0)).toBe(100_000);
-      // No per-recipient round-trips (ruling 10): only the chunked createMany.
+      // No per-recipient round-trips (ruling 10): one cleanup delete, then only the chunked createMany.
       expect(Object.keys(prisma.campaignRecipient)).toEqual(["createMany", "deleteMany"]);
-      expect(prisma.campaignRecipient.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.campaignRecipient.deleteMany).toHaveBeenCalledTimes(1);
     });
 
     it("launch failure leaves recipients queued and campaign failed", async () => {
       zernio.sendBroadcast.mockRejectedValue(new Error("Zernio down"));
       await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/Zernio down/);
       expect(prisma.campaignRecipient.createMany).toHaveBeenCalled();
-      expect(prisma.campaignRecipient.deleteMany).not.toHaveBeenCalled();
+      // The only delete is the pre-write cleanup of the draft; nothing is deleted on failure.
+      expect(prisma.campaignRecipient.deleteMany).toHaveBeenCalledTimes(1);
+      expect(prisma.campaignRecipient.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.campaignRecipient.createMany.mock.invocationCallOrder[0],
+      );
       expect(prisma.campaign.update.mock.calls.at(-1)[0].data).toMatchObject({ status: "failed", zernioBroadcastId: "b1" });
     });
 
-    it("a retried draft launch clears the rows an interrupted attempt left behind first", async () => {
-      prisma.campaign.findFirst.mockResolvedValue({ ...draft, recipientTracking: true });
+    it("a relaunched draft always clears leftover rows first, even when recipientTracking is false (fix M1)", async () => {
+      // A launch that died mid-createMany leaves rows with recipientTracking still false.
+      prisma.campaign.findFirst.mockResolvedValue({ ...draft, recipientTracking: false });
       await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
       expect(prisma.campaignRecipient.deleteMany).toHaveBeenCalledWith({ where: { workspaceId: "ws1", campaignId: "camp1" } });
       expect(prisma.campaignRecipient.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
@@ -390,6 +395,7 @@ describe("broadcast sweep maps Zernio recipients monotonically and resumes from 
 
   it("maps pending/sent/delivered/read/failed rows, advances skip and resets it on hasMore:false, then recounts", async () => {
     process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    process.env.ZERNIO_RECIPIENT_PAGE = "3";
     const { prisma, zernio, svc } = build();
     const page1 = [
       zr("962790000001"),
@@ -409,20 +415,20 @@ describe("broadcast sweep maps Zernio recipients monotonically and resumes from 
       zr("962799999999", { status: "read" }), // unknown phone: ignored
     ];
     zernio.listBroadcastRecipients
-      .mockResolvedValueOnce({ recipients: page1, pagination: { total: 7, limit: 100, skip: 0, hasMore: true }, summary: {} })
-      .mockResolvedValueOnce({ recipients: page2, pagination: { total: 7, limit: 100, skip: 3, hasMore: false }, summary: {} });
+      .mockResolvedValueOnce({ recipients: page1, pagination: { total: 7, limit: 3, skip: 0, hasMore: true }, summary: {} })
+      .mockResolvedValueOnce({ recipients: page2, pagination: { total: 7, limit: 3, skip: 3, hasMore: false }, summary: {} });
 
     await svc.syncActive();
-    expect(zernio.listBroadcastRecipients).toHaveBeenLastCalledWith("b1", { skip: 0, limit: 100 });
+    expect(zernio.listBroadcastRecipients).toHaveBeenLastCalledWith("b1", { skip: 0, limit: 3 });
     const camp = prisma.db.campaign[0];
     expect(camp.recipientSyncSkip).toBe(3);
     expect(camp.recipientsSyncedAt).toBeNull();
-    // Tracked: Zernio's status is copied, its aggregate counters are not.
+    // Before the first full pass Zernio's aggregate counters still apply (fix I1).
     expect(camp.status).toBe("running");
-    expect(camp.sent).toBe(0);
+    expect(camp.sent).toBe(9);
 
     await svc.syncActive();
-    expect(zernio.listBroadcastRecipients).toHaveBeenLastCalledWith("b1", { skip: 3, limit: 100 });
+    expect(zernio.listBroadcastRecipients).toHaveBeenLastCalledWith("b1", { skip: 3, limit: 3 });
     expect(camp.recipientSyncSkip).toBe(0);
     expect(camp.recipientsSyncedAt).toEqual(NOW);
 

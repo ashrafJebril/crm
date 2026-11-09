@@ -273,12 +273,13 @@ export class RecipientTrackerService {
   }
 
   /**
+   * With `floor`, each counter only rises (used before the first full pass).
    * Ruling 5: a tracked campaign's counters come from its rows (one
    * groupBy over the (campaignId, status, id) index).
    *   sent = sent + delivered + read + replied; delivered = delivered + read + replied;
    *   read = read + replied; failed = failed; replied = replied.
    */
-  async recountCampaign(campaignId: string): Promise<void> {
+  async recountCampaign(campaignId: string, opts: { floor?: boolean } = {}): Promise<void> {
     const groups = (await this.prisma.campaignRecipient.groupBy({
       by: ["status"],
       where: { campaignId },
@@ -288,9 +289,24 @@ export class RecipientTrackerService {
     const replied = n("replied");
     const read = n("read") + replied;
     const delivered = n("delivered") + read;
-    await this.prisma.campaign.update({
-      where: { id: campaignId },
-      data: { sent: n("sent") + delivered, delivered, read, failed: n("failed"), replied },
-    });
+    let data = { sent: n("sent") + delivered, delivered, read, failed: n("failed"), replied };
+    if (opts.floor) {
+      // Fix I1: before the first full sweep pass the rows are incomplete, so
+      // they may only raise the counters Zernio's aggregates already set.
+      const cur = await this.prisma.campaign.findFirst({
+        where: { id: campaignId },
+        select: { sent: true, delivered: true, read: true, failed: true, replied: true },
+      });
+      if (cur) {
+        data = {
+          sent: Math.max(data.sent, cur.sent ?? 0),
+          delivered: Math.max(data.delivered, cur.delivered ?? 0),
+          read: Math.max(data.read, cur.read ?? 0),
+          failed: Math.max(data.failed, cur.failed ?? 0),
+          replied: Math.max(data.replied, cur.replied ?? 0),
+        };
+      }
+    }
+    await this.prisma.campaign.update({ where: { id: campaignId }, data });
   }
 }

@@ -112,7 +112,9 @@ export class CampaignReplyAttributor {
       data: patch,
     });
     if (res.count !== 1) return null;
-    await this.tracker.recountCampaign(best.row.campaignId);
+    // Fix M2: a cheap increment on the inbound path; the sweep's recount
+    // reconciles every counter on its next tick.
+    await this.prisma.campaign.update({ where: { id: best.row.campaignId }, data: { replied: { increment: 1 } } });
     return { recipientId: best.row.id, campaignId: best.row.campaignId };
   }
 }

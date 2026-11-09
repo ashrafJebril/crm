@@ -704,10 +704,10 @@ export class ZernioClient {
     return {
       recipients,
       pagination: {
-        total: typeof p.total === "number" ? p.total : opts.skip + recipients.length,
+        total: typeof p.total === "number" ? p.total : null,
         limit: typeof p.limit === "number" ? p.limit : opts.limit,
         skip: typeof p.skip === "number" ? p.skip : opts.skip,
-        hasMore: p.hasMore === true,
+        hasMore: typeof p.hasMore === "boolean" ? p.hasMore : null,
       },
       summary: res?.summary && typeof res.summary === "object" ? res.summary : {},
     };
@@ -1055,7 +1055,8 @@ export interface ZernioBroadcastRecipient {
 
 export interface ZernioBroadcastRecipientsPage {
   recipients: ZernioBroadcastRecipient[];
-  pagination: { total: number; limit: number; skip: number; hasMore: boolean };
+  /** `total` and `hasMore` are null when Zernio does not report them (the sweep then pages until a short page). */
+  pagination: { total: number | null; limit: number; skip: number; hasMore: boolean | null };
   summary: Record<string, unknown>;
 }
 

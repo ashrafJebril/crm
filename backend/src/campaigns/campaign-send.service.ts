@@ -185,8 +185,8 @@ export class CampaignSendService {
    * phoneless member (`skipped`), written BEFORE Zernio is called so a crash
    * mid-launch leaves an honest "not sent" record. Chunked createMany of
    * 1000 with skipDuplicates on (campaignId, phone); no per-recipient
-   * round-trips (ruling 10). A draft that an interrupted earlier attempt
-   * left rows on is cleared first: nothing was sent for it (no broadcast id).
+   * round-trips (ruling 10). Any rows an interrupted earlier attempt left on
+   * the draft are cleared first: nothing was sent for it (no broadcast id).
    */
   private async writeRecipientRows(
     workspaceId: string,
@@ -196,9 +196,9 @@ export class CampaignSendService {
     skippedRows: ReturnType<typeof buildRecipients>["skippedRows"],
   ): Promise<void> {
     const campaignId = campaign.id;
-    if (campaign.recipientTracking) {
-      await this.prisma.campaignRecipient.deleteMany({ where: { workspaceId, campaignId } });
-    }
+    // Fix M1: always, since a launch that died mid-write leaves rows while
+    // recipientTracking is still false. One indexed statement.
+    await this.prisma.campaignRecipient.deleteMany({ where: { workspaceId, campaignId } });
     const queued = recipients.map((r) => ({
       workspaceId,
       campaignId,
@@ -242,104 +242,158 @@ export class CampaignSendService {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) throw new NotFoundException("Campaign not found");
     if (!campaign.zernioBroadcastId) return campaign;
-    return this.applyStats(campaign.id, campaign.zernioBroadcastId, campaign.recipientTracking === true);
+    return this.applyStats(campaign.id, campaign.zernioBroadcastId, this.useAggregates(campaign));
   }
 
   /**
-   * Every 5 minutes:
-   * - active campaigns (scheduled/running) get Zernio's status (and, when
-   *   untracked, its aggregate counters);
-   * - tracked campaigns, active or finished within 72 h of launch, get a
-   *   bounded recipient sweep (SP-12).
+   * Zernio's aggregate counters apply to untracked (pre-SP-12) campaigns,
+   * and to tracked ones until their first full sweep pass completes (fix I1).
+   * After that the counters come from the rows (ruling 5).
+   */
+  private useAggregates(c: { recipientTracking?: boolean | null; recipientsSyncedAt?: Date | null }): boolean {
+    return c.recipientTracking !== true || !c.recipientsSyncedAt;
+  }
+
+  /** Re-entrancy guard: @nestjs/schedule does not prevent overlapping ticks. */
+  private syncing = false;
+
+  /**
+   * Every 5 minutes, in two phases (fix I3):
+   * 1. Zernio's status (and, while `useAggregates`, its counters) for every
+   *    active (scheduled/running) campaign, so status flips are never held
+   *    back by sweeps;
+   * 2. the recipient sweeps of tracked campaigns that are active or within
+   *    72 h of their effective send time `COALESCE(scheduledAt, launchedAt)`
+   *    (fix I2), sharing one page budget round-robin.
+   * An overlapping tick returns at once.
    */
   @Cron(CronExpression.EVERY_5_MINUTES)
   async syncActive(): Promise<void> {
-    const tailSince = new Date(Date.now() - RECIPIENT_SWEEP_TAIL_MS);
-    const rows = await this.prisma.campaign.findMany({
-      where: {
-        zernioBroadcastId: { not: null },
-        OR: [
-          { status: { in: ACTIVE } },
-          { recipientTracking: true, status: { in: FINISHED }, launchedAt: { gte: tailSince } },
-        ],
-      },
-      select: {
-        id: true,
-        workspaceId: true,
-        zernioBroadcastId: true,
-        status: true,
-        recipientTracking: true,
-        recipientSyncSkip: true,
-      },
-    });
-    for (const c of rows) {
-      const tracked = c.recipientTracking === true;
-      if (!FINISHED.includes(c.status as string)) {
+    if (this.syncing) return;
+    this.syncing = true;
+    try {
+      const tailSince = new Date(Date.now() - RECIPIENT_SWEEP_TAIL_MS);
+      const rows = await this.prisma.campaign.findMany({
+        where: {
+          zernioBroadcastId: { not: null },
+          OR: [
+            { status: { in: ACTIVE } },
+            {
+              recipientTracking: true,
+              status: { in: FINISHED },
+              OR: [{ scheduledAt: { gte: tailSince } }, { scheduledAt: null, launchedAt: { gte: tailSince } }],
+            },
+          ],
+        },
+        select: {
+          id: true,
+          workspaceId: true,
+          zernioBroadcastId: true,
+          status: true,
+          recipientTracking: true,
+          recipientSyncSkip: true,
+          recipientsSyncedAt: true,
+        },
+      });
+      for (const c of rows) {
+        if (FINISHED.includes(c.status as string)) continue;
         try {
-          await this.applyStats(c.id, c.zernioBroadcastId!, tracked);
+          await this.applyStats(c.id, c.zernioBroadcastId!, this.useAggregates(c));
         } catch (e) {
           this.log.warn(`campaign ${c.id} stats sync failed: ${(e as Error).message}`);
         }
       }
-      if (tracked) {
-        try {
-          await this.sweepRecipients(c);
-        } catch (e) {
-          this.log.warn(`campaign ${c.id} recipient sweep failed: ${(e as Error).message}`);
-        }
-      }
-    }
-  }
-
-  /**
-   * SP-12 pull sweep (the source of truth, ruling 1): up to
-   * RECIPIENT_SYNC_MAX_PAGES pages of ZERNIO_RECIPIENT_PAGE rows from
-   * `recipientSyncSkip`. The offset is saved even when a page fails; when
-   * Zernio says `hasMore: false` it resets to 0, `recipientsSyncedAt` is set
-   * and the counters are recounted from rows.
-   */
-  private async sweepRecipients(c: {
-    id: string;
-    workspaceId: string;
-    zernioBroadcastId: string | null;
-    recipientSyncSkip?: number | null;
-  }): Promise<void> {
-    if (!c.zernioBroadcastId) return;
-    const limit = recipientPageSize();
-    const maxPages = recipientSyncMaxPages();
-    let skip = c.recipientSyncSkip ?? 0;
-    let finished = false;
-    try {
-      for (let page = 0; page < maxPages; page++) {
-        const res = await this.zernio.listBroadcastRecipients(c.zernioBroadcastId, { skip, limit });
-        await this.tracker.applyBroadcastPage({ id: c.id, workspaceId: c.workspaceId }, res);
-        skip += res.recipients.length;
-        if (!res.pagination.hasMore || res.recipients.length === 0) {
-          finished = true;
-          break;
-        }
-      }
+      await this.sweepAll(rows.filter((c) => c.recipientTracking === true));
+    } catch (e) {
+      this.log.warn(`campaign sync failed: ${(e as Error).message}`);
     } finally {
-      await this.prisma.campaign.update({
-        where: { id: c.id },
-        data: finished ? { recipientSyncSkip: 0, recipientsSyncedAt: new Date() } : { recipientSyncSkip: skip },
-      });
+      this.syncing = false;
     }
-    if (finished) await this.tracker.recountCampaign(c.id);
   }
 
   /**
-   * Zernio's broadcast status always; its aggregate counters only for
-   * untracked (pre-SP-12) campaigns. Tracked campaigns take their counters
-   * from their rows (ruling 5).
+   * SP-12 pull sweep (the source of truth, ruling 1). Pages of
+   * ZERNIO_RECIPIENT_PAGE rows, taken round-robin across campaigns from each
+   * one's `recipientSyncSkip`, at most RECIPIENT_SYNC_MAX_PAGES pages per
+   * tick in total, so one huge campaign cannot starve the others.
+   *
+   * A campaign's pass ends on an empty page, `hasMore: false`, a page shorter
+   * than the page size, or `skip >= total` when Zernio reports a total. A
+   * missing `hasMore` on a full page means there is more (fix I1). At the end
+   * of the tick each campaign stores its offset (reset to 0 and
+   * `recipientsSyncedAt` set when its pass ended) and, when rows changed or
+   * the pass ended, is recounted: exactly after a first full pass, otherwise
+   * only upwards while Zernio's aggregates are still in use. A failing
+   * campaign keeps its offset and does not stop the others.
    */
-  private async applyStats(id: string, broadcastId: string, tracked = false) {
+  private async sweepAll(
+    campaigns: Array<{
+      id: string;
+      workspaceId: string;
+      zernioBroadcastId: string | null;
+      recipientSyncSkip?: number | null;
+      recipientsSyncedAt?: Date | null;
+    }>,
+  ): Promise<void> {
+    const limit = recipientPageSize();
+    let budget = recipientSyncMaxPages();
+    const state = campaigns
+      .filter((c) => c.zernioBroadcastId)
+      .map((c) => ({ c, skip: c.recipientSyncSkip ?? 0, finished: false, failed: false, changed: 0, pages: 0 }));
+    let open = state;
+    while (budget > 0 && open.length > 0) {
+      for (const s of open) {
+        if (budget <= 0) break;
+        budget--;
+        s.pages++;
+        try {
+          const res = await this.zernio.listBroadcastRecipients(s.c.zernioBroadcastId!, { skip: s.skip, limit });
+          const applied = await this.tracker.applyBroadcastPage({ id: s.c.id, workspaceId: s.c.workspaceId }, res);
+          s.changed += applied.changed;
+          const n = res.recipients.length;
+          s.skip += n;
+          const pageSize = res.pagination.limit > 0 ? Math.min(res.pagination.limit, limit) : limit;
+          const total = res.pagination.total;
+          s.finished =
+            n === 0 ||
+            res.pagination.hasMore === false ||
+            n < pageSize ||
+            (typeof total === "number" && s.skip >= total);
+        } catch (e) {
+          s.failed = true;
+          this.log.warn(`campaign ${s.c.id} recipient sweep failed: ${(e as Error).message}`);
+        }
+      }
+      open = open.filter((s) => !s.finished && !s.failed);
+    }
+    for (const s of state) {
+      if (s.pages === 0) continue;
+      try {
+        await this.prisma.campaign.update({
+          where: { id: s.c.id },
+          data: s.finished ? { recipientSyncSkip: 0, recipientsSyncedAt: new Date() } : { recipientSyncSkip: s.skip },
+        });
+        if (s.finished || s.changed > 0) {
+          const firstPassDone = s.finished || !!s.c.recipientsSyncedAt;
+          await this.tracker.recountCampaign(s.c.id, { floor: !firstPassDone });
+        }
+      } catch (e) {
+        this.log.warn(`campaign ${s.c.id} recipient sweep save failed: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /**
+   * Zernio's broadcast status always; its aggregate counters only when
+   * `aggregates` (see `useAggregates`).
+   */
+  private async applyStats(id: string, broadcastId: string, aggregates = true) {
     const b = await this.zernio.getBroadcast(broadcastId);
     return this.prisma.campaign.update({
       where: { id },
       data: {
         status: campaignStatusFor(b.status),
-        ...(tracked ? {} : { sent: b.sent, delivered: b.delivered, read: b.read, failed: b.failed }),
+        ...(aggregates ? { sent: b.sent, delivered: b.delivered, read: b.read, failed: b.failed } : {}),
         statsSyncedAt: new Date(),
       },
     });
