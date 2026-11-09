@@ -76,3 +76,28 @@ export function isShortTitle(s: string | null | undefined): boolean {
   const t = s.trim();
   return t.length > 0 && t.length <= SHORT_TITLE_MAX && !/[\r\n]/.test(t) && !t.includes("{");
 }
+
+/**
+ * SP-13: a recipient skipped because a mapped template variable had no
+ * value and no fallback: `skip:missing_value:<source>.<key>` (for example
+ * `skip:missing_value:custom.service_due`). Insights group failures by code,
+ * so each missing field gets its own line.
+ */
+export const MISSING_VALUE_PREFIX = "skip:missing_value:";
+export type MissingValueSource = "field" | "custom";
+
+export function missingValueCode(source: MissingValueSource, key: string): string {
+  return `${MISSING_VALUE_PREFIX}${source}.${key}`;
+}
+
+export function parseMissingValueCode(code: string | null | undefined): { source: MissingValueSource; key: string } | null {
+  const m = /^skip:missing_value:(field|custom)\.(.+)$/.exec(code ?? "");
+  return m ? { source: m[1] as MissingValueSource, key: m[2] } : null;
+}
+
+/**
+ * SP-13 direct transport: a send whose outcome was never confirmed (the
+ * attempt is older than 23 h, past Zernio's 24 h idempotency window), so
+ * it is never re-sent.
+ */
+export const LAUNCH_UNCONFIRMED = "launch:unconfirmed";

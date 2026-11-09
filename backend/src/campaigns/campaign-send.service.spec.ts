@@ -1,6 +1,10 @@
 import { CampaignSendService } from "./campaign-send.service";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
+import { HttpException } from "@nestjs/common";
+import { channel, contact, ME, world, WS, zernioCopy } from "./sending/launch-test-world";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 describe("CampaignSendService", () => {
   let prisma: any;
@@ -53,205 +57,195 @@ describe("CampaignSendService", () => {
     svc = new CampaignSendService(prisma, zernio, { isLocked } as never);
   });
 
-  const vars = [{ field: "name" as const }, { field: "custom" as const, customValue: "20%" }];
+  describe("launch (SP-13: validate, claim, kick, 202)", () => {
+    const BODY = "Hi {{1}}, {{2}} off";
+    const legacyVars = [{ field: "name" as const }, { field: "custom" as const, customValue: "20%" }];
+    const people = (n: number) => Array.from({ length: n }, (_, i) => contact(`c${String(i).padStart(5, "0")}`, `C${i}`, `+9627900${String(i).padStart(5, "0")}`));
+    const keyOf = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch (e) {
+        const r = (e as HttpException).getResponse() as Record<string, unknown> | string;
+        return { status: (e as HttpException).getStatus(), ...(typeof r === "string" ? { message: r } : r) };
+      }
+      return null;
+    };
 
-  describe("launch", () => {
-    it("imports the audience, creates the broadcast and sends it now", async () => {
-      const res = await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      expect(prisma.contact.findMany).toHaveBeenCalledWith({
-        where: { workspaceId: "ws1", segmentMembers: { some: { segmentId: "seg1" } } },
-        select: { id: true, name: true, phone: true, lifecycle: true, marketingOptOut: true },
-      });
-      expect(zernio.bulkCreateContacts).toHaveBeenCalledWith("prof1", "acc1", [
-        { name: "C0", platformIdentifier: "+962790000000" },
-        { name: "C1", platformIdentifier: "+962790000001" },
-        { name: "C2", platformIdentifier: "+962790000002" },
-      ]);
-      expect(zernio.createWhatsAppBroadcast).toHaveBeenCalledWith({
-        profileId: "prof1",
-        accountId: "acc1",
-        name: "Eid offer",
-        template: { name: "eid_offer", language: "ar" },
-        variables: vars,
-      });
-      expect(zernio.addBroadcastRecipients).toHaveBeenCalledWith("b1", ["+962790000000", "+962790000001", "+962790000002"]);
-      expect(zernio.sendBroadcast).toHaveBeenCalledWith("b1");
-      const data = prisma.campaign.update.mock.calls.at(-1)[0].data;
-      expect(data).toMatchObject({ status: "running", zernioBroadcastId: "b1", recipients: 3, skipped: 1, lastError: null });
-      expect(res.status).toBe("running");
-    });
-
-    it("targets every contact when the campaign has no segment", async () => {
-      prisma.campaign.findFirst.mockResolvedValue({ ...draft, segmentId: null });
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      expect(prisma.contact.findMany.mock.calls[0][0].where).toEqual({ workspaceId: "ws1" });
-    });
-
-    it("batches recipients 100 at a time and contacts 1,000 at a time", async () => {
-      prisma.contact.findMany.mockResolvedValue(contacts(1150));
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      expect(zernio.bulkCreateContacts).toHaveBeenCalledTimes(2);
-      expect(zernio.addBroadcastRecipients).toHaveBeenCalledTimes(12);
+    it("claims the draft as launching, answers before any Zernio call, and the job sends it", async () => {
+      const w = world({ body: BODY, contacts: people(3) });
+      const res = await w.send.launch(WS, "camp", { mode: "now", variables: legacyVars }, { userId: ME });
+      expect(res).toMatchObject({ status: "launching", launchStage: "planning", launchedById: ME, launchAttempts: 0 });
+      // Legacy body variables were converted and stored; the body is kept for history.
+      expect(res.varMap).toEqual({ "1": { source: "field", key: "name" }, "2": { source: "static", value: "20%" } });
+      expect(res.variableMapping).toEqual(legacyVars);
+      expect(w.zernio.bulkCreateContacts).not.toHaveBeenCalled();
+      await w.runner.idle();
+      expect(w.zernio.createWhatsAppBroadcast).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: "acc-A", template: { name: "svc", language: "en" }, variables: [{ field: "name" }, { field: "custom", customValue: "20%" }] }),
+      );
+      expect(w.camp()).toMatchObject({ status: "running", recipients: 3, skipped: 0, zernioBroadcastId: "zb1", lastError: null });
     });
 
     it("schedules for a future time", async () => {
+      const w = world({ contacts: people(2) });
       const when = new Date(Date.now() + 3_600_000).toISOString();
-      const res = await svc.launch("ws1", "camp1", { mode: "schedule", scheduledAt: when, variables: vars });
-      expect(zernio.scheduleBroadcast).toHaveBeenCalledWith("b1", when);
-      expect(zernio.sendBroadcast).not.toHaveBeenCalled();
-      expect(res.status).toBe("scheduled");
-      expect(prisma.campaign.update.mock.calls.at(-1)[0].data.scheduledAt).toEqual(new Date(when));
+      await w.launch({ mode: "schedule", scheduledAt: when });
+      expect(w.zernio.scheduleBroadcast).toHaveBeenCalledWith("zb1", when);
+      expect(w.zernio.sendBroadcast).not.toHaveBeenCalled();
+      expect(w.camp()).toMatchObject({ status: "scheduled" });
+      expect(w.camp().scheduledAt).toEqual(new Date(when));
     });
 
-    it("rejects a schedule in the past", async () => {
-      await expect(
-        svc.launch("ws1", "camp1", { mode: "schedule", scheduledAt: "2020-01-01T00:00:00.000Z", variables: vars }),
-      ).rejects.toThrow(/future/);
-    });
-
-    it("SP-19 m6 / SP-13 ruling 6: with no WhatsApp sender it answers the keyed 409, never an English provider message", async () => {
-      prisma.integration.findFirst.mockResolvedValue(null);
-      const err = await svc.launch("ws1", "camp1", { mode: "now", variables: vars }).catch((e) => e);
-      expect(err.getStatus()).toBe(409);
-      expect(err.getResponse()).toEqual({ statusCode: 409, message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" });
-      expect(err.message).not.toMatch(/Integrations/);
+    it("refuses with keyed errors, in order, and claims nothing", async () => {
+      const cases: Array<[string, Parameters<typeof world>[0], Record<string, unknown>, Record<string, unknown>?]> = [
+        ["already launched", { campaign: { status: "running", zernioBroadcastId: "b0" } }, { status: 409, message: "campaigns.already_launched" }],
+        ["schedule in the past", {}, { status: 400, message: "campaigns.schedule_invalid" }, { mode: "schedule", scheduledAt: "2020-01-01T00:00:00.000Z" }],
+        ["schedule missing", {}, { status: 400, message: "campaigns.schedule_invalid" }, { mode: "schedule" }],
+        ["template pending", { template: { status: "pending" } }, { status: 400, message: "campaigns.template_not_approved" }],
+        ["no template", { campaign: { templateId: null } }, { status: 400, message: "campaigns.template_not_approved" }],
+        ["text header variable", { template: { headerType: "text", headerContent: "Hi {{1}}" } }, { status: 400, message: "campaigns.template_unsupported" }],
+        ["dynamic URL button", { template: { buttons: JSON.stringify([{ type: "URL", text: "Go", url: "https://x.test/{{1}}" }]) } }, { status: 400, message: "campaigns.template_unsupported" }],
+        ["foreign sender", { senders: ["X"], channels: [channel("A"), channel("X", { workspaceId: "ws2" })] }, { status: 400, message: "channels.sender_invalid" }],
+        ["missing slot", { body: "Hi {{1}}" }, { status: 400, message: "campaigns.var_map_invalid", slot: "1", reason: "missing_slot" }],
+        ["company", { body: "Hi {{1}}" }, { status: 400, message: "campaigns.var_map_invalid", reason: "bad_key" }, { mode: "now", variables: [{ field: "company" }] }],
+        ["unknown custom key", { body: "Hi {{1}}", varMap: { "1": { source: "custom", key: "nope" } } }, { status: 400, message: "campaigns.var_map_invalid", reason: "unknown_custom_field" }],
+      ];
+      for (const [name, opts, expected, input] of cases) {
+        const w = world({ contacts: people(1), ...opts });
+        const before = w.camp().status;
+        expect({ name, e: await keyOf(w.send.launch(WS, "camp", (input ?? { mode: "now" }) as never, { userId: ME })) }).toEqual({
+          name,
+          e: expect.objectContaining(expected),
+        });
+        await w.runner.idle();
+        expect({ name, status: w.camp().status }).toEqual({ name, status: before });
+        expect(w.zernio.bulkCreateContacts).not.toHaveBeenCalled();
+      }
     });
 
     it("refuses while the workspace is locked for an unpaid subscription", async () => {
-      isLocked.mockResolvedValue(true);
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/payment/i);
-      expect(zernio.createWhatsAppBroadcast).not.toHaveBeenCalled();
+      const w = world({ contacts: people(1) });
+      w.isLocked.mockResolvedValue(true);
+      await expect(w.send.launch(WS, "camp", { mode: "now" })).rejects.toThrow(/payment/i);
+      expect(w.camp().status).toBe("draft");
     });
 
-    it("requires an approved template", async () => {
-      prisma.template.findFirst.mockResolvedValue({ name: "t", lang: "en", status: "pending", body: "x" });
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: [] })).rejects.toThrow(/approved/);
+    it("not connected: no Zernio profile, or no number, is the keyed 409", async () => {
+      const noProfile = world({ contacts: people(1) });
+      noProfile.prisma.db.workspace[0].zernioProfileId = null;
+      expect(await keyOf(noProfile.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 409, message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" });
+      const noNumber = world({ contacts: people(1), channels: [] });
+      expect(await keyOf(noNumber.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 409, message: "campaigns.whatsapp_not_connected" });
     });
 
-    it("requires one value per template variable", async () => {
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: [{ field: "name" }] })).rejects.toThrow(/2 variables/);
-    });
-
-    it("requires WhatsApp to be connected through Zernio", async () => {
-      prisma.integration.findFirst.mockResolvedValue(null);
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toMatchObject({
-        status: 409,
-        response: { message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" },
+    it("the template must be on every sender: missing is 400, unreadable is 502", async () => {
+      const w = world({ senders: ["A", "B"], contacts: people(2) });
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => (acc === "acc-B" ? [] : [zernioCopy("Hello")]));
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 400, message: "campaigns.template_missing_on_number", channelIds: ["B"] });
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => {
+        if (acc === "acc-B") throw new Error("Zernio down");
+        return [zernioCopy("Hello")];
       });
-    });
-
-    it("refuses an audience nobody can be reached in", async () => {
-      prisma.contact.findMany.mockResolvedValue([{ name: "X", phone: null, lifecycle: "lead" }]);
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/No one in this audience/);
-    });
-
-    it("only launches drafts", async () => {
-      prisma.campaign.findFirst.mockResolvedValue({ ...draft, status: "running", zernioBroadcastId: "b0" });
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/already/);
-    });
-
-    it("marks the campaign failed with Zernio's reason when sending breaks", async () => {
-      zernio.sendBroadcast.mockRejectedValue(new Error("Template parameter count mismatch"));
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/mismatch/);
-      const data = prisma.campaign.update.mock.calls.at(-1)[0].data;
-      expect(data).toMatchObject({ status: "failed", lastError: "Template parameter count mismatch", zernioBroadcastId: "b1" });
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 502, message: "campaigns.template_check_failed", channelIds: ["B"] });
+      expect(w.camp().status).toBe("draft");
     });
 
     it("launch writes recipients in chunks of 1000 before calling Zernio", async () => {
-      prisma.contact.findMany.mockResolvedValue([
-        ...contacts(2500),
-        { id: "o1", name: "Out1", phone: "962791000001", lifecycle: "lead", marketingOptOut: true },
-        { id: "o2", name: "Out2", phone: "962791000002", lifecycle: "churned" },
-        { id: "o3", name: "Out3", phone: null, lifecycle: "lead", marketingOptOut: true },
-        { id: "n1", name: "NoPhone1", phone: null, lifecycle: "lead" },
-        { id: "n2", name: "NoPhone2", phone: "0790000000", lifecycle: "lead" },
-      ]);
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      const calls = prisma.campaignRecipient.createMany.mock.calls.map((c: any[]) => c[0]);
-      expect(calls).toHaveLength(4);
+      const contacts = [
+        ...people(2500),
+        contact("o1", "Out1", "962791000001", { marketingOptOut: true }),
+        contact("o2", "Out2", "962791000002", { lifecycle: "churned" }),
+        contact("o3", "Out3", null, { marketingOptOut: true }),
+        contact("z1", "NoPhone1", null),
+        contact("z2", "NoPhone2", "0790000000"),
+      ];
+      const w = world({ contacts });
+      await w.launch();
+      const calls = w.prisma.campaignRecipient.createMany.mock.calls.map((c: any[]) => c[0]);
       for (const c of calls) expect(c.skipDuplicates).toBe(true);
-      expect(calls.map((c: any) => c.data.length)).toEqual([1000, 1000, 500, 5]);
-      for (const c of calls.slice(0, 3)) for (const r of c.data) expect(r).toMatchObject({ status: "queued", workspaceId: "ws1", campaignId: "camp1" });
-      expect(calls[0].data[0]).toEqual({
-        workspaceId: "ws1",
-        campaignId: "camp1",
-        contactId: "ct0",
-        channelId: null,
-        phone: "+962790000000",
-        contactName: "C0",
-        status: "queued",
-      });
-      const skippedRows = calls[3].data;
-      expect(skippedRows.map((r: any) => [r.contactId, r.status, r.failureCode, r.phone])).toEqual([
-        ["o1", "skipped", "skip:opted_out", "+962791000001"],
-        ["o2", "skipped", "skip:opted_out", "+962791000002"],
-        ["o3", "skipped", "skip:opted_out", null],
-        ["n1", "skipped", "skip:no_phone", null],
-        ["n2", "skipped", "skip:no_phone", null],
+      expect(Math.max(...calls.map((c: any) => c.data.length))).toBe(1000);
+      expect(calls.reduce((n: number, c: any) => n + c.data.length, 0)).toBe(2505);
+      expect(w.rows().filter((r: any) => r.status === "queued")).toHaveLength(2500);
+      expect(
+        w.rows()
+          .filter((r: any) => r.status === "skipped")
+          .map((r: any) => [r.contactId, r.failureCode, r.phone])
+          .sort(),
+      ).toEqual([
+        ["o1", "skip:opted_out", "+962791000001"],
+        ["o2", "skip:opted_out", "+962791000002"],
+        ["o3", "skip:opted_out", null],
+        ["z1", "skip:no_phone", null],
+        ["z2", "skip:no_phone", null],
       ]);
-      // Rows are written before Zernio is called.
-      const lastWrite = Math.max(...prisma.campaignRecipient.createMany.mock.invocationCallOrder);
-      expect(lastWrite).toBeLessThan(zernio.createWhatsAppBroadcast.mock.invocationCallOrder[0]);
-      expect(lastWrite).toBeLessThan(zernio.bulkCreateContacts.mock.invocationCallOrder[0]);
-      const trackingSet = prisma.campaign.update.mock.calls.findIndex((c: any[]) => c[0].data.recipientTracking === true);
-      expect(trackingSet).toBeGreaterThanOrEqual(0);
-      expect(prisma.campaign.update.mock.invocationCallOrder[trackingSet]).toBeLessThan(zernio.bulkCreateContacts.mock.invocationCallOrder[0]);
-      expect(prisma.campaign.update.mock.calls.at(-1)[0].data).toMatchObject({ recipients: 2500, skipped: 5, status: "running" });
+      const lastWrite = Math.max(...w.prisma.campaignRecipient.createMany.mock.invocationCallOrder);
+      expect(lastWrite).toBeLessThan(w.zernio.bulkCreateContacts.mock.invocationCallOrder[0]);
+      expect(w.camp()).toMatchObject({ recipients: 2500, skipped: 5, status: "running", recipientTracking: true });
     });
 
     it("launch with 100k recipients never inserts more than 1000 rows per call", async () => {
-      prisma.contact.findMany.mockResolvedValue(
-        Array.from({ length: 100_000 }, (_, i) => ({ id: `k${i}`, name: `K${i}`, phone: `+9627${String(i).padStart(8, "0")}`, lifecycle: "lead" })),
-      );
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      const sizes = prisma.campaignRecipient.createMany.mock.calls.map((c: any[]) => c[0].data.length);
+      const w = world({ contacts: [] });
+      const N = 100_000;
+      w.prisma.contact.findMany = jest.fn(async (a: any) => {
+        const from = a.where?.id?.gt ? Number(String(a.where.id.gt).slice(1)) + 1 : 0;
+        const n = Math.max(0, Math.min(a.take, N - from));
+        return Array.from({ length: n }, (_, k) => ({ ...contact(`k${String(from + k).padStart(6, "0")}`, `K${from + k}`, `+9627${String(from + k).padStart(8, "0")}`) }));
+      });
+      const sizes: number[] = [];
+      w.prisma.campaignRecipient.createMany = jest.fn(async (a: any) => {
+        sizes.push(a.data.length);
+        return { count: a.data.length };
+      });
+      await w.launch();
       expect(sizes).toHaveLength(100);
       expect(Math.max(...sizes)).toBe(1000);
-      expect(sizes.reduce((a: number, b: number) => a + b, 0)).toBe(100_000);
-      // No per-recipient round-trips (ruling 10): one cleanup delete, then only the chunked createMany.
-      expect(Object.keys(prisma.campaignRecipient)).toEqual(["createMany", "deleteMany"]);
-      expect(prisma.campaignRecipient.deleteMany).toHaveBeenCalledTimes(1);
+      expect(sizes.reduce((a, b) => a + b, 0)).toBe(N);
+      // No per-recipient round-trips: one cleanup delete, then only the chunked createMany.
+      expect(w.prisma.campaignRecipient.deleteMany).toHaveBeenCalledTimes(1);
     });
 
     it("launch failure leaves recipients queued and campaign failed", async () => {
-      zernio.sendBroadcast.mockRejectedValue(new Error("Zernio down"));
-      await expect(svc.launch("ws1", "camp1", { mode: "now", variables: vars })).rejects.toThrow(/Zernio down/);
-      expect(prisma.campaignRecipient.createMany).toHaveBeenCalled();
-      // The only delete is the pre-write cleanup of the draft; nothing is deleted on failure.
-      expect(prisma.campaignRecipient.deleteMany).toHaveBeenCalledTimes(1);
-      expect(prisma.campaignRecipient.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.campaignRecipient.createMany.mock.invocationCallOrder[0],
-      );
-      expect(prisma.campaign.update.mock.calls.at(-1)[0].data).toMatchObject({ status: "failed", zernioBroadcastId: "b1" });
+      const w = world({ contacts: people(3) });
+      w.zernio.sendBroadcast.mockRejectedValue(new HttpException("Template parameter count mismatch", 400));
+      await w.launch();
+      expect(w.camp()).toMatchObject({ status: "failed", lastError: "campaigns.launch_failed" });
+      expect(w.partitions()[0].lastError).toBe("Template parameter count mismatch");
+      expect(w.rows()).toHaveLength(3);
+      expect(w.rows().every((r: any) => r.status === "queued")).toBe(true);
     });
 
-    it("a relaunched draft always clears leftover rows first, even when recipientTracking is false (fix M1)", async () => {
-      // A launch that died mid-createMany leaves rows with recipientTracking still false.
-      prisma.campaign.findFirst.mockResolvedValue({ ...draft, recipientTracking: false });
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      expect(prisma.campaignRecipient.deleteMany).toHaveBeenCalledWith({ where: { workspaceId: "ws1", campaignId: "camp1" } });
-      expect(prisma.campaignRecipient.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.campaignRecipient.createMany.mock.invocationCallOrder[0],
-      );
+    it("a relaunched draft always clears leftover rows first", async () => {
+      const w = world({ contacts: people(2) });
+      w.prisma.db.campaignRecipient.push({ id: "old", workspaceId: WS, campaignId: "camp", phone: "+962799999999", status: "queued" });
+      await w.launch();
+      expect(w.rows().map((r: any) => r.phone)).not.toContain("+962799999999");
+      expect(w.rows()).toHaveLength(2);
     });
 
     it("records the sending channel on every row", async () => {
-      prisma.channel.findFirst.mockResolvedValue({ id: "chA", externalId: "accA", kind: "whatsapp", provider: "zernio", status: "active" });
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      expect(zernio.createWhatsAppBroadcast.mock.calls[0][0].accountId).toBe("accA");
-      for (const c of prisma.campaignRecipient.createMany.mock.calls) for (const r of c[0].data) expect(r.channelId).toBe("chA");
+      const w = world({ senders: ["B"], contacts: [...people(3), contact("x", "Out", "962791000009", { marketingOptOut: true })] });
+      await w.launch();
+      expect(w.zernio.createWhatsAppBroadcast.mock.calls[0][0].accountId).toBe("acc-B");
+      for (const r of w.rows()) expect(r.channelId).toBe("B");
     });
 
     it("opted-out contact is skipped by campaign send (with a skipped row)", async () => {
-      prisma.contact.findMany.mockResolvedValue([
-        { id: "lina", name: "Lina", phone: "962790000001", lifecycle: "lead", marketingOptOut: true },
-        { id: "omar", name: "Omar", phone: "962790000002", lifecycle: "lead", marketingOptOut: false },
-      ]);
-      await svc.launch("ws1", "camp1", { mode: "now", variables: vars });
-      expect(zernio.addBroadcastRecipients).toHaveBeenCalledWith("b1", ["+962790000002"]);
-      const rows = prisma.campaignRecipient.createMany.mock.calls.flatMap((c: any[]) => c[0].data);
-      expect(rows.find((r: any) => r.contactId === "lina")).toMatchObject({ status: "skipped", failureCode: "skip:opted_out" });
-      expect(rows.find((r: any) => r.contactId === "omar")).toMatchObject({ status: "queued" });
+      const w = world({
+        contacts: [contact("lina", "Lina", "962790000001", { marketingOptOut: true }), contact("omar", "Omar", "962790000002")],
+      });
+      await w.launch();
+      expect(w.zernio.addBroadcastRecipients).toHaveBeenCalledWith("zb1", ["+962790000002"]);
+      expect(w.rows().find((r: any) => r.contactId === "lina")).toMatchObject({ status: "skipped", failureCode: "skip:opted_out" });
+      expect(w.rows().find((r: any) => r.contactId === "omar")).toMatchObject({ status: "queued" });
+    });
+
+    it("an opted-out number on an earlier page never blocks a reachable contact with the same number later", async () => {
+      const w = world({ contacts: [contact("a1", "Out", "962790000001", { marketingOptOut: true }), contact("a2", "In", "962790000001")] });
+      w.runner.pageSize = 1;
+      await w.launch();
+      expect(w.rows().find((r: any) => r.contactId === "a2")).toMatchObject({ status: "queued", phone: "+962790000001" });
+      expect(w.rows().find((r: any) => r.contactId === "a1")).toMatchObject({ status: "skipped", phone: null });
+      expect(w.zernio.addBroadcastRecipients).toHaveBeenCalledWith("zb1", ["+962790000001"]);
     });
   });
 
@@ -276,7 +270,7 @@ describe("CampaignSendService", () => {
     });
 
     it("refuses to cancel a campaign that never launched", async () => {
-      await expect(svc.cancel("ws1", "camp1")).rejects.toThrow(/not sending/);
+      await expect(svc.cancel("ws1", "camp1")).rejects.toMatchObject({ status: 400, response: { message: "campaigns.not_cancellable" } });
     });
   });
 

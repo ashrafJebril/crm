@@ -1,21 +1,23 @@
-import { BadRequestException, Injectable, Logger, Optional } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { Prisma } from "@prisma/client";
+import { type Campaign, Prisma } from "@prisma/client";
 import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioBroadcastVariable, ZernioClient } from "../integrations/zernio.client";
-import { campaignSender } from "../channels/default-channel";
+import { assertHeaderMedia } from "../integrations/template-header";
+import { MediaService } from "../media/media.service";
+import type { Viewer } from "../permissions/visibility";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
-import { SKIP_CODES } from "./tracking/failure-codes";
 import { campaignError } from "./campaign-errors";
-import {
-  buildRecipients,
-  campaignStatusFor,
-  chunk,
-  estimateMetaCost,
-  templatePlaceholderCount,
-  totalSkipped,
-} from "./campaign-audience";
+import { buildRecipients, campaignStatusFor, estimateMetaCost, templatePlaceholderCount } from "./campaign-audience";
+import { CampaignLaunchRunner } from "./sending/campaign-launch-runner.service";
+import { aggregateBroadcastStatus } from "./sending/broadcast-status";
+import { loadCustomDefs, resolveLaunchSenders, templateUnsupported } from "./sending/launch-context";
+import { effectiveSenderIds, templateOnSenders } from "./sending/senders";
+import { legacyToVarMap, validateVarMap } from "./sending/var-map";
+
+/** Ruling 9: a campaign with a header file is scheduled at most this many days ahead. */
+export const HEADER_SCHEDULE_MAX_DAYS = 6;
 
 /** SP-12: recipient rows per createMany at launch (never one giant insert). */
 export const RECIPIENT_WRITE_CHUNK = 1000;
@@ -37,6 +39,39 @@ export const recipientSyncMaxPages = () => positiveInt(process.env.RECIPIENT_SYN
 
 const ACTIVE = ["scheduled", "running"];
 const FINISHED = ["completed", "failed", "cancelled"];
+/** SP-13: partitions Zernio has (or had) sending: swept and read for status. */
+const SWEPT_STAGES = ["sent", "scheduled", "cancelled"];
+
+interface SweepCampaign {
+  id: string;
+  workspaceId: string;
+  zernioBroadcastId: string | null;
+  status?: string | null;
+  recipients?: number | null;
+  recipientSyncSkip?: number | null;
+  recipientsSyncedAt?: Date | null;
+  sendTransport?: string | null;
+}
+
+interface SweepPartition {
+  id: string;
+  campaignId: string;
+  zernioBroadcastId: string;
+  recipientSyncSkip: number | null;
+  recipientsSyncedAt: Date | null;
+  recipientCount: number | null;
+}
+
+/** One broadcast the sweep pages: a legacy campaign (key = its id) or one SP-13 partition. */
+interface SweepUnit {
+  key: string;
+  c: SweepCampaign;
+  broadcastId: string;
+  skip: number;
+  syncedAt: Date | null;
+  expected: number;
+  partition: SweepPartition | null;
+}
 
 export interface LaunchInput {
   mode: "now" | "schedule";
@@ -58,6 +93,8 @@ export class CampaignSendService {
   private readonly log = new Logger(CampaignSendService.name);
 
   private readonly tracker: RecipientTrackerService;
+  /** SP-13: the background launch runner (module singleton; hand-built specs get one over the same Prisma). */
+  readonly launcher: CampaignLaunchRunner;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -65,8 +102,11 @@ export class CampaignSendService {
     private readonly paymentLock: PaymentLockService,
     // From CampaignTrackingModule; hand-built specs get one over the same Prisma.
     @Optional() tracker?: RecipientTrackerService,
+    @Optional() launcher?: CampaignLaunchRunner,
+    @Optional() private readonly media?: MediaService,
   ) {
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
+    this.launcher = launcher ?? new CampaignLaunchRunner(prisma, zernio, media, undefined, this.tracker);
   }
 
   private audience(workspaceId: string, segmentId: string | null | undefined) {
@@ -88,153 +128,135 @@ export class CampaignSendService {
     };
   }
 
-  async launch(workspaceId: string, id: string, input: LaunchInput) {
+  /**
+   * SP-13 (SP-12 R10): validate, claim the draft as `launching`, kick the
+   * background runner, and answer at once (202) with the campaign. Every
+   * check that needs no audience runs here, in the plan's order:
+   * 1. payment lock; 2. 404 `campaigns.not_found`; 3. 409
+   * `campaigns.already_launched`; 4. `campaigns.schedule_invalid`;
+   * 5. `campaigns.template_not_approved`; 6. `campaigns.template_unsupported`
+   * (ruling 12); 7. 409 `campaigns.whatsapp_not_connected`; 8. senders
+   * (`channels.sender_invalid`, `campaigns.too_many_senders`); 9. the
+   * template on every sender (`campaigns.template_missing_on_number`, 502
+   * `campaigns.template_check_failed`); 10. the varMap (`var_map_invalid`;
+   * legacy body `variables` convert when the campaign has none); 11. the
+   * header file (MediaService.get as the launcher, `assertHeaderMedia`, at
+   * most 6 days ahead, ruling 9).
+   * The claim is a compare-and-set on the draft, so a second click gets 409.
+   * Audience checks (nobody reachable, too varied) fail the job later.
+   */
+  async launch(workspaceId: string, id: string, input: LaunchInput, viewer?: Viewer) {
     if (await this.paymentLock.isLocked(workspaceId)) {
       throw new BadRequestException("Sending is paused until the overdue payment for this workspace is settled.");
     }
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) throw campaignError("campaigns.not_found");
-    if (campaign.status !== "draft" || campaign.zernioBroadcastId) {
-      throw new BadRequestException("This campaign has already been launched.");
-    }
+    if (campaign.status !== "draft" || campaign.zernioBroadcastId) throw campaignError("campaigns.already_launched");
 
     let scheduledAt: Date | null = null;
     if (input.mode === "schedule") {
       scheduledAt = input.scheduledAt ? new Date(input.scheduledAt) : null;
       if (!scheduledAt || Number.isNaN(scheduledAt.getTime()) || scheduledAt.getTime() <= Date.now()) {
-        throw new BadRequestException("Pick a date and time in the future.");
+        throw campaignError("campaigns.schedule_invalid");
       }
     }
 
     const template = campaign.templateId
       ? await this.prisma.template.findFirst({ where: { id: campaign.templateId, workspaceId } })
       : null;
-    if (!template || template.status !== "approved") {
-      throw new BadRequestException("Pick a WhatsApp template that Meta has approved.");
-    }
-    const variables = input.variables ?? [];
-    const needed = templatePlaceholderCount(template.body);
-    if (variables.length !== needed) {
-      throw new BadRequestException(`This template needs ${needed} variables; ${variables.length} were given.`);
-    }
+    if (!template || template.status !== "approved") throw campaignError("campaigns.template_not_approved");
+    if (templateUnsupported(template)) throw campaignError("campaigns.template_unsupported");
 
-    // SP-19: the chosen sender (an active Zernio WhatsApp channel, else 400
-    // channels.sender_invalid) or, when none was chosen, the default one.
-    // SP-12: with its channel id, recorded on every recipient row.
-    const sender = await campaignSender(this.prisma, workspaceId, campaign.senderChannelId);
     const workspace = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { zernioProfileId: true } });
-    if (!workspace?.zernioProfileId || !sender) {
-      // SP-13 ruling 6: one key for every marketing action (409, code WHATSAPP_NOT_CONNECTED).
-      throw campaignError("campaigns.whatsapp_not_connected");
-    }
-    const profileId = workspace.zernioProfileId;
-    const accountId = sender.accountId;
+    // SP-13 ruling 6: one key for every marketing action (409, code WHATSAPP_NOT_CONNECTED).
+    if (!workspace?.zernioProfileId) throw campaignError("campaigns.whatsapp_not_connected");
+    const senders = await resolveLaunchSenders(this.prisma, workspaceId, effectiveSenderIds(campaign));
+    if (senders.length === 0) throw campaignError("campaigns.whatsapp_not_connected");
 
-    const { recipients, skipped, skippedRows } = buildRecipients(await this.audience(workspaceId, campaign.segmentId));
-    if (recipients.length === 0) {
-      throw new BadRequestException("No one in this audience has a WhatsApp number with a country code.");
-    }
+    const onSenders = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang });
+    if (onSenders.failed.length > 0) throw campaignError("campaigns.template_check_failed", { channelIds: onSenders.failed });
+    if (onSenders.missing.length > 0) throw campaignError("campaigns.template_missing_on_number", { channelIds: onSenders.missing });
 
-    await this.writeRecipientRows(workspaceId, campaign, sender.channelId, recipients, skippedRows);
+    const rawMap = campaign.varMap ?? legacyToVarMap(input.variables ?? []);
+    const defs = await loadCustomDefs(this.prisma, workspaceId);
+    const varMap = validateVarMap(rawMap, { slotCount: templatePlaceholderCount(template.body), customDefs: defs });
 
-    // Import first so Zernio knows each person's name for {{n}} = name.
-    for (const batch of chunk(recipients, 1000)) {
-      await this.zernio.bulkCreateContacts(
-        profileId,
-        accountId,
-        batch.map((r) => ({ name: r.name, platformIdentifier: r.phone })),
-      );
-    }
-
-    const broadcastId = await this.zernio.createWhatsAppBroadcast({
-      profileId,
-      accountId,
-      name: campaign.name,
-      template: { name: template.name, language: template.lang },
-      variables,
-    });
-
-    try {
-      for (const batch of chunk(recipients.map((r) => r.phone), 100)) {
-        await this.zernio.addBroadcastRecipients(broadcastId, batch);
+    if (campaign.headerMediaId) {
+      if (!this.media) throw new NotFoundException("Media not found");
+      const row = await this.media.get(workspaceId, campaign.headerMediaId, viewer);
+      assertHeaderMedia(row, template.headerType);
+      if (scheduledAt && scheduledAt.getTime() - Date.now() > HEADER_SCHEDULE_MAX_DAYS * 24 * 3_600_000) {
+        throw campaignError("campaigns.header_media_schedule_too_far", { days: HEADER_SCHEDULE_MAX_DAYS });
       }
-      if (scheduledAt) await this.zernio.scheduleBroadcast(broadcastId, scheduledAt.toISOString());
-      else await this.zernio.sendBroadcast(broadcastId);
-    } catch (e) {
-      await this.prisma.campaign.update({
-        where: { id },
-        data: { status: "failed", zernioBroadcastId: broadcastId, lastError: (e as Error).message },
-      });
-      throw e;
     }
 
-    return this.prisma.campaign.update({
-      where: { id },
+    const claimed = await this.prisma.campaign.updateMany({
+      where: { id, workspaceId, status: "draft", zernioBroadcastId: null },
       data: {
-        status: scheduledAt ? "scheduled" : "running",
-        zernioBroadcastId: broadcastId,
+        status: "launching",
+        launchStage: "planning",
+        launchHeartbeatAt: new Date(),
+        launchAttempts: 0,
+        launchedById: viewer?.userId ?? null,
         scheduledAt,
-        launchedAt: new Date(),
-        recipients: recipients.length,
-        skipped: totalSkipped(skipped),
-        variableMapping: variables as unknown as Prisma.InputJsonValue,
+        varMap: varMap as unknown as Prisma.InputJsonValue,
+        // History (SP-12 and main read it): the legacy body when one was sent.
+        ...(input.variables ? { variableMapping: input.variables as unknown as Prisma.InputJsonValue } : {}),
+        planCompletedAt: null,
+        cancelRequestedAt: null,
+        sendTransport: null,
         lastError: null,
       },
     });
+    if (claimed.count !== 1) throw campaignError("campaigns.already_launched");
+    this.launcher.kick(id);
+    return (await this.prisma.campaign.findFirst({ where: { id, workspaceId } }))!;
   }
 
   /**
-   * SP-12: one row per reachable phone (`queued`) and per opted-out or
-   * phoneless member (`skipped`), written BEFORE Zernio is called so a crash
-   * mid-launch leaves an honest "not sent" record. Chunked createMany of
-   * 1000 with skipDuplicates on (campaignId, phone); no per-recipient
-   * round-trips (ruling 10). Any rows an interrupted earlier attempt left on
-   * the draft are cleared first: nothing was sent for it (no broadcast id).
+   * - `launching`: records `cancelRequestedAt`; the runner (or its resume)
+   *   deletes drafts and cancels sent partitions, then ends `cancelled`.
+   * - a scheduled direct campaign still waiting: `cancelled` at once.
+   * - SP-13 multi-broadcast (`sendTransport: broadcast`): every sent or
+   *   scheduled partition is cancelled in Zernio.
+   * - otherwise the legacy single broadcast, unchanged.
+   * 400 `campaigns.not_cancellable` when nothing is sending.
    */
-  private async writeRecipientRows(
-    workspaceId: string,
-    campaign: { id: string; recipientTracking?: boolean | null },
-    channelId: string | null,
-    recipients: ReturnType<typeof buildRecipients>["recipients"],
-    skippedRows: ReturnType<typeof buildRecipients>["skippedRows"],
-  ): Promise<void> {
-    const campaignId = campaign.id;
-    // Fix M1: always, since a launch that died mid-write leaves rows while
-    // recipientTracking is still false. One indexed statement.
-    await this.prisma.campaignRecipient.deleteMany({ where: { workspaceId, campaignId } });
-    const queued = recipients.map((r) => ({
-      workspaceId,
-      campaignId,
-      contactId: r.contactId ?? null,
-      channelId,
-      phone: r.phone,
-      contactName: r.name,
-      status: "queued",
-    }));
-    for (const data of chunk(queued, RECIPIENT_WRITE_CHUNK)) {
-      await this.prisma.campaignRecipient.createMany({ data, skipDuplicates: true });
-    }
-    const left = skippedRows.map((r) => ({
-      workspaceId,
-      campaignId,
-      contactId: r.contactId ?? null,
-      channelId,
-      phone: r.phone,
-      contactName: r.name.trim() || null,
-      status: "skipped",
-      failureCode: SKIP_CODES[r.reason],
-    }));
-    for (const data of chunk(left, RECIPIENT_WRITE_CHUNK)) {
-      await this.prisma.campaignRecipient.createMany({ data, skipDuplicates: true });
-    }
-    await this.prisma.campaign.update({ where: { id: campaignId }, data: { recipientTracking: true } });
-  }
-
-  async cancel(workspaceId: string, id: string) {
+  async cancel(workspaceId: string, id: string): Promise<Campaign> {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) throw campaignError("campaigns.not_found");
+    const reread = async () => (await this.prisma.campaign.findFirst({ where: { id, workspaceId } }))!;
+    if (campaign.status === "launching") {
+      const res = await this.prisma.campaign.updateMany({
+        where: { id, workspaceId, status: "launching" },
+        data: { cancelRequestedAt: new Date() },
+      });
+      if (res.count === 1) return reread();
+      return this.cancel(workspaceId, id);
+    }
+    if (campaign.sendTransport === "direct" && campaign.status === "scheduled") {
+      const res = await this.prisma.campaign.updateMany({
+        where: { id, workspaceId, status: "scheduled", sendTransport: "direct" },
+        data: { status: "cancelled", launchStage: "done" },
+      });
+      if (res.count === 1) return reread();
+      return this.cancel(workspaceId, id);
+    }
+    if (campaign.sendTransport === "broadcast" && ["scheduled", "running"].includes(campaign.status)) {
+      const parts = (await this.prisma.campaignBroadcast.findMany({
+        where: { workspaceId, campaignId: id, zernioBroadcastId: { not: null }, stage: { in: ["sent", "scheduled"] } },
+        select: { id: true, zernioBroadcastId: true },
+      })) as Array<{ id: string; zernioBroadcastId: string }>;
+      if (parts.length > 0) {
+        for (const p of parts) {
+          await this.zernio.cancelBroadcast(p.zernioBroadcastId);
+          await this.prisma.campaignBroadcast.update({ where: { id: p.id }, data: { stage: "cancelled" } });
+        }
+        return this.prisma.campaign.update({ where: { id }, data: { status: "cancelled" } });
+      }
+    }
     if (!campaign.zernioBroadcastId || !["scheduled", "running"].includes(campaign.status)) {
-      throw new BadRequestException("This campaign is not sending, so there is nothing to cancel.");
+      throw campaignError("campaigns.not_cancellable");
     }
     await this.zernio.cancelBroadcast(campaign.zernioBroadcastId);
     return this.prisma.campaign.update({ where: { id }, data: { status: "cancelled" } });
@@ -251,8 +273,13 @@ export class CampaignSendService {
   async refresh(workspaceId: string, id: string) {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) throw campaignError("campaigns.not_found");
+    // SP-13 direct sends have no broadcast: the rows are the truth.
+    if (campaign.sendTransport === "direct" && campaign.recipientTracking && ["running", "completed"].includes(campaign.status)) {
+      await this.tracker.recountCampaign(campaign.id);
+      return (await this.prisma.campaign.findFirst({ where: { id, workspaceId } })) ?? campaign;
+    }
     if (!campaign.zernioBroadcastId) return campaign;
-    const updated = await this.applyStats(campaign.id, campaign.zernioBroadcastId, this.useAggregates(campaign));
+    const updated = await this.statsFor(campaign);
     if (updated.recipientTracking !== true || this.syncing) return updated;
     this.syncing = true;
     try {
@@ -320,12 +347,13 @@ export class CampaignSendService {
           recipientSyncSkip: true,
           recipientsSyncedAt: true,
           recipients: true,
+          sendTransport: true,
         },
       });
       for (const c of rows) {
         if (FINISHED.includes(c.status as string)) continue;
         try {
-          await this.applyStats(c.id, c.zernioBroadcastId!, this.useAggregates(c));
+          await this.statsFor(c);
         } catch (e) {
           this.log.warn(`campaign ${c.id} stats sync failed: ${(e as Error).message}`);
         }
@@ -367,45 +395,35 @@ export class CampaignSendService {
    * Fix I2: `refresh` calls this for one campaign with `maxPages` as its own
    * budget and `force` to skip the hourly tail throttle.
    */
-  private async sweepAll(
-    campaigns: Array<{
-      id: string;
-      workspaceId: string;
-      zernioBroadcastId: string | null;
-      status?: string | null;
-      recipients?: number | null;
-      recipientSyncSkip?: number | null;
-      recipientsSyncedAt?: Date | null;
-    }>,
-    opts: { maxPages?: number; force?: boolean } = {},
-  ): Promise<void> {
+  private async sweepAll(campaigns: SweepCampaign[], opts: { maxPages?: number; force?: boolean } = {}): Promise<void> {
     const limit = recipientPageSize();
     let budget = opts.maxPages ?? recipientSyncMaxPages();
     const now = Date.now();
-    const tailDue = (c: (typeof campaigns)[number]) => {
-      if (opts.force || !FINISHED.includes(c.status as string)) return true;
-      const lastEnd = Math.max(c.recipientsSyncedAt?.getTime() ?? 0, this.passEndedAt.get(c.id) ?? 0);
+    const units = await this.sweepUnits(campaigns.filter((c) => c.zernioBroadcastId));
+    const tailDue = (u: SweepUnit) => {
+      if (opts.force || !FINISHED.includes(u.c.status as string)) return true;
+      const lastEnd = Math.max(u.syncedAt?.getTime() ?? 0, this.passEndedAt.get(u.key) ?? 0);
       return now - lastEnd >= RECIPIENT_TAIL_INTERVAL_MS;
     };
-    const synced = (c: (typeof campaigns)[number]) => c.recipientsSyncedAt?.getTime() ?? -1;
-    const state = campaigns
-      .filter((c) => c.zernioBroadcastId && tailDue(c))
+    const synced = (u: SweepUnit) => u.syncedAt?.getTime() ?? -1;
+    const state = units
+      .filter(tailDue)
       .sort(
         (a, b) =>
-          (this.lastPagedAt.get(a.id) ?? 0) - (this.lastPagedAt.get(b.id) ?? 0) ||
+          (this.lastPagedAt.get(a.key) ?? 0) - (this.lastPagedAt.get(b.key) ?? 0) ||
           synced(a) - synced(b) ||
-          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+          (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
       )
-      .map((c) => ({ c, skip: c.recipientSyncSkip ?? 0, finished: false, failed: false, changed: 0, pages: 0 }));
+      .map((u) => ({ u, c: u.c, skip: u.skip, finished: false, failed: false, changed: 0, pages: 0 }));
     let open = state;
     while (budget > 0 && open.length > 0) {
       for (const s of open) {
         if (budget <= 0) break;
         budget--;
         s.pages++;
-        this.lastPagedAt.set(s.c.id, ++this.pageSeq);
+        this.lastPagedAt.set(s.u.key, ++this.pageSeq);
         try {
-          const res = await this.zernio.listBroadcastRecipients(s.c.zernioBroadcastId!, { skip: s.skip, limit });
+          const res = await this.zernio.listBroadcastRecipients(s.u.broadcastId, { skip: s.skip, limit });
           const applied = await this.tracker.applyBroadcastPage({ id: s.c.id, workspaceId: s.c.workspaceId }, res);
           s.changed += applied.changed;
           const n = res.recipients.length;
@@ -424,13 +442,27 @@ export class CampaignSendService {
       }
       open = open.filter((s) => !s.finished && !s.failed);
     }
+    // SP-13: multi-broadcast campaigns are saved per broadcast, then recounted once.
+    const multi = new Map<string, { c: SweepCampaign; recount: boolean }>();
     for (const s of state) {
       if (s.pages === 0) continue;
       try {
         // R3: a pass that saw fewer rows than were sent (e.g. a silent page
         // cap) does not count as complete; it restarts and the aggregates stay.
-        const covered = s.finished && s.skip >= (s.c.recipients ?? 0);
-        if (s.finished) this.passEndedAt.set(s.c.id, Date.now());
+        const covered = s.finished && s.skip >= s.u.expected;
+        if (s.finished) this.passEndedAt.set(s.u.key, Date.now());
+        if (s.u.partition) {
+          const at = covered ? new Date() : null;
+          await this.prisma.campaignBroadcast.update({
+            where: { id: s.u.partition.id },
+            data: s.finished ? { recipientSyncSkip: 0, ...(at ? { recipientsSyncedAt: at } : {}) } : { recipientSyncSkip: s.skip },
+          });
+          if (at) s.u.partition.recipientsSyncedAt = at;
+          const m = multi.get(s.c.id) ?? { c: s.c, recount: false };
+          m.recount ||= s.finished || s.changed > 0;
+          multi.set(s.c.id, m);
+          continue;
+        }
         await this.prisma.campaign.update({
           where: { id: s.c.id },
           data: s.finished
@@ -445,6 +477,93 @@ export class CampaignSendService {
         this.log.warn(`campaign ${s.c.id} recipient sweep save failed: ${(e as Error).message}`);
       }
     }
+    for (const { c, recount } of multi.values()) {
+      try {
+        // The campaign's first pass is done once every broadcast's pass covered its rows.
+        const parts = units.filter((u) => u.c.id === c.id && u.partition).map((u) => u.partition!);
+        const firstPassDone = !!c.recipientsSyncedAt || (parts.length > 0 && parts.every((p) => !!p.recipientsSyncedAt));
+        if (firstPassDone && !c.recipientsSyncedAt) {
+          await this.prisma.campaign.update({ where: { id: c.id }, data: { recipientsSyncedAt: new Date() } });
+        }
+        if (recount) await this.tracker.recountCampaign(c.id, { floor: !firstPassDone });
+      } catch (e) {
+        this.log.warn(`campaign ${c.id} recipient sweep save failed: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  /**
+   * SP-13: what the sweep pages. A campaign launched before SP-13 (no
+   * `sendTransport`) is one unit keyed by its id, exactly as before. A
+   * multi-broadcast campaign is one unit per sent broadcast, each with its
+   * own `recipientSyncSkip` and pass state, matching rows by
+   * `(campaignId, phone)` like the legacy path. One query loads them all.
+   */
+  private async sweepUnits(campaigns: SweepCampaign[]): Promise<SweepUnit[]> {
+    const legacy = (c: SweepCampaign): SweepUnit => ({
+      key: c.id,
+      c,
+      broadcastId: c.zernioBroadcastId!,
+      skip: c.recipientSyncSkip ?? 0,
+      syncedAt: c.recipientsSyncedAt ?? null,
+      expected: c.recipients ?? 0,
+      partition: null,
+    });
+    const multiIds = campaigns.filter((c) => c.sendTransport === "broadcast").map((c) => c.id);
+    if (multiIds.length === 0) return campaigns.map(legacy);
+    const parts = (await this.prisma.campaignBroadcast.findMany({
+      where: { campaignId: { in: multiIds }, zernioBroadcastId: { not: null }, stage: { in: SWEPT_STAGES } },
+      select: { id: true, campaignId: true, zernioBroadcastId: true, recipientSyncSkip: true, recipientsSyncedAt: true, recipientCount: true },
+    })) as SweepPartition[];
+    return campaigns.flatMap((c) => {
+      const mine = c.sendTransport === "broadcast" ? parts.filter((p) => p.campaignId === c.id) : [];
+      if (mine.length === 0) return [legacy(c)];
+      return mine.map((p) => ({
+        key: `bc:${p.id}`,
+        c,
+        broadcastId: p.zernioBroadcastId,
+        skip: p.recipientSyncSkip ?? 0,
+        syncedAt: p.recipientsSyncedAt ?? null,
+        expected: p.recipientCount ?? 0,
+        partition: p,
+      }));
+    });
+  }
+
+  /**
+   * Status (and, while `useAggregates`, counters) from Zernio: one broadcast
+   * for a legacy campaign; every sent broadcast of an SP-13 campaign,
+   * combined by `aggregateBroadcastStatus`.
+   */
+  private async statsFor(c: {
+    id: string;
+    workspaceId: string;
+    zernioBroadcastId: string | null;
+    sendTransport?: string | null;
+    recipientTracking?: boolean | null;
+    recipientsSyncedAt?: Date | null;
+  }) {
+    const aggregates = this.useAggregates(c);
+    if (c.sendTransport === "broadcast") {
+      const parts = (await this.prisma.campaignBroadcast.findMany({
+        where: { workspaceId: c.workspaceId, campaignId: c.id, zernioBroadcastId: { not: null }, stage: { in: SWEPT_STAGES } },
+        select: { zernioBroadcastId: true },
+      })) as Array<{ zernioBroadcastId: string }>;
+      if (parts.length > 0) {
+        const stats = [];
+        for (const p of parts) stats.push(await this.zernio.getBroadcast(p.zernioBroadcastId));
+        const b = aggregateBroadcastStatus(stats);
+        return this.prisma.campaign.update({
+          where: { id: c.id },
+          data: {
+            status: campaignStatusFor(b.status),
+            ...(aggregates ? { sent: b.sent, delivered: b.delivered, read: b.read, failed: b.failed } : {}),
+            statsSyncedAt: new Date(),
+          },
+        });
+      }
+    }
+    return this.applyStats(c.id, c.zernioBroadcastId!, aggregates);
   }
 
   /**

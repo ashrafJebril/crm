@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  HttpCode,
   Delete,
   Get,
   Module,
@@ -30,7 +31,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
 import { MediaModule } from "../media/media.module";
-import { MediaService } from "../media/media.service";
+import { lockMediaForReference, MediaService } from "../media/media.service";
 import type { Viewer } from "../permissions/visibility";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import type { ZernioBroadcastVariable } from "../integrations/zernio.client";
@@ -43,6 +44,9 @@ import { CampaignReportService } from "./campaign-report.service";
 import { CampaignFollowUpService } from "./campaign-follow-up.service";
 import { campaignError } from "./campaign-errors";
 import { CampaignPreviewService } from "./sending/campaign-preview.service";
+import { CampaignLaunchRunner } from "./sending/campaign-launch-runner.service";
+import { CampaignLaunchScheduler } from "./sending/campaign-launch.scheduler";
+import { NotificationsModule } from "../notifications/notifications.module";
 import { effectiveSenderIds, normalizeSenderWrite } from "./sending/senders";
 import { validateVarMapShape } from "./sending/var-map";
 import { campaignSenderOptions, campaignSenders } from "../channels/default-channel";
@@ -235,21 +239,40 @@ export class CampaignsController {
     return {
       ...campaign,
       senders: rows.map((c) => ({ channelId: c.id, displayName: c.displayName, phoneNumber: c.phoneNumber ?? null })),
+      // SP-13: background launch progress while launching (two indexed queries).
+      launch: campaign.status === "launching" ? await CampaignLaunchRunner.progress(this.prisma, workspaceId, campaign) : null,
     };
+  }
+
+  /**
+   * SP-13 (T3 M1): a write that sets `headerMediaId` runs in a transaction
+   * that first takes the media row's advisory lock (`lockMediaForReference`,
+   * the lock `MediaService.remove` takes) and re-reads the row: a concurrent
+   * delete either sees this reference (409 media.in_use) or this save sees
+   * the row gone (404), so the FK never silently nulls the header.
+   */
+  private withHeaderLock<T>(workspaceId: string, mediaId: string | null | undefined, write: (tx: PrismaService) => Promise<T>): Promise<T> {
+    if (!mediaId) return write(this.prisma);
+    return this.prisma.$transaction(async (tx) => {
+      await lockMediaForReference(tx, workspaceId, mediaId);
+      return write(tx as unknown as PrismaService);
+    }) as Promise<T>;
   }
 
   @Post()
   async create(@CurrentWorkspace() workspaceId: string, @Body() dto: CreateCampaignDto, @CurrentViewer() viewer?: Viewer) {
     const sending = await this.sendingFields(workspaceId, dto, viewer);
-    return this.prisma.campaign.create({
-      data: {
-        ...this.plainFields(dto),
-        ...sending,
-        workspaceId,
-        status: "draft",
-        recipients: dto.recipients ?? 0,
-      },
-    });
+    return this.withHeaderLock(workspaceId, sending.headerMediaId, (db) =>
+      db.campaign.create({
+        data: {
+          ...this.plainFields(dto),
+          ...sending,
+          workspaceId,
+          status: "draft",
+          recipients: dto.recipients ?? 0,
+        },
+      }),
+    );
   }
 
   @Patch(":id")
@@ -263,16 +286,33 @@ export class CampaignsController {
     if (!existing) throw campaignError("campaigns.not_found");
     if (existing.status !== "draft") throw new BadRequestException("Only draft campaigns can be edited.");
     const sending = await this.sendingFields(workspaceId, dto, viewer);
-    return this.prisma.campaign.update({ where: { id }, data: { ...this.plainFields(dto), ...sending } });
+    return this.withHeaderLock(workspaceId, sending.headerMediaId, (db) =>
+      db.campaign.update({ where: { id }, data: { ...this.plainFields(dto), ...sending } }),
+    );
   }
 
+  /**
+   * SP-13: validates, claims the draft as `launching` and answers 202 at
+   * once; the background runner does the rest (poll GET :id for `launch`).
+   */
   @Post(":id/launch")
-  launch(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Body() dto: LaunchCampaignDto) {
-    return this.send.launch(workspaceId, id, {
-      mode: dto.mode,
-      scheduledAt: dto.scheduledAt,
-      variables: dto.variables as ZernioBroadcastVariable[] | undefined,
-    });
+  @HttpCode(202)
+  launch(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: LaunchCampaignDto,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    return this.send.launch(
+      workspaceId,
+      id,
+      {
+        mode: dto.mode,
+        scheduledAt: dto.scheduledAt,
+        variables: dto.variables as ZernioBroadcastVariable[] | undefined,
+      },
+      viewer,
+    );
   }
 
   @Post(":id/cancel")
@@ -289,7 +329,7 @@ export class CampaignsController {
   async remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     const existing = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!existing) throw campaignError("campaigns.not_found");
-    if (existing.status === "scheduled" || existing.status === "running") {
+    if (existing.status === "scheduled" || existing.status === "running" || existing.status === "launching") {
       throw new BadRequestException("Cancel this campaign before deleting it.");
     }
     return this.prisma.campaign.delete({ where: { id } }).then(() => ({ ok: true }));
@@ -299,9 +339,17 @@ export class CampaignsController {
 @Module({
   // SP-12: SegmentsModule (MarketingOutboundService) and TagsModule (TagsService) for follow-ups.
   // SP-13: MediaModule (MediaService.get for header media, with viewer visibility).
-  imports: [IntegrationsModule, CampaignTrackingModule, SegmentsModule, TagsModule, MediaModule],
+  // SP-13 Task 2: NotificationsModule (the launch runner notifies the launcher on failure).
+  imports: [IntegrationsModule, CampaignTrackingModule, SegmentsModule, TagsModule, MediaModule, NotificationsModule],
   // CampaignsController first, so its literal GET preview is registered before any :id route.
   controllers: [CampaignsController, CampaignReportController],
-  providers: [CampaignSendService, CampaignReportService, CampaignFollowUpService, CampaignPreviewService],
+  providers: [
+    CampaignSendService,
+    CampaignReportService,
+    CampaignFollowUpService,
+    CampaignPreviewService,
+    CampaignLaunchRunner,
+    CampaignLaunchScheduler,
+  ],
 })
 export class CampaignsModule {}

@@ -1,4 +1,5 @@
-import { isShortTitle, PROVIDER_UNKNOWN } from "./tracking/failure-codes";
+import { isShortTitle, parseMissingValueCode, PROVIDER_UNKNOWN } from "./tracking/failure-codes";
+import { fieldLabel } from "./sending/var-map";
 import type { RecipientStatus } from "./tracking/recipient-status";
 import type { ExportLang } from "./campaign-report.dto";
 
@@ -71,7 +72,25 @@ export const FAILURE_LABELS: Record<string, [en: string, ar: string]> = {
   "meta:130472": ["Number is in a Meta experiment", "الرقم ضمن تجربة لدى ميتا"],
   "meta:131000": ["Something went wrong", "حدث خطأ ما"],
   "meta:368": ["Temporarily blocked for policy violations", "محظور مؤقتًا بسبب مخالفة السياسات"],
+  // SP-13
+  "launch:unconfirmed": ["Send not confirmed; not retried", "لم يتأكد الإرسال؛ لم تتم إعادة المحاولة"],
 };
+
+/** SP-13: custom field labels by key (this workspace's contact defs, archived included). */
+export type FieldLabelDefs = ReadonlyMap<string, { label: string; labelAr: string }>;
+
+/**
+ * SP-13 `skip:missing_value:<source>.<key>`: "No value for <label>" /
+ * "لا توجد قيمة لـ <label>". The label is the custom field's label (Arabic
+ * label in ar), or the built-in field's name in both languages; an unknown
+ * key shows the raw key. Null for any other code.
+ */
+export function missingValueLabel(code: string | null, lang: ExportLang, defs: FieldLabelDefs = new Map()): string | null {
+  const parsed = parseMissingValueCode(code);
+  if (!parsed) return null;
+  const l = fieldLabel(parsed.source, parsed.key, defs);
+  return lang === "ar" ? `لا توجد قيمة لـ ${l.labelAr}` : `No value for ${l.label}`;
+}
 
 const pick = (pair: [string, string], lang: ExportLang) => (lang === "ar" ? pair[1] : pair[0]);
 
@@ -85,8 +104,10 @@ export function statusLabel(status: string, lang: ExportLang): string {
  * "WhatsApp error <n>"; a short provider text is appended to codes without
  * their own copy. The raw provider text is never used otherwise.
  */
-export function failureLabel(code: string | null, reason: string | null, lang: ExportLang): string {
+export function failureLabel(code: string | null, reason: string | null, lang: ExportLang, defs?: FieldLabelDefs): string {
   if (!code) return "";
+  const missing = missingValueLabel(code, lang, defs);
+  if (missing) return missing;
   const known = FAILURE_LABELS[code];
   if (known && code !== PROVIDER_UNKNOWN) return pick(known, lang);
   const short = isShortTitle(reason) ? reason!.trim() : null;

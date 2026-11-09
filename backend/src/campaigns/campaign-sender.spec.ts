@@ -34,9 +34,12 @@ describe("campaign senderChannelId must be an active zernio whatsapp channel", (
       contact: [{ id: "c", workspaceId: "ws1", name: "C", phone: "+962790000000", lifecycle: "lead" }],
     });
     const zernio = {
+      // SP-13: launch checks the template on every sender (read-only).
+      whatsappTemplates: jest.fn(async () => [{ id: "t", name: "eid", language: "ar", status: "APPROVED", category: "MARKETING", components: [{ type: "BODY", text: "Hi" }] }]),
       bulkCreateContacts: jest.fn(async () => ({})),
       createWhatsAppBroadcast: jest.fn(async () => "b1"),
       addBroadcastRecipients: jest.fn(async () => ({})),
+      getBroadcast: jest.fn(async () => ({ status: "draft", recipientCount: 0, sent: 0, delivered: 0, read: 0, failed: 0 })),
       sendBroadcast: jest.fn(async () => {}),
     };
     const svc = new CampaignSendService(prisma, zernio as never, { isLocked: async () => false } as never);
@@ -46,12 +49,14 @@ describe("campaign senderChannelId must be an active zernio whatsapp channel", (
   it("sends from the chosen channel's account", async () => {
     const { svc, zernio } = build("B");
     await svc.launch("ws1", "camp", { mode: "now", variables: [] });
+    await svc.launcher.idle();
     expect(zernio.createWhatsAppBroadcast).toHaveBeenCalledWith(expect.objectContaining({ accountId: "acc-B" }));
   });
 
   it("null falls back to the default Zernio WhatsApp channel", async () => {
     const { svc, zernio } = build(null);
     await svc.launch("ws1", "camp", { mode: "now", variables: [] });
+    await svc.launcher.idle();
     expect(zernio.createWhatsAppBroadcast).toHaveBeenCalledWith(expect.objectContaining({ accountId: "acc-A" }));
   });
 

@@ -467,3 +467,113 @@ describe("refresh sweeps the campaign (final review I2)", () => {
     expect(zernio.getBroadcast).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("sweep pages every broadcast of a multi-broadcast campaign and aggregates status", () => {
+  /** An SP-13 campaign with two sent broadcasts of 2 rows each, plus a legacy campaign. */
+  function multiWorld() {
+    const camp = campaign("m1", { sendTransport: "broadcast", zernioBroadcastId: "zb-1", recipients: 4 });
+    const legacy = campaign("old", { recipients: 1 });
+    const part = (id: string, zb: string, stage = "sent") => ({
+      id,
+      workspaceId: "ws1",
+      campaignId: "m1",
+      channelId: "chA",
+      accountId: "acc",
+      partitionKey: id,
+      variables: {},
+      transport: "broadcast",
+      stage,
+      recipientCount: 2,
+      zernioBroadcastId: zb,
+      recipientSyncSkip: 0,
+      recipientsSyncedAt: null,
+      createdAt: ago(H),
+      updatedAt: ago(H),
+    });
+    const { prisma, zernio, svc } = build({
+      campaign: [camp, legacy],
+      campaignRecipient: [...rows("m1", 4), ...rows("old", 1).map((r) => ({ ...r, phone: phone(9) }))],
+      campaignBroadcast: [part("p1", "zb-1"), part("p2", "zb-2"), part("p3", null as unknown as string, "cancelled")],
+    } as never);
+    const byBroadcast: Record<string, number[]> = { "zb-1": [0, 1], "zb-2": [2, 3], "b-old": [9] };
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, { skip, limit }: { skip: number; limit: number }) => {
+      const list = (byBroadcast[b] ?? []).slice(skip, skip + limit).map((i) => zr(i, "read"));
+      return { recipients: list, pagination: { total: byBroadcast[b]?.length ?? 0, limit, skip, hasMore: skip + list.length < (byBroadcast[b]?.length ?? 0) }, summary: {} };
+    });
+    zernio.getBroadcast.mockImplementation(async (b: string) =>
+      b === "zb-1"
+        ? { status: "completed", recipientCount: 2, sent: 2, delivered: 2, read: 1, failed: 0 }
+        : b === "zb-2"
+          ? { status: "sending", recipientCount: 2, sent: 1, delivered: 1, read: 0, failed: 1 }
+          : { status: "sending", recipientCount: 1, sent: 1, delivered: 0, read: 0, failed: 0 },
+    );
+    return { prisma, zernio, svc };
+  }
+
+  it("reads every broadcast's status and sums the counters until the first pass, then counts from rows", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    const { prisma, zernio, svc } = multiWorld();
+    await svc.syncActive();
+    expect(zernio.getBroadcast.mock.calls.map((c: unknown[]) => c[0]).sort()).toEqual(["b-old", "zb-1", "zb-2"]);
+    const m1 = () => prisma.db.campaign.find((c: { id: string }) => c.id === "m1");
+    // completed + sending → still sending (running); counters summed.
+    expect(m1()).toMatchObject({ status: "running", sent: 3, delivered: 3, failed: 1 });
+    // (read may already be raised, never lowered, by a floor recount of a first page.)
+    expect(m1().read).toBeGreaterThanOrEqual(1);
+    expect(m1().recipientsSyncedAt).toBeNull();
+
+    // A budget of 1 page per tick rotates over the legacy campaign and both broadcasts.
+    await svc.syncActive();
+    await svc.syncActive();
+    const paged = zernio.listBroadcastRecipients.mock.calls.map((c: unknown[]) => c[0]);
+    expect([...paged].sort()).toEqual(["b-old", "zb-1", "zb-2"]);
+    // The cancelled partition never had a broadcast: never paged.
+    expect(paged).not.toContain(null);
+
+    const parts = prisma.db.campaignBroadcast;
+    expect(parts.find((p: { id: string }) => p.id === "p1").recipientsSyncedAt).toEqual(NOW);
+    expect(parts.find((p: { id: string }) => p.id === "p2").recipientsSyncedAt).toEqual(NOW);
+    // Every broadcast covered: the campaign's first pass is done; counters now come from the rows (all read).
+    expect(m1().recipientsSyncedAt).toEqual(NOW);
+    expect(m1()).toMatchObject({ sent: 4, delivered: 4, read: 4, failed: 0 });
+    expect(prisma.db.campaignRecipient.filter((r: { campaignId: string; status: string }) => r.campaignId === "m1" && r.status === "read")).toHaveLength(4);
+    // The legacy campaign kept its own single-broadcast state.
+    expect(prisma.db.campaign.find((c: { id: string }) => c.id === "old").recipientsSyncedAt).toEqual(NOW);
+  });
+
+  it("each broadcast resumes from its own offset", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "2";
+    process.env.ZERNIO_RECIPIENT_PAGE = "1";
+    const { prisma, zernio, svc } = multiWorld();
+    prisma.db.campaign = prisma.db.campaign.filter((c: { id: string }) => c.id === "m1");
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: unknown[]) => [c[0], (c[1] as { skip: number }).skip]).sort()).toEqual([
+      ["zb-1", 0],
+      ["zb-2", 0],
+    ]);
+    expect(prisma.db.campaignBroadcast.map((p: { recipientSyncSkip: number }) => p.recipientSyncSkip)).toEqual([1, 1, 0]);
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.slice(2).map((c: unknown[]) => [c[0], (c[1] as { skip: number }).skip]).sort()).toEqual([
+      ["zb-1", 1],
+      ["zb-2", 1],
+    ]);
+  });
+
+  it("refresh of a multi-broadcast campaign aggregates and sweeps its broadcasts, bounded", async () => {
+    const { prisma, zernio, svc } = multiWorld();
+    const res = await svc.refresh("ws1", "m1");
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: unknown[]) => c[0]).sort()).toEqual(["zb-1", "zb-2"]);
+    expect(zernio.listBroadcastRecipients.mock.calls.length).toBeLessThanOrEqual(REFRESH_SWEEP_MAX_PAGES);
+    expect(res).toMatchObject({ id: "m1", status: "running", read: 4 });
+    expect(prisma.db.campaign.find((c: { id: string }) => c.id === "old").recipientsSyncedAt).toBeNull();
+  });
+
+  it("cancel cancels every sent broadcast of a multi-broadcast campaign", async () => {
+    const { prisma, zernio, svc } = multiWorld();
+    (zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast = jest.fn(async () => {});
+    const res = await svc.cancel("ws1", "m1");
+    expect((zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast.mock.calls.map((c) => c[0]).sort()).toEqual(["zb-1", "zb-2"]);
+    expect(res.status).toBe("cancelled");
+    expect(prisma.db.campaignBroadcast.map((p: { stage: string }) => p.stage)).toEqual(["cancelled", "cancelled", "cancelled"]);
+  });
+});

@@ -1,5 +1,6 @@
 import type { ZernioBroadcastVariable } from "../../integrations/zernio.client";
 import { campaignError } from "../campaign-errors";
+import { missingValueCode } from "../tracking/failure-codes";
 
 /**
  * SP-13 template variable mapping (`Campaign.varMap`).
@@ -248,9 +249,9 @@ export function resolveVarMap(
   return { ok: true, values, usedFallback };
 }
 
-/** `skip:missing_value:<source>.<key>` (the recipient row's failureCode). */
+/** `skip:missing_value:<source>.<key>` (the recipient row's failureCode; `missingValueCode`). */
 export function missingSkipCode(source: VarSource, key: string): string {
-  return `skip:missing_value:${source}.${key}`;
+  return missingValueCode(source, key);
 }
 
 /**

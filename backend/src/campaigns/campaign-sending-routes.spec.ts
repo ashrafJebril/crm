@@ -65,6 +65,7 @@ function build(opts: { profile?: string | null; channels?: Record<string, unknow
     createWhatsAppBroadcast: jest.fn(async () => "b1"),
     addBroadcastRecipients: jest.fn(async () => ({})),
     sendBroadcast: jest.fn(async () => {}),
+    getBroadcast: jest.fn(async () => ({ status: "draft", recipientCount: 0, sent: 0, delivered: 0, read: 0, failed: 0 })),
     cancelBroadcast: jest.fn(async () => {}),
     createWhatsAppTemplate: jest.fn(async () => ({ id: "m", status: "PENDING" })),
     updateWhatsAppTemplate: jest.fn(async () => ({ status: "PENDING" })),
@@ -112,6 +113,48 @@ describe("SP-13 campaign routes", () => {
     });
   });
 
+  it("launch answers launching at once; GET :id shows launch progress only while launching; delete is refused meanwhile", async () => {
+    const { ctrl, send } = build();
+    await expect(ctrl.launch("ws1", "mine", { mode: "now" }, { userId: "u-owner" })).resolves.toMatchObject({ status: "launching", launchedById: "u-owner" });
+    const during = await ctrl.get("ws1", "mine");
+    expect(during.launch).toEqual({ stage: "planning", planned: 0, partitionsTotal: 0, partitionsDone: 0, directSent: 0 });
+    expect(await err(ctrl.remove("ws1", "mine"))).toMatchObject({ status: 400 });
+    await send.launcher.idle();
+    const after = await ctrl.get("ws1", "mine");
+    expect(after).toMatchObject({ status: "running", launch: null });
+  });
+
+  it("a header write takes the media lock and re-reads the file inside one transaction (T3 M1)", async () => {
+    const { ctrl, prisma } = build();
+    const raw = prisma.$executeRaw as jest.Mock;
+    // A clean save: the advisory lock, then the write.
+    await expect(ctrl.update("ws1", "mine", { headerMediaId: "m1" })).resolves.toMatchObject({ headerMediaId: "m1" });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(raw.mock.calls.some((c: unknown[]) => (c[0] as string[]).join("?").includes("pg_advisory_xact_lock"))).toBe(true);
+
+    // A delete that commits between the visibility check and our lock: the save finds the row gone (404),
+    // and the campaign keeps its previous header (never silently nulled).
+    raw.mockImplementationOnce(async () => {
+      prisma.db.media = prisma.db.media.filter((m: { id: string }) => m.id !== "m3");
+      return 0;
+    });
+    prisma.db.media.push({ id: "m3", workspaceId: "ws1", mimeType: "image/png", uploadedById: "u-owner" });
+    raw.mockImplementationOnce(async () => {
+      prisma.db.media = prisma.db.media.filter((m: { id: string }) => m.id !== "m1");
+      return 0;
+    });
+    expect(await err(ctrl.update("ws1", "mine", { headerMediaId: "m3", name: "renamed" }))).toMatchObject({ status: 404, message: "Media not found" });
+    expect(prisma.db.campaign.find((c: { id: string }) => c.id === "mine")).toMatchObject({ headerMediaId: "m1", name: "mine" });
+    expect(await err(ctrl.create("ws1", { name: "n", audience: "a", channel: "Broadcast", headerMediaId: "m1" }))).toMatchObject({ status: 404 });
+    expect(prisma.db.campaign.some((c: { name: string }) => c.name === "n")).toBe(false);
+
+    // Clearing the header (or not touching it) needs no lock.
+    const before = prisma.$transaction.mock.calls.length;
+    await ctrl.update("ws1", "mine", { headerMediaId: null });
+    await ctrl.update("ws1", "mine", { name: "x" });
+    expect(prisma.$transaction.mock.calls.length).toBe(before);
+  });
+
   it("header media goes through MediaService.get with the viewer (fix M2)", async () => {
     const { ctrl } = build();
     const restricted = { userId: "u-restricted" };
@@ -145,7 +188,9 @@ describe("SP-13 campaign routes", () => {
     // The picker still explains why it is not offered as an explicit sender.
     expect(s.senders).toEqual([expect.objectContaining({ channelId: "N", eligible: false, reason: "not_active" })]);
     expect((await na.ctrl.previewV2("ws1", { templateId: "tpl" }, req({ campaigns: ["view"] }))).connected).toBe(true);
-    await expect(na.ctrl.launch("ws1", "mine", { mode: "now" })).resolves.toMatchObject({ status: "running" });
+    await expect(na.ctrl.launch("ws1", "mine", { mode: "now" })).resolves.toMatchObject({ status: "launching" });
+    await na.send.launcher.idle();
+    expect(na.prisma.db.campaign.find((c: { id: string }) => c.id === "mine")).toMatchObject({ status: "running" });
     expect(na.zernio.createWhatsAppBroadcast).toHaveBeenCalledWith(expect.objectContaining({ accountId: "acc-N" }));
     await expect(na.templates.create("ws1", { name: "x", lang: "en", category: "MARKETING", body: "Hi" })).resolves.toBeDefined();
     expect(na.zernio.createWhatsAppTemplate).toHaveBeenCalledWith(expect.objectContaining({ accountId: "acc-N" }));

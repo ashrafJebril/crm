@@ -3,7 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { csvCell } from "../contacts/contacts-export.service";
 import type { ExportSink, PreparedExport } from "../common/csv-stream";
 import { campaignError } from "./campaign-errors";
-import { EXPORT_HEADERS, failureLabel, statusLabel } from "./campaign-export-labels";
+import { EXPORT_HEADERS, failureLabel, type FieldLabelDefs, statusLabel } from "./campaign-export-labels";
 import {
   EXPORT_IDS_CAP,
   EXPORT_LANGS,
@@ -55,6 +55,28 @@ export interface CampaignInsights {
   unrecorded: number;
   recipientsSyncedAt: string | null;
   statsSyncedAt: string | null;
+  /** SP-13: one line per sending number, largest first ([] when untracked). */
+  byNumber: NumberInsight[];
+}
+
+/**
+ * SP-13 per-number line. Sums use the one-outcome-per-row sets: `sent` =
+ * sent + delivered + read + replied + failed (attempted), `delivered` =
+ * delivered + read + replied, `read` = read + replied. `unknown` marks rows
+ * whose number is gone (a null `channelId`: the channel was deleted).
+ */
+export interface NumberInsight {
+  channelId: string | null;
+  displayName: string | null;
+  phoneNumber: string | null;
+  unknown: boolean;
+  total: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+  failed: number;
+  skipped: number;
 }
 
 type Row = {
@@ -218,10 +240,11 @@ export class CampaignReportService {
         failures: [],
         unrecorded: 0,
         ...synced,
+        byNumber: [],
       };
     }
 
-    const [groups, timing, replyRows, failureRows] = await Promise.all([
+    const [groups, timing, replyRows, failureRows, numberGroups] = await Promise.all([
       // Index-only GROUP BY on (campaignId, status, id).
       this.prisma.campaignRecipient.groupBy({
         by: ["status"],
@@ -273,6 +296,12 @@ export class CampaignReportService {
           ORDER BY "failureCode", "updatedAt" DESC, "id" DESC
         ) l ON l."failureCode" IS NOT DISTINCT FROM c.code
       `,
+      // SP-13 per number: index-only GROUP BY on (campaignId, channelId, status).
+      this.prisma.campaignRecipient.groupBy({
+        by: ["channelId", "status"],
+        where: { workspaceId, campaignId },
+        _count: { _all: true },
+      }) as unknown as Promise<{ channelId: string | null; status: string; _count: { _all: number } }[]>,
     ]);
 
     const counts = emptyCounts();
@@ -321,7 +350,51 @@ export class CampaignReportService {
     }
     failures.sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
 
-    return { tracked: true, total, counts, funnel, readTiming, replies, failures, unrecorded, ...synced };
+    const byNumber = await this.byNumber(workspaceId, numberGroups);
+    return { tracked: true, total, counts, funnel, readTiming, replies, failures, unrecorded, ...synced, byNumber };
+  }
+
+  /** SP-13: the per-number lines from one `GROUP BY channelId, status`, plus one channel lookup. */
+  private async byNumber(
+    workspaceId: string,
+    groups: { channelId: string | null; status: string; _count: { _all: number } }[],
+  ): Promise<NumberInsight[]> {
+    const per = new Map<string | null, Record<RecipientStatus, number>>();
+    for (const g of groups) {
+      if (!isStatus(g.status)) continue;
+      const id = g.channelId ?? null;
+      const c = per.get(id) ?? emptyCounts();
+      c[g.status] += Number(g._count._all);
+      per.set(id, c);
+    }
+    const ids = distinct([...per.keys()]);
+    const chans = ids.length
+      ? ((await this.prisma.channel.findMany({
+          where: { workspaceId, id: { in: ids } },
+          select: { id: true, displayName: true, phoneNumber: true },
+        })) as ChannelRef[])
+      : [];
+    const byId = new Map(chans.map((c) => [c.id, c]));
+    const lines: NumberInsight[] = [...per.entries()].map(([channelId, c]) => {
+      const ch = channelId ? byId.get(channelId) : undefined;
+      const read = c.read + c.replied;
+      const delivered = c.delivered + read;
+      return {
+        channelId,
+        displayName: ch?.displayName ?? null,
+        phoneNumber: ch?.phoneNumber ?? null,
+        unknown: !ch,
+        total: RECIPIENT_STATUSES.reduce((n, s) => n + c[s], 0),
+        sent: c.sent + delivered + c.failed,
+        delivered,
+        read,
+        replied: c.replied,
+        failed: c.failed,
+        skipped: c.skipped,
+      };
+    });
+    // Largest first; known numbers before the unknown line on a tie.
+    return lines.sort((a, b) => b.total - a.total || Number(a.unknown) - Number(b.unknown) || String(a.channelId).localeCompare(String(b.channelId)));
   }
 
   /**
@@ -355,6 +428,15 @@ export class CampaignReportService {
     const filename = `campaign-${slug}-${scope}-${new Date().toISOString().slice(0, 10)}.csv`;
     const header = EXPORT_HEADERS[lang].map(csvCell).join(",") + "\r\n";
     const tracked = campaign.recipientTracking;
+    // SP-13: labels for skip:missing_value:custom.<key> (this workspace's
+    // contact fields, archived ones included so old rows keep their label).
+    const defRows = tracked
+      ? ((await this.prisma.customFieldDef.findMany({
+          where: { workspaceId, entity: "contact" },
+          select: { key: true, label: true, labelAr: true },
+        })) as Array<{ key: string; label: string; labelAr: string }>)
+      : [];
+    const labelDefs: FieldLabelDefs = new Map(defRows.map((d) => [d.key, d]));
 
     const run = async (sink: ExportSink) => {
       await sink.write(BOM + header);
@@ -393,7 +475,7 @@ export class CampaignReportService {
               d.replyText ?? "",
               d.buttonPayload ?? "",
               d.failureCode ?? "",
-              failureLabel(r.failureCode ?? null, r.failureReason ?? null, lang),
+              failureLabel(r.failureCode ?? null, r.failureReason ?? null, lang, labelDefs),
               sending,
             ]
               .map(csvCell)

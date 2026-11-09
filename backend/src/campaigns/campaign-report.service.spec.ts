@@ -284,6 +284,7 @@ describe("insights buckets read times and groups replies and failures", () => {
       unrecorded: 0,
       recipientsSyncedAt: null,
       statsSyncedAt: at(0).toISOString(),
+      byNumber: [],
     });
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect(prisma.campaignRecipient.groupBy).not.toHaveBeenCalled();
@@ -463,5 +464,72 @@ describe("campaign export escapes formulas and starts with BOM", () => {
     await expect(
       ctrl.exportGet(WS, "c1", {}, new FakeRes() as never, noView as never).catch((e) => e.getStatus()),
     ).resolves.toBe(403);
+  });
+});
+
+describe("insights byNumber sums to totals", () => {
+  it("groups rows by sending number, largest first, with a deleted channel shown as unknown", async () => {
+    const rows = [
+      ...["sent", "delivered", "read", "replied", "failed", "skipped", "queued"].map((status) => rec("c1", { channelId: "chA", status })),
+      ...["read", "read", "failed"].map((status) => rec("c1", { channelId: "chB", status })),
+      ...["delivered", "skipped"].map((status) => rec("c1", { channelId: null, status })),
+      rec("cb", { workspaceId: "ws_b", channelId: "chA", status: "read" }),
+    ];
+    const { svc } = setup(rows, {
+      channel: [
+        { id: "chA", workspaceId: WS, displayName: "Main", phoneNumber: "+966500000001" },
+        { id: "chB", workspaceId: WS, displayName: "Sales", phoneNumber: null },
+      ],
+    });
+    const res = await svc.insights(WS, "c1");
+    expect(res.byNumber).toEqual([
+      { channelId: "chA", displayName: "Main", phoneNumber: "+966500000001", unknown: false, total: 7, sent: 5, delivered: 3, read: 2, replied: 1, failed: 1, skipped: 1 },
+      { channelId: "chB", displayName: "Sales", phoneNumber: null, unknown: false, total: 3, sent: 3, delivered: 2, read: 2, replied: 0, failed: 1, skipped: 0 },
+      { channelId: null, displayName: null, phoneNumber: null, unknown: true, total: 2, sent: 1, delivered: 1, read: 0, replied: 0, failed: 0, skipped: 1 },
+    ]);
+    // Every per-number column sums to the campaign's funnel and counts.
+    const sum = (k: "total" | "sent" | "delivered" | "read" | "replied" | "failed" | "skipped") => res.byNumber.reduce((n, b) => n + b[k], 0);
+    expect(sum("total")).toBe(res.total);
+    expect(sum("sent")).toBe(res.funnel.sent);
+    expect(sum("delivered")).toBe(res.funnel.delivered);
+    expect(sum("read")).toBe(res.funnel.read);
+    expect(sum("replied")).toBe(res.funnel.replied);
+    expect(sum("failed")).toBe(res.counts.failed);
+    expect(sum("skipped")).toBe(res.counts.skipped);
+  });
+
+  it("an untracked campaign has no per-number lines", async () => {
+    const { svc } = setup([]);
+    expect((await svc.insights(WS, "old")).byNumber).toEqual([]);
+  });
+});
+
+describe("SP-13 failure labels in the CSV", () => {
+  it("labels skip:missing_value:* with the field's label in both languages, and launch:unconfirmed", async () => {
+    const rows = [
+      rec("c1", { status: "skipped", failureCode: "skip:missing_value:custom.service_due" }),
+      rec("c1", { status: "skipped", failureCode: "skip:missing_value:field.email" }),
+      rec("c1", { status: "skipped", failureCode: "skip:missing_value:custom.gone_key" }),
+      rec("c1", { status: "failed", failureCode: "launch:unconfirmed" }),
+    ];
+    const { svc } = setup(rows, {
+      customFieldDef: [
+        { id: "d1", workspaceId: WS, entity: "contact", key: "service_due", label: "Service due", labelAr: "موعد الخدمة", type: "date", archivedAt: new Date() },
+        { id: "d2", workspaceId: "ws_b", entity: "contact", key: "gone_key", label: "Foreign label", labelAr: "أجنبي", type: "text", archivedAt: null },
+      ],
+    });
+    const text = async (lang: "en" | "ar") => {
+      const job = await svc.prepareExport(WS, "c1", { lang });
+      const out: string[] = [];
+      await job.run({ write: (c) => void out.push(c), aborted: () => false });
+      return parseCsv(out.join("").slice(1)).slice(1).map((l) => l[10]);
+    };
+    expect(await text("en")).toEqual(["No value for Service due", "No value for Email", "No value for gone_key", "Send not confirmed; not retried"]);
+    expect(await text("ar")).toEqual([
+      "لا توجد قيمة لـ موعد الخدمة",
+      "لا توجد قيمة لـ البريد الإلكتروني",
+      "لا توجد قيمة لـ gone_key",
+      "لم يتأكد الإرسال؛ لم تتم إعادة المحاولة",
+    ]);
   });
 });

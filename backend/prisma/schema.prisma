@@ -113,6 +113,8 @@ model Contact {
   @@index([workspaceId])
   @@index([workspaceId, email])
   @@index([workspaceId, ownerId])
+  // SP-13: keyset paging of a campaign audience (WHERE workspaceId = ? AND id > ? ORDER BY id).
+  @@index([workspaceId, id])
 }
 
 model CustomFieldDef {
