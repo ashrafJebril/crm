@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ActivityList } from "@/components/activities/ActivityList";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { qk } from "@/api/queryKeys";
@@ -290,6 +291,10 @@ export function TicketDetailContent({
                   }}
                   style={input}
                 />
+              </Section>
+
+              <Section title={lang === "ar" ? "المتابعات" : "Follow-ups"}>
+                <ActivityList ticketId={ticketId} />
               </Section>
 
               <Section title={lang === "ar" ? "النشاط" : "Activity"}>

@@ -47,4 +47,14 @@ describe("notificationText", () => {
   it("shows raw title for unknown plain text", () => {
     expect(notificationText(en, { type: "weird", title: "Hello there", body: null, recordKind: null, recordId: null })).toEqual({ title: "Hello there" });
   });
+  it("renders activity.due and assignment.activity in both languages", () => {
+    const due = { type: "activity_due", title: "activity.due", body: JSON.stringify({ title: "Call back", contactName: "Sara" }) };
+    expect(notificationText(en, due)).toEqual({ title: "Follow-up due: Call back", body: "Sara" });
+    expect(notificationText(ar, due).title).toBe("موعد متابعة: Call back");
+    const asg = { ...base, title: "assignment.activity", body: JSON.stringify({ title: "Send quote", contactName: "Sara" }) };
+    expect(notificationText(en, asg)).toEqual({ title: "Activity assigned to you: Send quote", body: "Sara" });
+    expect(notificationText(ar, asg).title).toBe("أُسند إليك نشاط: Send quote");
+    const bulk = { ...base, title: "assignment.activity", body: JSON.stringify({ title: "x", count: 3 }) };
+    expect(notificationText(en, bulk).title).toBe("3 activities assigned to you");
+  });
 });

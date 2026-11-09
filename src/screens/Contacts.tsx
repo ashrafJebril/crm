@@ -7,6 +7,8 @@ import {
   type CSSProperties,
   type DragEvent,
 } from "react";
+import { NextStepChip, useNextSteps } from "@/components/activities/NextStepChip";
+import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -94,6 +96,10 @@ function ContactsTable({
   tagColorByName,
 }: ContactsTableProps) {
   const pageAll = contacts.length > 0 && contacts.every((c) => selected.has(c.id));
+  // One batched request for the whole page.
+  const nextSteps = useNextSteps("contactIds", useMemo(() => contacts.map((c) => c.id), [contacts]));
+  const canEditActivity = usePermissions().can("contacts.update");
+  const [stepFor, setStepFor] = useState<string | null>(null);
   const togglePage = () => {
     const next = new Set(selected);
     for (const c of contacts) {
@@ -128,6 +134,7 @@ function ContactsTable({
             <th>{tx("Source", "المصدر")}</th>
             <th>{tx("Convs", "محادثات")}</th>
             <th>{tx("Value", "القيمة")}</th>
+            <th>{tx("Next step", "الخطوة التالية")}</th>
             <th>{tx("Last seen", "آخر ظهور")}</th>
             <th></th>
           </tr>
@@ -194,6 +201,9 @@ function ContactsTable({
               <td className="muted">{c.source}</td>
               <td className="mono">{c.convs}</td>
               <td className="mono">{c.value}</td>
+              <td onClick={(e) => e.stopPropagation()} style={{ maxWidth: 220 }}>
+                <NextStepChip step={nextSteps[c.id]} canEdit={canEditActivity} onClick={() => setStepFor(c.id)} />
+              </td>
               <td className="mono muted">{c.lastSeen}</td>
               <td onClick={(e) => e.stopPropagation()}>
                 <button className="btn ghost icon sm">
@@ -204,6 +214,14 @@ function ContactsTable({
           ))}
         </tbody>
       </table>
+      {stepFor && (
+        <ActivityDialog
+          key={stepFor}
+          contactId={stepFor}
+          activity={nextSteps[stepFor] ? { id: nextSteps[stepFor]!.activityId, kind: nextSteps[stepFor]!.kind, title: nextSteps[stepFor]!.title, notes: null, dueAt: nextSteps[stepFor]!.dueAt, doneAt: null, outcome: null, assigneeId: null } : undefined}
+          onClose={() => setStepFor(null)}
+        />
+      )}
     </div>
   );
 }

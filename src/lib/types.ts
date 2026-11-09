@@ -21,6 +21,7 @@ export type RouteId =
   | "pipeline"
   | "campaigns"
   | "contacts"
+  | "followups"
   | "workflows"
   | "analytics"
   | "templates"

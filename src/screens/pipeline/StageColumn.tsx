@@ -1,8 +1,10 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStageTickets } from "./hooks/useStageTickets";
 import { TicketCard } from "./TicketCard";
+import { useNextSteps } from "@/components/activities/NextStepChip";
+import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { stageColor } from "./stageColors";
 import type { Ticket, TicketStage, Lang } from "@/lib/types";
 
@@ -62,6 +64,10 @@ export function StageColumn({
     );
   }, [allTickets, searchQuery]);
 
+  // One batched next-step request per column.
+  const nextSteps = useNextSteps("ticketIds", useMemo(() => allTickets.map((t) => t.id), [allTickets]));
+  const [stepTicketId, setStepTicketId] = useState<string | null>(null);
+
   const { setNodeRef: setDroppableRef, isOver } = useDroppable({
     id: stage.id,
     data: { stageId: stage.id },
@@ -71,7 +77,7 @@ export function StageColumn({
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 140,
+    estimateSize: () => 172,
     overscan: 6,
   });
 
@@ -279,6 +285,8 @@ export function StageColumn({
                       onOpenConversation(ticket.conversationId)
                     }
                     onOpenMoveMenu={(rect) => onOpenMoveMenu(ticket, rect)}
+                    nextStep={nextSteps[ticket.id]}
+                    onNextStepClick={() => setStepTicketId(ticket.id)}
                   />
                 </div>
               );
@@ -314,6 +322,18 @@ export function StageColumn({
           </button>
         ) : null}
       </div>
+      {stepTicketId && (
+        <ActivityDialog
+          key={stepTicketId}
+          ticketId={stepTicketId}
+          activity={
+            nextSteps[stepTicketId]
+              ? { id: nextSteps[stepTicketId]!.activityId, kind: nextSteps[stepTicketId]!.kind, title: nextSteps[stepTicketId]!.title, notes: null, dueAt: nextSteps[stepTicketId]!.dueAt, doneAt: null, outcome: null, assigneeId: null }
+              : undefined
+          }
+          onClose={() => setStepTicketId(null)}
+        />
+      )}
     </div>
   );
 }

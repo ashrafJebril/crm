@@ -11,6 +11,7 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   pipeline: lazy(() => import("@/screens/pipeline/PipelinePage")),
   workflows: lazy(() => import("@/screens/workflows/WorkflowsPage")),
   contacts: lazy(() => import("@/screens/Contacts")),
+  followups: lazy(() => import("@/screens/FollowUps")),
   analytics: lazy(() => import("@/screens/Analytics")),
   templates: lazy(() => import("@/screens/Templates")),
   media: lazy(() => import("@/screens/Media")),

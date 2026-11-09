@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import type { RouteId } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { useFetch } from "@/api/useFetch";
 import { NAV, isSection, type NavEntry } from "./nav";
 import { Avatar } from "@/components/Avatar";
@@ -18,6 +19,9 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const { t } = useTweaks();
   const { user, activeWorkspace } = useAuth();
   const isAr = t.lang === "ar";
+  const { can } = usePermissions();
+  // Follow-ups needs a record permission to be of any use.
+  const canFollowUps = can("contacts.view") || can("tickets.view");
 
   // Live unread-count for the Inbox nav item. All channels are DB-backed now
   // (the Zernio webhook persists FB/IG/WA inbound), so one cheap DB query
@@ -35,7 +39,9 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   // section header that ends up with no items beneath it.
   const visibleNav = useMemo<NavEntry[]>(() => {
     const filtered = NAV.filter(
-      (n) => isSection(n) || !n.superAdminOnly || user?.isSuperAdmin,
+      (n) =>
+        isSection(n) ||
+        ((!n.superAdminOnly || user?.isSuperAdmin) && (n.id !== "followups" || canFollowUps)),
     );
     const out: NavEntry[] = [];
     for (let i = 0; i < filtered.length; i++) {
@@ -47,7 +53,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
       out.push(cur);
     }
     return out;
-  }, [user?.isSuperAdmin]);
+  }, [user?.isSuperAdmin, canFollowUps]);
 
   return (
     <aside className="side">

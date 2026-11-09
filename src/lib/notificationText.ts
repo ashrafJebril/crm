@@ -55,6 +55,26 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
       }
       return out(tx("Ticket assigned to you", "تم إسناد تذكرة إليك"), ticket);
     }
+    case "activity.due": {
+      const title = str(p.title);
+      const contact = str(p.contactName);
+      return out(
+        title ? tx(`Follow-up due: ${title}`, `موعد متابعة: ${title}`) : tx("A follow-up is due", "حان موعد متابعة"),
+        contact,
+      );
+    }
+    case "assignment.activity": {
+      const title = str(p.title);
+      const contact = str(p.contactName);
+      const count = typeof p.count === "number" ? p.count : undefined;
+      if (count && count > 1) {
+        return out(tx(`${count} activities assigned to you`, `أُسندت إليك ${count} أنشطة`));
+      }
+      return out(
+        title ? tx(`Activity assigned to you: ${title}`, `أُسند إليك نشاط: ${title}`) : tx("Activity assigned to you", "أُسند إليك نشاط"),
+        contact,
+      );
+    }
     case "import.failed":
       return out(tx("An import failed", "فشل الاستيراد"));
     case "mention.note": {

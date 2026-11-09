@@ -6,6 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Avatar } from "@/components/Avatar";
 import { IconInbox } from "@/icons";
 import type { Ticket, Lang } from "@/lib/types";
+import { NextStepChip, type NextStep } from "@/components/activities/NextStepChip";
 
 interface TicketCardProps {
   ticket: Ticket;
@@ -14,6 +15,8 @@ interface TicketCardProps {
   onClick?: () => void;
   onOpenConversation?: () => void;
   onOpenMoveMenu?: (anchorRect: DOMRect) => void;
+  nextStep?: NextStep;
+  onNextStepClick?: () => void;
 }
 
 const cardBase: CSSProperties = {
@@ -49,6 +52,8 @@ export const TicketCard = memo(function TicketCard({
   onClick,
   onOpenConversation,
   onOpenMoveMenu,
+  nextStep,
+  onNextStepClick,
 }: TicketCardProps) {
   const t = ticket;
   const moveBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -259,6 +264,11 @@ export const TicketCard = memo(function TicketCard({
             {t.currency ?? "SAR"}
           </div>
         ) : null}
+      </div>
+
+      {/* Next step (batch-loaded per column) */}
+      <div style={{ minWidth: 0 }}>
+        <NextStepChip step={nextStep} canEdit={canMove} onClick={onNextStepClick} />
       </div>
     </div>
   );

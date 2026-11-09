@@ -13,6 +13,8 @@ import { DeleteContactDialog } from "./DeleteContactDialog";
 import { usePermissions } from "@/auth/usePermissions";
 import { openRecord } from "@/lib/openRecord";
 import { anotherModalOpen } from "@/lib/modalOpen";
+import { ActivityList } from "@/components/activities/ActivityList";
+import { Timeline } from "@/components/activities/Timeline";
 
 interface RecentConv {
   id: string;
@@ -88,6 +90,7 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
   const s = sumQ.data;
   const c = s?.contact;
   const [deleting, setDeleting] = useState(false);
+  const [tab, setTab] = useState<"overview" | "timeline">("overview");
 
 
   // Links open the record in the sheet (pushing history) instead of leaving the screen.
@@ -216,8 +219,34 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
               </button>}
             </div>
 
+            <div role="tablist" style={{ display: "flex", gap: 4, padding: "6px 16px 0", borderBottom: "1px solid var(--line)" }}>
+              {(["overview", "timeline"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === k}
+                  onClick={() => setTab(k)}
+                  style={{
+                    background: "transparent", border: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12,
+                    padding: "6px 10px", color: tab === k ? "var(--ink)" : "var(--ink-3)",
+                    borderBottom: tab === k ? "2px solid var(--accent)" : "2px solid transparent",
+                  }}
+                >
+                  {k === "overview" ? tx("Overview", "نظرة عامة") : tx("Timeline", "الخط الزمني")}
+                </button>
+              ))}
+            </div>
+
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ overflowY: "auto", flex: 1, padding: "14px 16px 24px" }}>
+              {tab === "timeline" ? (
+                <Timeline contactId={c.id} />
+              ) : (<>
+              <Section label={tx("Activities", "الأنشطة")}>
+                <ActivityList contactId={c.id} />
+              </Section>
+
               <Section label={tx("Details", "البيانات")}>
                 <ContactDetailsForm
                   tx={tx}
@@ -439,6 +468,7 @@ export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted,
                   {tx("Delete contact", "حذف جهة الاتصال")}
                 </button>
               </div>
+              </>)}
             </div>
           </>
         )}
