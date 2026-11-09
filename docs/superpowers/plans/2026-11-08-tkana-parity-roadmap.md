@@ -112,8 +112,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `delete-custom-field-with-references` (Review Focus 2); `opted-out contact is skipped by campaign send` (assert in `campaign-send.service.spec.ts`); `merge tags rewrites segment rules exactly ("VIP" ≠ "VIPER")`; `select-all ids honours filter`.
 
 #### SP-05 Notifications and collaboration. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-09-sp05-notifications-collaboration.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09.
 - **Gaps:** notifications stored on the server, typed and deep-linked; a bell list with mark read/all; per-type preference dialog; notes with @mentions (warning when the mentioned person can't open the record), replies and seen marks; notes inline in the conversation thread.
 - **Read in Tkana:** `routes/notifications.ts`, `routes/notifications.preferences.ts`, `components/notifications/{notification-bell,alert-settings-dialog}.tsx`, `routes/collaboration.ts`, `components/collaboration/{thread-note,note-replies}.tsx`, `lib/**/mentions-seen.ts`.
 - **Data:** §2.4. `Note` gains `parentId String?` and `mentions String[]`; `NoteSeen {noteId, userId, seenAt}`.
@@ -122,8 +122,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `mention-parse-arabic.test.ts` (Review Focus 5); `mention of member without access returns warning and does not notify`; `assignment in SP-01 emits notification` (added to SP-01's spec once SP-05 lands).
 
 #### SP-25 Roles and permissions. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-09-sp25-roles-permissions.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09.
 - **Gaps:** custom roles with a resource × action matrix (whole row/column toggles); conversation visibility all/assigned; per-record gating on boards, calendar and follow-ups; replace the mock Roles tab (`src/data/team-extras.ts` `PERM_MATRIX`).
 - **Read in Tkana:** `routes/settings.roles.tsx`, `components/RolePermissionMatrix.tsx`, `lib/permissions/role-matrix*`, every `requirePermission`/`usePermissions` call.
 - **Data:** §2.5. Migration: create 4 system roles per workspace, set `WorkspaceMember.roleId` from the `role` string, and keep `role` until a later cleanup.
@@ -132,8 +132,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `permission-sidedoors.e2e-spec.ts` (Review Focus 1: search, record sheet, export, copilot refs, notification deep link); `system roles reproduce today's guard decisions` (a table test over every existing route); `cannot delete a role in use`.
 
 #### SP-06 Universal record sheet. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-09-sp06-record-sheet.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09.
 - **Gaps:** `?record=kind:id` opens one side sheet over any page; chips link to other records and swap the sheet in place; browser Back steps through them.
 - **Read in Tkana:** `components/shell/{record-sheet-host,record-sheet}.tsx`, `routes/record.$kind.$id.ts`.
 - **Data:** none.
@@ -144,8 +144,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 ### Phase 2: Core CRM work
 
 #### SP-03 Contacts import and export. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-09-sp03-import-export.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09.
 - **Gaps:** CSV/XLSX import (upload → map columns including custom fields and assignee → preview new/update/unchanged/invalid → background job with progress → result screen → optional pipeline placement); CSV export of the filtered list; import a file into a new audience group (Marketing).
 - **Read in Tkana:** `components/crm/contacts-import/*`, `routes/crm.contacts.imports.$id.ts`, `routes/crm.contacts.export.ts`, `routes/marketing.tsx` (`importAndCreateGroup`).
 - **Data:** `ImportJob {id, workspaceId, kind:"contacts"|"audience"|"catalog", status, total, processed, created, updated, failed, errors Json, mapping Json, options Json, fileMediaId, createdById}`.
@@ -154,8 +154,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `import-50k.spec.ts` (Review Focus 3); `csv-arabic-roundtrip.spec.ts` (Review Focus 5); `phone normalization merges +971/00971/05x`; `resume after crash continues from processed`.
 
 #### SP-04 Activities and follow-ups. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-09-sp04-activities-followups.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09.
 - **Gaps:** contact activity timeline (logged calls/meetings, scheduled follow-ups, outcome, complete); a follow-ups queue (Mine/Team, Overdue/Today/Upcoming with counts, filters by person/type/pipeline, done/reassign/reschedule singly or in bulk); a "next step" chip/column on contacts and cards; assign work from a card.
 - **Read in Tkana:** `routes/sales.follow-ups*.ts(x)`, `components/follow-ups/*`, `components/pipeline/customers/{assign-work-dialog,next-step-chip}.tsx`, `components/collaboration/*` (timeline).
 - **Data:** §2.3. The timeline merges `Activity`, `Note`, `TicketActivity` and messages by `createdAt`.
@@ -164,8 +164,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `bucketing uses workspace timezone` (dueAt 23:30 local is "today"); `bulk reschedule only touches permitted rows`; `due notification fires once`.
 
 #### SP-07 Pipeline and stage editor. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-10-sp07-pipeline-editor.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09. **Post-deploy:** re-run the lost-reasons backfill.
 - **Gaps:** create/rename/archive pipelines; add/reorder/recolour/remove stages with a move-cards-to target; one draft save with a conflict check; a bilingual lost-reasons catalog per pipeline; a stale-card threshold (amber after N days); flags `agentCanMove`, `assignsConversations`, "not a lead" definition.
 - **Read in Tkana:** `routes/settings.pipelines.tsx`, `lib/pipeline/stage-draft.ts`, `components/pipeline/customers/lost-reasons-editor.tsx`.
 - **Data:** `Pipeline` + `archivedAt`, `version`, `staleDays Int?`, `agentCanMove Boolean`, `assignsConversations Boolean`, `kind:"deals"|"leads"|"support"`; `LostReason {pipelineId, label, labelAr, order, archivedAt}`; `Ticket.lostReasonId`.
@@ -174,8 +174,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `pipeline-draft-conflict.spec.ts` (Review Focus 4); `delete-stage-with-references moves cards and logs TicketActivity` (Review Focus 2); `cannot remove the last won stage`.
 
 #### SP-08 Board upgrades and lead pipeline. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-10-sp08-board-upgrades.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09.
 - **Gaps:** a sortable, paged table view for every board; date range, customer and assignee filters; bulk assign/lost/not-a-lead; a lead pipeline (one card per person tied to the contact lifecycle; won/lost from the card menu; dropping onto a lost stage asks why; reopen lost; not-a-lead); bulk add to a pipeline from Contacts; stale cards turn amber.
 - **Read in Tkana:** `routes/pipeline.customers.tsx`, `components/pipeline/{table,date-filter,customer-filter}.tsx`, `components/pipeline/customers/*`, `components/crm/bulk-add-to-pipeline-dialog.tsx`.
 - **Depends on:** SP-02 (`notALead`), SP-07 (`kind`, `staleDays`).
@@ -184,8 +184,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `lead won sets contact lifecycle customer`; `reopen restores previous stage`; `one open lead card per contact per pipeline`.
 
 #### SP-31 Inbox thread enrichments. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-10-sp31-inbox-enrichments.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09. The Zernio reaction payload is still unverified live.
 - **Gaps:** one customer thread across channels/conversations (segment seams, lazy older segments, handoff markers); in-thread events (stage moves, ticket/booking events) with undo for a stage move; customer reactions on messages; template picker with header image (upload or library) and preview; AI summary popover, topics/pain points card, summary translation; linked tickets/bookings card; saved replies (neither app has these; they replace the 3 hardcoded chips at `Inbox.tsx:1510`).
 - **Read in Tkana:** `routes/conversations.customer.$id.stream.ts`, `conversations.segment.$id.ts`, `components/conversations/{SegmentSeam,HandoffSeamMarker,ThreadEvent,reactions,SummaryStrip,TopicsCard,LinkedItemsCard,ThreadPane}.tsx`, `routes/conversations.$id.templates.ts`.
 - **Data:** `Message.reaction String?`, `Message.kind:"message"|"event"`, `Message.event Json?`; `Conversation.topics Json?`, `painPoints Json?`; `SavedReply {workspaceId, title, body, bodyAr?, shortcut}`.
@@ -195,8 +195,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 ### Phase 3: Channels and marketing
 
 #### SP-19 Channels hub and multiple numbers. Size XL
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-11-sp19-channels.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-09. Live checks covered webchat, limits and signup config. Telegram, Meta signup/landline and Zernio sync still need live provider checks. **Before release:** set TOKEN_ENC_KEY and PUBLIC_BASE_URL on Fly, and supply the Meta config for embedded signup.
 - **Gaps:** one channels hub (list, add, detail, status badges); several WhatsApp numbers per workspace (inbox number tabs + filter); one-click WhatsApp signup through Meta, with landline verification and number-limit handling; website chat widget (embed snippet) + hosted chat page link; Telegram channel.
 - **Read in Tkana:** `routes/channels*.tsx`, `components/channels/{use-embedded-signup,landline-verification-card,widget-snippet-dialog,chat-page-link}.tsx`, `apps/chat-widget/` (widget runtime), `channels.new.tsx` (`provisionTelegramChannel`).
 - **Data:** §2.7, with a migration from `Integration`.
