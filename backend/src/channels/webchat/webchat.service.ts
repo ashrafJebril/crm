@@ -192,8 +192,8 @@ export class WebchatService implements OnModuleInit {
       ...(after && !Number.isNaN(after.getTime()) ? { createdAt: { gt: after } } : {}),
     };
     const rows = after
-      ? await this.prisma.raw.message.findMany({ where, orderBy: { createdAt: "asc" }, take: HISTORY_LIMIT })
-      : (await this.prisma.raw.message.findMany({ where, orderBy: { createdAt: "desc" }, take: HISTORY_LIMIT })).reverse();
+      ? await this.prisma.raw.message.findMany({ where, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: HISTORY_LIMIT })
+      : (await this.prisma.raw.message.findMany({ where, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: HISTORY_LIMIT })).reverse();
     return { items: rows.map(toWidgetMessage) };
   }
 
