@@ -62,10 +62,11 @@ class FollowUpTargetDto {
 }
 
 export class CreateGroupDto extends FollowUpTargetDto {
+  // Fix m3: every constraint carries the key, so no generic text can lead the 400's message list.
   @Trim
-  @IsString()
+  @IsString({ message: "campaigns.group_name_required" })
   @IsNotEmpty({ message: "campaigns.group_name_required" })
-  @Length(1, 120)
+  @Length(1, 120, { message: "campaigns.group_name_required" })
   name!: string;
   @Trim @IsOptional() @IsString() @MaxLength(120) nameAr?: string;
 }

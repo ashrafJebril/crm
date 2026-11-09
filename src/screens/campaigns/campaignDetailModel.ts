@@ -97,7 +97,8 @@ export function funnelSteps(insights: Pick<CampaignInsights, "funnel">): FunnelS
 export function funnelLabel(key: FunnelKey, tx: Tx): string {
   return {
     targeted: tx("Targeted", "المستهدفون"),
-    sent: tx("Sent", "أُرسلت"),
+    // Fix m2: this step counts sent + failed, so it is "Attempted"; the list page's "Sent" excludes failures.
+    sent: tx("Attempted", "تمت محاولة الإرسال"),
     delivered: tx("Delivered", "وصلت"),
     read: tx("Read", "قُرئت"),
     replied: tx("Replied", "ردّوا"),
@@ -210,15 +211,21 @@ export const INSIGHTS_POLL_MS = 30_000;
 const TRACKING_WINDOW_MS = 72 * 3_600_000;
 
 /**
- * Insights poll while the campaign sends, and for 72 h after launch (the
- * backend sweep keeps landing late reads and failures for that long). The
- * hidden tab pause is useFetch's (React Query's refetchIntervalInBackground).
+ * Insights poll while the campaign sends, and for 72 h after its effective
+ * send time `scheduledAt ?? launchedAt`, the same base as the backend sweep
+ * tail and reply attribution (the sweep keeps landing late reads and
+ * failures for that long). The hidden tab pause is useFetch's (React
+ * Query's refetchIntervalInBackground).
  */
-export function insightsPollMs(c: Pick<Campaign, "status" | "launchedAt"> | null, now: number): number | null {
+export function insightsPollMs(
+  c: Pick<Campaign, "status" | "launchedAt" | "scheduledAt"> | null,
+  now: number,
+): number | null {
   if (!c) return null;
   if (c.status === "scheduled" || c.status === "running") return INSIGHTS_POLL_MS;
-  const launched = c.launchedAt ? Date.parse(c.launchedAt) : NaN;
-  if (Number.isFinite(launched) && now - launched < TRACKING_WINDOW_MS) return INSIGHTS_POLL_MS;
+  const base = c.scheduledAt ?? c.launchedAt;
+  const sentAt = base ? Date.parse(base) : NaN;
+  if (Number.isFinite(sentAt) && now - sentAt < TRACKING_WINDOW_MS) return INSIGHTS_POLL_MS;
   return null;
 }
 

@@ -27,9 +27,25 @@ export const REPLY_WINDOW_MS = 72 * 3_600_000;
 const SEND_SLACK_MS = 24 * 3_600_000;
 
 /**
+ * Fix I1: a `queued` row (no send stamped yet) is a candidate only while its
+ * campaign could actually have sent it. A cancelled or failed campaign never
+ * will, and a still-scheduled one whose scheduledAt is after the reply has
+ * not sent yet. Rows stamped `sent` or later are unaffected.
+ */
+function couldStillSend(
+  c: { status: string | null; scheduledAt: Date | null } | undefined,
+  at: Date,
+): boolean {
+  if (!c) return false;
+  if (c.status === "cancelled" || c.status === "failed") return false;
+  if (c.status === "scheduled" && c.scheduledAt && c.scheduledAt.getTime() > at.getTime()) return false;
+  return true;
+}
+
+/**
  * SP-12 reply attribution (ruling 6). Candidates are rows on the same
  * channel, matching the sender's normalized phone or contact id, not
- * skipped, whose effective send time `COALESCE(sentAt, scheduledAt,
+ * skipped, not a `queued` row of a campaign that has not sent (fix I1), whose effective send time `COALESCE(sentAt, scheduledAt,
  * launchedAt)` is at most 72 h before the reply. The single latest candidate
  * (greatest effective time, then greatest id) is marked replied, only if it
  * has no reply yet: first reply wins, and there is no fallback to an older
@@ -69,7 +85,7 @@ export class CampaignReplyAttributor {
         launchedAt: { not: null, lte: at },
         OR: [{ launchedAt: { gte: since } }, { scheduledAt: { gte: since } }],
       },
-      select: { id: true, launchedAt: true, scheduledAt: true },
+      select: { id: true, status: true, launchedAt: true, scheduledAt: true },
     });
     if (campaigns.length === 0) return null;
     const byId = new Map(campaigns.map((c) => [c.id, c]));
@@ -91,6 +107,7 @@ export class CampaignReplyAttributor {
     let best: { row: (typeof rows)[number]; eff: number } | null = null;
     for (const row of rows) {
       const c = byId.get(row.campaignId);
+      if (row.status === "queued" && !couldStillSend(c, at)) continue;
       const effDate = row.sentAt ?? c?.scheduledAt ?? c?.launchedAt ?? null;
       if (!effDate) continue;
       const eff = effDate.getTime();

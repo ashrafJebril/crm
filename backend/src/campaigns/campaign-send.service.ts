@@ -29,6 +29,8 @@ const positiveInt = (raw: string | undefined, fallback: number) => {
 };
 /** Rows per Zernio recipients page. 100 until the Task 4 probe shows the real maximum (ruling 1). */
 export const recipientPageSize = () => positiveInt(process.env.ZERNIO_RECIPIENT_PAGE, 100);
+/** Fix I2: pages one explicit Refresh may sweep for its campaign. */
+export const REFRESH_SWEEP_MAX_PAGES = 5;
 /** Pages per campaign per 5-minute tick. */
 export const recipientSyncMaxPages = () => positiveInt(process.env.RECIPIENT_SYNC_MAX_PAGES, 50);
 
@@ -239,12 +241,30 @@ export class CampaignSendService {
     return this.prisma.campaign.update({ where: { id }, data: { status: "cancelled" } });
   }
 
-  /** Pull one campaign's latest counters from Zernio. */
+  /**
+   * Pull one campaign's latest status and counters from Zernio, then (fix
+   * I2) a bounded sweep of its recipients: at most REFRESH_SWEEP_MAX_PAGES
+   * pages from its stored offset, through the same tracker as the cron. It
+   * shares the cron's `syncing` guard, so the two never overlap: while a tick
+   * is running the sweep is skipped (that tick is already sweeping) and the
+   * current state is returned. A failing sweep never fails the refresh.
+   */
   async refresh(workspaceId: string, id: string) {
     const campaign = await this.prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) throw new NotFoundException("Campaign not found");
     if (!campaign.zernioBroadcastId) return campaign;
-    return this.applyStats(campaign.id, campaign.zernioBroadcastId, this.useAggregates(campaign));
+    const updated = await this.applyStats(campaign.id, campaign.zernioBroadcastId, this.useAggregates(campaign));
+    if (updated.recipientTracking !== true || this.syncing) return updated;
+    this.syncing = true;
+    try {
+      await this.sweepAll([updated], { maxPages: REFRESH_SWEEP_MAX_PAGES, force: true });
+    } catch (e) {
+      this.log.warn(`campaign ${campaign.id} refresh sweep failed: ${(e as Error).message}`);
+      return updated;
+    } finally {
+      this.syncing = false;
+    }
+    return (await this.prisma.campaign.findFirst({ where: { id: campaign.id, workspaceId } })) ?? updated;
   }
 
   /**
@@ -344,6 +364,9 @@ export class CampaignSendService {
    * - R3: `recipientsSyncedAt` is set only when the ended pass covered at
    *   least `Campaign.recipients` rows; otherwise the pass restarts at 0 and
    *   Zernio's counters stay in use.
+   *
+   * Fix I2: `refresh` calls this for one campaign with `maxPages` as its own
+   * budget and `force` to skip the hourly tail throttle.
    */
   private async sweepAll(
     campaigns: Array<{
@@ -355,12 +378,13 @@ export class CampaignSendService {
       recipientSyncSkip?: number | null;
       recipientsSyncedAt?: Date | null;
     }>,
+    opts: { maxPages?: number; force?: boolean } = {},
   ): Promise<void> {
     const limit = recipientPageSize();
-    let budget = recipientSyncMaxPages();
+    let budget = opts.maxPages ?? recipientSyncMaxPages();
     const now = Date.now();
     const tailDue = (c: (typeof campaigns)[number]) => {
-      if (!FINISHED.includes(c.status as string)) return true;
+      if (opts.force || !FINISHED.includes(c.status as string)) return true;
       const lastEnd = Math.max(c.recipientsSyncedAt?.getTime() ?? 0, this.passEndedAt.get(c.id) ?? 0);
       return now - lastEnd >= RECIPIENT_TAIL_INTERVAL_MS;
     };

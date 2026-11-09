@@ -11,6 +11,7 @@ import {
   followUpSummary,
   followUpTarget,
   formatPct,
+  funnelLabel,
   funnelSteps,
   insightsPollMs,
   mergePages,
@@ -57,6 +58,14 @@ describe("funnelSteps", () => {
     expect(steps.map((s) => s.key)).toEqual(["targeted", "sent", "delivered", "read", "replied"]);
     expect(steps.map((s) => s.count)).toEqual([200, 180, 150, 90, 9]);
     expect(steps.map((s) => s.pct)).toEqual([100, 90, 75, 45, 4.5]);
+  });
+
+  it("m2: the first sending step is labelled Attempted (sent + failed), not Sent", () => {
+    expect(funnelLabel("sent", en)).toBe("Attempted");
+    expect(funnelLabel("sent", ar)).toBe("تمت محاولة الإرسال");
+    const steps = funnelSteps({ funnel: { targeted: 1, sent: 1, delivered: 1, read: 1, replied: 1 } });
+    expect(steps.map((s) => funnelLabel(s.key, en))).toEqual(["Targeted", "Attempted", "Delivered", "Read", "Replied"]);
+    expect(steps.map((s) => funnelLabel(s.key, ar))).toEqual(["المستهدفون", "تمت محاولة الإرسال", "وصلت", "قُرئت", "ردّوا"]);
   });
 
   it("has no percentages when nobody was targeted", () => {
@@ -109,6 +118,17 @@ describe("insightsPollMs", () => {
     expect(insightsPollMs({ status: "draft", launchedAt: null }, now)).toBeNull();
     expect(insightsPollMs({ status: "failed", launchedAt: "garbage" }, now)).toBeNull();
     expect(insightsPollMs(null, now)).toBeNull();
+  });
+
+  it("insightsPollMs measures the 72h window from scheduledAt ?? launchedAt, like the backend", () => {
+    const launchedAt = new Date(now - 100 * H).toISOString();
+    // Scheduled 4 days ahead, sent 1h ago: still polling.
+    expect(insightsPollMs({ status: "completed", launchedAt, scheduledAt: new Date(now - H).toISOString() }, now)).toBe(30_000);
+    expect(insightsPollMs({ status: "completed", launchedAt, scheduledAt: new Date(now - 71 * H).toISOString() }, now)).toBe(30_000);
+    expect(insightsPollMs({ status: "completed", launchedAt, scheduledAt: new Date(now - 72 * H).toISOString() }, now)).toBeNull();
+    // No schedule: launchedAt is the base.
+    expect(insightsPollMs({ status: "completed", launchedAt, scheduledAt: null }, now)).toBeNull();
+    expect(insightsPollMs({ status: "completed", launchedAt: new Date(now - H).toISOString(), scheduledAt: null }, now)).toBe(30_000);
   });
 });
 

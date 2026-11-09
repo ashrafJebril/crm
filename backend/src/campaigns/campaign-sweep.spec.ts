@@ -1,4 +1,4 @@
-import { CampaignSendService } from "./campaign-send.service";
+import { CampaignSendService, REFRESH_SWEEP_MAX_PAGES } from "./campaign-send.service";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
 import { CampaignReplyAttributor } from "./tracking/reply-attributor.service";
@@ -115,6 +115,8 @@ describe("sweep counters (I1)", () => {
     // Zernio's aggregate counters still apply; the 100 delivered rows never lower them.
     expect(c).toMatchObject({ sent: 240, delivered: 200, read: 120, failed: 3 });
     expect(svc.refresh).toBeDefined();
+    // Refresh's own sweep (fix I2) fails here, so its pass does not end either.
+    zernio.listBroadcastRecipients.mockRejectedValue(new Error("timeout"));
     const refreshed = await svc.refresh("ws1", "c1");
     expect(refreshed).toMatchObject({ sent: 240, delivered: 200 });
   });
@@ -358,5 +360,110 @@ describe("fix round 2", () => {
     expect(prisma.db.campaignRecipient[0].status).toBe("replied");
     expect(prisma.db.campaign[0].replied).toBe(1);
     void svc;
+  });
+});
+
+describe("refresh sweeps the campaign (final review I2)", () => {
+  it("refresh runs applyStats, then sweeps only that campaign, at most REFRESH_SWEEP_MAX_PAGES pages", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1"; // the cron budget does not limit refresh
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("c1"), campaign("other")],
+      campaignRecipient: [...rows("c1", 1000), ...rows("other", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1000, "full"));
+    const res = await svc.refresh("ws1", "c1");
+    expect(REFRESH_SWEEP_MAX_PAGES).toBe(5);
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1);
+    expect(Math.max(...zernio.getBroadcast.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...zernio.listBroadcastRecipients.mock.invocationCallOrder),
+    );
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => `${c[0]}@${c[1].skip}`)).toEqual([
+      "b-c1@0",
+      "b-c1@100",
+      "b-c1@200",
+      "b-c1@300",
+      "b-c1@400",
+    ]);
+    const by = Object.fromEntries(prisma.db.campaign.map((c: any) => [c.id, c]));
+    expect(by.c1.recipientSyncSkip).toBe(500);
+    expect(prisma.db.campaignRecipient.filter((r: any) => r.status === "delivered")).toHaveLength(500);
+    // The response is the campaign as stored after the sweep.
+    expect(res).toMatchObject({ id: "c1", recipientSyncSkip: 500 });
+    // The cron continues from refresh's offset (and serves the never-paged campaign first).
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "2";
+    zernio.listBroadcastRecipients.mockClear();
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => `${c[0]}@${c[1].skip}`)).toEqual(["b-other@0", "b-c1@500"]);
+  });
+
+  it("refresh lands per-recipient states on a finished campaign whose pass ended recently", async () => {
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("c1", { status: "completed", recipientsSyncedAt: ago(10 * 60_000) })],
+      campaignRecipient: rows("c1", 3),
+    });
+    zernio.getBroadcast.mockResolvedValue({ status: "completed", sent: 3, delivered: 3, read: 0, failed: 0 });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(3, "full"));
+    const res = await svc.refresh("ws1", "c1");
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    expect(prisma.db.campaignRecipient.every((r: { status: string }) => r.status === "delivered")).toBe(true);
+    expect(res).toMatchObject({ delivered: 3, recipientsSyncedAt: NOW });
+  });
+
+  it("refresh of an untracked campaign only pulls Zernio's counters", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("c1", { recipientTracking: false })] });
+    const res = await svc.refresh("ws1", "c1");
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1);
+    expect(zernio.listBroadcastRecipients).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ sent: 240, delivered: 200 });
+  });
+
+  it("refresh skips its sweep while a cron tick is running and returns the current state", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("a")], campaignRecipient: rows("a", 1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, o: { skip: number; limit: number }) => {
+      await gate;
+      return pagedZernio(1, "full")(b, o);
+    });
+    const tick = svc.syncActive();
+    await new Promise((r) => setImmediate(r));
+    const res = await svc.refresh("ws1", "a");
+    expect(res).toMatchObject({ id: "a", sent: 240 });
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1); // only the tick's page
+    release();
+    await tick;
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cron tick is skipped while refresh is sweeping, and runs again afterwards", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("a")], campaignRecipient: rows("a", 1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, o: { skip: number; limit: number }) => {
+      await gate;
+      return pagedZernio(1, "full")(b, o);
+    });
+    const refreshing = svc.refresh("ws1", "a");
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    await svc.syncActive(); // returns at once
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1); // refresh's applyStats only
+    release();
+    await refreshing;
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    await svc.syncActive();
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failing refresh sweep keeps the offset and still returns the campaign", async () => {
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1", { recipientSyncSkip: 40 })], campaignRecipient: rows("c1", 1) });
+    zernio.listBroadcastRecipients.mockRejectedValue(new Error("timeout"));
+    const res = await svc.refresh("ws1", "c1");
+    expect(res).toMatchObject({ id: "c1", recipientSyncSkip: 40 });
+    expect(prisma.db.campaign[0].recipientSyncSkip).toBe(40);
+    // The guard is released.
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(2);
   });
 });

@@ -3,7 +3,7 @@ import type { CampaignFunnel as Funnel } from "@/lib/types";
 import { formatPct, funnelLabel, funnelSteps } from "./campaignDetailModel";
 import { Card, HBars, fmtNum } from "./ui";
 
-/** Targeted → sent → delivered → read → replied, each as a share of targeted. One accent hue. */
+/** Targeted → attempted (sent + failed) → delivered → read → replied, each as a share of targeted. One accent hue. */
 export function CampaignFunnel({ funnel, tx }: { funnel: Funnel; tx: Tx }) {
   const steps = funnelSteps({ funnel });
   const rows = steps.map((s) => ({

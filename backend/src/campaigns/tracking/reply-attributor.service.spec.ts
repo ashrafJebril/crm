@@ -119,6 +119,60 @@ describe("reply attribution window 72h", () => {
     expect(await attributor.onInbound(reply(at(0)))).toEqual({ recipientId: "r1", campaignId: "c1" });
   });
 
+  it("I1: a cancelled scheduled campaign's queued row does not steal the reply; the sent campaign gets it", async () => {
+    const { prisma, attributor } = build({
+      campaign: [
+        campaign("c1"),
+        campaign("c2", { status: "cancelled", launchedAt: at(2 * H), scheduledAt: at(24 * H) }),
+      ],
+      campaignRecipient: [
+        row("r1", { campaignId: "c1" }),
+        row("r2", { campaignId: "c2", status: "queued", sentAt: null, deliveredAt: null, messageId: null }),
+      ],
+    });
+    expect(await attributor.onInbound(reply(at(25 * H)))).toEqual({ recipientId: "r1", campaignId: "c1" });
+    const [r1, r2] = prisma.db.campaignRecipient;
+    expect(r1).toMatchObject({ status: "replied", repliedAt: at(25 * H) });
+    expect(r2).toMatchObject({ status: "queued", repliedAt: null });
+    const by = Object.fromEntries(prisma.db.campaign.map((c: any) => [c.id, c]));
+    expect(by.c1.replied).toBe(1);
+    expect(by.c2.replied).toBe(0);
+  });
+
+  it("I1: a broadcast cancelled midway or failed does not attribute through its unsent queued rows", async () => {
+    for (const status of ["cancelled", "failed"]) {
+      const { prisma, attributor } = build({
+        campaign: [campaign("c1"), campaign("c2", { status, launchedAt: at(H) })],
+        campaignRecipient: [
+          row("r1", { campaignId: "c1" }),
+          row("r2", { campaignId: "c2", status: "queued", sentAt: null, deliveredAt: null, messageId: null }),
+        ],
+      });
+      expect(await attributor.onInbound(reply(at(2 * H)))).toEqual({ recipientId: "r1", campaignId: "c1" });
+      expect(prisma.db.campaignRecipient[1].status).toBe("queued");
+    }
+  });
+
+  it("I1: a row of a cancelled campaign that was actually sent still attributes", async () => {
+    const { attributor } = build({
+      campaign: [campaign("c1"), campaign("c2", { status: "cancelled", launchedAt: at(H) })],
+      campaignRecipient: [row("r1", { campaignId: "c1" }), row("r2", { campaignId: "c2", sentAt: at(H) })],
+    });
+    expect(await attributor.onInbound(reply(at(2 * H)))).toEqual({ recipientId: "r2", campaignId: "c2" });
+  });
+
+  it("I1: a still-scheduled campaign whose scheduledAt is in the future is not a candidate", async () => {
+    const { prisma, attributor } = build({
+      campaign: [campaign("c1"), campaign("c2", { status: "scheduled", launchedAt: at(H), scheduledAt: at(48 * H) })],
+      campaignRecipient: [
+        row("r1", { campaignId: "c1" }),
+        row("r2", { campaignId: "c2", status: "queued", sentAt: null, deliveredAt: null, messageId: null }),
+      ],
+    });
+    expect(await attributor.onInbound(reply(at(2 * H)))).toEqual({ recipientId: "r1", campaignId: "c1" });
+    expect(prisma.db.campaignRecipient[1].status).toBe("queued");
+  });
+
   it("a skipped row never attributes", async () => {
     const { attributor, prisma } = build({
       campaign: [campaign("c1")],

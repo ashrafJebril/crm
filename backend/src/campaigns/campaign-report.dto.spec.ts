@@ -48,4 +48,12 @@ describe("campaign report DTOs", () => {
     expect(await errors(CreateGroupDto, { status: "read", name: "x".repeat(121) })).not.toEqual([]);
     expect(await errors(CreateGroupDto, { status: "read", name: "ok", extra: 1 })).not.toEqual([]);
   });
+
+  it("m3: every CreateGroupDto.name failure carries the campaigns.group_name_required key, never generic text", async () => {
+    for (const name of ["   ", "", "x".repeat(121), " " + "x".repeat(121) + " ", undefined, 42, null]) {
+      const msgs = await errors(CreateGroupDto, { status: "read", ...(name === undefined ? {} : { name }) });
+      expect(msgs.length).toBeGreaterThan(0);
+      expect(new Set(msgs)).toEqual(new Set(["campaigns.group_name_required"]));
+    }
+  });
 });
