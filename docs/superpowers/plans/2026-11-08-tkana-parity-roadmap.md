@@ -225,8 +225,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Rollback:** do not roll the backend back below SP-13 while an SP-13 campaign may still be sending. Run the gate query in [docs/runbooks/campaign-launch-rollback.md](../../runbooks/campaign-launch-rollback.md) first; it must return 0 rows.
 
 #### SP-14 Number and template health. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-14-sp14-number-template-health.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-10 against local Zernio and Meta Graph stubs (93 pass, 0 fail). Copy-to-number was moved to a follow-up. **Pending:** real-provider checks for Zernio number-info and the template webhook shape, Graph messaging-limit fields, and the Meta quality webhooks. Those webhooks need the Meta App Dashboard subscription, which is a user action.
 - **Gaps:** a number health page (quality rating, messaging-limit tier, display-name status, verification, blocked/template problems) with a live check; template PAUSED/quality status and a health sheet.
 - **Depends on:** SP-19.
 - **Read in Tkana:** `routes/marketing.health*.ts(x)`, `components/marketing/{number-health-page,whatsapp-health-*,whatsapp-template-health}.tsx`, `lib/channels/waba-health.ts`.
