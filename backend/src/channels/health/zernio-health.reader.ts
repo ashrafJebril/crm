@@ -1,6 +1,6 @@
 import { HttpException, Logger } from "@nestjs/common";
 import type { ZernioBudget } from "../../campaigns/sending/zernio-budget";
-import type { ZernioClient, ZernioNumberInfo } from "../../integrations/zernio.client";
+import { ZernioRateLimitError, type ZernioClient, type ZernioNumberInfo } from "../../integrations/zernio.client";
 import { zernioHealthCall } from "./health-budget";
 import type { FieldName, RawField, RawHealthRead, RawTemplate } from "./health-model";
 
@@ -55,10 +55,13 @@ export async function readZernioHealth(
   try {
     info = await zernioHealthCall(() => zernio.whatsappNumberInfo(accountId), budget);
   } catch (e) {
-    const gone = isAccountGone(e);
     log.warn(`number-info failed for a Zernio account: ${e instanceof HttpException ? e.getStatus() : "error"}`);
     for (const f of ALL_FIELDS) fields[f] = { error: "check_failed" };
-    if (gone) return { provider: "zernio", fields, templates: { error: "check_failed" } };
+    // Gone: nothing else to read. Rate limited (fix round 1, I1): a second
+    // call would land inside Zernio's Retry-After window.
+    if (isAccountGone(e) || e instanceof ZernioRateLimitError) {
+      return { provider: "zernio", fields, templates: { error: "check_failed" } };
+    }
   }
 
   if (info) {
@@ -85,7 +88,10 @@ export async function readZernioHealth(
       language: String(t.language ?? ""),
       status: t.status,
       category: t.category ? String(t.category) : null,
-      ...(isObj(t.quality_score) && t.quality_score.score !== undefined ? { qualityScore: t.quality_score.score } : {}),
+      // Undocumented passthrough (R1): read only when sent, and marked with its source.
+      ...(isObj(t.quality_score) && t.quality_score.score !== undefined
+        ? { qualityScore: t.quality_score.score, qualityPassthrough: true }
+        : {}),
     }));
     templates = { items, truncated: false };
   } catch (e) {

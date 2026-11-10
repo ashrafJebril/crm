@@ -110,6 +110,9 @@ describe("providers that cannot supply a field return unknown", () => {
     if (t === UNKNOWN) throw new Error("templates unknown");
     expect(t.items.map((i) => i.quality)).toEqual(["unknown", "GREEN"]);
     expect(t.lowQuality).toBe(0);
+    // Fix round 1 (M3): Zernio's undocumented quality_score is marked with its source.
+    expect(t.items[0]).not.toHaveProperty("source");
+    expect(t.items[1].source).toBe("zernio_passthrough");
   });
 
   it("Zernio quality_rating UNKNOWN gives unknown; Meta NA gives NOT_RATED", async () => {
@@ -136,6 +139,20 @@ describe("providers that cannot supply a field return unknown", () => {
     const h2 = mergeHealth(null, await readZernioHealth(zernioFake(none), freeBudget(), "acc1"), { now: NOW, trigger: "manual" });
     expect(h2.messaging).toEqual(sig("unknown", "missing_data"));
     expect(h2.overall).toBe("unknown");
+  });
+
+  it("a provider literal UNKNOWN phone status is unknown with missing_data (fix round 1, M2)", async () => {
+    const info = { phone: { ...FULL_ZERNIO_INFO.phone, status: "UNKNOWN" } };
+    const h = mergeHealth(null, await readZernioHealth(zernioFake(info), freeBudget(), "acc1"), { now: NOW, trigger: "manual" });
+    expect(h.phoneStatus).toEqual(sig("unknown", "missing_data"));
+    expect(h.issues).toEqual(["check_incomplete"]);
+    expect(h.overall).toBe("healthy");
+    const m = mergeHealth(null, await readMetaHealth(graphFake({ status: "unknown" }), { accessToken: "tok", externalId: "pn1" }, "waba1"), {
+      now: NOW,
+      trigger: "manual",
+    });
+    expect(m.phoneStatus).toEqual(sig("unknown", "missing_data"));
+    expect(m.issues).not.toContain("phone_status_unknown");
   });
 
   it("a Meta read with every field gives no unknowns", async () => {
@@ -212,6 +229,36 @@ describe("a failed read keeps the last value as previous only", () => {
     expect(ok.quality.value).toBe("GREEN");
   });
 
+  it("lastKnown keeps the passthrough source (fix round 1, M3)", async () => {
+    const info = { phone: FULL_ZERNIO_INFO.phone, waba: { business_verification_status: "VERIFIED" } };
+    const first = mergeHealth(null, await readZernioHealth(zernioFake(info), freeBudget(), "acc1"), { now: NOW, trigger: "manual" });
+    expect(first.verified.source).toBe("zernio_passthrough");
+    const failed: RawHealthRead = {
+      provider: "zernio",
+      fields: { verified: { error: "check_failed" }, quality: { error: "check_failed" } },
+      templates: { error: "check_failed" },
+    };
+    const h = mergeHealth(first, failed, { now: LATER, trigger: "sweep" });
+    expect(h.lastKnown.verified).toEqual({ value: "VERIFIED", checkedAt: NOW.toISOString(), source: "zernio_passthrough" });
+    expect(h.lastKnown.quality).toEqual({ value: "GREEN", checkedAt: NOW.toISOString() });
+    const again = mergeHealth(h, failed, { now: new Date("2026-11-11T10:00:00.000Z"), trigger: "sweep" });
+    expect(again.lastKnown.verified?.source).toBe("zernio_passthrough");
+  });
+
+  it("checkedAt moves only when something was read (fix round 1, M4)", async () => {
+    const first = mergeHealth(null, await readZernioHealth(zernioFake(), freeBudget(), "acc1"), { now: NOW, trigger: "manual" });
+    expect(first.checkedAt).toBe(NOW.toISOString());
+    const nothing: RawHealthRead = { provider: "zernio", fields: {}, templates: { error: "check_failed" } };
+    for (const f of SIGNAL_NAMES) nothing.fields[f] = { error: "check_failed" };
+    const h = mergeHealth(first, nothing, { now: LATER, trigger: "sweep" });
+    expect(h.checkedAt).toBe(NOW.toISOString());
+    expect(h.quality.checkedAt).toBe(LATER.toISOString()); // the attempt stays on each signal
+    expect(mergeHealth(null, nothing, { now: LATER, trigger: "sweep" }).checkedAt).toBeNull();
+    // A template list alone counts as a read.
+    const onlyTemplates: RawHealthRead = { ...nothing, templates: { items: [], truncated: false } };
+    expect(mergeHealth(first, onlyTemplates, { now: LATER, trigger: "sweep" }).checkedAt).toBe(LATER.toISOString());
+  });
+
   it("carries alerts unchanged (evaluateAlerts owns them)", () => {
     const prev = { alerts: { baselineAt: NOW.toISOString(), levels: { quality: 1 } } } as unknown as ChannelHealth;
     const h = mergeHealth(prev, { provider: "zernio", fields: {}, templates: { error: "check_failed" } }, { now: LATER, trigger: "manual" });
@@ -284,6 +331,7 @@ describe("overall and issues follow the severity rules", () => {
     ["messaging BLOCKED", (h) => (h.messaging = sig("BLOCKED")), ["messaging_blocked"], "critical"],
     ["messaging LIMITED", (h) => (h.messaging = sig("LIMITED")), ["messaging_limited"], "attention"],
     ["phone FLAGGED", (h) => (h.phoneStatus = sig("FLAGGED")), ["phone_status_flagged"], "attention"],
+    ["phone status unknown (missing_data)", (h) => (h.phoneStatus = sig("unknown", "missing_data")), ["check_incomplete"], "healthy"],
     ["phone RESTRICTED", (h) => (h.phoneStatus = sig("RESTRICTED")), ["phone_status_restricted"], "critical"],
     ["phone BANNED", (h) => (h.phoneStatus = sig("BANNED")), ["phone_status_banned"], "critical"],
     ["phone DISCONNECTED", (h) => (h.phoneStatus = sig("DISCONNECTED")), ["phone_status_disconnected"], "critical"],

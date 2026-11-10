@@ -140,9 +140,11 @@ export class ChannelHealthService {
   }
 
   /** Fenced write: only while `healthAttemptedAt` still equals `token`. */
-  async write(id: string, token: Date, health: ChannelHealth, now: Date): Promise<boolean> {
+  async write(id: string, token: Date, health: ChannelHealth): Promise<boolean> {
     const json = JSON.stringify(health);
-    const at = now.toISOString();
+    // healthCheckedAt mirrors health.checkedAt: it moves only on a check that
+    // read something (fix round 1, M4), else it keeps the previous value.
+    const at = health.checkedAt;
     const tok = token.toISOString();
     const n = await this.prisma.$executeRaw`UPDATE "Channel" SET "health" = ${json}::jsonb, "healthCheckedAt" = ${at}::timestamp(3) WHERE "id" = ${id} AND "healthAttemptedAt" = ${tok}::timestamp(3)`;
     return Number(n) === 1;
@@ -168,7 +170,7 @@ export class ChannelHealthService {
     const { changes, alerts } = evaluateAlerts(previous?.alerts ?? null, health, now);
     health.alerts = alerts;
 
-    const written = await this.write(fresh.id, token, health, now);
+    const written = await this.write(fresh.id, token, health);
     if (!written) this.log.log(`health check of channel ${fresh.id} was superseded; nothing written`);
     if (written && changes.length && this.onDowngrade) {
       try {

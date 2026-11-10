@@ -1,7 +1,7 @@
 import { HttpException, Logger } from "@nestjs/common";
-import { ZernioBudget, zernioHealthRpm } from "../../campaigns/sending/zernio-budget";
+import { RETRY_AFTER_DEFAULT_MS, RETRY_AFTER_MAX_MS, ZernioBudget, zernioHealthRpm } from "../../campaigns/sending/zernio-budget";
 import { ZernioRateLimitError } from "../../integrations/zernio.client";
-import { HEALTH_RETRIES, zernioHealthCall } from "./health-budget";
+import { HEALTH_MAX_WAIT_MS, HEALTH_RETRIES, zernioHealthCall } from "./health-budget";
 import { mergeHealth, SIGNAL_NAMES } from "./health-model";
 import { readZernioHealth } from "./zernio-health.reader";
 
@@ -44,7 +44,7 @@ describe("every zernio health call takes the shared budget", () => {
     expect(ZernioBudget.shared().health).toBeDefined();
   });
 
-  it("a check is 2 calls; tokens taken equal calls made, campaign before health", async () => {
+  it("a check is 2 calls; tokens taken equal calls made, health before campaign (fix round 1, M1)", async () => {
     const { budget, campaign, health } = budgetWithSpies();
     const order: string[] = [];
     campaign.mockImplementation(async () => void order.push("campaign"));
@@ -62,7 +62,7 @@ describe("every zernio health call takes the shared budget", () => {
     await readZernioHealth(zernio, budget, "acc1");
     expect(zernio.whatsappNumberInfo).toHaveBeenCalledWith("acc1");
     expect(zernio.whatsappTemplates).toHaveBeenCalledWith("acc1");
-    expect(order).toEqual(["campaign", "health", "number-info", "campaign", "health", "templates"]);
+    expect(order).toEqual(["health", "campaign", "number-info", "health", "campaign", "templates"]);
     expect(campaign).toHaveBeenCalledTimes(2);
     expect(health).toHaveBeenCalledTimes(2);
   });
@@ -104,10 +104,56 @@ describe("every zernio health call takes the shared budget", () => {
     };
     const read = await readZernioHealth(zernio, budget, "acc1");
     expect(zernio.whatsappNumberInfo).toHaveBeenCalledTimes(HEALTH_RETRIES + 1);
-    expect(campaign).toHaveBeenCalledTimes(HEALTH_RETRIES + 1 + 1); // + the templates call
+    // Fix round 1 (I1): after number-info ends in a 429, templates are not called.
+    expect(zernio.whatsappTemplates).not.toHaveBeenCalled();
+    expect(campaign).toHaveBeenCalledTimes(HEALTH_RETRIES + 1);
     const h = mergeHealth(null, read, { now: NOW, trigger: "manual" });
     expect(h.quality.error).toBe("check_failed");
-    expect(h.templates.error).toBeNull();
+    expect(h.templates).toEqual({ value: "unknown", checkedAt: NOW.toISOString(), error: "check_failed" });
+  });
+
+  it("a 60 s Retry-After pauses the shared campaign bucket for 60 s, is not retried, and skips templates (fix round 1, I1)", async () => {
+    const { c, budget, pause } = budgetWithSpies();
+    const zernio = {
+      whatsappNumberInfo: jest.fn(async () => {
+        throw new ZernioRateLimitError("slow", 60_000);
+      }),
+      whatsappTemplates: jest.fn(async () => []),
+    };
+    const read = await readZernioHealth(zernio, budget, "acc1");
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(pause).toHaveBeenCalledWith(60_000);
+    expect(zernio.whatsappNumberInfo).toHaveBeenCalledTimes(1);
+    expect(zernio.whatsappTemplates).not.toHaveBeenCalled();
+    expect(c.sleeps).not.toContain(20_000);
+    const h = mergeHealth(null, read, { now: NOW, trigger: "manual" });
+    expect(h.quality.error).toBe("check_failed");
+    expect(h.templates.error).toBe("check_failed");
+  });
+
+  it("a Retry-After above the 60 s ceiling pauses for 60 s; none pauses for the 5 s default (fix round 1, I1)", async () => {
+    const { budget, pause } = budgetWithSpies();
+    await expect(
+      zernioHealthCall(async () => {
+        throw new ZernioRateLimitError("slow", 300_000);
+      }, budget),
+    ).rejects.toBeInstanceOf(ZernioRateLimitError);
+    expect(pause).toHaveBeenLastCalledWith(RETRY_AFTER_MAX_MS);
+    let n = 0;
+    await zernioHealthCall(async () => {
+      if (n++ === 0) throw new ZernioRateLimitError("slow", null);
+      return 1;
+    }, budget);
+    expect(pause).toHaveBeenLastCalledWith(RETRY_AFTER_DEFAULT_MS);
+  });
+
+  it("a Retry-After just over the 20 s health cap is not retried (fix round 1, I1)", async () => {
+    const { budget } = budgetWithSpies();
+    const fn = jest.fn(async () => {
+      throw new ZernioRateLimitError("slow", HEALTH_MAX_WAIT_MS + 1);
+    });
+    await expect(zernioHealthCall(fn, budget)).rejects.toBeInstanceOf(ZernioRateLimitError);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 

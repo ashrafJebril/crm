@@ -51,6 +51,8 @@ export interface TemplateItem {
   status: string;
   quality: string; // GREEN | YELLOW | RED | NOT_RATED | "unknown"
   category: string | null;
+  /** Fix round 1 (M3): set when `quality` came from Zernio's undocumented passthrough. */
+  source?: "zernio_passthrough";
 }
 
 export interface TemplateSummary {
@@ -72,6 +74,12 @@ export interface TemplatesSignal {
 }
 
 export type AlertSignal = "quality" | "messaging" | "phoneStatus" | "nameStatus" | "accountReview" | "tier" | "templatesBad";
+
+export interface LastKnown {
+  value: string;
+  checkedAt: string;
+  source?: "zernio_passthrough";
+}
 
 export interface HealthAlerts {
   baselineAt: string;
@@ -98,7 +106,8 @@ export interface ChannelHealth {
   accountReview: Signal;
   templates: TemplatesSignal;
   issues: string[];
-  lastKnown: Partial<Record<FieldName, { value: string; checkedAt: string }>>;
+  /** The previous known value of a field that is now unknown for a failed read; keeps its `source`. */
+  lastKnown: Partial<Record<FieldName, LastKnown>>;
   /** Null only between `mergeHealth` and `evaluateAlerts` (the service sets it before writing). */
   alerts: HealthAlerts | null;
 }
@@ -124,6 +133,8 @@ export interface RawTemplate {
   category: string | null;
   /** The raw `quality_score.score`; undefined when the provider sent none. */
   qualityScore?: unknown;
+  /** The score came from an undocumented Zernio passthrough (R1). */
+  qualityPassthrough?: boolean;
 }
 
 export interface RawHealthRead {
@@ -198,8 +209,9 @@ export function normalizeField(field: FieldName, raw: unknown): string | null {
     case "tier":
       return normalizeTier(raw);
     case "phoneStatus": {
+      // Open-ended, but a literal UNKNOWN is no status (fix round 1, M2).
       const u = upper(raw);
-      return u && IDENT.test(u) ? u : null;
+      return u && u !== "UNKNOWN" && IDENT.test(u) ? u : null;
     }
     case "verified": {
       const u = upper(raw);
@@ -275,6 +287,7 @@ export function summarizeTemplates(
         status,
         quality: quality ?? UNKNOWN,
         category: t.category ?? null,
+        ...(quality && t.qualityPassthrough ? { source: "zernio_passthrough" as const } : {}),
       });
     }
   }
@@ -342,6 +355,11 @@ const KEEPS_LAST: ReadonlySet<SignalError> = new Set<SignalError>([
   "missing_data",
 ]);
 
+/** True when the provider answered at least one field or the template list. */
+export function readAnything(read: RawHealthRead): boolean {
+  return Object.values(read.fields).some((f) => !!f && !("error" in f)) || !("error" in read.templates);
+}
+
 /** A stored health JSON, if it is one (anything else reads as no health). */
 export function asChannelHealth(v: unknown): ChannelHealth | null {
   return v && typeof v === "object" && !Array.isArray(v) && (v as { v?: unknown }).v === 1 ? (v as ChannelHealth) : null;
@@ -364,7 +382,9 @@ export function mergeHealth(
     signals[f] = s;
     if (s.value === UNKNOWN && KEEPS_LAST.has(s.error)) {
       const prev = previous?.[f];
-      if (prev && prev.value !== UNKNOWN && prev.checkedAt) lastKnown[f] = { value: prev.value, checkedAt: prev.checkedAt };
+      if (prev && prev.value !== UNKNOWN && prev.checkedAt) {
+        lastKnown[f] = { value: prev.value, checkedAt: prev.checkedAt, ...(prev.source ? { source: prev.source } : {}) };
+      }
       else if (previous?.lastKnown?.[f]) lastKnown[f] = previous.lastKnown[f];
     }
   }
@@ -378,7 +398,10 @@ export function mergeHealth(
   return {
     v: 1,
     provider: read.provider,
-    checkedAt: at,
+    // Fix round 1 (M4): "when the last check read anything"; a check where
+    // every read failed keeps the previous time (each signal still carries
+    // its own attempt time and error).
+    checkedAt: readAnything(read) ? at : (previous?.checkedAt ?? null),
     trigger: opts.trigger,
     overall: computeOverall(base, issues),
     ...signals,

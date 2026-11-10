@@ -506,7 +506,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         const row = db.channel.find((c) => c.id === id);
         if (!row || !(row.healthAttemptedAt instanceof Date) || row.healthAttemptedAt.getTime() !== new Date(token).getTime()) return 0;
         row.health = JSON.parse(json);
-        row.healthCheckedAt = new Date(at);
+        row.healthCheckedAt = at == null ? null : new Date(at);
         return 1;
       }
       if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {

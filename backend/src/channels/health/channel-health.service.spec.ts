@@ -308,6 +308,24 @@ describe("ChannelHealthService", () => {
     expect(JSON.stringify(w.prisma.db.channel[0].health)).not.toContain("TOK-123456");
   });
 
+  it("a check where every read failed keeps the previous healthCheckedAt (fix round 1, M4)", async () => {
+    const w = world();
+    const a = await w.add({ externalId: "accA" });
+    await w.svc.check("wsA", a.id, { now: T0 });
+    w.zernio.whatsappNumberInfo.mockRejectedValue(new HttpException("upstream", 502));
+    w.zernio.whatsappTemplates.mockRejectedValue(new HttpException("upstream", 502));
+    const dto = await w.svc.check("wsA", a.id, { now: plus(60_000) });
+    expect(dto.healthCheckedAt).toBe(T0.toISOString());
+    expect(dto.health?.checkedAt).toBe(T0.toISOString());
+    expect(w.prisma.db.channel[0].healthCheckedAt).toEqual(T0);
+    expect(dto.health?.quality.error).toBe("check_failed");
+    // A never-read number stays null.
+    const b = await w.add({ externalId: "accB" });
+    const dtoB = await w.svc.check("wsA", b.id, { now: plus(60_000) });
+    expect(dtoB.healthCheckedAt).toBeNull();
+    expect(dtoB.health?.checkedAt).toBeNull();
+  });
+
   it("a provider failure never 5xx's: failing fields are unknown with check_failed", async () => {
     const w = world();
     const a = await w.add({ externalId: "accA" });
