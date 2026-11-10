@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { useFetch } from "@/api/useFetch";
+import { usePermissions } from "@/auth/usePermissions";
 import { IconFilter } from "@/icons";
 import type { Tx } from "@/lib/tx";
-import type { ChannelDto, ConversationLabel, TagRow, TeamMember } from "@/lib/types";
+import type { AdSourceOption, ChannelDto, ConversationLabel, TagRow, TeamMember } from "@/lib/types";
 import { channelLabels } from "../channels/channelModel";
 import { activeFilterCount, EMPTY_FILTER, type InboxFilter } from "./inboxFilters";
 import { LABEL_COLOR_VAR } from "./LabelPicker";
@@ -57,6 +58,10 @@ function Panel({
   // Contact tags are only needed once the popover is open.
   const tagsQ = useFetch<TagRow[]>("/tags");
   const tags = tagsQ.data ?? [];
+  // SP-15 "Ad source": the ads that started a conversation (conversations.view).
+  const canAds = usePermissions().can("conversations.view");
+  const adsQ = useFetch<{ items: AdSourceOption[] }>(canAds ? "/ad-sources" : null);
+  const ads = adsQ.data?.items ?? [];
   const lifecycles: { id: string; label: string }[] = [
     { id: "lead", label: tx("Lead", "عميل محتمل") },
     { id: "customer", label: tx("Customer", "عميل") },
@@ -118,6 +123,37 @@ function Panel({
               {t.name}
             </Check>
           ))}
+        </Group>
+      )}
+      {canAds && (
+        <Group title={tx("Ad source", "مصدر الإعلان")}>
+          <Check
+            checked={filter.adFilter === "any" && filter.adSourceIds.length === 0}
+            onChange={() => set({ adFilter: filter.adFilter === "any" ? null : "any", adSourceIds: [] })}
+          >
+            {tx("Any ad", "أي إعلان")}
+          </Check>
+          <Check
+            checked={filter.adFilter === "none" && filter.adSourceIds.length === 0}
+            onChange={() => set({ adFilter: filter.adFilter === "none" ? null : "none", adSourceIds: [] })}
+          >
+            {tx("No ad", "بلا إعلان")}
+          </Check>
+          {ads.length > 0 && (
+            <div style={{ maxHeight: 160, overflowY: "auto", borderTop: "1px solid var(--line-soft)", marginTop: 2, paddingTop: 2 }}>
+              {ads.map((a) => (
+                <Check
+                  key={a.id}
+                  checked={filter.adSourceIds.includes(a.id)}
+                  onChange={() => set({ adSourceIds: toggle(filter.adSourceIds, a.id), adFilter: null })}
+                >
+                  <bdi dir="auto" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                    {a.label}
+                  </bdi>
+                </Check>
+              ))}
+            </div>
+          )}
         </Group>
       )}
       <Group title={tx("Lifecycle", "مرحلة العميل")}>

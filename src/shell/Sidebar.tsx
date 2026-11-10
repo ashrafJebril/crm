@@ -24,6 +24,8 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
   const canFollowUps = can("contacts.view") || can("tickets.view");
   // SP-19: the channels hub needs channels.view (owner/admin/agent/viewer by default).
   const canChannels = can("channels.view");
+  // SP-15: the Ads screen needs reports.view.
+  const canAds = can("reports.view");
 
   // Live unread-count for the Inbox nav item. All channels are DB-backed now
   // (the Zernio webhook persists FB/IG/WA inbound), so one cheap DB query
@@ -45,7 +47,8 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
         isSection(n) ||
         ((!n.superAdminOnly || user?.isSuperAdmin) &&
           (n.id !== "followups" || canFollowUps) &&
-          (n.id !== "channels" || canChannels)),
+          (n.id !== "channels" || canChannels) &&
+          (n.id !== "ads" || canAds)),
     );
     const out: NavEntry[] = [];
     for (let i = 0; i < filtered.length; i++) {
@@ -57,7 +60,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
       out.push(cur);
     }
     return out;
-  }, [user?.isSuperAdmin, canFollowUps, canChannels]);
+  }, [user?.isSuperAdmin, canFollowUps, canChannels, canAds]);
 
   return (
     <aside className="side">

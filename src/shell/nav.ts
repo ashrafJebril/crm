@@ -30,6 +30,8 @@ export const NAV: NavEntry[] = [
   { id: "calendar",    label: "Calendar",    ar: "التقويم",       Icon: IconCal },
   { id: "social",      label: "Social",      ar: "السوشيال",      Icon: IconGlobe },
   { id: "campaigns",   label: "Campaigns",   ar: "الحملات",       Icon: IconCampaign },
+  // SP-15: click-to-WhatsApp ads (reports.view).
+  { id: "ads",         label: "Ads",         ar: "الإعلانات",     Icon: IconChart },
   { id: "pipeline",    label: "Pipeline",    ar: "خط الأنابيب",   Icon: IconLayers },
   { id: "workflows",   label: "Workflows",   ar: "الأتمتة",       Icon: IconFlow },
   { id: "contacts",    label: "Contacts",    ar: "جهات الاتصال",  Icon: IconUsers },
@@ -63,5 +65,6 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   agent:       { en: "Kewy AI agent",   ar: "وكيل كيوي الذكاء" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
   channels:    { en: "Channels",        ar: "القنوات" },
+  ads:         { en: "Ads",             ar: "الإعلانات" },
   admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
 };

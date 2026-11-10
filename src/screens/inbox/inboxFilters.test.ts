@@ -158,3 +158,39 @@ describe("number tabs (SP-19)", () => {
     expect(tabs.map((t) => t.label)).toEqual(["All", "Shop · +971500000001", "Shop · #t-w2"]);
   });
 });
+
+describe("matchesFilter keeps only conversations from the chosen ads", () => {
+  const fromA = mk({ id: "a", adSourceId: "adA", channelId: "w1" });
+  const fromB = mk({ id: "b", adSourceId: "adB", channelId: "w2" });
+  const organic = mk({ id: "c", adSourceId: null, channelId: "w1" });
+  const legacy = mk({ id: "d", channelId: "w1" });
+  const all = [fromA, fromB, organic, legacy];
+  const ids = (f: InboxFilter, tab: string | null = null) => all.filter((c) => matchesFilter(c, f, ctx, tab)).map((c) => c.id);
+
+  it("any keeps attributed rows, none keeps the others", () => {
+    expect(ids(F({ adFilter: "any" }))).toEqual(["a", "b"]);
+    expect(ids(F({ adFilter: "none" }))).toEqual(["c", "d"]);
+    expect(ids(F({}))).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("ids keep matching adSourceId", () => {
+    expect(ids(F({ adSourceIds: ["adB"] }))).toEqual(["b"]);
+    expect(ids(F({ adSourceIds: ["adA", "adB"] }))).toEqual(["a", "b"]);
+    expect(ids(F({ adSourceIds: ["zzz"] }))).toEqual([]);
+  });
+
+  it("combines with the number tab and other filters", () => {
+    expect(ids(F({ adFilter: "any" }), "w1")).toEqual(["a"]);
+    expect(ids(F({ adFilter: "none" }), "w1")).toEqual(["c", "d"]);
+    expect(ids(F({ adSourceIds: ["adA", "adB"], channelIds: ["w2"] }))).toEqual(["b"]);
+    expect(ids(F({ adFilter: "any", bucket: "unread" }))).toEqual([]);
+  });
+
+  it("activeFilterCount counts it once", () => {
+    expect(activeFilterCount(F({ adFilter: "any" }))).toBe(1);
+    expect(activeFilterCount(F({ adSourceIds: ["adA", "adB"] }))).toBe(1);
+    expect(activeFilterCount(F({ adFilter: "any", adSourceIds: ["adA"] }))).toBe(1);
+    expect(activeFilterCount(F({ adFilter: "none", escalatedOnly: true }))).toBe(2);
+    expect(activeFilterCount(EMPTY_FILTER)).toBe(0);
+  });
+});

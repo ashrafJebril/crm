@@ -29,6 +29,7 @@ export type RouteId =
   | "agent"
   | "settings"
   | "channels"
+  | "ads"
   | "admin";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
@@ -311,6 +312,10 @@ export interface Conversation {
   /** SP-19: effective channel (null for l-agent threads) and its provider. */
   channelId?: string | null;
   channelProvider?: string | null;
+  /** SP-15: the first ad that started this thread (set once), its time and chip. */
+  adSourceId?: string | null;
+  adReferredAt?: string | null;
+  adSource?: AdSourceChip | null;
 }
 
 export type AppointmentStatus =
@@ -1100,4 +1105,113 @@ export interface EmbeddedSignupConfig {
   reason?: string;
   /** Env names only, and only for channels.update holders. */
   missing?: string[];
+}
+
+// ─── SP-15: ad attribution and Meta Ads ───────────────────────────────────
+
+/** The ad chip on a conversation row (`GET /conversations`). */
+export interface AdSourceChip {
+  id: string;
+  sourceType: string;
+  headline: string | null;
+  adName: string | null;
+  mediaType: string | null;
+  /** `/api/media/<id>/file` once re-hosted, else Meta's (possibly expired) link, else null. */
+  imageUrl: string | null;
+}
+
+/** One ad for the inbox filter (`GET /ad-sources`). */
+export interface AdSourceOption {
+  id: string;
+  label: string;
+  sourceType: string;
+  lastReferredAt: string | null;
+}
+
+/** One ad on the Ads tab (`GET /ad-sources/overview`) or its page (`GET /ad-sources/:id`, with `daily`). */
+export interface AdCard {
+  id: string;
+  sourceId: string;
+  sourceType: string;
+  headline: string | null;
+  body: string | null;
+  adName: string | null;
+  adSetName: string | null;
+  campaignName: string | null;
+  namesFrom: string | null;
+  mediaType: string | null;
+  imageUrl: string | null;
+  sourceUrl: string | null;
+  adAccountId: string | null;
+  firstReferredAt: string | null;
+  lastReferredAt: string | null;
+  /** Conversations started in the range. */
+  started: number;
+  /** null = Unknown (no active connection, or another ad account). */
+  spend: { amount: number; currency: string } | null;
+  /** null when nothing started or spend is unknown. */
+  costPerConversation: number | null;
+  daily?: { date: string; started: number; spend: number | null }[];
+}
+
+export type MetaAdsStatus = "not_connected" | "pending" | "active" | "needs_reconnect" | "disconnected";
+
+export interface MetaAdsConnectionDto {
+  status: MetaAdsStatus;
+  statusReason: string | null;
+  adAccountId: string | null;
+  adAccountName: string | null;
+  currency: string | null;
+  timezone: string | null;
+  pageId: string | null;
+  pageName: string | null;
+  connectedAt: string | null;
+  connectedBy: { id: string; name: string } | null;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  spendBackfilled: boolean;
+  tokenExpiresAt: string | null;
+  hasPendingLogin: boolean;
+  /** `missing` is present only for connectors.manage holders. */
+  config: { ready: boolean; missing?: string[] };
+}
+
+export interface AdsCurrencyTotal {
+  currency: string;
+  spend: number;
+  started: number;
+  costPerConversation: number | null;
+}
+
+export interface AdsDailyPoint {
+  date: string;
+  started: number;
+  /** null when no connection is active. */
+  spend: Record<string, number> | null;
+}
+
+export interface AdsOverview {
+  range: { from: string; to: string; tz: string };
+  connection: MetaAdsConnectionDto | null;
+  totals: { started: number; byCurrency: AdsCurrencyTotal[] };
+  daily: AdsDailyPoint[];
+  ads: AdCard[];
+  totalAds: number;
+}
+
+export interface MetaAdsCandidates {
+  adAccounts: { id: string; name: string; currency: string; timezone: string; accountStatus: number | string | null }[];
+  pages: { id: string; name: string }[];
+  scopes?: string[];
+}
+
+export interface AdConversationItem {
+  conversationId: string;
+  contactId: string;
+  contactName: string | null;
+  channelId: string | null;
+  referredAt: string;
+  firstTouch: boolean;
+  status: string;
+  assigneeId: string | null;
 }

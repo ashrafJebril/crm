@@ -28,6 +28,8 @@ export function decodeFilter(s: string | null | undefined): InboxFilter {
     from: typeof o.from === "string" && o.from ? o.from : undefined,
     to: typeof o.to === "string" && o.to ? o.to : undefined,
     escalatedOnly: o.escalatedOnly === true,
+    adFilter: o.adFilter === "any" || o.adFilter === "none" ? o.adFilter : null,
+    adSourceIds: strs(o.adSourceIds),
   };
 }
 

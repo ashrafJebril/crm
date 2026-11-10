@@ -106,6 +106,20 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
         words.length > 1 ? words.slice(1).join(tx("; ", "؛ ")) : undefined,
       );
     }
+    case "meta_ads.needs_reconnect": {
+      // SP-15: body {reason: "token_refused"|"account_refused", adAccountName}.
+      const name = str(p.adAccountName);
+      const reason =
+        p.reason === "token_refused" ? tx("Meta refused the login", "رفضت Meta تسجيل الدخول")
+        : p.reason === "account_refused" ? tx("Meta refused access to the ad account", "رفضت Meta الوصول إلى الحساب الإعلاني")
+        : undefined;
+      return out(
+        name
+          ? tx(`Meta Ads needs reconnecting: ${name}`, `يحتاج حساب إعلانات Meta إلى إعادة ربط: ${name}`)
+          : tx("Meta Ads needs reconnecting", "يحتاج حساب إعلانات Meta إلى إعادة ربط"),
+        reason,
+      );
+    }
     case "import.failed":
       return out(tx("An import failed", "فشل الاستيراد"));
     case "mention.note": {

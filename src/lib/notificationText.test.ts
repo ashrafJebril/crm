@@ -152,3 +152,32 @@ describe("health downgrade notification text and deep link", () => {
     expect(notificationText(en, { ...base, title: "import.failed", body: null })).toEqual({ title: "An import failed" });
   });
 });
+
+describe("meta ads reconnect notification text and deep link", () => {
+  const n = (body: unknown) => ({
+    type: "connector_needs_attention",
+    title: "meta_ads.needs_reconnect",
+    body: JSON.stringify(body),
+    recordKind: null,
+    recordId: null,
+  });
+
+  it("names the ad account and words the reason in both languages", () => {
+    expect(notificationText(en, n({ reason: "token_refused", adAccountName: "Acme Ads" }))).toEqual({
+      title: "Meta Ads needs reconnecting: Acme Ads",
+      body: "Meta refused the login",
+    });
+    expect(notificationText(ar, n({ reason: "account_refused", adAccountName: "Acme Ads" }))).toEqual({
+      title: "يحتاج حساب إعلانات Meta إلى إعادة ربط: Acme Ads",
+      body: "رفضت Meta الوصول إلى الحساب الإعلاني",
+    });
+    expect(notificationText(en, n({ reason: "other", adAccountName: null }))).toEqual({ title: "Meta Ads needs reconnecting" });
+  });
+
+  it("deep-links to the Ads connection tab; other titles are unchanged", () => {
+    expect(notificationHref(n({}), "#/inbox")).toBe("#/ads?tab=connection");
+    expect(notificationHref({ ...n({}), body: null }, "#/dashboard")).toBe("#/ads?tab=connection");
+    expect(notificationHref({ ...n({ channelId: "ch1" }), title: "channel.health_downgraded" }, "#/inbox")).toBe("#/channels?id=ch1");
+    expect(notificationHref({ title: "import.failed", body: null, recordKind: null, recordId: null }, "#/inbox")).toBeNull();
+  });
+});

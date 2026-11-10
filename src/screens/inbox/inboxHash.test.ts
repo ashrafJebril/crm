@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { encodeJson } from "@/lib/hashState";
 import { EMPTY_FILTER } from "./inboxFilters";
 import {
   decodeFilter, encodeFilter, readFilterFromHash, readViewFromHash, writeFilterToHash, writeViewToHash, readNumberFromHash, writeNumberToHash,
@@ -63,5 +64,35 @@ describe("inboxHash number tab and channelIds (SP-19)", () => {
     expect(readNumberFromHash(h)).toBe("w1");
     expect(new URLSearchParams(h.split("?")[1]).get("v")).toBe("table");
     expect(readNumberFromHash(writeNumberToHash(h, null))).toBeNull();
+  });
+});
+
+describe("inbox ad-source filter round-trips through the hash", () => {
+  it("round-trips any/none and specific ads", () => {
+    for (const ad of [{ adFilter: "any" as const, adSourceIds: [] }, { adFilter: "none" as const, adSourceIds: [] }, { adFilter: null, adSourceIds: ["as1", "as2"] }]) {
+      const f = { ...EMPTY_FILTER, ...ad };
+      const h = writeFilterToHash("#/inbox?v=table", f);
+      expect(readFilterFromHash(h)).toEqual(f);
+      expect(readViewFromHash(h)).toBe("table");
+    }
+  });
+
+  it("old hashes without the keys decode to adFilter null and no ads", () => {
+    const old = encodeJson({ bucket: "mine", assigneeIds: [], labelIds: ["l1"], tags: [], lifecycles: [], channelIds: [], escalatedOnly: false });
+    const f = decodeFilter(old);
+    expect(f.adFilter).toBeNull();
+    expect(f.adSourceIds).toEqual([]);
+    expect(f.labelIds).toEqual(["l1"]);
+  });
+
+  it("ignores malformed values", () => {
+    const f = decodeFilter(encodeJson({ adFilter: "maybe", adSourceIds: ["a", 3, null, { x: 1 }] }));
+    expect(f.adFilter).toBeNull();
+    expect(f.adSourceIds).toEqual(["a"]);
+    expect(decodeFilter(encodeJson({ adSourceIds: "as1" })).adSourceIds).toEqual([]);
+  });
+
+  it("the empty filter leaves no f= param", () => {
+    expect(writeFilterToHash("#/inbox", EMPTY_FILTER)).toBe("#/inbox");
   });
 });

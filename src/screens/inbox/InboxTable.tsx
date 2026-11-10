@@ -12,6 +12,7 @@ import type { Tx } from "@/lib/tx";
 import { Pager } from "../contacts/Pager";
 import { statusLabels } from "./boardLogic";
 import { LabelChips } from "./LabelChips";
+import { CtwaChip } from "./CtwaChip";
 
 /** Table over the already filtered + sorted inbox list; client-side paging. */
 export function InboxTable({
@@ -101,6 +102,7 @@ export function InboxTable({
                       <span dir="auto" style={{ fontWeight: c.unread > 0 ? 700 : 500 }}>
                         {contact?.name ?? "—"}
                       </span>
+                      {c.adSource && <CtwaChip ad={c.adSource} tx={tx} />}
                     </span>
                   </td>
                   <td>{CHANNEL_LABEL[c.channel] ?? c.channel}</td>

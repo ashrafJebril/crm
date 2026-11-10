@@ -62,6 +62,7 @@ import { InboxFilterMenu } from "./inbox/InboxFilterMenu";
 import { InboxSortMenu } from "./inbox/InboxSortMenu";
 import { TriageStrip } from "./inbox/TriageStrip";
 import { LabelChips } from "./inbox/LabelChips";
+import { AdAttributionCard, CtwaChip } from "./inbox/CtwaChip";
 import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
@@ -1108,6 +1109,11 @@ function InboxList({
                   {c.lastFrom === "human" && <span style={{ color: "var(--accent)" }}>↳ </span>}
                   {c.preview}
                 </div>
+                {c.adSource && (
+                  <div style={{ marginTop: 4, minWidth: 0, display: "flex" }}>
+                    <CtwaChip ad={c.adSource} tx={tx} />
+                  </div>
+                )}
                 {(c.labelIds?.length ?? 0) > 0 && (
                   <div style={{ marginTop: 4 }}>
                     <LabelChips labelIds={c.labelIds ?? []} labelById={labelById} />
@@ -1319,7 +1325,9 @@ function ConversationPane({
   const { user } = useAuth();
   // Every send path (text, media, template) is POST .../messages|send|send-template,
   // all mapped to conversations.create on the backend.
-  const canCompose = usePermissions().can("conversations.create");
+  const { can } = usePermissions();
+  const canCompose = can("conversations.create");
+  const canViewAds = can("reports.view");
   const noPermCompose = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const [draft, setDraft] = useState<string>("");
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
@@ -1564,6 +1572,9 @@ function ConversationPane({
           </button>
         </div>
       </div>
+      {conv.adSource && (
+        <AdAttributionCard ad={conv.adSource} referredAt={conv.adReferredAt} canOpen={canViewAds} tx={tx} lang={lang} />
+      )}
 
       <div
         ref={scrollerRef}

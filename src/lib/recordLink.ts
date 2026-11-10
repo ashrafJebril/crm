@@ -29,11 +29,14 @@ function channelIdOf(body: string | null | undefined): string | null {
   }
 }
 
-/** Where a notification opens: a channel's detail for health alerts, else its record (`recordHref`). */
+/** Where a notification opens: a channel's detail for health alerts, the Ads
+ *  connection for a Meta Ads reconnect, else its record (`recordHref`). */
 export function notificationHref(
   n: { title: string; body?: string | null; recordKind?: string | null; recordId?: string | null },
   currentHash: string = typeof window === "undefined" ? "" : window.location.hash,
 ): string | null {
+  // SP-15: the Meta Ads reconnect alert opens the Ads connection tab.
+  if (n.title === "meta_ads.needs_reconnect") return "#/ads?tab=connection";
   if (CHANNEL_TITLES.has(n.title)) {
     const id = channelIdOf(n.body);
     return id ? `#/channels?id=${encodeURIComponent(id)}` : "#/channels";

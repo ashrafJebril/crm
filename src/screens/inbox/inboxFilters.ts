@@ -18,10 +18,15 @@ export interface InboxFilter {
   from?: string;
   to?: string;
   escalatedOnly: boolean;
+  /** SP-15 "Ad source": any ad / no ad (null = off). */
+  adFilter: "any" | "none" | null;
+  /** SP-15: specific ads (`Conversation.adSourceId`, any of). */
+  adSourceIds: string[];
 }
 
 export const EMPTY_FILTER: InboxFilter = {
   bucket: "all", assigneeIds: [], labelIds: [], tags: [], lifecycles: [], channelIds: [], escalatedOnly: false,
+  adFilter: null, adSourceIds: [],
 };
 
 export interface FilterCtx {
@@ -63,6 +68,10 @@ export function matchesFilter(
   if (f.assigneeIds.length && !(c.assigneeId && f.assigneeIds.includes(c.assigneeId))) return false;
   if (f.labelIds.length && !(c.labelIds ?? []).some((l) => f.labelIds.includes(l))) return false;
   if (f.escalatedOnly && !c.escalated) return false;
+  if (f.adSourceIds.length) {
+    if (!(c.adSourceId && f.adSourceIds.includes(c.adSourceId))) return false;
+  } else if (f.adFilter === "any" && !c.adSourceId) return false;
+  else if (f.adFilter === "none" && c.adSourceId) return false;
   if (f.tags.length || f.lifecycles.length) {
     const contact = ctx.contactById.get(c.contactId);
     if (f.tags.length && !(contact?.tags ?? []).some((t) => f.tags.includes(t))) return false;
@@ -106,7 +115,8 @@ export function bucketCounts(list: Conversation[], ctx: FilterCtx): Record<Inbox
 
 export function activeFilterCount(f: InboxFilter): number {
   return (f.assigneeIds.length ? 1 : 0) + (f.labelIds.length ? 1 : 0) + (f.tags.length ? 1 : 0) +
-    (f.lifecycles.length ? 1 : 0) + (f.channelIds.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0);
+    (f.lifecycles.length ? 1 : 0) + (f.channelIds.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0) +
+    (f.adFilter || f.adSourceIds.length ? 1 : 0);
 }
 
 export interface NumberTab {
