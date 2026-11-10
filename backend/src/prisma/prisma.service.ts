@@ -67,6 +67,12 @@ export class PrismaService implements OnModuleDestroy {
   get adsActionAudit() { return this.client.adsActionAudit; }
   get adsWallet() { return this.client.adsWallet; }
   get adsWalletTransaction() { return this.client.adsWalletTransaction; }
+  // SP-15: click-to-WhatsApp attribution and Meta Ads.
+  get adSource() { return this.client.adSource; }
+  get adReferral() { return this.client.adReferral; }
+  get adSpendDaily() { return this.client.adSpendDaily; }
+  get metaAdsConnection() { return this.client.metaAdsConnection; }
+  get metaLead() { return this.client.metaLead; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

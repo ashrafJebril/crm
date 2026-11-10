@@ -287,6 +287,30 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-15 (part 1): the ad-source routes Task 1 adds. Task 2 extends this block.
+  describe("SP-15 ads routes", () => {
+    const READS = ["GET /ad-sources", "GET /ad-sources/:id/conversations"];
+
+    it("permission map covers SP-15 routes", () => {
+      expect(ROUTE_PERMISSIONS["GET /ad-sources"]).toBe("conversations.view");
+      expect(ROUTE_PERMISSIONS["GET /ad-sources/:id/conversations"]).toBe("conversations.view");
+    });
+
+    it("owner, admin, agent and viewer can read the ad filter and the per-ad conversations (scoped)", () => {
+      for (const route of READS) {
+        for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    it("impersonation is not blocked (ruling 7)", () => {
+      for (const route of READS) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
     it("billing.manage and roles.manage are owner-only", () => {
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "billing.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "roles.manage")).toBe(false);

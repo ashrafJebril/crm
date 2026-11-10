@@ -30,6 +30,7 @@ import { channelError } from "../channels/channel-errors";
 import type { Channel } from "@prisma/client";
 import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
 import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
+import { AdReferralService } from "../ad-attribution/ad-referral.service";
 import { zernioReplyParts } from "../campaigns/tracking/inbound-reply";
 import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
 import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
@@ -75,6 +76,8 @@ export class ZernioService {
   /** SP-12: per-recipient delivery state and reply attribution. */
   private readonly tracker: RecipientTrackerService;
   private readonly attributor: CampaignReplyAttributor;
+  /** SP-15: click-to-WhatsApp referral capture. */
+  private readonly adReferrals: AdReferralService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -95,10 +98,13 @@ export class ZernioService {
     @Optional() attributor?: CampaignReplyAttributor,
     // SP-14: template webhooks ask for a number health check (global ChannelsCoreModule).
     @Optional() private readonly healthTrigger?: HealthCheckTrigger,
+    // SP-15, from AdAttributionModule; hand-built specs get one over the same Prisma double.
+    @Optional() adReferrals?: AdReferralService,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
     this.attributor = attributor ?? new CampaignReplyAttributor(prisma, this.tracker);
+    this.adReferrals = adReferrals ?? new AdReferralService(prisma, media);
   }
 
   // ─── Profile (per-workspace tenant) ──────────────────────────────────────
@@ -1753,6 +1759,18 @@ export class ZernioService {
         inboundMessageId: created?.id ?? null,
         at: now,
       });
+      // SP-15: a click-to-WhatsApp referral (WhatsApp only, ruling 4). After
+      // the message row exists; capture never throws (Review Focus 2).
+      if (channel === "whatsapp" && created?.id) {
+        await this.adReferrals.captureZernio(evt, {
+          workspaceId,
+          channelId,
+          conversationId: conv.id,
+          contactId: contact.id,
+          messageId: created.id,
+          at: now,
+        });
+      }
     }
 
     // Our own outbound echo is not something to answer, and a thread only
@@ -2038,8 +2056,17 @@ export interface ZernioWebhookEvent {
     sentAt?: string;
     isRead?: boolean;
     /** SP-12 (ruling 7): a tapped button's payload, only when Zernio sends it. */
-    metadata?: { buttonPayload?: string; postbackPayload?: string } | null;
+    metadata?: {
+      buttonPayload?: string;
+      postbackPayload?: string;
+      /** SP-15: Meta's verbatim CTWA referral (location unverified, ruling 13). */
+      referral?: unknown;
+      /** SP-15: Zernio's ad attribution `{adId, name, synced, …}`. */
+      ad?: unknown;
+    } | null;
   };
+  /** SP-15: CTWA attribution at the payload root (as Zernio's docs place it). */
+  metadata?: { referral?: unknown; ad?: unknown; [k: string]: unknown } | null;
   /** reaction.received: the emoji and the message it targets (empty emoji = removed). */
   reaction?: {
     emoji?: string | null;

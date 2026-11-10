@@ -23,6 +23,7 @@ import {
   CreateMessageDto,
   UpdateConversationDto,
 } from "./conversations.dto";
+import { AD_SOURCE_CHIP_SELECT, toAdSourceChip } from "../ad-attribution/ad-source-chip";
 
 @Injectable()
 export class ConversationsService {
@@ -91,7 +92,7 @@ export class ConversationsService {
       this.prisma.conversation.findMany({
         where,
         orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-        include: { labels: { select: { labelId: true } } },
+        include: { labels: { select: { labelId: true } }, adSource: { select: AD_SOURCE_CHIP_SELECT } },
       }),
       this.prisma.channel.findMany({
         where: { workspaceId },
@@ -131,8 +132,8 @@ export class ConversationsService {
 
     const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
     const now = Date.now();
-    return convs.map(({ labels, ...rest }) => {
-      const c = { ...rest, labelIds: labels.map((l) => l.labelId) };
+    return convs.map(({ labels, adSource, ...rest }) => {
+      const c = { ...rest, labelIds: labels.map((l) => l.labelId), adSource: toAdSourceChip(adSource) };
       if (c.channel !== "whatsapp") return c;
       const lastInboundAt = lastInboundByConv.get(c.id) ?? null;
       const waWindowOpen = lastInboundAt
@@ -149,10 +150,12 @@ export class ConversationsService {
       include: {
         messages: { orderBy: { createdAt: "asc" } },
         labels: { select: { labelId: true } },
+        adSource: { select: AD_SOURCE_CHIP_SELECT },
       },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
-    return this.withWindow(conv);
+    const { adSource, ...full } = conv;
+    return { ...this.withWindow(full), adSource: toAdSourceChip(adSource) };
   }
 
   private withWindow<

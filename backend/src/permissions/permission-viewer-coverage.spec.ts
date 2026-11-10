@@ -18,6 +18,7 @@ import { FacebookController } from "../integrations/facebook.controller";
 import { InstagramController } from "../integrations/instagram.controller";
 import { WorkflowsController } from "../workflows/workflows.controller";
 import { MediaController } from "../media/media.controller";
+import { AdSourcesController } from "../ad-attribution/ad-sources.controller";
 
 // Some modules read secrets at import time (JwtModule.register in AuthModule).
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret-for-permission-viewer-coverage-spec";
@@ -49,6 +50,7 @@ function injectsViewer(ctrl: Function, method: string, factory: unknown): boolea
 const ALLOWLIST: Record<string, string> = {
   "POST /conversations": "creates a new conversation; reads no existing one",
   "GET /conversation-labels": "label definitions only; no conversation data",
+  "GET /ad-sources": "SP-15 ad names for the inbox filter; no conversation data",
   "GET /saved-replies": "workspace canned replies; no conversation data",
   "POST /saved-replies": "creates a workspace canned reply",
   "PATCH /saved-replies/:id": "edits a workspace canned reply",
@@ -84,6 +86,7 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["instagram", InstagramController, ["listConversations", "listMessages", "sendDirectMessage", "send"]],
   ["workflows", WorkflowsController, ["listRuns", "getRun"]],
   ["media", MediaController, ["list", "serve", "remove"]],
+  ["ad-sources", AdSourcesController, ["conversations"]],
 ];
 
 const SRC = path.resolve(__dirname, "..");

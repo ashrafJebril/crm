@@ -18,6 +18,8 @@ import { MediaService } from "../media/media.service";
 import { UpdateTicketDto } from "../tickets/tickets.dto";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
+import { makeFakePrisma } from "../channels/test-prisma";
+import { AdSourcesService } from "../ad-attribution/ad-sources.service";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -98,6 +100,8 @@ function makePrisma(perms: Record<string, string[]>, visibility: "assigned" | "a
     noteSeen: { upsert: jest.fn() },
     appointment: { findFirst: jest.fn(), count: jest.fn().mockResolvedValue(0) },
     user: { findUnique: jest.fn().mockResolvedValue({ name: "x" }) },
+    // SP-15: re-hosted ad creatives are visible like staff uploads (none here).
+    adSource: { findMany: jest.fn().mockResolvedValue([]) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: jest.fn().mockResolvedValue([]),
@@ -540,5 +544,125 @@ describe("assigned-only conversation visibility: side doors", () => {
       const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
       expect(errors.map((e) => e.property)).toEqual(["conversationId"]);
     });
+  });
+});
+
+/**
+ * SP-15 Review Focus 4: `GET /ad-sources/:id/conversations` is ANDed with the
+ * viewer's conversation scope. The real PermissionService and AdSourcesService
+ * over the in-memory Prisma double.
+ */
+describe("SP-15 per-ad conversation list", () => {
+  const WS1 = "ws1";
+  const t = (min: number) => new Date(Date.UTC(2026, 10, 15, 9, min));
+  const touch = (id: string, conversationId: string, min: number, firstTouch = false) => ({
+    id,
+    workspaceId: WS1,
+    adSourceId: "ad-1",
+    conversationId,
+    contactId: `ct-${conversationId}`,
+    channelId: "ch-1",
+    messageId: `msg-${id}`,
+    provider: "meta",
+    ctwaClid: "secret-clid",
+    firstTouch,
+    referredAt: t(min),
+  });
+  const conversation = (id: string, assigneeId: string | null, workspaceId = WS1) => ({
+    id,
+    workspaceId,
+    contactId: `ct-${id}`,
+    channelId: "ch-1",
+    status: "human",
+    assigneeId,
+    adSourceId: "ad-1",
+  });
+  function build() {
+    const prisma = makeFakePrisma({
+      workspace: [
+        { id: WS1, timezone: "Asia/Riyadh" },
+        { id: "ws2", timezone: "Asia/Riyadh" },
+      ],
+      role: [
+        { id: "r-owner", workspaceId: WS1, key: "owner", isSystem: true, name: "Owner", nameAr: "Owner", permissions: { "*": ["*"] }, conversationVisibility: "all" },
+        { id: "r-agent", workspaceId: WS1, key: null, isSystem: false, name: "A", nameAr: "A", permissions: { conversations: ["view"] }, conversationVisibility: "assigned" },
+      ],
+      workspaceMember: [
+        { id: "wm1", workspaceId: WS1, userId: "owner", role: "owner", roleId: null },
+        { id: "wm2", workspaceId: WS1, userId: ME, role: "custom", roleId: "r-agent" },
+      ],
+      adSource: [
+        { id: "ad-1", workspaceId: WS1, sourceType: "ad", sourceId: "1", lastReferredAt: t(9) },
+        { id: "ad-foreign", workspaceId: "ws2", sourceType: "ad", sourceId: "1", lastReferredAt: t(9) },
+      ],
+      conversation: [conversation("cv-mine", ME), conversation("cv-other", "someone"), conversation("cv-none", null), conversation("cv-ws2", ME, "ws2")],
+      contact: [
+        { id: "ct-cv-mine", workspaceId: WS1, name: "Mine" },
+        { id: "ct-cv-other", workspaceId: WS1, name: "Other" },
+        { id: "ct-cv-none", workspaceId: WS1, name: "None" },
+      ],
+      adReferral: [
+        touch("r1", "cv-mine", 1, true),
+        touch("r2", "cv-other", 2, true),
+        touch("r3", "cv-none", 3, true),
+        touch("r4", "cv-mine", 4),
+        touch("r5", "cv-other", 5),
+        { ...touch("r-ws2", "cv-ws2", 6, true), workspaceId: "ws2", adSourceId: "ad-foreign" },
+      ],
+    });
+    const perm = new PermissionService(prisma);
+    return { prisma, svc: new AdSourcesService(prisma, perm) };
+  }
+  const RANGE = { from: "2026-11-01", to: "2026-11-30" };
+
+  it("per-ad conversation list respects assigned visibility", async () => {
+    const { svc } = build();
+    const mine = await svc.conversations(WS1, "ad-1", { userId: ME }, RANGE);
+    expect(mine.items.map((i) => i.conversationId)).toEqual(["cv-mine", "cv-mine"]);
+    expect(mine.items[0]).toEqual({
+      conversationId: "cv-mine",
+      contactId: "ct-cv-mine",
+      contactName: "Mine",
+      channelId: "ch-1",
+      referredAt: t(4),
+      firstTouch: false,
+      status: "human",
+      assigneeId: ME,
+    });
+    expect(JSON.stringify(mine)).not.toContain("secret-clid");
+
+    const all = await svc.conversations(WS1, "ad-1", { userId: "owner" }, RANGE);
+    expect(all.items.map((i) => i.conversationId)).toEqual(["cv-other", "cv-mine", "cv-none", "cv-other", "cv-mine"]);
+    // A bypass session (super-admin / impersonation) is unfiltered too.
+    expect((await svc.conversations(WS1, "ad-1", { userId: "x", bypass: true }, RANGE)).items).toHaveLength(5);
+    // A non-member fails closed.
+    expect((await svc.conversations(WS1, "ad-1", { userId: "stranger" }, RANGE)).items).toEqual([]);
+  });
+
+  it("cursor paging is stable under a new touch", async () => {
+    const { prisma, svc } = build();
+    const p1 = await svc.conversations(WS1, "ad-1", { userId: "owner" }, { ...RANGE, limit: 2 });
+    expect(p1.items.map((i) => i.referredAt)).toEqual([t(5), t(4)]);
+    expect(p1.nextCursor).toEqual(expect.any(String));
+    // A new, newer touch arrives between pages: it never shifts the next page.
+    prisma.db.adReferral.push(touch("r9", "cv-none", 30));
+    const p2 = await svc.conversations(WS1, "ad-1", { userId: "owner" }, { ...RANGE, limit: 2, cursor: p1.nextCursor! });
+    expect(p2.items.map((i) => i.referredAt)).toEqual([t(3), t(2)]);
+    const p3 = await svc.conversations(WS1, "ad-1", { userId: "owner" }, { ...RANGE, limit: 2, cursor: p2.nextCursor! });
+    expect(p3.items.map((i) => i.referredAt)).toEqual([t(1)]);
+    expect(p3.nextCursor).toBeNull();
+    await expect(svc.conversations(WS1, "ad-1", { userId: "owner" }, { ...RANGE, cursor: "%%%" })).rejects.toMatchObject({
+      response: { message: "ads.range_invalid" },
+    });
+  });
+
+  it("foreign ids return 404 on SP-15 routes", async () => {
+    const { svc } = build();
+    for (const id of ["ad-foreign", "missing"]) {
+      await expect(svc.conversations(WS1, id, { userId: "owner" }, RANGE)).rejects.toMatchObject({
+        status: 404,
+        response: { statusCode: 404, message: "ads.not_found" },
+      });
+    }
   });
 });

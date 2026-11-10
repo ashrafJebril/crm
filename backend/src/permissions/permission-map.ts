@@ -150,6 +150,10 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /conversations/:id/send": "conversations.create", // SP-19 transport send (telegram/native); viewer-checked
   "PUT /conversations/:id/labels": "conversations.update",
   "GET /conversation-labels": "conversations.view",
+  // SP-15: the inbox Ad source filter's options, and an ad's conversations
+  // (ANDed with the viewer's conversation scope).
+  "GET /ad-sources": "conversations.view",
+  "GET /ad-sources/:id/conversations": "conversations.view",
   "GET /saved-replies": "conversations.view",
   "POST /saved-replies": "conversations.manage",
   "PATCH /saved-replies/:id": "conversations.manage",

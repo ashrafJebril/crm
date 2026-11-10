@@ -71,6 +71,13 @@ export function matches(row: Row, where: any, db: Tables, model: string): boolea
       if (!hit) return false;
       continue;
     }
+    // SP-15: AdReferral -> Conversation relation filter (`{ is: {...} }` or a plain where).
+    if (model === "adReferral" && k === "conversation") {
+      const inner = (cond as any)?.is ?? cond;
+      const conv = (db.conversation ?? []).find((c) => c.id === row.conversationId);
+      if (!conv || !matches(conv, inner, db, "conversation")) return false;
+      continue;
+    }
     if (model === "integration" && k === "channel") {
       const linked = (db.channel ?? []).some((c) => c.integrationId === row.id);
       const wantNull = cond === null || (cond as any)?.is === null;
@@ -159,7 +166,58 @@ const DEFAULTS: Record<string, () => Row> = {
     healthAttemptedAt: null,
   }),
   integration: () => ({ provider: "meta", pageId: null, pageName: null, accessToken: null, raw: null }),
-  conversation: () => ({ channelId: null, externalId: null, aiEnabled: false, aiPausedAt: null, unread: 0 }),
+  conversation: () => ({
+    channelId: null,
+    externalId: null,
+    aiEnabled: false,
+    aiPausedAt: null,
+    unread: 0,
+    // SP-15
+    adSourceId: null,
+    adReferredAt: null,
+  }),
+  // SP-15
+  adSource: () => ({
+    headline: null,
+    body: null,
+    mediaType: null,
+    mediaUrl: null,
+    mediaId: null,
+    sourceUrl: null,
+    welcomeText: null,
+    adAccountId: null,
+    adName: null,
+    adSetName: null,
+    campaignName: null,
+    namesFrom: null,
+    firstReferredAt: null,
+    lastReferredAt: null,
+  }),
+  adReferral: () => ({ channelId: null, ctwaClid: null, firstTouch: false }),
+  metaAdsConnection: () => ({
+    status: "pending",
+    statusReason: null,
+    tokenEnc: null,
+    tokenExpiresAt: null,
+    pendingTokenEnc: null,
+    pendingExpiresAt: null,
+    scopes: null,
+    adAccountId: null,
+    adAccountName: null,
+    currency: null,
+    timezone: null,
+    pageId: null,
+    pageName: null,
+    connectedById: null,
+    connectedAt: null,
+    lastSyncedAt: null,
+    lastSyncError: null,
+    syncAttemptedAt: null,
+    spendBackfilledAt: null,
+    checkAttemptedAt: null,
+    leadCheckpoints: null,
+  }),
+  metaLead: () => ({ formName: null, adId: null, adSourceId: null, contactId: null }),
   // SP-12
   campaign: () => ({
     recipientTracking: false,
@@ -217,6 +275,41 @@ const DEFAULTS: Record<string, () => Row> = {
   customFieldDef: () => ({ entity: "contact", options: null, order: 0, archivedAt: null }),
 };
 
+/** SP-15 unique constraints, as Postgres enforces them (P2002). */
+const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
+  adSource: [["AdSource_workspaceId_sourceType_sourceId_key", ["workspaceId", "sourceType", "sourceId"]]],
+  adReferral: [["AdReferral_messageId_key", ["messageId"]]],
+  adSpendDaily: [["AdSpendDaily_adSourceId_date_key", ["adSourceId", "date"]]],
+  metaAdsConnection: [["MetaAdsConnection_workspaceId_key", ["workspaceId"]]],
+  metaLead: [["MetaLead_workspaceId_leadgenId_key", ["workspaceId", "leadgenId"]]],
+};
+const keyPart = (v: any) => (v instanceof Date ? v.getTime() : v);
+function sp15Clash(model: string, rows: Row[], row: Row): string | null {
+  for (const [name, cols] of SP15_UNIQUES[model] ?? []) {
+    if (rows.some((o) => o !== row && cols.every((c) => keyPart(o[c]) === keyPart(row[c])))) return name;
+  }
+  return null;
+}
+
+/** SP-15: the relations specs read through `include` / nested `select`. */
+const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>> = {
+  conversation: { adSource: ["adSource", "adSourceId", "one"], adReferrals: ["adReferral", "conversationId", "many"] },
+  adReferral: {
+    conversation: ["conversation", "conversationId", "one"],
+    adSource: ["adSource", "adSourceId", "one"],
+    message: ["message", "messageId", "one"],
+  },
+  adSource: { media: ["media", "mediaId", "one"], referrals: ["adReferral", "adSourceId", "many"] },
+  metaLead: { adSource: ["adSource", "adSourceId", "one"], contact: ["contact", "contactId", "one"] },
+};
+function relation(model: string, row: Row, key: string, db: Tables): Row | Row[] | null | undefined {
+  const rel = RELATIONS[model]?.[key];
+  if (!rel) return undefined;
+  const [target, fk, kind] = rel;
+  if (kind === "one") return (db[target] ?? []).find((r) => r.id === row[fk]) ?? null;
+  return (db[target] ?? []).filter((r) => r[fk] === row.id);
+}
+
 /** SP-13: @@unique([campaignId, partitionKey]). */
 function broadcastClash(rows: Row[], row: Row): boolean {
   return rows.some((o) => o !== row && o.campaignId === row.campaignId && o.partitionKey === row.partitionKey);
@@ -227,11 +320,25 @@ function recipientClash(rows: Row[], row: Row): boolean {
   return row.phone != null && rows.some((o) => o !== row && o.campaignId === row.campaignId && o.phone === row.phone);
 }
 
-function project(row: Row, select?: any, include?: any, db?: Tables): Row {
+function project(row: Row, select?: any, include?: any, db?: Tables, model?: string): Row {
   let out: Row = { ...row };
+  const nested = (k: string, v: any): any => {
+    const r = model && db ? relation(model, row, k, db) : undefined;
+    if (r === undefined) return undefined;
+    const target = RELATIONS[model as string][k][0];
+    const sel = typeof v === "object" ? v.select : undefined;
+    const inc = typeof v === "object" ? v.include : undefined;
+    if (Array.isArray(r)) return r.map((x) => project(x, sel, inc, db, target));
+    return r ? project(r, sel, inc, db, target) : null;
+  };
   if (include && db) {
     for (const [k, v] of Object.entries(include)) {
       if (!v) continue;
+      const rel = nested(k, v);
+      if (rel !== undefined) {
+        out[k] = rel;
+        continue;
+      }
       if (k === "contact") out.contact = (db.contact ?? []).find((c) => c.id === row.contactId) ?? null;
       if (k === "labels") out.labels = [];
       if (k === "messages") out.messages = (db.message ?? []).filter((m) => m.conversationId === row.id);
@@ -241,7 +348,11 @@ function project(row: Row, select?: any, include?: any, db?: Tables): Row {
   }
   if (select) {
     const picked: Row = {};
-    for (const [k, v] of Object.entries(select)) if (v) picked[k] = out[k];
+    for (const [k, v] of Object.entries(select)) {
+      if (!v) continue;
+      const rel = typeof v === "object" ? nested(k, v) : undefined;
+      picked[k] = rel !== undefined ? rel : out[k];
+    }
     out = picked;
   }
   return out;
@@ -258,6 +369,12 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     campaign: [],
     template: [],
     campaignRecipient: [],
+    // SP-15
+    adSource: [],
+    adReferral: [],
+    adSpendDaily: [],
+    metaAdsConnection: [],
+    metaLead: [],
     ...seed,
   } as Tables;
 
@@ -266,6 +383,8 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     const write = (row: Row) => {
       if (name === "channel") checkChannelUniques(rows(), row);
       if (name === "campaignBroadcast" && broadcastClash(rows(), row)) throw p2002("CampaignBroadcast_campaignId_partitionKey_key");
+      const sp15 = sp15Clash(name, rows(), row);
+      if (sp15) throw p2002(sp15);
     };
     // Like Prisma, every call returns a LAZY thenable: nothing runs until it
     // is awaited, so an array $transaction can snapshot first and roll back.
@@ -275,15 +394,15 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         let r = rows().filter((x) => matches(x, a.where, db, name));
         r = sortRows(r, a.orderBy);
         if (a.take) r = r.slice(0, a.take);
-        return r.map((x) => project(x, a.select, a.include, db));
+        return r.map((x) => project(x, a.select, a.include, db, name));
       }),
       findFirst: op((a) => {
         const r = sortRows(rows().filter((x) => matches(x, a.where, db, name)), a.orderBy)[0];
-        return r ? project(r, a.select, a.include, db) : null;
+        return r ? project(r, a.select, a.include, db, name) : null;
       }),
       findUnique: op((a) => {
         const r = rows().find((x) => matches(x, a.where, db, name));
-        return r ? project(r, a.select, a.include, db) : null;
+        return r ? project(r, a.select, a.include, db, name) : null;
       }),
       count: op((a) => rows().filter((x) => matches(x, a.where, db, name)).length),
       // Supports `by: [field]` with `_count: { _all: true }` (what SP-12 uses).
@@ -295,6 +414,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
           const key = JSON.stringify(by.map((k) => x[k]));
           const g = groups.get(key) ?? Object.fromEntries([...by.map((k) => [k, x[k]]), ["_count", { _all: 0 }]]);
           g._count._all++;
+          // SP-15: `_max` (the inbox WhatsApp window query).
+          for (const f of Object.keys(a._max ?? {})) {
+            g._max ??= {};
+            const cur = g._max[f];
+            if (x[f] != null && (cur == null || x[f] > cur)) g._max[f] = x[f];
+            else g._max[f] ??= null;
+          }
           groups.set(key, g);
         }
         return [...groups.values()];
@@ -318,6 +444,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
             if (a.skipDuplicates) continue;
             throw p2002("SegmentMember_pkey");
           }
+          if (a.skipDuplicates && sp15Clash(name, rows(), row)) continue;
           write(row);
           rows().push(row);
           count++;
@@ -404,6 +531,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     if (db.campaignBroadcast) db.campaignBroadcast = db.campaignBroadcast.filter((b) => b.campaignId !== row.id);
     for (const c of db.campaign ?? []) if (c.headerMediaId === row.id) c.headerMediaId = null;
     for (const t of db.template ?? []) if (t.headerMediaId === row.id) t.headerMediaId = null;
+    // SP-15: Conversation/AdSource/Message deletes cascade into AdReferral; Conversation.adSourceId,
+    // AdSource.mediaId and MetaLead.adSourceId -> SET NULL; a Contact delete cascades MetaLead.
+    if (db.adReferral) db.adReferral = db.adReferral.filter((r) => r.conversationId !== row.id && r.adSourceId !== row.id && r.messageId !== row.id);
+    for (const c of db.conversation ?? []) if (c.adSourceId === row.id) c.adSourceId = null;
+    for (const s of db.adSource ?? []) if (s.mediaId === row.id) s.mediaId = null;
+    for (const l of db.metaLead ?? []) if (l.adSourceId === row.id) l.adSourceId = null;
+    if (db.metaLead) db.metaLead = db.metaLead.filter((l) => l.contactId !== row.id);
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -445,6 +579,12 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     customFieldDef: model("customFieldDef"),
     customFieldValue: model("customFieldValue"),
     media: model("media"),
+    // SP-15
+    adSource: model("adSource"),
+    adReferral: model("adReferral"),
+    adSpendDaily: model("adSpendDaily"),
+    metaAdsConnection: model("metaAdsConnection"),
+    metaLead: model("metaLead"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();

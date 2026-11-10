@@ -204,8 +204,10 @@ export class MediaService {
    * Media ids of `rows` a restricted (assigned-only) viewer may see: staff
    * uploads (uploadedById set) and media referenced by a message in a
    * conversation the viewer can see. Messages reference media by id in
-   * `attach`, or by a URL containing the id (public-token links). null when
-   * the viewer is unrestricted.
+   * `attach`, or by a URL containing the id (public-token links). SP-15: a
+   * re-hosted ad creative (AdSource.mediaId) is the business's own ad, shown
+   * on the inbox chip, so it is visible like a staff upload. null when the
+   * viewer is unrestricted.
    */
   private async visibleTo(
     workspaceId: string,
@@ -216,7 +218,15 @@ export class MediaService {
     const scope = await this.perm.conversationScope(workspaceId, viewer);
     if (Object.keys(scope).length === 0) return null;
     const out = new Set(rows.filter((r) => r.uploadedById != null).map((r) => r.id));
-    const inbound = rows.filter((r) => r.uploadedById == null).map((r) => r.id);
+    let inbound = rows.filter((r) => r.uploadedById == null).map((r) => r.id);
+    if (inbound.length > 0) {
+      const creatives = await this.prisma.adSource.findMany({
+        where: { workspaceId, mediaId: { in: inbound } },
+        select: { mediaId: true },
+      });
+      for (const c of creatives) if (c.mediaId) out.add(c.mediaId);
+      inbound = inbound.filter((id) => !out.has(id));
+    }
     if (inbound.length > 0) {
       const msgs = await this.prisma.message.findMany({
         where: {

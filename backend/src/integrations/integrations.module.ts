@@ -34,9 +34,10 @@ import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
 import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.module";
+import { AdAttributionModule } from "../ad-attribution/ad-attribution.module";
 
 @Module({
-  imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule, CampaignTrackingModule],
+  imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule, CampaignTrackingModule, AdAttributionModule],
   controllers: [
     FacebookController,
     InstagramController,

@@ -38,6 +38,12 @@ const SCOPED_MODELS = new Set([
   "AdsActionAudit",
   "AdsWallet",
   "AdsWalletTransaction",
+  // SP-15
+  "AdSource",
+  "AdReferral",
+  "AdSpendDaily",
+  "MetaAdsConnection",
+  "MetaLead",
 ]);
 
 const READ_ACTIONS = new Set([

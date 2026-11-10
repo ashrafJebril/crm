@@ -31,6 +31,7 @@ import { addsWhatsappSlot, assertSecretsStorable, attachMetaNumber, NOT_META } f
 
 import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
 import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
+import { AdReferralService } from "../ad-attribution/ad-referral.service";
 import { metaReplyParts } from "../campaigns/tracking/inbound-reply";
 import { providerFailure } from "../campaigns/tracking/failure-codes";
 import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
@@ -73,6 +74,8 @@ interface WebhookEntryChangeValue {
       button_reply?: { id?: string; title?: string };
       list_reply?: { id?: string; title?: string; description?: string };
     };
+    /** SP-15: present only on the first message after a click-to-WhatsApp ad. */
+    referral?: MetaReferral;
   }>;
   statuses?: Array<{
     id: string;
@@ -82,6 +85,21 @@ interface WebhookEntryChangeValue {
     // On "failed": Meta's error(s).
     errors?: Array<{ code?: number; title?: string; message?: string; error_data?: { details?: string } }>;
   }>;
+}
+
+/** SP-15: Meta's CTWA `referral` (webhooks reference, messages). Parsed defensively. */
+interface MetaReferral {
+  source_url?: string;
+  source_id?: string;
+  source_type?: string;
+  body?: string;
+  headline?: string;
+  media_type?: string;
+  image_url?: string;
+  video_url?: string;
+  thumbnail_url?: string;
+  ctwa_clid?: string;
+  welcome_message?: { text?: string };
 }
 
 // Meta sends a different `value` shape for template status updates than for
@@ -180,15 +198,20 @@ export class WhatsAppService {
     @Optional() attributor?: CampaignReplyAttributor,
     // SP-14: quality webhooks ask for a number health check (global ChannelsCoreModule).
     @Optional() private readonly healthTrigger?: HealthCheckTrigger,
+    // SP-15, from AdAttributionModule; hand-built specs get one over the same Prisma double.
+    @Optional() adReferrals?: AdReferralService,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
     this.attributor = attributor ?? new CampaignReplyAttributor(prisma, this.tracker);
+    this.adReferrals = adReferrals ?? new AdReferralService(prisma, media);
     this.embeddedSignup = embeddedSignup ?? new EmbeddedSignupService(prisma, new MetaGraphClient(), realtime);
   }
   private readonly embeddedSignup: EmbeddedSignupService;
   private readonly tracker: RecipientTrackerService;
   private readonly attributor: CampaignReplyAttributor;
+  /** SP-15: click-to-WhatsApp referral capture. */
+  private readonly adReferrals: AdReferralService;
 
   // ─── Public REST API ───────────────────────────────────────────────────
   /**
@@ -1416,6 +1439,18 @@ export class WhatsAppService {
       inboundMessageId: created?.id ?? null,
       at: d,
     });
+    // SP-15: the click-to-WhatsApp referral, after the message row exists.
+    // Capture never throws (Review Focus 2).
+    if (msg.referral && created?.id) {
+      await this.adReferrals.captureMeta(msg.referral, {
+        workspaceId,
+        channelId: channel.id,
+        conversationId: conv.id,
+        contactId: contact.id,
+        messageId: created.id,
+        at: d,
+      });
+    }
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "whatsapp",
       channelId: channel.id,
