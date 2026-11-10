@@ -24,3 +24,7 @@ export const HEALTH_SWEEP_MAX_MS = 10 * 60_000;
 export const healthSweepBatch = (env: Env = process.env) => positiveInt(env.HEALTH_SWEEP_BATCH, HEALTH_SWEEP_BATCH);
 export const healthSweepIntervalMs = (env: Env = process.env) => positiveInt(env.HEALTH_SWEEP_INTERVAL_MS, HEALTH_SWEEP_INTERVAL_MS);
 export const healthSweepMaxMs = (env: Env = process.env) => positiveInt(env.HEALTH_SWEEP_MAX_MS, HEALTH_SWEEP_MAX_MS);
+
+/** Review m1: webhook-triggered checks per workspace per minute (separate from the live-check cap). */
+export const HEALTH_WEBHOOK_WS_PER_MIN = 30;
+export const healthWebhookWsPerMin = (env: Env = process.env) => positiveInt(env.HEALTH_WEBHOOK_WS_PER_MIN, HEALTH_WEBHOOK_WS_PER_MIN);

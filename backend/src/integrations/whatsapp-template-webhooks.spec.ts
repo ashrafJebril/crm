@@ -81,6 +81,44 @@ describe("Meta template and quality webhooks (SP-14)", () => {
     expect(w.prisma.db.channel.every((c: { health?: unknown }) => c.health == null)).toBe(true);
   });
 
+  it("the WABA lookup filters in the query and batches Integration reads (review m3)", async () => {
+    const w = build();
+    // Many Meta numbers of other WABAs and tenants, several legacy-linked.
+    for (let i = 0; i < 30; i++) {
+      w.prisma.db.integration.push({ id: `intX${i}`, workspaceId: `wsX${i}`, platform: "whatsapp", provider: "meta", pageId: `pnX${i}`, raw: JSON.stringify({ wabaId: `waba_X${i}` }) });
+      w.prisma.db.channel.push(
+        { id: `chX${i}`, workspaceId: `wsX${i}`, kind: "whatsapp", provider: "meta", externalId: `pnX${i}`, displayName: "x", phoneNumber: `+1555000${i}`, status: "active", config: { wabaId: `waba_Y${i}` } },
+        { id: `chL${i}`, workspaceId: `wsX${i}`, kind: "whatsapp", provider: "meta", externalId: `pnL${i}`, displayName: "x", phoneNumber: `+1666000${i}`, status: "active", config: null, integrationId: `intX${i}` },
+      );
+    }
+    const chFind = jest.spyOn(w.prisma.channel, "findMany");
+    const intMany = jest.spyOn(w.prisma.integration, "findMany");
+    const intFirst = jest.spyOn(w.prisma.integration, "findFirst");
+
+    await w.hook("message_template_quality_update", { new_quality_score: "RED", message_template_id: 111 });
+    await w.hook("phone_number_quality_update", { display_phone_number: "+1 555-000-1111" }, "waba_L");
+    await w.trigger.idle();
+    expect(new Set(w.checks.map(([, id]) => id))).toEqual(new Set(["chM", "chM2", "chL"]));
+
+    // Per event: one Integration query and one Channel query, whatever the number of Meta numbers.
+    expect(intFirst).not.toHaveBeenCalled();
+    expect(intMany).toHaveBeenCalledTimes(2);
+    expect(chFind).toHaveBeenCalledTimes(2);
+    // The Channel query is scoped to the WABA: the config JSON path, or the WABA's legacy Integrations.
+    const call = (i: number) => (chFind.mock.calls[i][0] as { where: { OR: unknown } }).where;
+    const where = call(0);
+    expect(where.OR).toEqual([{ config: { path: ["wabaId"], equals: "waba_A" } }, { integrationId: { in: [] } }]);
+    expect(call(1).OR).toEqual([{ config: { path: ["wabaId"], equals: "waba_L" } }, { integrationId: { in: ["int1"] } }]);
+  });
+
+  it("a legacy-linked number whose config names another WABA is not matched through its Integration", async () => {
+    const w = build();
+    w.prisma.db.channel.find((c: { id: string }) => c.id === "chL").config = { wabaId: "waba_other" };
+    await w.hook("phone_number_quality_update", { display_phone_number: "15550001111" }, "waba_L");
+    await w.trigger.idle();
+    expect(w.checks).toEqual([]);
+  });
+
   it("the phone quality webhook triggers a check of the matching Meta number only", async () => {
     const w = build();
     await w.hook("phone_number_quality_update", { display_phone_number: "962790000001", event: "DOWNGRADE", current_limit: "TIER_250" });

@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { HttpException, Inject, Injectable, Logger, OnModuleDestroy, Optional } from "@nestjs/common";
 import type { Channel } from "@prisma/client";
 import { ZernioBudget } from "../../campaigns/sending/zernio-budget";
 import { ZernioClient, type ZernioWhatsAppTemplate } from "../../integrations/zernio.client";
@@ -8,7 +8,7 @@ import { toChannelDto, type ChannelDto } from "../channel-dto";
 import { channelError } from "../channel-errors";
 import { MetaGraphClient } from "../whatsapp/meta-graph.client";
 import { evaluateAlerts, type AlertChange } from "./health-alerts";
-import { healthCooldownMs, healthWsPerMin } from "./health-config";
+import { healthCooldownMs, healthWebhookWsPerMin, healthWsPerMin } from "./health-config";
 import {
   asChannelHealth,
   mergeHealth,
@@ -87,9 +87,18 @@ export interface ClaimedCheckResult {
  *    still equals this check's claim token (fencing).
  */
 @Injectable()
-export class ChannelHealthService {
+export class ChannelHealthService implements OnModuleDestroy {
   private readonly log = new Logger(ChannelHealthService.name);
   readonly wsLimiter = new HealthCheckLimiter();
+  /** Review m1: webhook-triggered checks per workspace per minute (`HEALTH_WEBHOOK_WS_PER_MIN`). */
+  readonly webhookLimiter = new HealthCheckLimiter(healthWebhookWsPerMin());
+  /** Review m2: deferred webhook re-checks, one per channel. */
+  private readonly rechecks = new Map<string, { cancelled: boolean; run?: Promise<unknown> }>();
+  private readonly inFlight = new Set<Promise<unknown>>();
+  /** Timer used for deferred re-checks (specs replace it). */
+  defer: (fn: () => void, ms: number) => void = (fn, ms) => {
+    setTimeout(fn, ms).unref?.();
+  };
   private readonly budget: ZernioBudget;
   /** Called after a won write that found downgrades (at most once per downgrade). */
   onDowngrade?: (e: HealthDowngrade) => Promise<void> | void;
@@ -118,12 +127,15 @@ export class ChannelHealthService {
     if (!row) throw channelError("channels.not_found");
     assertCheckable(row);
 
-    const slot = this.wsLimiter.take(workspaceId, now.getTime());
+    // Review m1: webhook-triggered checks have their own per-workspace cap, so
+    // a WABA-wide fan-out never takes the slots "Check now" uses.
+    const limiter = opts.trigger === "webhook" ? this.webhookLimiter : this.wsLimiter;
+    const slot = limiter.take(workspaceId, now.getTime());
     if (!slot.ok) throw channelError("channels.health_check_busy", { retryAfter: slot.retryAfter });
 
     const token = await this.claim(row.id, workspaceId, now, this.cooldownMs);
     if (!token) {
-      this.wsLimiter.refund(workspaceId, now.getTime());
+      limiter.refund(workspaceId, now.getTime());
       const cur = await this.prisma.channel.findFirst({
         where: { id: row.id, workspaceId },
         select: { healthAttemptedAt: true },
@@ -156,18 +168,60 @@ export class ChannelHealthService {
    * disconnected number is logged at debug level and swallowed. Never throws.
    */
   async checkFromWebhook(workspaceId: string, id: string, now: Date = new Date()): Promise<boolean> {
+    // Review m2: a re-check is already scheduled for this number; this event is covered by it.
+    if (this.rechecks.has(id)) return false;
     try {
       await this.check(workspaceId, id, { trigger: "webhook", now });
       return true;
     } catch (e) {
       const status = e instanceof HttpException ? e.getStatus() : 0;
-      if (status === 429 || status === 400 || status === 404 || status === 409) {
+      if (status === 429) {
+        // Cooldown or the webhook cap: the event happened, so check once it ends.
+        const body = (e as HttpException).getResponse() as { retryAfter?: number; nextAt?: string };
+        const waitMs = Math.max(1, Number(body?.retryAfter) || 1) * 1000;
+        const nextAtMs = body?.nextAt ? Date.parse(body.nextAt) : now.getTime() + waitMs;
+        this.scheduleRecheck(workspaceId, id, waitMs, nextAtMs);
+        this.log.debug(`webhook health check of channel ${id} deferred ${waitMs} ms`);
+      } else if (status === 400 || status === 404 || status === 409) {
         this.log.debug(`webhook health check of channel ${id} not run: ${status}`);
       } else {
         this.log.warn(`webhook health check of channel ${id} failed: ${(e as Error)?.name ?? "error"}`);
       }
       return false;
     }
+  }
+
+  /**
+   * Review m2: at most one deferred webhook re-check per number, in memory.
+   * It runs as a webhook check at the end of the cooldown (or the cap's
+   * window); events arriving meanwhile are coalesced into it.
+   */
+  private scheduleRecheck(workspaceId: string, id: string, waitMs: number, nextAtMs: number): void {
+    if (this.rechecks.has(id)) return;
+    const entry: { cancelled: boolean; run?: Promise<unknown> } = { cancelled: false };
+    this.rechecks.set(id, entry);
+    this.defer(() => {
+      if (entry.cancelled) return;
+      this.rechecks.delete(id);
+      entry.run = this.checkFromWebhook(workspaceId, id, new Date(Math.max(Date.now(), nextAtMs)));
+      this.inFlight.add(entry.run);
+      void entry.run.finally(() => this.inFlight.delete(entry.run as Promise<unknown>));
+    }, waitMs);
+  }
+
+  /** Channel ids with a deferred re-check pending. */
+  pendingRechecks(): string[] {
+    return [...this.rechecks.keys()];
+  }
+
+  /** Resolves once every fired re-check has settled (specs). */
+  async idleRechecks(): Promise<void> {
+    while (this.inFlight.size) await Promise.all([...this.inFlight]);
+  }
+
+  onModuleDestroy(): void {
+    for (const e of this.rechecks.values()) e.cancelled = true;
+    this.rechecks.clear();
   }
 
   /**

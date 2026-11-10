@@ -20,6 +20,12 @@ function matchValue(v: any, cond: any): boolean {
   if (cond === null) return v === null || v === undefined;
   if (cond instanceof Date) return v instanceof Date && v.getTime() === cond.getTime();
   if (typeof cond === "object" && !Array.isArray(cond)) {
+    // SP-14 (review m3): a Json column filtered by `{ path: [...], equals }`.
+    if ("path" in cond) {
+      let cur = v;
+      for (const k of cond.path as string[]) cur = cur && typeof cur === "object" ? cur[k] : undefined;
+      return "equals" in cond ? cur === cond.equals : cur !== undefined;
+    }
     if ("in" in cond && !(cond.in as any[]).includes(v)) return false;
     if ("notIn" in cond && (cond.notIn as any[]).includes(v)) return false;
     if ("not" in cond) {

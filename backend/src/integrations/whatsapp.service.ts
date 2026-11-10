@@ -1269,21 +1269,32 @@ export class WhatsAppService {
 
   /** Connected Meta WhatsApp channels of a WABA (`config.wabaId`, else the legacy `Integration.raw.wabaId`). */
   private async metaChannelsOfWaba(wabaId: string): Promise<Array<{ id: string; workspaceId: string; phoneNumber: string | null }>> {
+    // Review m3: two scoped queries per event, whatever the number of Meta
+    // numbers. First the legacy Integrations of this WABA (`raw` is a JSON
+    // string: a `contains` pre-filter, confirmed by parsing)...
+    const integs = await this.prisma.integration.findMany({
+      where: { platform: "whatsapp", raw: { contains: wabaId } },
+      select: { id: true, raw: true },
+    });
+    const legacyIds = integs.filter((i) => this.parseRaw(i.raw ?? null).wabaId === wabaId).map((i) => i.id);
+    // ...then the channels whose config names the WABA, or that link one of those Integrations.
     const rows = await this.prisma.channel.findMany({
-      where: { kind: "whatsapp", provider: "meta", status: { not: "disconnected" } },
+      where: {
+        kind: "whatsapp",
+        provider: "meta",
+        status: { not: "disconnected" },
+        OR: [{ config: { path: ["wabaId"], equals: wabaId } }, { integrationId: { in: legacyIds } }],
+      },
       select: { id: true, workspaceId: true, phoneNumber: true, config: true, integrationId: true },
     });
-    const out: Array<{ id: string; workspaceId: string; phoneNumber: string | null }> = [];
-    for (const r of rows) {
-      const cfg = r.config as Record<string, unknown> | null;
-      let waba = cfg && typeof cfg === "object" && typeof cfg.wabaId === "string" ? cfg.wabaId : null;
-      if (!waba && r.integrationId) {
-        const integ = await this.prisma.integration.findFirst({ where: { id: r.integrationId }, select: { raw: true } });
-        waba = this.parseRaw(integ?.raw ?? null).wabaId ?? null;
-      }
-      if (waba === wabaId) out.push({ id: r.id, workspaceId: r.workspaceId, phoneNumber: r.phoneNumber ?? null });
-    }
-    return out;
+    // `config.wabaId` wins over the legacy Integration, as in the health check's `wabaIdOf`.
+    return rows
+      .filter((r) => {
+        const cfg = r.config as Record<string, unknown> | null;
+        const own = cfg && typeof cfg === "object" && typeof cfg.wabaId === "string" && cfg.wabaId ? cfg.wabaId : null;
+        return own ? own === wabaId : !!r.integrationId && legacyIds.includes(r.integrationId);
+      })
+      .map((r) => ({ id: r.id, workspaceId: r.workspaceId, phoneNumber: r.phoneNumber ?? null }));
   }
 
   private metaLangToLocal(meta: string | undefined): string {
