@@ -140,6 +140,30 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-15 routes (part 2)", () => {
+    const sp15: Record<string, string> = {
+      "GET /ad-sources": "conversations.view",
+      "GET /ad-sources/:id/conversations": "conversations.view",
+      "GET /ad-sources/overview": "reports.view",
+      "GET /ad-sources/:id": "reports.view",
+      "GET /meta-ads/connection": "connectors.view",
+      "GET /meta-ads/oauth/start": "connectors.manage",
+      "GET /meta-ads/oauth/callback": "public",
+      "GET /meta-ads/candidates": "connectors.manage",
+      "POST /meta-ads/connection": "connectors.manage",
+      "POST /meta-ads/check": "connectors.manage",
+      "DELETE /meta-ads/connection": "connectors.manage",
+    };
+    for (const [k, p] of Object.entries(sp15)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // `overview` is declared before `:id`, so it is never captured as an id.
+    const ads = routes.filter((r) => r.key.startsWith("GET /ad-sources/"));
+    const at = (k: string) => ads.findIndex((r) => r.key === k);
+    expect(at("GET /ad-sources/overview")).toBeGreaterThanOrEqual(0);
+    expect(at("GET /ad-sources/overview")).toBeLessThan(at("GET /ad-sources/:id"));
+  });
+
     it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

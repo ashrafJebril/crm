@@ -154,6 +154,18 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // (ANDed with the viewer's conversation scope).
   "GET /ad-sources": "conversations.view",
   "GET /ad-sources/:id/conversations": "conversations.view",
+  // SP-15 Task 2: ad metrics (spend, started, cost) are reports.
+  "GET /ad-sources/overview": "reports.view",
+  "GET /ad-sources/:id": "reports.view",
+  // SP-15 Task 2: Meta Ads connect (ruling 7). The callback is public; its
+  // state JWT binds workspace + user and the user's connectors.manage is re-checked.
+  "GET /meta-ads/connection": "connectors.view",
+  "GET /meta-ads/oauth/start": "connectors.manage",
+  "GET /meta-ads/oauth/callback": "public",
+  "GET /meta-ads/candidates": "connectors.manage",
+  "POST /meta-ads/connection": "connectors.manage",
+  "POST /meta-ads/check": "connectors.manage",
+  "DELETE /meta-ads/connection": "connectors.manage",
   "GET /saved-replies": "conversations.view",
   "POST /saved-replies": "conversations.manage",
   "PATCH /saved-replies/:id": "conversations.manage",

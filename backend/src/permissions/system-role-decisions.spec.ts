@@ -304,8 +304,50 @@ describe("system-role decision table", () => {
       }
     });
 
+    // Part 2 (Task 2): ad metrics and Meta Ads connect.
+    const METRICS = ["GET /ad-sources/overview", "GET /ad-sources/:id"];
+    const MANAGE = [
+      "GET /meta-ads/oauth/start",
+      "GET /meta-ads/candidates",
+      "POST /meta-ads/connection",
+      "POST /meta-ads/check",
+      "DELETE /meta-ads/connection",
+    ];
+
+    it("permission map covers SP-15 routes (part 2)", () => {
+      for (const route of METRICS) expect({ route, p: ROUTE_PERMISSIONS[route] }).toEqual({ route, p: "reports.view" });
+      for (const route of MANAGE) expect({ route, p: ROUTE_PERMISSIONS[route] }).toEqual({ route, p: "connectors.manage" });
+      expect(ROUTE_PERMISSIONS["GET /meta-ads/connection"]).toBe("connectors.view");
+      expect(ROUTE_PERMISSIONS["GET /meta-ads/oauth/callback"]).toBe("public");
+    });
+
+    it("owner and admin can connect, check and disconnect; agent and viewer cannot", () => {
+      for (const route of MANAGE) {
+        for (const role of ["owner", "admin"] as const) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        for (const role of ["agent", "viewer"] as const) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("viewers can read the connection status; agents cannot (no connectors action)", () => {
+      const route = "GET /meta-ads/connection";
+      expect(["owner", "admin", "agent", "viewer"].map((r) => [r, allowed(r as SystemRoleKey, route)])).toEqual([
+        ["owner", true],
+        ["admin", true],
+        ["agent", false],
+        ["viewer", true],
+      ]);
+    });
+
+    it("owner, admin, agent and viewer can read the overview and the per-ad page (reports.view)", () => {
+      for (const route of METRICS) {
+        for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
     it("impersonation is not blocked (ruling 7)", () => {
-      for (const route of READS) {
+      for (const route of [...READS, ...METRICS, ...MANAGE, "GET /meta-ads/connection"]) {
         expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
       }
     });

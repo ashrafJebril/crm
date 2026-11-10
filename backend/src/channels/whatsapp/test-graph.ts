@@ -82,6 +82,15 @@ const KEYS = [
   "CHANNEL_WHATSAPP_LIMIT",
   "TOKEN_ENC_KEY",
   "NODE_ENV",
+  // SP-15 Meta Ads
+  "META_ADS_APP_ID",
+  "META_ADS_APP_SECRET",
+  "META_ADS_LOGIN_CONFIG_ID",
+  "META_ADS_GRAPH_VERSION",
+  "META_ADS_SYNC_BATCH",
+  "META_ADS_SYNC_INTERVAL_MS",
+  "META_ADS_SYNC_MAX_MS",
+  "META_ADS_MAX_PAGES",
 ] as const;
 
 /** Snapshot the env keys these specs touch; returns a restore function. */
@@ -95,4 +104,50 @@ export function isolateEnv(set: Partial<Record<(typeof KEYS)[number], string>> =
       else process.env[k] = saved[k];
     }
   };
+}
+
+// ─── SP-15: Marketing API routes (Meta Ads connect and the spend sync) ─────
+
+/** The Meta Ads app env, set for the duration of a spec. */
+export const META_ADS_ENV = {
+  META_ADS_APP_ID: "777000111",
+  META_ADS_APP_SECRET: "ADS-APP-SECRET-abc-123",
+  META_ADS_LOGIN_CONFIG_ID: "888000222",
+  META_ADS_GRAPH_VERSION: "v23.0",
+} as const;
+
+/** The token the fake OAuth exchange hands out. */
+export const ADS_TOKEN = "EAAB-ads-token-SECRET-0123456789";
+
+/** A Graph insights row. */
+export function insightRow(adId: string, date: string, spend: string, names: Partial<Record<"ad_name" | "adset_name" | "campaign_name", string>> = {}) {
+  return { ad_id: adId, date_start: date, date_stop: date, spend, ...names };
+}
+
+/**
+ * Default Marketing API replies: the code exchange, `ads_read` granted, two
+ * ad accounts (act_111 USD Asia/Riyadh, act_222 EUR UTC), one Page (900), `/me`,
+ * the ad account read and empty insights. Prepend handlers to override.
+ */
+export function marketingHandlers(opts: { token?: string; scopes?: string[] } = {}): GraphHandler[] {
+  const scopes = opts.scopes ?? ["ads_read", "business_management", "pages_show_list"];
+  return [
+    ["/oauth/access_token", { body: { access_token: opts.token ?? ADS_TOKEN, token_type: "bearer" } }],
+    ["/me/permissions", { body: { data: scopes.map((permission) => ({ permission, status: "granted" })) } }],
+    [
+      "/me/adaccounts",
+      {
+        body: {
+          data: [
+            { id: "act_111", name: "Main account", currency: "USD", timezone_name: "Asia/Riyadh", account_status: 1 },
+            { id: "act_222", name: "Second account", currency: "EUR", timezone_name: "UTC", account_status: 1 },
+          ],
+        },
+      },
+    ],
+    ["/me/accounts", { body: { data: [{ id: "900", name: "Shop page" }] } }],
+    [/\/me\?/, { body: { id: "user-1" } }],
+    [/\/act_\d+\/insights/, { body: { data: [] } }],
+    [/\/act_\d+\?/, { body: { id: "act_111", name: "Main account", currency: "USD", timezone_name: "Asia/Riyadh", account_status: 1 } }],
+  ];
 }

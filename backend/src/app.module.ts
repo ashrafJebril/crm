@@ -39,6 +39,7 @@ import { SavedRepliesModule } from "./saved-replies/saved-replies.module";
 import { WorkflowsModule } from "./workflows/workflows.module";
 import { McpServerModule } from "./mcp-server/mcp-server.module";
 import { AdsModule } from "./ads/ads.module";
+import { MetaAdsModule } from "./meta-ads/meta-ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
 import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
 import { PermissionsModule } from "./permissions/permissions.module";
@@ -89,6 +90,7 @@ import { RolesModule } from "./roles/roles.module";
     RealtimeModule,
     SearchModule,
     AdsModule,
+    MetaAdsModule,
     KnowledgeModule,
     CustomFieldsModule,
   ],

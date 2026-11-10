@@ -92,7 +92,8 @@ export function matches(row: Row, where: any, db: Tables, model: string): boolea
       Object.keys(cond).every((ck) => k.split("_").includes(ck))
     ) {
       // compound unique, e.g. workspaceId_externalSource_externalId
-      if (!Object.entries(cond).every(([ck, cv]) => row[ck] === cv)) return false;
+      // SP-15: Date parts (AdSpendDaily adSourceId_date) compare by instant.
+      if (!Object.entries(cond).every(([ck, cv]) => keyPart(row[ck]) === keyPart(cv))) return false;
       continue;
     }
     if (!matchValue(row[k], cond)) return false;
@@ -585,6 +586,8 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     adSpendDaily: model("adSpendDaily"),
     metaAdsConnection: model("metaAdsConnection"),
     metaLead: model("metaLead"),
+    // SP-15 Task 2: MetaAdsConnection.connectedBy.
+    user: model("user"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();
@@ -677,6 +680,31 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         const row = db.channel.find((c) => c.id === id);
         if (!row) return 0;
         Object.assign(row, { health: null, healthCheckedAt: null, healthAttemptedAt: null });
+        return 1;
+      }
+      // SP-15 Meta Ads claims (sync cadence and the live-check cooldown). Like
+      // Postgres raw SQL, neither touches updatedAt; only the exact guarded
+      // statements are honoured (a spec catches a dropped guard).
+      if (/UPDATE "MetaAdsConnection" SET "syncAttemptedAt"/.test(sql)) {
+        if (!/^UPDATE "MetaAdsConnection" SET "syncAttemptedAt" = \?::timestamp\(3\) WHERE "id" = \? AND "status" = 'active' AND \("syncAttemptedAt" IS NULL OR "syncAttemptedAt" <= \?::timestamp\(3\)\)$/.test(sql.trim()))
+          throw new Error(`unexpected meta ads sync claim SQL: ${sql}`);
+        const [at, id, cutoff] = vals;
+        const row = (db.metaAdsConnection ?? []).find((c) => c.id === id && c.status === "active");
+        if (!row) return 0;
+        const prev: Date | null = row.syncAttemptedAt ?? null;
+        if (prev && prev.getTime() > new Date(cutoff).getTime()) return 0;
+        row.syncAttemptedAt = new Date(at);
+        return 1;
+      }
+      if (/UPDATE "MetaAdsConnection" SET "checkAttemptedAt"/.test(sql)) {
+        if (!/^UPDATE "MetaAdsConnection" SET "checkAttemptedAt" = \?::timestamp\(3\) WHERE "workspaceId" = \? AND \("checkAttemptedAt" IS NULL OR "checkAttemptedAt" <= \?::timestamp\(3\)\)$/.test(sql.trim()))
+          throw new Error(`unexpected meta ads check claim SQL: ${sql}`);
+        const [at, workspaceId, cutoff] = vals;
+        const row = (db.metaAdsConnection ?? []).find((c) => c.workspaceId === workspaceId);
+        if (!row) return 0;
+        const prev: Date | null = row.checkAttemptedAt ?? null;
+        if (prev && prev.getTime() > new Date(cutoff).getTime()) return 0;
+        row.checkAttemptedAt = new Date(at);
         return 1;
       }
       if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {
