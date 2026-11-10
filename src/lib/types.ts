@@ -411,6 +411,11 @@ export interface SenderOption extends CampaignSender {
   provider: string;
   eligible: boolean;
   reason: null | "provider_meta" | "not_active";
+  /** SP-14 (display only): the number's tier from its health snapshot, or "unknown". */
+  tier?: string;
+  /** SP-14 (display only): the number's quality rating, or "unknown". */
+  quality?: string;
+  healthCheckedAt?: string | null;
 }
 
 /** GET /campaigns/senders */
@@ -436,6 +441,8 @@ export interface CampaignPreviewV2 {
   templateMissing: string[];
   /** Channel ids whose templates could not be read. */
   templateCheckFailed?: string[];
+  /** SP-14: senders whose copy of the template is paused or disabled. */
+  templatePaused?: { channelId: string; status: "paused" | "disabled" | string }[];
   /** Empty without contacts.view (ruling 18). */
   samples: {
     contactId: string;
@@ -573,7 +580,10 @@ export interface Template {
   name: string;
   lang: Lang;
   category: "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
-  status: "approved" | "pending" | "rejected" | "submitted" | "failed" | "local";
+  /** SP-14: "paused" and "disabled" are Meta's template states (never sendable). */
+  status: "approved" | "pending" | "rejected" | "submitted" | "failed" | "local" | "paused" | "disabled";
+  /** SP-14: Meta template quality (GREEN | YELLOW | RED | NOT_RATED); null = unknown. */
+  quality?: string | null;
   uses: number;
   body?: string | null;
   footer?: string | null;
@@ -956,6 +966,113 @@ export interface ChannelDto {
   lastInboundAt: string | null;
   createdAt: string;
   conversationCount?: number;
+  /** SP-14: the number's health snapshot (WhatsApp only); null until the first check. */
+  health?: ChannelHealthPublic | null;
+  /** SP-14: when the last check read something. */
+  healthCheckedAt?: string | null;
+  /** SP-14: when the next live check is allowed; null when no cooldown is running. */
+  healthNextCheckAt?: string | null;
+}
+
+// ─── SP-14 number and template health ─────────────────────────────────────
+
+/** Why a health value is "unknown" (null when it is a real value). */
+export type HealthSignalError =
+  | null
+  | "unsupported"
+  | "check_failed"
+  | "permission_denied"
+  | "missing_data"
+  | "missing_credentials";
+
+/** One health field. `value` is the provider value, or the sentinel "unknown". */
+export interface HealthSignal {
+  value: string;
+  checkedAt: string | null;
+  error: HealthSignalError;
+  /** R1: read from a field Zernio passes through from Meta without documenting it. */
+  source?: "zernio_passthrough";
+}
+
+export type HealthFieldName =
+  | "quality"
+  | "tier"
+  | "nameStatus"
+  | "verified"
+  | "codeVerification"
+  | "messaging"
+  | "phoneStatus"
+  | "accountReview";
+
+export interface TemplateSummaryPublic {
+  total: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+  paused: number;
+  disabled: number;
+  lowQuality: number;
+  truncated: boolean;
+}
+
+export interface HealthTemplatesSignal {
+  value: TemplateSummaryPublic | "unknown";
+  checkedAt: string | null;
+  error: HealthSignalError;
+}
+
+export type HealthOverall = "healthy" | "attention" | "critical" | "unknown";
+
+/** `ChannelDto.health` (backend `publicHealth`): no alerts, no template items. */
+export interface ChannelHealthPublic extends Record<HealthFieldName, HealthSignal> {
+  v: 1;
+  provider: "zernio" | "meta";
+  checkedAt: string | null;
+  trigger: "manual" | "sweep" | "webhook";
+  overall: HealthOverall;
+  templates: HealthTemplatesSignal;
+  issues: string[];
+  /** The previous known value of a field that is unknown now because a read failed. */
+  lastKnown: Partial<Record<HealthFieldName, { value: string; checkedAt: string; source?: "zernio_passthrough" }>>;
+}
+
+/** One template on one number (Meta status UPPERCASE verbatim). */
+export interface NumberTemplateItem {
+  id: string | null;
+  name: string;
+  language: string;
+  status: string;
+  /** GREEN | YELLOW | RED | NOT_RATED | "unknown" */
+  quality: string;
+  category: string | null;
+  source?: "zernio_passthrough";
+}
+
+/** GET /channels/:id/templates */
+export interface ChannelTemplatesResponse {
+  channelId: string;
+  checkedAt: string | null;
+  error: HealthSignalError;
+  truncated: boolean;
+  /** false: no snapshot or an unknown list, so `items` is empty but that is not "no templates". */
+  known: boolean;
+  items: NumberTemplateItem[];
+}
+
+/** GET /templates/:id/health */
+export interface TemplateHealthResponse {
+  template: { id: string; name: string; lang: string; status: string; quality: string | null; reviewedAt: string | null };
+  numbers: {
+    channelId: string;
+    displayName: string;
+    phoneNumber: string | null;
+    provider: string;
+    isDefault: boolean;
+    /** lowercase status, or "missing" / "unknown" */
+    status: string;
+    quality: string;
+    checkedAt: string | null;
+  }[];
 }
 
 export interface ChannelLimits {

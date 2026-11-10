@@ -8,7 +8,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { IconBell, IconCog, IconVolume, IconVolumeMute } from "@/icons";
 import { notificationText } from "@/lib/notificationText";
-import { recordHref } from "@/lib/recordLink";
+import { notificationHref } from "@/lib/recordLink";
 import { NotificationsList } from "./NotificationsList";
 import { NotificationPrefsDialog } from "./NotificationPrefsDialog";
 import {
@@ -310,7 +310,7 @@ export function NotificationsBell(): React.ReactElement {
         name: txt.title,
         preview: txt.body ?? "",
         at: Date.now(),
-        getHref: () => recordHref(n.recordKind, n.recordId),
+        getHref: () => notificationHref(n),
         storedId: n.id,
       };
       setToasts((prev) => [...prev, { id: item.id, item, dismissing: false }].slice(-MAX_VISIBLE_TOASTS));
@@ -328,7 +328,7 @@ export function NotificationsBell(): React.ReactElement {
       });
       os.onclick = () => {
         window.focus();
-        const href = recordHref(n.recordKind, n.recordId);
+        const href = notificationHref(n);
         if (href) window.location.hash = href;
         markStoredRead(n.id);
         os.close();
@@ -351,7 +351,7 @@ export function NotificationsBell(): React.ReactElement {
   };
   const openStored = (n: StoredNotification): void => {
     markStoredRead(n.id);
-    const href = recordHref(n.recordKind, n.recordId);
+    const href = notificationHref(n);
     if (href) window.location.hash = href;
     setOpen(false);
   };

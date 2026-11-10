@@ -2,6 +2,7 @@ import type { Tx } from "@/lib/tx";
 import type { SendersResponse } from "@/lib/types";
 import { effectiveSelection, makePrimary, senderUnavailable, splitCounts, toggleSender } from "./senderModel";
 import { fmtNum } from "./ui";
+import { SenderHealthChips } from "./SenderHealthChips";
 
 /**
  * SP-13 "Send from": tick one or more WhatsApp numbers. The first ticked is
@@ -88,6 +89,7 @@ export function SendFromField({
                     <span className="badge accent">{tx("Primary", "الأساسي")}</span>
                   )}
                   {s.isDefault && <span className="badge">{tx("Default", "الافتراضي")}</span>}
+                  <SenderHealthChips tx={tx} tier={s.tier} quality={s.quality} />
                 </div>
                 {why && <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>{why}</div>}
               </div>

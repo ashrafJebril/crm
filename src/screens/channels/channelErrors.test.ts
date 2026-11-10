@@ -46,6 +46,9 @@ const ERROR_KEYS = [
   "channels.landline_wrong_state",
   "channels.landline_meta_error",
   "channels.zernio_reauth_required",
+  "channels.health_unsupported",
+  "channels.health_check_cooldown",
+  "channels.health_check_busy",
   "widget.origin_forbidden",
   "widget.rate_limited",
   "widget.channel_unavailable",
@@ -75,6 +78,9 @@ const EXTRAS: Record<string, Record<string, unknown>[]> = {
   "channels.landline_invalid_input": [{}, { field: "cc" }, { metaCode: 100 }],
   "channels.landline_meta_error": [{}, { metaCode: 131000 }],
   "widget.rate_limited": [{}, { retryAfter: 30 }],
+  "channels.health_unsupported": [{}, { provider: "telegram" }],
+  "channels.health_check_cooldown": [{}, { retryAfter: 42, nextAt: "2026-11-10T10:00:00Z" }],
+  "channels.health_check_busy": [{}, { retryAfter: 12 }],
   "widget.invalid_message": [{ field: "body" }, { field: "name" }],
 };
 
@@ -163,5 +169,19 @@ describe("sendErrorText (SP-19 m1)", () => {
     expect(sendErrorText("channels.not_connected", ar)).toBe(nc.ar);
     expect(sendErrorText("channels.disconnected", en)).toBe(channelErrorCopy("channels.disconnected")!.en);
     expect(sendErrorText("Message failed to send", en)).toBe("Message failed to send");
+  });
+});
+
+describe("SP-14 health check keys", () => {
+  it("words the cooldown and busy 429s with the seconds left", () => {
+    const en = makeTx("en");
+    const cool = new ApiError("channels.health_check_cooldown", 429, undefined, {
+      message: "channels.health_check_cooldown",
+      retryAfter: 42,
+      nextAt: "2026-11-10T10:00:42Z",
+    });
+    expect(channelErrorText(cool, en)).toBe("This number was just checked. Try again in 42s.");
+    const busy = new ApiError("channels.health_check_busy", 429, undefined, { message: "channels.health_check_busy", retryAfter: 7 });
+    expect(channelErrorText(busy, makeTx("ar"))).toContain("7");
   });
 });

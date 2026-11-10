@@ -22,6 +22,8 @@ import { ChatPageLink } from "./ChatPageLink";
 import { LandlineVerificationCard } from "./LandlineVerificationCard";
 import { WebchatSettingsForm } from "./WebchatSettingsForm";
 import { WidgetSnippetDialog } from "./WidgetSnippetDialog";
+import { NumberHealthSection } from "./health/NumberHealthSection";
+import { hasNumberHealth } from "./health/healthModel";
 import { useZernioConnect } from "@/screens/settings/ZernioCard";
 
 interface Perms {
@@ -290,6 +292,20 @@ export function ChannelDetail({
               }}
             />
           </div>
+        )}
+
+        {/* SP-14 number health (WhatsApp on Zernio or Meta) */}
+        {hasNumberHealth(channel) && !disconnected && (
+          <NumberHealthSection
+            channel={channel}
+            tx={tx}
+            lang={lang}
+            canUpdate={perms.canUpdate}
+            onUpdated={(c) => {
+              setLocal(c);
+              onChanged();
+            }}
+          />
         )}
 
         {channel.provider === "meta" && channel.kind === "whatsapp" && perms.canUpdate && !stage && <MetaWebhookInfo tx={tx} />}

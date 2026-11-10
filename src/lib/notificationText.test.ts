@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { notificationText } from "./notificationText";
 import { makeTx } from "./tx";
+import { notificationHref, recordHref } from "./recordLink";
 
 const en = makeTx("en");
 const ar = makeTx("ar");
@@ -82,5 +83,72 @@ describe("notificationText", () => {
     expect(notificationText(ar, asg).title).toBe("أُسند إليك نشاط: Send quote");
     const bulk = { ...base, title: "assignment.activity", body: JSON.stringify({ title: "x", count: 3 }) };
     expect(notificationText(en, bulk).title).toBe("3 activities assigned to you");
+  });
+});
+
+describe("health downgrade notification text and deep link", () => {
+  const n = (body: unknown) => ({
+    type: "connector_needs_attention",
+    title: "channel.health_downgraded",
+    body: JSON.stringify(body),
+    recordKind: null,
+    recordId: null,
+  });
+
+  it("names the number and words the first change, the rest in the body", () => {
+    const one = n({ channelId: "ch1", name: "Sales", phone: "+962790000001", changes: [{ signal: "quality", from: "GREEN", to: "YELLOW" }] });
+    expect(notificationText(en, one)).toEqual({ title: "Sales needs attention: quality dropped to Medium" });
+    expect(notificationText(ar, one)).toEqual({ title: "Sales يحتاج إلى انتباه: انخفضت الجودة إلى متوسطة" });
+    const many = n({
+      channelId: "ch1",
+      name: "Sales",
+      changes: [
+        { signal: "messaging", from: "AVAILABLE", to: "BLOCKED" },
+        { signal: "templatesBad", from: 0, to: 2 },
+        { signal: "tier", from: "TIER_1K", to: "TIER_250" },
+      ],
+    });
+    expect(notificationText(en, many)).toEqual({
+      title: "Sales needs attention: messaging is blocked",
+      body: "2 templates paused or disabled; the daily limit dropped to 250 / day",
+    });
+    const a = notificationText(ar, many);
+    expect(a.title).toBe("Sales يحتاج إلى انتباه: المراسلة محظورة");
+    expect(a.body).toContain("تم إيقاف قالبين أو تعطيلهما");
+  });
+
+  it("words every signal in both languages", () => {
+    const changes = [
+      { signal: "quality", to: "RED" },
+      { signal: "messaging", to: "LIMITED" },
+      { signal: "phoneStatus", to: "FLAGGED" },
+      { signal: "nameStatus", to: "DECLINED" },
+      { signal: "accountReview", to: "REJECTED" },
+      { signal: "tier", to: "TIER_50" },
+      { signal: "templatesBad", to: 1 },
+    ];
+    for (const ch of changes) {
+      const e = notificationText(en, n({ channelId: "c", name: "N", changes: [ch] })).title;
+      const r = notificationText(ar, n({ channelId: "c", name: "N", changes: [ch] })).title;
+      // Worded per signal: never the generic fallback, never a raw value.
+      expect(e, ch.signal).not.toContain("its health changed");
+      if (typeof ch.to === "string") expect(e, ch.signal).not.toContain(ch.to);
+      expect(r, ch.signal).toMatch(/[؀-ۿ]/);
+    }
+  });
+
+  it("falls back to the phone, and with no changes still says it needs attention", () => {
+    expect(notificationText(en, n({ channelId: "c", phone: "+1", changes: [] }))).toEqual({ title: "+1 needs attention" });
+    expect(notificationText(ar, n({ channelId: "c" })).title).toBe("رقم واتساب يحتاج إلى انتباه");
+  });
+
+  it("deep links to the channel; other titles keep recordHref", () => {
+    expect(notificationHref(n({ channelId: "ch 1" }), "#/inbox")).toBe("#/channels?id=ch%201");
+    expect(notificationHref({ ...n({}), body: "not json" }, "#/inbox")).toBe("#/channels");
+    const other = { type: "mention", title: "mention.note", body: null, recordKind: "contact", recordId: "c1" };
+    expect(notificationHref(other, "#/pipeline")).toBe(recordHref("contact", "c1", "#/pipeline"));
+    expect(notificationHref({ ...other, recordKind: null }, "#/pipeline")).toBeNull();
+    // Other titles are unchanged by the new case.
+    expect(notificationText(en, { ...base, title: "import.failed", body: null })).toEqual({ title: "An import failed" });
   });
 });

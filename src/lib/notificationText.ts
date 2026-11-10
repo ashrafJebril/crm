@@ -1,4 +1,5 @@
 import { lastErrorText } from "@/screens/campaigns/campaignErrors";
+import { changeText, type HealthChange } from "@/screens/channels/health/healthModel";
 import type { Tx } from "./tx";
 
 export interface NotificationLike {
@@ -88,6 +89,21 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
           ? tx(`Campaign “${name}” couldn't be sent`, `تعذّر إرسال الحملة «${name}»`)
           : tx("A campaign couldn't be sent", "تعذّر إرسال حملة"),
         error,
+      );
+    }
+    case "channel.health_downgraded": {
+      // SP-14: body {channelId, name, phone, changes: [{signal, from, to}]}.
+      const name = str(p.name) ?? str(p.phone) ?? tx("A WhatsApp number", "رقم واتساب");
+      const changes = Array.isArray(p.changes)
+        ? (p.changes as unknown[]).filter(
+            (x): x is HealthChange => !!x && typeof x === "object" && typeof (x as HealthChange).signal === "string",
+          )
+        : [];
+      const words = changes.map((ch) => changeText(ch, tx));
+      if (words.length === 0) return out(tx(`${name} needs attention`, `${name} يحتاج إلى انتباه`));
+      return out(
+        tx(`${name} needs attention: ${words[0]}`, `${name} يحتاج إلى انتباه: ${words[0]}`),
+        words.length > 1 ? words.slice(1).join(tx("; ", "؛ ")) : undefined,
       );
     }
     case "import.failed":

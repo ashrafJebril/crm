@@ -117,6 +117,28 @@ export const CAMPAIGN_ERROR_COPY: Record<string, CopyFn> = {
           "تعذّر التحقق من القالب على الأرقام المختارة. حاول مجددًا بعد قليل.",
         ];
   },
+  // ── SP-14: paused / disabled templates refuse launch ──
+  "campaigns.template_paused": () => [
+    "Meta paused this template because of low quality. Choose another template, or wait until Meta lifts the pause.",
+    "أوقفت Meta هذا القالب مؤقتًا بسبب انخفاض جودته. اختر قالبًا آخر، أو انتظر حتى ترفع Meta الإيقاف.",
+  ],
+  "campaigns.template_disabled": () => [
+    "Meta disabled this template, so it can't be sent. Choose another template.",
+    "عطّلت Meta هذا القالب، لذا لا يمكن إرساله. اختر قالبًا آخر.",
+  ],
+  "campaigns.template_paused_on_number": (x, ctx) => {
+    const n = numbers(x.channelIds, ctx);
+    const many = plural(x.channelIds);
+    return n
+      ? [
+          `The template is paused or disabled on ${n}. Remove ${many ? "those numbers" : "that number"} or choose another template.`,
+          `القالب متوقف أو معطّل على ${n}. أزل ${many ? "هذه الأرقام" : "هذا الرقم"} أو اختر قالبًا آخر.`,
+        ]
+      : [
+          "The template is paused or disabled on some of the chosen numbers. Remove them or choose another template.",
+          "القالب متوقف أو معطّل على بعض الأرقام المختارة. أزلها أو اختر قالبًا آخر.",
+        ];
+  },
   "campaigns.template_not_approved": () => ["Choose a template Meta has approved.", "اختر قالبًا معتمدًا من ميتا."],
   "campaigns.template_unsupported": () => [
     "This template has header variables or a dynamic link button, which campaigns can't fill yet. Choose another template.",

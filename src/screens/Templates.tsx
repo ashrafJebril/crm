@@ -26,6 +26,8 @@ import { GalleryTab } from "./templates/GalleryTab";
 import { WhatsAppGate, useWhatsAppConnection } from "@/components/WhatsAppGate";
 import { gatedTitle } from "@/components/whatsAppGateCopy";
 import type { Template } from "@/lib/types";
+import { templateQualityView, templateStatusView, toFullStatus } from "./channels/health/healthModel";
+import { TemplateHealthSheet } from "./templates/TemplateHealthSheet";
 
 type Tab = "library" | "quick" | "gallery";
 type CategoryFilter = "ALL" | TemplateCategory;
@@ -55,6 +57,9 @@ const STATUS_BADGE: Record<string, BadgeKind> = {
   failed: "bad",
   // Neutral, deliberately not "ok": a local template cannot be sent.
   local: "",
+  // SP-14: Meta paused (low quality) or disabled the template; neither can be sent.
+  paused: "warn",
+  disabled: "bad",
 };
 
 interface TemplatePreviewProps {
@@ -85,7 +90,7 @@ function TemplatePreview({
           </div>
         </div>
         <Badge kind={STATUS_BADGE[selected.status] ?? ""} dot>
-          {selected.status}
+          {templateStatusView(selected.status, makeTx(isAr ? "ar" : "en")).label}
         </Badge>
       </div>
 
@@ -247,17 +252,9 @@ function toTemplateFull(t: Template): TemplateFull {
     }
   }
 
-  const status: TemplateFull["status"] =
-    t.status === "approved" ||
-    t.status === "pending" ||
-    t.status === "rejected" ||
-    // Must pass through, not collapse to "pending": "local" means Meta has
-    // never seen this template, so it can never be sent as-is.
-    t.status === "local"
-      ? t.status
-      : t.status === "failed"
-        ? "rejected"
-        : "pending";
+  // "local", "paused" and "disabled" must pass through, not collapse to
+  // "pending": none of them can be sent as-is (SP-14 stopped hiding pauses).
+  const status: TemplateFull["status"] = toFullStatus(t.status);
 
   return {
     id: t.id,
@@ -279,6 +276,7 @@ function TemplatesImpl() {
   const { can } = usePermissions();
   const canDeleteTpl = can("templates.delete");
   const canCreateTpl = can("templates.create");
+  const canViewTpl = can("templates.view");
   // SP-13: one banner, and submitting to Meta is disabled while WhatsApp isn't connected.
   const { connected } = useWhatsAppConnection();
   const createGate = gatedTitle("template.create", connected, tx);
@@ -297,6 +295,7 @@ function TemplatesImpl() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Template | null>(null);
+  const [healthFor, setHealthFor] = useState<Template | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -331,13 +330,17 @@ function TemplatesImpl() {
     let pending = 0;
     let rejected = 0;
     let local = 0;
+    let paused = 0;
+    let disabled = 0;
     for (const tpl of allFull) {
       if (tpl.status === "approved") approved++;
       else if (tpl.status === "pending") pending++;
       else if (tpl.status === "rejected") rejected++;
       else if (tpl.status === "local") local++;
+      else if (tpl.status === "paused") paused++;
+      else if (tpl.status === "disabled") disabled++;
     }
-    return { approved, pending, rejected, local };
+    return { approved, pending, rejected, local, paused, disabled };
   }, [allFull]);
 
   // Close the row context menu on outside click.
@@ -542,6 +545,7 @@ function TemplatesImpl() {
                       <th>{tx("Category", "الفئة")}</th>
                       <th>{tx("Lang", "اللغة")}</th>
                       <th>{tx("Status", "الحالة")}</th>
+                      <th>{tx("Quality", "الجودة")}</th>
                       <th style={{ textAlign: "end" }}>
                         {tx("Uses", "الاستخدام")}
                       </th>
@@ -576,8 +580,11 @@ function TemplatesImpl() {
                           </td>
                           <td>
                             <Badge kind={STATUS_BADGE[tpl.status] ?? ""} dot>
-                              {tpl.status}
+                              {templateStatusView(tpl.status, tx).label}
                             </Badge>
+                          </td>
+                          <td>
+                            <QualityBadge quality={raw?.quality} tx={tx} />
                           </td>
                           <td className="mono" style={{ textAlign: "end", fontSize: 12 }}>
                             {tpl.uses.toLocaleString()}
@@ -632,6 +639,15 @@ function TemplatesImpl() {
                                     setEditor({ mode: "edit", template: raw });
                                   }}
                                 />
+                                {canViewTpl && (
+                                  <RowMenuItem
+                                    label={tx("Health", "الصحة")}
+                                    onClick={() => {
+                                      setMenuFor(null);
+                                      setHealthFor(raw);
+                                    }}
+                                  />
+                                )}
                                 <RowMenuItem
                                   label={tx("Duplicate", "نسخ")}
                                   disabled={pending}
@@ -671,15 +687,25 @@ function TemplatesImpl() {
               }}
             >
               <span>
-                {list.length} of {allFull.length}
+                {tx(`${list.length} of ${allFull.length}`, `${list.length} من ${allFull.length}`)}
               </span>
               <span>·</span>
-              <span style={{ color: "var(--ok)" }}>● {counts.approved} approved</span>
-              <span style={{ color: "var(--warn)" }}>● {counts.pending} pending</span>
-              <span style={{ color: "var(--bad)" }}>● {counts.rejected} rejected</span>
+              <span style={{ color: "var(--ok)" }}>● {tx(`${counts.approved} approved`, `${counts.approved} معتمد`)}</span>
+              <span style={{ color: "var(--warn)" }}>● {tx(`${counts.pending} pending`, `${counts.pending} قيد المراجعة`)}</span>
+              <span style={{ color: "var(--bad)" }}>● {tx(`${counts.rejected} rejected`, `${counts.rejected} مرفوض`)}</span>
+              {counts.paused > 0 ? (
+                <span style={{ color: "var(--warn)" }} title={tx("Meta paused these for low quality — they can't be sent", "أوقفتها Meta مؤقتًا لانخفاض جودتها — لا يمكن إرسالها")}>
+                  ● {tx(`${counts.paused} paused`, `${counts.paused} متوقف مؤقتًا`)}
+                </span>
+              ) : null}
+              {counts.disabled > 0 ? (
+                <span style={{ color: "var(--bad)" }} title={tx("Meta disabled these — they can't be sent", "عطّلتها Meta — لا يمكن إرسالها")}>
+                  ● {tx(`${counts.disabled} disabled`, `${counts.disabled} معطّل`)}
+                </span>
+              ) : null}
               {counts.local > 0 ? (
-                <span style={{ color: "var(--ink-3)" }} title="Not submitted to Meta — cannot be sent">
-                  ● {counts.local} local only
+                <span style={{ color: "var(--ink-3)" }} title={tx("Not submitted to Meta — cannot be sent", "لم يُرسل إلى Meta — لا يمكن إرساله")}>
+                  ● {tx(`${counts.local} local only`, `${counts.local} محلي فقط`)}
                 </span>
               ) : null}
             </div>
@@ -785,7 +811,28 @@ function TemplatesImpl() {
           onConfirm={() => void handleDelete(confirmDelete)}
         />
       )}
+
+      {healthFor && canViewTpl && (
+        <TemplateHealthSheet templateId={healthFor.id} templateName={healthFor.name} onClose={() => setHealthFor(null)} />
+      )}
     </div>
+  );
+}
+
+/** SP-14 template quality; null (no provider value) reads as a muted Unknown, never green. */
+function QualityBadge({ quality, tx }: { quality: string | null | undefined; tx: (en: string, ar: string) => string }) {
+  const q = templateQualityView(quality, tx);
+  if (q.unknown) {
+    return (
+      <span className="badge" style={{ background: "transparent", border: "1px dashed var(--line)", color: "var(--ink-3)" }}>
+        {q.label}
+      </span>
+    );
+  }
+  return (
+    <Badge kind={q.tone === "good" ? "ok" : q.tone === "neutral" ? "" : q.tone} dot={q.tone !== "neutral"}>
+      {q.label}
+    </Badge>
   );
 }
 

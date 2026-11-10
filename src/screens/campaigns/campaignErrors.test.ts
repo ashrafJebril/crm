@@ -47,9 +47,12 @@ const SP13_KEYS = [
   "campaigns.has_live_broadcasts",
 ];
 
+// SP-14 (task-2 report): paused / disabled templates refuse launch.
+const SP14_KEYS = ["campaigns.template_paused", "campaigns.template_disabled", "campaigns.template_paused_on_number"];
+
 describe("campaignErrorText", () => {
   it("maps every error key to copy in both languages", () => {
-    expect(Object.keys(CAMPAIGN_ERROR_COPY).sort()).toEqual([...KEYS, ...SP13_KEYS].sort());
+    expect(Object.keys(CAMPAIGN_ERROR_COPY).sort()).toEqual([...KEYS, ...SP13_KEYS, ...SP14_KEYS].sort());
     for (const key of KEYS) {
       const err = new ApiError(key, 400, undefined, { statusCode: 400, message: key });
       const e = campaignErrorText(err, en);
@@ -200,5 +203,33 @@ describe("campaignErrorText", () => {
     expect(lastErrorText("Zernio said no", en)).toBe("Zernio said no");
     expect(lastErrorText(null, en)).toBeNull();
     expect(lastErrorText("  ", en)).toBeNull();
+  });
+
+  it("campaign error copy covers the SP-14 template keys", () => {
+    for (const key of SP14_KEYS) {
+      const err = new ApiError(key, 400, undefined, { statusCode: 400, message: key });
+      const e = campaignErrorText(err, en);
+      const a = campaignErrorText(err, ar);
+      expect(e, key).not.toBe(key);
+      expect(e, key).not.toBe("Something went wrong. Try again.");
+      expect(e, key).not.toMatch(ARABIC);
+      expect(a, key).toMatch(ARABIC);
+    }
+    const senders = [
+      { channelId: "c1", displayName: "Sales", phoneNumber: "+962790000001" },
+      { channelId: "c2", displayName: "Support", phoneNumber: "+962790000002" },
+    ];
+    const paused = new ApiError("campaigns.template_paused_on_number", 400, undefined, {
+      message: "campaigns.template_paused_on_number",
+      channelIds: ["c1", "c2"],
+      statuses: { c1: "paused", c2: "disabled" },
+    });
+    expect(campaignErrorText(paused, en, { senders })).toBe(
+      "The template is paused or disabled on Sales · ⁦+962790000001⁩, Support · ⁦+962790000002⁩. Remove those numbers or choose another template.",
+    );
+    expect(campaignErrorText(paused, ar, { senders })).toContain("⁦+962790000002⁩");
+    // Unknown ids never surface raw.
+    const unknown = new ApiError("campaigns.template_paused_on_number", 400, undefined, { channelIds: ["zz"] });
+    expect(campaignErrorText(unknown, en, { senders })).not.toContain("zz");
   });
 });

@@ -166,11 +166,15 @@ function MessageStep({ tx, templates, templateId, onSelect, varMap, onVarMap, cu
               return (
                 <option key={t.id} value={t.id} disabled={t.status !== "approved" || unsupported}>
                   {t.name} · {t.lang.toUpperCase()}
-                  {t.status !== "approved"
-                    ? ` · ${tx("not approved yet", "غير معتمد بعد")}`
-                    : unsupported
-                      ? ` · ${tx("Not supported for campaigns yet", "غير مدعوم في الحملات بعد")}`
-                      : ""}
+                  {t.status === "paused"
+                    ? ` · ${tx("paused by Meta", "أوقفته Meta مؤقتًا")}`
+                    : t.status === "disabled"
+                      ? ` · ${tx("disabled by Meta", "عطّلته Meta")}`
+                      : t.status !== "approved"
+                        ? ` · ${tx("not approved yet", "غير معتمد بعد")}`
+                        : unsupported
+                          ? ` · ${tx("Not supported for campaigns yet", "غير مدعوم في الحملات بعد")}`
+                          : ""}
                 </option>
               );
             })}
@@ -499,6 +503,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
     pv.reachable > 0 &&
     pv.templateMissing.length === 0 &&
     (pv.templateCheckFailed ?? []).length === 0 &&
+    (pv.templatePaused ?? []).length === 0 &&
     pv.transport.kind !== "too_varied";
 
   const draftBody = () => ({

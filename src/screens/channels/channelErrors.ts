@@ -238,6 +238,34 @@ export const CHANNEL_ERROR_COPY: Record<string, CopyFn> = {
     en: "Zernio needs you to sign in to this account again.",
     ar: "يطلب Zernio تسجيل الدخول إلى هذا الحساب مجددًا.",
   }),
+  // ── SP-14 number health (POST /channels/:id/health/check) ──
+  "channels.health_unsupported": (x) => {
+    const p = str(x.provider);
+    return p
+      ? {
+          en: `Health checks aren't available for numbers connected through ${p}.`,
+          ar: `فحص الحالة غير متاح للأرقام المربوطة عبر ${p}.`,
+        }
+      : { en: "Health checks aren't available for this channel.", ar: "فحص الحالة غير متاح لهذه القناة." };
+  },
+  "channels.health_check_cooldown": (x) => {
+    const s = seconds(x);
+    return s
+      ? { en: `This number was just checked. Try again in ${s}s.`, ar: `فُحص هذا الرقم للتو. حاول مجددًا بعد ${s} ث.` }
+      : { en: "This number was just checked. Try again in a minute.", ar: "فُحص هذا الرقم للتو. حاول مجددًا بعد دقيقة." };
+  },
+  "channels.health_check_busy": (x) => {
+    const s = seconds(x);
+    return s
+      ? {
+          en: `Too many checks in this workspace right now. Try again in ${s}s.`,
+          ar: `عدد الفحوصات في مساحة العمل هذه كبير الآن. حاول مجددًا بعد ${s} ث.`,
+        }
+      : {
+          en: "Too many checks in this workspace right now. Try again in a minute.",
+          ar: "عدد الفحوصات في مساحة العمل هذه كبير الآن. حاول مجددًا بعد دقيقة.",
+        };
+  },
   "widget.origin_forbidden": () => ({
     en: "This website isn't in the chat's allowed websites.",
     ar: "هذا الموقع ليس ضمن المواقع المسموح لها بالمحادثة.",

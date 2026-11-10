@@ -14,3 +14,29 @@ export function recordHref(
   if (kind === "conversation" && isOpaqueThreadId(id)) return `#/inbox?open=${encodeURIComponent(id)}`;
   return withRecord(currentHash, { kind, id });
 }
+
+/** SP-14: notification titles that deep-link to a channel (`body.channelId`) instead of a record. */
+const CHANNEL_TITLES = new Set(["channel.health_downgraded"]);
+
+function channelIdOf(body: string | null | undefined): string | null {
+  if (!body) return null;
+  try {
+    const v: unknown = JSON.parse(body);
+    const id = v && typeof v === "object" ? (v as { channelId?: unknown }).channelId : undefined;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where a notification opens: a channel's detail for health alerts, else its record (`recordHref`). */
+export function notificationHref(
+  n: { title: string; body?: string | null; recordKind?: string | null; recordId?: string | null },
+  currentHash: string = typeof window === "undefined" ? "" : window.location.hash,
+): string | null {
+  if (CHANNEL_TITLES.has(n.title)) {
+    const id = channelIdOf(n.body);
+    return id ? `#/channels?id=${encodeURIComponent(id)}` : "#/channels";
+  }
+  return recordHref(n.recordKind, n.recordId, currentHash);
+}

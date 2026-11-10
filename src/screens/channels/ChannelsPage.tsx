@@ -16,6 +16,7 @@ import { channelErrorCopy, channelErrorText, statusReasonCopy } from "./channelE
 import { PROVIDER_LABEL, groupChannels, kindLabel, needsSync, statusBadge, verificationStage } from "./channelModel";
 import { Banner, ErrorText, KindMark, useChannelsData, useHashParam } from "./channelUi";
 import { NumberLimitNotice } from "./NumberLimitNotice";
+import { NumberHealthOverview } from "./health/NumberHealthOverview";
 
 /**
  * The channels hub (SP-19): every connected channel grouped by kind, with
@@ -34,6 +35,9 @@ export default function ChannelsPage() {
 
   const { listQ, limitsQ, esQ, refresh } = useChannelsData(canView);
   const [openId, setOpenId] = useHashParam("id");
+  // SP-14: "Channels" | "Number health", kept in the hash (#/channels?view=health).
+  const [viewParam, setViewParam] = useHashParam("view");
+  const view = viewParam === "health" ? "health" : "channels";
   const [adding, setAdding] = useState(false);
   const [showDisconnected, setShowDisconnected] = useState(false);
   const zernio = useZernioConnect(tx);
@@ -99,7 +103,29 @@ export default function ChannelsPage() {
         }
       />
 
-      <div style={{ padding: "4px 24px 32px", display: "grid", gap: 14, maxWidth: 980 }}>
+      <div style={{ padding: "4px 24px 32px", display: "grid", gap: 14, maxWidth: view === "health" ? 1240 : 980 }}>
+        {!firstLoad && listQ.data && grouped.total > 0 && (
+          <div role="tablist" aria-label={tx("View", "العرض")} style={{ display: "inline-flex", gap: 4, justifySelf: "start", padding: 3, borderRadius: 9, background: "var(--bg-2)", border: "1px solid var(--line-soft)" }}>
+            {(
+              [
+                ["channels", tx("Channels", "القنوات")],
+                ["health", tx("Number health", "صحة الأرقام")],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={view === key}
+                className={`btn sm ${view === key ? "" : "ghost"}`.trim()}
+                onClick={() => setViewParam(key === "health" ? "health" : null)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {encryptionOff && (
           <Banner tone="warn" title={tx("Channel secrets are not encrypted", "بيانات القنوات السرية غير مشفّرة")}>
             {tx(
@@ -163,7 +189,11 @@ export default function ChannelsPage() {
           </div>
         )}
 
-        {grouped.groups.map((g) => {
+        {view === "health" && listQ.data && grouped.total > 0 && (
+          <NumberHealthOverview list={list} tx={tx} lang={t.lang} onOpen={(id) => setOpenId(id)} />
+        )}
+
+        {view === "channels" && grouped.groups.map((g) => {
           const k = kindLabel(g.kind);
           return (
             <section key={g.kind} style={{ display: "grid", gap: 8 }}>
@@ -177,7 +207,7 @@ export default function ChannelsPage() {
           );
         })}
 
-        {grouped.disconnected.length > 0 && (
+        {view === "channels" && grouped.disconnected.length > 0 && (
           <section style={{ display: "grid", gap: 8 }}>
             <button
               type="button"

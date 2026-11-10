@@ -12,7 +12,7 @@ export type TemplateCategory =
 
 // "local" = stored here but NOT submitted to / approved by Meta, so it
 // cannot be sent. Meta owns approval; we never claim it on its behalf.
-export type TemplateStatus = "approved" | "pending" | "rejected" | "local";
+export type TemplateStatus = "approved" | "pending" | "rejected" | "local" | "paused" | "disabled";
 
 export interface TemplateFull {
   id: string;

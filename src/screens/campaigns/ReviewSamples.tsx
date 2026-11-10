@@ -69,6 +69,19 @@ export function ReviewSamples({
           {campaignKeyText("campaigns.template_missing_on_number", { channelIds: preview.templateMissing }, tx, ctx)}
         </Notice>
       )}
+      {(preview.templatePaused ?? []).length > 0 && (
+        <Notice tone="warn">
+          {campaignKeyText(
+            "campaigns.template_paused_on_number",
+            {
+              channelIds: preview.templatePaused!.map((p) => p.channelId),
+              statuses: Object.fromEntries(preview.templatePaused!.map((p) => [p.channelId, p.status])),
+            },
+            tx,
+            ctx,
+          )}
+        </Notice>
+      )}
       {(preview.templateCheckFailed ?? []).length > 0 && (
         <Notice tone="warn">
           {campaignKeyText("campaigns.template_check_failed", { channelIds: preview.templateCheckFailed }, tx, ctx)}
