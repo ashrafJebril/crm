@@ -1063,3 +1063,84 @@ describe("template create with headerMediaId submits header_handle from the libr
     await expect(svc.create("ws1", { ...base, headerType: "image", headerContent: "https://cdn/x.png" })).resolves.toBeTruthy();
   });
 });
+
+// ─── SP-14 Task 2: paused / disabled and template quality ───────────────────
+describe("SP-14 template status and quality", () => {
+  const build = (meta: Array<Record<string, unknown>>, local: Array<Record<string, unknown>> = []) => {
+    const prisma = {
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      template: {
+        findMany: jest.fn().mockResolvedValue(local),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve(data)),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new", ...data })),
+      },
+    };
+    const client = { whatsappTemplates: jest.fn().mockResolvedValue(meta) };
+    const svc = new TemplatesService(prisma as unknown as PrismaService, client as unknown as ZernioClient);
+    return { svc, prisma, client };
+  };
+  const m = (name: string, status: string, extra: Record<string, unknown> = {}) => ({
+    id: `meta-${name}`,
+    name,
+    language: "en",
+    status,
+    category: "MARKETING",
+    components: [{ type: "BODY", text: "Hi" }],
+    ...extra,
+  });
+
+  it("paused and disabled map from every source: the Zernio list", async () => {
+    const { svc } = build([
+      m("a", "PAUSED"),
+      m("b", "DISABLED"),
+      m("c", "IN_APPEAL"),
+      m("d", "PENDING_DELETION"),
+      m("e", "APPROVED"),
+      m("f", "REJECTED"),
+      m("g", "SOMETHING_NEW"),
+      m("h", "paused"),
+    ]);
+    const rows = await svc.list("ws1");
+    expect(Object.fromEntries(rows.map((r) => [r.name, r.status]))).toEqual({
+      a: "paused",
+      b: "disabled",
+      c: "pending",
+      d: "pending",
+      e: "approved",
+      f: "rejected",
+      g: "pending",
+      h: "paused",
+    });
+  });
+
+  it("reconcile writes quality: the score, UNKNOWN as NOT_RATED, absent leaves it", async () => {
+    const local = [
+      { id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null },
+      { id: "t2", name: "b", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-b", body: "Hi", quality: null },
+      { id: "t3", name: "c", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-c", body: "Hi", quality: "RED" },
+    ];
+    const { svc, prisma } = build(
+      [m("a", "APPROVED", { quality_score: { score: "YELLOW" } }), m("b", "APPROVED", { quality_score: { score: "UNKNOWN" } }), m("c", "APPROVED"), m("n", "APPROVED", { quality_score: { score: "GREEN" } })],
+      local,
+    );
+    const rows = await svc.list("ws1");
+    const by = Object.fromEntries(rows.map((r) => [r.name, r]));
+    expect(by.a.quality).toBe("YELLOW");
+    expect(by.b.quality).toBe("NOT_RATED");
+    // Absent: the stored quality (e.g. from Meta's quality webhook) stays, and no write happens for it.
+    expect(by.c.quality).toBe("RED");
+    const updated = prisma.template.update.mock.calls.map((c: any) => c[0].where.id);
+    expect(updated.sort()).toEqual(["t1", "t2"]);
+    expect(prisma.template.create.mock.calls[0][0].data.quality).toBe("GREEN");
+  });
+
+  it("reconcileFromList reconciles a list already read, without a Zernio call", async () => {
+    const local = [{ id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null }];
+    const { svc, prisma, client } = build([], local);
+    const rows = await svc.reconcileFromList("ws1", [m("a", "PAUSED", { quality_score: { score: "RED" } })] as never);
+    expect(client.whatsappTemplates).not.toHaveBeenCalled();
+    expect(prisma.template.findMany).toHaveBeenCalledWith({ where: { workspaceId: "ws1" }, orderBy: { createdAt: "desc" } });
+    expect(rows[0]).toMatchObject({ status: "paused", quality: "RED" });
+  });
+});

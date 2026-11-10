@@ -19,12 +19,17 @@ import { WidgetRateLimiter, WidgetRateLimitGuard } from "./webchat/widget-rate-l
 import { ZernioChannelTransport } from "./zernio-transport";
 import { ChannelHealthController } from "./health/channel-health.controller";
 import { ChannelHealthService } from "./health/channel-health.service";
+import { ChannelHealthScheduler } from "./health/channel-health.scheduler";
+import { HealthNotifier } from "./health/health-notifier";
+import { HealthCheckTrigger } from "./health/health-check-trigger";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { TemplatesModule } from "../templates/templates.module";
 
 describe("channels modules", () => {
   it("the global core exports the routing building blocks", () => {
     expect(Reflect.getMetadata(GLOBAL_MODULE_METADATA, ChannelsCoreModule)).toBe(true);
     expect(Reflect.getMetadata(MODULE_METADATA.EXPORTS, ChannelsCoreModule)).toEqual(
-      expect.arrayContaining([ChannelResolver, ChannelTransportRegistry, InboundSinkService]),
+      expect.arrayContaining([ChannelResolver, ChannelTransportRegistry, InboundSinkService, HealthCheckTrigger]),
     );
   });
 
@@ -47,8 +52,12 @@ describe("channels modules", () => {
         WidgetRateLimitGuard,
         ZernioChannelTransport,
         ChannelHealthService,
+        // SP-14 Task 2: the hourly sweep and the downgrade notifier.
+        ChannelHealthScheduler,
+        HealthNotifier,
       ]),
     );
+    expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, ChannelsModule)).toEqual(expect.arrayContaining([NotificationsModule, TemplatesModule]));
     const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ChannelsModule) as unknown[];
     expect(providers).toContainEqual(expect.objectContaining({ provide: WidgetRateLimiter }));
   });

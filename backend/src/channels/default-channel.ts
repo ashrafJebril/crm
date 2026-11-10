@@ -3,6 +3,7 @@ import { campaignError } from "../campaigns/campaign-errors";
 import { channelError } from "./channel-errors";
 import { whatsappLimit } from "./channel-limits";
 import { ensureLegacyChannels } from "./legacy-mirror";
+import { asChannelHealth, UNKNOWN } from "./health/health-model";
 
 /**
  * SP-13 fix round 1 (M3): the one "connected" rule. A WhatsApp channel
@@ -177,6 +178,18 @@ export interface CampaignSenderOption {
   provider: string;
   eligible: boolean;
   reason: SenderIneligibleReason | null;
+  /** SP-14 (ruling 16): the messaging-limit tier from the health snapshot, or "unknown". Display only. */
+  tier: string;
+  /** SP-14: the quality rating from the health snapshot, or "unknown". Display only. */
+  quality: string;
+  /** SP-14: when the number's health was last read (ISO), or null. */
+  healthCheckedAt: string | null;
+}
+
+/** SP-14: a snapshot signal's current value; a failed or missing read is "unknown" (never the last value). */
+function snapshotValue(health: unknown, field: "tier" | "quality"): string {
+  const v = asChannelHealth(health)?.[field]?.value;
+  return typeof v === "string" && v ? v : UNKNOWN;
 }
 
 /**
@@ -197,7 +210,18 @@ export async function campaignSenderOptions(
   const rows = (await prisma.channel.findMany({
     where: { workspaceId, kind: "whatsapp", status: { not: "disconnected" } },
     orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
-    select: { id: true, kind: true, provider: true, status: true, externalId: true, displayName: true, phoneNumber: true, isDefault: true },
+    select: {
+      id: true,
+      kind: true,
+      provider: true,
+      status: true,
+      externalId: true,
+      displayName: true,
+      phoneNumber: true,
+      isDefault: true,
+      health: true,
+      healthCheckedAt: true,
+    },
   })) as Array<{
     id: string;
     kind: string;
@@ -207,6 +231,8 @@ export async function campaignSenderOptions(
     displayName: string;
     phoneNumber: string | null;
     isDefault: boolean;
+    health: unknown;
+    healthCheckedAt: Date | null;
   }>;
   const senders = rows.map((r) => {
     const reason: SenderIneligibleReason | null = r.provider !== "zernio" ? "provider_meta" : isEligibleSender(r) ? null : "not_active";
@@ -218,6 +244,9 @@ export async function campaignSenderOptions(
       provider: r.provider,
       eligible: reason === null,
       reason,
+      tier: snapshotValue(r.health, "tier"),
+      quality: snapshotValue(r.health, "quality"),
+      healthCheckedAt: r.healthCheckedAt instanceof Date ? r.healthCheckedAt.toISOString() : null,
     };
   });
   return {

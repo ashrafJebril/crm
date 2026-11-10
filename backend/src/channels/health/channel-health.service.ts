@@ -1,7 +1,7 @@
-import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type { Channel } from "@prisma/client";
 import { ZernioBudget } from "../../campaigns/sending/zernio-budget";
-import { ZernioClient } from "../../integrations/zernio.client";
+import { ZernioClient, type ZernioWhatsAppTemplate } from "../../integrations/zernio.client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { credentialsFor } from "../channel-credentials";
 import { toChannelDto, type ChannelDto } from "../channel-dto";
@@ -19,6 +19,8 @@ import {
 } from "./health-model";
 import { readMetaHealth } from "./meta-health.reader";
 import { readZernioHealth } from "./zernio-health.reader";
+import { snapshotTemplates, type NumberTemplates } from "./template-snapshot";
+import { HealthCheckTrigger } from "./health-check-trigger";
 
 /** Injection token for the Zernio budget (specs pass one with a virtual clock). */
 export const HEALTH_BUDGET = Symbol("HEALTH_BUDGET");
@@ -60,6 +62,12 @@ export interface HealthDowngrade {
   changes: AlertChange[];
 }
 
+/** Extra hooks for one check (the sweep uses them; the live check does not). */
+export interface CheckReadOptions {
+  /** Receives the Zernio templates list this check read (only on a successful read). */
+  onZernioTemplates?: (list: ZernioWhatsAppTemplate[]) => void;
+}
+
 export interface ClaimedCheckResult {
   channel: ChannelDto;
   /** False when the claim was superseded before the write (nothing written). */
@@ -91,8 +99,12 @@ export class ChannelHealthService {
     private readonly zernio: ZernioClient,
     private readonly graph: MetaGraphClient,
     @Optional() @Inject(HEALTH_BUDGET) budget?: ZernioBudget,
+    // SP-14 Task 2: provider webhooks reach `checkFromWebhook` through this
+    // global bridge (IntegrationsModule cannot import ChannelsModule).
+    @Optional() trigger?: HealthCheckTrigger,
   ) {
     this.budget = budget ?? ZernioBudget.shared();
+    trigger?.bind((ws, id) => this.checkFromWebhook(ws, id));
   }
 
   get cooldownMs(): number {
@@ -124,6 +136,38 @@ export class ChannelHealthService {
       });
     }
     return (await this.checkClaimed(row, token, opts.trigger ?? "manual", now)).channel;
+  }
+
+  /**
+   * SP-14 `GET /channels/:id/templates`: the number's template snapshot from
+   * its stored health. No provider call; the live per-sender read at launch
+   * stays the authority. Unknown or foreign id → 404 `channels.not_found`.
+   */
+  async templates(workspaceId: string, id: string): Promise<NumberTemplates> {
+    const row = await this.prisma.channel.findFirst({ where: { id, workspaceId }, select: { id: true, health: true } });
+    if (!row) throw channelError("channels.not_found");
+    return snapshotTemplates(row.id, row.health);
+  }
+
+  /**
+   * SP-14 webhooks (ruling 12 and 15): a provider event asks for a check of
+   * one number. The payload is only a trigger. The cooldown and the
+   * workspace cap still apply: a refusal (429), an unsupported or
+   * disconnected number is logged at debug level and swallowed. Never throws.
+   */
+  async checkFromWebhook(workspaceId: string, id: string, now: Date = new Date()): Promise<boolean> {
+    try {
+      await this.check(workspaceId, id, { trigger: "webhook", now });
+      return true;
+    } catch (e) {
+      const status = e instanceof HttpException ? e.getStatus() : 0;
+      if (status === 429 || status === 400 || status === 404 || status === 409) {
+        this.log.debug(`webhook health check of channel ${id} not run: ${status}`);
+      } else {
+        this.log.warn(`webhook health check of channel ${id} failed: ${(e as Error)?.name ?? "error"}`);
+      }
+      return false;
+    }
   }
 
   /**
@@ -161,11 +205,12 @@ export class ChannelHealthService {
     token: Date,
     trigger: HealthTrigger,
     now: Date = token,
+    opts: CheckReadOptions = {},
   ): Promise<ClaimedCheckResult> {
     const fresh = await this.prisma.channel.findFirst({ where: { id: row.id, workspaceId: row.workspaceId } });
     if (!fresh) throw channelError("channels.not_found");
     const previous = asChannelHealth(fresh.health);
-    const read = await this.read(fresh);
+    const read = await this.read(fresh, opts);
     const health = mergeHealth(previous, read, { now, trigger });
     const { changes, alerts } = evaluateAlerts(previous?.alerts ?? null, health, now);
     health.alerts = alerts;
@@ -185,12 +230,14 @@ export class ChannelHealthService {
   }
 
   /** One provider read for the channel. Never throws. */
-  private async read(row: Channel): Promise<RawHealthRead> {
+  private async read(row: Channel, opts: CheckReadOptions = {}): Promise<RawHealthRead> {
     const provider = row.provider === "meta" ? "meta" : "zernio";
     try {
       const creds = await credentialsFor(this.prisma, row);
       const effective = creds.provider === "meta" || creds.provider === "zernio" ? creds.provider : provider;
-      if (effective === "zernio") return await readZernioHealth(this.zernio, this.budget, creds.externalId);
+      if (effective === "zernio") {
+        return await readZernioHealth(this.zernio, this.budget, creds.externalId, { onTemplates: opts.onZernioTemplates });
+      }
       return await readMetaHealth(this.graph, creds, await this.wabaIdOf(row));
     } catch (e) {
       this.log.warn(`health read failed for channel ${row.id}: ${(e as Error)?.name ?? "error"}`);

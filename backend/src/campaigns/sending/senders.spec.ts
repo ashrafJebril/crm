@@ -113,17 +113,43 @@ describe("senders", () => {
     const s = (id: string, acc = `acc-${id}`) => ({ channelId: id, accountId: acc });
     const senders = [s("A"), s("B"), s("C"), s("D"), s("E"), s("F"), s("A2", "acc-A")];
     const r = await templateOnSenders(zernio, senders, { name: "eid_offer", lang: "ar" });
-    expect(r).toEqual({ missing: ["C", "D", "E"], failed: ["F"] });
+    expect(r).toEqual({ missing: ["C", "D", "E"], failed: ["F"], paused: [] });
     // One read per account (A and A2 share acc-A).
     expect(zernio.whatsappTemplates).toHaveBeenCalledTimes(6);
 
     // The primary lacking it is missing too, and the others are judged by presence alone.
     const r2 = await templateOnSenders(zernio, [s("C"), s("A"), s("D")], { name: "eid_offer", lang: "ar" });
-    expect(r2).toEqual({ missing: ["C"], failed: [] });
+    expect(r2).toEqual({ missing: ["C"], failed: [], paused: [] });
     // The primary unreadable: it is failed, and the others are judged by presence alone.
     const r3 = await templateOnSenders(zernio, [s("F"), s("A"), s("C")], { name: "eid_offer", lang: "ar" });
-    expect(r3).toEqual({ missing: ["C"], failed: ["F"] });
-    expect(await templateOnSenders(zernio, [], { name: "eid_offer", lang: "ar" })).toEqual({ missing: [], failed: [] });
+    expect(r3).toEqual({ missing: ["C"], failed: ["F"], paused: [] });
+    expect(await templateOnSenders(zernio, [], { name: "eid_offer", lang: "ar" })).toEqual({ missing: [], failed: [], paused: [] });
+  });
+
+  it("templateOnSenders classifies paused and disabled copies (SP-14 ruling 10)", async () => {
+    const lists: Record<string, unknown> = {
+      "acc-A": [copy()],
+      "acc-B": [copy({ status: "PAUSED" })],
+      "acc-C": [copy({ language: "ar_SA", status: "DISABLED" })], // same base language
+      "acc-D": [copy({ status: "PAUSED", language: "ar_SA" }), copy()], // an approved copy wins
+      "acc-E": [],
+      "acc-F": [copy({ status: "paused" })],
+    };
+    const zernio = { whatsappTemplates: jest.fn(async (acc: string) => lists[acc] as never) };
+    const s = (id: string) => ({ channelId: id, accountId: `acc-${id}` });
+    const r = await templateOnSenders(zernio, [s("A"), s("B"), s("C"), s("D"), s("E"), s("F")], { name: "eid_offer", lang: "ar" });
+    expect(r).toEqual({
+      missing: ["E"],
+      failed: [],
+      paused: [
+        { channelId: "B", status: "paused" },
+        { channelId: "C", status: "disabled" },
+        { channelId: "F", status: "paused" },
+      ],
+    });
+    // A paused primary: the others are judged by presence alone.
+    const r2 = await templateOnSenders(zernio, [s("B"), s("A"), s("E")], { name: "eid_offer", lang: "ar" });
+    expect(r2).toEqual({ missing: ["E"], failed: [], paused: [{ channelId: "B", status: "paused" }] });
   });
 
   it("templateOnSenders reads through the shared budget, and a 429 pauses it (SP-13 final review, R19)", async () => {
@@ -139,7 +165,7 @@ describe("senders", () => {
     // One token per account read; the rate-limited account fails closed and pauses the bucket.
     expect(budget.take).toHaveBeenCalledTimes(2);
     expect(budget.pause).toHaveBeenCalledWith(4000);
-    expect(r).toEqual({ missing: [], failed: ["B"] });
+    expect(r).toEqual({ missing: [], failed: ["B"], paused: [] });
   });
 
   it("sender write keeps senderChannelId equal to the primary", async () => {

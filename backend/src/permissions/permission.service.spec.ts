@@ -138,6 +138,45 @@ describe("PermissionService", () => {
     }
   });
 
+  describe("membersWith (SP-14)", () => {
+    const sys = (key: "owner" | "admin" | "agent" | "viewer") => ({
+      ...agentRole,
+      id: `r_${key}`,
+      key,
+      name: key,
+      permissions: SYSTEM_ROLES[key].permissions,
+    });
+
+    it("lists members whose effective role grants the permission, in one member query", async () => {
+      const custom = { ...agentRole, id: "r_c", key: null, name: "Channel lead", isSystem: false, permissions: { channels: ["view", "update"] } };
+      const ownerRole = sys("owner");
+      prisma.workspaceMember.findMany = jest.fn().mockResolvedValue([
+        { userId: "u_owner", role: "owner", roleId: "r_owner", roleRef: ownerRole },
+        { userId: "u_admin", role: "admin", roleId: null, roleRef: null },
+        { userId: "u_agent", role: "agent", roleId: null, roleRef: null },
+        { userId: "u_viewer", role: "viewer", roleId: null, roleRef: null },
+        { userId: "u_custom", role: "agent", roleId: "r_c", roleRef: custom },
+        // A stale system roleId (demoted by the legacy string) follows the string, as in `effective`.
+        { userId: "u_demoted", role: "agent", roleId: "r_owner", roleRef: ownerRole },
+        { userId: "u_odd", role: "intern", roleId: null, roleRef: null },
+      ]);
+      prisma.role.findFirst.mockImplementation(async ({ where }: any) => (["owner", "admin", "agent", "viewer"].includes(where.key) ? sys(where.key) : null));
+
+      const ids = await svc.membersWith("ws1", "channels.update");
+      expect(ids.sort()).toEqual(["u_admin", "u_custom", "u_owner"]);
+      expect(prisma.workspaceMember.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.workspaceMember.findMany).toHaveBeenCalledWith({ where: { workspaceId: "ws1" }, include: { roleRef: true } });
+      // One system-role lookup per distinct legacy key, not per member.
+      const keys = prisma.role.findFirst.mock.calls.map((c: any) => c[0].where.key).sort();
+      expect(keys).toEqual(["admin", "agent", "viewer"]);
+    });
+
+    it("an empty workspace has nobody", async () => {
+      prisma.workspaceMember.findMany = jest.fn().mockResolvedValue([]);
+      expect(await svc.membersWith("ws1", "channels.update")).toEqual([]);
+    });
+  });
+
   it("can checks resource.action", () => {
     const eff = { roleId: "r", key: "agent", name: "Agent", nameAr: "", permissions: SYSTEM_ROLES.agent.permissions, conversationVisibility: "all" as const };
     expect(svc.can(eff, "contacts.create")).toBe(true);

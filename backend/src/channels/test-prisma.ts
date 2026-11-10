@@ -92,9 +92,17 @@ function sortRows(rows: Row[], orderBy: any): Row[] {
   const list = Array.isArray(orderBy) ? orderBy : [orderBy];
   return [...rows].sort((a, b) => {
     for (const o of list) {
-      const [k, dir] = Object.entries(o)[0] as [string, string];
+      const [k, spec] = Object.entries(o)[0] as [string, string | { sort: string; nulls?: "first" | "last" }];
+      // SP-14: the `{ sort, nulls }` form places nulls explicitly. The plain
+      // string form keeps this double's historical null handling.
+      const dir = typeof spec === "string" ? spec : spec.sort;
       const av = a[k] instanceof Date ? a[k].getTime() : a[k];
       const bv = b[k] instanceof Date ? b[k].getTime() : b[k];
+      if (typeof spec === "object") {
+        const nulls = spec.nulls ?? (dir === "desc" ? "first" : "last");
+        if (av == null && bv == null) continue;
+        if (av == null || bv == null) return (av == null) === (nulls === "first") ? -1 : 1;
+      }
       if (av === bv) continue;
       const cmp = av > bv ? 1 : -1;
       return dir === "desc" ? -cmp : cmp;
@@ -221,6 +229,8 @@ function project(row: Row, select?: any, include?: any, db?: Tables): Row {
       if (k === "contact") out.contact = (db.contact ?? []).find((c) => c.id === row.contactId) ?? null;
       if (k === "labels") out.labels = [];
       if (k === "messages") out.messages = (db.message ?? []).filter((m) => m.conversationId === row.id);
+      // SP-14: WorkspaceMember.roleRef (PermissionService.membersWith).
+      if (k === "roleRef") out.roleRef = (db.role ?? []).find((r) => r.id === row.roleId) ?? null;
     }
   }
   if (select) {
@@ -415,6 +425,10 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     campaign: model("campaign"),
     template: model("template"),
     workspaceMember: model("workspaceMember"),
+    // SP-14: roles (membersWith) and SP-05 notifications (the downgrade alert).
+    role: model("role"),
+    notification: model("notification"),
+    notificationPreference: model("notificationPreference"),
     campaignRecipient: model("campaignRecipient"),
     // SP-12 T2: follow-up actions (groups and tags).
     segment: model("segment"),

@@ -1,6 +1,11 @@
 import { HttpException, Logger } from "@nestjs/common";
 import type { ZernioBudget } from "../../campaigns/sending/zernio-budget";
-import { ZernioRateLimitError, type ZernioClient, type ZernioNumberInfo } from "../../integrations/zernio.client";
+import {
+  ZernioRateLimitError,
+  type ZernioClient,
+  type ZernioNumberInfo,
+  type ZernioWhatsAppTemplate,
+} from "../../integrations/zernio.client";
 import { zernioHealthCall } from "./health-budget";
 import type { FieldName, RawField, RawHealthRead, RawTemplate } from "./health-model";
 
@@ -44,6 +49,7 @@ export async function readZernioHealth(
   zernio: Pick<ZernioClient, "whatsappNumberInfo" | "whatsappTemplates">,
   budget: ZernioBudget | undefined,
   accountId: string | null,
+  opts: { onTemplates?: (list: ZernioWhatsAppTemplate[]) => void } = {},
 ): Promise<RawHealthRead> {
   const fields: RawHealthRead["fields"] = {};
   if (!accountId) {
@@ -82,6 +88,9 @@ export async function readZernioHealth(
   let templates: RawHealthRead["templates"];
   try {
     const list = await zernioHealthCall(() => zernio.whatsappTemplates(accountId), budget);
+    // SP-14 Task 2: the sweep reuses this list to reconcile the default
+    // number's Template rows (no extra call). Only a successful read is shared.
+    if (Array.isArray(list)) opts.onTemplates?.(list);
     const items: RawTemplate[] = (Array.isArray(list) ? list : []).map((t) => ({
       id: t.id ? String(t.id) : null,
       name: String(t.name ?? ""),

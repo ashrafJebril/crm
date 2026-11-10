@@ -82,6 +82,40 @@ export class PermissionService {
       return null;
     }
 
+    const value = await this.resolve(member, (key) => this.systemRole(workspaceId, key));
+    this.cache.set(k, { value, expires: Date.now() + TTL_MS });
+    return value;
+  }
+
+  /**
+   * SP-14: the user ids of every member of the workspace whose effective
+   * role grants `permission` (custom roles included). One query over
+   * WorkspaceMember with its role; each member resolves exactly as
+   * `effective` does, with one system-role lookup per distinct legacy key.
+   * Not cached (it is used for notifications, not per request).
+   */
+  async membersWith(workspaceId: string, permission: Permission | string): Promise<string[]> {
+    const members = await this.prisma.workspaceMember.findMany({
+      where: { workspaceId },
+      include: { roleRef: true },
+    });
+    const system = new Map<string, Promise<RoleRow | null>>();
+    const lookup = (key: string) => {
+      if (!system.has(key)) system.set(key, this.systemRole(workspaceId, key));
+      return system.get(key) as Promise<RoleRow | null>;
+    };
+    const out: string[] = [];
+    for (const m of members) {
+      if (this.can(await this.resolve(m, lookup), permission)) out.push(m.userId);
+    }
+    return out;
+  }
+
+  /** A member row (with `roleRef`) → its effective role (see `effective`). */
+  private async resolve(
+    member: { role: string | null; roleRef?: RoleRow | null },
+    systemRole: (key: string) => Promise<RoleRow | null>,
+  ): Promise<EffectiveRole> {
     const legacyKey = (member.role ?? "").toLowerCase();
     let role: RoleRow | null = member.roleRef ?? null;
     // A system roleId that disagrees with the legacy role string is stale:
@@ -89,9 +123,9 @@ export class PermissionService {
     // promote a member without touching roleId. The legacy string wins for
     // system roles; a custom role (isSystem false) always wins.
     if (role && role.isSystem === true && role.key !== legacyKey) role = null;
-    if (!role) role = await this.systemRole(workspaceId, legacyKey);
+    if (!role) role = await systemRole(legacyKey);
 
-    const value: EffectiveRole = role
+    return role
       ? {
           roleId: role.id,
           key: role.key,
@@ -101,10 +135,7 @@ export class PermissionService {
           conversationVisibility: role.conversationVisibility === "assigned" ? "assigned" : "all",
         }
       : // An unknown legacy role string: least privilege.
-        { roleId: null, key: null, name: member.role, nameAr: member.role, permissions: {}, conversationVisibility: "all" };
-
-    this.cache.set(k, { value, expires: Date.now() + TTL_MS });
-    return value;
+        { roleId: null, key: null, name: member.role ?? "", nameAr: member.role ?? "", permissions: {}, conversationVisibility: "all" };
   }
 
   can(eff: EffectiveRole | null | undefined, permission: Permission | string): boolean {

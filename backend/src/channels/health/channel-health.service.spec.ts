@@ -270,7 +270,9 @@ describe("ChannelHealthService", () => {
 
   it("the controller route is POST /channels/:id/health/check, answers 200 and needs channels.update", () => {
     const keys = routesOf(ChannelHealthController).map((r) => r.key);
-    expect(keys).toEqual(["POST /channels/:id/health/check"]);
+    // SP-14 Task 2 adds the read-only per-number template list (templates.view).
+    expect(keys).toEqual(["POST /channels/:id/health/check", "GET /channels/:id/templates"]);
+    expect(ROUTE_PERMISSIONS["GET /channels/:id/templates"]).toBe("templates.view");
     expect(ROUTE_PERMISSIONS["POST /channels/:id/health/check"]).toBe("channels.update");
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, ChannelHealthController.prototype.check)).toBe(200);
   });

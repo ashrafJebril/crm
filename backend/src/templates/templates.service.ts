@@ -12,6 +12,103 @@ import { campaignError } from "../campaigns/campaign-errors";
 import { lockMediaForReference, MediaService } from "../media/media.service";
 import type { Viewer } from "../permissions/visibility";
 import { assertHeaderMedia, HEADER_MEDIA_MISMATCH } from "../integrations/template-header";
+import { normalizeTemplateQuality } from "../channels/health/health-model";
+import { findTemplateCopy, snapshotTemplates } from "../channels/health/template-snapshot";
+import { templateError } from "./template-errors";
+
+/**
+ * SP-14 (ruling 9): a provider template status → ours, or null when we do
+ * not know it. Lowercase like the stored values. PAUSED and DISABLED are
+ * their own statuses (a paused template must never look pending);
+ * IN_APPEAL and PENDING_DELETION stay pending.
+ */
+export function knownTemplateStatus(providerStatus: unknown): string | null {
+  switch (String(providerStatus ?? "").toUpperCase()) {
+    case "APPROVED":
+      return "approved";
+    case "REJECTED":
+      return "rejected";
+    case "PAUSED":
+      return "paused";
+    case "DISABLED":
+      return "disabled";
+    case "PENDING":
+    case "IN_APPEAL":
+    case "PENDING_DELETION":
+      return "pending";
+    default:
+      return null;
+  }
+}
+
+/** Match key for a template: name + base language ("en" links to Meta's "en_US"). */
+export function templateKey(name: string, language: string): string {
+  return `${name}::${String(language ?? "").split(/[_-]/)[0].toLowerCase()}`;
+}
+
+/** A provider's status event for one template (SP-14 webhooks). */
+export interface ProviderTemplateStatus {
+  /** Meta's template id. */
+  templateId?: string | null;
+  name?: string | null;
+  language?: string | null;
+  status?: string | null;
+  reason?: string | null;
+}
+
+/**
+ * SP-14: apply a provider's template status event to this workspace's rows
+ * only: by `metaTemplateId` first, else (when `allowNameMatch`) by name and
+ * base language. An unknown status changes nothing (it never defaults).
+ * Returns the rows updated. Plain Prisma, so the webhook handlers call it
+ * without depending on the templates module.
+ */
+export async function applyTemplateProviderStatus(
+  prisma: Pick<PrismaService, "template">,
+  workspaceId: string,
+  evt: ProviderTemplateStatus,
+  opts: { allowNameMatch?: boolean } = {},
+): Promise<number> {
+  const status = knownTemplateStatus(evt.status);
+  if (!status) return 0;
+  let rows = evt.templateId
+    ? await prisma.template.findMany({ where: { workspaceId, metaTemplateId: String(evt.templateId) } })
+    : [];
+  if (rows.length === 0 && opts.allowNameMatch && evt.name) {
+    const key = templateKey(evt.name, evt.language ?? "");
+    rows = (await prisma.template.findMany({ where: { workspaceId, name: evt.name } })).filter(
+      (r) => templateKey(r.name, r.lang) === key,
+    );
+  }
+  for (const row of rows) {
+    await prisma.template.update({
+      where: { id: row.id },
+      data: {
+        status,
+        metaRejectionReason: status === "rejected" ? (evt.reason ?? null) : null,
+        reviewedAt: new Date(),
+      },
+    });
+  }
+  return rows.length;
+}
+
+/** SP-14 `GET /templates/:id/health`: one template's status on every number. */
+export interface TemplateHealth {
+  template: { id: string; name: string; lang: string; status: string; quality: string | null; reviewedAt: string | null };
+  numbers: Array<{
+    channelId: string;
+    displayName: string;
+    phoneNumber: string | null;
+    provider: string;
+    isDefault: boolean;
+    /** Our lowercase status, or "missing" (the known snapshot lacks it) or "unknown". */
+    status: string;
+    /** GREEN | YELLOW | RED | NOT_RATED, or "unknown". */
+    quality: string;
+    checkedAt: string | null;
+  }>;
+}
 
 /** SP-13 (M3): a media header needs a file (or a legacy sample URL). */
 export const HEADER_MEDIA_REQUIRED = "templates.header_media_required";
@@ -50,6 +147,8 @@ export interface TemplateRow {
   buttons?: string | null;
   metaTemplateId?: string | null;
   metaRejectionReason?: string | null;
+  /** SP-14: Meta's template quality (GREEN | YELLOW | RED | NOT_RATED); null = unknown. */
+  quality?: string | null;
   [key: string]: unknown;
 }
 
@@ -131,6 +230,65 @@ export class TemplatesService {
     }
 
     return this.reconcile(workspaceId, localRows, metaTemplates);
+  }
+
+  /**
+   * SP-14: reconcile against a templates list the caller already read from
+   * the default number (the health sweep), so no extra Zernio call is made.
+   */
+  async reconcileFromList(workspaceId: string, metaTemplates: ZernioWhatsAppTemplate[]): Promise<TemplateRow[]> {
+    const localRows = (await this.prisma.template.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "desc" },
+    })) as unknown as TemplateRow[];
+    return this.reconcile(workspaceId, localRows, metaTemplates);
+  }
+
+  /** SP-14: apply a provider status event to this workspace's rows (see `applyTemplateProviderStatus`). */
+  applyProviderStatus(workspaceId: string, evt: ProviderTemplateStatus, opts: { allowNameMatch?: boolean } = {}): Promise<number> {
+    return applyTemplateProviderStatus(this.prisma, workspaceId, evt, opts);
+  }
+
+  /**
+   * SP-14 `GET /templates/:id/health`: the template's status on every
+   * non-disconnected WhatsApp number of the workspace, from each number's
+   * health snapshot (no provider call). Matching is by name and base
+   * language. `missing`: the snapshot's list is known, complete and lacks
+   * it. `unknown`: no snapshot, an unknown list, or a truncated list that
+   * lacks it. Foreign or unknown id → 404 `templates.not_found`.
+   */
+  async healthFor(workspaceId: string, id: string): Promise<TemplateHealth> {
+    const row = (await this.prisma.template.findFirst({ where: { id, workspaceId } })) as unknown as TemplateRow | null;
+    if (!row) throw templateError("templates.not_found");
+    const channels = (await this.prisma.channel.findMany({
+      where: { workspaceId, kind: "whatsapp", status: { not: "disconnected" } },
+      orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+      select: { id: true, displayName: true, phoneNumber: true, provider: true, isDefault: true, health: true },
+    })) as Array<{ id: string; displayName: string; phoneNumber: string | null; provider: string; isDefault: boolean; health: unknown }>;
+    const reviewed = row.reviewedAt as unknown;
+    const reviewedAt = reviewed instanceof Date ? reviewed.toISOString() : typeof reviewed === "string" ? reviewed : null;
+    return {
+      template: { id: row.id, name: row.name, lang: row.lang, status: row.status, quality: row.quality ?? null, reviewedAt },
+      numbers: channels.map((ch) => {
+        const snap = snapshotTemplates(ch.id, ch.health);
+        const copy = snap.known ? findTemplateCopy(snap.items, row.name, row.lang) : null;
+        const status = copy
+          ? (knownTemplateStatus(copy.status) ?? String(copy.status).toLowerCase())
+          : snap.known && !snap.truncated
+            ? "missing"
+            : "unknown";
+        return {
+          channelId: ch.id,
+          displayName: ch.displayName,
+          phoneNumber: ch.phoneNumber ?? null,
+          provider: ch.provider,
+          isDefault: ch.isDefault === true,
+          status,
+          quality: copy?.quality ?? "unknown",
+          checkedAt: snap.checkedAt,
+        };
+      }),
+    };
   }
 
   /** Submit a template to Meta (custom) or import a pre-approved library one. */
@@ -442,6 +600,10 @@ export class TemplatesService {
       const parts = this.extractComponents(m.components);
       const status = this.mapStatus(m.status);
       const existing = byKey.get(key);
+      // SP-14: Meta's template quality when the list carries it (UNKNOWN →
+      // NOT_RATED). Absent (or unrecognised) leaves the stored value alone.
+      const quality = normalizeTemplateQuality(m.quality_score?.score);
+      const qualityPart = quality ? { quality } : {};
 
       if (existing) {
         const data = {
@@ -452,6 +614,7 @@ export class TemplatesService {
           // Cleared on anything but a rejection, so an approval doesn't leave
           // a stale reason sitting on the row.
           metaRejectionReason: status === "rejected" ? (m.rejected_reason ?? null) : null,
+          ...qualityPart,
           ...parts,
         };
         // list() runs on every screen load, so only write when Meta actually
@@ -479,6 +642,7 @@ export class TemplatesService {
             metaTemplateId: m.id ?? null,
             metaRejectionReason: status === "rejected" ? (m.rejected_reason ?? null) : null,
             reviewedAt: new Date(),
+            ...qualityPart,
             ...parts,
           },
         })) as unknown as TemplateRow;
@@ -515,22 +679,12 @@ export class TemplatesService {
 
   /** Match on name + base language so an "en" row links to Meta's "en_US". */
   private key(name: string, language: string): string {
-    return `${name}::${String(language ?? "").split(/[_-]/)[0].toLowerCase()}`;
+    return templateKey(name, language);
   }
 
-  private mapStatus(metaStatus: string): string {
-    switch (String(metaStatus ?? "").toUpperCase()) {
-      case "APPROVED":
-        return "approved";
-      case "REJECTED":
-        return "rejected";
-      case "PENDING":
-      case "IN_APPEAL":
-      case "PENDING_DELETION":
-        return "pending";
-      default:
-        return "pending";
-    }
+  /** SP-14 (ruling 9): PAUSED → paused, DISABLED → disabled; anything unknown stays `pending`. */
+  mapStatus(metaStatus: string): string {
+    return knownTemplateStatus(metaStatus) ?? "pending";
   }
 
   /**

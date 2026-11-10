@@ -35,7 +35,11 @@ export type CampaignErrorKey =
   // SP-13 Task 2: lastError of a launch that failed for a non-keyed reason (the provider text is on the partition).
   | "campaigns.launch_failed"
   // SP-13 Task 2 fix round 1 (I1): a broadcast of this campaign may still send.
-  | "campaigns.has_live_broadcasts";
+  | "campaigns.has_live_broadcasts"
+  // SP-14 (ruling 10): paused / disabled templates.
+  | "campaigns.template_paused"
+  | "campaigns.template_disabled"
+  | "campaigns.template_paused_on_number";
 
 const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.not_found": 404,
@@ -65,6 +69,10 @@ const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.not_cancellable": 400,
   "campaigns.launch_failed": 502, // a launch failure (lastError)
   "campaigns.has_live_broadcasts": 400, // DELETE refused while a partition may still send
+  // SP-14
+  "campaigns.template_paused": 400, // the stored template is paused (before template_not_approved)
+  "campaigns.template_disabled": 400, // the stored template is disabled (before template_not_approved)
+  "campaigns.template_paused_on_number": 400, // {channelIds, statuses: {channelId: "paused" | "disabled"}}
 };
 
 /** Machine codes carried next to the key (ruling 6: the roadmap's name). */

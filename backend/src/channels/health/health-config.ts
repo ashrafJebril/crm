@@ -13,3 +13,14 @@ export const HEALTH_CHECK_WS_PER_MIN = 10;
 
 export const healthCooldownMs = (env: Env = process.env) => positiveInt(env.HEALTH_CHECK_COOLDOWN_MS, HEALTH_CHECK_COOLDOWN_MS);
 export const healthWsPerMin = (env: Env = process.env) => positiveInt(env.HEALTH_CHECK_WS_PER_MIN, HEALTH_CHECK_WS_PER_MIN);
+
+/** SP-14 sweep (ruling 7): numbers checked per hourly tick. */
+export const HEALTH_SWEEP_BATCH = 50;
+/** A number is due once its last attempt is this old (about one check a day). */
+export const HEALTH_SWEEP_INTERVAL_MS = 24 * 3_600_000;
+/** A tick starts no new check after this long. */
+export const HEALTH_SWEEP_MAX_MS = 10 * 60_000;
+
+export const healthSweepBatch = (env: Env = process.env) => positiveInt(env.HEALTH_SWEEP_BATCH, HEALTH_SWEEP_BATCH);
+export const healthSweepIntervalMs = (env: Env = process.env) => positiveInt(env.HEALTH_SWEEP_INTERVAL_MS, HEALTH_SWEEP_INTERVAL_MS);
+export const healthSweepMaxMs = (env: Env = process.env) => positiveInt(env.HEALTH_SWEEP_MAX_MS, HEALTH_SWEEP_MAX_MS);

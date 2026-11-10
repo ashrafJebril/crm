@@ -31,6 +31,9 @@ import type { Channel } from "@prisma/client";
 import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
 import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
 import { zernioReplyParts } from "../campaigns/tracking/inbound-reply";
+import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
+import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
+import { applyTemplateProviderStatus } from "../templates/templates.service";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -90,6 +93,8 @@ export class ZernioService {
     // the same Prisma double.
     @Optional() tracker?: RecipientTrackerService,
     @Optional() attributor?: CampaignReplyAttributor,
+    // SP-14: template webhooks ask for a number health check (global ChannelsCoreModule).
+    @Optional() private readonly healthTrigger?: HealthCheckTrigger,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
@@ -1488,6 +1493,10 @@ export class ZernioService {
       }
       return { ok: true };
     }
+    if (type === "whatsapp.template.status_updated") {
+      await this.applyTemplateStatus(payload);
+      return { ok: true };
+    }
     if (type.startsWith("whatsapp.number.")) {
       // Provisioning/KYC lifecycle — surface for observability; a real number
       // becomes usable once `account.connected` / activation arrives.
@@ -1496,6 +1505,55 @@ export class ZernioService {
     }
     this.log.debug(`Unhandled Zernio event: ${type}`);
     return { ok: true, ignored: true };
+  }
+
+  /**
+   * SP-14 (ruling 15): `whatsapp.template.status_updated`. The workspace is
+   * the one owning the account: the most recent non-disconnected Zernio
+   * channel with `externalId = account.accountId`. Unknown accounts are
+   * logged and ignored. Template rows of that workspace only are updated,
+   * by `metaTemplateId` first; the name + base-language fallback applies
+   * only when the account is the workspace's default number, because the
+   * rows are default-number rows (SP-19 R8) and another number's copy must
+   * never rewrite them. Then a check of that number is requested
+   * (`trigger: "webhook"`, cooldown respected), so a pause on any number
+   * reaches its snapshot and the downgrade alerts. Never throws.
+   */
+  private async applyTemplateStatus(payload: ZernioWebhookEvent): Promise<void> {
+    try {
+      const accountId = payload.account?.accountId ?? payload.data?.accountId ?? payload.data?.account?.accountId;
+      const t = payload.template ?? payload.data?.template;
+      if (!accountId || !t) {
+        this.log.warn("Zernio template status event without an account or a template; ignored");
+        return;
+      }
+      const ch = await this.prisma.channel.findFirst({
+        where: { kind: "whatsapp", provider: "zernio", externalId: accountId, status: { not: "disconnected" } },
+        orderBy: [{ updatedAt: "desc" }],
+        select: { id: true, workspaceId: true },
+      });
+      if (!ch) {
+        this.log.log("Zernio template status event for an account no workspace holds; ignored");
+        return;
+      }
+      const isDefault = (await defaultZernioWhatsappAccountId(this.prisma, ch.workspaceId)) === accountId;
+      const n = await applyTemplateProviderStatus(
+        this.prisma,
+        ch.workspaceId,
+        {
+          templateId: t.templateId ?? t.id ?? null,
+          name: t.name ?? null,
+          language: t.language ?? null,
+          status: t.status ?? null,
+          reason: t.reason ?? t.rejectedReason ?? t.rejected_reason ?? null,
+        },
+        { allowNameMatch: isDefault },
+      );
+      this.log.log(`Zernio template status ${String(t.status ?? "")} applied to ${n} template row(s)`);
+      this.healthTrigger?.request(ch.workspaceId, ch.id);
+    } catch (e) {
+      this.log.warn(`Zernio template status event failed: ${(e as Error)?.message ?? "error"}`);
+    }
   }
 
   /**
@@ -2005,6 +2063,31 @@ export interface ZernioWebhookEvent {
     profileId?: string;
   };
   // account.connected / account.disconnected still carry a `data` envelope.
-  data?: { profileId?: string };
+  data?: {
+    profileId?: string;
+    /** SP-14: tolerated envelope for the template status event (unverified, R19). */
+    accountId?: string;
+    account?: { accountId?: string };
+    template?: ZernioTemplateStatusPayload;
+  };
+  /**
+   * SP-14 `whatsapp.template.status_updated` (docs.zernio.com webhooks;
+   * delivery and exact shape unverified live, ruling 19). Status is one of
+   * APPROVED, REJECTED, PENDING, PAUSED, DISABLED, IN_APPEAL, PENDING_DELETION.
+   */
+  template?: ZernioTemplateStatusPayload;
 
+}
+
+/** SP-14: the template of a `whatsapp.template.status_updated` event. */
+export interface ZernioTemplateStatusPayload {
+  /** Meta's template id. */
+  templateId?: string;
+  id?: string;
+  name?: string;
+  language?: string;
+  status?: string;
+  reason?: string | null;
+  rejectedReason?: string | null;
+  rejected_reason?: string | null;
 }

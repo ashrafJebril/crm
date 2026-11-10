@@ -33,6 +33,8 @@ import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker
 import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
 import { metaReplyParts } from "../campaigns/tracking/inbound-reply";
 import { providerFailure } from "../campaigns/tracking/failure-codes";
+import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
+import { normalizeTemplateQuality } from "../channels/health/health-model";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -86,11 +88,27 @@ interface WebhookEntryChangeValue {
 // inbound messages — typed separately so the webhook handler can dispatch on
 // `change.field`.
 interface TemplateStatusValue {
-  event?: "APPROVED" | "REJECTED" | "FLAGGED" | "PAUSED" | "PENDING_DELETION" | "DISABLED" | string;
+  event?: "APPROVED" | "REJECTED" | "FLAGGED" | "PAUSED" | "PENDING_DELETION" | "DISABLED" | "REINSTATED" | string;
   message_template_id?: string | number;
   message_template_name?: string;
   message_template_language?: string;
   reason?: string;
+}
+
+/** SP-14: `message_template_quality_update` (Meta webhooks reference). */
+interface TemplateQualityValue {
+  previous_quality_score?: string;
+  new_quality_score?: string;
+  message_template_id?: string | number;
+  message_template_name?: string;
+  message_template_language?: string;
+}
+
+/** SP-14: `phone_number_quality_update` (Meta webhooks reference). A trigger only. */
+interface PhoneQualityValue {
+  display_phone_number?: string;
+  event?: string;
+  current_limit?: string;
 }
 
 interface WebhookPayload {
@@ -98,7 +116,7 @@ interface WebhookPayload {
   entry?: Array<{
     id: string;
     changes?: Array<{
-      value?: WebhookEntryChangeValue | TemplateStatusValue;
+      value?: WebhookEntryChangeValue | TemplateStatusValue | TemplateQualityValue | PhoneQualityValue;
       field?: string;
     }>;
   }>;
@@ -160,6 +178,8 @@ export class WhatsAppService {
     // the same Prisma double.
     @Optional() tracker?: RecipientTrackerService,
     @Optional() attributor?: CampaignReplyAttributor,
+    // SP-14: quality webhooks ask for a number health check (global ChannelsCoreModule).
+    @Optional() private readonly healthTrigger?: HealthCheckTrigger,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
@@ -1006,6 +1026,19 @@ export class WhatsAppService {
           processed += 1;
           continue;
         }
+        // SP-14 (ruling 12): quality events. They need the app to subscribe to
+        // these fields in the Meta App Dashboard (a user action). The payload
+        // is a trigger, never a source of health values.
+        if (change.field === "message_template_quality_update") {
+          await this.handleTemplateQualityUpdate(value as TemplateQualityValue, entry.id);
+          processed += 1;
+          continue;
+        }
+        if (change.field === "phone_number_quality_update") {
+          await this.handlePhoneQualityUpdate(value as PhoneQualityValue, entry.id);
+          processed += 1;
+          continue;
+        }
 
         // Inbound messages / delivery statuses (field: "messages").
         const v = value as WebhookEntryChangeValue;
@@ -1176,21 +1209,81 @@ export class WhatsAppService {
     return match?.workspaceId ?? null;
   }
 
+  /**
+   * SP-14 (ruling 9): Meta's template events → our status. FLAGGED is not a
+   * pause (Meta: a flagged template is still sendable), so it changes no
+   * status; DISABLED is its own status; REINSTATED is approved again.
+   */
   private mapTemplateEvent(event: string): string | null {
     switch (event) {
       case "APPROVED":
+      case "REINSTATED":
         return "approved";
       case "REJECTED":
         return "rejected";
-      case "FLAGGED":
       case "PAUSED":
-      case "DISABLED":
         return "paused";
+      case "DISABLED":
+        return "disabled";
       case "PENDING_DELETION":
         return "pending";
       default:
         return null;
     }
+  }
+
+  /**
+   * SP-14: `message_template_quality_update` sets `Template.quality` by
+   * `metaTemplateId` (globally unique at Meta, so no tenant can be crossed),
+   * with Meta's UNKNOWN stored as NOT_RATED. It then asks for a check of the
+   * WABA's Meta numbers (their snapshots hold the template list). An
+   * unrecognised score or id changes nothing.
+   */
+  private async handleTemplateQualityUpdate(value: TemplateQualityValue, wabaId?: string): Promise<void> {
+    const metaId = value.message_template_id != null ? String(value.message_template_id) : null;
+    const quality = normalizeTemplateQuality(value.new_quality_score);
+    if (metaId && quality) {
+      const res = await this.prisma.template.updateMany({ where: { metaTemplateId: metaId }, data: { quality } });
+      if (res.count === 0) this.log.debug(`Template quality update for an unknown template id=${metaId}`);
+    } else {
+      this.log.debug("Template quality update without an id or a known score; ignored");
+    }
+    if (wabaId) for (const ch of await this.metaChannelsOfWaba(wabaId)) this.healthTrigger?.request(ch.workspaceId, ch.id);
+  }
+
+  /**
+   * SP-14 (ruling 12): `phone_number_quality_update` asks for a check of the
+   * Meta channel it names: WABA = `entry.id`, number = `display_phone_number`
+   * (digits compared). The event's own values are never stored.
+   */
+  private async handlePhoneQualityUpdate(value: PhoneQualityValue, wabaId?: string): Promise<void> {
+    const digits = String(value.display_phone_number ?? "").replace(/\D/g, "");
+    if (!wabaId || !digits) {
+      this.log.debug("Phone quality update without a WABA or a number; ignored");
+      return;
+    }
+    const hits = (await this.metaChannelsOfWaba(wabaId)).filter((c) => String(c.phoneNumber ?? "").replace(/\D/g, "") === digits);
+    if (hits.length === 0) this.log.debug(`Phone quality update for a number no channel holds (waba=${wabaId})`);
+    for (const ch of hits) this.healthTrigger?.request(ch.workspaceId, ch.id);
+  }
+
+  /** Connected Meta WhatsApp channels of a WABA (`config.wabaId`, else the legacy `Integration.raw.wabaId`). */
+  private async metaChannelsOfWaba(wabaId: string): Promise<Array<{ id: string; workspaceId: string; phoneNumber: string | null }>> {
+    const rows = await this.prisma.channel.findMany({
+      where: { kind: "whatsapp", provider: "meta", status: { not: "disconnected" } },
+      select: { id: true, workspaceId: true, phoneNumber: true, config: true, integrationId: true },
+    });
+    const out: Array<{ id: string; workspaceId: string; phoneNumber: string | null }> = [];
+    for (const r of rows) {
+      const cfg = r.config as Record<string, unknown> | null;
+      let waba = cfg && typeof cfg === "object" && typeof cfg.wabaId === "string" ? cfg.wabaId : null;
+      if (!waba && r.integrationId) {
+        const integ = await this.prisma.integration.findFirst({ where: { id: r.integrationId }, select: { raw: true } });
+        waba = this.parseRaw(integ?.raw ?? null).wabaId ?? null;
+      }
+      if (waba === wabaId) out.push({ id: r.id, workspaceId: r.workspaceId, phoneNumber: r.phoneNumber ?? null });
+    }
+    return out;
   }
 
   private metaLangToLocal(meta: string | undefined): string {

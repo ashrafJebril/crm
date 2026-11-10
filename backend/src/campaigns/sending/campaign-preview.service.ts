@@ -8,7 +8,7 @@ import { buildRecipients, estimateMetaCost, templatePlaceholderCount } from "../
 import { campaignError } from "../campaign-errors";
 import { streamAudience, type StreamedContact } from "./audience-stream";
 import { campaignDirectMax, campaignMaxPartitions, partitionKey, planTransport, slotsInOrder, type TransportKind } from "./partition";
-import { assignSender, normalizeSenderWrite, splitCounts, templateOnSenders } from "./senders";
+import { assignSender, normalizeSenderWrite, splitCounts, templateOnSenders, type PausedCopy } from "./senders";
 import { ZernioBudget } from "./zernio-budget";
 import {
   type CustomDef,
@@ -59,6 +59,8 @@ export interface CampaignPreview {
   templateMissing: string[];
   /** Senders whose templates Zernio could not return (launch fails closed on them). */
   templateCheckFailed: string[];
+  /** SP-14: senders whose copy is paused or disabled (launch refuses: template_paused_on_number). */
+  templatePaused: PausedCopy[];
   samples: PreviewSample[];
   estimate: { usd: number; unpriced: number };
 }
@@ -192,10 +194,12 @@ export class CampaignPreviewService {
 
     let templateMissing: string[] = [];
     let templateCheckFailed: string[] = [];
+    let templatePaused: PausedCopy[] = [];
     if (template && connected && senders.length > 0) {
       const r = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang }, { budget: this.budget.campaign });
       templateMissing = r.missing;
       templateCheckFailed = r.failed;
+      templatePaused = r.paused;
     }
 
     const limit = campaignMaxPartitions();
@@ -214,6 +218,7 @@ export class CampaignPreviewService {
       transport: { kind, partitions: partitions.size, limit, directLimit },
       templateMissing,
       templateCheckFailed,
+      templatePaused,
       samples: [sampleSlots.reachable, sampleSlots.fallback, sampleSlots.skipped].filter((s): s is PreviewSample => !!s),
       estimate,
     };

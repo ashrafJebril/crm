@@ -85,6 +85,21 @@ function approvedCopy(list: ZernioWhatsAppTemplate[], template: { name: string; 
   return hits.find((t) => t.language === template.lang) ?? hits[0] ?? null;
 }
 
+/** SP-14: a sender whose copy of the template is paused or disabled. */
+export interface PausedCopy {
+  channelId: string;
+  status: "paused" | "disabled";
+}
+
+/** The paused or disabled copy of `template` in one account's list (used when it holds no approved one). */
+function pausedCopy(list: ZernioWhatsAppTemplate[], template: { name: string; lang: string }): "paused" | "disabled" | null {
+  const hits = list.filter((t) => t.name === template.name && baseLang(t.language) === baseLang(template.lang));
+  const statuses = hits.map((t) => String(t.status ?? "").toUpperCase());
+  if (statuses.includes("DISABLED")) return "disabled";
+  if (statuses.includes("PAUSED")) return "paused";
+  return null;
+}
+
 /**
  * Which senders lack the campaign's template (ruling 4). Reads each distinct
  * account's approved templates once (read-only GET). A sender is `missing`
@@ -96,13 +111,20 @@ function approvedCopy(list: ZernioWhatsAppTemplate[], template: { name: string; 
  * Returns channel ids. With `opts.budget` (SP-13 final review, R19) each
  * account read takes a token from the shared campaign bucket, and a 429
  * pauses it.
+ *
+ * SP-14 (ruling 10): a sender with no approved copy but a PAUSED or
+ * DISABLED one (same name and base language) is listed in `paused` with
+ * its status, not in `missing`. Launch refuses it with
+ * `campaigns.template_paused_on_number`, after `template_check_failed` and
+ * before `template_missing_on_number`. This live read stays the authority;
+ * the health snapshot never authorizes a send.
  */
 export async function templateOnSenders(
   zernio: Pick<ZernioClient, "whatsappTemplates">,
   senders: ReadonlyArray<{ channelId: string | null; accountId: string }>,
   template: { name: string; lang: string },
   opts: { budget?: BudgetBucket } = {},
-): Promise<{ missing: string[]; failed: string[] }> {
+): Promise<{ missing: string[]; failed: string[]; paused: PausedCopy[] }> {
   const read = (accountId: string) =>
     opts.budget ? budgeted(opts.budget, () => zernio.whatsappTemplates(accountId)) : zernio.whatsappTemplates(accountId);
   const reads = new Map<string, Promise<ZernioWhatsAppTemplate[] | Error>>();
@@ -122,6 +144,7 @@ export async function templateOnSenders(
 
   const missing: string[] = [];
   const failed: string[] = [];
+  const paused: PausedCopy[] = [];
   let reference: ZernioWhatsAppTemplate | null = null;
   senders.forEach((s, i) => {
     const id = s.channelId ?? s.accountId;
@@ -132,9 +155,15 @@ export async function templateOnSenders(
     }
     const found = approvedCopy(list, template);
     if (i === 0) reference = found;
-    if (!found || (i > 0 && reference && !sameTemplateCopy(reference, found))) missing.push(id);
+    if (!found) {
+      const blocked = pausedCopy(list, template);
+      if (blocked) paused.push({ channelId: id, status: blocked });
+      else missing.push(id);
+      return;
+    }
+    if (i > 0 && reference && !sameTemplateCopy(reference, found)) missing.push(id);
   });
-  return { missing, failed };
+  return { missing, failed, paused };
 }
 
 /**

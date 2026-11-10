@@ -268,6 +268,23 @@ describe("system-role decision table", () => {
       expect(blockedForImpersonation(ROUTE_PERMISSIONS[CHECK] as string)).toBe(false);
       expect(() => assertRequestPermission(imp, "channels.update")).not.toThrow();
     });
+
+    // Part 2 (Task 2): the read-only template-health routes.
+    const READS = ["GET /channels/:id/templates", "GET /templates/:id/health"];
+
+    it("every system role can read both template-health routes", () => {
+      for (const route of READS) {
+        for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    it("none of the SP-14 routes is blocked for impersonation", () => {
+      for (const route of [CHECK, ...READS]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
   });
 
     it("billing.manage and roles.manage are owner-only", () => {

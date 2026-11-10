@@ -138,6 +138,59 @@ describe("CampaignSendService", () => {
       expect(await keyOf(noNumber.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 409, message: "campaigns.whatsapp_not_connected" });
     });
 
+    // SP-14 (ruling 10): check 5 refuses a stored paused/disabled template with its own key.
+    it("paused or disabled template refuses launch with its key", async () => {
+      for (const [status, key] of [
+        ["paused", "campaigns.template_paused"],
+        ["disabled", "campaigns.template_disabled"],
+      ] as const) {
+        const w = world({ contacts: people(2), template: { status } });
+        expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toEqual({ status: 400, statusCode: 400, message: key });
+        // Before template_not_approved, and before any Zernio read.
+        expect(w.zernio.whatsappTemplates).not.toHaveBeenCalled();
+        expect(w.camp().status).toBe("draft");
+      }
+      // Other non-approved statuses keep SP-13's key.
+      const w = world({ contacts: people(2), template: { status: "pending" } });
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ message: "campaigns.template_not_approved" });
+    });
+
+    // SP-14 (ruling 10): check 9's live per-sender read classifies paused/disabled copies.
+    it("sender copy paused refuses launch", async () => {
+      const paused = { ...zernioCopy("Hello"), status: "PAUSED" };
+      const disabled = { ...zernioCopy("Hello"), status: "DISABLED" };
+      const w = world({ senders: ["A", "B", "C"], contacts: people(2) });
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => (acc === "acc-B" ? [paused] : [zernioCopy("Hello")]));
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toEqual({
+        status: 400,
+        statusCode: 400,
+        message: "campaigns.template_paused_on_number",
+        channelIds: ["B"],
+        statuses: { B: "paused" },
+      });
+      // Precedence: an unreadable sender (502) first.
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => {
+        if (acc === "acc-C") throw new Error("Zernio down");
+        return acc === "acc-B" ? [paused] : [zernioCopy("Hello")];
+      });
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 502, message: "campaigns.template_check_failed", channelIds: ["C"] });
+      // Then paused-on-number before missing-on-number.
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => (acc === "acc-B" ? [paused] : acc === "acc-C" ? [] : [zernioCopy("Hello")]));
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ status: 400, message: "campaigns.template_paused_on_number", channelIds: ["B"] });
+      // A disabled copy reports its status.
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => (acc === "acc-C" ? [disabled] : [zernioCopy("Hello")]));
+      expect(await keyOf(w.send.launch(WS, "camp", { mode: "now" }))).toMatchObject({ channelIds: ["C"], statuses: { C: "disabled" } });
+      expect(w.camp().status).toBe("draft");
+      expect(w.zernio.createWhatsAppBroadcast).not.toHaveBeenCalled();
+
+      // The preview reports it as templatePaused (and not as missing).
+      w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => (acc === "acc-B" ? [paused] : acc === "acc-C" ? [] : [zernioCopy("Hello")]));
+      const p = await w.preview.preview(WS, { templateId: "tpl", senderChannelIds: ["A", "B", "C"] }, { canViewContacts: false });
+      expect(p.templatePaused).toEqual([{ channelId: "B", status: "paused" }]);
+      expect(p.templateMissing).toEqual(["C"]);
+      expect(p.templateCheckFailed).toEqual([]);
+    });
+
     it("the template must be on every sender: missing is 400, unreadable is 502", async () => {
       const w = world({ senders: ["A", "B"], contacts: people(2) });
       w.zernio.whatsappTemplates.mockImplementation(async (acc: string) => (acc === "acc-B" ? [] : [zernioCopy("Hello")]));

@@ -344,6 +344,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "PATCH /templates/:id": "templates.update",
   "DELETE /templates/:id": "templates.delete",
   "POST /templates/:id/duplicate": "templates.create",
+  "GET /templates/:id/health": "templates.view", // SP-14: the template on every number (snapshots, no provider call)
 
   // ── AI agent & knowledge ──────────────────────────────────────────────
   "GET /ai/settings": "agent.view",
@@ -410,6 +411,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /channels/sync": "channels.update",
   "POST /channels/:id/reconnect": "channels.update", // T2: Telegram re-registers its webhook
   "POST /channels/:id/health/check": "channels.update", // SP-14 R4: spends provider budget
+  "GET /channels/:id/templates": "templates.view", // SP-14 R11(a): the number's template snapshot, read-only
   "POST /channels/telegram": "channels.create",
   "DELETE /channels/:id": "channels.delete", // soft disconnect
   // SP-19 T4: WhatsApp embedded signup, manual multi-number, landline numbers

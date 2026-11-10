@@ -8,6 +8,7 @@ import { MetaGraphClient } from "./whatsapp/meta-graph.client";
 import { EmbeddedSignupService } from "./whatsapp/embedded-signup.service";
 import { LandlineService } from "./whatsapp/landline.service";
 import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.module";
+import { HealthCheckTrigger } from "./health/health-check-trigger";
 
 /**
  * The routing building blocks every sender/receiver needs (Zernio, Meta,
@@ -21,6 +22,9 @@ import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.
  * `/integrations/whatsapp/oauth/exchange` route in IntegrationsModule can
  * delegate to the embedded signup without a cycle. LandlineService also
  * registers the `meta` transport's reconnect hook.
+ *
+ * SP-14: HealthCheckTrigger lets the Zernio and Meta webhooks ask for a
+ * number health check; ChannelsModule's ChannelHealthService binds it.
  */
 @Global()
 @Module({
@@ -32,6 +36,7 @@ import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.
     MetaGraphClient,
     EmbeddedSignupService,
     LandlineService,
+    HealthCheckTrigger,
   ],
   exports: [
     ChannelResolver,
@@ -40,6 +45,7 @@ import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.
     MetaGraphClient,
     EmbeddedSignupService,
     LandlineService,
+    HealthCheckTrigger,
   ],
 })
 export class ChannelsCoreModule {}

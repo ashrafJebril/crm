@@ -137,11 +137,13 @@ export class CampaignSendService {
    * check that needs no audience runs here, in the plan's order:
    * 1. payment lock; 2. 404 `campaigns.not_found`; 3. 409
    * `campaigns.already_launched`; 4. `campaigns.schedule_invalid`;
-   * 5. `campaigns.template_not_approved`; 6. `campaigns.template_unsupported`
+   * 5. `campaigns.template_paused` / `campaigns.template_disabled` (SP-14),
+   * then `campaigns.template_not_approved`; 6. `campaigns.template_unsupported`
    * (ruling 12); 7. 409 `campaigns.whatsapp_not_connected`; 8. senders
    * (`channels.sender_invalid`, `campaigns.too_many_senders`); 9. the
-   * template on every sender (`campaigns.template_missing_on_number`, 502
-   * `campaigns.template_check_failed`); 10. the varMap (`var_map_invalid`;
+   * template on every sender (502 `campaigns.template_check_failed`, then
+   * SP-14's `campaigns.template_paused_on_number`, then
+   * `campaigns.template_missing_on_number`); 10. the varMap (`var_map_invalid`;
    * legacy body `variables` convert when the campaign has none); 11. the
    * header file (MediaService.get as the launcher, `assertHeaderMedia`, at
    * most 6 days ahead, ruling 9).
@@ -167,6 +169,9 @@ export class CampaignSendService {
     const template = campaign.templateId
       ? await this.prisma.template.findFirst({ where: { id: campaign.templateId, workspaceId } })
       : null;
+    // SP-14 (ruling 10): a paused or disabled template has its own key, before not_approved.
+    if (template?.status === "paused") throw campaignError("campaigns.template_paused");
+    if (template?.status === "disabled") throw campaignError("campaigns.template_disabled");
     if (!template || template.status !== "approved") throw campaignError("campaigns.template_not_approved");
     if (templateUnsupported(template)) throw campaignError("campaigns.template_unsupported");
 
@@ -178,6 +183,12 @@ export class CampaignSendService {
 
     const onSenders = await templateOnSenders(this.zernio, senders, { name: template.name, lang: template.lang }, { budget: this.budget.campaign });
     if (onSenders.failed.length > 0) throw campaignError("campaigns.template_check_failed", { channelIds: onSenders.failed });
+    if (onSenders.paused.length > 0) {
+      throw campaignError("campaigns.template_paused_on_number", {
+        channelIds: onSenders.paused.map((p) => p.channelId),
+        statuses: Object.fromEntries(onSenders.paused.map((p) => [p.channelId, p.status])),
+      });
+    }
     if (onSenders.missing.length > 0) throw campaignError("campaigns.template_missing_on_number", { channelIds: onSenders.missing });
 
     const rawMap = campaign.varMap ?? legacyToVarMap(input.variables ?? []);

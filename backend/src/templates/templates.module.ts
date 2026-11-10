@@ -116,6 +116,16 @@ class TemplatesController {
     return this.templates.lookupLibraryTemplate(workspaceId, name, language);
   }
 
+  /**
+   * SP-14: the template's status on every number of the workspace, from
+   * each number's health snapshot (no provider call). Foreign or unknown id
+   * → 404 `templates.not_found`. Declared before `:id` like `library`.
+   */
+  @Get(":id/health")
+  health(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.templates.healthFor(workspaceId, id);
+  }
+
   @Get(":id")
   async get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     const row = await this.prisma.template.findFirst({ where: { id, workspaceId } });
@@ -181,5 +191,7 @@ class TemplatesController {
   imports: [IntegrationsModule, MediaModule],
   controllers: [TemplatesController],
   providers: [TemplatesService],
+  // SP-14: the health sweep reconciles the default number's rows from the list it read.
+  exports: [TemplatesService],
 })
 export class TemplatesModule {}

@@ -126,9 +126,11 @@ describe("permission map", () => {
   });
 
   it("permission map covers SP-14 routes", () => {
-    // Part 1 (Task 1): the live check. Task 2 adds the template-health routes.
+    // Part 1 (Task 1): the live check. Part 2 (Task 2): the template-health routes.
     const sp14: Record<string, string> = {
       "POST /channels/:id/health/check": "channels.update",
+      "GET /channels/:id/templates": "templates.view",
+      "GET /templates/:id/health": "templates.view",
       // Reading the cached health stays on the channel DTO (channels.view).
       "GET /channels/:id": "channels.view",
       "GET /channels": "channels.view",
