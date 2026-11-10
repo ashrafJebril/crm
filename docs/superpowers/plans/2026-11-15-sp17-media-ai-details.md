@@ -171,7 +171,7 @@ What we take and what we don't:
 
   The handler loads the row by `(id, workspaceId)` first. A foreign path id returns **404**.
 - **Migration:**
-  - File: `backend/prisma/migrations/20261115120000_media_ai_details/migration.sql`. The timestamp is after `20261114140000_number_template_health`. **Every existing migration is applied in production and is never edited.** Hand-written; apply with `npx prisma migrate deploy` only, never `migrate dev`.
+  - File: `backend/prisma/migrations/20261115140000_media_ai_details/migration.sql`. The timestamp is after `20261114140000_number_template_health`. **Every existing migration is applied in production and is never edited.** Hand-written; apply with `npx prisma migrate deploy` only, never `migrate dev`.
   - **Additive and idempotent:**
     ```sql
     -- AlterTable
@@ -262,7 +262,7 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 15. **Size.** The roadmap says S. Backend (columns, PATCH, search, tool, send re-check, prompt) and frontend (dialog, Gallery and Media actions, Photos tab) fit 2 build tasks plus verification. If the send re-check (ruling 2) is declined, Task 1 shrinks. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Decided 2026-11-10. Every recommended ruling is accepted. R13: migration 20261115120000_media_ai_details needs explicit user approval before it is applied.*
+*Decided 2026-11-10. Every recommended ruling is accepted. R13: migration 20261115140000_media_ai_details needs explicit user approval before it is applied.*
 - **R1** Accepted (agent access through the CRM MCP `list_photos` tool; no l payload change).
 - **R2** Accepted (send-time re-check of our own media URLs).
 - **R3** Accepted (approvable = JPEG/PNG ≤ 5 MB, staff uploads only).
@@ -275,7 +275,7 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 - **R10** Accepted (prompt rollout without a bulk backfill).
 - **R11** Accepted (no new index).
 - **R12** Accepted (last write wins).
-- **R13** Accepted (verification on production; explicit approval for `20261115120000_media_ai_details`).
+- **R13** Accepted (verification on production; explicit approval for `20261115140000_media_ai_details`).
 - **R14** Accepted (unverified l behaviour listed in the PR).
 - **R15** Accepted (size S, 2 build tasks plus verification).
 
@@ -286,7 +286,7 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 
 **Files:**
 - `backend/prisma/schema.prisma`: the Global Constraints → Data changes.
-- `backend/prisma/migrations/20261115120000_media_ai_details/migration.sql`.
+- `backend/prisma/migrations/20261115140000_media_ai_details/migration.sql`.
 - `backend/src/media/media-details.ts` (new, pure) + `media-details.spec.ts`:
   - `MEDIA_DETAIL_LIMITS`, `AGENT_PHOTO_MIMES`, `AGENT_PHOTO_MAX_BYTES` (from `HEADER_LIMITS.image`), `AGENT_PHOTO_URL_TTL_S`;
   - `normalizeTags(input) → string[]` (throws a class-validator-shaped 400 over 20);
@@ -412,7 +412,7 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 - [ ] Commit `feat(media): details dialog, agent approval and search in the gallery, and the agent Photos tab`.
 
 ### Task 3: Verification
-Apply `20261115120000_media_ai_details` with `npx prisma migrate deploy`, and only when the controller and the user explicitly approve it (ruling 13). It is safe for `main` (Global Constraints). Record the results in `.superpowers/sdd/2026-11-15-sp17-media-ai-details/live-verification.md`, in the format of SP-14's `live-verification.md`: summary, a results table with evidence, DB-side checks, findings, cleanup, and the pending real-l items (ruling 14). If the harness refuses the write, put the tables in the scratchpad and say so; do not reroute.
+Apply `20261115140000_media_ai_details` with `npx prisma migrate deploy`, and only when the controller and the user explicitly approve it (ruling 13). It is safe for `main` (Global Constraints). Record the results in `.superpowers/sdd/2026-11-15-sp17-media-ai-details/live-verification.md`, in the format of SP-14's `live-verification.md`: summary, a results table with evidence, DB-side checks, findings, cleanup, and the pending real-l items (ruling 14). If the harness refuses the write, put the tables in the scratchpad and say so; do not reroute.
 
 **Isolation** (no repo code changed; scripts derived from SP-14's in the session scratchpad `C:\Users\ashra\AppData\Local\Temp\claude\7b75a64029a712a6\ebb2057a-6300-4548-9aec-b98487880afb\scratchpad\`):
 - **Own instance:** `launch-sp17.js`, derived from `launch-sp14.js`.
