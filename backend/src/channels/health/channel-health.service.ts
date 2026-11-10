@@ -156,9 +156,12 @@ export class ChannelHealthService implements OnModuleDestroy {
    * stays the authority. Unknown or foreign id → 404 `channels.not_found`.
    */
   async templates(workspaceId: string, id: string): Promise<NumberTemplates> {
-    const row = await this.prisma.channel.findFirst({ where: { id, workspaceId }, select: { id: true, health: true } });
+    const row = await this.prisma.channel.findFirst({
+      where: { id, workspaceId },
+      select: { id: true, health: true, provider: true, externalId: true },
+    });
     if (!row) throw channelError("channels.not_found");
-    return snapshotTemplates(row.id, row.health);
+    return snapshotTemplates(row.id, row.health, { provider: row.provider, externalId: row.externalId ?? null });
   }
 
   /**
@@ -263,7 +266,9 @@ export class ChannelHealthService implements OnModuleDestroy {
   ): Promise<ClaimedCheckResult> {
     const fresh = await this.prisma.channel.findFirst({ where: { id: row.id, workspaceId: row.workspaceId } });
     if (!fresh) throw channelError("channels.not_found");
-    const previous = asChannelHealth(fresh.health);
+    // Final review I1: a health read from another account (the row was
+    // re-pointed) is no previous: no lastKnown, and a silent baseline.
+    const previous = asChannelHealth(fresh.health, { provider: fresh.provider, externalId: fresh.externalId ?? null });
     const read = await this.read(fresh, opts);
     const health = mergeHealth(previous, read, { now, trigger });
     const { changes, alerts } = evaluateAlerts(previous?.alerts ?? null, health, now);
@@ -273,7 +278,8 @@ export class ChannelHealthService implements OnModuleDestroy {
     if (!written) this.log.log(`health check of channel ${fresh.id} was superseded; nothing written`);
     if (written && changes.length && this.onDowngrade) {
       try {
-        await this.onDowngrade({ channel: fresh, health, changes });
+        // The notifier words `from` with the previous health: pass the one used here.
+        await this.onDowngrade({ channel: { ...fresh, health: previous as unknown as Channel["health"] }, health, changes });
       } catch (e) {
         // At most once (ruling 8): the write stands; a lost alert is logged.
         this.log.warn(`downgrade hook failed for channel ${fresh.id}: ${(e as Error)?.name ?? "error"}`);
@@ -286,8 +292,11 @@ export class ChannelHealthService implements OnModuleDestroy {
   /** One provider read for the channel. Never throws. */
   private async read(row: Channel, opts: CheckReadOptions = {}): Promise<RawHealthRead> {
     const provider = row.provider === "meta" ? "meta" : "zernio";
+    // The account this read is for (I1): the credentials' one, else the row's.
+    let accountId: string | null = row.externalId ?? null;
     try {
       const creds = await credentialsFor(this.prisma, row);
+      accountId = creds.externalId ?? null;
       const effective = creds.provider === "meta" || creds.provider === "zernio" ? creds.provider : provider;
       if (effective === "zernio") {
         return await readZernioHealth(this.zernio, this.budget, creds.externalId, { onTemplates: opts.onZernioTemplates });
@@ -297,7 +306,7 @@ export class ChannelHealthService implements OnModuleDestroy {
       this.log.warn(`health read failed for channel ${row.id}: ${(e as Error)?.name ?? "error"}`);
       const fields: RawHealthRead["fields"] = {};
       for (const f of SIGNAL_NAMES) fields[f] = { error: "check_failed" };
-      return { provider, fields, templates: { error: "check_failed" } };
+      return { provider, accountId, fields, templates: { error: "check_failed" } };
     }
   }
 

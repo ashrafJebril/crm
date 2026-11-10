@@ -4,6 +4,7 @@ import { accountHealth } from "../integrations/zernio-account-health";
 import type { Channel, Prisma } from "@prisma/client";
 import {
   alignLegacyChannel,
+  clearChannelHealth,
   MERGED,
   revival,
   USER_DISCONNECTED,
@@ -87,6 +88,8 @@ export async function mirrorZernioAccounts(
           ...revival(slot, false),
         },
       });
+      // Final review I1: the slot now points at another account; drop A's health.
+      await clearChannelHealth(prisma, slot.id);
       hasRow.add(p.pageId);
     }
   }

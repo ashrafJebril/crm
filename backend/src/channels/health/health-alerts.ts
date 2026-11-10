@@ -38,6 +38,8 @@ export const ALERT_LEVELS = {
     RESTRICTED: 2,
     DISCONNECTED: 2,
     BANNED: 2,
+    // Final review M4: Meta deleted the number; critical, as the UI shows it.
+    DELETED: 2,
   } as Record<string, number>,
   nameStatus: { DECLINED: 2, EXPIRED: 2 } as Record<string, number>,
   accountReview: { REJECTED: 2 } as Record<string, number>,

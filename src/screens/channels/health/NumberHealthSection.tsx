@@ -21,6 +21,7 @@ import {
   signalView,
   templateQualityView,
   templateStatusView,
+  templatesReadLabel,
   templatesView,
   unknownReason,
 } from "./healthModel";
@@ -191,9 +192,10 @@ function NumberTemplates({ channelId, refreshKey, tx, lang }: { channelId: strin
     <div style={{ display: "grid", gap: 6 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, fontSize: 12.5 }}>{tx("Templates on this number", "القوالب على هذا الرقم")}</span>
-        {d?.checkedAt && (
+        {/* Final review M3: "Read" only for a list that was read; a failed read shows its attempt time. */}
+        {d && templatesReadLabel(d, tx) && (
           <span className="muted" style={{ fontSize: 11 }}>
-            {tx("Read", "قُرئت")}: {fmtWhen(d.checkedAt, lang, tx)}
+            {templatesReadLabel(d, tx)}: {fmtWhen(d.checkedAt, lang, tx)}
           </span>
         )}
       </div>

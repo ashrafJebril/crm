@@ -49,7 +49,7 @@ export async function readMetaHealth(
   if (!token) {
     for (const [f] of [...PHONE_FIELDS, ...WABA_FIELDS]) fields[f] = missing;
     fields.tier = missing;
-    return { provider: "meta", fields, templates: { error: "missing_credentials" } };
+    return { provider: "meta", accountId: phoneId ?? null, fields, templates: { error: "missing_credentials" } };
   }
 
   const one = async (node: string, field: string): Promise<RawField> => {
@@ -115,5 +115,5 @@ export async function readMetaHealth(
     );
   }
   await Promise.all(tasks);
-  return { provider: "meta", fields, templates };
+  return { provider: "meta", accountId: phoneId ?? null, fields, templates };
 }

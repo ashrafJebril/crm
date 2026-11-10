@@ -20,8 +20,18 @@ export interface SweepResult {
 type DueRow = { id: string; workspaceId: string; provider: string; externalId: string | null };
 
 /**
+ * Final review M1: the connected statuses plus `error`. An `error` number
+ * (e.g. Meta's webhook subscription failed) is still listed in the campaign
+ * sender picker and can usually still be read, so it is swept like the
+ * others. When its read fails, its values become Unknown with the old ones
+ * kept only as Previous — never shown stale as current.
+ */
+const SWEPT_STATUSES: string[] = [...CONNECTED_CHANNEL_STATUSES, "error"];
+
+/**
  * SP-14 daily sweep (ruling 7): every hour, up to `HEALTH_SWEEP_BATCH` (50)
- * connected Zernio / Meta WhatsApp numbers whose last attempt is older than
+ * connected (or `error`, see SWEPT_STATUSES) Zernio / Meta WhatsApp numbers
+ * whose last attempt is older than
  * `HEALTH_SWEEP_INTERVAL_MS` (24 h), oldest first (never-checked first), one
  * at a time, starting no check after `HEALTH_SWEEP_MAX_MS` (10 min). So each
  * number is checked about once a day and the load is spread.
@@ -64,7 +74,7 @@ export class ChannelHealthScheduler {
         where: {
           kind: "whatsapp",
           provider: { in: [...HEALTH_PROVIDERS] },
-          status: { in: [...CONNECTED_CHANNEL_STATUSES] },
+          status: { in: SWEPT_STATUSES },
           OR: [{ healthAttemptedAt: null }, { healthAttemptedAt: { lte: cutoff } }],
         },
         orderBy: [{ healthAttemptedAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],

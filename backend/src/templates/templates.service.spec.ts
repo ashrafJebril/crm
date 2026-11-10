@@ -1114,7 +1114,7 @@ describe("SP-14 template status and quality", () => {
     });
   });
 
-  it("reconcile writes quality: the score, UNKNOWN as NOT_RATED, absent leaves it", async () => {
+  it("reconcile writes quality: the score, UNKNOWN as NOT_RATED, absent clears it (final review M5)", async () => {
     const local = [
       { id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null },
       { id: "t2", name: "b", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-b", body: "Hi", quality: null },
@@ -1128,11 +1128,32 @@ describe("SP-14 template status and quality", () => {
     const by = Object.fromEntries(rows.map((r) => [r.name, r]));
     expect(by.a.quality).toBe("YELLOW");
     expect(by.b.quality).toBe("NOT_RATED");
-    // Absent: the stored quality (e.g. from Meta's quality webhook) stays, and no write happens for it.
-    expect(by.c.quality).toBe("RED");
+    // Absent: the provider no longer reports a score, so the old one is cleared (R1: never kept as current).
+    expect(by.c.quality).toBeNull();
     const updated = prisma.template.update.mock.calls.map((c: any) => c[0].where.id);
-    expect(updated.sort()).toEqual(["t1", "t2"]);
+    expect(updated.sort()).toEqual(["t1", "t2", "t3"]);
+    expect(prisma.template.update.mock.calls.find((c: any) => c[0].where.id === "t3")[0].data.quality).toBeNull();
     expect(prisma.template.create.mock.calls[0][0].data.quality).toBe("GREEN");
+    // Each listed row says where its quality came from and when it was read.
+    expect(by.a.qualitySource).toBe("zernio_passthrough");
+    expect(typeof by.a.qualityReadAt).toBe("string");
+    expect(by.c.qualitySource).toBeNull();
+    expect(by.n.qualitySource).toBe("zernio_passthrough");
+  });
+
+  it("an already-unknown quality with no score is not rewritten", async () => {
+    const local = [{ id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null }];
+    const { svc, prisma } = build([m("a", "APPROVED")], local);
+    await svc.list("ws1");
+    expect(prisma.template.update).not.toHaveBeenCalled();
+  });
+
+  it("a failed list read keeps the stored quality but marks it as not read now", async () => {
+    const local = [{ id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: "GREEN" }];
+    const { svc, client } = build([], local);
+    client.whatsappTemplates.mockRejectedValueOnce(new Error("down"));
+    const rows = await svc.list("ws1");
+    expect(rows[0]).toMatchObject({ quality: "GREEN", qualityReadAt: null });
   });
 
   it("reconcileFromList reconciles a list already read, without a Zernio call", async () => {

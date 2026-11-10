@@ -54,7 +54,7 @@ export async function readZernioHealth(
   const fields: RawHealthRead["fields"] = {};
   if (!accountId) {
     for (const f of ALL_FIELDS) fields[f] = { error: "missing_credentials" };
-    return { provider: "zernio", fields, templates: { error: "missing_credentials" } };
+    return { provider: "zernio", accountId: accountId ?? null, fields, templates: { error: "missing_credentials" } };
   }
 
   let info: ZernioNumberInfo | null = null;
@@ -66,7 +66,7 @@ export async function readZernioHealth(
     // Gone: nothing else to read. Rate limited (fix round 1, I1): a second
     // call would land inside Zernio's Retry-After window.
     if (isAccountGone(e) || e instanceof ZernioRateLimitError) {
-      return { provider: "zernio", fields, templates: { error: "check_failed" } };
+      return { provider: "zernio", accountId: accountId ?? null, fields, templates: { error: "check_failed" } };
     }
   }
 
@@ -107,5 +107,5 @@ export async function readZernioHealth(
     log.warn(`templates read failed for a Zernio account: ${e instanceof HttpException ? e.getStatus() : "error"}`);
     templates = { error: "check_failed" };
   }
-  return { provider: "zernio", fields, templates };
+  return { provider: "zernio", accountId: accountId ?? null, fields, templates };
 }

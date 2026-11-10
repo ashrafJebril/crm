@@ -180,16 +180,19 @@ describe("SP-13 campaign senders", () => {
 
   it("senders expose tier and quality from the snapshot", async () => {
     const at = new Date("2026-11-10T06:00:00.000Z");
-    const snap = (quality: { value: string; error: string | null }, tier: { value: string; error: string | null }) => ({
+    const snap = (quality: { value: string; error: string | null }, tier: { value: string; error: string | null }, accountId = "acc-H") => ({
       v: 1,
       provider: "zernio",
+      accountId,
       checkedAt: at.toISOString(),
       quality: { ...quality, checkedAt: at.toISOString() },
       tier: { ...tier, checkedAt: at.toISOString() },
     });
     const prisma = build("pro", [
       ch("H", { health: snap({ value: "YELLOW", error: null }, { value: "TIER_2K", error: null }), healthCheckedAt: at }),
-      ch("U", { health: snap({ value: "unknown", error: "check_failed" }, { value: "unknown", error: "check_failed" }), healthCheckedAt: null }),
+      ch("U", { health: snap({ value: "unknown", error: "check_failed" }, { value: "unknown", error: "check_failed" }, "acc-U"), healthCheckedAt: null }),
+      // Final review I1: a snapshot read from another account (the row moved) is not this number's.
+      ch("MOVED", { health: snap({ value: "GREEN", error: null }, { value: "TIER_10K", error: null }, "acc-OLD"), healthCheckedAt: at }),
       ch("JUNK", { health: { v: 99, quality: { value: "GREEN" } } }),
     ]);
     const r = await campaignSenderOptions(prisma, "ws1");
@@ -198,6 +201,7 @@ describe("SP-13 campaign senders", () => {
     // A failed read stays unknown (never the last value); an unknown shape is unknown.
     expect(by.U).toMatchObject({ tier: "unknown", quality: "unknown", healthCheckedAt: null });
     expect(by.JUNK).toMatchObject({ tier: "unknown", quality: "unknown" });
+    expect(by.MOVED).toMatchObject({ tier: "unknown", quality: "unknown", healthCheckedAt: null });
     // Display only: a RED or low tier never changes eligibility.
     expect(by.A).toMatchObject({ tier: "unknown", eligible: true });
   });

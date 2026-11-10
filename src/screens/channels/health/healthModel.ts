@@ -329,6 +329,22 @@ export function templatesView(t: HealthTemplatesSignal | null | undefined, tx: T
     };
   }
   const bad = v.paused + v.disabled;
+  // Final review M2: with nothing paused or disabled, "None" would also claim
+  // the quality is fine. When the provider did not report it (or the
+  // snapshot predates the count), the honest answer is Unknown.
+  if (v.total > 0 && bad === 0 && v.lowQuality === 0 && (v.qualityUnknown === undefined || v.qualityUnknown > 0)) {
+    return {
+      label: pick(tx, UNKNOWN_LABEL),
+      tone: "neutral",
+      unknown: true,
+      state: "missing_data",
+      reason: tx(
+        "Template quality isn't reported by the provider. None are paused or disabled.",
+        "لا يُبلِّغ المزوّد عن جودة القوالب. لا توجد قوالب متوقفة أو معطّلة.",
+      ),
+      bad: 0,
+    };
+  }
   const parts: string[] = [];
   if (v.paused) parts.push(tx(`${v.paused} paused`, `${v.paused} متوقف مؤقتًا`));
   if (v.disabled) parts.push(tx(`${v.disabled} disabled`, `${v.disabled} معطّل`));
@@ -577,4 +593,92 @@ export function changeText(ch: HealthChange, tx: Tx): string {
     default:
       return tx("its health changed", "تغيّرت حالته");
   }
+}
+
+// ─── SP-14 final review: sender chips, template list time, template quality ─
+
+/** M1: a sender's tier / quality older than this reads as Unknown. */
+export const SENDER_HEALTH_MAX_AGE_MS = 7 * 24 * 3_600_000;
+
+export interface SenderChipsView {
+  tier: { label: string; unknown: boolean; note: string };
+  quality: { label: string; tone: Tone; unknown: boolean };
+  /** When the values were read (ISO); null when they are not shown. */
+  checkedAt: string | null;
+  /** Why both chips are Unknown (no read, or one too old). */
+  reason?: string;
+}
+
+/**
+ * M1: the campaign sender chips. The values count only with a check time no
+ * older than 7 days; otherwise both chips are Unknown with the reason. An
+ * older backend that sends neither field gets no chips (null).
+ */
+export function senderChipsView(
+  s: { tier?: string; quality?: string; healthCheckedAt?: string | null },
+  nowMs: number,
+  tx: Tx,
+): SenderChipsView | null {
+  if (s.tier === undefined && s.quality === undefined) return null;
+  const at = s.healthCheckedAt ? Date.parse(s.healthCheckedAt) : NaN;
+  const fresh = Number.isFinite(at) && nowMs - at <= SENDER_HEALTH_MAX_AGE_MS;
+  const reason = fresh
+    ? undefined
+    : Number.isFinite(at)
+      ? tx("Not checked in the last 7 days", "لم يُفحص خلال آخر 7 أيام")
+      : tx("Not checked yet", "لم يُفحص بعد");
+  const tierValue = fresh ? (s.tier ?? UNKNOWN) : UNKNOWN;
+  const qualityValue = fresh ? (s.quality ?? UNKNOWN) : UNKNOWN;
+  const t = tierView(tierValue, tx);
+  const q = signalView("quality", { value: qualityValue, checkedAt: null, error: null }, tx);
+  return {
+    tier: { label: t.label, unknown: !tierValue || tierValue === UNKNOWN, note: t.note },
+    quality: { label: q.label, tone: q.tone, unknown: q.unknown },
+    checkedAt: fresh ? (s.healthCheckedAt ?? null) : null,
+    ...(reason ? { reason } : {}),
+  };
+}
+
+/**
+ * M3: the time label of a number's template list. "Read" only when the list
+ * was read; after a failed read the time is only the last attempt.
+ */
+export function templatesReadLabel(d: { known: boolean; checkedAt: string | null }, tx: Tx): string | null {
+  if (!d.checkedAt) return null;
+  return d.known ? tx("Read", "قُرئت") : tx("Last attempt", "آخر محاولة");
+}
+
+export interface TemplateQualityCell {
+  label: string;
+  tone: Tone;
+  unknown: boolean;
+  /** A stored score that no read confirms now: shown muted, as previous. */
+  previous: boolean;
+  /** R1: the score came through Zernio's undocumented passthrough. */
+  source?: string;
+  /** When the list carrying the score was read. */
+  readAt?: string;
+}
+
+/**
+ * M5: the Templates list quality cell. A score from a list read now shows
+ * its source mark and read time. A stored score that no read confirms now
+ * (`qualityReadAt: null`) is "Previous: …", muted, never current. An older
+ * backend without the read fields shows the value as before.
+ */
+export function templateQualityCell(
+  row: { quality?: string | null; qualitySource?: string | null; qualityReadAt?: string | null },
+  tx: Tx,
+): TemplateQualityCell {
+  const q = templateQualityView(row.quality, tx);
+  if (q.unknown) return { ...q, previous: false };
+  if (row.qualityReadAt === null) {
+    return { label: tx(`Previous: ${q.label}`, `السابق: ${q.label}`), tone: "neutral", unknown: true, previous: true };
+  }
+  return {
+    ...q,
+    previous: false,
+    ...(row.qualitySource === "zernio_passthrough" ? { source: pick(tx, SOURCE_LABEL) } : {}),
+    ...(row.qualityReadAt ? { readAt: row.qualityReadAt } : {}),
+  };
 }

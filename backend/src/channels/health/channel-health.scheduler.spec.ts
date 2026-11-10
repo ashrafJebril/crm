@@ -154,21 +154,23 @@ describe("ChannelHealthScheduler", () => {
       expect((await w.scheduler.sweep(T0)).checked).toBe(3);
     });
 
-    it("only connected Zernio / Meta WhatsApp numbers are selected", async () => {
+    it("only connected (or error) Zernio / Meta WhatsApp numbers are selected", async () => {
       const w = world();
       const ok = [
         w.add(),
         w.add({ status: "needs_attention" }),
         w.add({ provider: "meta", externalId: "pn_1" }), // no credentials: still checked (Unknown with missing_credentials)
+        // Final review M1: an error number is still offered in the sender picker,
+        // so it is swept too (a failed read only turns its values into Previous).
+        w.add({ status: "error" }),
       ];
       w.add({ status: "disconnected" });
       w.add({ status: "pending" });
-      w.add({ status: "error" });
       w.add({ kind: "telegram", provider: "telegram" });
       w.add({ kind: "webchat", provider: "webchat" });
       w.add({ provider: "twilio" });
       const res = await w.scheduler.sweep(T0);
-      expect(res).toEqual({ checked: 3, skipped: 0, failed: 0 });
+      expect(res).toEqual({ checked: 4, skipped: 0, failed: 0 });
       expect(w.attempted().sort()).toEqual(ok.map((c) => c.id).sort());
     });
 

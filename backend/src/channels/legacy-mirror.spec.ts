@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { channelFromIntegration, ensureLegacyChannels, initcap } from "./legacy-mirror";
+import { alignLegacyChannel, channelFromIntegration, ensureLegacyChannels, initcap } from "./legacy-mirror";
 import { makeFakePrisma } from "./test-prisma";
 
 const MIGRATION = path.resolve(
@@ -177,5 +177,60 @@ describe("migration maps each Integration to one Channel", () => {
     });
     await ensureLegacyChannels(prisma, "ws1");
     expect(prisma.db.channel.find((c: { id: string }) => c.id === "chi_i-wa").isDefault).toBe(false);
+  });
+});
+
+/** A stored SP-14 health of the account the row pointed at before a move. */
+export const OLD_HEALTH = { v: 1, provider: "meta", accountId: "pn-1", quality: { value: "GREEN", checkedAt: "2026-11-01T00:00:00.000Z", error: null } };
+
+describe("SP-14 final review I1: a re-point clears the stored health", () => {
+  it("re-auth / provider switch in place clears health, healthCheckedAt and healthAttemptedAt with raw SQL", async () => {
+    const at = new Date("2026-11-01T00:00:00.000Z");
+    const updatedAt = new Date("2026-01-01T00:00:00.000Z");
+    const prisma = makeFakePrisma({
+      integration: [integ({ id: "I1", provider: "zernio", pageId: "acc-z" })],
+      channel: [
+        {
+          id: "chi_I1",
+          workspaceId: "ws1",
+          kind: "whatsapp",
+          provider: "meta",
+          externalId: "pn-1",
+          displayName: "x",
+          status: "active",
+          isDefault: true,
+          integrationId: "I1",
+          createdAt: updatedAt,
+          updatedAt,
+          health: OLD_HEALTH,
+          healthCheckedAt: at,
+          healthAttemptedAt: at,
+        },
+      ],
+    });
+    const out = await alignLegacyChannel(prisma, prisma.db.integration[0]);
+    expect(prisma.db.channel[0]).toMatchObject({
+      provider: "zernio",
+      externalId: "acc-z",
+      health: null,
+      healthCheckedAt: null,
+      healthAttemptedAt: null,
+    });
+    expect(out).toMatchObject({ health: null, healthCheckedAt: null, healthAttemptedAt: null });
+    const clears = prisma.$executeRaw.mock.calls.map((c: [TemplateStringsArray]) => c[0].join("?")).filter((s: string) => /"health" = NULL/.test(s));
+    expect(clears).toHaveLength(1);
+    expect(clears[0]).not.toMatch(/updatedAt/);
+  });
+
+  it("an aligned row (same identity) keeps its health", async () => {
+    const at = new Date("2026-11-01T00:00:00.000Z");
+    const prisma = makeFakePrisma({
+      integration: [integ({ id: "I1", provider: "meta", pageId: "pn-1" })],
+      channel: [
+        { id: "chi_I1", workspaceId: "ws1", kind: "whatsapp", provider: "meta", externalId: "pn-1", displayName: "x", status: "active", isDefault: true, integrationId: "I1", createdAt: at, updatedAt: at, health: OLD_HEALTH, healthCheckedAt: at, healthAttemptedAt: at },
+      ],
+    });
+    await alignLegacyChannel(prisma, prisma.db.integration[0]);
+    expect(prisma.db.channel[0]).toMatchObject({ health: OLD_HEALTH, healthCheckedAt: at, healthAttemptedAt: at });
   });
 });

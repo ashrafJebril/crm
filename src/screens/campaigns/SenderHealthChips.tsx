@@ -1,25 +1,41 @@
 import type { Tx } from "@/lib/tx";
-import { signalView, tierView } from "@/screens/channels/health/healthModel";
-import { ToneChip } from "@/screens/channels/health/healthUi";
+import type { Lang } from "@/lib/types";
+import { senderChipsView } from "@/screens/channels/health/healthModel";
+import { ToneChip, fmtWhen } from "@/screens/channels/health/healthUi";
 
 /**
  * SP-14 (R16): a sender's daily limit and quality from its health snapshot.
  * Display only; it never changes which numbers can be ticked. Unknown is
- * muted, never green.
+ * muted, never green. Final review M1: the values count only with a check
+ * time no older than 7 days (shown in the tooltip); otherwise both chips are
+ * Unknown with the reason.
  */
-export function SenderHealthChips({ tx, tier, quality }: { tx: Tx; tier?: string; quality?: string }) {
+export function SenderHealthChips({
+  tx,
+  tier,
+  quality,
+  healthCheckedAt,
+  now = Date.now(),
+}: {
+  tx: Tx;
+  tier?: string;
+  quality?: string;
+  healthCheckedAt?: string | null;
+  now?: number;
+}) {
   // Older backends send neither field: show nothing rather than a fake value.
-  if (tier === undefined && quality === undefined) return null;
-  const t = tierView(tier ?? "unknown", tx);
-  const tUnknown = !tier || tier === "unknown";
-  const q = signalView("quality", { value: quality ?? "unknown", checkedAt: null, error: null }, tx);
+  const v = senderChipsView({ tier, quality, healthCheckedAt }, now, tx);
+  if (!v) return null;
+  const lang = tx("en", "ar") as Lang;
+  const checked = v.checkedAt ? `${tx("Checked", "فُحص")}: ${fmtWhen(v.checkedAt, lang, tx)}` : undefined;
+  const why = v.reason ?? tx("Not known yet for this number", "غير معروف بعد لهذا الرقم");
   return (
     <>
-      <ToneChip tone="neutral" unknown={tUnknown} title={t.note}>
-        {tx("Limit", "الحد")}: <bdi dir="ltr">{t.label}</bdi>
+      <ToneChip tone="neutral" unknown={v.tier.unknown} title={v.tier.unknown ? why : [checked, v.tier.note].filter(Boolean).join("\n")}>
+        {tx("Limit", "الحد")}: <bdi dir="ltr">{v.tier.label}</bdi>
       </ToneChip>
-      <ToneChip tone={q.tone} unknown={q.unknown} title={q.unknown ? tx("Not known yet for this number", "غير معروف بعد لهذا الرقم") : undefined}>
-        {tx("Quality", "الجودة")}: {q.label}
+      <ToneChip tone={v.quality.tone} unknown={v.quality.unknown} title={v.quality.unknown ? why : checked}>
+        {tx("Quality", "الجودة")}: {v.quality.label}
       </ToneChip>
     </>
   );

@@ -529,6 +529,16 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         row.healthCheckedAt = at == null ? null : new Date(at);
         return 1;
       }
+      // SP-14 final review I1: a re-pointed row drops its health (no updatedAt).
+      if (/UPDATE "Channel" SET "health" = NULL/.test(sql)) {
+        if (!/^UPDATE "Channel" SET "health" = NULL, "healthCheckedAt" = NULL, "healthAttemptedAt" = NULL WHERE "id" = \?$/.test(sql.trim()) || /updatedAt/.test(sql))
+          throw new Error(`unexpected health clear SQL: ${sql}`);
+        const [id] = vals;
+        const row = db.channel.find((c) => c.id === id);
+        if (!row) return 0;
+        Object.assign(row, { health: null, healthCheckedAt: null, healthAttemptedAt: null });
+        return 1;
+      }
       if (/UPDATE "Channel" SET "lastInboundAt"/.test(sql)) {
         const [id] = vals;
         const row = db.channel.find((c) => c.id === id);

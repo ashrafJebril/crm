@@ -26,7 +26,8 @@ import { GalleryTab } from "./templates/GalleryTab";
 import { WhatsAppGate, useWhatsAppConnection } from "@/components/WhatsAppGate";
 import { gatedTitle } from "@/components/whatsAppGateCopy";
 import type { Template } from "@/lib/types";
-import { templateQualityView, templateStatusView, toFullStatus } from "./channels/health/healthModel";
+import { templateQualityCell, templateStatusView, toFullStatus } from "./channels/health/healthModel";
+import { SourceMark, fmtWhen } from "./channels/health/healthUi";
 import { TemplateHealthSheet } from "./templates/TemplateHealthSheet";
 
 type Tab = "library" | "quick" | "gallery";
@@ -584,7 +585,7 @@ function TemplatesImpl() {
                             </Badge>
                           </td>
                           <td>
-                            <QualityBadge quality={raw?.quality} tx={tx} />
+                            <QualityBadge row={raw} tx={tx} />
                           </td>
                           <td className="mono" style={{ textAlign: "end", fontSize: 12 }}>
                             {tpl.uses.toLocaleString()}
@@ -819,20 +820,34 @@ function TemplatesImpl() {
   );
 }
 
-/** SP-14 template quality; null (no provider value) reads as a muted Unknown, never green. */
-function QualityBadge({ quality, tx }: { quality: string | null | undefined; tx: (en: string, ar: string) => string }) {
-  const q = templateQualityView(quality, tx);
+/**
+ * SP-14 template quality; null (no provider value) reads as a muted Unknown,
+ * never green. Final review M5: a score from the list just read shows its
+ * Zernio source mark and read time; a stored score no read confirms now is
+ * a muted "Previous: …".
+ */
+function QualityBadge({ row, tx }: { row: Template | null; tx: (en: string, ar: string) => string }) {
+  const q = templateQualityCell(row ?? {}, tx);
+  const lang = tx("en", "ar") as "en" | "ar";
   if (q.unknown) {
     return (
-      <span className="badge" style={{ background: "transparent", border: "1px dashed var(--line)", color: "var(--ink-3)" }}>
+      <span
+        className="badge"
+        style={{ background: "transparent", border: "1px dashed var(--line)", color: "var(--ink-3)" }}
+        title={q.previous ? tx("The last read didn't confirm this; it's the previously stored value", "لم تؤكّده آخر قراءة؛ هذه القيمة المخزّنة سابقًا") : undefined}
+      >
         {q.label}
       </span>
     );
   }
+  const title = [q.source, q.readAt ? `${tx("Read", "قُرئت")}: ${fmtWhen(q.readAt, lang, tx)}` : null].filter(Boolean).join("\n");
   return (
-    <Badge kind={q.tone === "good" ? "ok" : q.tone === "neutral" ? "" : q.tone} dot={q.tone !== "neutral"}>
-      {q.label}
-    </Badge>
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }} title={title || undefined}>
+      <Badge kind={q.tone === "good" ? "ok" : q.tone === "neutral" ? "" : q.tone} dot={q.tone !== "neutral"}>
+        {q.label}
+      </Badge>
+      {q.source && <SourceMark label={tx("Via Zernio", "عبر Zernio")} />}
+    </span>
   );
 }
 

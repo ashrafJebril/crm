@@ -21,6 +21,21 @@ import type { PrismaService } from "../prisma/prisma.service";
 
 const log = new Logger("LegacyChannelMirror");
 
+/**
+ * SP-14 final review I1: a row re-pointed to another account (or provider)
+ * drops the health it read from the old one, so the next check is a silent
+ * baseline and the number is due at once. Raw SQL, so `Channel.updatedAt`
+ * (SP-19's routing tie-break) is not touched by this write (ruling R3).
+ * `asChannelHealth` also ignores a health of another account, so this is
+ * belt and braces for every move path.
+ */
+export async function clearChannelHealth(prisma: PrismaService, id: string): Promise<void> {
+  await prisma.$executeRaw`UPDATE "Channel" SET "health" = NULL, "healthCheckedAt" = NULL, "healthAttemptedAt" = NULL WHERE "id" = ${id}`;
+}
+
+/** The row as it reads after `clearChannelHealth`. */
+const withoutHealth = (row: Channel): Channel => ({ ...row, health: null, healthCheckedAt: null, healthAttemptedAt: null }) as Channel;
+
 export interface IntegrationLike {
   id: string;
   workspaceId: string;
@@ -116,7 +131,7 @@ export async function alignLegacyChannel(
   if (linked && !twin) {
     if (opts.allowInPlace === false) return linked;
     try {
-      return await prisma.channel.update({
+      const moved = await prisma.channel.update({
         where: { id: linked.id },
         data: {
           provider: want.provider,
@@ -125,6 +140,8 @@ export async function alignLegacyChannel(
           ...revival(linked, explicit),
         },
       });
+      await clearChannelHealth(prisma, moved.id);
+      return withoutHealth(moved);
     } catch (e) {
       if (!isUniqueViolation(e)) throw e; // a twin appeared concurrently: relink below
     }

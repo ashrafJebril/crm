@@ -3,7 +3,7 @@ import { campaignError } from "../campaigns/campaign-errors";
 import { channelError } from "./channel-errors";
 import { whatsappLimit } from "./channel-limits";
 import { ensureLegacyChannels } from "./legacy-mirror";
-import { asChannelHealth, UNKNOWN } from "./health/health-model";
+import { asChannelHealth, UNKNOWN, type ChannelHealth } from "./health/health-model";
 
 /**
  * SP-13 fix round 1 (M3): the one "connected" rule. A WhatsApp channel
@@ -187,8 +187,8 @@ export interface CampaignSenderOption {
 }
 
 /** SP-14: a snapshot signal's current value; a failed or missing read is "unknown" (never the last value). */
-function snapshotValue(health: unknown, field: "tier" | "quality"): string {
-  const v = asChannelHealth(health)?.[field]?.value;
+function snapshotValue(health: ChannelHealth | null, field: "tier" | "quality"): string {
+  const v = health?.[field]?.value;
   return typeof v === "string" && v ? v : UNKNOWN;
 }
 
@@ -235,6 +235,8 @@ export async function campaignSenderOptions(
     healthCheckedAt: Date | null;
   }>;
   const senders = rows.map((r) => {
+    // Final review I1: only a health read from the row's current account counts.
+    const health = asChannelHealth(r.health, { provider: r.provider, externalId: r.externalId ?? null });
     const reason: SenderIneligibleReason | null = r.provider !== "zernio" ? "provider_meta" : isEligibleSender(r) ? null : "not_active";
     return {
       channelId: r.id,
@@ -244,9 +246,9 @@ export async function campaignSenderOptions(
       provider: r.provider,
       eligible: reason === null,
       reason,
-      tier: snapshotValue(r.health, "tier"),
-      quality: snapshotValue(r.health, "quality"),
-      healthCheckedAt: r.healthCheckedAt instanceof Date ? r.healthCheckedAt.toISOString() : null,
+      tier: snapshotValue(health, "tier"),
+      quality: snapshotValue(health, "quality"),
+      healthCheckedAt: health && r.healthCheckedAt instanceof Date ? r.healthCheckedAt.toISOString() : null,
     };
   });
   return {

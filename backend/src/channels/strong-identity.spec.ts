@@ -1,5 +1,6 @@
 import { ZernioService } from "../integrations/zernio.service";
 import { makeFakePrisma } from "./test-prisma";
+import { mirrorZernioAccounts } from "./zernio-mirror";
 
 /**
  * SP-19 fix round 3 (R1, R2): a Zernio legacy slot moves only on strong
@@ -217,5 +218,30 @@ describe("inbound legacy mirror does not re-point a live Zernio slot by itself (
     const { svc } = zernio(prisma);
     await svc.handleEvent(inbound("acc-X", "zc-X", "m-x"));
     expect(prisma.db.channel.find((c: { id: string }) => c.id === "chi_I1").externalId).toBe("acc-A");
+  });
+});
+
+describe("SP-14 final review I1: the in-place move clears the stored health", () => {
+  it("A deleted in Zernio, a different B added: the slot moves to B with no health of A", async () => {
+    const at = new Date("2026-11-01T00:00:00.000Z");
+    const prisma = seed();
+    prisma.db.integration[0].pageId = "acc-B";
+    Object.assign(prisma.db.channel[0], {
+      status: "disconnected",
+      statusReason: "zernio_account_missing",
+      health: { v: 1, provider: "zernio", accountId: "acc-A", quality: { value: "GREEN", checkedAt: at.toISOString(), error: null } },
+      healthCheckedAt: at,
+      healthAttemptedAt: at,
+    });
+    await mirrorZernioAccounts(prisma, "ws1", [{ _id: "acc-B", platform: "whatsapp", displayName: "B" }] as never, prisma.db.integration);
+    expect(prisma.db.channel.find((c: { id: string }) => c.id === "chi_I1")).toMatchObject({
+      externalId: "acc-B",
+      health: null,
+      healthCheckedAt: null,
+      healthAttemptedAt: null,
+    });
+    const clears = prisma.$executeRaw.mock.calls.map((c: [TemplateStringsArray]) => c[0].join("?")).filter((s: string) => /"health" = NULL/.test(s));
+    expect(clears.length).toBeGreaterThanOrEqual(1);
+    for (const s of clears) expect(s).not.toMatch(/updatedAt/);
   });
 });

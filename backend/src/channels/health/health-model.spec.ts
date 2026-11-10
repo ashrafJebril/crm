@@ -1,6 +1,7 @@
 import { ZernioBudget } from "../../campaigns/sending/zernio-budget";
 import { toChannelDto } from "../channel-dto";
 import {
+  asChannelHealth,
   computeIssues,
   computeOverall,
   mergeHealth,
@@ -20,6 +21,7 @@ import {
 } from "./health-model";
 import { readMetaHealth } from "./meta-health.reader";
 import { readZernioHealth } from "./zernio-health.reader";
+import { snapshotTemplates } from "./template-snapshot";
 
 const NOW = new Date("2026-11-09T10:00:00.000Z");
 const LATER = new Date("2026-11-10T10:00:00.000Z");
@@ -316,7 +318,7 @@ describe("overall and issues follow the severity rules", () => {
     phoneStatus: sig("CONNECTED"),
     accountReview: sig("APPROVED"),
     templates: {
-      value: { total: 0, approved: 0, pending: 0, rejected: 0, paused: 0, disabled: 0, lowQuality: 0, items: [], truncated: false },
+      value: { total: 0, approved: 0, pending: 0, rejected: 0, paused: 0, disabled: 0, lowQuality: 0, qualityUnknown: 0, items: [], truncated: false },
       checkedAt: NOW.toISOString(),
       error: null,
     },
@@ -430,6 +432,99 @@ describe("channel dto exposes public health without alerts or template items", (
     };
     expect(toChannelDto(row)).toMatchObject({ health: null, healthCheckedAt: null, healthNextCheckAt: null });
     expect(toChannelDto({ ...row, health: { v: 2 } }).health).toBeNull();
-    expect(publicHealth({ v: 1, templates: { value: "unknown", checkedAt: null, error: "check_failed" } })?.templates.value).toBe("unknown");
+    expect(publicHealth({ v: 1, provider: "zernio", accountId: "a", templates: { value: "unknown", checkedAt: null, error: "check_failed" } }, { provider: "zernio", externalId: "a" })?.templates.value).toBe("unknown");
+  });
+});
+
+describe("health is tied to the account it read (final review I1)", () => {
+  const owner = { provider: "zernio", externalId: "acc1" };
+  const stored = async () =>
+    JSON.parse(JSON.stringify(mergeHealth(null, await readZernioHealth(zernioFake(), freeBudget(), "acc1"), { now: NOW, trigger: "manual" })));
+
+  it("records the provider and the account it read", async () => {
+    const h = await stored();
+    expect(h).toMatchObject({ provider: "zernio", accountId: "acc1" });
+    const m = mergeHealth(null, await readMetaHealth(graphFake(), { accessToken: "tok", externalId: "pn1" }, "waba1"), {
+      now: NOW,
+      trigger: "manual",
+    });
+    expect(m).toMatchObject({ provider: "meta", accountId: "pn1" });
+  });
+
+  it("a health read for another account or provider is absent", async () => {
+    const h = await stored();
+    expect(asChannelHealth(h, owner)?.quality.value).toBe("GREEN");
+    expect(asChannelHealth(h, { provider: "zernio", externalId: "acc2" })).toBeNull();
+    expect(asChannelHealth(h, { provider: "meta", externalId: "acc1" })).toBeNull();
+    expect(publicHealth(h, owner)?.quality.value).toBe("GREEN");
+    expect(publicHealth(h, { provider: "zernio", externalId: "acc2" })).toBeNull();
+    // A snapshot stored before it carried its account (old rows) is absent too.
+    const { accountId: _drop, ...old } = h;
+    expect(asChannelHealth(old, owner)).toBeNull();
+    expect(publicHealth(old, owner)).toBeNull();
+  });
+
+  it("the channel dto shows no health and no check time after a move", async () => {
+    const row = {
+      id: "c1",
+      kind: "whatsapp",
+      provider: "zernio",
+      externalId: "acc2", // the row now points at another account
+      displayName: "x",
+      phoneNumber: null,
+      status: "active",
+      statusReason: null,
+      isDefault: false,
+      lastInboundAt: null,
+      createdAt: NOW,
+      health: await stored(),
+      healthCheckedAt: NOW,
+    };
+    expect(toChannelDto(row)).toMatchObject({ health: null, healthCheckedAt: null });
+    expect(toChannelDto({ ...row, externalId: "acc1" }).health?.quality.value).toBe("GREEN");
+  });
+
+  it("the template snapshot of another account is unknown, never that account's list", async () => {
+    const h = JSON.parse(
+      JSON.stringify(
+        mergeHealth(
+          null,
+          await readZernioHealth(zernioFake(FULL_ZERNIO_INFO, [{ id: "t1", name: "promo", language: "en", status: "APPROVED" }]), freeBudget(), "acc1"),
+          { now: NOW, trigger: "manual" },
+        ),
+      ),
+    );
+    expect(snapshotTemplates("c1", h, owner)).toMatchObject({ known: true });
+    expect(snapshotTemplates("c1", h, { provider: "zernio", externalId: "acc2" })).toEqual({
+      channelId: "c1",
+      checkedAt: null,
+      error: null,
+      truncated: false,
+      known: false,
+      items: [],
+    });
+  });
+});
+
+describe("a DELETED phone status is critical (final review M4)", () => {
+  it("overall is critical and the issue is listed", async () => {
+    const info = { phone: { ...FULL_ZERNIO_INFO.phone, status: "DELETED" } };
+    const h = mergeHealth(null, await readZernioHealth(zernioFake(info), freeBudget(), "acc1"), { now: NOW, trigger: "manual" });
+    expect(h.phoneStatus.value).toBe("DELETED");
+    expect(h.issues).toContain("phone_status_deleted");
+    expect(h.overall).toBe("critical");
+  });
+});
+
+describe("summary counts templates whose quality is not reported (final review M2)", () => {
+  it("qualityUnknown counts every template without a quality score", () => {
+    const s = summarizeTemplates([
+      { id: "1", name: "a", language: "en", status: "APPROVED", category: null },
+      { id: "2", name: "b", language: "en", status: "APPROVED", category: null, qualityScore: "GREEN" },
+      { id: "3", name: "c", language: "en", status: "APPROVED", category: null, qualityScore: "UNKNOWN" }, // NOT_RATED is reported
+      { id: "4", name: "d", language: "en", status: "APPROVED", category: null, qualityScore: "weird" },
+    ]);
+    expect(s.qualityUnknown).toBe(2);
+    expect(s.lowQuality).toBe(0);
   });
 });

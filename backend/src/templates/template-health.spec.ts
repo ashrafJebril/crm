@@ -35,7 +35,10 @@ const tpl = (name: string, language: string, status: string, extra: Partial<RawT
 });
 
 function world() {
-  const channel = (id: string, over: Record<string, unknown> = {}) => ({
+  // A stored snapshot is the one read from that row's own account (final review I1).
+  const own = (row: Record<string, unknown>) =>
+    row.health ? { ...row, health: { ...(row.health as object), provider: row.provider, accountId: row.externalId } } : row;
+  const channel = (id: string, over: Record<string, unknown> = {}) => own({
     id,
     workspaceId: "wsA",
     kind: "whatsapp",

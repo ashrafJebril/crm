@@ -89,7 +89,7 @@ export function SendFromField({
                     <span className="badge accent">{tx("Primary", "الأساسي")}</span>
                   )}
                   {s.isDefault && <span className="badge">{tx("Default", "الافتراضي")}</span>}
-                  <SenderHealthChips tx={tx} tier={s.tier} quality={s.quality} />
+                  <SenderHealthChips tx={tx} tier={s.tier} quality={s.quality} healthCheckedAt={s.healthCheckedAt} />
                 </div>
                 {why && <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 }}>{why}</div>}
               </div>

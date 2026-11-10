@@ -1,4 +1,4 @@
-import { asChannelHealth, UNKNOWN, type SignalError, type TemplateItem } from "./health-model";
+import { asChannelHealth, UNKNOWN, type HealthOwner, type SignalError, type TemplateItem } from "./health-model";
 
 /** Base language: "en_US" → "en" (as `TemplatesService.key` matches). */
 export const baseLanguage = (l: string | null | undefined) => String(l ?? "").split(/[_-]/)[0].toLowerCase();
@@ -16,9 +16,13 @@ export interface NumberTemplates {
   items: TemplateItem[];
 }
 
-/** The template snapshot of a stored `Channel.health` (no provider call). */
-export function snapshotTemplates(channelId: string, health: unknown): NumberTemplates {
-  const h = asChannelHealth(health);
+/**
+ * The template snapshot of a stored `Channel.health` (no provider call).
+ * A health read from another account than `owner`'s current one is no
+ * snapshot (final review I1).
+ */
+export function snapshotTemplates(channelId: string, health: unknown, owner: HealthOwner): NumberTemplates {
+  const h = asChannelHealth(health, owner);
   const t = h?.templates;
   if (!t || t.value === UNKNOWN || !t.value || typeof t.value !== "object") {
     return { channelId, checkedAt: t?.checkedAt ?? null, error: t?.error ?? null, truncated: false, known: false, items: [] };

@@ -584,6 +584,10 @@ export interface Template {
   status: "approved" | "pending" | "rejected" | "submitted" | "failed" | "local" | "paused" | "disabled";
   /** SP-14: Meta template quality (GREEN | YELLOW | RED | NOT_RATED); null = unknown. */
   quality?: string | null;
+  /** SP-14 final review M5: "zernio_passthrough" when the list just read carried the score. */
+  qualitySource?: "zernio_passthrough" | null;
+  /** SP-14 final review M5: when the list confirming `quality` was read; null = not read now (a stored, previous value). */
+  qualityReadAt?: string | null;
   uses: number;
   body?: string | null;
   footer?: string | null;
@@ -1012,6 +1016,8 @@ export interface TemplateSummaryPublic {
   paused: number;
   disabled: number;
   lowQuality: number;
+  /** Templates whose quality the provider did not report (absent on snapshots stored before it existed). */
+  qualityUnknown?: number;
   truncated: boolean;
 }
 
@@ -1027,6 +1033,8 @@ export type HealthOverall = "healthy" | "attention" | "critical" | "unknown";
 export interface ChannelHealthPublic extends Record<HealthFieldName, HealthSignal> {
   v: 1;
   provider: "zernio" | "meta";
+  /** The external account this health was read from (the backend hides another account's health). */
+  accountId?: string | null;
   checkedAt: string | null;
   trigger: "manual" | "sweep" | "webhook";
   overall: HealthOverall;

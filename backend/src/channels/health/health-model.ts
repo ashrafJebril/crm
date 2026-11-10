@@ -63,6 +63,11 @@ export interface TemplateSummary {
   paused: number;
   disabled: number;
   lowQuality: number;
+  /**
+   * Final review M2: templates whose quality the provider did not report
+   * (no score, or one we do not know). NOT_RATED is a reported state, not this.
+   */
+  qualityUnknown: number;
   items: TemplateItem[];
   truncated: boolean;
 }
@@ -93,6 +98,13 @@ export type Overall = "healthy" | "attention" | "critical" | "unknown";
 export interface ChannelHealth {
   v: 1;
   provider: HealthProvider;
+  /**
+   * Final review I1: the external account this health was read from (Meta
+   * phone_number_id or Zernio account id). A stored health whose provider or
+   * account differs from the row's current one belongs to another number and
+   * reads as absent (`asChannelHealth`).
+   */
+  accountId: string | null;
   checkedAt: string | null;
   trigger: HealthTrigger;
   overall: Overall;
@@ -139,6 +151,8 @@ export interface RawTemplate {
 
 export interface RawHealthRead {
   provider: HealthProvider;
+  /** The external account read (I1); null when the row has none. */
+  accountId?: string | null;
   fields: Partial<Record<FieldName, RawField>>;
   templates: { items: RawTemplate[]; truncated: boolean } | { error: Exclude<SignalError, null> };
 }
@@ -267,6 +281,7 @@ export function summarizeTemplates(
     paused: 0,
     disabled: 0,
     lowQuality: 0,
+    qualityUnknown: 0,
     items: [],
     truncated: !!opts.truncated || items.length > max,
   };
@@ -279,6 +294,7 @@ export function summarizeTemplates(
     else if (PENDING_STATUSES.has(status)) s.pending++;
     const quality = t.qualityScore === undefined ? null : normalizeTemplateQuality(t.qualityScore);
     if (quality === "YELLOW" || quality === "RED") s.lowQuality++;
+    if (!quality) s.qualityUnknown++;
     if (s.items.length < max) {
       s.items.push({
         id: t.id ?? null,
@@ -329,7 +345,8 @@ export function computeIssues(h: Pick<ChannelHealth, FieldName | "templates">): 
   return out;
 }
 
-const CRITICAL_PHONE = new Set(["RESTRICTED", "BANNED", "DISCONNECTED"]);
+// Final review M4: DELETED is critical too (red in the UI, alert level 2).
+const CRITICAL_PHONE = new Set(["RESTRICTED", "BANNED", "DISCONNECTED", "DELETED"]);
 
 export function computeOverall(h: Pick<ChannelHealth, FieldName | "templates">, issues = computeIssues(h)): Overall {
   if (
@@ -360,9 +377,27 @@ export function readAnything(read: RawHealthRead): boolean {
   return Object.values(read.fields).some((f) => !!f && !("error" in f)) || !("error" in read.templates);
 }
 
-/** A stored health JSON, if it is one (anything else reads as no health). */
-export function asChannelHealth(v: unknown): ChannelHealth | null {
-  return v && typeof v === "object" && !Array.isArray(v) && (v as { v?: unknown }).v === 1 ? (v as ChannelHealth) : null;
+/** The row a stored health must belong to: its current provider and account. */
+export interface HealthOwner {
+  provider: string;
+  externalId: string | null;
+}
+
+/**
+ * A stored health JSON of `owner`'s current account, if it is one. Anything
+ * else reads as no health: not a v1 health, or (final review I1) one read
+ * from another provider or account — the row was re-pointed since, by a
+ * re-auth, a provider switch or an SP-19 slot move. A snapshot stored before
+ * it carried its account is absent too. So another number's values are
+ * never shown as current, and its alert levels are never this number's
+ * baseline (the next check is a silent baseline, ruling 8).
+ */
+export function asChannelHealth(v: unknown, owner: HealthOwner): ChannelHealth | null {
+  if (!v || typeof v !== "object" || Array.isArray(v) || (v as { v?: unknown }).v !== 1) return null;
+  const h = v as Partial<ChannelHealth>;
+  if (h.provider !== owner.provider) return null;
+  if (!("accountId" in h) || (h.accountId ?? null) !== (owner.externalId ?? null)) return null;
+  return v as ChannelHealth;
 }
 
 /**
@@ -398,6 +433,7 @@ export function mergeHealth(
   return {
     v: 1,
     provider: read.provider,
+    accountId: read.accountId ?? null,
     // Fix round 1 (M4): "when the last check read anything"; a check where
     // every read failed keeps the previous time (each signal still carries
     // its own attempt time and error).
@@ -412,9 +448,9 @@ export function mergeHealth(
   };
 }
 
-/** The DTO view: drops `alerts` and the template items. */
-export function publicHealth(health: unknown): ChannelHealthPublic | null {
-  const h = asChannelHealth(health);
+/** The DTO view of `owner`'s health: drops `alerts` and the template items. */
+export function publicHealth(health: unknown, owner: HealthOwner): ChannelHealthPublic | null {
+  const h = asChannelHealth(health, owner);
   if (!h) return null;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { alerts, templates, ...rest } = h;

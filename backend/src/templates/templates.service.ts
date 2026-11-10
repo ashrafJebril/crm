@@ -149,6 +149,19 @@ export interface TemplateRow {
   metaRejectionReason?: string | null;
   /** SP-14: Meta's template quality (GREEN | YELLOW | RED | NOT_RATED); null = unknown. */
   quality?: string | null;
+  /**
+   * Final review M5 (response only, not stored): where `quality` came from.
+   * "zernio_passthrough" when the Zernio list just read carried the score
+   * (an undocumented field, R1); null when it carried none.
+   */
+  qualitySource?: "zernio_passthrough" | null;
+  /**
+   * Final review M5 (response only): when the provider list confirming
+   * `quality` was read; null when this response is not from a fresh read
+   * (a failed or impossible list read), so a stored quality is only a
+   * previous value.
+   */
+  qualityReadAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -263,14 +276,22 @@ export class TemplatesService {
     const channels = (await this.prisma.channel.findMany({
       where: { workspaceId, kind: "whatsapp", status: { not: "disconnected" } },
       orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
-      select: { id: true, displayName: true, phoneNumber: true, provider: true, isDefault: true, health: true },
-    })) as Array<{ id: string; displayName: string; phoneNumber: string | null; provider: string; isDefault: boolean; health: unknown }>;
+      select: { id: true, displayName: true, phoneNumber: true, provider: true, externalId: true, isDefault: true, health: true },
+    })) as Array<{
+      id: string;
+      displayName: string;
+      phoneNumber: string | null;
+      provider: string;
+      externalId: string | null;
+      isDefault: boolean;
+      health: unknown;
+    }>;
     const reviewed = row.reviewedAt as unknown;
     const reviewedAt = reviewed instanceof Date ? reviewed.toISOString() : typeof reviewed === "string" ? reviewed : null;
     return {
       template: { id: row.id, name: row.name, lang: row.lang, status: row.status, quality: row.quality ?? null, reviewedAt },
       numbers: channels.map((ch) => {
-        const snap = snapshotTemplates(ch.id, ch.health);
+        const snap = snapshotTemplates(ch.id, ch.health, { provider: ch.provider, externalId: ch.externalId ?? null });
         const copy = snap.known ? findTemplateCopy(snap.items, row.name, row.lang) : null;
         const status = copy
           ? (knownTemplateStatus(copy.status) ?? String(copy.status).toLowerCase())
@@ -593,6 +614,7 @@ export class TemplatesService {
     const byKey = new Map(localRows.map((r) => [this.key(r.name, r.lang), r]));
     const confirmed = new Set<string>();
     const out: TemplateRow[] = [];
+    const readAt = new Date().toISOString();
 
     for (const m of metaTemplates) {
       const key = this.key(m.name, m.language);
@@ -601,9 +623,13 @@ export class TemplatesService {
       const status = this.mapStatus(m.status);
       const existing = byKey.get(key);
       // SP-14: Meta's template quality when the list carries it (UNKNOWN →
-      // NOT_RATED). Absent (or unrecognised) leaves the stored value alone.
+      // NOT_RATED). Final review M5 (R1): absent or unrecognised clears the
+      // stored value — a score the provider no longer reports is not kept as
+      // current. (A value from Meta's quality webhook lasts until the next
+      // list read without a score.)
       const quality = normalizeTemplateQuality(m.quality_score?.score);
       const qualityPart = quality ? { quality } : {};
+      const qualityMeta = { qualitySource: quality ? ("zernio_passthrough" as const) : null, qualityReadAt: readAt };
 
       if (existing) {
         const data = {
@@ -614,7 +640,7 @@ export class TemplatesService {
           // Cleared on anything but a rejection, so an approval doesn't leave
           // a stale reason sitting on the row.
           metaRejectionReason: status === "rejected" ? (m.rejected_reason ?? null) : null,
-          ...qualityPart,
+          quality: quality ?? null,
           ...parts,
         };
         // list() runs on every screen load, so only write when Meta actually
@@ -629,7 +655,7 @@ export class TemplatesService {
             data: { ...data, reviewedAt: new Date() },
           });
         }
-        out.push({ ...existing, ...data });
+        out.push({ ...existing, ...data, ...qualityMeta });
       } else {
         const created = (await this.prisma.template.create({
           data: {
@@ -646,7 +672,7 @@ export class TemplatesService {
             ...parts,
           },
         })) as unknown as TemplateRow;
-        out.push(created);
+        out.push({ ...created, ...qualityMeta });
       }
     }
 
@@ -660,7 +686,7 @@ export class TemplatesService {
           data: { status: "local", metaTemplateId: null },
         });
       }
-      out.push({ ...r, status: "local", metaTemplateId: null });
+      out.push({ ...r, status: "local", metaTemplateId: null, qualitySource: null, qualityReadAt: null });
     }
 
     return out;
@@ -668,8 +694,10 @@ export class TemplatesService {
 
   /** What we can honestly claim without reaching Meta. */
   private unverified(row: TemplateRow): TemplateRow {
-    if (row.metaTemplateId) return row;
-    return { ...row, status: "local" };
+    // M5: not read now, so a stored quality is only a previous value.
+    const quality = { qualitySource: null, qualityReadAt: null };
+    if (row.metaTemplateId) return { ...row, ...quality };
+    return { ...row, status: "local", ...quality };
   }
 
   /** SP-19 (R8): templates live on the default WhatsApp number. */

@@ -10,6 +10,8 @@ import { ChannelHealthService } from "./channel-health.service";
 import { alertLevel, evaluateAlerts, UNLIMITED_LEVEL } from "./health-alerts";
 import { mergeHealth, type ChannelHealth, type FieldName, type HealthAlerts, type RawField, type RawHealthRead } from "./health-model";
 import { HealthNotifier } from "./health-notifier";
+import { toChannelDto } from "../channel-dto";
+import { campaignSenderOptions } from "../default-channel";
 
 const T0 = new Date("2026-11-09T00:00:00.000Z");
 const at = (i: number) => new Date(T0.getTime() + i * 3_600_000);
@@ -116,6 +118,8 @@ describe("evaluateAlerts table", () => {
     expect(alertLevel("phoneStatus", "RATE_LIMITED")).toBe(1);
     expect(alertLevel("phoneStatus", "MESSAGING_LIMIT_REACHED")).toBe(1);
     expect(alertLevel("phoneStatus", "RESTRICTED")).toBe(2);
+    // Final review M4: a deleted number is critical, as the UI shows it.
+    expect(alertLevel("phoneStatus", "DELETED")).toBe(2);
     expect(alertLevel("phoneStatus", "PENDING")).toBe(0);
     expect(alertLevel("nameStatus", "EXPIRED")).toBe(2);
     expect(alertLevel("nameStatus", "PENDING_REVIEW")).toBe(0);
@@ -150,14 +154,14 @@ function alertWorld() {
     ],
     notificationPreference: [{ id: "p1", workspaceId: "wsA", userId: "u_quiet", type: "connector_needs_attention", inApp: false, sound: true }],
   } as never);
-  const script = { quality: "GREEN", fail: false };
+  const script = { quality: "GREEN", tier: "TIER_1K", fail: false };
   const zernio = {
     whatsappNumberInfo: jest.fn(async (_acc: string): Promise<unknown> => {
       if (script.fail) throw new HttpException("Bad gateway", 502);
       return {
         phone: {
           quality_rating: script.quality,
-          messaging_limit_tier: "TIER_1K",
+          messaging_limit_tier: script.tier,
           name_status: "APPROVED",
           status: "CONNECTED",
           health_status: { can_send_message: "AVAILABLE" },
@@ -279,5 +283,55 @@ describe("SP-14 downgrade notifications", () => {
     release();
     await a;
     expect(w.notify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SP-14 final review I1: health is tied to the account it read", () => {
+  let restore: () => void;
+  beforeEach(() => {
+    restore = isolateEnv();
+    for (const k of ["HEALTH_CHECK_COOLDOWN_MS", "HEALTH_CHECK_WS_PER_MIN", "HEALTH_SWEEP_BATCH", "HEALTH_SWEEP_INTERVAL_MS", "HEALTH_SWEEP_MAX_MS"]) delete process.env[k];
+    for (const m of ["log", "warn", "debug", "error"] as const) jest.spyOn(Logger.prototype, m).mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    restore();
+    jest.restoreAllMocks();
+  });
+
+  it("after a move the UI health is null and the next check is a silent baseline", async () => {
+    const w = alertWorld();
+    const ch = await w.prisma.channel.create({
+      data: { workspaceId: "wsA", kind: "whatsapp", provider: "zernio", externalId: "accA", displayName: "Sales line", status: "active" },
+    });
+    // Number A: GREEN at TIER_10K, the baseline.
+    w.script.tier = "TIER_10K";
+    const a = await w.health.check("wsA", ch.id, { now: T0 });
+    expect(a.health).toMatchObject({ accountId: "accA" });
+    expect(a.health?.quality.value).toBe("GREEN");
+
+    // The slot is re-pointed to account B by any path (here: no health clear at all).
+    const row = w.prisma.db.channel.find((c: { id: string }) => c.id === ch.id);
+    row.externalId = "accB";
+    const moved = toChannelDto(row);
+    expect(moved.health).toBeNull();
+    expect(moved.healthCheckedAt).toBeNull();
+    const senders = await campaignSenderOptions(w.prisma as never, "wsA");
+    expect(senders.senders.find((s) => s.channelId === ch.id)).toMatchObject({ tier: "unknown", quality: "unknown", healthCheckedAt: null });
+    expect((await w.health.templates("wsA", ch.id)).known).toBe(false);
+
+    // B is really YELLOW at TIER_250: its first check is a silent baseline.
+    w.script.quality = "YELLOW";
+    w.script.tier = "TIER_250";
+    const b = await w.health.check("wsA", ch.id, { now: new Date(T0.getTime() + DAY) });
+    expect(b.health).toMatchObject({ accountId: "accB" });
+    expect(b.health?.quality.value).toBe("YELLOW");
+    expect(b.health?.lastKnown).toEqual({});
+    expect(w.notify).not.toHaveBeenCalled();
+
+    // B's own downgrade still notifies once (its baseline is B's levels).
+    w.script.quality = "RED";
+    await w.health.check("wsA", ch.id, { now: new Date(T0.getTime() + 2 * DAY) });
+    expect(w.notify).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(w.notify.mock.calls[0][2].body as string).changes).toEqual([{ signal: "quality", from: "YELLOW", to: "RED" }]);
   });
 });

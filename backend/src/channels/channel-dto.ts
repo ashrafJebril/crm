@@ -82,6 +82,7 @@ export function toChannelDto(
 ): ChannelDto {
   const attempted = row.healthAttemptedAt instanceof Date ? row.healthAttemptedAt.getTime() : null;
   const nextAt = attempted !== null ? attempted + healthCooldownMs() : null;
+  const health = publicHealth(row.health, { provider: row.provider, externalId: row.externalId ?? null });
   return {
     id: row.id,
     kind: row.kind,
@@ -96,8 +97,9 @@ export function toChannelDto(
     lastInboundAt: row.lastInboundAt ?? null,
     createdAt: row.createdAt,
     ...(extra.conversationCount !== undefined ? { conversationCount: extra.conversationCount } : {}),
-    health: publicHealth(row.health),
-    healthCheckedAt: iso(row.healthCheckedAt),
+    health,
+    // Final review I1: the check time belongs to the health it dates.
+    healthCheckedAt: health ? iso(row.healthCheckedAt) : null,
     healthNextCheckAt: nextAt !== null && nextAt > now.getTime() ? new Date(nextAt).toISOString() : null,
   };
 }

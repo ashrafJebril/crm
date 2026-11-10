@@ -92,7 +92,7 @@ export class HealthNotifier implements OnModuleInit {
    */
   async onDowngrade(
     workspaceId: string,
-    channel: Pick<Channel, "id" | "displayName" | "phoneNumber"> & { health?: unknown },
+    channel: Pick<Channel, "id" | "displayName" | "phoneNumber"> & { health?: unknown; provider?: string; externalId?: string | null },
     changes: AlertChange[],
   ): Promise<number> {
     if (changes.length === 0) return 0;
@@ -101,7 +101,12 @@ export class HealthNotifier implements OnModuleInit {
       this.log.log(`channel ${channel.id} downgraded; nobody holds ${HEALTH_ALERT_PERMISSION}`);
       return 0;
     }
-    const previous = asChannelHealth(channel.health ?? null);
+    // `channel.health` is the previous health the check compared against
+    // (already tied to this account by the service); only its owner matches.
+    const previous =
+      typeof channel.provider === "string"
+        ? asChannelHealth(channel.health ?? null, { provider: channel.provider, externalId: channel.externalId ?? null })
+        : null;
     const body: DowngradeBody = {
       channelId: channel.id,
       name: channel.displayName,

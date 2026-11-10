@@ -13,8 +13,12 @@ import {
   laterOf,
   nextCheckFromError,
   overallView,
+  SENDER_HEALTH_MAX_AGE_MS,
+  senderChipsView,
   signalView,
+  templateQualityCell,
   templateQualityView,
+  templatesReadLabel,
   templateStatusView,
   templatesView,
   tierView,
@@ -275,5 +279,125 @@ describe("template status badges keep paused and disabled distinct from pending"
       expect(templateStatusView(s, ar).label, s).toMatch(ARABIC);
     }
     expect(templateStatusView("approved", en).tone).toBe("good");
+  });
+});
+
+// ─── SP-14 final review fixes ──────────────────────────────────────────────
+
+describe("sender chips show their age; old or missing reads are Unknown (final review M1)", () => {
+  const NOW = new Date("2026-11-10T08:00:00.000Z").getTime();
+  const DAY = 24 * 3_600_000;
+  const ago = (ms: number) => new Date(NOW - ms).toISOString();
+
+  it("a recent read shows its values and when it was checked", () => {
+    const v = senderChipsView({ tier: "TIER_2K", quality: "GREEN", healthCheckedAt: ago(DAY) }, NOW, en)!;
+    expect(v.tier).toMatchObject({ label: "2,000 / day", unknown: false });
+    expect(v.quality).toMatchObject({ label: "High", tone: "good", unknown: false });
+    expect(v.checkedAt).toBe(ago(DAY));
+    expect(v.reason).toBeUndefined();
+  });
+
+  it("a read older than 7 days is Unknown, never the old value", () => {
+    expect(SENDER_HEALTH_MAX_AGE_MS).toBe(7 * DAY);
+    for (const lang of [en, ar]) {
+      const v = senderChipsView({ tier: "TIER_2K", quality: "GREEN", healthCheckedAt: ago(7 * DAY + 1) }, NOW, lang)!;
+      expect(v.tier.unknown).toBe(true);
+      expect(v.quality).toMatchObject({ tone: "neutral", unknown: true });
+      expect(v.tier.label).toBe(lang === en ? "Unknown" : "غير معروف");
+      expect(v.reason).toBeTruthy();
+    }
+    expect(senderChipsView({ tier: "TIER_2K", quality: "GREEN", healthCheckedAt: ago(7 * DAY + 1) }, NOW, en)!.reason).toBe(
+      "Not checked in the last 7 days",
+    );
+  });
+
+  it("no check time is Unknown (Not checked yet), whatever the values say", () => {
+    for (const at of [null, undefined, "not-a-date"]) {
+      const v = senderChipsView({ tier: "TIER_2K", quality: "GREEN", healthCheckedAt: at }, NOW, en)!;
+      expect(v.tier.unknown && v.quality.unknown).toBe(true);
+      expect(v.reason).toBe("Not checked yet");
+    }
+  });
+
+  it("an older backend that sends neither field renders nothing", () => {
+    expect(senderChipsView({}, NOW, en)).toBeNull();
+  });
+});
+
+describe("templates needing review is Unknown when quality is not reported (final review M2)", () => {
+  const summary = (over: Record<string, number>) => ({
+    total: 3,
+    approved: 3,
+    pending: 0,
+    rejected: 0,
+    paused: 0,
+    disabled: 0,
+    lowQuality: 0,
+    qualityUnknown: 0,
+    truncated: false,
+    ...over,
+  });
+
+  it("quality not reported and nothing paused or disabled: Unknown, never a green None", () => {
+    for (const lang of [en, ar]) {
+      const v = templatesView({ value: summary({ qualityUnknown: 3 }), checkedAt: AT, error: null }, lang);
+      expect(v.label).toBe(lang === en ? "Unknown" : "غير معروف");
+      expect(v.tone).toBe("neutral");
+      expect(v.unknown).toBe(true);
+      expect(v.bad).toBe(0);
+      expect(v.reason).toBeTruthy();
+    }
+    expect(templatesView({ value: summary({ qualityUnknown: 1 }), checkedAt: AT, error: null }, en).reason).toBe(
+      "Template quality isn't reported by the provider. None are paused or disabled.",
+    );
+  });
+
+  it("every quality reported: None is green", () => {
+    const v = templatesView({ value: summary({}), checkedAt: AT, error: null }, en);
+    expect(v).toMatchObject({ label: "None (3 templates)", tone: "good", unknown: false });
+  });
+
+  it("paused or disabled templates still show their counts", () => {
+    const v = templatesView({ value: summary({ paused: 1, qualityUnknown: 3 }), checkedAt: AT, error: null }, en);
+    expect(v).toMatchObject({ label: "1 paused", tone: "warn", unknown: false, bad: 1 });
+  });
+
+  it("a snapshot without the count (stored before it existed) is Unknown too", () => {
+    const { qualityUnknown: _drop, ...old } = summary({});
+    expect(templatesView({ value: old, checkedAt: AT, error: null }, en).unknown).toBe(true);
+  });
+});
+
+describe("template list time label (final review M3)", () => {
+  it("Read only for a list that was read; Last attempt after a failed read", () => {
+    expect(templatesReadLabel({ known: true, checkedAt: AT }, en)).toBe("Read");
+    expect(templatesReadLabel({ known: false, checkedAt: AT }, en)).toBe("Last attempt");
+    expect(templatesReadLabel({ known: false, checkedAt: AT }, ar)).toBe("آخر محاولة");
+    expect(templatesReadLabel({ known: false, checkedAt: null }, en)).toBeNull();
+    expect(templatesReadLabel({ known: true, checkedAt: null }, en)).toBeNull();
+  });
+});
+
+describe("Templates list quality: source and read time (final review M5)", () => {
+  it("a passthrough score read now carries the source mark and its read time", () => {
+    const v = templateQualityCell({ quality: "GREEN", qualitySource: "zernio_passthrough", qualityReadAt: AT }, en);
+    expect(v).toMatchObject({ label: "High", tone: "good", unknown: false, previous: false, readAt: AT, source: "Via Zernio (unverified field)" });
+    expect(templateQualityCell({ quality: "GREEN", qualitySource: "zernio_passthrough", qualityReadAt: AT }, ar).source).toMatch(ARABIC);
+  });
+
+  it("a stored score not confirmed by a read now is Previous, muted, never current", () => {
+    for (const lang of [en, ar]) {
+      const v = templateQualityCell({ quality: "GREEN", qualitySource: null, qualityReadAt: null }, lang);
+      expect(v.previous).toBe(true);
+      expect(v.unknown).toBe(true);
+      expect(v.tone).toBe("neutral");
+      expect(v.label).toBe(lang === en ? "Previous: High" : "السابق: عالية");
+    }
+  });
+
+  it("no score is Unknown; an older backend (no read fields) shows the value as before", () => {
+    expect(templateQualityCell({ quality: null, qualitySource: null, qualityReadAt: AT }, en)).toMatchObject({ label: "Unknown", unknown: true, previous: false });
+    expect(templateQualityCell({ quality: "RED" }, en)).toMatchObject({ label: "Low", tone: "bad", unknown: false, previous: false });
+    expect(templateQualityCell({ quality: "RED" }, en).source).toBeUndefined();
   });
 });
