@@ -49,6 +49,24 @@ describe("creative fetch rules", () => {
     );
   });
 
+  it("META_CDN_TEST_BASE is ignored in production or on Fly, and warns when active", () => {
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    warn.mockClear();
+    const base = "http://127.0.0.1:4010";
+    for (const env of [
+      { META_CDN_TEST_BASE: base, NODE_ENV: "production" },
+      { META_CDN_TEST_BASE: base, FLY_APP_NAME: "crm-api" },
+    ]) {
+      expect(creativeTestBase(env)).toBeNull();
+      expect(creativeFetchTarget(IMG, env)).toBe(IMG);
+    }
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("META_CDN_TEST_BASE"))).toBe(false);
+    expect(creativeFetchTarget(IMG, { META_CDN_TEST_BASE: base, NODE_ENV: "test" })).toContain(base);
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("META_CDN_TEST_BASE is active"))).toBe(true);
+    for (const l of lines) expect(l).not.toContain("fbcdn");
+  });
+
   it("refuses redirects, non-images, oversize bodies and slow hosts", async () => {
     const run = (res: () => Response | Promise<Response>, opts: { timeoutMs?: number } = {}) =>
       makeFetchCreative({ fetchImpl: fakeFetch(() => res()) as never, ...opts })(IMG);
@@ -227,6 +245,54 @@ describe("creative is re-hosted once with strict fetch rules", () => {
     }
     await Promise.all([...runs, dup]);
     expect(peak).toBeLessThanOrEqual(REHOST_CONCURRENCY);
+    expect(fetchCreative).toHaveBeenCalledTimes(4);
+  });
+
+  it("a finishing re-host hands its slot to the waiter, so a newcomer cannot push it to 3", async () => {
+    const prisma = makeFakePrisma({});
+    let peak = 0;
+    const running = new Map<string, () => void>();
+    const fetchCreative: FetchCreative = jest.fn(
+      (url: string) =>
+        new Promise((resolve) => {
+          peak = Math.max(peak, activeRehosts());
+          running.set(url, () => resolve({ buffer: PNG, mimeType: "image/png" }));
+        }),
+    );
+    const media = { ingestBuffer: jest.fn(async () => ({ id: `m${Math.random()}` })) };
+    const target = (i: number) => ({ id: `h${i}`, workspaceId: "ws1", sourceId: String(i), mediaId: null, mediaUrl: `${IMG}&n=${i}` });
+    const tick = async (n = 5) => {
+      for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+    };
+    const runs = [1, 2, 3].map((i) => rehostCreative(target(i), { prisma, media, fetchCreative }));
+    await tick();
+    expect(running.size).toBe(2);
+    // Release one; a newcomer starts in the same turn, before the waiter resumes.
+    const first = [...running.keys()][0];
+    running.get(first)!();
+    running.delete(first);
+    // The slot is handed over: the count never dips while a waiter is queued,
+    // so no newcomer can slip in between (old code: 2 -> 1 -> newcomer 2 -> waiter 3).
+    const samples: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      samples.push(activeRehosts());
+      await Promise.resolve();
+    }
+    expect(Math.min(...samples)).toBe(REHOST_CONCURRENCY);
+    expect(running.size).toBe(2);
+    runs.push(rehostCreative(target(4), { prisma, media, fetchCreative }));
+    await tick();
+    expect(activeRehosts()).toBeLessThanOrEqual(REHOST_CONCURRENCY);
+    while (running.size) {
+      const [k, done] = [...running.entries()][0];
+      running.delete(k);
+      done();
+      await tick();
+      expect(activeRehosts()).toBeLessThanOrEqual(REHOST_CONCURRENCY);
+    }
+    await Promise.all(runs);
+    expect(peak).toBeLessThanOrEqual(REHOST_CONCURRENCY);
+    expect(activeRehosts()).toBe(0);
     expect(fetchCreative).toHaveBeenCalledTimes(4);
   });
 });

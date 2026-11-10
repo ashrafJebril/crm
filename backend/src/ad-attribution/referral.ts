@@ -152,10 +152,18 @@ export function zernioAttributionMetadata(evt: unknown): Obj | null {
  * Zernio `message.received` / `conversation.started`. `names` only when
  * `metadata.ad.synced === true`. `metadata.ad.adId` is the fallback ad id
  * when the verbatim referral has no `source_id`.
+ *
+ * Review I1: an ad-only `metadata.ad` (no referral object) may be Zernio's
+ * conversation-level attribution repeated on every webhook, so it counts as a
+ * click only on `conversation.started`, never on a `message.received`.
  */
 export function parseZernioReferral(evt: unknown, onDrop?: OnDrop): NormalizedReferral | null {
   const meta = zernioAttributionMetadata(evt);
   if (!meta) return null;
+  if (!isObj(meta.referral)) {
+    const type = isObj(evt) ? evt.type ?? evt.event : undefined;
+    if (type !== "conversation.started") return null;
+  }
   const ad = isObj(meta.ad) ? meta.ad : null;
   const adId = ad ? sourceIdOf(ad.adId) : null;
   const raw = isObj(meta.referral) ? meta.referral : {};

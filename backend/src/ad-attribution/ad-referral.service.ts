@@ -149,12 +149,16 @@ export class AdReferralService {
   }
 
   /**
-   * 1. upsert the workspace's AdSource (fill-only for creative fields);
-   * 2. insert one AdReferral per message (`messageId` unique: a redelivery is
-   *    a no-op and returns null);
-   * 3. set the conversation's first touch only while `adSourceId` is null
-   *    (one conditional update, so only one referral wins, also under a race);
-   * 4. queue the creative re-host without awaiting it.
+   * 1. skip a repeated click (review I1): a touch already stored for this
+   *    conversation and ad with the same `ctwaClid`, or, for a Zernio touch
+   *    without a click id, any touch for this conversation and ad;
+   * 2. upsert the workspace's AdSource (fill-only for creative fields);
+   * 3. in ONE transaction (review M1): insert the touch (`messageId` unique:
+   *    a redelivery is a no-op and returns null) and set the conversation's
+   *    first touch only while `adSourceId` is null (one guarded update, so
+   *    only one referral wins, also under a race);
+   * 4. move first/lastReferredAt with guarded updates, never backwards (M2);
+   * 5. queue the creative re-host without awaiting it.
    */
   async capture(input: CaptureInput): Promise<CaptureResult | null> {
     try {
@@ -166,33 +170,57 @@ export class AdReferralService {
     }
   }
 
+  /** Review I1: the same click already produced a touch in this conversation. */
+  private async isRepeat(db: Pick<PrismaService, "adReferral">, input: CaptureInput, adSourceId: string): Promise<boolean> {
+    const clid = input.referral.ctwaClid;
+    if (!clid && input.provider !== "zernio") return false;
+    const hit = await db.adReferral.findFirst({
+      where: {
+        workspaceId: input.workspaceId,
+        conversationId: input.conversationId,
+        adSourceId,
+        ...(clid ? { ctwaClid: clid } : {}),
+      },
+      select: { id: true },
+    });
+    return !!hit;
+  }
+
   private async doCapture(input: CaptureInput): Promise<CaptureResult | null> {
     const { workspaceId, referral: ref, at } = input;
     const seen = await this.prisma.adReferral.findUnique({ where: { messageId: input.messageId }, select: { id: true } });
     if (seen) return null;
 
-    const src = await this.upsertFromReferral(workspaceId, ref, at);
-
-    const inserted = await this.prisma.adReferral.createMany({
-      data: [
-        {
-          workspaceId,
-          adSourceId: src.id,
-          conversationId: input.conversationId,
-          contactId: input.contactId,
-          channelId: input.channelId,
-          messageId: input.messageId,
-          provider: input.provider,
-          ctwaClid: ref.ctwaClid,
-          firstTouch: false,
-          referredAt: at,
-        },
-      ],
-      skipDuplicates: true,
+    const key = { workspaceId, sourceType: ref.sourceType, sourceId: ref.sourceId };
+    const known = await this.prisma.adSource.findUnique({
+      where: { workspaceId_sourceType_sourceId: key },
+      select: { id: true },
     });
-    if (inserted.count === 0) return null;
+    // A repeated click changes nothing at all (no creative fill, no dates).
+    if (known && (await this.isRepeat(this.prisma, input, known.id))) return null;
+
+    const { row: src, created } = await this.upsertFromReferral(workspaceId, ref, at);
 
     const firstTouch = await this.prisma.$transaction(async (tx) => {
+      if (await this.isRepeat(tx, input, src.id)) return null;
+      const inserted = await tx.adReferral.createMany({
+        data: [
+          {
+            workspaceId,
+            adSourceId: src.id,
+            conversationId: input.conversationId,
+            contactId: input.contactId,
+            channelId: input.channelId,
+            messageId: input.messageId,
+            provider: input.provider,
+            ctwaClid: ref.ctwaClid,
+            firstTouch: false,
+            referredAt: at,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 0) return null;
       const won = await tx.conversation.updateMany({
         where: { id: input.conversationId, workspaceId, adSourceId: null },
         data: { adSourceId: src.id, adReferredAt: at },
@@ -201,12 +229,30 @@ export class AdReferralService {
       await tx.adReferral.updateMany({ where: { messageId: input.messageId, workspaceId }, data: { firstTouch: true } });
       return true;
     });
+    if (firstTouch === null) return null;
 
+    if (!created) await this.moveReferralDates(workspaceId, src.id, at);
     if (!src.mediaId && src.mediaUrl) this.queueRehost(src);
     return { adSourceId: src.id, firstTouch };
   }
 
-  private async upsertFromReferral(workspaceId: string, ref: NormalizedReferral, at: Date): Promise<AdSource> {
+  /** Review M2: guarded writes, so concurrent touches never move a date backwards. */
+  private async moveReferralDates(workspaceId: string, id: string, at: Date): Promise<void> {
+    await this.prisma.adSource.updateMany({
+      where: { id, workspaceId, OR: [{ lastReferredAt: null }, { lastReferredAt: { lt: at } }] },
+      data: { lastReferredAt: at },
+    });
+    await this.prisma.adSource.updateMany({
+      where: { id, workspaceId, OR: [{ firstReferredAt: null }, { firstReferredAt: { gt: at } }] },
+      data: { firstReferredAt: at },
+    });
+  }
+
+  private async upsertFromReferral(
+    workspaceId: string,
+    ref: NormalizedReferral,
+    at: Date,
+  ): Promise<{ row: AdSource; created: boolean }> {
     const names = ref.names;
     const { row, created } = await findOrCreate(
       this.prisma,
@@ -227,7 +273,7 @@ export class AdReferralService {
         lastReferredAt: at,
       }),
     );
-    if (created) return row;
+    if (created) return { row, created };
 
     const patch: Record<string, unknown> = {};
     for (const f of CREATIVE) if (row[f] == null && ref[f] != null) patch[f] = ref[f];
@@ -244,10 +290,9 @@ export class AdReferralService {
       if (named && row.namesFrom !== "zernio") patch.namesFrom = "zernio";
     }
     if (names?.adAccountId && !row.adAccountId) patch.adAccountId = names.adAccountId;
-    if (!row.firstReferredAt || at < row.firstReferredAt) patch.firstReferredAt = at;
-    if (!row.lastReferredAt || at > row.lastReferredAt) patch.lastReferredAt = at;
-    if (Object.keys(patch).length === 0) return row;
-    return this.prisma.adSource.update({ where: { id: row.id }, data: patch });
+    // first/lastReferredAt move only after the touch is stored (moveReferralDates).
+    if (Object.keys(patch).length === 0) return { row, created };
+    return { row: await this.prisma.adSource.update({ where: { id: row.id }, data: patch }), created };
   }
 
   /** Task 2: see `upsertAdSourceFromSync`. */

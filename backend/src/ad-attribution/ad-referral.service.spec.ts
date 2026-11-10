@@ -155,25 +155,31 @@ interface Provider {
   name: string;
   /** Sends inbound message `n` (1-based) with an optional referral at minute `n`. */
   send(w: World, n: number, referral: Record<string, unknown> | null): Promise<unknown>;
-  /** The message time the conversation's first touch must carry. */
-  firstTime(w: World): Date;
+}
+
+/** Zernio stamps our receive time: the clock is fixed at minute `n` (Date only is faked). */
+async function atClock<T>(n: number, run: () => Promise<T>): Promise<T> {
+  jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask"] });
+  jest.setSystemTime(at(n));
+  try {
+    return await run();
+  } finally {
+    jest.useRealTimers();
+  }
 }
 
 const PROVIDERS: Provider[] = [
   {
     name: "zernio (root metadata)",
-    send: (w, n, r) => w.zernio.handleEvent(zEvent(`zm-${n}`, r, "root")),
-    firstTime: (w) => w.prisma.db.adReferral[0].referredAt,
+    send: (w, n, r) => atClock(n, () => w.zernio.handleEvent(zEvent(`zm-${n}`, r, "root"))),
   },
   {
     name: "zernio (message.metadata)",
-    send: (w, n, r) => w.zernio.handleEvent(zEvent(`zm-${n}`, r, "message")),
-    firstTime: (w) => w.prisma.db.adReferral[0].referredAt,
+    send: (w, n, r) => atClock(n, () => w.zernio.handleEvent(zEvent(`zm-${n}`, r, "message"))),
   },
   {
     name: "meta",
     send: (w, n, r) => w.meta.handleWebhook(mEvent(`wamid.${n}`, r, at(n))),
-    firstTime: () => at(1),
   },
 ];
 
@@ -187,7 +193,6 @@ describe("SP-15 referral capture", () => {
   describe.each(PROVIDERS)("$name", (p) => {
     it("referral captured only on first inbound", async () => {
       const w = world();
-      const before = Date.now();
 
       // 1. First message with referral A: AdSource A, one first touch, conversation attributed.
       await p.send(w, 1, refA);
@@ -219,9 +224,10 @@ describe("SP-15 referral capture", () => {
       });
       const conv = w.prisma.db.conversation[0];
       expect(conv.adSourceId).toBe(a.id);
-      expect(conv.adReferredAt).toEqual(p.firstTime(w));
-      if (p.name === "meta") expect(conv.adReferredAt).toEqual(at(1));
-      else expect(conv.adReferredAt.getTime()).toBeGreaterThanOrEqual(before - 1000);
+      // The fixed time of message 1, for both providers (not the stored touch's own value).
+      expect(conv.adReferredAt).toEqual(at(1));
+      expect(w.prisma.db.adReferral[0].referredAt).toEqual(at(1));
+      expect(a).toMatchObject({ firstReferredAt: at(1), lastReferredAt: at(1) });
 
       // 2. A message without a referral changes nothing.
       const snapshot = JSON.stringify({ s: w.prisma.db.adSource, r: w.prisma.db.adReferral, c: conv.adSourceId, t: conv.adReferredAt });
@@ -238,7 +244,8 @@ describe("SP-15 referral capture", () => {
       expect(w.prisma.db.adReferral).toHaveLength(2);
       expect(w.prisma.db.adReferral[1]).toMatchObject({ adSourceId: b.id, firstTouch: false, ctwaClid: "clid-B" });
       expect(conv.adSourceId).toBe(a.id);
-      expect(conv.adReferredAt).toEqual(p.firstTime(w));
+      expect(conv.adReferredAt).toEqual(at(1));
+      expect(w.prisma.db.adReferral[1].referredAt).toEqual(at(3));
 
       // 4. A redelivery of message 1 (same wamid / Zernio id) is a no-op.
       await p.send(w, 1, refA);
@@ -254,10 +261,128 @@ describe("SP-15 referral capture", () => {
     await w.zernio.handleEvent(zEvent("echo-2", refA, "message", { type: "message.received", direction: "outgoing" }));
     expect(w.prisma.db.message).toHaveLength(2);
     expect(w.prisma.db.message.every((m: any) => m.from === "human")).toBe(true);
+    // M4: an unmatched message.sent without a direction is stored (pre-existing
+    // behaviour) but is never a customer click.
+    const noDirection = zEvent("echo-3", refA, "root", { type: "message.sent" });
+    delete (noDirection.message as any).direction;
+    await w.zernio.handleEvent(noDirection);
+    expect(w.prisma.db.message).toHaveLength(3);
     expect(w.prisma.db.adSource).toHaveLength(0);
     expect(w.prisma.db.adReferral).toHaveLength(0);
     expect(w.prisma.db.conversation[0].adSourceId).toBeNull();
     expect(w.fetchCreative).not.toHaveBeenCalled();
+  });
+
+  describe("I1: one click is one touch", () => {
+    it("conversation.started (no message id) then message.received with the same metadata: one touch", async () => {
+      const w = world();
+      const metadata = { referral: refA, ad: { adId: refA.source_id, name: refA.headline, synced: false } };
+      const started = { ...zEvent("ignored", null), event: "conversation.started", metadata };
+      delete (started.message as any).id;
+      await atClock(1, () => w.zernio.handleEvent(started));
+      await atClock(2, () => w.zernio.handleEvent({ ...zEvent("zm-2", null), metadata }));
+      await w.ads.drain();
+      expect(w.prisma.db.message).toHaveLength(2);
+      expect(w.prisma.db.adReferral).toHaveLength(1);
+      expect(w.prisma.db.adReferral[0]).toMatchObject({ firstTouch: true, ctwaClid: "clid-A", referredAt: at(1) });
+      expect(w.prisma.db.adSource[0]).toMatchObject({ firstReferredAt: at(1), lastReferredAt: at(1) });
+    });
+
+    it("conversation-level root metadata repeated on later plain messages adds no touch", async () => {
+      const w = world();
+      // A referral without ctwa_clid (Status placement), repeated on every webhook.
+      const { ctwa_clid: _c, ...noClid } = refA;
+      const metadata = { referral: noClid, ad: { adId: refA.source_id, synced: false } };
+      await atClock(1, () => w.zernio.handleEvent({ ...zEvent("zm-1", null), metadata }));
+      await atClock(2, () => w.zernio.handleEvent({ ...zEvent("zm-2", null), metadata }));
+      await atClock(3, () => w.zernio.handleEvent({ ...zEvent("zm-3", null), metadata }));
+      await w.ads.drain();
+      expect(w.prisma.db.message).toHaveLength(3);
+      expect(w.prisma.db.adReferral).toHaveLength(1);
+      expect(w.prisma.db.adSource[0]).toMatchObject({ firstReferredAt: at(1), lastReferredAt: at(1) });
+    });
+
+    it("an ad-only metadata.ad counts on conversation.started, never on message.received", async () => {
+      const w = world();
+      const metadata = { ad: { adId: "5550001", name: "x", synced: false } };
+      await atClock(1, () => w.zernio.handleEvent({ ...zEvent("zm-1", null), metadata }));
+      expect(w.prisma.db.adReferral).toHaveLength(0);
+      await atClock(2, () => w.zernio.handleEvent({ ...zEvent("zm-2", null), event: "conversation.started", metadata }));
+      expect(w.prisma.db.adReferral).toHaveLength(1);
+      expect(w.prisma.db.adSource[0]).toMatchObject({ sourceId: "5550001", sourceType: "ad", headline: null });
+      // Repeated on a later conversation.started: still one touch.
+      await atClock(3, () => w.zernio.handleEvent({ ...zEvent("zm-3", null), event: "conversation.started", metadata }));
+      expect(w.prisma.db.adReferral).toHaveLength(1);
+    });
+
+    it("a new click on the same ad (another ctwa_clid) is a new touch", async () => {
+      const w = world();
+      await w.meta.handleWebhook(mEvent("wamid.1", refA, at(1)));
+      await w.meta.handleWebhook(mEvent("wamid.2", refA, at(2)));
+      expect(w.prisma.db.adReferral).toHaveLength(1);
+      await w.meta.handleWebhook(mEvent("wamid.3", { ...refA, ctwa_clid: "clid-A2" }, at(3)));
+      expect(w.prisma.db.adReferral).toHaveLength(2);
+      expect(w.prisma.db.adSource[0]).toMatchObject({ firstReferredAt: at(1), lastReferredAt: at(3) });
+    });
+  });
+
+  it("M1: the touch insert and the first-touch update run in one transaction", async () => {
+    const w = world();
+    let inTx = false;
+    const calls: Array<[string, boolean]> = [];
+    const realTx = w.prisma.$transaction;
+    w.prisma.$transaction = jest.fn(async (arg: any) => {
+      inTx = true;
+      try {
+        return await realTx(arg);
+      } finally {
+        inTx = false;
+      }
+    });
+    for (const [model, op] of [["adReferral", "createMany"], ["adReferral", "updateMany"]] as const) {
+      const orig = w.prisma[model][op];
+      w.prisma[model][op] = jest.fn((a: any) => {
+        calls.push([`${model}.${op}`, inTx]);
+        return orig(a);
+      });
+    }
+    const origConv = w.prisma.conversation.updateMany;
+    w.prisma.conversation.updateMany = jest.fn((a: any) => {
+      if (a?.where && "adSourceId" in a.where) calls.push(["conversation.updateMany(firstTouch)", inTx]);
+      return origConv(a);
+    });
+    await w.meta.handleWebhook(mEvent("wamid.1", refA, at(1)));
+    expect(w.prisma.db.adReferral[0].firstTouch).toBe(true);
+    expect(calls).toEqual([
+      ["adReferral.createMany", true],
+      ["conversation.updateMany(firstTouch)", true],
+      ["adReferral.updateMany", true],
+    ]);
+  });
+
+  it("M2: concurrent touches never move first/lastReferredAt backwards", async () => {
+    const w = world({
+      adSource: [{ id: "s1", workspaceId: "ws1", sourceType: "ad", sourceId: refA.source_id, firstReferredAt: at(5), lastReferredAt: at(5) }],
+      conversation: [
+        { id: "cv1", workspaceId: "ws1", contactId: "c1", channel: "whatsapp", adSourceId: null },
+        { id: "cv2", workspaceId: "ws1", contactId: "c2", channel: "whatsapp", adSourceId: null },
+        { id: "cv3", workspaceId: "ws1", contactId: "c3", channel: "whatsapp", adSourceId: null },
+      ],
+      message: [
+        { id: "m1", workspaceId: "ws1", conversationId: "cv1" },
+        { id: "m2", workspaceId: "ws1", conversationId: "cv2" },
+        { id: "m3", workspaceId: "ws1", conversationId: "cv3" },
+      ],
+    });
+    const base = { workspaceId: "ws1", channelId: "M", provider: "meta" as const };
+    const ref = (clid: string) => parseMetaReferral({ ...refA, ctwa_clid: clid })!;
+    await Promise.all([
+      w.ads.capture({ ...base, conversationId: "cv1", contactId: "c1", messageId: "m1", referral: ref("x1"), at: at(9) }),
+      w.ads.capture({ ...base, conversationId: "cv2", contactId: "c2", messageId: "m2", referral: ref("x2"), at: at(7) }),
+      w.ads.capture({ ...base, conversationId: "cv3", contactId: "c3", messageId: "m3", referral: ref("x3"), at: at(2) }),
+    ]);
+    expect(w.prisma.db.adReferral).toHaveLength(3);
+    expect(w.prisma.db.adSource[0]).toMatchObject({ firstReferredAt: at(2), lastReferredAt: at(9) });
   });
 
   it("a Zernio referral on a non-WhatsApp account is ignored (ruling 4)", async () => {

@@ -47,8 +47,12 @@ export type FetchCreative = (url: string) => Promise<FetchedCreative>;
 
 type Env = Record<string, string | undefined>;
 
-/** The loopback test base, or null when unset or not exactly loopback. */
+/**
+ * The loopback test base, or null when unset, not exactly loopback, or in a
+ * production runtime (`NODE_ENV=production` or on Fly, `FLY_APP_NAME` set).
+ */
 export function creativeTestBase(env: Env = process.env): string | null {
+  if (env.NODE_ENV === "production" || (env.FLY_APP_NAME ?? "").trim() !== "") return null;
   const raw = (env.META_CDN_TEST_BASE ?? "").trim();
   const m = /^http:\/\/127\.0\.0\.1:(\d{2,5})$/.exec(raw);
   return m && Number(m[1]) <= 65_535 ? raw : null;
@@ -68,7 +72,10 @@ export function creativeFetchTarget(link: string, env: Env = process.env): strin
     throw new CreativeFetchError("creative_host_refused");
   }
   const base = creativeTestBase(env);
-  return base ? `${base}/${host}${u.pathname}${u.search}` : u.toString();
+  if (!base) return u.toString();
+  // Visible on purpose: creatives are being fetched from a local stub.
+  new Logger("CreativeRehost").warn(`META_CDN_TEST_BASE is active: creative fetched from ${base}`);
+  return `${base}/${host}${u.pathname}${u.search}`;
 }
 
 /** The production fetcher: no redirects, timeout, size and type caps. */
@@ -131,14 +138,23 @@ let active = 0;
 const waiting: Array<() => void> = [];
 const inFlight = new Map<string, Promise<RehostResult>>();
 
+/**
+ * At most REHOST_CONCURRENCY at a time. A finishing task hands its slot
+ * straight to the next waiter (the count never dips), so a newcomer cannot
+ * slip in between the release and the waiter resuming.
+ */
 async function limited<T>(fn: () => Promise<T>): Promise<T> {
-  if (active >= REHOST_CONCURRENCY) await new Promise<void>((r) => waiting.push(r));
-  active++;
+  if (active >= REHOST_CONCURRENCY) {
+    await new Promise<void>((r) => waiting.push(r)); // the slot is ours on wake-up
+  } else {
+    active++;
+  }
   try {
     return await fn();
   } finally {
-    active--;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next) next();
+    else active--;
   }
 }
 

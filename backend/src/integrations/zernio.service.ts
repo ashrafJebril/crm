@@ -1760,8 +1760,15 @@ export class ZernioService {
         at: now,
       });
       // SP-15: a click-to-WhatsApp referral (WhatsApp only, ruling 4). After
-      // the message row exists; capture never throws (Review Focus 2).
-      if (channel === "whatsapp" && created?.id) {
+      // the message row exists; capture never throws (Review Focus 2). Only a
+      // customer event captures: an unmatched `message.sent` also reaches this
+      // path and may lack `direction` (review M4).
+      const eventType = evt.type ?? evt.event;
+      if (
+        channel === "whatsapp" &&
+        created?.id &&
+        (eventType === "message.received" || eventType === "conversation.started")
+      ) {
         await this.adReferrals.captureZernio(evt, {
           workspaceId,
           channelId,

@@ -117,6 +117,17 @@ describe("parseZernioReferral", () => {
     expect(parseZernioReferral({})).toBeNull();
   });
 
+  it("an ad-only metadata.ad is a referral only on conversation.started", () => {
+    const meta = { ad: ad() };
+    expect(parseZernioReferral({ event: "message.received", metadata: meta })).toBeNull();
+    expect(parseZernioReferral({ type: "message.received", message: { metadata: meta } })).toBeNull();
+    expect(parseZernioReferral({ event: "conversation.started", metadata: meta })).toMatchObject({
+      sourceId: "120210000000001",
+      sourceType: "ad",
+      headline: null,
+    });
+  });
+
   it("falls back to metadata.ad.adId when the referral has no source_id", () => {
     const r = parseZernioReferral({ metadata: { referral: { ...META, source_id: undefined, source_type: undefined }, ad: ad() } });
     expect(r).toMatchObject({ sourceId: "120210000000001", sourceType: "ad" });
