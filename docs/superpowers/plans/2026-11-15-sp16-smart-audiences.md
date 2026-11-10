@@ -486,25 +486,25 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 
 ### Controller rulings
 *Decided 2026-11-10. Every recommended ruling (R1–R19) is accepted, with these specifics. **R8:** a read-only check on 2026-11-10 found 0 campaigns of any status using a rule-based segment (all 6 use plain groups). The switch changes no existing audience. Task 4 re-runs the count before deploy and stops for the user if it is non-zero. **R12:** engagement and follow-up rules are included only if Task 2 stays reviewable; otherwise they move to a follow-up. **R18:** do not seed 100k rows on production. The live check seeds at most 20k throwaway contacts (cleaned up), and 100k scale is covered by the in-memory spec plus EXPLAIN. Migration 20261115130000_smart_audiences needs explicit user approval before it is applied.*
-- **R1** Pending. Recommended: live evaluation, one compiler to `Prisma.ContactWhereInput`, no materialization.
-- **R2** Pending. Recommended: new `Segment.rules Jsonb`; `filter` keeps the legacy projection or the nobody-sentinel; legacy rows are never rewritten.
+- **R1** Accepted: live evaluation, one compiler to `Prisma.ContactWhereInput`, no materialization.
+- **R2** Accepted: new `Segment.rules Jsonb`; `filter` keeps the legacy projection or the nobody-sentinel; legacy rows are never rewritten.
 - **R3** Pending (minor). Recommended: the Tkana rule set plus the legacy fields, with the semantics as listed; tags by name.
-- **R4** Pending. Recommended: `conversations none/any` only; exact counts deferred to a `ContactStats` follow-up.
-- **R5** Pending. Recommended: allow smart → smart references with cycle rejection, the workspace lock, and caps of depth 3 and 100 expanded conditions.
-- **R6** Pending. Recommended: a broken reference matches nobody for every operator and shows an issue; never drop the rule.
-- **R7** Pending. Recommended: 409 plus confirm for tags and audiences; scheduled or running campaigns block with no override; field, stage and pipeline previews are a follow-up.
-- **R8** Pending. Recommended: the read-only count of draft/scheduled campaigns on `crm` segments is reported to the user before deploy; scheduled ones need the user's decision.
+- **R4** Accepted: `conversations none/any` only; exact counts deferred to a `ContactStats` follow-up.
+- **R5** Accepted: allow smart → smart references with cycle rejection, the workspace lock, and caps of depth 3 and 100 expanded conditions.
+- **R6** Accepted: a broken reference matches nobody for every operator and shows an issue; never drop the rule.
+- **R7** Accepted: 409 plus confirm for tags and audiences; scheduled or running campaigns block with no override; field, stage and pipeline previews are a follow-up.
+- **R8** Accepted: the read-only count of draft/scheduled campaigns on `crm` segments is reported to the user before deploy; scheduled ones need the user's decision.
 - **R9** Pending (minor). Recommended: the shared `pipelineStageWhere`; a stage given matches open or closed cards; this fixes "in Won" in the contacts list too.
-- **R10** Pending. Recommended: only `Contact_workspaceId_createdAt_idx`; the statement timeout; a 5-minute count cache; a `Message` index only after Task 4 measures a need, in its own approval.
+- **R10** Accepted: only `Contact_workspaceId_createdAt_idx`; the statement timeout; a 5-minute count cache; a `Message` index only after Task 4 measures a need, in its own approval.
 - **R11** Pending (minor). Recommended: `Segment.version` with 409 `audiences.version_conflict`.
-- **R12** Pending. Recommended: include the campaign-engagement and follow-up rules as the droppable B6/F6 sections.
+- **R12** Accepted: include the campaign-engagement and follow-up rules as the droppable B6/F6 sections.
 - **R13** Pending (minor). Recommended: rename Contacts → Groups to "Audiences" / "الجماهير", put the detail page in the hash, and retire `SegmentManager`.
 - **R14** Pending (minor). Recommended: workspace-wide evaluation; add the side-door assertion.
 - **R15** Pending (minor). Recommended: keep `/segments`; add routes; leave `/members` unchanged.
 - **R16** Pending (minor). Recommended: v2 `ruleSummary`; no HJZ calls in verification.
 - **R17** Pending (minor). Recommended: one `now` per request, and per launch.
-- **R18** Pending. Recommended: the production throwaway workspace with a 100k seed after explicit approval; the 20k fallback otherwise. The migration needs explicit user approval, and the user must not run `migrate deploy` on their own.
-- **R19** Pending. Recommended: large M; drop R12's section first if a task outgrows review.
+- **R18** Accepted: the production throwaway workspace with a 100k seed after explicit approval; the 20k fallback otherwise. The migration needs explicit user approval, and the user must not run `migrate deploy` on their own.
+- **R19** Accepted: large M; drop R12's section first if a task outgrows review.
 
 ---
 
