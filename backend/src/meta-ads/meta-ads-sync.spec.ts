@@ -66,6 +66,11 @@ describe("Meta Ads spend sync", () => {
     expect(resumeWindows([{ since: "2026-11-14", until: "2026-11-20" }, { since: "2026-11-08", until: "2026-11-13" }], "2026-11-10")).toEqual([
       { since: "2026-11-08", until: "2026-11-09" },
     ]);
+    // With the stopped run's last day, the days after it are kept (read first).
+    expect(resumeWindows([{ since: "2026-11-14", until: "2026-11-20" }, { since: "2026-11-08", until: "2026-11-13" }], "2026-11-10", "2026-11-18")).toEqual([
+      { since: "2026-11-19", until: "2026-11-20" },
+      { since: "2026-11-08", until: "2026-11-09" },
+    ]);
   });
 
   it("sync re-reads the days missed while parked: a 10-day outage then a same-account reconnect fills all 10 days", async () => {
@@ -345,6 +350,59 @@ describe("Meta Ads spend sync", () => {
       expect(w.conn()).toMatchObject({ lastSyncError: null, spendBackfilledAt: T0, lastSyncedAt: next });
       const filled = await w.metrics.overview("wsA", { from: "2026-11-12", to: "2026-11-18" }, next);
       expect(filled.daily.map((d) => d.spend)).toEqual([{ USD: 1 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }]);
+    });
+
+    it("a run stopped on day D and resumed on day D+1 reads D+1, so D+1 is known", async () => {
+      // Every window has spend on its first and last day; Meta throttles the 3rd read of the first tick.
+      let n = 0;
+      const ranges: Array<{ since: string; until: string }> = [];
+      const { g } = scriptedInsights((_i, url) => {
+        const r = JSON.parse(new URL(url).searchParams.get("time_range")!) as { since: string; until: string };
+        ranges.push(r);
+        if (n++ === 2) return graphError(17, "User request limit reached");
+        return { body: { data: r.since === r.until ? [insightRow("6001", r.until, "3.00")] : [insightRow("6001", r.until, "3.00"), insightRow("6001", r.since, "1.00")] } };
+      });
+      const w = world({ graph: g });
+      seedActive(w);
+      // Day D = 11-10 (Riyadh): 11-04..11-10 and 10-28..11-03 are written, then the stop.
+      await w.scheduler.sweep(T0);
+      expect(w.conn()).toMatchObject({ lastSyncError: "rate_limited", spendBackfilledAt: null });
+      expect(ranges.map((r) => r.since)).toEqual(["2026-11-04", "2026-10-28", "2026-10-21"]);
+
+      // Day D+1 = 11-11: the new day first, then the unread days below 10-28; 10-28..11-10 is not re-read.
+      const next = later(24 * HOUR);
+      await w.scheduler.sweep(next);
+      const resumed = ranges.slice(3);
+      expect(resumed[0]).toEqual({ since: "2026-11-11", until: "2026-11-11" });
+      expect(resumed[1]).toEqual({ since: "2026-10-22", until: "2026-10-27" });
+      for (const r of resumed.slice(1)) expect(r.until < "2026-10-28").toBe(true);
+      expect(resumed[resumed.length - 1].since).toBe("2026-08-14");
+      expect(w.conn()).toMatchObject({ lastSyncError: null, spendBackfilledAt: next, lastSyncedAt: next });
+      // The completing run read the day it records as the last sync: D+1 is known, not 0.
+      const o = await w.metrics.overview("wsA", { from: "2026-11-11", to: "2026-11-11" }, next);
+      expect(o.range.spendCoverage).toEqual({ from: "2026-08-14", to: "2026-11-11" });
+      expect(o.daily.map((d) => d.spend)).toEqual([{ USD: 3 }]);
+    });
+
+    it("a resume more than a window after the stopped run re-reads the whole span", async () => {
+      let n = 0;
+      const sinces: string[] = [];
+      const { g } = scriptedInsights((_i, url) => {
+        const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
+        sinces.push(since);
+        if (n++ === 1) return graphError(17, "User request limit reached");
+        return { body: { data: [insightRow("6001", since, "1.00")] } };
+      });
+      const w = world({ graph: g });
+      seedActive(w);
+      await w.scheduler.sweep(T0);
+      expect(sinces).toEqual(["2026-11-04", "2026-10-28"]);
+      // 9 days later the new days would need two windows; a stop between them
+      // would leave a hole above the written days, so the run starts over.
+      const next = later(9 * 24 * HOUR);
+      await w.scheduler.sweep(next);
+      expect(sinces.slice(2)).toEqual(syncWindows({ spendBackfilledAt: null, timezone: "Asia/Riyadh" }, next).map((x) => x.since));
+      expect(w.conn()).toMatchObject({ lastSyncError: null, spendBackfilledAt: next, lastSyncedAt: next });
     });
 
     it("the backfill resumes across ticks without re-reading finished windows", async () => {

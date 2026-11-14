@@ -72,14 +72,22 @@ export function syncWindows(conn: WindowConn, now: Date): Array<{ since: string;
 }
 
 /**
- * Resume: drop the windows wholly on or after `resumeBefore` (already read
- * by an earlier run) and cut one that straddles it, so a day boundary that
- * shifted the windows never skips the unread part of a window.
+ * Resume: drop the days an earlier, unfinished run already read
+ * (`resumeBefore`..`readThrough`, its oldest written day through its own
+ * "today") and cut the windows that straddle them, so a day boundary that
+ * shifted the windows never skips an unread day. Days after `readThrough`
+ * (the run resumes on a later day) are kept and stay first. Without
+ * `readThrough`, every day from `resumeBefore` on counts as read.
  */
-export function resumeWindows(windows: Array<{ since: string; until: string }>, resumeBefore: string) {
-  return windows
-    .filter((w) => w.since < resumeBefore)
-    .map((w) => (w.until >= resumeBefore ? { since: w.since, until: addDays(resumeBefore, -1) } : w));
+export function resumeWindows(windows: Array<{ since: string; until: string }>, resumeBefore: string, readThrough?: string) {
+  const out: Array<{ since: string; until: string }> = [];
+  for (const w of windows) {
+    if (readThrough !== undefined && w.until > readThrough) {
+      out.push({ since: w.since > readThrough ? w.since : addDays(readThrough, 1), until: w.until });
+    }
+    if (w.since < resumeBefore) out.push({ since: w.since, until: w.until >= resumeBefore ? addDays(resumeBefore, -1) : w.until });
+  }
+  return out;
 }
 
 /** Spend rows per upsert transaction (M4). */
@@ -97,7 +105,9 @@ export const UPSERT_BATCH = 200;
  *   windows are read newest first and each is written whole or not at all, so
  *   every window from the newest down to the one holding that day is done. An
  *   empty window leaves no row, so one between the last written window and
- *   the stop point is read again on resume (one cheap page).
+ *   the stop point is read again on resume (one cheap page). A run resumed
+ *   on a later day reads the days after the stopped run's day first, so the
+ *   `lastSyncedAt` it records is always a day it read.
  * - **Gap fill (final review I2).** After the backfill a run reads from the
  *   last successful sync (minus the 3-day overlap, at most 90 days) in the
  *   same 7-day windows, budget, deadline and resume (rows written since
@@ -160,17 +170,25 @@ export async function syncConnection(
         ? { gt: conn.lastSyncedAt ?? conn.connectedAt ?? new Date(0) }
         : null;
     if (writtenSince) {
-      const oldest = await prisma.adSpendDaily.findFirst({
-        where: {
-          workspaceId: conn.workspaceId,
-          adAccountId: act,
-          syncedAt: writtenSince,
-          date: { gte: new Date(`${windows[windows.length - 1].since}T00:00:00.000Z`) },
-        },
-        orderBy: [{ date: "asc" }],
-        select: { date: true },
-      });
-      if (oldest) windows = resumeWindows(windows, oldest.date.toISOString().slice(0, 10));
+      const where = {
+        workspaceId: conn.workspaceId,
+        adAccountId: act,
+        syncedAt: writtenSince,
+        date: { gte: new Date(`${windows[windows.length - 1].since}T00:00:00.000Z`) },
+      };
+      const oldest = await prisma.adSpendDaily.findFirst({ where, orderBy: [{ date: "asc" }], select: { date: true } });
+      if (oldest) {
+        // The earlier runs read from their oldest written day through the
+        // "today" of the latest of them (its rows' `syncedAt`); a run resumed
+        // on a later day still reads the days after that, newest first.
+        const latest = await prisma.adSpendDaily.findFirst({ where, orderBy: [{ syncedAt: "desc" }], select: { syncedAt: true } });
+        const readThrough = latest ? dayOf(latest.syncedAt, safeTimeZone(conn.timezone)) : windows[0].until;
+        // More new days than one window: a stop between their windows would
+        // leave a hole above the read days, so the run reads the whole span.
+        if (addDays(readThrough, WINDOW_DAYS) >= windows[0].until) {
+          windows = resumeWindows(windows, oldest.date.toISOString().slice(0, 10), readThrough);
+        }
+      }
     }
 
     for (const w of windows) {
