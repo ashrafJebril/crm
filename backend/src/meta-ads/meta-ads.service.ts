@@ -1,7 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import type { MetaAdsConnection } from "@prisma/client";
-import { randomBytes } from "node:crypto";
+import { hkdfSync, randomBytes } from "node:crypto";
+import { requireJwtSecret } from "../common/jwt-secret";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import { safeTimeZone } from "../ad-attribution/ad-range";
@@ -18,6 +19,25 @@ export const META_ADS_OAUTH_PURPOSE = "meta_ads_oauth";
 export const META_ADS_MANAGE = "connectors.manage";
 /** A user token shorter-lived than this is swapped for a long-lived one. */
 const LONG_LIVED_BELOW_S = 2 * 86_400;
+/** The choose step (candidates + save) must finish this soon after the exchange (M1). */
+export const PENDING_LOGIN_TTL_MS = 3_600_000;
+/** The state's audience: a session token never verifies as a state, nor the reverse (M2). */
+export const OAUTH_STATE_AUDIENCE = "meta-ads-oauth";
+const STATE_TTL_S = 600;
+
+/**
+ * The OAuth state's signing key, derived from `JWT_SECRET` with HKDF-SHA256
+ * under its own label, so a state is never a valid session token (and a
+ * session token is never a valid state).
+ */
+export function oauthStateSecret(): string {
+  return Buffer.from(hkdfSync("sha256", requireJwtSecret(), "", "aram/meta-ads/oauth-state/v1", 32)).toString("hex");
+}
+
+/** Signs an OAuth state (the derived key, the state audience, a 10-minute default lifetime). */
+export function signOAuthState(jwt: JwtService, payload: OAuthState, expiresIn: string | number = STATE_TTL_S): string {
+  return jwt.sign({ ...payload }, { secret: oauthStateSecret(), audience: OAUTH_STATE_AUDIENCE, expiresIn });
+}
 
 interface OAuthState {
   workspaceId: string;
@@ -43,6 +63,14 @@ export type CallbackOutcome = { redirect: string };
 @Injectable()
 export class MetaAdsService {
   private readonly log = new Logger(MetaAdsService.name);
+  /**
+   * Nonces of states already used (single-use, M2), each kept until its
+   * state would have expired anyway. In memory: on one machine a replay is
+   * refused; across machines the 10-minute expiry still bounds it.
+   */
+  private readonly usedNonces = new Map<string, number>();
+  /** The service's time (specs replace it). */
+  clock: () => Date = () => new Date();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -64,7 +92,7 @@ export class MetaAdsService {
       const u = await this.prisma.user.findUnique({ where: { id: row.connectedById }, select: { id: true, name: true } });
       if (u) by = { id: u.id, name: u.name };
     }
-    return toMetaAdsDto(row, viewerCanManage, by);
+    return toMetaAdsDto(row, viewerCanManage, by, this.clock());
   }
 
   /** `GET /meta-ads/oauth/start` → the Login for Business dialog URL. */
@@ -72,10 +100,7 @@ export class MetaAdsService {
     const app = metaAdsApp();
     if (app.missing.length) throw metaAdsError("meta_ads.not_configured", { missing: app.missing });
     if (!metaAdsEncryptionAvailable()) throw metaAdsError("meta_ads.encryption_unavailable");
-    const state = this.jwt.sign(
-      { workspaceId, userId, nonce: randomBytes(16).toString("hex"), purpose: META_ADS_OAUTH_PURPOSE } satisfies OAuthState,
-      { expiresIn: "10m" },
-    );
+    const state = signOAuthState(this.jwt, { workspaceId, userId, nonce: randomBytes(16).toString("hex"), purpose: META_ADS_OAUTH_PURPOSE });
     const params = new URLSearchParams({
       client_id: app.appId,
       redirect_uri: redirectUri(),
@@ -125,7 +150,11 @@ export class MetaAdsService {
     } catch (e) {
       return fail(metaAdsErrorKey(e) === "meta_ads.encryption_unavailable" ? "encryption_unavailable" : "exchange_failed");
     }
-    const pendingExpiresAt = grant.expiresIn !== null ? new Date(Date.now() + grant.expiresIn * 1000) : null;
+    // The choose step ends an hour after the exchange, or when the token does if sooner (M1).
+    const nowMs = this.clock().getTime();
+    const pendingExpiresAt = new Date(
+      Math.min(nowMs + PENDING_LOGIN_TTL_MS, grant.expiresIn !== null ? nowMs + grant.expiresIn * 1000 : Infinity),
+    );
     try {
       await this.prisma.metaAdsConnection.upsert({
         where: { workspaceId: st.workspaceId },
@@ -139,16 +168,31 @@ export class MetaAdsService {
     return { redirect: frontendConnectionUrl({ metaAds: "choose" }) };
   }
 
+  /**
+   * Verifies the state's signature (derived key), audience, expiry and
+   * purpose, then uses up its nonce: a state works once.
+   */
   private verifyState(state: string | undefined): OAuthState | null {
     if (!state || state.length > 4096) return null;
+    let p: OAuthState & { exp?: number };
     try {
-      const p = this.jwt.verify<OAuthState>(state);
-      if (p?.purpose !== META_ADS_OAUTH_PURPOSE || typeof p.workspaceId !== "string" || !p.workspaceId) return null;
-      if (typeof p.userId !== "string" || !p.userId) return null;
-      return p;
+      p = this.jwt.verify<OAuthState & { exp?: number }>(state, { secret: oauthStateSecret(), audience: OAUTH_STATE_AUDIENCE });
     } catch {
       return null;
     }
+    if (p?.purpose !== META_ADS_OAUTH_PURPOSE || typeof p.workspaceId !== "string" || !p.workspaceId) return null;
+    if (typeof p.userId !== "string" || !p.userId) return null;
+    if (typeof p.nonce !== "string" || !p.nonce) return null;
+    return this.useNonce(p.nonce, (p.exp ?? 0) * 1000) ? p : null;
+  }
+
+  /** False when the nonce was already used. Expired entries are dropped as new ones arrive. */
+  private useNonce(nonce: string, expiresAtMs: number): boolean {
+    const now = Date.now();
+    for (const [n, exp] of this.usedNonces) if (exp <= now) this.usedNonces.delete(n);
+    if (this.usedNonces.has(nonce)) return false;
+    this.usedNonces.set(nonce, Math.max(expiresAtMs, now + STATE_TTL_S * 1000));
+    return true;
   }
 
   /**
@@ -161,9 +205,7 @@ export class MetaAdsService {
     const row = await this.prisma.metaAdsConnection.findUnique({ where: { workspaceId } });
     const stored = use === "active" ? row?.tokenEnc : row?.pendingTokenEnc;
     if (!row || !stored) throw metaAdsError("meta_ads.not_exchanged");
-    if (use === "pending" && row.pendingExpiresAt && row.pendingExpiresAt.getTime() <= Date.now()) {
-      throw metaAdsError("meta_ads.login_expired");
-    }
+    if (use === "pending") await this.assertPendingFresh(row);
     const token = readMetaAdsToken(stored);
     if (!token) throw metaAdsError("meta_ads.reconnect", { token: use });
     return this.readCandidates(token, use);
@@ -194,6 +236,21 @@ export class MetaAdsService {
   }
 
   /**
+   * The choose step's deadline (M1): past `pendingExpiresAt` the pending
+   * token is cleared (only if it is still the one read) and the call is 400
+   * `meta_ads.login_expired`. A row without a deadline (written before this
+   * rule) counts as expired too.
+   */
+  private async assertPendingFresh(row: MetaAdsConnection): Promise<void> {
+    if (row.pendingExpiresAt && row.pendingExpiresAt.getTime() > this.clock().getTime()) return;
+    await this.prisma.metaAdsConnection.updateMany({
+      where: { workspaceId: row.workspaceId, pendingTokenEnc: row.pendingTokenEnc },
+      data: { pendingTokenEnc: null, pendingExpiresAt: null },
+    });
+    throw metaAdsError("meta_ads.login_expired");
+  }
+
+  /**
    * `POST /meta-ads/connection`: checks the ids against a fresh candidates
    * read, then promotes `pendingTokenEnc → tokenEnc` in one conditional
    * update on the pending value it read (409 `meta_ads.connection_changed`
@@ -213,7 +270,7 @@ export class MetaAdsService {
     const row = await this.prisma.metaAdsConnection.findUnique({ where: { workspaceId } });
     const seen = row?.pendingTokenEnc ?? null;
     if (!row || !seen) throw metaAdsError("meta_ads.not_exchanged");
-    if (row.pendingExpiresAt && row.pendingExpiresAt.getTime() <= Date.now()) throw metaAdsError("meta_ads.login_expired");
+    await this.assertPendingFresh(row);
     const token = readMetaAdsToken(seen);
     if (!token) throw metaAdsError("meta_ads.reconnect", { token: "pending" });
 
@@ -223,6 +280,13 @@ export class MetaAdsService {
     const unknown = [...(account ? [] : [adAccountId]), ...(pageId !== null && !page ? [pageId] : [])];
     if (unknown.length) throw metaAdsError("meta_ads.unknown_asset", { ids: unknown });
 
+    // The token's own expiry (Meta's, not the choose step's): null = never (system-user token).
+    let tokenExpiresAt: Date | null;
+    try {
+      tokenExpiresAt = await this.graph.tokenExpiry(token);
+    } catch (e) {
+      throw this.interactiveError(e, "pending");
+    }
     const sameAccount = row.adAccountId === adAccountId;
     const now = new Date();
     const won = await this.prisma.metaAdsConnection.updateMany({
@@ -230,7 +294,7 @@ export class MetaAdsService {
       data: {
         tokenEnc: seen,
         pendingTokenEnc: null,
-        tokenExpiresAt: row.pendingExpiresAt ?? null,
+        tokenExpiresAt,
         pendingExpiresAt: null,
         status: "active",
         statusReason: null,

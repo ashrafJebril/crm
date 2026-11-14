@@ -79,7 +79,15 @@ export class MetaAdsSyncScheduler {
               await this.notifier.park(conn, "token_refused");
               return;
             }
-            const out = await syncConnection(conn, token, rowNow, { prisma: this.prisma, graph: this.graph, notifier: this.notifier, log: this.log });
+            // The tick's deadline also bounds each connection's own reads (M4).
+            const out = await syncConnection(conn, token, rowNow, {
+              prisma: this.prisma,
+              graph: this.graph,
+              notifier: this.notifier,
+              log: this.log,
+              clock: this.clock,
+              deadline: started + maxMs,
+            });
             if (out.result !== "ok") this.log.log(`meta ads sync ws=${d.workspaceId}: ${out.result}`);
           });
         } catch (e) {

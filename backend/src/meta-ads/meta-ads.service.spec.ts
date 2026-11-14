@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { ADS_TOKEN, fakeGraph, insightRow, isolateEnv, marketingHandlers, META_ADS_ENV } from "../channels/whatsapp/test-graph";
 import { decryptSecret, encryptSecret } from "../common/token-crypto";
 import { resetMetaAdsTokenWarning } from "./meta-ads-token";
+import { oauthStateSecret } from "./meta-ads.service";
 import { caught, ENC_KEY, PROOF, seedActive, T0, world } from "./test-meta-ads";
 
 const redirectParams = (r: { redirect: string }) => new URLSearchParams(r.redirect.split("#/ads?")[1]);
@@ -92,7 +93,7 @@ describe("Meta Ads connect", () => {
     const start = await caught(Promise.resolve().then(() => w.svc.start("wsA", "u_owner")));
     expect(start).toEqual({ status: 400, body: { statusCode: 400, message: "meta_ads.encryption_unavailable" } });
     // A state minted earlier (e.g. before the key was removed) still cannot store anything.
-    const state = w.jwt.sign({ workspaceId: "wsA", userId: "u_owner", nonce: "n", purpose: "meta_ads_oauth" }, { expiresIn: "10m" });
+    const state = w.signState({});
     const out = await w.svc.callback({ code: "CODE-1", state });
     expect(Object.fromEntries(redirectParams(out))).toEqual({ tab: "connection", metaAds: "error", code: "encryption_unavailable" });
     expect(w.prisma.db.metaAdsConnection).toHaveLength(0);
@@ -135,7 +136,7 @@ describe("Meta Ads connect", () => {
       expect(url.searchParams.get("response_type")).toBe("code");
       expect(url.searchParams.get("redirect_uri")).toBe("https://api.example.com/api/meta-ads/oauth/callback");
       expect(url.toString()).not.toContain(META_ADS_ENV.META_ADS_APP_SECRET);
-      const st = w.jwt.verify(url.searchParams.get("state")!);
+      const st = w.jwt.verify(url.searchParams.get("state")!, { secret: oauthStateSecret(), audience: "meta-ads-oauth" });
       expect(st).toMatchObject({ workspaceId: "wsA", userId: "u_owner", purpose: "meta_ads_oauth" });
     } finally {
       delete process.env.BACKEND_PUBLIC_URL;
@@ -152,13 +153,13 @@ describe("Meta Ads connect", () => {
 
     it("an expired state is refused", async () => {
       const w = world();
-      const state = w.jwt.sign({ workspaceId: "wsA", userId: "u_owner", nonce: "n", purpose: "meta_ads_oauth", exp: Math.floor(Date.now() / 1000) - 5 });
+      const state = w.signState({}, -5);
       await expectRefused(w, state, "invalid_state");
     });
 
     it("a wrong purpose is refused", async () => {
       const w = world();
-      await expectRefused(w, w.jwt.sign({ workspaceId: "wsA", userId: "u_owner", nonce: "n", purpose: "fb_oauth" }, { expiresIn: "10m" }), "invalid_state");
+      await expectRefused(w, w.signState({ purpose: "fb_oauth" }), "invalid_state");
     });
 
     it("a state signed with another secret is refused", async () => {
@@ -169,6 +170,33 @@ describe("Meta Ads connect", () => {
       );
       await expectRefused(w, forged, "invalid_state");
       await expectRefused(w, "", "invalid_state");
+    });
+
+    it("the state is signed apart from sessions: a session-secret token is no state, and a state is no session", async () => {
+      const w = world();
+      // Right payload, signed with the session secret (as AuthModule signs logins): refused.
+      const sessionSigned = w.jwt.sign({ workspaceId: "wsA", userId: "u_owner", nonce: "n", purpose: "meta_ads_oauth" }, { expiresIn: "10m" });
+      await expectRefused(w, sessionSigned, "invalid_state");
+      // A real state does not verify as a session token.
+      const state = w.stateOf(w.svc.start("wsA", "u_owner").url);
+      expect(() => w.jwt.verify(state)).toThrow();
+    });
+
+    it("the oauth state is single-use", async () => {
+      const w = world();
+      const state = w.stateOf(w.svc.start("wsA", "u_owner").url);
+      expect(redirectParams(await w.svc.callback({ code: "CODE-1", state })).get("metaAds")).toBe("choose");
+      const first = w.conn().pendingTokenEnc;
+      w.graph.calls.length = 0;
+      // A replay with another code stores nothing and calls nothing.
+      const replay = await w.svc.callback({ code: "CODE-OTHER", state });
+      expect(Object.fromEntries(redirectParams(replay))).toEqual({ tab: "connection", metaAds: "error", code: "invalid_state" });
+      expect(w.graph.calls).toHaveLength(0);
+      expect(w.conn().pendingTokenEnc).toBe(first);
+      // A cancelled callback uses its state up too.
+      const cancelled = w.stateOf(w.svc.start("wsA", "u_owner").url);
+      await w.svc.callback({ state: cancelled, error: "access_denied" });
+      expect(redirectParams(await w.svc.callback({ code: "CODE-2", state: cancelled })).get("code")).toBe("invalid_state");
     });
 
     it("oauth callback refuses a state whose user lost connectors.manage", async () => {
@@ -298,6 +326,27 @@ describe("Meta Ads connect", () => {
       expect((await caught(w.svc.save("wsA", "u_owner", { adAccountId: "act_111" }))).body.message).toBe("meta_ads.login_expired");
     });
 
+    it("candidates are paged by cursor (up to 1000), so account 150 can be chosen", async () => {
+      const page = (k: number) => ({
+        body: {
+          data: Array.from({ length: 100 }, (_, i) => ({ id: `act_${k * 100 + i + 1}`, name: `A${k * 100 + i + 1}`, currency: "USD", timezone_name: "UTC" })),
+          paging: { cursors: { after: `C${k + 1}` }, next: `https://graph.facebook.com/next?access_token=SECRET&after=C${k + 1}` },
+        },
+      });
+      const w = world({
+        graph: fakeGraph([
+          [/\/me\/adaccounts.*after=C1(&|$)/, page(1)],
+          [/\/me\/adaccounts.*after=C2(&|$)/, { body: { data: [{ id: "act_201", name: "Last", currency: "USD" }] } }],
+          ["/me/adaccounts", page(0)],
+          ...marketingHandlers(),
+        ]),
+      });
+      await connectPending(w);
+      expect((await w.svc.candidates("wsA")).adAccounts).toHaveLength(201);
+      const dto = await w.svc.save("wsA", "u_owner", { adAccountId: "act_150" });
+      expect(dto).toMatchObject({ status: "active", adAccountId: "act_150", adAccountName: "A150" });
+    });
+
     it("a valid save activates the chosen account and Page and schedules the first sync", async () => {
       const w = world();
       await connectPending(w);
@@ -316,6 +365,45 @@ describe("Meta Ads connect", () => {
       });
       expect(w.conn().syncAttemptedAt).toBeNull();
       expect(w.conn().scopes).toBe("ads_read,business_management,pages_show_list");
+    });
+  });
+
+  describe("the choose step expires 1 hour after the exchange", () => {
+    const HOUR = 3_600_000;
+
+    it("even when Meta reports no expiry (a system-user token)", async () => {
+      const w = world();
+      let now = T0.getTime();
+      w.svc.clock = () => new Date(now);
+      await w.svc.callback({ code: "CODE-1", state: w.stateOf(w.svc.start("wsA", "u_owner").url) });
+      expect(w.conn().pendingExpiresAt).toEqual(new Date(T0.getTime() + HOUR));
+      expect((await w.svc.connection("wsA", true)).hasPendingLogin).toBe(true);
+
+      now += HOUR + 60_000;
+      expect((await w.svc.connection("wsA", true)).hasPendingLogin).toBe(false);
+      expect(await caught(w.svc.candidates("wsA"))).toEqual({ status: 400, body: { statusCode: 400, message: "meta_ads.login_expired" } });
+      // The expired pending token is cleared on read; nothing is left to promote.
+      expect(w.conn()).toMatchObject({ pendingTokenEnc: null, pendingExpiresAt: null });
+      expect((await caught(w.svc.save("wsA", "u_owner", { adAccountId: "act_111" }))).body.message).toBe("meta_ads.not_exchanged");
+    });
+
+    it("save keeps the token's own expiry from Meta (60-day user token, or none)", async () => {
+      const exp = Math.floor((T0.getTime() + 60 * 24 * HOUR) / 1000);
+      const w = world({ graph: fakeGraph([["/debug_token", { body: { data: { is_valid: true, expires_at: exp } } }], ...marketingHandlers()]) });
+      let now = T0.getTime();
+      w.svc.clock = () => new Date(now);
+      await w.svc.callback({ code: "CODE-1", state: w.stateOf(w.svc.start("wsA", "u_owner").url) });
+      now += 30 * 60_000;
+      const dto = await w.svc.save("wsA", "u_owner", { adAccountId: "act_111" });
+      expect(dto.tokenExpiresAt).toEqual(new Date(exp * 1000));
+      // The app secret goes to Graph only, never to a log or the row.
+      const dbg = w.graph.called("/debug_token")[0];
+      expect(new URL(dbg.url).searchParams.get("input_token")).toBe(ADS_TOKEN);
+      expect(JSON.stringify(w.prisma.db.metaAdsConnection)).not.toContain(META_ADS_ENV.META_ADS_APP_SECRET);
+
+      const sys = world();
+      await sys.svc.callback({ code: "CODE-1", state: sys.stateOf(sys.svc.start("wsA", "u_owner").url) });
+      expect((await sys.svc.save("wsA", "u_owner", { adAccountId: "act_111" })).tokenExpiresAt).toBeNull();
     });
   });
 

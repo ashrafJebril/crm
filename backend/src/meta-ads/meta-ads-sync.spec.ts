@@ -87,11 +87,18 @@ describe("Meta Ads spend sync", () => {
 
     it("META_ADS_SYNC_MAX_MS stops early", async () => {
       process.env.META_ADS_SYNC_MAX_MS = String(10 * 60_000);
-      const w = world();
+      // Each Graph read takes 4 minutes of the tick's time.
+      let t = 0;
+      const { g } = scriptedInsights(() => {
+        t += 4 * 60_000;
+        return undefined;
+      });
+      const w = world({ graph: g });
       seedMany(w, 5);
-      const ticks = [0, 0, 4 * 60_000, 11 * 60_000];
-      w.scheduler.clock = () => ticks.shift() ?? 11 * 60_000;
-      expect(await w.scheduler.sweep(T0)).toEqual({ synced: 2, skipped: 0, failed: 0 });
+      w.scheduler.clock = () => t;
+      // Starts at 0, 4 and 8 minutes; at 12 minutes no new connection starts.
+      expect(await w.scheduler.sweep(T0)).toEqual({ synced: 3, skipped: 0, failed: 0 });
+      expect(g.called("/insights")).toHaveLength(3);
     });
 
     it("pending, needs_reconnect and disconnected are never selected", async () => {
@@ -140,21 +147,138 @@ describe("Meta Ads spend sync", () => {
       await w.scheduler.sweep(T0);
       expect(w.graph.called("/insights")).toHaveLength(2);
       expect(w.prisma.db.adSpendDaily).toHaveLength(0);
-      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", lastSyncedAt: null });
+      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", lastSyncedAt: T0 });
+    });
+
+    it("each window has its own page budget: a capped window is skipped and the older ones are still read", async () => {
+      process.env.META_ADS_MAX_PAGES = "2";
+      const w = world({
+        graph: fakeGraph([
+          // The newest window (since 11-04) always has another page.
+          [/insights.*2026-11-04/, { body: { data: [insightRow("6001", "2026-11-09", "1.00")], paging: { cursors: { after: "NEXT" }, next: "https://x" } } }],
+          [
+            /insights/,
+            (url) => {
+              const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
+              return { body: { data: [insightRow("6001", since, "2.00")] } };
+            },
+          ],
+          ...marketingHandlers(),
+        ]),
+      });
+      seedActive(w);
+      await w.scheduler.sweep(T0);
+      // 2 pages for the capped window, then one per older window.
+      expect(w.graph.called("/insights")).toHaveLength(2 + 12);
+      expect(w.prisma.db.adSpendDaily).toHaveLength(12);
+      expect(w.prisma.db.adSpendDaily.some((r: { date: Date }) => r.date.toISOString().startsWith("2026-11-09"))).toBe(false);
+      // Done as far as Meta lets us read: the run no longer loops on the capped window.
+      expect(w.conn()).toMatchObject({ lastSyncError: "partial", spendBackfilledAt: T0, lastSyncedAt: T0 });
+    });
+
+    it("the backfill resumes across ticks without re-reading finished windows", async () => {
+      // Every window has spend on its first day; Meta throttles the 5th and the 10th read.
+      let n = 0;
+      const sinces: string[] = [];
+      const { g } = scriptedInsights((_i, url) => {
+        const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
+        const call = n++;
+        sinces.push(since);
+        if (call === 4 || call === 9) return graphError(80004, "ad account throttled");
+        return { body: { data: [insightRow("6001", since, "1.00")] } };
+      });
+      const w = world({ graph: g });
+      seedActive(w);
+
+      await w.scheduler.sweep(T0);
+      expect(w.conn()).toMatchObject({ lastSyncError: "rate_limited", spendBackfilledAt: null });
+      await w.scheduler.sweep(later(HOUR));
+      expect(w.conn()).toMatchObject({ lastSyncError: "rate_limited", spendBackfilledAt: null });
+      await w.scheduler.sweep(later(2 * HOUR));
+      expect(w.conn()).toMatchObject({ lastSyncError: null, spendBackfilledAt: later(2 * HOUR), lastSyncedAt: later(2 * HOUR) });
+
+      // 13 windows read to completion once each; only the two throttled reads repeat.
+      const windows = syncWindows({ spendBackfilledAt: null, timezone: "Asia/Riyadh" }, T0).map((x) => x.since);
+      const throttled = [sinces[4], sinces[9]];
+      expect(sinces).toHaveLength(13 + 2);
+      for (const since of windows) {
+        expect({ since, reads: sinces.filter((x) => x === since).length }).toEqual({ since, reads: throttled.includes(since) ? 2 : 1 });
+      }
+      expect(w.prisma.db.adSpendDaily).toHaveLength(13);
+
+      // Then the 3-day mode.
+      await w.scheduler.sweep(later(3 * HOUR));
+      expect(sinces).toHaveLength(16);
+      expect(sinces[15]).toBe("2026-11-08");
+    });
+
+    it("the resume point counts only spend written since the connection was made", async () => {
+      const w = world();
+      seedActive(w, { connectedAt: T0 });
+      // Spend from an earlier connection to the same account (older than this connect).
+      w.prisma.db.adSource.push({ id: "ad_old", workspaceId: "wsA", sourceType: "ad", sourceId: "5000", adAccountId: "act_111" });
+      w.prisma.db.adSpendDaily.push({
+        id: "old",
+        workspaceId: "wsA",
+        adSourceId: "ad_old",
+        adAccountId: "act_111",
+        date: new Date("2026-08-14T00:00:00.000Z"),
+        spend: "1",
+        currency: "USD",
+        syncedAt: new Date(T0.getTime() - 86_400_000),
+      });
+      await w.scheduler.sweep(T0);
+      expect(w.graph.called("/insights")).toHaveLength(13);
+    });
+
+    it("the sync stops at the tick's deadline and the next tick resumes after the last finished window", async () => {
+      process.env.META_ADS_SYNC_MAX_MS = String(10 * 60_000);
+      let t = 0;
+      const sinces: string[] = [];
+      const { g } = scriptedInsights((_i, url) => {
+        t += 4 * 60_000;
+        const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
+        sinces.push(since);
+        return { body: { data: [insightRow("6001", since, "1.00")] } };
+      });
+      const w = world({ graph: g });
+      w.scheduler.clock = () => t;
+      seedActive(w);
+      await w.scheduler.sweep(T0);
+      // Reads start at 0, 4 and 8 minutes; the 4th would start past the deadline.
+      expect(sinces).toEqual(["2026-11-04", "2026-10-28", "2026-10-21"]);
+      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", spendBackfilledAt: null });
+      await w.scheduler.sweep(later(HOUR));
+      expect(sinces.slice(3)).toEqual(["2026-10-14", "2026-10-07", "2026-09-30"]);
+    });
+
+    it("spend upserts are written in batches", async () => {
+      const days = ["2026-11-08", "2026-11-09", "2026-11-10"];
+      const rows = Array.from({ length: 450 }, (_, i) => insightRow(String(7000 + (i % 150)), days[Math.floor(i / 150)], "1.25"));
+      const w = world({ graph: fakeGraph([[/insights/, { body: { data: rows } }], ...marketingHandlers()]) });
+      seedActive(w, { spendBackfilledAt: T0 });
+      const tx = w.prisma.$transaction as jest.Mock;
+      tx.mockClear();
+      await w.scheduler.sweep(T0);
+      expect(w.prisma.db.adSpendDaily).toHaveLength(450);
+      const batches = tx.mock.calls.filter((c: unknown[]) => Array.isArray(c[0])).map((c: unknown[]) => (c[0] as unknown[]).length);
+      expect(batches).toEqual([200, 200, 50]);
     });
   });
 
   it("sync stops on rate limit without retry", async () => {
-    const { g, count } = scriptedInsights((n) => (n === 1 ? graphError(17, "User request limit reached") : undefined));
+    const { g, count } = scriptedInsights((n) =>
+      n === 1 ? graphError(17, "User request limit reached") : n === 0 ? { body: { data: [insightRow("6001", "2026-11-04", "1.00")] } } : undefined,
+    );
     const w = world({ graph: g });
     seedActive(w);
     await w.scheduler.sweep(T0);
     expect(count()).toBe(2);
     expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "rate_limited", spendBackfilledAt: null });
     expect(w.notify).not.toHaveBeenCalled();
-    // The next hourly tick resumes (and here completes the backfill).
+    // The next hourly tick resumes after the finished newest window (and completes the backfill).
     await w.scheduler.sweep(later(HOUR));
-    expect(count()).toBe(2 + 13);
+    expect(count()).toBe(2 + 12);
     expect(w.conn()).toMatchObject({ status: "active", lastSyncError: null, spendBackfilledAt: later(HOUR) });
   });
 

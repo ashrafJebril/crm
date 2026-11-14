@@ -41,6 +41,7 @@ export function toMetaAdsDto(
   row: Partial<MetaAdsConnection> | null | undefined,
   viewerCanManage: boolean,
   connectedBy: { id: string; name: string } | null = null,
+  now: Date = new Date(),
 ): MetaAdsConnectionDto {
   const cfg = metaAdsConfigState();
   const config = { ready: cfg.ready, ...(viewerCanManage && cfg.missing.length ? { missing: cfg.missing } : {}) };
@@ -79,7 +80,8 @@ export function toMetaAdsDto(
     lastSyncError: row.lastSyncError ?? null,
     spendBackfilled: !!row.spendBackfilledAt,
     tokenExpiresAt: row.tokenExpiresAt ?? null,
-    hasPendingLogin: !!row.pendingTokenEnc,
+    // A pending login past its choose-step deadline can no longer be used (M1).
+    hasPendingLogin: !!row.pendingTokenEnc && !!row.pendingExpiresAt && row.pendingExpiresAt.getTime() > now.getTime(),
     config,
   };
 }

@@ -70,6 +70,10 @@ export interface TokenGrant {
   expiresIn: number | null;
 }
 
+/** Candidates (ad accounts, Pages): rows per page and the most read (M3). */
+export const CANDIDATES_PAGE = 100;
+export const CANDIDATES_MAX = 1000;
+
 /** The insights fields (ruling 12: never `actions`). */
 export const INSIGHTS_FIELDS = "ad_id,ad_name,adset_name,campaign_name,spend,date_start";
 
@@ -135,28 +139,56 @@ export class MetaAdsGraphClient {
       .map((p) => p.permission as string);
   }
 
-  /** Ad accounts the token reaches (first 100). */
+  /** Ad accounts the token reaches, cursor-paged up to `CANDIDATES_MAX`. */
   async adAccounts(token: string): Promise<AdAccountRow[]> {
-    const res = await this.call<{ data?: unknown[] }>("/me/adaccounts", {
-      token,
-      query: { fields: "id,name,currency,timezone_name,account_status", limit: "100" },
-    });
-    return (Array.isArray(res?.data) ? res!.data : []).flatMap((r) => {
+    const rows = await this.paged("/me/adaccounts", token, "id,name,currency,timezone_name,account_status");
+    return rows.flatMap((r) => {
       const a = toAccount(r);
       return a ? [a] : [];
     });
   }
 
-  /** Pages the token reaches (first 100). */
+  /** Pages the token reaches, cursor-paged up to `CANDIDATES_MAX`. */
   async pages(token: string): Promise<PageRow[]> {
-    const res = await this.call<{ data?: Array<{ id?: unknown; name?: unknown }> }>("/me/accounts", {
-      token,
-      query: { fields: "id,name", limit: "100" },
-    });
-    return (Array.isArray(res?.data) ? res!.data : []).flatMap((p) => {
+    const rows = (await this.paged("/me/accounts", token, "id,name")) as Array<{ id?: unknown; name?: unknown }>;
+    return rows.flatMap((p) => {
       const id = str(p?.id);
       return id && /^\d{1,32}$/.test(id) ? [{ id, name: str(p?.name) }] : [];
     });
+  }
+
+  /**
+   * Follows `paging.cursors.after` through `call()` (never `paging.next`,
+   * whose URL carries the token) until no next page or `CANDIDATES_MAX` rows.
+   */
+  private async paged(path: string, token: string, fields: string): Promise<unknown[]> {
+    const out: unknown[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < CANDIDATES_MAX / CANDIDATES_PAGE; page++) {
+      const res: { data?: unknown; paging?: { next?: unknown; cursors?: { after?: unknown } } } | undefined = await this.call(path, {
+        token,
+        query: after ? { fields, limit: String(CANDIDATES_PAGE), after } : { fields, limit: String(CANDIDATES_PAGE) },
+      });
+      if (Array.isArray(res?.data)) out.push(...res!.data);
+      after = res?.paging?.next && str(res.paging.cursors?.after) ? str(res.paging.cursors?.after) : null;
+      if (!after || out.length >= CANDIDATES_MAX) break;
+    }
+    return out.slice(0, CANDIDATES_MAX);
+  }
+
+  /**
+   * The token's own expiry from `debug_token` (app access token in the query,
+   * as Graph requires; only the path is ever logged). Null = never expires
+   * (`expires_at` 0, a system-user token). An invalid token is a token error.
+   */
+  async tokenExpiry(token: string): Promise<Date | null> {
+    const app = metaAdsApp();
+    const res = await this.call<{ data?: { is_valid?: unknown; expires_at?: unknown } }>("/debug_token", {
+      query: { input_token: token, access_token: `${app.appId}|${app.appSecret}` },
+    });
+    if (res?.data?.is_valid !== true) throw new MetaAdsGraphError(190, null, 400, null);
+    const at = num(res.data.expires_at);
+    return at && at > 0 ? new Date(at * 1000) : null;
   }
 
   async adAccount(act: string, token: string): Promise<AdAccountRow> {

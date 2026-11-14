@@ -137,6 +137,53 @@ describe("MetaAdsGraphClient", () => {
     expect(logged()).not.toContain("CODE-xyz");
   });
 
+  it("candidates follow the cursor (never paging.next) and stop at 1000", async () => {
+    const accounts = (k: number) =>
+      Array.from({ length: 100 }, (_, i) => ({ id: `act_${k * 100 + i + 1}`, name: `A${k}`, currency: "USD" }));
+    const g = fakeGraph([
+      [
+        "/me/adaccounts",
+        (url) => {
+          const after = new URL(url).searchParams.get("after");
+          const k = after ? Number(after.slice(1)) : 0;
+          return { body: { data: accounts(k), paging: { cursors: { after: `C${k + 1}` }, next: `https://graph.facebook.com/x?access_token=${ADS_TOKEN}` } } };
+        },
+      ],
+      [
+        "/me/accounts",
+        (url) =>
+          new URL(url).searchParams.get("after")
+            ? { body: { data: [{ id: "902", name: "B" }] } }
+            : { body: { data: [{ id: "901", name: "A" }], paging: { cursors: { after: "P2" }, next: "https://x" } } },
+      ],
+    ]);
+    const c = new MetaAdsGraphClient(g.fetch);
+    const list = await c.adAccounts(ADS_TOKEN);
+    expect(list).toHaveLength(1000);
+    expect(list[999].id).toBe("act_1000");
+    const calls = g.called("/me/adaccounts");
+    expect(calls).toHaveLength(10);
+    expect(calls.map((x) => new URL(x.url).searchParams.get("after"))).toEqual([null, "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"]);
+    for (const x of calls) expect(x.url.startsWith("https://graph.facebook.com/v23.0/me/adaccounts?")).toBe(true);
+    expect(await c.pages(ADS_TOKEN)).toEqual([
+      { id: "901", name: "A" },
+      { id: "902", name: "B" },
+    ]);
+  });
+
+  it("tokenExpiry reads debug_token: 0 is never, a time is that time, invalid is a token error", async () => {
+    const g = fakeGraph([["/debug_token", { body: { data: { is_valid: true, expires_at: 1_800_000_000 } } }]]);
+    const c = new MetaAdsGraphClient(g.fetch);
+    expect(await c.tokenExpiry(ADS_TOKEN)).toEqual(new Date(1_800_000_000_000));
+    const q = new URL(g.calls[0].url).searchParams;
+    expect(q.get("access_token")).toBe(`${META_ADS_ENV.META_ADS_APP_ID}|${META_ADS_ENV.META_ADS_APP_SECRET}`);
+    expect(logged()).not.toContain(META_ADS_ENV.META_ADS_APP_SECRET);
+    g.prepend(["/debug_token", { body: { data: { is_valid: true, expires_at: 0 } } }]);
+    expect(await c.tokenExpiry(ADS_TOKEN)).toBeNull();
+    g.prepend(["/debug_token", { body: { data: { is_valid: false } } }]);
+    expect(((await c.tokenExpiry(ADS_TOKEN).catch((e) => e)) as MetaAdsGraphError).kind).toBe("token");
+  });
+
   it("drops malformed ad accounts and pages", async () => {
     const g = fakeGraph([
       ["/me/adaccounts", { body: { data: [{ id: "act_1", name: "A", currency: "USD" }, { id: "1/../x" }, { id: "act_2", currency: "usd" }] } }],

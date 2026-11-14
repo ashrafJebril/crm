@@ -146,6 +146,8 @@ export function marketingHandlers(opts: { token?: string; scopes?: string[] } = 
       },
     ],
     ["/me/accounts", { body: { data: [{ id: "900", name: "Shop page" }] } }],
+    // A system-user token: valid, never expires (expires_at 0).
+    ["/debug_token", { body: { data: { is_valid: true, expires_at: 0 } } }],
     [/\/me\?/, { body: { id: "user-1" } }],
     [/\/act_\d+\/insights/, { body: { data: [] } }],
     [/\/act_\d+\?/, { body: { id: "act_111", name: "Main account", currency: "USD", timezone_name: "Asia/Riyadh", account_status: 1 } }],

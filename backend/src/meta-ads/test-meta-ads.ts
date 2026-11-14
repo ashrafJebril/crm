@@ -14,7 +14,7 @@ import { PermissionService } from "../permissions/permission.service";
 import { AdsMetricsService } from "../ad-attribution/ads-metrics.service";
 import { appSecretProof, MetaAdsGraphClient } from "./meta-ads-graph.client";
 import { MetaAdsNotifier } from "./meta-ads-notifier";
-import { MetaAdsService } from "./meta-ads.service";
+import { MetaAdsService, signOAuthState } from "./meta-ads.service";
 import { MetaAdsSyncScheduler } from "./meta-ads-sync.scheduler";
 
 export const JWT_SECRET = "meta-ads-spec-jwt-secret-0123456789abcdef";
@@ -23,6 +23,8 @@ export const PROOF = () => appSecretProof(ADS_TOKEN, META_ADS_ENV.META_ADS_APP_S
 export const T0 = new Date("2026-11-10T09:00:00.000Z");
 
 export function world(opts: { graph?: ReturnType<typeof fakeGraph>; prisma?: ReturnType<typeof makeFakePrisma> } = {}) {
+  // The OAuth state secret is derived from JWT_SECRET (as in the app).
+  process.env.JWT_SECRET = JWT_SECRET;
   const prisma =
     opts.prisma ??
     makeFakePrisma({
@@ -52,10 +54,17 @@ export function world(opts: { graph?: ReturnType<typeof fakeGraph>; prisma?: Ret
   const notifier = new MetaAdsNotifier(prisma, notifications, perm);
   const svc = new MetaAdsService(prisma, jwt, client, perm, notifier);
   const scheduler = new MetaAdsSyncScheduler(prisma, client, notifier);
+  // Deterministic elapsed time: a real clock lets a loaded machine shift the
+  // per-connection timestamps (now + elapsed) by a millisecond. Specs that
+  // test elapsed time set their own clock.
+  scheduler.clock = () => 0;
   const metrics = new AdsMetricsService(prisma);
   const stateOf = (url: string) => new URL(url).searchParams.get("state")!;
   const conn = (ws = "wsA") => prisma.db.metaAdsConnection.find((c: { workspaceId: string }) => c.workspaceId === ws);
-  return { prisma, graph, client, jwt, perm, notify, svc, scheduler, metrics, stateOf, conn };
+  /** A state signed like `oauth/start` signs it (purpose and expiry overridable). */
+  const signState = (payload: Record<string, unknown>, expiresIn: string | number = "10m") =>
+    signOAuthState(jwt, { workspaceId: "wsA", userId: "u_owner", nonce: `n-${Math.random()}`, purpose: "meta_ads_oauth", ...payload }, expiresIn);
+  return { prisma, graph, client, jwt, perm, notify, svc, scheduler, metrics, stateOf, conn, signState };
 }
 
 /** An active connection on act_111 (USD, Asia/Riyadh) holding the encrypted token. */
