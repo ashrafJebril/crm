@@ -235,8 +235,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `quality drop emits one notification`; `unknown fields render as unknown`.
 
 #### SP-15 Click-to-WhatsApp ad attribution and Meta Ads connect. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-15-sp15-ctwa-attribution.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied and live-verified 2026-11-14 against local Meta Graph, image-host and Zernio stubs (146 pass; F1/F2 fixed in c6d9184 and 46639d9). Lead forms are deferred to a follow-up. **Pending (user):** Meta App Review for ads permissions; set `META_ADS_APP_ID/SECRET`, `META_ADS_LOGIN_CONFIG_ID`, `META_ADS_GRAPH_VERSION` and `TOKEN_ENC_KEY` on Fly; register the redirect URI `…/api/meta-ads/oauth/callback`. Real Zernio/Meta referral and Marketing API behaviour is still unverified.
 - **Gaps:** capture the ad referral on the first inbound message; an ads tab (conversations started, spend, cost per conversation, daily chart, date range); a per-ad page linking to its conversations; an attribution chip + ad-source filter in the inbox; Meta lead-form data on the contact; a Meta Ads account connect (OAuth, choose ad account/page, check, disconnect). The existing Salma/Pipeboard ads backend stays and gains a UI here.
 - **Read in Tkana:** `routes/marketing.ads*.tsx`, `routes/marketing.meta-ads.tsx`, `components/marketing/{ctwa-ads-tab,ctwa-ad-page,meta-ads-connect}.tsx`, `lib/marketing/ctwa-ads*.ts`, `components/conversations/CtwaAttribution.tsx`.
 - **Data:** `AdSource {id, workspaceId, sourceId, sourceType, headline, body, mediaUrl, adAccountId?}`, `Conversation.adSourceId`, `AdSpendDaily {adSourceId, date, spend, currency}`, `MetaAdsConnection {workspaceId, tokenEnc, adAccountId, pageId}`.
