@@ -105,7 +105,8 @@ describe("overview view-model: Unknown vs 0 and currency totals", () => {
     const t = totalsView({ connection: null, totals: { started: 5, byCurrency: [] } }, en, "en");
     expect(t.figures).toHaveLength(1);
     expect(t.figures[0].spend).toEqual({ text: "Unknown", unknown: true, title: "Connect Meta Ads to see spend" });
-    expect(t.figures[0].cost.text).toBe("No conversations yet");
+    // 5 conversations started: the cost is Unknown, never "No conversations yet" (SP-15 live F2).
+    expect(t.figures[0].cost).toEqual({ text: "Unknown", unknown: true, title: "Connect Meta Ads to see spend" });
   });
 
   it("an active connection with no ads in range reads 0 in its currency", () => {
@@ -126,7 +127,7 @@ describe("overview view-model: Unknown vs 0 and currency totals", () => {
     // First sync pending.
     const pending = totalsView({ connection: active, totals: { started: 12, byCurrency: [] }, range: range(null) }, en, "en");
     expect(pending.figures[0].spend).toEqual({ text: "Unknown", unknown: true, title: "Spend not synced for these days yet" });
-    expect(pending.figures[0].cost.text).toBe("No conversations yet");
+    expect(pending.figures[0].cost).toEqual({ text: "Unknown", unknown: true, title: "Spend not synced for these days yet" });
     // A range starting before the synced days.
     expect(spendUnknownReason(active, range({ from: "2026-11-03", to: "2026-11-10" }))).toBe("not_synced");
     // Days after the last sync.
@@ -138,6 +139,37 @@ describe("overview view-model: Unknown vs 0 and currency totals", () => {
     expect(spendUnknownReason(active, range(null), { adAccountId: "act_9" })).toBe("other_account");
     expect(spendUnknownReason(active, range(null), { adAccountId: "act_1" })).toBe("not_synced");
     expect(spendUnknownReason(conn("needs_reconnect"), range(null), { adAccountId: "act_1" })).toBe("not_connected");
+  });
+
+  it("conversations started with Unknown spend read cost Unknown with the reason, in English and Arabic (SP-15 live F2)", () => {
+    const active = { ...conn("active"), adAccountId: "act_1" } as MetaAdsConnectionDto;
+    const range = (spendCoverage: { from: string; to: string } | null) => ({ from: "2026-11-01", to: "2026-11-10", tz: "UTC", spendCoverage });
+    const cases: Array<{ o: Parameters<typeof totalsView>[0]; en: string; ar: string }> = [
+      // Disconnected: 20 started, no spend.
+      { o: { connection: conn("disconnected"), totals: { started: 20, byCurrency: [] } }, en: "Connect Meta Ads to see spend", ar: "اربط إعلانات Meta لعرض الإنفاق" },
+      { o: { connection: null, totals: { started: 3, byCurrency: [] } }, en: "Connect Meta Ads to see spend", ar: "اربط إعلانات Meta لعرض الإنفاق" },
+      // Connected, but the range is not (all) synced: a 366-day range, or a skipped window.
+      { o: { connection: active, totals: { started: 17, byCurrency: [] }, range: range({ from: "2026-11-05", to: "2026-11-10" }) }, en: "Spend not synced for these days yet", ar: "لم تتم مزامنة الإنفاق لهذه الأيام بعد" },
+      // Synced, but every started conversation came from an ad of another account.
+      { o: { connection: active, totals: { started: 4, byCurrency: [] }, range: range({ from: "2026-08-01", to: "2026-11-10" }) }, en: "This ad isn't in the connected ad account", ar: "هذا الإعلان ليس في الحساب الإعلاني المربوط" },
+    ];
+    for (const c of cases) {
+      const e = totalsView(c.o, en, "en");
+      const a = totalsView(c.o, ar, "ar");
+      expect(e.started).toBe(c.o.totals.started);
+      expect(e.figures).toHaveLength(1);
+      expect(e.figures[0].started).toBe(c.o.totals.started);
+      expect(e.figures[0].cost).toEqual({ text: "Unknown", unknown: true, title: c.en });
+      expect(a.figures[0].cost).toEqual({ text: "غير معروف", unknown: true, title: c.ar });
+      expect(e.figures[0].cost.text).not.toMatch(/No conversations|\d/);
+      expect(a.figures[0].cost.text).not.toBe("لا محادثات بعد");
+    }
+    // "No conversations yet" stays for started 0 only, in both languages.
+    for (const connection of [null, conn("disconnected"), active]) {
+      const o = { connection, totals: { started: 0, byCurrency: [] }, range: range(null) };
+      expect(totalsView(o, en, "en").figures[0].cost.text).toBe("No conversations yet");
+      expect(totalsView(o, ar, "ar").figures[0].cost.text).toBe("لا محادثات بعد");
+    }
   });
 
   it("the empty state tells none in this range from none ever", () => {

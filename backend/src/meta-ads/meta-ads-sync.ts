@@ -103,9 +103,13 @@ export const UPSERT_BATCH = 200;
  *   same 7-day windows, budget, deadline and resume (rows written since
  *   `lastSyncedAt`), so days missed while parked or failing are filled.
  * - **Page budget per window.** A window whose paging reaches
- *   `META_ADS_MAX_PAGES` writes nothing and the run moves on to the next one;
- *   the run ends with `lastSyncError: "partial"`, and those days stay unread
- *   (never filled with 0).
+ *   `META_ADS_MAX_PAGES` writes nothing, and the run stops there with
+ *   `lastSyncError: "partial"` (SP-15 live F1). Such a run is not a
+ *   successful sync: it never sets `spendBackfilledAt` or advances
+ *   `lastSyncedAt`, so the metrics' covered span never includes the unread
+ *   days (they read Unknown, never 0). Stopping at the capped window, rather
+ *   than reading the older ones, keeps the resume point (`MIN(date)`) above
+ *   it, so the next tick retries that window first through the same resume.
  * - **Deadline (M4).** `deps.deadline` (in `deps.clock` units) is checked
  *   before every Graph read; past it the run stops as `partial` and the next
  *   tick resumes.
@@ -135,7 +139,7 @@ export async function syncConnection(
   const adIds = new Map<string, string | null>();
   let rows = 0;
   let done = 0;
-  let capped = 0;
+  let capped = false;
 
   const finish = async (data: Prisma.MetaAdsConnectionUpdateManyMutationInput) => {
     await prisma.metaAdsConnection.updateMany({
@@ -189,9 +193,9 @@ export async function syncConnection(
         after = page.after;
       } while (after);
       if (!full) {
-        capped++;
-        log.warn(`meta ads sync ws=${conn.workspaceId} window ${w.since}..${w.until} skipped: page budget reached`);
-        continue;
+        capped = true;
+        log.warn(`meta ads sync ws=${conn.workspaceId} window ${w.since}..${w.until} not read: page budget reached; retried next tick`);
+        break;
       }
       rows += await writeWindow(prisma, conn, act, currency, w, batch, adIds, now);
       done++;
@@ -215,16 +219,21 @@ export async function syncConnection(
     return { result: "failed", error: "sync_failed" };
   }
 
+  if (capped) {
+    // Unread days: no successful sync is recorded (the covered span stays put).
+    await finish({ lastSyncError: "partial" });
+    return { result: "partial", windows: done, rows };
+  }
   const backfilled = !conn.spendBackfilledAt;
   // A gap longer than 90 days was read only from 90 days back: the covered
   // span restarts there (spendBackfilledAt marks its start for the metrics).
   const restart = backfilled || syncSpan(conn, now).gapCapped;
   await finish({
     lastSyncedAt: now,
-    lastSyncError: capped ? "partial" : null,
+    lastSyncError: null,
     ...(restart ? { spendBackfilledAt: now } : {}),
   });
-  return capped ? { result: "partial", windows: done, rows } : { result: "ok", windows: done, rows, backfilled };
+  return { result: "ok", windows: done, rows, backfilled };
 }
 
 /**

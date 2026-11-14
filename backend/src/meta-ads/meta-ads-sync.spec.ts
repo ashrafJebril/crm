@@ -264,33 +264,87 @@ describe("Meta Ads spend sync", () => {
       await w.scheduler.sweep(T0);
       expect(w.graph.called("/insights")).toHaveLength(2);
       expect(w.prisma.db.adSpendDaily).toHaveLength(0);
-      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", lastSyncedAt: T0 });
+      // The skipped days were never read: no successful sync is recorded.
+      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", lastSyncedAt: null, spendBackfilledAt: T0 });
     });
 
-    it("each window has its own page budget: a capped window is skipped and the older ones are still read", async () => {
+    it("a backfill with a window over the page budget stays incomplete and Unknown; a later tick reads that window and completes", async () => {
       process.env.META_ADS_MAX_PAGES = "2";
-      const w = world({
-        graph: fakeGraph([
-          // The newest window (since 11-04) always has another page.
-          [/insights.*2026-11-04/, { body: { data: [insightRow("6001", "2026-11-09", "1.00")], paging: { cursors: { after: "NEXT" }, next: "https://x" } } }],
-          [
-            /insights/,
-            (url) => {
-              const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
-              return { body: { data: [insightRow("6001", since, "2.00")] } };
-            },
-          ],
-          ...marketingHandlers(),
-        ]),
+      // Windows (Riyadh): 11-04..11-10, 10-28..11-03, 10-21..10-27, ... Every
+      // window has spend on its first day; on the first tick the third window
+      // always has another page (over the budget), on the next it fits.
+      let tick = 1;
+      const sinces: string[] = [];
+      const { g } = scriptedInsights((_i, url) => {
+        const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
+        sinces.push(since);
+        const data = [insightRow("6001", since, "2.00")];
+        if (tick === 1 && since === "2026-10-21") return { body: { data, paging: { cursors: { after: "NEXT" }, next: "https://x" } } };
+        return { body: { data } };
       });
+      const w = world({ graph: g });
       seedActive(w);
+      const capped = { from: "2026-10-21", to: "2026-10-27" };
+
       await w.scheduler.sweep(T0);
-      // 2 pages for the capped window, then one per older window.
-      expect(w.graph.called("/insights")).toHaveLength(2 + 12);
-      expect(w.prisma.db.adSpendDaily).toHaveLength(12);
-      expect(w.prisma.db.adSpendDaily.some((r: { date: Date }) => r.date.toISOString().startsWith("2026-11-09"))).toBe(false);
-      // Done as far as Meta lets us read: the run no longer loops on the capped window.
-      expect(w.conn()).toMatchObject({ lastSyncError: "partial", spendBackfilledAt: T0, lastSyncedAt: T0 });
+      // The capped window wrote nothing, and nothing older was read past it.
+      expect(sinces).toEqual(["2026-11-04", "2026-10-28", "2026-10-21", "2026-10-21"]);
+      expect(w.prisma.db.adSpendDaily.some((r: { date: Date }) => r.date.toISOString() >= "2026-10-21" && r.date.toISOString() < "2026-10-28")).toBe(false);
+      // Not backfilled, no successful sync: every figure is Unknown, never 0.
+      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", spendBackfilledAt: null, lastSyncedAt: null });
+      const during = await w.metrics.overview("wsA", capped, T0);
+      expect(during.range.spendCoverage).toBeNull();
+      expect(during.daily.map((d) => d.spend)).toEqual([null, null, null, null, null, null, null]);
+      expect(during.totals.byCurrency).toEqual([]);
+      const ad = w.prisma.db.adSource.find((a: { sourceId: string }) => a.sourceId === "6001");
+      expect((await w.metrics.detail("wsA", ad.id, capped, T0)).spend).toBeNull();
+      expect((await w.metrics.detail("wsA", ad.id, { from: "2026-10-15", to: "2026-10-21" }, T0)).spend).toBeNull();
+
+      // The next tick resumes at the capped window, reads it and the older ones, and completes.
+      tick = 2;
+      await w.scheduler.sweep(later(HOUR));
+      const windows = syncWindows({ spendBackfilledAt: null, timezone: "Asia/Riyadh" }, T0).map((x) => x.since);
+      expect(sinces.slice(4)).toEqual(windows.slice(2));
+      expect(w.conn()).toMatchObject({ lastSyncError: null, spendBackfilledAt: later(HOUR), lastSyncedAt: later(HOUR) });
+      expect(w.prisma.db.adSpendDaily).toHaveLength(13);
+      const after = await w.metrics.overview("wsA", capped, later(HOUR));
+      expect(after.range.spendCoverage).not.toBeNull();
+      expect(after.daily.map((d) => d.spend)).toEqual([{ USD: 2 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }]);
+      expect((await w.metrics.detail("wsA", ad.id, capped, later(HOUR))).spend).toEqual({ amount: 2, currency: "USD" });
+    });
+
+    it("a gap fill with a window over the page budget keeps lastSyncedAt, stays Unknown past it, and the next tick fills it", async () => {
+      process.env.META_ADS_MAX_PAGES = "2";
+      let tick = 1;
+      const sinces: string[] = [];
+      const { g } = scriptedInsights((_i, url) => {
+        const { since } = JSON.parse(new URL(url).searchParams.get("time_range")!);
+        sinces.push(since);
+        const data = [insightRow("6001", since, "1.00")];
+        if (tick === 1 && since === "2026-11-12") return { body: { data, paging: { cursors: { after: "NEXT" }, next: "https://x" } } };
+        return { body: { data } };
+      });
+      const w = world({ graph: g });
+      // Backfilled and last synced at T0 (11-10 in Riyadh); the next sweep is 15 days later.
+      seedActive(w, { spendBackfilledAt: T0, lastSyncedAt: T0 });
+      const at = later(15 * 24 * HOUR); // 11-25
+      await w.scheduler.sweep(at);
+      // 11-19..11-25 is written, 11-12..11-18 is over the budget, 11-08..11-11 is not read.
+      expect(sinces).toEqual(["2026-11-19", "2026-11-12", "2026-11-12"]);
+      expect(w.conn()).toMatchObject({ status: "active", lastSyncError: "partial", spendBackfilledAt: T0, lastSyncedAt: T0 });
+      const o = await w.metrics.overview("wsA", { from: "2026-11-12", to: "2026-11-18" }, at);
+      expect(o.range.spendCoverage).toEqual({ from: "2026-08-13", to: "2026-11-10" });
+      expect(o.daily.every((d) => d.spend === null)).toBe(true);
+      expect(o.totals.byCurrency).toEqual([]);
+
+      tick = 2;
+      const next = new Date(at.getTime() + HOUR);
+      await w.scheduler.sweep(next);
+      // Resumes at the skipped window (the newest one was written by the stopped run).
+      expect(sinces.slice(3)).toEqual(["2026-11-12", "2026-11-08"]);
+      expect(w.conn()).toMatchObject({ lastSyncError: null, spendBackfilledAt: T0, lastSyncedAt: next });
+      const filled = await w.metrics.overview("wsA", { from: "2026-11-12", to: "2026-11-18" }, next);
+      expect(filled.daily.map((d) => d.spend)).toEqual([{ USD: 1 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }, { USD: 0 }]);
     });
 
     it("the backfill resumes across ticks without re-reading finished windows", async () => {

@@ -197,6 +197,8 @@ export interface CurrencyFigure {
  * The totals strip: one figure per currency (never one sum across
  * currencies). Without any known spend it is a single Unknown figure; an
  * active connection whose account had no ads in range reads 0 in its currency.
+ * Its cost per conversation is "No conversations yet" only when nothing
+ * started, and Unknown (with the spend's reason) otherwise.
  */
 export function totalsView(
   o: Pick<AdsOverview, "totals" | "connection"> & { range?: RangeCoverage },
@@ -222,11 +224,14 @@ export function totalsView(
     const cur = o.connection?.status === "active" ? o.connection.currency : null;
     // A real 0 only when the whole range was synced; otherwise Unknown (not_synced).
     const spend = cur && reason !== "not_synced" ? { amount: 0, currency: cur } : null;
+    const started = o.totals.started;
     figures.push({
       currency: cur,
       spend: spendView(spend, tx, lang, reason),
-      started: 0,
-      cost: costPerConversationView({ started: 0, spend, costPerConversation: null }, tx, lang, reason),
+      started,
+      // No in-account spend behind these conversations: "No conversations yet"
+      // only when none started, else Unknown with its reason (SP-15 live F2).
+      cost: costPerConversationView({ started, spend: null, costPerConversation: null }, tx, lang, reason),
     });
   }
   return { started: o.totals.started, figures };

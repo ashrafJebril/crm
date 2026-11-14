@@ -262,7 +262,10 @@ const shiftDay = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:0
  * The account days the spend sync has read: from the backfill's first day
  * (90 days up to `spendBackfilledAt`) to the day of the last successful sync,
  * in the account's timezone (the days `AdSpendDaily` is keyed by). The sync
- * fills gaps since the last success, so the span is contiguous. Null without
+ * fills gaps since the last success, so the span is contiguous. Only a run
+ * that wrote every window it read sets these two fields: a run that stopped
+ * at a window over the page budget leaves them as they were, so unread days
+ * are never inside the span (SP-15 live F1). Null without
  * an active connection or before the first full sync.
  */
 export function spendCoverage(
