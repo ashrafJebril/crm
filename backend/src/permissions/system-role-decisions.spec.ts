@@ -353,6 +353,42 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-16 (part 1): smart audience routes. Task 2 adds the tag references route.
+  describe("SP-16 audience routes", () => {
+    const READS = [
+      "GET /segments",
+      "GET /segments/:id",
+      "GET /segments/:id/contacts",
+      "GET /segments/:id/count",
+      "GET /segments/:id/candidates",
+      "POST /segments/preview",
+    ];
+    const MUTATIONS = ["POST /segments", "PATCH /segments/:id", "DELETE /segments/:id"];
+
+    it("every system role can read the audience routes and preview", () => {
+      for (const route of READS) {
+        for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    it("viewer cannot create, update or delete; agent, admin and owner can (SP-25 default)", () => {
+      for (const route of MUTATIONS) {
+        expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
+        for (const role of ["owner", "admin", "agent"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    it("none is blocked for impersonation", () => {
+      for (const route of [...READS, ...MUTATIONS]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
     it("billing.manage and roles.manage are owner-only", () => {
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "billing.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "roles.manage")).toBe(false);

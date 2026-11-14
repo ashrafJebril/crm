@@ -303,6 +303,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /segments/:id/members": "audiences.update",
   "DELETE /segments/:id/members/:contactId": "audiences.update",
   "GET /segments/:id/members": "audiences.view",
+  // SP-16: audience detail, keyset members, count and manual-group candidates.
+  "GET /segments/:id": "audiences.view",
+  "GET /segments/:id/contacts": "audiences.view",
+  "GET /segments/:id/count": "audiences.view",
+  "GET /segments/:id/candidates": "audiences.view",
   "POST /segments/admin/resync-hjz": "audiences.manage",
 
   // ── Campaigns, social posts, ads ──────────────────────────────────────

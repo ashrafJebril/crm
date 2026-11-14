@@ -140,6 +140,25 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-16 routes (part 1)", () => {
+    const sp16: Record<string, string> = {
+      "GET /segments/:id": "audiences.view",
+      "GET /segments/:id/contacts": "audiences.view",
+      "GET /segments/:id/count": "audiences.view",
+      "GET /segments/:id/candidates": "audiences.view",
+      // Unchanged and re-asserted.
+      "GET /segments": "audiences.view",
+      "POST /segments/preview": "audiences.view",
+      "POST /segments": "audiences.create",
+      "PATCH /segments/:id": "audiences.update",
+      "DELETE /segments/:id": "audiences.delete",
+      "GET /segments/:id/members": "audiences.view",
+    };
+    for (const [k, p] of Object.entries(sp16)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+  });
+
   it("permission map covers SP-15 routes (part 2)", () => {
     const sp15: Record<string, string> = {
       "GET /ad-sources": "conversations.view",
