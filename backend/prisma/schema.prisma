@@ -119,6 +119,8 @@ model Contact {
   @@index([workspaceId, ownerId])
   // SP-13: keyset paging of a campaign audience (WHERE workspaceId = ? AND id > ? ORDER BY id).
   @@index([workspaceId, id])
+  // SP-16: created-date audience rules; also serves the contacts list's createdAt desc order.
+  @@index([workspaceId, createdAt])
 }
 
 model CustomFieldDef {
@@ -424,6 +426,14 @@ model Segment {
   externalId      String?
   externalRules   String?
   lastSyncedAt    DateTime?
+  /// SP-16: the rule tree (AudienceRules, v 2). Null = legacy: read `filter` as one `and` group.
+  rules           Json?
+  /// SP-16: optimistic concurrency for the audience editor (PATCH sends it; 409 on mismatch).
+  version         Int       @default(0)
+  /// SP-16: cached member count of a smart audience. Raw-SQL written; never bumps updatedAt.
+  memberCount     Int?
+  /// SP-16: when memberCount was computed.
+  countedAt       DateTime?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceSegments", fields: [workspaceId], references: [id], onDelete: Cascade)
