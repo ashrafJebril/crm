@@ -3,7 +3,7 @@ import { ADS_TOKEN, fakeGraph, graphError, insightRow, isolateEnv, marketingHand
 import { encryptSecret } from "../common/token-crypto";
 import { AdReferralService } from "../ad-attribution/ad-referral.service";
 import { parseMetaReferral } from "../ad-attribution/referral";
-import { syncWindows } from "./meta-ads-sync";
+import { resumeWindows, syncSpan, syncWindows } from "./meta-ads-sync";
 import { resetMetaAdsTokenWarning } from "./meta-ads-token";
 import { ENC_KEY, seedActive, T0, world } from "./test-meta-ads";
 
@@ -43,6 +43,123 @@ describe("Meta Ads spend sync", () => {
     expect(syncWindows({ spendBackfilledAt: T0, timezone: "UTC" }, new Date("2026-11-09T22:30:00.000Z"))).toEqual([
       { since: "2026-11-07", until: "2026-11-09" },
     ]);
+  });
+
+  it("windows after the backfill start at the last successful sync, capped at 90 days", () => {
+    const now = new Date("2026-11-20T09:00:00.000Z");
+    const base = { spendBackfilledAt: T0, timezone: "UTC" };
+    // Synced an hour ago: the last 3 days only.
+    expect(syncWindows({ ...base, lastSyncedAt: new Date(now.getTime() - HOUR) }, now)).toEqual([{ since: "2026-11-18", until: "2026-11-20" }]);
+    // Last synced 11-10: 11-08 (3-day overlap) through 11-20, in 7-day windows.
+    expect(syncWindows({ ...base, lastSyncedAt: T0 }, now)).toEqual([
+      { since: "2026-11-14", until: "2026-11-20" },
+      { since: "2026-11-08", until: "2026-11-13" },
+    ]);
+    // A gap older than 90 days reads the last 90 only, and says so.
+    const old = { ...base, lastSyncedAt: new Date("2026-05-01T00:00:00.000Z") };
+    const capped = syncWindows(old, now);
+    expect(capped).toHaveLength(13);
+    expect(capped[12].since).toBe("2026-08-23");
+    expect(syncSpan(old, now).gapCapped).toBe(true);
+    expect(syncSpan({ ...base, lastSyncedAt: T0 }, now).gapCapped).toBe(false);
+    // Resume cuts a straddling window instead of skipping it.
+    expect(resumeWindows([{ since: "2026-11-14", until: "2026-11-20" }, { since: "2026-11-08", until: "2026-11-13" }], "2026-11-10")).toEqual([
+      { since: "2026-11-08", until: "2026-11-09" },
+    ]);
+  });
+
+  it("sync re-reads the days missed while parked: a 10-day outage then a same-account reconnect fills all 10 days", async () => {
+    const ranges: Array<{ since: string; until: string }> = [];
+    const { g } = scriptedInsights((_n, url) => {
+      const r = JSON.parse(new URL(url).searchParams.get("time_range")!) as { since: string; until: string };
+      ranges.push(r);
+      return { body: { data: [insightRow("6001", r.until, "1.00"), insightRow("6001", r.since, "1.00")] } };
+    });
+    const w = world({ graph: g });
+    // Backfilled and last synced at T0 (11-10 in Riyadh), then parked.
+    seedActive(w, { spendBackfilledAt: T0, lastSyncedAt: T0, status: "needs_reconnect", statusReason: "token_refused" });
+    const outageEnd = later(10 * 24 * HOUR); // 11-20
+    await w.scheduler.sweep(later(5 * 24 * HOUR));
+    expect(ranges).toHaveLength(0);
+
+    // Reconnect the same ad account: lastSyncedAt and spendBackfilledAt are kept.
+    await w.svc.callback({ code: "CODE-9", state: w.stateOf(w.svc.start("wsA", "u_owner").url) });
+    await w.svc.save("wsA", "u_owner", { adAccountId: "act_111" });
+    expect(w.conn()).toMatchObject({ status: "active", lastSyncedAt: T0, spendBackfilledAt: T0 });
+
+    await w.scheduler.sweep(outageEnd);
+    // Newest first, 7-day windows, from 11-08 (the 3-day overlap) through 11-20.
+    expect(ranges).toEqual([
+      { since: "2026-11-14", until: "2026-11-20" },
+      { since: "2026-11-08", until: "2026-11-13" },
+    ]);
+    const read = new Set<string>();
+    for (const r of ranges) for (let d = r.since; d <= r.until; d = new Date(Date.parse(d) + 86_400_000).toISOString().slice(0, 10)) read.add(d);
+    for (let i = 11; i <= 20; i++) expect(read.has(`2026-11-${i}`)).toBe(true);
+    expect(w.conn()).toMatchObject({ lastSyncedAt: outageEnd, lastSyncError: null, spendBackfilledAt: T0 });
+
+    // Then back to the last 3 days.
+    await w.scheduler.sweep(new Date(outageEnd.getTime() + HOUR));
+    expect(ranges.slice(2)).toEqual([{ since: "2026-11-18", until: "2026-11-20" }]);
+  });
+
+  it("a gap fill stopped by a rate limit resumes at the unread window, and a gap over 90 days restarts the covered span", async () => {
+    const ranges: string[] = [];
+    let n = 0;
+    const { g } = scriptedInsights((_i, url) => {
+      const r = JSON.parse(new URL(url).searchParams.get("time_range")!) as { since: string; until: string };
+      ranges.push(r.since);
+      if (n++ === 1) return graphError(17, "User request limit reached");
+      return { body: { data: [insightRow("6001", r.since, "1.00")] } };
+    });
+    const w = world({ graph: g });
+    seedActive(w, { spendBackfilledAt: T0, lastSyncedAt: T0 });
+    const at = later(10 * 24 * HOUR);
+    await w.scheduler.sweep(at);
+    expect(ranges).toEqual(["2026-11-14", "2026-11-08"]);
+    expect(w.conn()).toMatchObject({ lastSyncError: "rate_limited", lastSyncedAt: T0 });
+    await w.scheduler.sweep(new Date(at.getTime() + HOUR));
+    // The newest window was written by the stopped run: only the older one is read.
+    expect(ranges.slice(2)).toEqual(["2026-11-08"]);
+    expect(w.conn()).toMatchObject({ lastSyncError: null, lastSyncedAt: new Date(at.getTime() + HOUR), spendBackfilledAt: T0 });
+
+    const w2 = world();
+    seedActive(w2, { spendBackfilledAt: new Date("2026-01-01T00:00:00.000Z"), lastSyncedAt: new Date("2026-05-01T00:00:00.000Z") });
+    await w2.scheduler.sweep(T0);
+    expect(w2.graph.called("/insights")).toHaveLength(13);
+    expect(w2.conn()).toMatchObject({ lastSyncedAt: T0, spendBackfilledAt: T0 });
+  });
+
+  it("a failed batch rolls back only the rows this run created and restores the rows it refreshed", async () => {
+    const days = ["2026-11-08", "2026-11-09", "2026-11-10"];
+    const rows = Array.from({ length: 450 }, (_, i) => insightRow(String(7000 + (i % 150)), days[Math.floor(i / 150)], "1.25"));
+    const w = world({ graph: fakeGraph([[/insights/, { body: { data: rows } }], ...marketingHandlers()]) });
+    seedActive(w, { spendBackfilledAt: T0, lastSyncedAt: T0 });
+    // A good row from an earlier sync on the newest day (in the first batch).
+    const before = new Date(T0.getTime() - HOUR);
+    w.prisma.db.adSource.push({ id: "ad_7000", workspaceId: "wsA", sourceType: "ad", sourceId: "7000", adAccountId: "act_111" });
+    w.prisma.db.adSpendDaily.push({
+      id: "kept",
+      workspaceId: "wsA",
+      adSourceId: "ad_7000",
+      adAccountId: "act_111",
+      date: new Date("2026-11-10T00:00:00.000Z"),
+      spend: "9.5",
+      currency: "USD",
+      syncedAt: before,
+    });
+    const tx = w.prisma.$transaction as jest.Mock;
+    const inner = tx.getMockImplementation()!;
+    let arrays = 0;
+    tx.mockImplementation(async (arg: unknown) => {
+      if (Array.isArray(arg) && ++arrays === 2) throw new Error("connection reset");
+      return inner(arg);
+    });
+    await w.scheduler.sweep(later(HOUR));
+    expect(w.conn()).toMatchObject({ lastSyncError: "sync_failed", lastSyncedAt: T0 });
+    // Batch 1 (200 rows, the kept one among them) was undone: no new row is left, the old one is back.
+    expect(w.prisma.db.adSpendDaily).toHaveLength(1);
+    expect(w.prisma.db.adSpendDaily[0]).toMatchObject({ id: "kept", spend: "9.5", syncedAt: before, currency: "USD" });
   });
 
   describe("sync is bounded, idempotent and re-entrancy guarded", () => {

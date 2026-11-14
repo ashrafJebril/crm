@@ -450,7 +450,8 @@ describe("Meta Ads connect", () => {
 
   it("disconnect wipes tokens and keeps history", async () => {
     const w = world();
-    seedActive(w, { pendingTokenEnc: encryptSecret("EAAB-pending") });
+    // Synced (backfilled and last synced at T0): the spend before disconnect is known.
+    seedActive(w, { pendingTokenEnc: encryptSecret("EAAB-pending"), spendBackfilledAt: T0, lastSyncedAt: T0 });
     w.prisma.db.adSource.push({ id: "ad1", workspaceId: "wsA", sourceType: "ad", sourceId: "6001", adAccountId: "act_111", lastReferredAt: T0 });
     w.prisma.db.adReferral.push({ id: "r1", workspaceId: "wsA", adSourceId: "ad1", conversationId: "cv1", contactId: "c1", messageId: "m1", provider: "meta", referredAt: new Date("2026-11-08T10:00:00.000Z") });
     w.prisma.db.adSpendDaily.push({

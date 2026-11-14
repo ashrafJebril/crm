@@ -73,9 +73,16 @@ function world(seed: Parameters<typeof makeFakePrisma>[0] = {}) {
     }),
   };
   const ads = new AdReferralService(prisma, media as never, fetchCreative);
+  /** Each `inbox.activity` emit, with the touches stored when it was sent. */
+  const activity: Array<{ conversationId: string; touches: number }> = [];
+  const zRealtime = {
+    emitToWorkspace: jest.fn((_ws: string, event: string, payload: { conversationId: string }) => {
+      if (event === "inbox.activity") activity.push({ conversationId: payload.conversationId, touches: (prisma.db.adReferral ?? []).length });
+    }),
+  };
   const zernio = new ZernioService(
     prisma,
-    { emitToWorkspace: jest.fn() } as never,
+    zRealtime as never,
     {} as never,
     {} as never,
     { onInboundMessage: jest.fn(async () => {}), onOutboundReply: jest.fn(async () => {}) } as never,
@@ -102,7 +109,7 @@ function world(seed: Parameters<typeof makeFakePrisma>[0] = {}) {
     undefined,
     ads,
   );
-  return { prisma, ads, zernio, meta, fetchCreative, media };
+  return { prisma, ads, zernio, meta, fetchCreative, media, activity };
 }
 type World = ReturnType<typeof world>;
 
@@ -253,6 +260,22 @@ describe("SP-15 referral capture", () => {
       expect(w.prisma.db.adReferral.filter((r: any) => r.messageId === m1.id)).toHaveLength(1);
       expect(w.prisma.db.adReferral).toHaveLength(2);
     });
+  });
+
+  it("the Zernio path refreshes the inbox again once a first-touch capture is stored", async () => {
+    const w = world();
+    await atClock(1, () => w.zernio.handleEvent(zEvent("zm-1", refA, "root")));
+    const conv = w.prisma.db.conversation[0];
+    // The message refresh goes out first (delivery is not held for capture), then one after the touch exists.
+    expect(w.activity).toEqual([
+      { conversationId: conv.id, touches: 0 },
+      { conversationId: conv.id, touches: 1 },
+    ]);
+    // A plain message, and a later ad that is not the first touch, refresh once.
+    await atClock(2, () => w.zernio.handleEvent(zEvent("zm-2", null)));
+    await atClock(3, () => w.zernio.handleEvent(zEvent("zm-3", refB, "root")));
+    expect(w.activity).toHaveLength(4);
+    await w.ads.drain();
   });
 
   it("referral captured only on first inbound: a Zernio outbound echo captures nothing", async () => {

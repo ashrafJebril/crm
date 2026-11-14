@@ -1112,6 +1112,8 @@ export interface EmbeddedSignupConfig {
 /** The ad chip on a conversation row (`GET /conversations`). */
 export interface AdSourceChip {
   id: string;
+  /** Meta's ad id (the label of an ad with no name or headline). */
+  sourceId: string;
   sourceType: string;
   headline: string | null;
   adName: string | null;
@@ -1147,7 +1149,7 @@ export interface AdCard {
   lastReferredAt: string | null;
   /** Conversations started in the range. */
   started: number;
-  /** null = Unknown (no active connection, or another ad account). */
+  /** null = Unknown (no active connection, another ad account, or days not synced yet). */
   spend: { amount: number; currency: string } | null;
   /** null when nothing started or spend is unknown. */
   costPerConversation: number | null;
@@ -1186,17 +1188,20 @@ export interface AdsCurrencyTotal {
 export interface AdsDailyPoint {
   date: string;
   started: number;
-  /** null when no connection is active. */
+  /** null when no connection is active, or the day is outside the synced days. */
   spend: Record<string, number> | null;
 }
 
 export interface AdsOverview {
-  range: { from: string; to: string; tz: string };
+  /** `spendCoverage`: the account days the spend sync has read (null before the first full sync). */
+  range: { from: string; to: string; tz: string; spendCoverage?: { from: string; to: string } | null };
   connection: MetaAdsConnectionDto | null;
   totals: { started: number; byCurrency: AdsCurrencyTotal[] };
   daily: AdsDailyPoint[];
   ads: AdCard[];
   totalAds: number;
+  /** Any ad was ever referred (tells "none in this range" from "none yet"). */
+  everReferred?: boolean;
 }
 
 export interface MetaAdsCandidates {

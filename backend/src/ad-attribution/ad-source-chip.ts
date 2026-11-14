@@ -4,6 +4,8 @@
  */
 export interface AdSourceChip {
   id: string;
+  /** Meta's ad id: the label of an ad with no name or headline ("Ad <sourceId>"). */
+  sourceId: string;
   sourceType: string;
   headline: string | null;
   adName: string | null;
@@ -15,6 +17,7 @@ export interface AdSourceChip {
 /** The one `include: {adSource: {select}}` the conversation queries use. */
 export const AD_SOURCE_CHIP_SELECT = {
   id: true,
+  sourceId: true,
   sourceType: true,
   headline: true,
   adName: true,
@@ -25,6 +28,7 @@ export const AD_SOURCE_CHIP_SELECT = {
 
 export interface AdSourceChipRow {
   id: string;
+  sourceId: string;
   sourceType: string;
   headline: string | null;
   adName: string | null;
@@ -42,6 +46,7 @@ export function toAdSourceChip(row: AdSourceChipRow | null | undefined): AdSourc
   if (!row) return null;
   return {
     id: row.id,
+    sourceId: row.sourceId,
     sourceType: row.sourceType,
     headline: row.headline ?? null,
     adName: row.adName ?? null,

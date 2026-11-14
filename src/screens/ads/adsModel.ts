@@ -108,17 +108,49 @@ export function formatAdMoney(amount: number, currency: string, lang: Lang): str
 
 // ─── Unknown spend and cost ────────────────────────────────────────────────
 
-/** Why spend is unknown: no active connection, or the ad is in another (or no known) account. */
-export type SpendUnknownReason = "not_connected" | "other_account";
+/**
+ * Why spend is unknown: no active connection, the ad is in another (or no
+ * known) account, or the range has days the spend sync has not read yet.
+ */
+export type SpendUnknownReason = "not_connected" | "other_account" | "not_synced";
 
-export function spendUnknownReason(conn: Pick<MetaAdsConnectionDto, "status"> | null | undefined): SpendUnknownReason {
-  return conn?.status === "active" ? "other_account" : "not_connected";
+type RangeCoverage = Pick<AdsOverview["range"], "from" | "to" | "spendCoverage">;
+
+/** The whole range lies in the synced days. A backend without `spendCoverage` counts as synced. */
+export function rangeSynced(range: RangeCoverage): boolean {
+  const c = range.spendCoverage;
+  if (c === undefined) return true;
+  return !!c && range.from >= c.from && range.to <= c.to;
+}
+
+/**
+ * The reason for an Unknown spend: overall (the totals, the chart) when no
+ * card is given, else for that card.
+ */
+export function spendUnknownReason(
+  conn: (Pick<MetaAdsConnectionDto, "status"> & Partial<Pick<MetaAdsConnectionDto, "adAccountId">>) | null | undefined,
+  range?: RangeCoverage | null,
+  card?: Pick<AdCard, "adAccountId"> | null,
+): SpendUnknownReason {
+  if (conn?.status !== "active") return "not_connected";
+  if (card && (!card.adAccountId || card.adAccountId !== conn.adAccountId)) return "other_account";
+  if (range && !rangeSynced(range)) return "not_synced";
+  return "other_account";
 }
 
 export function unknownReasonText(reason: SpendUnknownReason, tx: Tx): string {
-  return reason === "not_connected"
-    ? tx("Connect Meta Ads to see spend", "اربط إعلانات Meta لعرض الإنفاق")
-    : tx("This ad isn't in the connected ad account", "هذا الإعلان ليس في الحساب الإعلاني المربوط");
+  switch (reason) {
+    case "not_connected": return tx("Connect Meta Ads to see spend", "اربط إعلانات Meta لعرض الإنفاق");
+    case "not_synced": return tx("Spend not synced for these days yet", "لم تتم مزامنة الإنفاق لهذه الأيام بعد");
+    default: return tx("This ad isn't in the connected ad account", "هذا الإعلان ليس في الحساب الإعلاني المربوط");
+  }
+}
+
+/** The empty Overview: no ad conversations in this range, or none ever. */
+export function emptyStateText(everReferred: boolean, tx: Tx): string {
+  return everReferred
+    ? tx("No conversations from ads in this range", "لا محادثات من الإعلانات في هذا النطاق")
+    : tx("No conversations from ads yet", "لا محادثات من الإعلانات بعد");
 }
 
 export interface FigureView {
@@ -166,11 +198,15 @@ export interface CurrencyFigure {
  * currencies). Without any known spend it is a single Unknown figure; an
  * active connection whose account had no ads in range reads 0 in its currency.
  */
-export function totalsView(o: Pick<AdsOverview, "totals" | "connection">, tx: Tx, lang: Lang): {
+export function totalsView(
+  o: Pick<AdsOverview, "totals" | "connection"> & { range?: RangeCoverage },
+  tx: Tx,
+  lang: Lang,
+): {
   started: number;
   figures: CurrencyFigure[];
 } {
-  const reason = spendUnknownReason(o.connection);
+  const reason = spendUnknownReason(o.connection, o.range);
   const figures: CurrencyFigure[] = o.totals.byCurrency.map((t) => ({
     currency: t.currency,
     spend: spendView({ amount: t.spend, currency: t.currency }, tx, lang, reason),
@@ -184,7 +220,8 @@ export function totalsView(o: Pick<AdsOverview, "totals" | "connection">, tx: Tx
   }));
   if (figures.length === 0) {
     const cur = o.connection?.status === "active" ? o.connection.currency : null;
-    const spend = cur ? { amount: 0, currency: cur } : null;
+    // A real 0 only when the whole range was synced; otherwise Unknown (not_synced).
+    const spend = cur && reason !== "not_synced" ? { amount: 0, currency: cur } : null;
     figures.push({
       currency: cur,
       spend: spendView(spend, tx, lang, reason),

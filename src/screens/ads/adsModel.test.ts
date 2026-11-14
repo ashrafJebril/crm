@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTx } from "@/lib/tx";
-import type { AdsOverview, MetaAdsConnectionDto } from "@/lib/types";
+import type { AdSourceChip, AdsOverview, MetaAdsConnectionDto } from "@/lib/types";
 import {
   adLabel,
   adLabelText,
@@ -16,8 +16,11 @@ import {
   parseRange,
   rangeToQuery,
   readTab,
+  emptyStateText,
+  spendUnknownReason,
   spendView,
   totalsView,
+  unknownReasonText,
   writeRange,
 } from "./adsModel";
 
@@ -66,6 +69,15 @@ describe("cost per conversation renders unknown when nothing started", () => {
     expect(plain(costPerConversationView({ ...card, costPerConversation: null }, en, "en", "not_connected").text)).toBe("SAR 30.13");
   });
 
+  it("spend not synced for the range is Unknown with its own reason, never 0", () => {
+    expect(unknownReasonText("not_synced", en)).toBe("Spend not synced for these days yet");
+    expect(unknownReasonText("not_synced", ar)).toBe("لم تتم مزامنة الإنفاق لهذه الأيام بعد");
+    const s = spendView(null, en, "en", "not_synced");
+    expect(s).toEqual({ text: "Unknown", unknown: true, title: "Spend not synced for these days yet" });
+    const c = costPerConversationView({ started: 12, spend: null, costPerConversation: null }, ar, "ar", "not_synced");
+    expect(c).toEqual({ text: "غير معروف", unknown: true, title: "لم تتم مزامنة الإنفاق لهذه الأيام بعد" });
+  });
+
   it("two currencies render two figures, never one total", () => {
     const o: Pick<AdsOverview, "totals" | "connection"> = {
       connection: null,
@@ -108,6 +120,33 @@ describe("overview view-model: Unknown vs 0 and currency totals", () => {
     expect(t.figures[0].spend.title).toBe("اربط إعلانات Meta لعرض الإنفاق");
   });
 
+  it("an active connection that has not synced the range reads Unknown (not_synced), not SAR 0.00", () => {
+    const active = { ...conn("active"), adAccountId: "act_1" } as MetaAdsConnectionDto;
+    const range = (spendCoverage: { from: string; to: string } | null) => ({ from: "2026-11-01", to: "2026-11-10", tz: "UTC", spendCoverage });
+    // First sync pending.
+    const pending = totalsView({ connection: active, totals: { started: 12, byCurrency: [] }, range: range(null) }, en, "en");
+    expect(pending.figures[0].spend).toEqual({ text: "Unknown", unknown: true, title: "Spend not synced for these days yet" });
+    expect(pending.figures[0].cost.text).toBe("No conversations yet");
+    // A range starting before the synced days.
+    expect(spendUnknownReason(active, range({ from: "2026-11-03", to: "2026-11-10" }))).toBe("not_synced");
+    // Days after the last sync.
+    expect(spendUnknownReason(active, range({ from: "2026-08-01", to: "2026-11-09" }))).toBe("not_synced");
+    // Covered: the account had no ads in range, a real 0.
+    const covered = totalsView({ connection: active, totals: { started: 0, byCurrency: [] }, range: range({ from: "2026-08-01", to: "2026-11-10" }) }, en, "en");
+    expect(plain(covered.figures[0].spend.text)).toBe("SAR 0.00");
+    // Per card: an ad of another account keeps its reason; not connected wins over everything.
+    expect(spendUnknownReason(active, range(null), { adAccountId: "act_9" })).toBe("other_account");
+    expect(spendUnknownReason(active, range(null), { adAccountId: "act_1" })).toBe("not_synced");
+    expect(spendUnknownReason(conn("needs_reconnect"), range(null), { adAccountId: "act_1" })).toBe("not_connected");
+  });
+
+  it("the empty state tells none in this range from none ever", () => {
+    expect(emptyStateText(false, en)).toBe("No conversations from ads yet");
+    expect(emptyStateText(false, ar)).toBe("لا محادثات من الإعلانات بعد");
+    expect(emptyStateText(true, en)).toBe("No conversations from ads in this range");
+    expect(emptyStateText(true, ar)).toBe("لا محادثات من الإعلانات في هذا النطاق");
+  });
+
   it("overview daily picks one currency; null spend stays null", () => {
     const daily: AdsOverview["daily"] = [
       { date: "2026-11-01", started: 1, spend: { SAR: 5 } },
@@ -131,6 +170,11 @@ describe("ad label falls back from name to headline to id", () => {
     const id = adLabel({ adName: null, headline: null, sourceId: "120208" }, ar);
     expect(id).toEqual({ kind: "id", text: "120208", prefix: "إعلان" });
     expect(adLabelText(adLabel({ adName: null, headline: "", sourceId: "9" }, en))).toBe("Ad 9");
+  });
+
+  it("an unnamed inbox chip is labelled with Meta's ad id, never our row id", () => {
+    const chip: AdSourceChip = { id: "clx9k2abc", sourceId: "120208000111", sourceType: "ad", headline: null, adName: null, mediaType: null, imageUrl: null };
+    expect(adLabelText(adLabel(chip, en))).toBe("Ad 120208000111");
   });
 
   it("is never blank", () => {

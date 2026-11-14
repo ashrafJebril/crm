@@ -27,6 +27,7 @@ function seed(opts: { conn?: Record<string, unknown> | null; wsTz?: string } = {
       currency: "USD",
       timezone: "UTC",
       spendBackfilledAt: NOW,
+      lastSyncedAt: NOW,
       ...(opts.conn ?? {}),
     });
   }
@@ -126,7 +127,7 @@ describe("SP-15 ad metrics", () => {
     });
     expect(o.ads.map((a) => a.id)).toEqual(["A", "C", "B"]);
     expect(o.totalAds).toBe(3);
-    expect(o.range).toEqual({ from: "2026-11-01", to: "2026-11-10", tz: "UTC" });
+    expect(o.range).toEqual({ from: "2026-11-01", to: "2026-11-10", tz: "UTC", spendCoverage: { from: "2026-08-13", to: "2026-11-10" } });
     const d5 = o.daily.find((d) => d.date === "2026-11-05")!;
     expect(d5).toEqual({ date: "2026-11-05", started: 4, spend: { USD: 150.25 } });
     expect(o.daily.find((d) => d.date === "2026-11-07")).toEqual({ date: "2026-11-07", started: 2, spend: { USD: 0, EUR: 10 } });
@@ -233,7 +234,7 @@ describe("started counts distinct conversations per ad in range", () => {
     }
     // Exactly 366 days is allowed; the default is the last 30 days.
     await w.svc.overview("wsA", { from: "2025-11-10", to: "2026-11-10" }, NOW);
-    expect((await w.svc.overview("wsA", {}, NOW)).range).toEqual({ from: "2026-10-12", to: "2026-11-10", tz: "UTC" });
+    expect((await w.svc.overview("wsA", {}, NOW)).range).toMatchObject({ from: "2026-10-12", to: "2026-11-10", tz: "UTC" });
   });
 });
 
@@ -270,5 +271,86 @@ describe("GET /ad-sources/:id", () => {
 
   it("daysBetween is inclusive", () => {
     expect(daysBetween("2026-02-27", "2026-03-01")).toEqual(["2026-02-27", "2026-02-28", "2026-03-01"]);
+  });
+});
+
+describe("spend is unknown outside the synced days", () => {
+  it("before the first sync completes, an ad of the connected account reads Unknown, never 0", async () => {
+    const w = seed({ conn: { spendBackfilledAt: null, lastSyncedAt: null } });
+    w.ad("A");
+    w.touch("A", "cv1", "2026-11-05T10:00:00.000Z");
+    const o = await w.svc.overview("wsA", RANGE, NOW);
+    expect(o.ads[0]).toMatchObject({ started: 1, spend: null, costPerConversation: null });
+    expect(o.totals.byCurrency).toEqual([]);
+    expect(o.range.spendCoverage).toBeNull();
+    expect(o.daily.every((d) => d.spend === null)).toBe(true);
+    const d = await w.svc.detail("wsA", "A", RANGE, NOW);
+    expect(d).toMatchObject({ spend: null, costPerConversation: null });
+    expect(d.daily!.every((x) => x.spend === null)).toBe(true);
+  });
+
+  it("a range starting before the 90 backfilled days reads Unknown; the synced days keep their figures", async () => {
+    const w = seed();
+    w.ad("A");
+    w.touch("A", "cv1", "2026-11-05T10:00:00.000Z");
+    w.spend("A", "2026-11-05", "12");
+    const q = { from: "2026-08-01", to: "2026-11-10" };
+    const o = await w.svc.overview("wsA", q, NOW);
+    expect(o.range.spendCoverage).toEqual({ from: "2026-08-13", to: "2026-11-10" });
+    expect(o.ads[0]).toMatchObject({ started: 1, spend: null, costPerConversation: null });
+    expect(o.totals.byCurrency).toEqual([]);
+    expect(o.daily.find((x) => x.date === "2026-08-12")!.spend).toBeNull();
+    expect(o.daily.find((x) => x.date === "2026-08-13")!.spend).toEqual({ USD: 0 });
+    expect(o.daily.find((x) => x.date === "2026-11-05")!.spend).toEqual({ USD: 12 });
+    const d = await w.svc.detail("wsA", "A", q, NOW);
+    expect(d.spend).toBeNull();
+    expect(d.daily!.find((x) => x.date === "2026-08-12")!.spend).toBeNull();
+    expect(d.daily!.find((x) => x.date === "2026-11-05")!.spend).toBe(12);
+  });
+
+  it("days after the last successful sync read Unknown", async () => {
+    const w = seed({ conn: { lastSyncedAt: new Date("2026-11-05T09:00:00.000Z") } });
+    w.ad("A");
+    w.touch("A", "cv1", "2026-11-03T10:00:00.000Z");
+    const o = await w.svc.overview("wsA", RANGE, NOW);
+    expect(o.ads[0].spend).toBeNull();
+    expect(o.daily.find((x) => x.date === "2026-11-05")!.spend).toEqual({ USD: 0 });
+    expect(o.daily.find((x) => x.date === "2026-11-06")!.spend).toBeNull();
+    // A range inside the synced days is known: an ad with no rows there is a real 0.
+    const inside = await w.svc.overview("wsA", { from: "2026-11-01", to: "2026-11-05" }, NOW);
+    expect(inside.ads[0].spend).toEqual({ amount: 0, currency: "USD" });
+    expect(inside.ads[0].costPerConversation).toBe(0);
+  });
+});
+
+describe("total conversations started counts distinct conversations", () => {
+  it("one conversation that touched two ads is 1 in the headline total and the daily series, 1 per ad", async () => {
+    const w = seed();
+    w.ad("A");
+    w.ad("B");
+    w.touch("A", "cv1", "2026-11-03T10:00:00.000Z");
+    w.touch("B", "cv1", "2026-11-04T10:00:00.000Z");
+    w.touch("B", "cv2", "2026-11-04T11:00:00.000Z");
+    const o = await w.svc.overview("wsA", RANGE, NOW);
+    const by = Object.fromEntries(o.ads.map((a) => [a.id, a]));
+    expect(by.A.started).toBe(1);
+    expect(by.B.started).toBe(2);
+    expect(o.totals.started).toBe(2);
+    expect(o.daily.find((d) => d.date === "2026-11-03")!.started).toBe(1);
+    expect(o.daily.find((d) => d.date === "2026-11-04")!.started).toBe(1);
+    expect(o.daily.reduce((s, d) => s + d.started, 0)).toBe(2);
+    // Per currency stays "conversations those ads started" (per ad).
+    expect(o.totals.byCurrency).toEqual([{ currency: "USD", spend: 0, started: 3, costPerConversation: 0 }]);
+  });
+});
+
+describe("overview tells never-referred from none in range", () => {
+  it("everReferred is false with no ad referral ever, true when ads were referred outside the range", async () => {
+    const w = seed();
+    expect((await w.svc.overview("wsA", RANGE, NOW)).everReferred).toBe(false);
+    w.ad("A", { lastReferredAt: new Date("2026-08-01T10:00:00.000Z") });
+    const o = await w.svc.overview("wsA", RANGE, NOW);
+    expect(o.ads).toHaveLength(0);
+    expect(o.everReferred).toBe(true);
   });
 });

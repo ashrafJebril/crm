@@ -1769,7 +1769,7 @@ export class ZernioService {
         created?.id &&
         (eventType === "message.received" || eventType === "conversation.started")
       ) {
-        await this.adReferrals.captureZernio(evt, {
+        const touch = await this.adReferrals.captureZernio(evt, {
           workspaceId,
           channelId,
           conversationId: conv.id,
@@ -1777,6 +1777,11 @@ export class ZernioService {
           messageId: created.id,
           at: now,
         });
+        // The message refresh above went out before capture (delivery is
+        // never held for it): refresh again once the chip exists (review M2).
+        if (touch?.firstTouch) {
+          this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel, channelId, conversationId: conv.id });
+        }
       }
     }
 

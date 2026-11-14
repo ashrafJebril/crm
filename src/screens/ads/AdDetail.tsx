@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { usePermissions } from "@/auth/usePermissions";
 import { Skeleton } from "@/components/Skeleton";
 import type { Tx } from "@/lib/tx";
-import type { AdCard as AdCardDto, AdConversationItem, Lang } from "@/lib/types";
+import type { AdCard as AdCardDto, AdConversationItem, AdsOverview, Lang, MetaAdsConnectionDto } from "@/lib/types";
 import { Banner, ErrorText } from "../channels/channelUi";
 import { AdLabelText } from "../inbox/CtwaChip";
 import { Figure } from "./AdCard";
@@ -15,9 +15,9 @@ import {
   adLabel,
   costPerConversationView,
   rangeQueryString,
+  spendUnknownReason,
   spendView,
   unknownReasonText,
-  type SpendUnknownReason,
 } from "./adsModel";
 
 const fmtWhen = (iso: string | null | undefined, lang: Lang) => {
@@ -32,14 +32,17 @@ const fmtWhen = (iso: string | null | undefined, lang: Lang) => {
 export function AdDetail({
   adId,
   query,
-  reason,
+  connection,
+  range,
   tx,
   lang,
   onBack,
 }: {
   adId: string;
   query: { from: string; to: string };
-  reason: SpendUnknownReason;
+  /** From the overview (same range): words an Unknown spend. */
+  connection: MetaAdsConnectionDto | null;
+  range: AdsOverview["range"] | null;
   tx: Tx;
   lang: Lang;
   onBack: () => void;
@@ -49,6 +52,7 @@ export function AdDetail({
   const qs = rangeQueryString(query);
   const cardQ = useFetch<AdCardDto>(`/ad-sources/${encodeURIComponent(adId)}?${qs}`);
   const card = cardQ.data;
+  const reason = spendUnknownReason(connection, range, card ?? null);
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
@@ -151,6 +155,9 @@ function AdConversations({ adId, qs, tx, lang }: { adId: string; qs: string; tx:
   const [next, setNext] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // `tx` only words errors: read it from a ref so a new `tx` never reloads the list (review M3).
+  const txRef = useRef(tx);
+  txRef.current = tx;
 
   const load = useCallback(
     async (cursor: string | null, signal?: AbortSignal) => {
@@ -164,12 +171,12 @@ function AdConversations({ adId, qs, tx, lang }: { adId: string; qs: string; tx:
         setNext(r.nextCursor);
       } catch (e) {
         if (signal?.aborted) return;
-        setError(adsErrorText(e, tx));
+        setError(adsErrorText(e, txRef.current));
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [adId, qs, tx],
+    [adId, qs],
   );
 
   useEffect(() => {

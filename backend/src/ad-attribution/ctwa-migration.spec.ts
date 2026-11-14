@@ -8,6 +8,8 @@ const FOLDER = "20261115120000_ctwa_attribution";
 const PINNED: Record<string, string> = {
   "20261114130000_contact_workspace_id_index": "af6730c4d81da99a945436a6ae8b08d571d23cef48d58ec026015c4842db50ef",
   "20261114140000_number_template_health": "24d05fd010ec625a3a0dfe1fde619d1364905fb2f3c7beb12266d4e833022dc0",
+  // SP-15 itself, applied and frozen (final review M7).
+  [FOLDER]: "9aa652fdfe1bc8ab5311389f83d972dd014bef39f536c1dee2243502611eabec",
 };
 
 const TABLES = ["AdSource", "AdReferral", "AdSpendDaily", "MetaAdsConnection", "MetaLead"];

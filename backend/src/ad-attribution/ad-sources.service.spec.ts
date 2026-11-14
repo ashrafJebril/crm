@@ -84,6 +84,7 @@ describe("conversation dto carries the ad chip", () => {
     const row = before.find((c) => c.id === "cv-ad");
     expect(row.adSource).toEqual({
       id: "ad-1",
+      sourceId: "1",
       sourceType: "ad",
       headline: "Spring sale",
       adName: null,
@@ -101,7 +102,7 @@ describe("conversation dto carries the ad chip", () => {
     expect(after.find((c) => c.id === "cv-ad").adSource.imageUrl).toBe("/api/media/med-9/file");
     expect(JSON.stringify(after)).not.toMatch(/ctwa|secret-clid/i);
     expect(prisma.conversation.findMany.mock.calls[0][0].include.adSource).toEqual({
-      select: { id: true, sourceType: true, headline: true, adName: true, mediaType: true, mediaId: true, mediaUrl: true },
+      select: { id: true, sourceId: true, sourceType: true, headline: true, adName: true, mediaType: true, mediaId: true, mediaUrl: true },
     });
   });
 
@@ -109,7 +110,7 @@ describe("conversation dto carries the ad chip", () => {
     const prisma = seed();
     const svc = build(prisma);
     const one: any = await svc.get("ws1", "cv-ad");
-    expect(one.adSource).toMatchObject({ id: "ad-1", imageUrl: "https://scontent.xx.fbcdn.net/a.jpg" });
+    expect(one.adSource).toMatchObject({ id: "ad-1", sourceId: "1", imageUrl: "https://scontent.xx.fbcdn.net/a.jpg" });
     expect(one.labelIds).toEqual([]);
     expect(JSON.stringify(one)).not.toMatch(/ctwa|secret-clid/i);
     expect(((await svc.get("ws1", "cv-plain")) as any).adSource).toBeNull();

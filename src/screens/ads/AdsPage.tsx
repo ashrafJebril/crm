@@ -15,6 +15,7 @@ import { AdsDailyChart } from "./AdsDailyChart";
 import { adsErrorText } from "./adsErrors";
 import {
   dailyCurrencies,
+  emptyStateText,
   overviewDaily,
   parseRange,
   presetLabel,
@@ -56,7 +57,8 @@ function useRange(): [AdsRange, (r: AdsRange) => void] {
 export default function AdsPage() {
   const { t } = useTweaks();
   const lang = t.lang;
-  const tx = makeTx(lang);
+  // Stable per language: AdDetail's conversation list reloads when `tx` changes (review M3).
+  const tx = useMemo(() => makeTx(lang), [lang]);
   const { can, loading: permsLoading } = usePermissions();
   const canView = can("reports.view");
   const canConnView = can("connectors.view");
@@ -102,7 +104,8 @@ export default function AdsPage() {
           <AdDetail
             adId={adId}
             query={query}
-            reason={spendUnknownReason(detailOverview.data?.connection)}
+            connection={detailOverview.data?.connection ?? null}
+            range={detailOverview.data?.range ?? null}
             tx={tx}
             lang={lang}
             onBack={() => setAdId(null)}
@@ -240,7 +243,7 @@ function Overview({
   const q = useFetch<AdsOverview>(`/ad-sources/overview?${rangeQueryString(query)}`);
   const o = q.data;
   const oauth = useStartOAuth(tx);
-  const reason = spendUnknownReason(o?.connection);
+  const reason = spendUnknownReason(o?.connection, o?.range);
   const totals = o ? totalsView(o, tx, lang) : null;
   const currencies = o ? dailyCurrencies(o.daily) : [];
   const conn = o?.connection ?? null;
@@ -319,12 +322,14 @@ function Overview({
 
           {o.ads.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", border: "1px dashed var(--line)", borderRadius: 12 }}>
-              <div style={{ fontWeight: 650, fontSize: 14 }}>{tx("No conversations from ads yet", "لا محادثات من الإعلانات بعد")}</div>
+              <div style={{ fontWeight: 650, fontSize: 14 }}>{emptyStateText(!!o.everReferred, tx)}</div>
               <div className="muted" style={{ fontSize: 12.5, marginBlockStart: 4 }}>
-                {tx(
-                  "When someone messages you from a click-to-WhatsApp ad, the ad and its conversations appear here.",
-                  "عندما يراسلك أحد من إعلان نقر للمراسلة على واتساب، يظهر الإعلان ومحادثاته هنا.",
-                )}
+                {o.everReferred
+                  ? tx("Pick a longer range to see earlier ads.", "اختر نطاقًا أطول لعرض الإعلانات السابقة.")
+                  : tx(
+                      "When someone messages you from a click-to-WhatsApp ad, the ad and its conversations appear here.",
+                      "عندما يراسلك أحد من إعلان نقر للمراسلة على واتساب، يظهر الإعلان ومحادثاته هنا.",
+                    )}
               </div>
             </div>
           ) : (
@@ -343,7 +348,7 @@ function Overview({
               </section>
               <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 12 }}>
                 {o.ads.map((c) => (
-                  <AdCard key={c.id} card={c} reason={reason} tx={tx} lang={lang} onOpen={onOpenAd} />
+                  <AdCard key={c.id} card={c} reason={spendUnknownReason(o.connection, o.range, c)} tx={tx} lang={lang} onOpen={onOpenAd} />
                 ))}
               </section>
               {o.totalAds > o.ads.length && (

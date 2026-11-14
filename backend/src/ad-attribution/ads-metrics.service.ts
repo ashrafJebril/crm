@@ -3,7 +3,8 @@ import type { AdSource, MetaAdsConnection } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { toMetaAdsDto, type MetaAdsConnectionDto } from "../meta-ads/meta-ads-dto";
 import { adsError } from "./ad-errors";
-import { dayOf, resolveDayRange, type DayRange } from "./ad-range";
+import { BACKFILL_DAYS } from "../meta-ads/meta-ads.config";
+import { dayOf, resolveDayRange, safeTimeZone, type DayRange } from "./ad-range";
 import { attributionTimeZone } from "./ad-sources.service";
 import { adImageUrl } from "./ad-source-chip";
 import { costPerConversation, dateKey, dateValue, daysBetween, round4 } from "./ads-metrics";
@@ -35,7 +36,10 @@ export interface AdCard {
   lastReferredAt: Date | null;
   /** Distinct conversations with a touch of this ad in the range. */
   started: number;
-  /** Null = Unknown (no active connection, or the ad is not in the connected account). */
+  /**
+   * Null = Unknown: no active connection, the ad is not in the connected
+   * account, or the range has days the sync has not read (`spendCoverage`).
+   */
   spend: Money | null;
   /** Null when nothing started or the spend is unknown. */
   costPerConversation: number | null;
@@ -50,13 +54,21 @@ export interface CurrencyTotal {
   costPerConversation: number | null;
 }
 
+/** The account days the spend sync has read (inclusive), or null before the first full sync. */
+export interface SpendCoverage {
+  from: string;
+  to: string;
+}
+
 export interface AdsOverview {
-  range: { from: string; to: string; tz: string };
+  range: { from: string; to: string; tz: string; spendCoverage: SpendCoverage | null };
   connection: MetaAdsConnectionDto | null;
   totals: { started: number; byCurrency: CurrencyTotal[] };
   daily: Array<{ date: string; started: number; spend: Record<string, number> | null }>;
   ads: AdCard[];
   totalAds: number;
+  /** Any ad was ever referred in this workspace (tells "none in this range" from "none yet"). */
+  everReferred: boolean;
 }
 
 /** Spend kept in 1/10 000 units, so sums never drift. */
@@ -76,8 +88,15 @@ interface AdAgg {
  *  - `started` = distinct conversations with a touch of the ad in the range;
  *    each counts on the day of its first touch in the range.
  *  - spend = the sum of `AdSpendDaily` of the **active** connection's ad
- *    account; null (Unknown) without an active connection or for an ad of
- *    another account; `{amount: 0}` for a connected ad Meta reported no spend for.
+ *    account; null (Unknown) without an active connection, for an ad of
+ *    another account, or when the range has a day outside the synced span
+ *    (final review I1: before the first sync, older than the backfill, or
+ *    after the last successful sync); `{amount: 0}` for a connected ad Meta
+ *    reported no spend for on synced days.
+ *  - The headline `totals.started` and `daily[].started` count distinct
+ *    conversations (a conversation that touched two ads counts once, on the
+ *    day of its first touch in the range); per-ad and per-currency figures
+ *    stay per ad.
  *  - Days are in the ad account's timezone when connected, else the workspace's (ruling 8).
  */
 @Injectable()
@@ -87,12 +106,14 @@ export class AdsMetricsService {
   async overview(workspaceId: string, q: { from?: string; to?: string } = {}, now: Date = new Date()): Promise<AdsOverview> {
     const { range, conn } = await this.context(workspaceId, q, now);
     const active = activeAccount(conn);
-    const aggs = await this.aggregate(workspaceId, range, active, null);
+    const coverage = spendCoverage(conn, active);
+    const covered = rangeCovered(range, coverage);
+    const { perAd: aggs, firstDay } = await this.aggregate(workspaceId, range, active, null);
     const ids = [...aggs.keys()];
     const rows = ids.length
       ? await this.prisma.adSource.findMany({ where: { workspaceId, id: { in: ids } } })
       : [];
-    const cards = rows.map((r) => card(r, aggs.get(r.id)!, active));
+    const cards = rows.map((r) => card(r, aggs.get(r.id)!, covered ? active : null));
 
     const totals = new Map<string, { spend: Units; started: number }>();
     for (const c of cards) {
@@ -111,20 +132,21 @@ export class AdsMetricsService {
         costPerConversation: costPerConversation(fromUnits(t.spend), t.started),
       }));
 
+    const startedOn = new Map<string, number>();
+    for (const d of firstDay.values()) startedOn.set(d, (startedOn.get(d) ?? 0) + 1);
     const inAccount = new Set(rows.filter((r) => active && r.adAccountId === active.adAccountId).map((r) => r.id));
     const daily = daysBetween(range.from, range.to).map((date) => {
-      let started = 0;
-      const units = new Map<string, Units>(active?.currency ? [[active.currency, 0]] : []);
+      const started = startedOn.get(date) ?? 0;
+      if (!active || !dayCovered(date, coverage)) return { date, started, spend: null };
+      const units = new Map<string, Units>(active.currency ? [[active.currency, 0]] : []);
       for (const [id, a] of aggs) {
-        for (const d of a.firstDay.values()) if (d === date) started++;
         if (!inAccount.has(id)) continue;
         for (const [cur, byDay] of a.spend) {
           const u = byDay.get(date);
           if (u !== undefined) units.set(cur, (units.get(cur) ?? 0) + u);
         }
       }
-      const spend = active ? Object.fromEntries([...units].map(([c, u]) => [c, fromUnits(u)])) : null;
-      return { date, started, spend };
+      return { date, started, spend: Object.fromEntries([...units].map(([c, u]) => [c, fromUnits(u)])) };
     });
 
     cards.sort(
@@ -134,13 +156,17 @@ export class AdsMetricsService {
         (b.lastReferredAt?.getTime() ?? 0) - (a.lastReferredAt?.getTime() ?? 0) ||
         a.id.localeCompare(b.id),
     );
+    const everReferred =
+      firstDay.size > 0 ||
+      !!(await this.prisma.adSource.findFirst({ where: { workspaceId, lastReferredAt: { not: null } }, select: { id: true } }));
     return {
-      range: { from: range.from, to: range.to, tz: range.tz },
+      range: { from: range.from, to: range.to, tz: range.tz, spendCoverage: coverage },
       connection: conn ? toMetaAdsDto(conn, false) : null,
-      totals: { started: cards.reduce((s, c) => s + c.started, 0), byCurrency },
+      totals: { started: firstDay.size, byCurrency },
       daily,
       ads: cards.slice(0, OVERVIEW_ADS_MAX),
       totalAds: cards.length,
+      everReferred,
     };
   }
 
@@ -150,14 +176,16 @@ export class AdsMetricsService {
     if (!ad) throw adsError("ads.not_found");
     const { range, conn } = await this.context(workspaceId, q, now);
     const active = activeAccount(conn);
-    const agg = (await this.aggregate(workspaceId, range, active, ad.id)).get(ad.id) ?? emptyAgg();
-    const c = card(ad, agg, active);
-    const known = c.spend !== null;
-    const cur = c.spend?.currency;
+    const coverage = spendCoverage(conn, active);
+    const agg = (await this.aggregate(workspaceId, range, active, ad.id)).perAd.get(ad.id) ?? emptyAgg();
+    const c = card(ad, agg, rangeCovered(range, coverage) ? active : null);
+    // Per day: known on the synced days when the ad's spend can be known at all.
+    const cur = spendOf(ad, agg, active)?.currency ?? null;
     c.daily = daysBetween(range.from, range.to).map((date) => {
       let started = 0;
       for (const d of agg.firstDay.values()) if (d === date) started++;
-      return { date, started, spend: known && cur ? fromUnits(agg.spend.get(cur)?.get(date) ?? 0) : null };
+      const known = cur !== null && dayCovered(date, coverage);
+      return { date, started, spend: known ? fromUnits(agg.spend.get(cur)?.get(date) ?? 0) : null };
     });
     return c;
   }
@@ -175,8 +203,10 @@ export class AdsMetricsService {
     range: DayRange,
     active: ActiveAccount | null,
     adId: string | null,
-  ): Promise<Map<string, AdAgg>> {
+  ): Promise<{ perAd: Map<string, AdAgg>; firstDay: Map<string, string> }> {
     const out = new Map<string, AdAgg>();
+    /** conversationId -> the day of its first touch (any ad) in the range. */
+    const firstDay = new Map<string, string>();
     const get = (id: string) => {
       let a = out.get(id);
       if (!a) out.set(id, (a = emptyAgg()));
@@ -189,7 +219,9 @@ export class AdsMetricsService {
     });
     for (const t of touches) {
       const a = get(t.adSourceId);
-      if (!a.firstDay.has(t.conversationId)) a.firstDay.set(t.conversationId, dayOf(t.referredAt, range.tz));
+      const day = dayOf(t.referredAt, range.tz);
+      if (!a.firstDay.has(t.conversationId)) a.firstDay.set(t.conversationId, day);
+      if (!firstDay.has(t.conversationId)) firstDay.set(t.conversationId, day);
     }
     if (active) {
       const spend = await this.prisma.adSpendDaily.findMany({
@@ -209,7 +241,7 @@ export class AdsMetricsService {
         byDay.set(s.currency, m);
       }
     }
-    return out;
+    return { perAd: out, firstDay };
   }
 }
 
@@ -223,6 +255,27 @@ function activeAccount(conn: MetaAdsConnection | null): ActiveAccount | null {
 }
 
 const emptyAgg = (): AdAgg => ({ firstDay: new Map(), spend: new Map() });
+
+const shiftDay = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00.000Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * The account days the spend sync has read: from the backfill's first day
+ * (90 days up to `spendBackfilledAt`) to the day of the last successful sync,
+ * in the account's timezone (the days `AdSpendDaily` is keyed by). The sync
+ * fills gaps since the last success, so the span is contiguous. Null without
+ * an active connection or before the first full sync.
+ */
+export function spendCoverage(
+  conn: Pick<MetaAdsConnection, "spendBackfilledAt" | "lastSyncedAt" | "timezone"> | null,
+  active: ActiveAccount | null,
+): SpendCoverage | null {
+  if (!active || !conn?.spendBackfilledAt || !conn.lastSyncedAt) return null;
+  const tz = safeTimeZone(conn.timezone);
+  return { from: shiftDay(dayOf(conn.spendBackfilledAt, tz), -(BACKFILL_DAYS - 1)), to: dayOf(conn.lastSyncedAt, tz) };
+}
+
+const dayCovered = (day: string, c: SpendCoverage | null) => !!c && day >= c.from && day <= c.to;
+const rangeCovered = (r: { from: string; to: string }, c: SpendCoverage | null) => dayCovered(r.from, c) && dayCovered(r.to, c);
 
 /** The ad's spend: Unknown unless it belongs to the active account; per currency, never summed. */
 function spendOf(ad: Pick<AdSource, "adAccountId">, agg: AdAgg, active: ActiveAccount | null): Money | null {
