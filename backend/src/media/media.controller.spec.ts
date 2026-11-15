@@ -69,6 +69,22 @@ describe("MediaController.list query parsing", () => {
       expect(err.getResponse()).toMatchObject({ message: "media.invalid_query", param });
     }
   });
+
+  it("rejects a repeated q even after the global pipe has joined it into one string", () => {
+    const { svc, ctrl } = build();
+    // ValidationPipe({transform:true}) turns ?q=a&q=b into "a,b" for the
+    // parameter; the raw request query still shows the array.
+    const res = { ...fakeRes(), req: { query: { q: ["a", "b"] } } };
+    let err: any;
+    try {
+      ctrl.list("ws", viewer, res as never, undefined, undefined, undefined, "a,b");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ message: "media.invalid_query", param: "q" });
+    expect(svc.listPage).not.toHaveBeenCalled();
+  });
 });
 
 describe("filename* is RFC 5987 encoded", () => {

@@ -111,7 +111,13 @@ export class MediaController {
         throw mediaError("media.invalid_query", { param: "limit" });
       }
     }
-    if (q !== undefined && (typeof q !== "string" || q.trim().length > MEDIA_QUERY_MAX)) {
+    // The global ValidationPipe joins a repeated ?q=a&q=b into "a,b" before it
+    // reaches us, so check the raw request query for the array as well.
+    const rawQ = (res as unknown as { req?: { query?: Record<string, unknown> } }).req?.query?.q;
+    if (
+      Array.isArray(rawQ) ||
+      (q !== undefined && (typeof q !== "string" || q.trim().length > MEDIA_QUERY_MAX))
+    ) {
       throw mediaError("media.invalid_query", { param: "q" });
     }
     if (approved !== undefined && approved !== "true" && approved !== "false") {
