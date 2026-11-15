@@ -5,7 +5,8 @@ import type { PrismaService } from "../prisma/prisma.service";
  * SP-17 (ruling 2): the send-time re-check of an image the AI agent returned.
  * `list_photos` hands the agent a URL; a photo hidden between that tool call
  * and the reply must not be sent. Our own media URLs are recognised here and
- * looked up again; any other URL keeps today's behaviour (l validated it).
+ * looked up again (and dropped unless still approved, failing closed); any
+ * other URL keeps today's behaviour (l validated it).
  */
 
 type Env = Record<string, string | undefined>;
@@ -25,63 +26,79 @@ function parse(url: string | undefined): URL | null {
   }
 }
 
-function decodeSegments(pathname: string): string[] | null {
+function decodeSegment(segment: string): string {
   try {
-    return pathname.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
+    return decodeURIComponent(segment);
   } catch {
-    return null;
+    return segment; // a malformed escape is kept raw (and so is looked up, then dropped)
   }
 }
 
+/** A host compared as DNS does: lowercase, no trailing dot, no port. */
+function normalHost(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
+/** The host of an env URL, normalised; null when unset or malformed. */
+function envHost(value: string | undefined): string | null {
+  const u = parse(value);
+  return u ? normalHost(u.hostname) : null;
+}
+
+/** `<region>.digitaloceanspaces.com` → `<bucket>.<region>.cdn.digitaloceanspaces.com`. */
+function derivedCdnHost(endpointHost: string | null, bucket: string): string | null {
+  const m = endpointHost ? /^([a-z0-9-]+)\.digitaloceanspaces\.com$/.exec(endpointHost) : null;
+  return m ? `${bucket}.${m[1]}.cdn.digitaloceanspaces.com` : null;
+}
+
 /**
- * Recognise our own media URLs (pure; query strings are ignored):
- * - `<PUBLIC_BASE_URL|APP_BASE_URL>/api/media/<id>/public?token=…` (local
- *   storage public-token links, as `MediaService.resolveExternalUrl` builds
- *   them) → `{id}`;
- * - a DO Spaces URL on our bucket (virtual-hosted `<bucket>.<endpoint host>`,
- *   path-style `<endpoint host>/<bucket>/…`, or the CDN host) → the object-key
- *   candidates its path ends in (every suffix of two or more segments; keys
- *   are `<workspaceId>/<file>`).
+ * Recognise our own media URLs (pure; query strings are ignored). SP-17
+ * review M1: anything that looks like ours fails closed (it is looked up, and
+ * dropped unless it is an approved photo of this workspace), so a changed
+ * form of a URL we handed out never passes as `external`.
+ * - a path ending in `/api/media/<id>/public` (optionally `/`), on ANY host
+ *   and scheme, case-insensitive, after percent-decoding each segment. Our
+ *   server routes such paths case-insensitively (Express) behind any alias
+ *   host, so the host is not trusted to tell ours from theirs → `{id}`;
+ * - a DO Spaces URL on our bucket, the host normalised (lowercase, no
+ *   trailing dot, port and scheme ignored): virtual-hosted
+ *   `<bucket>.<endpoint host>`, path-style `<endpoint host>/<bucket>/…`, the
+ *   configured CDN host, or the bucket's DO CDN host derived from the
+ *   endpoint → the object-key candidates its path ends in (every suffix of
+ *   two or more decoded segments; keys are `<workspaceId>/<file>`).
  * Anything else, or a malformed URL → null.
  */
 export function parseOwnMediaUrl(url: string, env: Env = process.env): OwnMediaRef | null {
   const u = parse(url);
   if (!u) return null;
 
-  const bases = [env.PUBLIC_BASE_URL, env.APP_BASE_URL].filter((b): b is string => Boolean(b));
-  if (bases.length === 0) bases.push("http://localhost:3001");
-  for (const b of bases) {
-    const base = parse(b);
-    if (!base || base.origin !== u.origin) continue;
-    const prefix = base.pathname.replace(/\/+$/, "");
-    if (!u.pathname.startsWith(`${prefix}/`)) continue;
-    const m = /^\/api\/media\/([^/]+)\/public\/?$/.exec(u.pathname.slice(prefix.length));
-    if (!m) continue;
-    try {
-      return { id: decodeURIComponent(m[1]) };
-    } catch {
-      return null;
+  const raw = u.pathname.replace(/\/$/, "").split("/");
+  const segments = raw.map(decodeSegment);
+  if (segments.length >= 4) {
+    const [api, media, id, pub] = segments.slice(-4);
+    if (api.toLowerCase() === "api" && media.toLowerCase() === "media" && pub.toLowerCase() === "public") {
+      return id ? { id } : null;
     }
   }
 
-  const bucket = env.DO_SPACES_BUCKET?.toLowerCase();
-  const endpoint = parse(env.DO_SPACES_ENDPOINT);
-  const cdn = parse(env.DO_SPACES_CDN_ENDPOINT);
+  const bucket = env.DO_SPACES_BUCKET?.trim().toLowerCase();
   if (!bucket) return null;
-  const host = u.host.toLowerCase();
-  let segments: string[] | null = null;
-  if ((endpoint && host === `${bucket}.${endpoint.host}`) || (cdn && host === cdn.host)) {
-    segments = decodeSegments(u.pathname);
-  } else if (endpoint && host === endpoint.host) {
-    const all = decodeSegments(u.pathname);
-    if (all && all[0]?.toLowerCase() === bucket) segments = all.slice(1);
-    else return null;
-  } else {
-    return null;
-  }
-  if (!segments) return null;
+  const endpoint = envHost(env.DO_SPACES_ENDPOINT);
+  const own = new Set<string>();
+  if (endpoint) own.add(`${bucket}.${endpoint}`);
+  const cdn = envHost(env.DO_SPACES_CDN_ENDPOINT);
+  if (cdn) own.add(cdn);
+  const derived = derivedCdnHost(endpoint, bucket);
+  if (derived) own.add(derived);
+
+  const host = normalHost(u.hostname);
+  const parts = segments.filter(Boolean);
+  let key: string[];
+  if (own.has(host)) key = parts;
+  else if (endpoint && host === endpoint && parts[0]?.toLowerCase() === bucket) key = parts.slice(1);
+  else return null;
   const storedPathCandidates: string[] = [];
-  for (let i = 0; i <= segments.length - 2; i++) storedPathCandidates.push(segments.slice(i).join("/"));
+  for (let i = 0; i <= key.length - 2; i++) storedPathCandidates.push(key.slice(i).join("/"));
   return { storedPathCandidates };
 }
 
@@ -107,13 +124,20 @@ export async function agentImageDecision(
   if ("storedPathCandidates" in ref && ref.storedPathCandidates.length === 0) {
     return { decision: "drop", mediaId: null };
   }
-  const row = await prisma.media.findFirst({
-    where:
-      "id" in ref
-        ? { id: ref.id, workspaceId }
-        : { workspaceId, storedPath: { in: ref.storedPathCandidates } },
-    select: { id: true, mimeType: true, sizeBytes: true, approvedForAgent: true },
-  });
+  const fallbackId = "id" in ref ? ref.id : null;
+  let row: { id: string; mimeType: string; sizeBytes: number; approvedForAgent: boolean } | null;
+  try {
+    row = await prisma.media.findFirst({
+      where:
+        "id" in ref
+          ? { id: ref.id, workspaceId }
+          : { workspaceId, storedPath: { in: ref.storedPathCandidates } },
+      select: { id: true, mimeType: true, sizeBytes: true, approvedForAgent: true },
+    });
+  } catch {
+    // Our URL, but we cannot confirm it: fail closed.
+    return { decision: "drop", mediaId: fallbackId };
+  }
   if (row && isAgentPhoto(row)) return { decision: "send", mediaId: row.id };
-  return { decision: "drop", mediaId: row?.id ?? ("id" in ref ? ref.id : null) };
+  return { decision: "drop", mediaId: row?.id ?? fallbackId };
 }

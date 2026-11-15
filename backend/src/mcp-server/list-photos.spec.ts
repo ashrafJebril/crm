@@ -141,6 +141,18 @@ describe("list_photos", () => {
     expect(refused).toMatchObject({ error: true });
   });
 
+  it("the mime filter is case-insensitive, like the send-time check (review M2)", async () => {
+    const { prisma, listPhotos } = setup();
+    prisma.db.media.push(
+      photo("upper-jpg", { approvedForAgent: true, mimeType: "IMAGE/JPEG", createdAt: at(60) }),
+      photo("mixed-png", { approvedForAgent: true, mimeType: "Image/Png", createdAt: at(61) }),
+      photo("upper-webp", { approvedForAgent: true, mimeType: "IMAGE/WEBP", createdAt: at(62) }),
+      photo("upper-pdf", { approvedForAgent: true, mimeType: "APPLICATION/PDF", createdAt: at(63) }),
+      photo("upper-hidden", { approvedForAgent: false, mimeType: "IMAGE/JPEG", createdAt: at(64) }),
+    );
+    expect(idsOf(await listPhotos({ limit: 10 }))).toEqual(["mixed-png", "upper-jpg", "ok-png", "ok-jpg"]);
+  });
+
   it("title falls back to the file name for older untitled data", async () => {
     const { prisma, listPhotos } = setup();
     prisma.db.media.push(photo("untitled", { title: null, fileName: "IMG_1.jpg", approvedForAgent: true, createdAt: at(50) }));

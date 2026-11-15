@@ -365,7 +365,8 @@ export class MediaService {
           {
             workspaceId,
             approvedForAgent: true,
-            mimeType: { in: [...AGENT_PHOTO_MIMES] },
+            // Case-insensitive, like isAgentPhoto at send (review M2).
+            OR: AGENT_PHOTO_MIMES.map((m) => ({ mimeType: { equals: m, mode: "insensitive" as const } })),
             sizeBytes: { lte: AGENT_PHOTO_MAX_BYTES },
           },
           mediaSearchWhere(opts.query),
