@@ -39,7 +39,9 @@ export type CampaignErrorKey =
   // SP-14 (ruling 10): paused / disabled templates.
   | "campaigns.template_paused"
   | "campaigns.template_disabled"
-  | "campaigns.template_paused_on_number";
+  | "campaigns.template_paused_on_number"
+  // SP-16 (F1): the campaign's audience (segment) was deleted.
+  | "campaigns.audience_missing";
 
 const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.not_found": 404,
@@ -73,6 +75,8 @@ const STATUS: Record<CampaignErrorKey, 400 | 404 | 409 | 502> = {
   "campaigns.template_paused": 400, // the stored template is paused (before template_not_approved)
   "campaigns.template_disabled": 400, // the stored template is disabled (before template_not_approved)
   "campaigns.template_paused_on_number": 400, // {channelIds, statuses: {channelId: "paused" | "disabled"}}
+  // SP-16
+  "campaigns.audience_missing": 400, // {segmentId}; also a launch failure (lastError)
 };
 
 /** Machine codes carried next to the key (ruling 6: the roadmap's name). */

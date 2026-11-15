@@ -159,6 +159,21 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-16 routes (part 2)", () => {
+    const sp16: Record<string, string> = {
+      "GET /tags/:id/references": "contacts.view",
+      // `?confirm=1` does not change the route key (Global Constraints).
+      "DELETE /tags/:id": "contacts.update",
+      "DELETE /segments/:id": "audiences.delete",
+      // Unchanged and re-asserted.
+      "PATCH /tags/:id": "contacts.update",
+      "POST /tags/merge": "contacts.update",
+    };
+    for (const [k, p] of Object.entries(sp16)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+  });
+
   it("permission map covers SP-15 routes (part 2)", () => {
     const sp15: Record<string, string> = {
       "GET /ad-sources": "conversations.view",

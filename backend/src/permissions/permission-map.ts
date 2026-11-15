@@ -263,6 +263,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "DELETE /custom-fields/:id": "settings.manage",
   // Tags label contacts; agents tag (and create tags) while working contacts.
   "GET /tags": "contacts.view",
+  // SP-16: the smart audiences that name a tag (read before a delete).
+  "GET /tags/:id/references": "contacts.view",
   "POST /tags": "contacts.update",
   "POST /tags/assign": "contacts.update",
   "PATCH /tags/:id": "contacts.update",

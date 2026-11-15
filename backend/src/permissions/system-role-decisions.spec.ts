@@ -353,7 +353,7 @@ describe("system-role decision table", () => {
     });
   });
 
-  // SP-16 (part 1): smart audience routes. Task 2 adds the tag references route.
+  // SP-16: smart audience routes (part 1) and the tag references route (Task 2).
   describe("SP-16 audience routes", () => {
     const READS = [
       "GET /segments",
@@ -362,6 +362,7 @@ describe("system-role decision table", () => {
       "GET /segments/:id/count",
       "GET /segments/:id/candidates",
       "POST /segments/preview",
+      "GET /tags/:id/references",
     ];
     const MUTATIONS = ["POST /segments", "PATCH /segments/:id", "DELETE /segments/:id"];
 
@@ -382,8 +383,16 @@ describe("system-role decision table", () => {
       }
     });
 
+    it("viewer cannot delete a tag (confirmed or not); agent, admin and owner can", () => {
+      const route = "DELETE /tags/:id";
+      expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
+      for (const role of ["owner", "admin", "agent"] as const) {
+        expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
     it("none is blocked for impersonation", () => {
-      for (const route of [...READS, ...MUTATIONS]) {
+      for (const route of [...READS, ...MUTATIONS, "DELETE /tags/:id"]) {
         expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
       }
     });

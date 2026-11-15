@@ -1,4 +1,5 @@
 import { makeFakePrisma } from "../../channels/test-prisma";
+import { SegmentsService } from "../../segments/segments.service";
 import { streamAudience } from "./audience-stream";
 
 describe("streamAudience", () => {
@@ -32,7 +33,8 @@ describe("streamAudience", () => {
   it("streams the audience in keyset pages in id order, each with its custom values", async () => {
     const prisma = build();
     const pages = [];
-    for await (const p of streamAudience(prisma, "ws1", null, ["d-city"], 10)) pages.push(p);
+    // SP-16: the audience comes in as a resolved where (no segment: the workspace).
+    for await (const p of streamAudience(prisma, "ws1", { workspaceId: "ws1" }, ["d-city"], 10)) pages.push(p);
     expect(pages.map((p) => p.contacts.length)).toEqual([10, 10, 5]);
     const ids = pages.flatMap((p) => p.contacts.map((c) => c.id));
     expect(ids).toEqual([...ids].sort());
@@ -45,6 +47,8 @@ describe("streamAudience", () => {
       expect(call[0]).toMatchObject({ where: { workspaceId: "ws1" }, orderBy: { id: "asc" }, take: 10 });
     }
     expect(prisma.contact.findMany.mock.calls[1][0].where.id).toEqual({ gt: pages[0].contacts.at(-1)!.id });
+    // SP-16: the audience sits whole inside AND, next to the cursor.
+    expect(prisma.contact.findMany.mock.calls[1][0].where.AND).toEqual([{ workspaceId: "ws1" }]);
     // One value query per page, only for the requested defs.
     expect(prisma.customFieldValue.findMany).toHaveBeenCalledTimes(3);
     expect(prisma.customFieldValue.findMany.mock.calls[0][0].where.defId).toEqual({ in: ["d-city"] });
@@ -53,7 +57,10 @@ describe("streamAudience", () => {
   it("filters by segment and skips the value query without defs", async () => {
     const prisma = build();
     const ids: string[] = [];
-    for await (const p of streamAudience(prisma, "ws1", "seg", [], 1000)) ids.push(...p.contacts.map((c) => c.id));
+    // SP-16: a manual group resolves by membership through the segments service, unchanged.
+    prisma.db.segment = [{ id: "seg", workspaceId: "ws1", origin: "manual", filter: "{}", rules: null }];
+    const manual = await new SegmentsService(prisma as never).resolveContactWhere("ws1", "seg");
+    for await (const p of streamAudience(prisma, "ws1", manual, [], 1000)) ids.push(...p.contacts.map((c) => c.id));
     expect(ids).toHaveLength(13);
     expect(prisma.customFieldValue.findMany).not.toHaveBeenCalled();
   });

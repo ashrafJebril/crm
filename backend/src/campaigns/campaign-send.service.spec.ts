@@ -39,6 +39,8 @@ describe("CampaignSendService", () => {
       channel: { findFirst: jest.fn().mockResolvedValue(null) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }), findMany: jest.fn().mockResolvedValue([]) },
       contact: { findMany: jest.fn().mockResolvedValue([...contacts(3), { id: "ctX", name: "X", phone: null, lifecycle: "lead" }]) },
+      // SP-16: the campaign's segment, resolved through the segments service (a manual group: by membership).
+      segment: { findFirst: jest.fn().mockResolvedValue({ id: "seg1", workspaceId: "ws1", origin: "manual", filter: "{}", rules: null }) },
       campaignRecipient: {
         createMany: jest.fn().mockImplementation(({ data }) => Promise.resolve({ count: data.length })),
         deleteMany: jest.fn().mockResolvedValue({ count: 0 }),

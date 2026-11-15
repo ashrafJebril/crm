@@ -6,7 +6,8 @@ import { ZernioClient } from "../../integrations/zernio.client";
 import { campaignSender, campaignSenderOptions, campaignSenders } from "../../channels/default-channel";
 import { buildRecipients, estimateMetaCost, templatePlaceholderCount } from "../campaign-audience";
 import { campaignError } from "../campaign-errors";
-import { streamAudience, type StreamedContact } from "./audience-stream";
+import { SegmentsService } from "../../segments/segments.service";
+import { type AudienceResolver, resolveCampaignAudience, streamAudience, type StreamedContact } from "./audience-stream";
 import { campaignDirectMax, campaignMaxPartitions, partitionKey, planTransport, slotsInOrder, type TransportKind } from "./partition";
 import { assignSender, normalizeSenderWrite, splitCounts, templateOnSenders, type PausedCopy } from "./senders";
 import { ZernioBudget } from "./zernio-budget";
@@ -86,12 +87,18 @@ export function renderTemplate(body: string, values: readonly string[]): string 
 export class CampaignPreviewService {
   /** The process-wide Zernio budget (final review, R19): template reads take a token; a 429 pauses it. */
   budget: ZernioBudget = ZernioBudget.shared();
+  /** SP-16 (F1): resolves the campaign's audience (smart audiences through the compiler). */
+  private readonly segments: AudienceResolver;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly zernio: ZernioClient,
     private readonly media: MediaService,
-  ) {}
+    // Required by Nest (SegmentsModule provides it); hand-built specs may pass a stub or nothing.
+    segments?: SegmentsService,
+  ) {
+    this.segments = segments ?? new SegmentsService(prisma);
+  }
 
   async preview(
     workspaceId: string,
@@ -111,6 +118,10 @@ export class CampaignPreviewService {
       : null;
     // A body id never 404s (ruling 11): unknown or foreign → 400.
     if (body.templateId && !template) throw campaignError("campaigns.template_not_approved");
+
+    // SP-16 (F1): one resolve, one `now`, the same compiler as the contacts
+    // list. A deleted (or foreign) segment → 400 campaigns.audience_missing.
+    const audienceWhere = await resolveCampaignAudience(this.segments, workspaceId, body.segmentId || null, new Date());
 
     // Through MediaService.get with the viewer: foreign, unknown or (for an
     // assigned-only member) invisible media → 404 (fix round 1, M2).
@@ -135,7 +146,7 @@ export class CampaignPreviewService {
     const sampleSlots: { reachable?: PreviewSample; fallback?: PreviewSample; skipped?: PreviewSample } = {};
     const wantSamples = opts.canViewContacts && !!template;
 
-    for await (const page of streamAudience(this.prisma, workspaceId, body.segmentId || null, map.defIds)) {
+    for await (const page of streamAudience(this.prisma, workspaceId, audienceWhere, map.defIds)) {
       total += page.contacts.length;
       const built = buildRecipients(page.contacts, seen);
       skipped.noPhone += built.skipped.noPhone;

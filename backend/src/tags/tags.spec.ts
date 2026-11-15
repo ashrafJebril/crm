@@ -57,6 +57,9 @@ describe("TagsService", () => {
     $transaction: jest.Mock;
   };
   let svc: TagsService;
+  const sqlOf = (call: unknown[]) => (call[0] as string[]).join("?");
+  /** `tx.$executeRaw` calls other than the SP-16 workspace audience lock. */
+  const contactRaw = () => tx.$executeRaw.mock.calls.filter((c: unknown[]) => !sqlOf(c).includes("pg_advisory_xact_lock"));
 
   beforeEach(() => {
     tx = {
@@ -170,7 +173,9 @@ describe("TagsService", () => {
       .mockResolvedValueOnce({ id: "t1", name: "VIP", color: "90" })
       .mockResolvedValueOnce(null);
     await svc.update("ws1", "t1", { name: "Gold" });
-    const sql = (tx.$executeRaw.mock.calls[0][0] as string[]).join("?");
+    // SP-16: the workspace audience lock comes first, then the contact rewrite.
+    expect(sqlOf(tx.$executeRaw.mock.calls[0])).toContain("pg_advisory_xact_lock");
+    const sql = sqlOf(contactRaw()[0]);
     expect(sql).toContain("jsonb_agg(DISTINCT");
     expect(sql).toContain('"workspaceId" =');
   });
@@ -180,9 +185,10 @@ describe("TagsService", () => {
     tx.$executeRaw.mockResolvedValue(2);
     const res = await svc.remove("ws1", "t1");
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(contactRaw()).toHaveLength(1);
     expect(tx.tag.delete).toHaveBeenCalledWith({ where: { id: "t1" } });
-    expect(res).toEqual({ ok: true, contactsUpdated: 2 });
+    // SP-16: an unreferenced tag deletes as before; no audience was marked.
+    expect(res).toEqual({ ok: true, contactsUpdated: 2, audiencesMarked: 0 });
   });
 
   describe("merge", () => {
@@ -199,14 +205,14 @@ describe("TagsService", () => {
       tx.$executeRaw.mockResolvedValue(2);
       const res = await svc.merge("ws1", ["a", "b"], "into");
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-      expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
-      const call = tx.$executeRaw.mock.calls[0];
-      const sql = (call[0] as string[]).join("?");
+      expect(contactRaw()).toHaveLength(2);
+      const call = contactRaw()[0];
+      const sql = sqlOf(call);
       expect(sql).toContain("jsonb_agg(DISTINCT");
       expect(sql).toContain('"tags"::jsonb ?');
       expect(sql).not.toContain("LIKE");
       expect(call.slice(1)).toEqual(["VIP", "Premium", "ws1", "VIP"]);
-      expect(tx.$executeRaw.mock.calls[1].slice(1)).toEqual(["Gold", "Premium", "ws1", "Gold"]);
+      expect(contactRaw()[1].slice(1)).toEqual(["Gold", "Premium", "ws1", "Gold"]);
       expect(tx.tag.delete).not.toHaveBeenCalled();
       expect(res).toEqual({ contactsUpdated: 4, segmentsUpdated: 0, removed: 2 });
     });

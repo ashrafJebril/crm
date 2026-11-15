@@ -11,12 +11,27 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from "@nestjs/common";
 import { ArrayNotEmpty, ArrayUnique, IsArray, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 import { Transform } from "class-transformer";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import {
+  LEGACY_SENTINEL,
+  legacyProjection,
+  readRules,
+  rewriteRulesTagName,
+  type AudienceRules,
+} from "../segments/audience-rules";
+import {
+  audienceRefs,
+  findReferencingAudiences,
+  writeMarkedAudiences,
+  type MarkingClient,
+} from "../segments/audience-marking";
+import { tagError } from "./tag-errors";
 
 /** Deterministic 12-step hue for auto-colored tags (matches the absorb
  *  migration's hashtext formula in spirit; exact parity isn't required —
@@ -101,6 +116,23 @@ export function rewriteFilterTagName(
  *  extended Prisma client's tx isn't assignable to Prisma.TransactionClient). */
 type TagTx = Pick<PrismaService, "$executeRaw" | "segment">;
 
+/** `?confirm=1` (or `true`) on the destructive routes (ruling 7). */
+export function isConfirmed(raw: unknown): boolean {
+  return raw === true || raw === "1" || raw === "true";
+}
+
+/** A rule that names tag `name` (exact). */
+const namesTag = (name: string) => (r: { field: string; tag?: string }) => r.field === "tag" && r.tag === name;
+
+/**
+ * SP-16: serialize with audience saves (the same workspace advisory lock as
+ * `SegmentsService.save`), so a save cannot slip a rule naming the old tag in
+ * between our scan and our write.
+ */
+function lockAudiences(tx: TagTx, workspaceId: string) {
+  return tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"sp16:audiences:" + workspaceId}))`;
+}
+
 @Injectable()
 export class TagsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -174,6 +206,7 @@ export class TagsService {
       let contactsUpdated = 0;
       let segmentsUpdated = 0;
       if (renaming) {
+        await lockAudiences(tx, workspaceId);
         contactsUpdated = await this.renameOnContacts(tx, workspaceId, tag.name, newName);
         segmentsUpdated = await this.renameInSegments(tx, workspaceId, [
           [tag.name, newName],
@@ -208,9 +241,18 @@ export class TagsService {
     `;
   }
 
-  /** Saved crm segments store tag NAMES in their filter JSON; without this a
-   *  renamed/merged tag silently makes every smart segment match nothing.
-   *  Applies the (from, to) pairs in order; returns segments actually written. */
+  /** Saved crm segments store tag NAMES in their filter JSON and (SP-16) in
+   *  their rule trees; without this a renamed/merged tag silently makes every
+   *  smart segment match nothing. Applies the (from, to) pairs in order;
+   *  returns segments actually written (each counted once).
+   *
+   *  - A row with `rules` (v2): the rules are rewritten (`rewriteRulesTagName`:
+   *    exact names, identical siblings deduplicated, `missing` rules left
+   *    alone). `filter` becomes the new tree's legacy projection when it has
+   *    one, else stays the nobody-sentinel. `version` is bumped so an open
+   *    editor holding the old name gets 409 instead of writing it back.
+   *  - A legacy row: its `filter` arrays are rewritten as before (legacy rows
+   *    are never converted to rules here). */
   private async renameInSegments(
     tx: TagTx,
     workspaceId: string,
@@ -218,10 +260,32 @@ export class TagsService {
   ): Promise<number> {
     const segments = await tx.segment.findMany({
       where: { workspaceId, origin: "crm" },
-      select: { id: true, filter: true },
+      select: { id: true, filter: true, rules: true },
     });
     let updated = 0;
     for (const s of segments) {
+      const { tree, source } = readRules(s);
+      if (source === "rules") {
+        let next: AudienceRules = tree;
+        let changedRules = false;
+        for (const [from, to] of pairs) {
+          const r = rewriteRulesTagName(next, from, to);
+          if (r === null) continue;
+          next = r;
+          changedRules = true;
+        }
+        if (!changedRules) continue;
+        await tx.segment.update({
+          where: { id: s.id },
+          data: {
+            rules: next as unknown as Prisma.InputJsonValue,
+            filter: JSON.stringify(legacyProjection(next) ?? LEGACY_SENTINEL),
+            version: { increment: 1 },
+          },
+        });
+        updated += 1;
+        continue;
+      }
       let filter = s.filter;
       let changed = false;
       for (const [from, to] of pairs) {
@@ -255,6 +319,7 @@ export class TagsService {
     }
     const sources = from.map((id) => byId.get(id)!);
     return this.prisma.$transaction(async (tx) => {
+      await lockAudiences(tx, workspaceId);
       let contactsUpdated = 0;
       for (const src of sources) {
         contactsUpdated += await this.renameOnContacts(tx, workspaceId, src.name, into.name);
@@ -271,10 +336,45 @@ export class TagsService {
     });
   }
 
-  async remove(workspaceId: string, id: string) {
+  /**
+   * `GET /tags/:id/references`: the smart audiences whose rules (not marked
+   * `missing`) or legacy filter (`tagsAll`/`tagsAny`, read as rules) name this
+   * tag exactly. Foreign or unknown id: 404.
+   */
+  async references(workspaceId: string, id: string) {
     const tag = await this.prisma.tag.findFirst({ where: { id, workspaceId } });
     if (!tag) throw new NotFoundException("Tag not found");
+    const list = await findReferencingAudiences(this.prisma as unknown as MarkingClient, workspaceId, namesTag(tag.name));
+    return { audiences: audienceRefs(list) };
+  }
+
+  /**
+   * SP-16 safe delete (ruling 7). A tag that smart audiences use answers 409
+   * `tags.in_use_by_audiences {audiences}` and writes nothing, unless
+   * `confirm`. Confirmed (or unreferenced), ONE transaction:
+   * 1. the workspace audience lock (as `SegmentsService.save`);
+   * 2. the tag is removed from contacts (exact element);
+   * 3. every referencing audience gets its tag rules marked `missing` (never
+   *    dropped: they match nobody, for `has` and `not_has`), a legacy filter
+   *    first converted to rules; `filter` becomes the nobody-sentinel and
+   *    `version` is bumped;
+   * 4. the catalog row is deleted.
+   * The references are read again inside the transaction: one that appeared
+   * after an unconfirmed check still answers 409 (and rolls back).
+   */
+  async remove(workspaceId: string, id: string, opts: { confirm?: boolean } = {}) {
+    const tag = await this.prisma.tag.findFirst({ where: { id, workspaceId } });
+    if (!tag) throw new NotFoundException("Tag not found");
+    const pred = namesTag(tag.name);
+    if (!opts.confirm) {
+      const refs = await findReferencingAudiences(this.prisma as unknown as MarkingClient, workspaceId, pred);
+      if (refs.length) throw tagError("tags.in_use_by_audiences", { audiences: audienceRefs(refs) });
+    }
     return this.prisma.$transaction(async (tx) => {
+      await lockAudiences(tx, workspaceId);
+      const client = tx as unknown as MarkingClient;
+      const refs = await findReferencingAudiences(client, workspaceId, pred);
+      if (refs.length && !opts.confirm) throw tagError("tags.in_use_by_audiences", { audiences: audienceRefs(refs) });
       const contactsUpdated = await tx.$executeRaw`
         UPDATE "Contact"
         SET "tags" = (
@@ -283,8 +383,9 @@ export class TagsService {
         )
         WHERE "workspaceId" = ${workspaceId} AND "tags"::jsonb ? ${tag.name}
       `;
+      const audiencesMarked = await writeMarkedAudiences(client, workspaceId, refs);
       await tx.tag.delete({ where: { id } });
-      return { ok: true as const, contactsUpdated };
+      return { ok: true as const, contactsUpdated, audiencesMarked };
     });
   }
 
@@ -381,7 +482,7 @@ export class TagsService {
 }
 
 @Controller("tags")
-class TagsController {
+export class TagsController {
   constructor(private readonly svc: TagsService) {}
 
   @Get()
@@ -403,9 +504,15 @@ class TagsController {
     return this.svc.update(workspaceId, id, dto);
   }
 
+  @Get(":id/references")
+  references(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.svc.references(workspaceId, id);
+  }
+
+  /** `?confirm=1` deletes a tag that smart audiences use, marking their rules (ruling 7). */
   @Delete(":id")
-  remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.svc.remove(workspaceId, id);
+  remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Query("confirm") confirm?: string) {
+    return this.svc.remove(workspaceId, id, { confirm: isConfirmed(confirm) });
   }
 
   @Post("merge")

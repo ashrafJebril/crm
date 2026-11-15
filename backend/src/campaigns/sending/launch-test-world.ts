@@ -22,6 +22,7 @@ import { CampaignReportService } from "../campaign-report.service";
 import { CampaignLaunchRunner } from "./campaign-launch-runner.service";
 import { CampaignLaunchScheduler } from "./campaign-launch.scheduler";
 import { CampaignPreviewService } from "./campaign-preview.service";
+import { SegmentsService } from "../../segments/segments.service";
 import type { ZernioBudget } from "./zernio-budget";
 
 export const WS = "ws1";
@@ -222,6 +223,9 @@ export interface WorldOpts {
   customFieldValue?: Array<Record<string, unknown>>;
   media?: Array<Record<string, unknown>>;
   zernioTemplates?: Array<Record<string, unknown>>;
+  /** SP-16: segment rows (manual groups resolve by `segmentMember`). */
+  segments?: Array<Record<string, unknown>>;
+  segmentMembers?: Array<Record<string, unknown>>;
 }
 
 export function world(opts: WorldOpts = {}) {
@@ -260,6 +264,8 @@ export function world(opts: WorldOpts = {}) {
     customFieldDef: (opts.customFieldDef ?? []) as never,
     customFieldValue: (opts.customFieldValue ?? []) as never,
     media: (opts.media ?? []) as never,
+    segment: (opts.segments ?? []) as never,
+    segmentMember: (opts.segmentMembers ?? []) as never,
   });
   const zernio = fakeZernio(opts.zernioTemplates ?? [zernioCopy(body)]);
   const media = {
@@ -271,10 +277,17 @@ export function world(opts: WorldOpts = {}) {
     resolveExternalUrl: jest.fn(async (_ws: string, id: string, ttl: number) => `https://cdn.test/${id}?ttl=${ttl}`),
   };
   const notifications = { notify: jest.fn(async () => 1) };
+  // SP-16 (F1): the audience resolver every campaign path uses. The real
+  // segments service over the same fake (manual groups by membership, a
+  // missing segment 404s), behind a spy specs can override.
+  const realSegments = new SegmentsService(prisma);
+  const segments = {
+    resolveContactWhere: jest.fn((ws: string, id: string, o?: { now?: Date }) => realSegments.resolveContactWhere(ws, id, o)),
+  };
   const tracker = new RecipientTrackerService(prisma);
   const { budget, takes } = freeBudget();
   const makeRunner = () => {
-    const r = new CampaignLaunchRunner(prisma, zernio as never, media as never, notifications as never, tracker);
+    const r = new CampaignLaunchRunner(prisma, zernio as never, media as never, notifications as never, tracker, segments as never);
     r.budget = budget;
     r.sleep = async () => {};
     return r;
@@ -282,10 +295,10 @@ export function world(opts: WorldOpts = {}) {
   const runner = makeRunner();
   const scheduler = new CampaignLaunchScheduler(prisma, runner, tracker);
   const isLocked = jest.fn(async () => false);
-  const send = new CampaignSendService(prisma, zernio as never, { isLocked } as never, tracker, runner, media as never);
+  const send = new CampaignSendService(prisma, zernio as never, { isLocked } as never, tracker, runner, media as never, segments as never);
   // The services' Zernio reads use the same free budget (SP-13 final review, R19).
   send.budget = budget;
-  const preview = new CampaignPreviewService(prisma, zernio as never, media as never);
+  const preview = new CampaignPreviewService(prisma, zernio as never, media as never, segments as never);
   preview.budget = budget;
   const report = new CampaignReportService(prisma);
   const camp = () => prisma.db.campaign.find((c: any) => c.id === "camp");
@@ -303,7 +316,7 @@ export function world(opts: WorldOpts = {}) {
     await runner.idle();
     return n;
   };
-  return { prisma, zernio, media, notifications, tracker, runner, makeRunner, scheduler, send, preview, report, isLocked, budget, takes, camp, rows, partitions, launch, resume };
+  return { prisma, zernio, media, notifications, segments, tracker, runner, makeRunner, scheduler, send, preview, report, isLocked, budget, takes, camp, rows, partitions, launch, resume };
 }
 
 /** The report service's raw insights queries, evaluated in JS (as campaign-report.service.spec does). */

@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { SegmentsService } from "../segments/segments.service";
 import { fieldWhere, type FieldOp } from "../custom-fields/custom-fields.service";
+import { pipelineStageWhere } from "./pipeline-stage-where";
 
 export interface ContactFieldFilter {
   defId: string;
@@ -185,13 +186,9 @@ export async function buildContactWhere(
   }
   if (f.ownerId === "none") where.ownerId = null;
   else if (f.ownerId) where.ownerId = f.ownerId;
-  if (f.pipelineId) {
-    and.push({
-      tickets: {
-        some: { pipelineId: f.pipelineId, ...(f.stageId ? { stageId: f.stageId } : {}), closedAt: null },
-      },
-    });
-  }
+  // SP-16 ruling 9: the same predicate as the audience `pipeline_stage` rule
+  // (a stage → any card in it, open or closed; pipeline only → open cards).
+  if (f.pipelineId) and.push(pipelineStageWhere(workspaceId, { pipelineId: f.pipelineId, stageId: f.stageId }, "in"));
   if (f.optOut !== undefined) where.marketingOptOut = f.optOut;
   if (f.notALead !== undefined) where.notALead = f.notALead;
 

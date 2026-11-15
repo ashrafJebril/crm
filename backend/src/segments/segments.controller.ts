@@ -1,10 +1,9 @@
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { SegmentsService } from "./segments.service";
 import { MarketingOutboundService } from "./marketing-outbound.service";
 import { addManualMembers, requireManualGroup } from "./segment-members";
-import { audienceNotFound } from "./audience-errors";
 import { AddMembersDto, CreateSegmentDto, PreviewSegmentDto, UpdateSegmentDto } from "./segments.dto";
 
 /**
@@ -60,17 +59,16 @@ export class SegmentsController {
     return row;
   }
 
-  /** Unchanged in Task 1; the reference-aware delete (ruling 7) is Task 2. */
+  /**
+   * Reference-aware delete (ruling 7): 409 `audiences.in_use_by_campaigns`
+   * (no override) or `audiences.in_use` (override with `?confirm=1`, which
+   * marks the referencing rules). Answers `{ok: true, audiencesMarked}`.
+   */
   @Delete(":id")
-  async remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    const existing = await this.prisma.segment.findFirst({ where: { id, workspaceId } });
-    if (!existing) throw audienceNotFound();
-    if (existing.origin === "hjz") {
-      throw new NotFoundException("Segment is managed by HJZ and read-only here");
-    }
-    await this.prisma.segment.delete({ where: { id } });
+  async remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Query("confirm") confirm?: string) {
+    const res = await this.svc.remove(workspaceId, id, { confirm: confirm === "1" || confirm === "true" });
     void this.outbound.emitSegmentDeleted(workspaceId, id);
-    return { ok: true };
+    return res;
   }
 
   @Get(":id/contacts")

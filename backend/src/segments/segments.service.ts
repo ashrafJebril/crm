@@ -17,6 +17,7 @@ import {
 import { toAudienceRow, type AudienceRow } from "./audience-dto";
 import { audienceError, audienceNotFound } from "./audience-errors";
 import { assertReferencesExist, emptyLookups, loadLookups, type AudienceLookups, type LookupsPrisma } from "./audience-lookups";
+import { audienceRefs, findReferencingAudiences, writeMarkedAudiences, type MarkingClient } from "./audience-marking";
 import {
   LEGACY_SENTINEL,
   legacyProjection,
@@ -40,6 +41,19 @@ export const COUNT_ROUTE_FRESH_MS = 10_000;
 export const PAGE_LIMIT_DEFAULT = 50;
 export const PAGE_LIMIT_MAX = 100;
 export const PREVIEW_SAMPLE = 5;
+
+/**
+ * Ruling 7: a campaign in one of these states may still read its audience,
+ * so the audience cannot be deleted at all (no `confirm` override):
+ * `scheduled`, `launching` (the SP-13 background job) or `running`, or a
+ * launch stage of `planning` / `sending`.
+ */
+export const LIVE_CAMPAIGN_STATUSES = ["scheduled", "launching", "running"];
+export const LIVE_LAUNCH_STAGES = ["planning", "sending"];
+
+export function isLiveCampaign(c: { status: string; launchStage?: string | null }): boolean {
+  return LIVE_CAMPAIGN_STATUSES.includes(c.status) || (!!c.launchStage && LIVE_LAUNCH_STAGES.includes(c.launchStage));
+}
 
 export interface SaveAudienceInput {
   name?: string;
@@ -268,6 +282,47 @@ export class SegmentsService {
       .filter((s) => s.id !== id && referencedIds(readRules(s).tree).segmentIds.includes(id))
       .map((s) => ({ id: s.id, name: s.name, nameAr: s.nameAr }));
     return { audiences, campaigns };
+  }
+
+  /**
+   * `DELETE /segments/:id` (ruling 7), ONE transaction:
+   * 1. the workspace audience lock (as `save`), then the row (404; an hjz
+   *    row keeps its pre-SP-16 404 text);
+   * 2. a campaign that may still read the audience (`isLiveCampaign`) → 409
+   *    `audiences.in_use_by_campaigns {campaigns}`, even with `confirm`;
+   * 3. other references (smart audiences with a `group` rule naming it, any
+   *    other campaign) without `confirm` → 409 `audiences.in_use {audiences, campaigns}`;
+   * 4. the referencing `group` rules are marked `missing` (issue
+   *    `group_missing`, nobody, for `in` and `not_in`), and the row is deleted.
+   * Draft campaigns keep their dangling `segmentId`; their preview and launch
+   * then refuse with `campaigns.audience_missing`. Nothing is written on a 409.
+   */
+  async remove(workspaceId: string, id: string, opts: { confirm?: boolean } = {}): Promise<{ ok: true; audiencesMarked: number }> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"sp16:audiences:" + workspaceId}))`;
+        const row = (await tx.segment.findFirst({ where: { id, workspaceId } })) as SegmentRow | null;
+        if (!row) throw audienceNotFound();
+        if (row.origin === "hjz") throw new NotFoundException("Segment is managed by HJZ and read-only here");
+        const campaignRows = (await tx.campaign.findMany({
+          where: { workspaceId, segmentId: id },
+          select: { id: true, name: true, status: true, launchStage: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        })) as Array<{ id: string; name: string; status: string; launchStage: string | null }>;
+        const campaigns = campaignRows.map((c) => ({ id: c.id, name: c.name, status: c.status }));
+        const live = campaignRows.filter(isLiveCampaign).map((c) => ({ id: c.id, name: c.name, status: c.status }));
+        if (live.length) throw audienceError("audiences.in_use_by_campaigns", { campaigns: live });
+        const client = tx as unknown as MarkingClient;
+        const refs = await findReferencingAudiences(client, workspaceId, (r) => r.field === "group" && r.segmentId === id, { excludeId: id });
+        if ((refs.length || campaigns.length) && !opts.confirm) {
+          throw audienceError("audiences.in_use", { audiences: audienceRefs(refs), campaigns });
+        }
+        const audiencesMarked = await writeMarkedAudiences(client, workspaceId, refs);
+        await tx.segment.delete({ where: { id } });
+        return { ok: true as const, audiencesMarked };
+      },
+      { timeout: 20_000, maxWait: 10_000 },
+    );
   }
 
   /** `GET /segments/:id`: the row (with a fresh-or-cached count) plus what uses it. */

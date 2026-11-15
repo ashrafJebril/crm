@@ -20,6 +20,10 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { AdSourcesService } from "../ad-attribution/ad-sources.service";
+import { createAudienceDb } from "../segments/audience-test-db";
+import { predicateWorld, WS as SP16_WS } from "../segments/__fixtures__/audience-world";
+import { SegmentsController } from "../segments/segments.controller";
+import { SegmentsService } from "../segments/segments.service";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -664,5 +668,47 @@ describe("SP-15 per-ad conversation list", () => {
         response: { statusCode: 404, message: "ads.not_found" },
       });
     }
+  });
+});
+
+/**
+ * SP-16 ruling 14: smart-audience rules over conversation data (last active,
+ * channel, conversations) evaluate workspace-wide, so an assigned-only member
+ * may learn that SOME contact matches. What the audience routes return must
+ * still carry no conversation id, message text or assignee.
+ */
+describe("audience routes expose no conversation data", () => {
+  it("the JSON of /segments/:id/contacts, the preview sample and the detail has no conversation id, message text or assignee", async () => {
+    const t = predicateWorld();
+    for (const cv of t.conversation) Object.assign(cv, { assigneeId: "agent-secret-7", lastMessage: "SECRET-CONVERSATION-TEXT" });
+    for (const m of t.message) Object.assign(m, { text: "SECRET-MESSAGE-TEXT" });
+    const fake = createAudienceDb(t);
+    const svc = new SegmentsService(fake.prisma as never);
+    const ctrl = new SegmentsController(fake.prisma as never, svc, { emitSegmentUpserted: jest.fn(), emitSegmentDeleted: jest.fn() } as never);
+    const rules = {
+      v: 2 as const,
+      op: "or" as const,
+      rules: [
+        { field: "last_active" as const, op: "within" as const, value: { amount: 30, unit: "days" as const } },
+        { field: "channel" as const, op: "is" as const, channel: "whatsapp" },
+        { field: "conversations" as const, op: "any" as const },
+      ],
+    };
+    const saved = await svc.save(SP16_WS, { name: "Talkers", rules });
+    const page = await ctrl.contacts(SP16_WS, saved.id);
+    const preview = await svc.preview(SP16_WS, { rules });
+    const detail = await ctrl.detail(SP16_WS, saved.id);
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(preview.sample.length).toBeGreaterThan(0);
+    const json = JSON.stringify([page, preview, detail]);
+    const convIds = t.conversation.map((c) => c.id);
+    const msgIds = t.message.map((m) => m.id);
+    for (const id of [...convIds, ...msgIds]) expect({ id, leaked: json.includes(`"${id}"`) }).toEqual({ id, leaked: false });
+    for (const secret of ["agent-secret-7", "SECRET-CONVERSATION-TEXT", "SECRET-MESSAGE-TEXT", "assigneeId", "conversationId", "messages"]) {
+      expect({ secret, leaked: json.includes(secret) }).toEqual({ secret, leaked: false });
+    }
+    // Only contact columns, in the documented page and sample shapes.
+    for (const item of page.items) expect(Object.keys(item).sort()).toEqual(["email", "id", "lifecycle", "name", "phone"]);
+    for (const s of preview.sample) expect(Object.keys(s).sort()).toEqual(["id", "name", "phone"]);
   });
 });

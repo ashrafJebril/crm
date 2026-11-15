@@ -11,6 +11,7 @@
 import type { Prisma } from "@prisma/client";
 import { localMidnight } from "../activities/buckets";
 import { fieldWhere } from "../custom-fields/custom-fields.service";
+import { pipelineStageWhere } from "../contacts/pipeline-stage-where";
 import type { AudienceLookups } from "./audience-lookups";
 import {
   AUDIENCE_LIMITS,
@@ -48,17 +49,8 @@ const HOISTED_FIELDS = new Set(["industry", "source", "name", "phone", "stage_ke
 
 const tagNeedle = (name: string): Prisma.ContactWhereInput => ({ tags: { contains: JSON.stringify(name) } });
 
-/** "pipeline_stage" predicate (ruling 9): a stage → any card in it, open or closed; pipeline only → open cards. */
-export function pipelineStageWhere(
-  ws: string,
-  ref: { pipelineId: string; stageId?: string },
-  op: "in" | "not_in",
-): Prisma.ContactWhereInput {
-  const ticket: Prisma.TicketWhereInput = ref.stageId
-    ? { workspaceId: ws, pipelineId: ref.pipelineId, stageId: ref.stageId }
-    : { workspaceId: ws, pipelineId: ref.pipelineId, closedAt: null };
-  return { tickets: op === "in" ? { some: ticket } : { none: ticket } };
-}
+/** Re-exported: the shared helper lives in contacts/ (ruling 9, Task 2 B4). */
+export { pipelineStageWhere };
 
 function missingKind(r: AudienceRule): RuleIssueKind {
   switch (r.field) {

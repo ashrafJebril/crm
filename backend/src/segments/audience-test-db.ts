@@ -37,6 +37,8 @@ export interface AudienceTables {
   campaignRecipient: Row[];
   activity: Row[];
   workspace: Row[];
+  /** SP-16 Task 2: the tag catalog (safe tag deletes). */
+  tag: Row[];
 }
 
 export function emptyTables(): AudienceTables {
@@ -55,6 +57,7 @@ export function emptyTables(): AudienceTables {
     campaignRecipient: [],
     activity: [],
     workspace: [],
+    tag: [],
   };
 }
 
@@ -287,6 +290,12 @@ export interface AudienceDbCall {
 export interface AudienceDbOptions {
   /** Run interactive transactions one at a time (a stand-in for the advisory lock). */
   serializeTransactions?: boolean;
+  /**
+   * SP-16 Task 2: emulate a raw `$executeRaw` statement the helper does not
+   * know (for example the tag SQL on `Contact.tags`). Return the affected row
+   * count, or `undefined` to fall through to the built-in handling.
+   */
+  raw?: (sql: string, values: unknown[], db: AudienceTables) => number | undefined;
 }
 
 let idSeq = 0;
@@ -329,6 +338,27 @@ export function createAudienceDb(tables: Partial<AudienceTables> = {}, opts: Aud
       count: async (args: any = {}) => {
         log(model, "count", args);
         return db[model].filter((r) => matchesWhere(db, model, r, args.where)).length;
+      },
+      update: async (args: any) => {
+        log(model, "update", args);
+        const row = db[model].find((r) => matchesWhere(db, model, r, args.where));
+        if (!row) throw Object.assign(new Error("Record to update not found."), { code: "P2025" });
+        Object.assign(row, normalizeData(args.data, row));
+        return project(row, args.select);
+      },
+      delete: async (args: any) => {
+        log(model, "delete", args);
+        const i = db[model].findIndex((r) => matchesWhere(db, model, r, args.where));
+        if (i < 0) throw Object.assign(new Error("Record to delete does not exist."), { code: "P2025" });
+        const [row] = db[model].splice(i, 1);
+        return project(row, args.select);
+      },
+      deleteMany: async (args: any = {}) => {
+        log(model, "deleteMany", args);
+        const keep = db[model].filter((r) => !matchesWhere(db, model, r, args.where));
+        const count = db[model].length - keep.length;
+        db[model].splice(0, db[model].length, ...keep);
+        return { count };
       },
     });
 
@@ -410,9 +440,12 @@ export function createAudienceDb(tables: Partial<AudienceTables> = {}, opts: Aud
       customFieldDef: generic("customFieldDef"),
       campaign: generic("campaign"),
       workspace: generic("workspace"),
+      tag: generic("tag"),
       $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = strings.join("?");
         log("$raw", "$executeRaw", { sql, values });
+        const custom = opts.raw?.(sql, values, db);
+        if (custom !== undefined) return custom;
         if (/UPDATE "Segment" SET "memberCount"/.test(sql)) {
           const [count, at, id, ws] = values as [number, Date, string, string];
           const row = db.segment.find((r) => r.id === id && r.workspaceId === ws);
@@ -436,12 +469,14 @@ export function createAudienceDb(tables: Partial<AudienceTables> = {}, opts: Aud
       const id = ++txSeq;
       calls.push({ model: "$tx", op: "begin", args: options, tx: id });
       const run = async () => {
-        // A snapshot so a thrown error rolls the segment table back, like Postgres.
-        const snapshot = db.segment.map((r) => ({ ...r }));
+        // A snapshot so a thrown error rolls every table back, like Postgres.
+        const snapshot = Object.fromEntries(
+          (Object.keys(db) as Array<keyof AudienceTables>).map((k) => [k, db[k].map((r) => ({ ...r }))]),
+        ) as unknown as AudienceTables;
         try {
           return await fn(client.__tx(id));
         } catch (e) {
-          db.segment.splice(0, db.segment.length, ...snapshot);
+          for (const k of Object.keys(snapshot) as Array<keyof AudienceTables>) db[k].splice(0, db[k].length, ...snapshot[k]);
           throw e;
         } finally {
           calls.push({ model: "$tx", op: "end", args: null, tx: id });

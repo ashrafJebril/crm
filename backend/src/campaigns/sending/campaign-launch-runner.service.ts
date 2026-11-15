@@ -6,7 +6,8 @@ import { NotificationsService } from "../../notifications/notifications.service"
 import { workspaceContext } from "../../common/workspace-context";
 import { RecipientTrackerService } from "../tracking/recipient-tracker.service";
 import { campaignError } from "../campaign-errors";
-import { AUDIENCE_PAGE } from "./audience-stream";
+import { SegmentsService } from "../../segments/segments.service";
+import { AUDIENCE_PAGE, type AudienceResolver, resolveCampaignAudience } from "./audience-stream";
 import { type PartitionRow, prepareBroadcastPartition, sendBroadcastPartition } from "./broadcast-transport";
 import { sendDirectPartition } from "./direct-transport";
 import { CancelRequested, defIdsFor, type LaunchJob, LeaseLost, loadCustomDefs, resolveLaunchSenders } from "./launch-context";
@@ -104,6 +105,8 @@ export class CampaignLaunchRunner {
   private readonly inFlight = new Set<string>();
   private readonly pending = new Set<Promise<void>>();
   private readonly tracker: RecipientTrackerService;
+  /** SP-16 (F1): resolves the campaign's audience (smart audiences through the compiler). */
+  private readonly segments: AudienceResolver;
 
   /** Audience page size (tests lower it). */
   pageSize = AUDIENCE_PAGE;
@@ -124,8 +127,11 @@ export class CampaignLaunchRunner {
     @Optional() private readonly media?: MediaService,
     @Optional() private readonly notifications?: NotificationsService,
     @Optional() tracker?: RecipientTrackerService,
+    // Required by Nest (no @Optional: SegmentsModule provides it); hand-built specs may pass a stub or nothing.
+    segments?: SegmentsService,
   ) {
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
+    this.segments = segments ?? new SegmentsService(prisma);
   }
 
   /** Start (or resume) a launch in the background; never throws. */
@@ -341,10 +347,16 @@ export class CampaignLaunchRunner {
 
     let transport = c.sendTransport as "broadcast" | "direct" | null;
     if (c.launchStage === "planning" || !c.planCompletedAt) {
+      // SP-16 (F1, ruling 17): the audience is resolved ONCE per plan, with the
+      // plan start as `now`; a deleted segment fails the job with
+      // `campaigns.audience_missing` (never the whole workspace).
+      const planStart = new Date();
+      const audienceWhere = await resolveCampaignAudience(this.segments, ws, c.segmentId ?? null, planStart);
       const defs = await loadCustomDefs(this.prisma, ws);
       const senders = await resolveLaunchSenders(this.prisma, ws, effectiveSenderIds(c));
       const plan = await planLaunch(job, {
         campaign: { id: c.id, workspaceId: ws, segmentId: c.segmentId ?? null },
+        audienceWhere,
         senders,
         varMap,
         defs,

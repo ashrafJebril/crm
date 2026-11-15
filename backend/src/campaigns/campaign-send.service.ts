@@ -14,6 +14,8 @@ import { CampaignLaunchRunner, FINISHED_BROADCAST, isNotFound } from "./sending/
 import { budgeted, ZernioBudget } from "./sending/zernio-budget";
 import { aggregateBroadcastStatus } from "./sending/broadcast-status";
 import { loadCustomDefs, resolveLaunchSenders, templateUnsupported } from "./sending/launch-context";
+import { type AudienceResolver, resolveCampaignAudience } from "./sending/audience-stream";
+import { SegmentsService } from "../segments/segments.service";
 import { effectiveSenderIds, templateOnSenders } from "./sending/senders";
 import { legacyToVarMap, validateVarMap } from "./sending/var-map";
 
@@ -98,6 +100,8 @@ export class CampaignSendService {
   readonly launcher: CampaignLaunchRunner;
   /** Zernio budget for per-partition status reads (fix round 1, m3); process-wide by default. */
   budget: ZernioBudget = ZernioBudget.shared();
+  /** SP-16 (F1): resolves a campaign's audience (smart audiences through the compiler). */
+  private readonly segments: AudienceResolver;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -107,14 +111,19 @@ export class CampaignSendService {
     @Optional() tracker?: RecipientTrackerService,
     @Optional() launcher?: CampaignLaunchRunner,
     @Optional() private readonly media?: MediaService,
+    // Required by Nest (SegmentsModule provides it); hand-built specs may pass a stub or nothing.
+    segments?: SegmentsService,
   ) {
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
-    this.launcher = launcher ?? new CampaignLaunchRunner(prisma, zernio, media, undefined, this.tracker);
+    this.segments = segments ?? new SegmentsService(prisma);
+    this.launcher = launcher ?? new CampaignLaunchRunner(prisma, zernio, media, undefined, this.tracker, segments);
   }
 
-  private audience(workspaceId: string, segmentId: string | null | undefined) {
+  /** SP-16 (F1): the same resolver as the preview and the launch; a deleted segment → 400 campaigns.audience_missing. */
+  private async audience(workspaceId: string, segmentId: string | null | undefined) {
+    const where = await resolveCampaignAudience(this.segments, workspaceId, segmentId, new Date());
     return this.prisma.contact.findMany({
-      where: segmentId ? { workspaceId, segmentMembers: { some: { segmentId } } } : { workspaceId },
+      where,
       select: { id: true, name: true, phone: true, lifecycle: true, marketingOptOut: true },
     });
   }
@@ -146,7 +155,8 @@ export class CampaignSendService {
    * `campaigns.template_missing_on_number`); 10. the varMap (`var_map_invalid`;
    * legacy body `variables` convert when the campaign has none); 11. the
    * header file (MediaService.get as the launcher, `assertHeaderMedia`, at
-   * most 6 days ahead, ruling 9).
+   * most 6 days ahead, ruling 9); 12. the audience (SP-16: a deleted segment
+   * → 400 `campaigns.audience_missing {segmentId}`).
    * The claim is a compare-and-set on the draft, so a second click gets 409.
    * Audience checks (nobody reachable, too varied) fail the job later.
    */
@@ -203,6 +213,10 @@ export class CampaignSendService {
         throw campaignError("campaigns.header_media_schedule_too_far", { days: HEADER_SCHEDULE_MAX_DAYS });
       }
     }
+
+    // SP-16 (F1): refuse a campaign whose audience is gone before claiming it.
+    // The job resolves it again at its plan start (and fails with the same key).
+    await resolveCampaignAudience(this.segments, workspaceId, campaign.segmentId, new Date());
 
     const claimed = await this.prisma.campaign.updateMany({
       where: { id, workspaceId, status: "draft", zernioBroadcastId: null },

@@ -14,6 +14,12 @@ export const PLAN_WRITE_CHUNK = 1000;
 
 export interface PlanInput {
   campaign: { id: string; workspaceId: string; segmentId: string | null };
+  /**
+   * SP-16 (F1): the audience, resolved ONCE by the runner through
+   * `resolveCampaignAudience` with the plan start as `now`, so every page is
+   * read with the same relative windows.
+   */
+  audienceWhere: Prisma.ContactWhereInput;
   senders: LaunchSender[];
   varMap: VarMap;
   defs: ReadonlyMap<string, CustomDef>;
@@ -55,7 +61,7 @@ const directKey = (channelId: string | null) => createHash("sha256").update(JSON
  */
 export async function planLaunch(job: LaunchJob, input: PlanInput): Promise<PlanResult> {
   const { prisma } = job;
-  const { campaign, senders, varMap, defs, defIds, lang, headerOverride } = input;
+  const { campaign, audienceWhere, senders, varMap, defs, defIds, lang, headerOverride } = input;
   const ws = campaign.workspaceId;
   const campaignId = campaign.id;
   if (senders.length === 0) throw campaignError("campaigns.whatsapp_not_connected");
@@ -99,7 +105,7 @@ export async function planLaunch(job: LaunchJob, input: PlanInput): Promise<Plan
   let reachable = 0;
   let skipped = 0;
 
-  for await (const page of streamAudience(prisma, ws, campaign.segmentId, defIds, job.pageSize)) {
+  for await (const page of streamAudience(prisma, ws, audienceWhere, defIds, job.pageSize)) {
     await job.fence();
     const built = buildRecipients(page.contacts, seen);
     skipped += built.skipped.noPhone + built.skipped.optedOut + built.skipped.duplicate;

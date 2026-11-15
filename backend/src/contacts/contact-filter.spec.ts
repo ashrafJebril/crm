@@ -126,11 +126,11 @@ describe("buildContactWhere", () => {
     expect(JSON.stringify(w)).toContain(JSON.stringify(JSON.stringify('a"b')).slice(1, -1));
   });
 
-  it("pipelineId/stageId filter open tickets", async () => {
+  it("pipelineId/stageId: a stage matches any card in it, open or closed; a pipeline alone matches open cards (SP-16 ruling 9)", async () => {
     const w = await build({ pipelineId: "p1", stageId: "st1" } as never);
-    expect(and(w)).toContainEqual({ tickets: { some: { pipelineId: "p1", stageId: "st1", closedAt: null } } });
+    expect(and(w)).toContainEqual({ tickets: { some: { workspaceId: "ws1", pipelineId: "p1", stageId: "st1" } } });
     const w2 = await build({ pipelineId: "p1" } as never);
-    expect(and(w2)).toContainEqual({ tickets: { some: { pipelineId: "p1", closedAt: null } } });
+    expect(and(w2)).toContainEqual({ tickets: { some: { workspaceId: "ws1", pipelineId: "p1", closedAt: null } } });
   });
 
   it("custom fields go through fieldWhere with workspace-scoped defs", async () => {
