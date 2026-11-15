@@ -58,8 +58,15 @@ describe("TagsService", () => {
   };
   let svc: TagsService;
   const sqlOf = (call: unknown[]) => (call[0] as string[]).join("?");
-  /** `tx.$executeRaw` calls other than the SP-16 workspace audience lock. */
-  const contactRaw = () => tx.$executeRaw.mock.calls.filter((c: unknown[]) => !sqlOf(c).includes("pg_advisory_xact_lock"));
+  /** `tx.$executeRaw` calls on Contact (not the SP-16 lock or the batched Segment writes). */
+  const contactRaw = () => tx.$executeRaw.mock.calls.filter((c: unknown[]) => sqlOf(c).includes('UPDATE "Contact"'));
+  /** The rows of the one batched Segment rewrite (SP-16 live verification). */
+  const batchRows = () => {
+    const calls = tx.$executeRaw.mock.calls.filter((c: unknown[]) => sqlOf(c).includes("jsonb_to_recordset"));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].slice(2)).toEqual(["ws1"]);
+    return JSON.parse(calls[0][1] as string);
+  };
 
   beforeEach(() => {
     tx = {
@@ -155,12 +162,10 @@ describe("TagsService", () => {
     expect(tx.segment.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { workspaceId: "ws1", origin: "crm" } }),
     );
-    expect(tx.segment.update).toHaveBeenCalledTimes(1);
-    expect(tx.segment.update).toHaveBeenCalledWith({
-      where: { id: "s1" },
-      // SP-16 (review m1): a legacy row's version is bumped too.
-      data: { filter: JSON.stringify({ tagsAny: ["Gold"] }), version: { increment: 1 } },
-    });
+    // SP-16: one batched statement (version + 1 for legacy rows too, review m1); a rename clears no counts.
+    expect(tx.segment.update).not.toHaveBeenCalled();
+    expect(batchRows()).toEqual([{ id: "s1", rules: null, filter: JSON.stringify({ tagsAny: ["Gold"] }) }]);
+    expect(tx.$executeRaw.mock.calls.some((c: unknown[]) => sqlOf(c).includes('"countedAt" = NULL'))).toBe(false);
     expect(tx.tag.update).toHaveBeenCalledWith({
       where: { id: "t1" },
       data: { name: "Gold", color: undefined },
@@ -227,12 +232,12 @@ describe("TagsService", () => {
       expect(tx.segment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { workspaceId: "ws1", origin: "crm" } }),
       );
-      expect(tx.segment.update).toHaveBeenCalledTimes(1);
-      expect(tx.segment.update).toHaveBeenCalledWith({
-        where: { id: "s1" },
-        // SP-16 (review m1, m2): version bumped; a merge clears the count cache.
-        data: { filter: JSON.stringify({ tagsAny: ["Premium"] }), version: { increment: 1 }, memberCount: null, countedAt: null },
-      });
+      // SP-16: one batched rewrite, then one count-cache clear (F2).
+      expect(tx.segment.update).not.toHaveBeenCalled();
+      expect(batchRows()).toEqual([{ id: "s1", rules: null, filter: JSON.stringify({ tagsAny: ["Premium"] }) }]);
+      const clear = tx.$executeRaw.mock.calls.filter((c: unknown[]) => sqlOf(c).includes('"countedAt" = NULL'));
+      expect(clear).toHaveLength(1);
+      expect(clear[0].slice(1)).toEqual(["ws1", ["s1"]]);
       expect(tx.tag.deleteMany).toHaveBeenCalledWith({
         where: { id: { in: ["a"] }, workspaceId: "ws1" },
       });

@@ -17,7 +17,14 @@ import {
 import { toAudienceRow, type AudienceRow } from "./audience-dto";
 import { audienceError, audienceNotFound } from "./audience-errors";
 import { assertReferencesExist, emptyLookups, loadLookups, type AudienceLookups, type LookupsPrisma } from "./audience-lookups";
-import { audienceRefs, findReferencingAudiences, writeMarkedAudiences, type MarkingClient } from "./audience-marking";
+import {
+  audienceRefs,
+  clearAffectedCounts,
+  findReferencingAudiences,
+  writeMarkedAudiences,
+  type MarkingClient,
+  type RawClient,
+} from "./audience-marking";
 import {
   LEGACY_SENTINEL,
   legacyProjection,
@@ -296,8 +303,9 @@ export class SegmentsService {
    *    `group_missing`, nobody, for `in` and `not_in`), and the row is deleted.
    * Draft campaigns keep their dangling `segmentId`; their preview and launch
    * then refuse with `campaigns.audience_missing`. Nothing is written on a 409.
-   * `marked` lists the audiences rewritten, for the caller's HJZ re-sync after
-   * commit (review m2); the route does not return it.
+   * The marked rows and every audience reaching them through a `group` rule
+   * lose their cached count (F2). `marked` lists those audiences, for the
+   * caller's HJZ re-sync after commit (review m2); the route does not return it.
    */
   async remove(
     workspaceId: string,
@@ -323,9 +331,10 @@ export class SegmentsService {
         if ((refs.length || campaigns.length) && !opts.confirm) {
           throw audienceError("audiences.in_use", { audiences: audienceRefs(refs), campaigns });
         }
-        const audiencesMarked = await writeMarkedAudiences(client, workspaceId, refs);
+        const audiencesMarked = await writeMarkedAudiences(tx as unknown as RawClient, workspaceId, refs);
         await tx.segment.delete({ where: { id } });
-        return { ok: true as const, audiencesMarked, marked: refs.map((r) => r.id) };
+        const marked = await clearAffectedCounts(tx as unknown as MarkingClient & RawClient, workspaceId, refs.map((r) => r.id));
+        return { ok: true as const, audiencesMarked, marked };
       },
       { timeout: 20_000, maxWait: 10_000 },
     );

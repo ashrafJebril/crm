@@ -446,6 +446,28 @@ export function createAudienceDb(tables: Partial<AudienceTables> = {}, opts: Aud
         log("$raw", "$executeRaw", { sql, values });
         const custom = opts.raw?.(sql, values, db);
         if (custom !== undefined) return custom;
+        // SP-16 live-verification fixes: the batched audience rewrite and the count-cache clear.
+        if (/UPDATE "Segment" AS s/.test(sql) && /jsonb_to_recordset/.test(sql)) {
+          const [payload, ws] = values as [string, string];
+          let n = 0;
+          for (const v of JSON.parse(payload) as Array<{ id: string; rules: unknown; filter: string }>) {
+            const row = db.segment.find((r) => r.id === v.id && r.workspaceId === ws);
+            if (!row) continue;
+            Object.assign(row, { rules: v.rules ?? null, filter: v.filter, version: (row.version ?? 0) + 1, updatedAt: new Date() });
+            n++;
+          }
+          return n;
+        }
+        if (/UPDATE "Segment" SET "memberCount" = NULL, "countedAt" = NULL/.test(sql)) {
+          const [ws, ids] = values as [string, string[]];
+          let n = 0;
+          for (const row of db.segment) {
+            if (row.workspaceId !== ws || !ids.includes(row.id)) continue;
+            Object.assign(row, { memberCount: null, countedAt: null });
+            n++;
+          }
+          return n;
+        }
         if (/UPDATE "Segment" SET "memberCount"/.test(sql)) {
           const [count, at, id, ws] = values as [number, Date, string, string];
           const row = db.segment.find((r) => r.id === id && r.workspaceId === ws);

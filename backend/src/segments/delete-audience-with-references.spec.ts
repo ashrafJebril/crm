@@ -149,11 +149,11 @@ describe("delete-audience-with-references", () => {
     const orig = w.fake.prisma.__tx;
     w.fake.prisma.__tx = (id: number) => {
       const tx = orig(id);
-      let n = 0;
-      const update = tx.segment.update;
-      tx.segment.update = async (args: unknown) => {
-        if (++n === 2) throw new Error("connection lost while marking");
-        return update(args);
+      // Fail the LAST write (the count-cache clear), after the marks and the delete ran.
+      const raw = tx.$executeRaw;
+      tx.$executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join("?").includes('"countedAt" = NULL')) throw new Error("connection lost while marking");
+        return raw(strings, ...values);
       };
       return tx;
     };
@@ -175,5 +175,32 @@ describe("foreign ids return 404 on SP-16 routes (part 2)", () => {
       expect(await bodyOf(w.ctrl.remove(WS, id, "1"))).toMatchObject({ status: 404, message: "audiences.not_found" });
     }
     expect(snapshot(w.db)).toBe(before);
+  });
+});
+
+describe("F2 and batching on the audience delete", () => {
+  it("referrers of the marked audiences are cleared transitively; N audiences take O(1) statements", async () => {
+    const run = async (n: number) => {
+      const w = world();
+      for (let i = 0; i < n; i++) {
+        w.db.segment.push(
+          seg(`S${i}`, WS, "crm", { rules: tree(inG) }),
+          seg(`T${i}`, WS, "crm", { rules: tree({ field: "group", op: "not_in", segmentId: `S${i}` }) }),
+        );
+      }
+      w.db.segment.push(seg("Z", WS, "crm", { rules: tree(lead) }));
+      for (const s of w.db.segment) Object.assign(s, { memberCount: 42, countedAt: new Date("2026-11-15T00:00:00Z") });
+      expect(await w.ctrl.remove(WS, "G", "1")).toEqual({ ok: true, audiencesMarked: 2 + n });
+      return w;
+    };
+    const small = await run(1);
+    const large = await run(25);
+    for (const id of ["S", "N", "S0", "T0", "S24", "T24"]) expect(large.row(id)).toMatchObject({ memberCount: null, countedAt: null });
+    expect(large.row("T3")!.version).toBe(0);
+    expect(large.row("Z")).toMatchObject({ memberCount: 42 });
+    const statements = (w: ReturnType<typeof world>) => w.fake.calls.filter((c) => c.tx !== null && c.model !== "$tx").length;
+    expect(statements(large)).toBe(statements(small));
+    // HJZ re-sync covers the cleared referrers too.
+    expect(large.outbound.emitSegmentUpserted.mock.calls.map((c: unknown[]) => c[1])).toEqual(expect.arrayContaining(["S", "N", "S0", "T0"]));
   });
 });

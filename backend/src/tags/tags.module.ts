@@ -27,10 +27,15 @@ import {
 } from "../segments/audience-rules";
 import {
   audienceRefs,
+  clearAffectedCounts,
   findReferencingAudiences,
+  writeAudiencesBatch,
   writeMarkedAudiences,
+  type AudienceWrite,
   type MarkingClient,
+  type RawClient,
 } from "../segments/audience-marking";
+import { WORKSPACE_TX_OPTIONS } from "../workspaces/workspace-defaults";
 import { tagError } from "./tag-errors";
 import { MarketingOutboundService } from "../segments/marketing-outbound.service";
 import { SegmentsModule } from "../segments/segments.module";
@@ -117,6 +122,13 @@ export function rewriteFilterTagName(
 /** The transaction-client surface the shared rewrite helpers need (the app's
  *  extended Prisma client's tx isn't assignable to Prisma.TransactionClient). */
 type TagTx = Pick<PrismaService, "$executeRaw" | "segment">;
+
+/**
+ * Tag rename, merge and delete rewrite contacts and audiences in one
+ * interactive transaction; Prisma's 5 s default was nearly reached live, so
+ * they get the workspace-seeding limits (live verification).
+ */
+export const TAG_TX_OPTIONS = { ...WORKSPACE_TX_OPTIONS };
 
 /** `?confirm=1` (or `true`) on the destructive routes (ruling 7). */
 export function isConfirmed(raw: unknown): boolean {
@@ -227,6 +239,7 @@ export class TagsService {
       if (renaming) {
         await lockAudiences(tx, workspaceId);
         contactsUpdated = await this.renameOnContacts(tx, workspaceId, tag.name, newName);
+        // A rename keeps membership (contacts are renamed too), so counts stay.
         changed = await this.renameInSegments(tx, workspaceId, [[tag.name, newName]]);
       }
       const updated = await tx.tag.update({
@@ -234,7 +247,7 @@ export class TagsService {
         data: { name: newName, color: dto.color ?? undefined },
       });
       return { tag: updated, contactsUpdated, changed };
-    });
+    }, TAG_TX_OPTIONS);
     this.resync(workspaceId, res.changed);
     return { tag: res.tag, contactsUpdated: res.contactsUpdated, segmentsUpdated: res.changed.length };
   }
@@ -273,21 +286,19 @@ export class TagsService {
    *  - A legacy row: its `filter` arrays are rewritten as before (legacy rows
    *    are never converted to rules here); its `version` is bumped too
    *    (review m1: an editor showing the legacy tree must not save the old name).
-   *  - `clearCounts` (a merge, which changes membership) also clears the
-   *    count cache of every rewritten row.
+   *  All rewritten rows are written in ONE statement (`writeAudiencesBatch`),
+   *  so the transaction does not grow with the number of audiences.
    *  Returns the ids of the rows written. */
   private async renameInSegments(
     tx: TagTx,
     workspaceId: string,
     pairs: [string, string][],
-    opts: { clearCounts?: boolean } = {},
   ): Promise<string[]> {
-    const counts = opts.clearCounts ? { memberCount: null, countedAt: null } : {};
+    const writes: AudienceWrite[] = [];
     const segments = await tx.segment.findMany({
       where: { workspaceId, origin: "crm" },
       select: { id: true, filter: true, rules: true },
     });
-    const updated: string[] = [];
     for (const s of segments) {
       const { tree, source } = readRules(s);
       if (source === "rules") {
@@ -300,16 +311,7 @@ export class TagsService {
           changedRules = true;
         }
         if (!changedRules) continue;
-        await tx.segment.update({
-          where: { id: s.id },
-          data: {
-            rules: next as unknown as Prisma.InputJsonValue,
-            filter: JSON.stringify(legacyProjection(next) ?? LEGACY_SENTINEL),
-            version: { increment: 1 },
-            ...counts,
-          },
-        });
-        updated.push(s.id);
+        writes.push({ id: s.id, rules: next, filter: JSON.stringify(legacyProjection(next) ?? LEGACY_SENTINEL) });
         continue;
       }
       let filter = s.filter;
@@ -321,10 +323,10 @@ export class TagsService {
         changed = true;
       }
       if (!changed) continue;
-      await tx.segment.update({ where: { id: s.id }, data: { filter, version: { increment: 1 }, ...counts } });
-      updated.push(s.id);
+      writes.push({ id: s.id, rules: null, filter });
     }
-    return updated;
+    await writeAudiencesBatch(tx as unknown as RawClient, workspaceId, writes);
+    return writes.map((w) => w.id);
   }
 
   /** Fold `fromIds` into `intoId`: contacts and saved filters are rewritten to
@@ -350,19 +352,22 @@ export class TagsService {
       for (const src of sources) {
         contactsUpdated += await this.renameOnContacts(tx, workspaceId, src.name, into.name);
       }
-      // A merge changes membership (contacts of both names now share one), so counts are cleared.
       const changed = await this.renameInSegments(
         tx,
         workspaceId,
         sources.map((src): [string, string] => [src.name, into.name]),
-        { clearCounts: true },
       );
+      // A merge changes membership: the rewritten rows, every audience naming the
+      // TARGET (its holders grew) and their group referrers lose their cached count (F2).
+      const cleared = await clearAffectedCounts(tx as unknown as MarkingClient & RawClient, workspaceId, changed, {
+        tagNames: [into.name],
+      });
       const { count } = await tx.tag.deleteMany({
         where: { id: { in: from }, workspaceId },
       });
-      return { contactsUpdated, changed, removed: count };
-    });
-    this.resync(workspaceId, res.changed);
+      return { contactsUpdated, changed, cleared, removed: count };
+    }, TAG_TX_OPTIONS);
+    this.resync(workspaceId, [...res.changed, ...res.cleared]);
     return { contactsUpdated: res.contactsUpdated, segmentsUpdated: res.changed.length, removed: res.removed };
   }
 
@@ -413,10 +418,12 @@ export class TagsService {
         )
         WHERE "workspaceId" = ${workspaceId} AND "tags"::jsonb ? ${tag.name}
       `;
-      const audiencesMarked = await writeMarkedAudiences(client, workspaceId, refs);
+      const audiencesMarked = await writeMarkedAudiences(tx as unknown as RawClient, workspaceId, refs);
+      // The marked rows and their group referrers lose their cached count (F2).
+      const cleared = await clearAffectedCounts(tx as unknown as MarkingClient & RawClient, workspaceId, refs.map((r) => r.id));
       await tx.tag.delete({ where: { id } });
-      return { ok: true as const, contactsUpdated, audiencesMarked, marked: refs.map((r) => r.id) };
-    });
+      return { ok: true as const, contactsUpdated, audiencesMarked, marked: cleared };
+    }, TAG_TX_OPTIONS);
     this.resync(workspaceId, res.marked);
     return { ok: res.ok, contactsUpdated: res.contactsUpdated, audiencesMarked: res.audiencesMarked };
   }

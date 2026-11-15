@@ -219,11 +219,11 @@ describe("delete-tag-in-rule warns with affected audiences", () => {
     const orig = w.fake.prisma.__tx;
     w.fake.prisma.__tx = (id: number) => {
       const tx = orig(id);
-      let n = 0;
-      const update = tx.segment.update;
-      tx.segment.update = async (args: unknown) => {
-        if (++n === 2) throw new Error("connection lost while marking");
-        return update(args);
+      // Fail the LAST write (the count-cache clear), after the marks and the delete ran.
+      const raw = tx.$executeRaw;
+      tx.$executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join("?").includes('"countedAt" = NULL')) throw new Error("connection lost while marking");
+        return raw(strings, ...values);
       };
       return tx;
     };
@@ -322,8 +322,10 @@ describe("HJZ re-sync, version and count cache after marking, rename and merge (
     const orig = w.fake.prisma.__tx;
     w.fake.prisma.__tx = (id: number) => {
       const tx = orig(id);
-      tx.segment.update = async () => {
-        throw new Error("boom");
+      const raw = tx.$executeRaw;
+      tx.$executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        if (strings.join("?").includes("jsonb_to_recordset")) throw new Error("boom");
+        return raw(strings, ...values);
       };
       return tx;
     };
@@ -362,5 +364,81 @@ describe("HJZ re-sync, version and count cache after marking, rename and merge (
     expect(w.row("B").version).toBe(1);
     expect(w.row("E")).toMatchObject({ memberCount: 7, countedAt: at, version: 0 });
     expect(ids(w)).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("F2: counts are cleared for merge targets and group referrers (live verification)", () => {
+  const AT = new Date("2026-11-15T19:56:15.113Z");
+  const counted = (w: ReturnType<typeof world>) => {
+    for (const s of w.db.segment) Object.assign(s, { memberCount: 1819, countedAt: AT });
+  };
+
+  it("a merge into Gold clears a `tag has Gold` audience that was not rewritten (and its group referrers)", async () => {
+    const w = world();
+    w.db.segment.push(
+      seg("HG", WS, "crm", { rules: tree(has("Gold")), filter: JSON.stringify({ tagsAll: ["Gold"] }) }),
+      seg("RG", WS, "crm", { rules: tree({ field: "group", op: "in", segmentId: "HG" }) }),
+    );
+    counted(w);
+    await w.tags.merge(WS, ["tVIP"], "tGold");
+    // HG names the target only: its rules are unchanged, its count is not.
+    expect(w.row("HG").rules).toEqual(tree(has("Gold")));
+    expect(w.row("HG").version).toBe(0);
+    for (const id of ["HG", "RG", "A", "B", "C"]) expect(w.row(id)).toMatchObject({ memberCount: null, countedAt: null });
+    // Unrelated audiences keep their cache.
+    expect(w.row("E")).toMatchObject({ memberCount: 1819, countedAt: AT });
+    expect(w.row("FB")).toMatchObject({ memberCount: 1819 });
+  });
+
+  it("a confirmed tag delete clears the referrers of a marked audience, transitively (in and not_in)", async () => {
+    const w = world();
+    w.db.segment.push(
+      seg("R1", WS, "crm", { rules: tree({ field: "group", op: "in", segmentId: "A" }) }),
+      seg("R2", WS, "crm", { rules: tree({ field: "group", op: "not_in", segmentId: "R1" }) }),
+      seg("R3", WS, "crm", { rules: tree({ field: "group", op: "in", segmentId: "E" }) }),
+    );
+    counted(w);
+    await w.ctrl.remove(WS, "tVIP", "1");
+    for (const id of ["A", "B", "C", "R1", "R2"]) expect(w.row(id)).toMatchObject({ memberCount: null, countedAt: null });
+    // Their rules are untouched (only A, B and C are marked).
+    expect(w.row("R1").version).toBe(0);
+    for (const id of ["E", "R3"]) expect(w.row(id)).toMatchObject({ memberCount: 1819, countedAt: AT });
+  });
+});
+
+describe("tag operations: one longer transaction, O(1) statements in the number of audiences", () => {
+  const TX = { timeout: 30_000, maxWait: 10_000 };
+  const txOptions = (w: ReturnType<typeof world>) => w.fake.calls.filter((c) => c.model === "$tx" && c.op === "begin").map((c) => c.args);
+  /** Statements run inside transactions (reads and writes), excluding the begin/end markers. */
+  const statements = (w: ReturnType<typeof world>) => w.fake.calls.filter((c) => c.tx !== null && c.model !== "$tx").length;
+  const withAudiences = (n: number) => {
+    const w = world();
+    for (let i = 0; i < n; i++) {
+      w.db.segment.push(
+        seg(`V${i}`, WS, "crm", { rules: tree(has("VIP"), lead), filter: JSON.stringify({ tagsAll: ["VIP"], lifecycle: ["lead"] }) }),
+        seg(`L${i}`, WS, "crm", { filter: JSON.stringify({ tagsAny: ["VIP"] }) }),
+        seg(`R${i}`, WS, "crm", { rules: tree({ field: "group", op: "in", segmentId: `V${i}` }) }),
+      );
+    }
+    return w;
+  };
+
+  it.each([
+    ["rename", (w: ReturnType<typeof world>) => (w.db.tag.splice(w.db.tag.findIndex((t) => t.id === "tPremium"), 1), w.tags.update(WS, "tVIP", { name: "Premium" }))],
+    ["merge", (w: ReturnType<typeof world>) => w.tags.merge(WS, ["tVIP"], "tGold")],
+    ["confirmed delete", (w: ReturnType<typeof world>) => w.ctrl.remove(WS, "tVIP", "1")],
+  ] as const)("%s: transaction options {timeout: 30 000, maxWait: 10 000}; 3 and 60 extra audiences take the same number of statements", async (_label, op) => {
+    const small = withAudiences(1);
+    const large = withAudiences(20);
+    await op(small);
+    await op(large);
+    expect(txOptions(small)).toEqual([TX]);
+    expect(txOptions(large)).toEqual([TX]);
+    expect(statements(large)).toBe(statements(small));
+    // The writes still happened: every VIP audience was rewritten (rename/merge) or marked (delete), with version + 1.
+    for (let i = 0; i < 20; i++) {
+      expect(large.row(`V${i}`).version).toBe(1);
+      expect(large.row(`L${i}`).version).toBe(1);
+    }
   });
 });
