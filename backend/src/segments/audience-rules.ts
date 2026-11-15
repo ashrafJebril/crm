@@ -61,7 +61,9 @@ export type RuleIssueKind =
   | "pipeline_archived"
   | "stage_missing"
   | "campaign_missing"
-  | "cycle";
+  | "cycle"
+  /** SP-16 fix (I2): a reference chain longer than `AUDIENCE_LIMITS.maxReferenceDepth`. */
+  | "too_deep";
 export type RuleIssue = { path: number[]; kind: RuleIssueKind };
 
 export const AUDIENCE_LIMITS = {
@@ -75,6 +77,12 @@ export const AUDIENCE_LIMITS = {
   maxValues: 10,
   /** Children of one group. */
   maxChildren: 30,
+  /**
+   * Smart → smart reference chain (ruling R5, fix I2): the saved tree may reach
+   * at most 5 smart audiences in a row (T → A1 → … → A5). The ONE bound used by
+   * save/preview validation, the lookups walk, the cycle walk and the compiler.
+   */
+  maxReferenceDepth: 5,
 } as const;
 
 /** An inert legacy filter: a ticket-stage key that cannot exist, so pre-SP-16 readers see nobody. */

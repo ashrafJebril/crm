@@ -37,6 +37,7 @@ import { SendFromField } from "./campaigns/SendFromField";
 import { VariableMappingField } from "./campaigns/VariableMappingField";
 import { HEADER_MEDIA_MAX_DAYS, HeaderMediaField } from "./campaigns/HeaderMediaField";
 import { ReviewSamples } from "./campaigns/ReviewSamples";
+import { audienceCountLabel } from "./campaigns/audienceCount";
 import { LaunchProgress } from "./campaigns/LaunchProgress";
 
 type View = "list" | "builder";
@@ -81,20 +82,23 @@ interface AudienceStepProps {
   segments: Segment[];
   segmentId: string | null;
   onSelect: (id: string | null) => void;
-  count: number;
+  /** SP-16: null when the audience was too large to count. */
+  count: number | null;
 }
 
 function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStepProps) {
-  const options: { id: string | null; label: string; count: number }[] = [
-    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: -1 },
-    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count })),
+  // SP-16: a segment count is null when it timed out on the server ("all contacts" shows none).
+  const options: { id: string | null; label: string; count: number | null; showCount: boolean }[] = [
+    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: null, showCount: false },
+    ...segments.map((s) => ({ id: s.id, label: s.name, count: (s.count as number | null | undefined) ?? null, showCount: true })),
   ];
+  const total = audienceCountLabel(count, tx);
   return (
     <div className="card">
       <div className="card-h">
         <h3>{tx("Audience", "الجمهور")}</h3>
-        <span className="sub mono">
-          {count.toLocaleString()} {tx("contacts match", "جهة اتصال")}
+        <span className="sub mono" title={total.title}>
+          {total.text} {tx("contacts match", "جهة اتصال")}
         </span>
       </div>
       <div style={{ padding: 18, display: "grid", gap: 8 }}>
@@ -118,9 +122,9 @@ function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStep
                 style={{ accentColor: "var(--accent)" }}
               />
               <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{opt.label}</span>
-              {opt.count >= 0 && (
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                  {opt.count.toLocaleString()}
+              {opt.showCount && (
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }} title={audienceCountLabel(opt.count, tx).title}>
+                  {audienceCountLabel(opt.count, tx).text}
                 </span>
               )}
             </label>
@@ -433,7 +437,8 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   const preview = useCampaignPreview(previewBody);
   const pv = preview.data;
   const errCtx = { senders: senders?.senders ?? [] };
-  const audienceCount = pv?.total ?? selectedSegment?.count ?? 0;
+  // SP-16: a smart audience's cached count may be null (too large to count right now).
+  const audienceCount: number | null = pv?.total ?? (selectedSegment ? ((selectedSegment.count as number | null | undefined) ?? null) : 0);
 
   const selectTemplate = (id: string | null) => {
     setTemplateId(id);
@@ -510,7 +515,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
     name: name.trim(),
     audience: audienceLabel,
     channel: "Broadcast",
-    recipients: audienceCount,
+    recipients: audienceCount ?? 0,
     schedule: scheduleLabel,
     segmentId: segmentId ?? undefined,
     templateId: templateId ?? undefined,

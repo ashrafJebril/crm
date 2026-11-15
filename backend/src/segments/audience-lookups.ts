@@ -6,7 +6,7 @@
  */
 import { DEFAULT_TZ, validTz } from "../activities/buckets";
 import { audienceError } from "./audience-errors";
-import { needsTimezone, readRules, referencedIds, type AudienceRules, type ReferencedIds } from "./audience-rules";
+import { AUDIENCE_LIMITS, needsTimezone, readRules, referencedIds, type AudienceRules, type ReferencedIds } from "./audience-rules";
 
 export interface LookupSegment {
   id: string;
@@ -38,8 +38,14 @@ export function emptyLookups(timezone = DEFAULT_TZ): AudienceLookups {
   return { segments: new Map(), pipelines: new Map(), stages: new Map(), defs: new Map(), campaigns: new Map(), timezone };
 }
 
-/** Bound on the referenced-audience closure walk (corrupt data cannot make it run away). */
-const MAX_SEGMENT_LEVELS = 12;
+/**
+ * Levels of referenced segments to load: hops 1..maxReferenceDepth are the
+ * smart audiences the compiler may inline, and one more hop loads the groups
+ * the deepest of them names (a manual group there still resolves; a smart one
+ * is `too_deep` in the compiler). Same bound as save and the cycle walk (fix I2).
+ */
+export const LOOKUP_SEGMENT_LEVELS = AUDIENCE_LIMITS.maxReferenceDepth + 1;
+/** Safety cap on the closure size; a segment cut off here compiles to `group_missing` (nobody). */
 const MAX_SEGMENTS = 500;
 
 /**
@@ -55,7 +61,7 @@ export async function loadLookups(prisma: LookupsPrisma, ws: string, trees: Audi
   let tz = trees.some(needsTimezone);
 
   let frontier = [...new Set(all.flatMap((r) => r.segmentIds))];
-  for (let level = 0; frontier.length && level < MAX_SEGMENT_LEVELS && out.segments.size < MAX_SEGMENTS; level++) {
+  for (let level = 0; frontier.length && level < LOOKUP_SEGMENT_LEVELS && out.segments.size < MAX_SEGMENTS; level++) {
     const rows = (await prisma.segment.findMany({
       where: { workspaceId: ws, id: { in: frontier } },
       select: { id: true, origin: true, rules: true, filter: true },
