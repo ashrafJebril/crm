@@ -1243,6 +1243,17 @@ model Media {
   publicToken          String?   @unique
   publicTokenExpiresAt DateTime?
 
+  /// SP-17: agent-facing details. Null = not described.
+  title            String?
+  /// SP-17: what is visible in the file (accessibility and search).
+  alt              String?
+  /// SP-17: normalised (trimmed, Latin lowercased, deduped), ≤ 20 tags of ≤ 40 chars.
+  tags             String[] @default([])
+  /// SP-17: when the agent should send it. ≤ 500 chars.
+  useWhen          String?
+  /// SP-17: the agent may list and send this file. Off by default.
+  approvedForAgent Boolean  @default(false)
+
   /// SP-13 back-relations: campaigns and templates using this file as their header.
   campaignHeaders Campaign[] @relation("CampaignHeaderMedia")
   templateHeaders Template[] @relation("TemplateHeaderMedia")

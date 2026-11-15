@@ -353,6 +353,39 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-17: media details and the agent switch (ruling 5).
+  describe("SP-17 media details", () => {
+    const PATCH = "PATCH /media/:id";
+
+    it("permission map covers SP-17 routes", () => {
+      expect(ROUTE_PERMISSIONS[PATCH]).toBe("knowledge.update");
+      expect(ROUTE_PERMISSIONS["GET /media"]).toBe("conversations.view");
+    });
+
+    it("owner and admin can PATCH; agent and viewer cannot", () => {
+      expect(["owner", "admin", "agent", "viewer"].map((r) => [r, allowed(r as SystemRoleKey, PATCH)])).toEqual([
+        ["owner", true],
+        ["admin", true],
+        ["agent", false],
+        ["viewer", false],
+      ]);
+    });
+
+    it("all four can GET /media (with q and approved)", () => {
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, "GET /media") }).toEqual({ role, ok: true });
+      }
+    });
+
+    it("impersonation is not blocked", () => {
+      const imp = { user: { workspaceId: "ws1", impersonating: true } } as never;
+      for (const route of [PATCH, "GET /media"]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+      expect(() => assertRequestPermission(imp, "knowledge.update")).not.toThrow();
+    });
+  });
+
     it("billing.manage and roles.manage are owner-only", () => {
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "billing.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "roles.manage")).toBe(false);

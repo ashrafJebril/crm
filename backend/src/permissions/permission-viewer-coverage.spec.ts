@@ -85,7 +85,8 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["facebook", FacebookController, ["listConversations", "listMessagesInConversation", "sendDirectMessage"]],
   ["instagram", InstagramController, ["listConversations", "listMessages", "sendDirectMessage", "send"]],
   ["workflows", WorkflowsController, ["listRuns", "getRun"]],
-  ["media", MediaController, ["list", "serve", "remove"]],
+  // SP-17: update loads through MediaService.get with the viewer (a hidden inbound file is 404).
+  ["media", MediaController, ["list", "serve", "remove", "update"]],
   ["ad-sources", AdSourcesController, ["conversations"]],
 ];
 

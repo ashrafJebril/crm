@@ -222,6 +222,9 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /media/:id/file": "conversations.view",
   "POST /media/upload": "conversations.create",
   "DELETE /media/:id": "conversations.update",
+  // SP-17 (ruling 5): details and the agent switch decide what the AI may
+  // send to every customer, so they follow knowledge, not conversations.
+  "PATCH /media/:id": "knowledge.update",
 
   // ── Contacts ──────────────────────────────────────────────────────────
   "GET /contacts": "contacts.view",

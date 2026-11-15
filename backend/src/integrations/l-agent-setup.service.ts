@@ -24,6 +24,22 @@ To book an appointment:
 
 To change or cancel, find the appointment with list_appointments, then use update_appointment or cancel_appointment. If a tool call fails, say so honestly and offer to have a team member follow up.`;
 
+// SP-17: the photos section has its own marker, so the tools section and its
+// idempotence are untouched; each missing section is appended once.
+const PHOTOS_MARKER = "<!-- kewy-crm-photos -->";
+
+export const CRM_PHOTOS_SECTION = `${PHOTOS_MARKER}
+## Photos
+When a photo would help the customer (a product, the menu, a location, how-to steps), call list_photos
+with a few words from their request. Send at most one photo per reply by using its url as the reply image,
+and follow its "use when" note. Never send a photo that list_photos did not return, and never describe a
+photo as sent unless you attached it.`;
+
+const PROMPT_SECTIONS: ReadonlyArray<readonly [marker: string, section: string]> = [
+  [PROMPT_MARKER, CRM_PROMPT_SECTION],
+  [PHOTOS_MARKER, CRM_PHOTOS_SECTION],
+];
+
 interface LAgent {
   slug: string;
   live_version: number | null;
@@ -96,7 +112,7 @@ export class LAgentSetupService {
     const server = await this.mcp.create(workspaceId, {
       name: CRM_MCP_SERVER_NAME,
       description:
-        "This business's CRM: appointments and contacts. Use it to book, reschedule or cancel appointments and to look up or create customers.",
+        "This business's CRM: appointments, contacts and approved photos. Use it to book, reschedule or cancel appointments, to look up or create customers, and to find approved photos to send.",
       url: endpointUrl,
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -115,9 +131,11 @@ export class LAgentSetupService {
     const prompts = await this.client.request<LPrompt[]>(`${base}/${slug}/prompts`);
     const live = prompts.find((p) => p.version === agent?.live_version);
     const current = live?.content ?? "";
-    if (current.includes(PROMPT_MARKER)) return "already-present";
+    const missing = PROMPT_SECTIONS.filter(([marker]) => !current.includes(marker)).map(([, section]) => section);
+    if (missing.length === 0) return "already-present";
 
-    const content = current ? `${current.trimEnd()}\n\n${CRM_PROMPT_SECTION}` : CRM_PROMPT_SECTION;
+    // One PUT carrying every missing section.
+    const content = [current.trimEnd(), ...missing].filter(Boolean).join("\n\n");
     await this.client.request(`${base}/${slug}/prompt`, { method: "PUT", body: { content } });
     return "updated";
   }

@@ -164,6 +164,18 @@ describe("permission map", () => {
     expect(at("GET /ad-sources/overview")).toBeLessThan(at("GET /ad-sources/:id"));
   });
 
+  it("permission map covers SP-17 routes", () => {
+    const sp17: Record<string, string> = {
+      "PATCH /media/:id": "knowledge.update",
+      // Unchanged: search and the approval filter ride on the library list.
+      "GET /media": "conversations.view",
+      "POST /mcp/v1": "public",
+    };
+    for (const [k, p] of Object.entries(sp17)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+  });
+
     it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

@@ -15,6 +15,7 @@ import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
+import { agentImageDecision } from "../media/agent-photo";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
@@ -1989,6 +1990,32 @@ export class ZernioService {
       });
       if (!result) return;
 
+      // SP-17 (ruling 2): our own media URL is sent only while it is still an
+      // approved agent photo of this workspace; a photo hidden after the
+      // agent's list_photos call (or never approved, or another workspace's)
+      // is dropped and the text goes alone. Other URLs are sent as before.
+      let image: { url: string; type: "image" } | undefined = result.imageUrl
+        ? { url: result.imageUrl, type: "image" }
+        : undefined;
+      if (image) {
+        try {
+          const { decision, mediaId } = await agentImageDecision(this.prisma, workspaceId, image.url);
+          if (decision === "drop") {
+            this.log.warn(
+              `agent image dropped: not approved (media ${mediaId ?? "unknown"}, conversation ${conversationId})`,
+            );
+            image = undefined;
+          }
+        } catch (err) {
+          // Fail closed on the image, never on the answer.
+          this.log.warn(
+            `agent image dropped: approval check failed for conversation ${conversationId}`,
+            err instanceof Error ? err.stack : String(err),
+          );
+          image = undefined;
+        }
+      }
+
       // sendInDbConversation both delivers the reply and stores the single
       // Message row (with real delivery metadata) plus the conversation
       // preview update — tagged "ai" so the thread still reads as the
@@ -2001,7 +2028,7 @@ export class ZernioService {
           undefined,
           undefined,
           "ai",
-          result.imageUrl ? { url: result.imageUrl, type: "image" } : undefined,
+          image,
         );
       } catch (err) {
         // l validates the image URL before it ever reaches us, but the
@@ -2009,7 +2036,7 @@ export class ZernioService {
         // signed URL, a size/format l allows but the channel doesn't). A
         // bad image should only cost the image — never the text answer the
         // agent already produced — so retry once without the attachment.
-        if (!result.imageUrl) throw err;
+        if (!image) throw err;
         this.log.warn(
           `l auto-reply image failed to send for conversation ${conversationId}, retrying text-only`,
           err instanceof Error ? err.stack : String(err),

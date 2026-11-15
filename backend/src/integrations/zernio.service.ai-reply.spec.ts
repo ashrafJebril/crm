@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { ZernioClient } from "./zernio.client";
+import { makeFakePrisma } from "../channels/test-prisma";
 
 const WS = "ws-1";
 const CONV = "conv-1";
@@ -266,5 +267,99 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       "ai",
       undefined,
     );
+  });
+});
+
+describe("agent reply drops an unapproved CRM photo but keeps the text", () => {
+  const ENV_KEYS = ["PUBLIC_BASE_URL", "APP_BASE_URL", "DO_SPACES_BUCKET", "DO_SPACES_ENDPOINT", "DO_SPACES_CDN_ENDPOINT"] as const;
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
+    process.env.PUBLIC_BASE_URL = "https://crm.example.test";
+    delete process.env.APP_BASE_URL;
+    process.env.DO_SPACES_BUCKET = "aram";
+    process.env.DO_SPACES_ENDPOINT = "https://fra1.digitaloceanspaces.com";
+    delete process.env.DO_SPACES_CDN_ENDPOINT;
+  });
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    jest.restoreAllMocks();
+  });
+
+  const TOKEN = "tok_SECRET_123";
+  const photo = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    workspaceId: WS,
+    mimeType: "image/jpeg",
+    sizeBytes: 1000,
+    approvedForAgent: true,
+    storedPath: `${WS}/${id}.jpg`,
+    ...over,
+  });
+
+  async function run(imageUrl: string, rows: Record<string, unknown>[]) {
+    const ask = jest.fn().mockResolvedValue({ answer: "here's the menu", imageUrl });
+    const built = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+    built.prisma.media = makeFakePrisma({ media: rows }).media;
+    const warn = jest.spyOn((built.svc as any).log, "warn").mockImplementation(() => undefined);
+    await built.svc.handleEvent(inbound as never);
+    await settle();
+    return { ...built, warn };
+  }
+
+  const textOnly = (send: jest.SpyInstance) => {
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(WS, CONV, "here's the menu", undefined, undefined, "ai", undefined);
+  };
+
+  it("our public-token URL for an approved photo is sent with the image", async () => {
+    const url = `https://crm.example.test/api/media/p1/public?token=${TOKEN}`;
+    const { send } = await run(url, [photo("p1")]);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(WS, CONV, "here's the menu", undefined, undefined, "ai", { url, type: "image" });
+  });
+
+  it("the same photo hidden: one text-only send and a log line with the id, never the token", async () => {
+    const url = `https://crm.example.test/api/media/p1/public?token=${TOKEN}`;
+    const { send, warn } = await run(url, [photo("p1", { approvedForAgent: false })]);
+    textOnly(send);
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    const line = lines.find((l) => l.includes("agent image dropped: not approved"));
+    expect(line).toContain("p1");
+    expect(lines.join("\n")).not.toContain(TOKEN);
+  });
+
+  it("a Spaces URL whose path is the storedPath of an unapproved row -> text only", async () => {
+    const url = `https://aram.fra1.digitaloceanspaces.com/${WS}/p2.jpg?X-Amz-Signature=abc`;
+    const { send } = await run(url, [photo("p2", { approvedForAgent: false })]);
+    textOnly(send);
+  });
+
+  it("another workspace's approved photo URL -> text only", async () => {
+    const url = `https://crm.example.test/api/media/theirs/public?token=${TOKEN}`;
+    const { send } = await run(url, [photo("theirs", { workspaceId: "ws-other" })]);
+    textOnly(send);
+  });
+
+  it("an external URL is sent as today", async () => {
+    const url = "https://example.com/x.jpg";
+    const { send } = await run(url, []);
+    expect(send).toHaveBeenCalledWith(WS, CONV, "here's the menu", undefined, undefined, "ai", { url, type: "image" });
+  });
+
+  it("a failing approval lookup drops the image, never the answer", async () => {
+    const ask = jest.fn().mockResolvedValue({
+      answer: "here's the menu",
+      imageUrl: `https://crm.example.test/api/media/p1/public?token=${TOKEN}`,
+    });
+    const built = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+    built.prisma.media = { findFirst: jest.fn().mockRejectedValue(new Error("db down")) };
+    jest.spyOn((built.svc as any).log, "warn").mockImplementation(() => undefined);
+    await built.svc.handleEvent(inbound as never);
+    await settle();
+    textOnly(built.send);
   });
 });
