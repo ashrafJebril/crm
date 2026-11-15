@@ -5,7 +5,7 @@ import { usePermissions } from "@/auth/usePermissions";
 import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { invalidateMediaLists, updateMedia, useMediaPages } from "@/components/media/mediaApi";
 import { AgentBadge, MediaDetailsDialog } from "@/components/media/MediaDetailsDialog";
-import { approvalBlock, approvalBlockText, displayTitle } from "@/components/media/mediaDetails";
+import { approvalBlockText, approvalSwitchState, displayTitle } from "@/components/media/mediaDetails";
 import { mediaErrorText, mediaLibraryBlocked, mediaNoAccessText } from "@/components/media/mediaErrors";
 import { MediaSearchBar, approvedParam, type ApprovalFilter } from "@/components/media/MediaSearchBar";
 import { useToast } from "@/components/Toast";
@@ -46,7 +46,8 @@ export function PhotosTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
   const token = tokenStore.get();
 
   const setApproved = async (m: Media, on: boolean) => {
-    if (on && !m.title?.trim()) {
+    // Same rule as the dialog: approving an untitled photo needs a title first.
+    if (approvalSwitchState(m, { title: m.title ?? "", approvedForAgent: on }, canEdit).needsTitle) {
       // Approving needs a title: let the user name it first.
       toast(tx("Add a title to approve this photo.", "أضف عنوانًا لاعتماد هذه الصورة."), "info");
       setDetails(m);
@@ -115,8 +116,12 @@ export function PhotosTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 12 }}>
           {pages.items.map((m) => {
-            const block = approvalBlock(m);
-            const switchDisabled = !canEdit || busy === m.id || (block !== null && !m.approvedForAgent);
+            const sw = approvalSwitchState(m, { title: m.title ?? "", approvedForAgent: m.approvedForAgent }, canEdit);
+            const block = sw.block;
+            const switchDisabled = sw.disabled || busy === m.id;
+            const titleId = `photo-${m.id}-title`;
+            const reasonId = `photo-${m.id}-reason`;
+            const showReason = canEdit && block !== null && !m.approvedForAgent;
             return (
               <div key={m.id} className="card" style={{ padding: 10, display: "grid", gap: 8, alignContent: "start" }}>
                 <div style={{ height: 120, borderRadius: 8, overflow: "hidden", background: "var(--bg-2)", display: "grid", placeItems: "center" }}>
@@ -124,6 +129,7 @@ export function PhotosTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                   <div
+                    id={titleId}
                     dir="auto"
                     title={m.fileName}
                     style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}
@@ -144,16 +150,20 @@ export function PhotosTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                       role="switch"
                       checked={m.approvedForAgent}
                       disabled={switchDisabled}
+                      aria-label={`${tx("Agent can send", "يمكن للوكيل إرسال")} ${displayTitle(m)}`}
+                      aria-describedby={showReason ? reasonId : undefined}
                       onChange={(e) => void setApproved(m, e.target.checked)}
                     />
                     {tx("Agent can send this", "يمكن للوكيل إرسال هذا")}
                   </label>
                 )}
-                {canEdit && block && !m.approvedForAgent && (
-                  <span style={{ fontSize: 11, color: "var(--ink-3)" }}>{approvalBlockText(block, tx)}</span>
+                {showReason && block && (
+                  <span id={reasonId} style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                    {approvalBlockText(block, tx)}
+                  </span>
                 )}
                 <div>
-                  <button type="button" className="btn ghost sm" onClick={() => setDetails(m)}>
+                  <button type="button" className="btn ghost sm" aria-describedby={titleId} onClick={() => setDetails(m)}>
                     {tx("Details", "التفاصيل")}
                   </button>
                 </div>

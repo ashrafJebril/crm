@@ -116,3 +116,26 @@ export function defaultTitle(fileName: string): string {
 
 /** What a tile shows: the title, or the file name when undescribed. */
 export const displayTitle = (m: Pick<Media, "title" | "fileName">): string => m.title?.trim() || m.fileName;
+
+/**
+ * The approval switch's state, the backend rule in one place (dialog and
+ * Photos tab):
+ * - a blocked file (type, size, inbound) can be switched off but never on;
+ * - without `canEdit` (knowledge.update) the switch is disabled;
+ * - `needsTitle`: the result is approved with no title, and the change
+ *   approves it or changes the title (backend media.title_required). An
+ *   untitled row approved earlier can still have other fields edited.
+ */
+export function approvalSwitchState(
+  media: Pick<Media, "mimeType" | "sizeBytes" | "uploadedById" | "approvedForAgent" | "title">,
+  draft: { title: string; approvedForAgent: boolean },
+  canEdit: boolean,
+): { disabled: boolean; needsTitle: boolean; block: ApprovalBlock | null } {
+  const block = approvalBlock(media);
+  const disabled = !canEdit || (block !== null && !draft.approvedForAgent);
+  const title = clean(draft.title);
+  const approving = draft.approvedForAgent && media.approvedForAgent !== true;
+  const titleChanged = title !== (media.title ?? null);
+  const needsTitle = draft.approvedForAgent && title === null && (approving || titleChanged);
+  return { disabled, needsTitle, block };
+}

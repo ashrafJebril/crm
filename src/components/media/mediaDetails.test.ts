@@ -7,6 +7,7 @@ import {
   MEDIA_DETAIL_LIMITS,
   approvalBlock,
   approvalBlockText,
+  approvalSwitchState,
   defaultTitle,
   detailsDraft,
   detailsPatch,
@@ -106,5 +107,56 @@ describe("media details model", () => {
     expect(displayTitle(media({ title: "Menu" }))).toBe("Menu");
     // Rows from before SP-17 (or a list without the fields) still render.
     expect(displayTitle({ ...media(), title: undefined } as unknown as Media)).toBe("menu.final.jpg");
+  });
+});
+
+describe("approval switch state mirrors the backend rule", () => {
+  type Row = [
+    name: string,
+    media: Partial<Media>,
+    draft: { title: string; approvedForAgent: boolean },
+    canEdit: boolean,
+    expected: { disabled: boolean; needsTitle: boolean; block: "type" | "size" | "inbound" | null },
+  ];
+  const rows: Row[] = [
+    ["a staff JPEG can be switched on", {}, { title: "Menu", approvedForAgent: false }, true, { disabled: false, needsTitle: false, block: null }],
+    ["approving with a title", { title: "Menu" }, { title: "Menu", approvedForAgent: true }, true, { disabled: false, needsTitle: false, block: null }],
+    ["approving without a title needs one", {}, { title: "  ", approvedForAgent: true }, true, { disabled: false, needsTitle: true, block: null }],
+    ["type: a PDF cannot be switched on", { mimeType: "application/pdf" }, { title: "x", approvedForAgent: false }, true, { disabled: true, needsTitle: false, block: "type" }],
+    ["type: a WebP cannot be switched on", { mimeType: "image/webp" }, { title: "x", approvedForAgent: false }, true, { disabled: true, needsTitle: false, block: "type" }],
+    ["size: a 6 MB PNG cannot be switched on", { mimeType: "image/png", sizeBytes: 6 * MB }, { title: "x", approvedForAgent: false }, true, { disabled: true, needsTitle: false, block: "size" }],
+    ["inbound: a customer attachment cannot be switched on", { uploadedById: null }, { title: "x", approvedForAgent: false }, true, { disabled: true, needsTitle: false, block: "inbound" }],
+    [
+      "a blocked file approved earlier can still be switched off",
+      { mimeType: "image/webp", approvedForAgent: true, title: "Old" },
+      { title: "Old", approvedForAgent: true },
+      true,
+      { disabled: false, needsTitle: false, block: "type" },
+    ],
+    [
+      "clearing the title of an approved row needs a title",
+      { approvedForAgent: true, title: "Menu" },
+      { title: "", approvedForAgent: true },
+      true,
+      { disabled: false, needsTitle: true, block: null },
+    ],
+    [
+      "clearing the title while switching off is allowed",
+      { approvedForAgent: true, title: "Menu" },
+      { title: "", approvedForAgent: false },
+      true,
+      { disabled: false, needsTitle: false, block: null },
+    ],
+    [
+      "an untitled row approved before SP-17 keeps editing other fields",
+      { approvedForAgent: true, title: null },
+      { title: "", approvedForAgent: true },
+      true,
+      { disabled: false, needsTitle: false, block: null },
+    ],
+    ["without knowledge.update the switch is disabled", {}, { title: "Menu", approvedForAgent: false }, false, { disabled: true, needsTitle: false, block: null }],
+  ];
+  it.each(rows)("%s", (_name, over, draft, canEdit, expected) => {
+    expect(approvalSwitchState(media(over), draft, canEdit)).toEqual(expected);
   });
 });
