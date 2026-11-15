@@ -1,0 +1,2 @@
+# Migration SQL must keep LF line endings: Prisma checksums the exact bytes.
+backend/prisma/migrations/** text eol=lf
