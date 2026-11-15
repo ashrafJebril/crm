@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { templatesTabFromHash, type TemplatesTab } from "./templates/templatesTab";
+import { templatesTabFromParam, templatesTabParam, type TemplatesTab } from "./templates/templatesTab";
+import { useHashParam } from "@/lib/useHashParam";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -284,8 +285,12 @@ function TemplatesImpl() {
   const createGate = gatedTitle("template.create", connected, tx);
   const isAr = t.lang === "ar";
 
-  // SP-17: `#/templates?tab=gallery` (the agent Photos tab's link) opens the Gallery.
-  const [tab, setTab] = useState<Tab>(() => templatesTabFromHash(typeof window === "undefined" ? "" : window.location.hash));
+  // SP-17: the tab lives in the hash (`#/templates?tab=gallery`) in both
+  // directions, so the Photos tab's link opens the Gallery and a reload or
+  // bookmark reopens the tab the user is on. The library clears the param.
+  const [tabParam, setTabParam] = useHashParam("tab");
+  const tab: Tab = templatesTabFromParam(tabParam);
+  const setTab = (next: Tab) => setTabParam(templatesTabParam(next));
   const [filter, setFilter] = useState<CategoryFilter>("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState<string>("");
