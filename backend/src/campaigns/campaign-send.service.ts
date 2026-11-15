@@ -14,7 +14,7 @@ import { CampaignLaunchRunner, FINISHED_BROADCAST, isNotFound } from "./sending/
 import { budgeted, ZernioBudget } from "./sending/zernio-budget";
 import { aggregateBroadcastStatus } from "./sending/broadcast-status";
 import { loadCustomDefs, resolveLaunchSenders, templateUnsupported } from "./sending/launch-context";
-import { type AudienceResolver, resolveCampaignAudience } from "./sending/audience-stream";
+import { type AudienceResolver, resolveCampaignAudience, streamAudience } from "./sending/audience-stream";
 import { SegmentsService } from "../segments/segments.service";
 import { effectiveSenderIds, templateOnSenders } from "./sending/senders";
 import { legacyToVarMap, validateVarMap } from "./sending/var-map";
@@ -119,25 +119,34 @@ export class CampaignSendService {
     this.launcher = launcher ?? new CampaignLaunchRunner(prisma, zernio, media, undefined, this.tracker, segments);
   }
 
-  /** SP-16 (F1): the same resolver as the preview and the launch; a deleted segment → 400 campaigns.audience_missing. */
-  private async audience(workspaceId: string, segmentId: string | null | undefined) {
-    const where = await resolveCampaignAudience(this.segments, workspaceId, segmentId, new Date());
-    return this.prisma.contact.findMany({
-      where,
-      select: { id: true, name: true, phone: true, lifecycle: true, marketingOptOut: true },
-    });
-  }
-
-  /** Who a segment (or everyone) would reach, and roughly what Meta will charge. */
+  /**
+   * Who a segment (or everyone) would reach, and roughly what Meta will charge
+   * (legacy `GET /campaigns/preview`; same response shape as before).
+   *
+   * SP-16: the audience resolves through the same resolver as the newer
+   * preview and the launch (a deleted segment → 400 campaigns.audience_missing),
+   * and is read in keyset pages of AUDIENCE_PAGE (review m3), never loaded
+   * whole: only the per-page counts and the phone de-duplication set are kept.
+   */
   async preview(workspaceId: string, segmentId: string | null) {
-    const contacts = await this.audience(workspaceId, segmentId);
-    const { recipients, skipped } = buildRecipients(contacts);
-    return {
-      total: contacts.length,
-      reachable: recipients.length,
-      skipped,
-      estimate: estimateMetaCost(recipients.map((r) => r.phone)),
-    };
+    const where = await resolveCampaignAudience(this.segments, workspaceId, segmentId, new Date());
+    const seen = new Set<string>();
+    const skipped = { noPhone: 0, optedOut: 0, duplicate: 0 };
+    const estimate = { usd: 0, unpriced: 0 };
+    let total = 0;
+    let reachable = 0;
+    for await (const page of streamAudience(this.prisma, workspaceId, where, [])) {
+      total += page.contacts.length;
+      const built = buildRecipients(page.contacts, seen);
+      skipped.noPhone += built.skipped.noPhone;
+      skipped.optedOut += built.skipped.optedOut;
+      skipped.duplicate += built.skipped.duplicate;
+      reachable += built.recipients.length;
+      const cost = estimateMetaCost(built.recipients.map((r) => r.phone));
+      estimate.usd += cost.usd;
+      estimate.unpriced += cost.unpriced;
+    }
+    return { total, reachable, skipped, estimate };
   }
 
   /**

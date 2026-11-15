@@ -212,3 +212,30 @@ describe("missing audience refuses preview and launch", () => {
     expect(w.zernio.deliveries).toHaveLength(0);
   });
 });
+
+describe("legacy GET /campaigns/preview is bounded (review m3)", () => {
+  it("streams keyset pages of at most 1 000 contacts and keeps the response shape and totals", async () => {
+    // 2 500 contacts: every 10th has no phone, every 25th opted out; c02400 repeats c00000's phone (a duplicate across pages).
+    const people = Array.from({ length: 2500 }, (_, i) => {
+      const id = `c${String(i).padStart(5, "0")}`;
+      const phone = i % 10 === 5 ? null : i === 2400 ? "+962790000000" : `+9627900${String(i).padStart(5, "0")}`;
+      return contact(id, `C${i}`, phone, { marketingOptOut: i % 25 === 3 });
+    });
+    const w = world({ contacts: people });
+    const res = await w.send.preview(WS, null);
+    const noPhone = people.filter((p) => !p.phone).length;
+    const optedOut = people.filter((p) => p.phone && p.marketingOptOut).length;
+    expect(res).toEqual({
+      total: 2500,
+      reachable: 2500 - noPhone - optedOut - 1,
+      skipped: { noPhone, optedOut, duplicate: 1 },
+      estimate: { usd: expect.any(Number), unpriced: 0 },
+    });
+    const calls = w.prisma.contact.findMany.mock.calls.map((c: any[]) => c[0]);
+    expect(calls.length).toBe(3);
+    for (const a of calls) {
+      expect(a.take).toBeLessThanOrEqual(1000);
+      expect(a.orderBy).toEqual({ id: "asc" });
+    }
+  });
+});

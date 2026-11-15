@@ -42,7 +42,7 @@ function world(campaigns: Array<Record<string, unknown>> = []) {
   t.campaign.push(...campaigns);
   const fake = createAudienceDb(t);
   const svc = new SegmentsService(fake.prisma as never);
-  const outbound = { emitSegmentUpserted: jest.fn(async () => true), emitSegmentDeleted: jest.fn(async () => true) };
+  const outbound = { emitSegmentUpserted: jest.fn(async (_ws: string, _id: string) => true), emitSegmentDeleted: jest.fn(async () => true) };
   const ctrl = new SegmentsController(fake.prisma as never, svc, outbound as never);
   const row = (id: string) => fake.db.segment.find((s) => s.id === id);
   const members = async (id: string) => evaluateContacts(fake.db, await svc.resolveContactWhere(WS, id));
@@ -78,6 +78,7 @@ describe("delete-audience-with-references", () => {
     });
     expect(snapshot(w.db)).toBe(before);
     expect(w.outbound.emitSegmentDeleted).not.toHaveBeenCalled();
+    expect(w.outbound.emitSegmentUpserted).not.toHaveBeenCalled();
   });
 
   it("with confirm: G is deleted, the referencing rules are marked missing (group_missing, nobody for in and not_in), the draft keeps its segmentId", async () => {
@@ -88,6 +89,8 @@ describe("delete-audience-with-references", () => {
     expect(await w.ctrl.remove(WS, "G", "1")).toEqual({ ok: true, audiencesMarked: 2 });
     expect(w.row("G")).toBeUndefined();
     expect(w.outbound.emitSegmentDeleted).toHaveBeenCalledWith(WS, "G");
+    // Review m2: the marked audiences are re-emitted to HJZ after commit.
+    expect(w.outbound.emitSegmentUpserted.mock.calls.map((c: unknown[]) => c[1]).sort()).toEqual(["N", "S"]);
 
     expect(w.row("S")!.rules).toEqual(tree({ ...inG, missing: true } as AudienceNode));
     expect(await w.issues("S")).toEqual([{ path: [0], kind: "group_missing" }]);

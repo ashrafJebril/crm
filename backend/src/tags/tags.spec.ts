@@ -158,7 +158,8 @@ describe("TagsService", () => {
     expect(tx.segment.update).toHaveBeenCalledTimes(1);
     expect(tx.segment.update).toHaveBeenCalledWith({
       where: { id: "s1" },
-      data: { filter: JSON.stringify({ tagsAny: ["Gold"] }) },
+      // SP-16 (review m1): a legacy row's version is bumped too.
+      data: { filter: JSON.stringify({ tagsAny: ["Gold"] }), version: { increment: 1 } },
     });
     expect(tx.tag.update).toHaveBeenCalledWith({
       where: { id: "t1" },
@@ -229,7 +230,8 @@ describe("TagsService", () => {
       expect(tx.segment.update).toHaveBeenCalledTimes(1);
       expect(tx.segment.update).toHaveBeenCalledWith({
         where: { id: "s1" },
-        data: { filter: JSON.stringify({ tagsAny: ["Premium"] }) },
+        // SP-16 (review m1, m2): version bumped; a merge clears the count cache.
+        data: { filter: JSON.stringify({ tagsAny: ["Premium"] }), version: { increment: 1 }, memberCount: null, countedAt: null },
       });
       expect(tx.tag.deleteMany).toHaveBeenCalledWith({
         where: { id: { in: ["a"] }, workspaceId: "ws1" },

@@ -296,8 +296,14 @@ export class SegmentsService {
    *    `group_missing`, nobody, for `in` and `not_in`), and the row is deleted.
    * Draft campaigns keep their dangling `segmentId`; their preview and launch
    * then refuse with `campaigns.audience_missing`. Nothing is written on a 409.
+   * `marked` lists the audiences rewritten, for the caller's HJZ re-sync after
+   * commit (review m2); the route does not return it.
    */
-  async remove(workspaceId: string, id: string, opts: { confirm?: boolean } = {}): Promise<{ ok: true; audiencesMarked: number }> {
+  async remove(
+    workspaceId: string,
+    id: string,
+    opts: { confirm?: boolean } = {},
+  ): Promise<{ ok: true; audiencesMarked: number; marked: string[] }> {
     return this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"sp16:audiences:" + workspaceId}))`;
@@ -319,7 +325,7 @@ export class SegmentsService {
         }
         const audiencesMarked = await writeMarkedAudiences(client, workspaceId, refs);
         await tx.segment.delete({ where: { id } });
-        return { ok: true as const, audiencesMarked };
+        return { ok: true as const, audiencesMarked, marked: refs.map((r) => r.id) };
       },
       { timeout: 20_000, maxWait: 10_000 },
     );

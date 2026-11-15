@@ -87,13 +87,22 @@ function world() {
   );
   t.segmentMember.push({ segmentId: "D", contactId: "k1" });
   const fake = createAudienceDb(t, { raw: tagSql });
-  const tags = new TagsService(fake.prisma as never);
+  // HJZ emits as a spy; each call records the audience row as it was when emitted (after commit).
+  const emitted: Array<{ id: string; rules: unknown; filter: string }> = [];
+  const outbound = {
+    emitSegmentUpserted: jest.fn(async (_ws: string, id: string) => {
+      const r = fake.db.segment.find((x) => x.id === id);
+      emitted.push({ id, rules: r ? JSON.parse(JSON.stringify(r.rules)) : null, filter: r?.filter });
+      return true;
+    }),
+  };
+  const tags = new TagsService(fake.prisma as never, outbound as never);
   const ctrl = new TagsController(tags);
   const segments = new SegmentsService(fake.prisma as never);
   const members = async (id: string) => evaluateContacts(fake.db, await segments.resolveContactWhere(WS, id));
   const issues = async (id: string) => (await segments.compile(WS, readRules(row(id)).tree, { selfId: id })).issues;
   const row = (id: string) => fake.db.segment.find((s) => s.id === id)!;
-  return { fake, db: fake.db, tags, ctrl, members, issues, row };
+  return { fake, db: fake.db, tags, ctrl, members, issues, row, outbound, emitted };
 }
 
 async function bodyOf(p: Promise<unknown>) {
@@ -291,3 +300,67 @@ describe("tag rename and merge rewrite rules", () => {
 function tagsOfId(db: AudienceTables, id: string): string[] {
   return tagsOf(db.contact.find((c) => c.id === id)!);
 }
+
+describe("HJZ re-sync, version and count cache after marking, rename and merge (review m1, m2)", () => {
+  const ids = (w: ReturnType<typeof world>) => w.outbound.emitSegmentUpserted.mock.calls.map((c) => c[1]).sort();
+  const flush = () => new Promise((r) => setImmediate(r));
+
+  it("a confirmed delete re-emits every marked audience after commit (the emitted state is the marked one)", async () => {
+    const w = world();
+    await w.ctrl.remove(WS, "tVIP", "1");
+    await flush();
+    expect(ids(w)).toEqual(["A", "B", "C"]);
+    expect(w.outbound.emitSegmentUpserted.mock.calls.every((c) => c[0] === WS)).toBe(true);
+    for (const e of w.emitted) expect(e.filter).toBe(LEGACY_SENTINEL_JSON);
+  });
+
+  it("no emit on a 409, on a rolled-back delete, or for an unreferenced tag", async () => {
+    const w = world();
+    await bodyOf(w.ctrl.remove(WS, "tVIP"));
+    w.db.contact[4].tags = '["Lonely"]';
+    await w.ctrl.remove(WS, "tLonely");
+    const orig = w.fake.prisma.__tx;
+    w.fake.prisma.__tx = (id: number) => {
+      const tx = orig(id);
+      tx.segment.update = async () => {
+        throw new Error("boom");
+      };
+      return tx;
+    };
+    await expect(w.ctrl.remove(WS, "tVIP", "1")).rejects.toThrow("boom");
+    await flush();
+    expect(w.outbound.emitSegmentUpserted).not.toHaveBeenCalled();
+  });
+
+  it("an emit failure never fails the delete (best-effort)", async () => {
+    const w = world();
+    w.outbound.emitSegmentUpserted.mockRejectedValue(new Error("hjz down"));
+    expect(await w.ctrl.remove(WS, "tVIP", "1")).toMatchObject({ ok: true, audiencesMarked: 3 });
+    await flush();
+  });
+
+  it("a rename bumps version on legacy rows too (m1) and re-emits every rewritten audience", async () => {
+    const w = world();
+    w.db.tag.splice(w.db.tag.findIndex((t) => t.id === "tPremium"), 1);
+    await w.tags.update(WS, "tVIP", { name: "Premium" });
+    await flush();
+    expect(w.row("B").rules).toBeNull();
+    expect(w.row("B").version).toBe(1);
+    expect(w.row("E").version).toBe(0);
+    expect(ids(w)).toEqual(["A", "B", "C"]);
+  });
+
+  it("a merge clears the count cache of every rewritten audience and re-emits them", async () => {
+    const w = world();
+    const at = new Date("2026-11-01T00:00:00Z");
+    for (const s of w.db.segment) Object.assign(s, { memberCount: 7, countedAt: at });
+    await w.tags.merge(WS, ["tVIP", "tGold"], "tPremium");
+    await flush();
+    for (const id of ["A", "B", "C"]) {
+      expect(w.row(id)).toMatchObject({ memberCount: null, countedAt: null });
+    }
+    expect(w.row("B").version).toBe(1);
+    expect(w.row("E")).toMatchObject({ memberCount: 7, countedAt: at, version: 0 });
+    expect(ids(w)).toEqual(["A", "B", "C"]);
+  });
+});

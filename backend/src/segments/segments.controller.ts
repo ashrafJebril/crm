@@ -68,7 +68,9 @@ export class SegmentsController {
   async remove(@CurrentWorkspace() workspaceId: string, @Param("id") id: string, @Query("confirm") confirm?: string) {
     const res = await this.svc.remove(workspaceId, id, { confirm: confirm === "1" || confirm === "true" });
     void this.outbound.emitSegmentDeleted(workspaceId, id);
-    return res;
+    // Review m2: the audiences whose group rule was marked now match nobody; re-sync them to HJZ (best-effort).
+    for (const m of res.marked) void Promise.resolve(this.outbound.emitSegmentUpserted(workspaceId, m)).catch(() => undefined);
+    return { ok: res.ok, audiencesMarked: res.audiencesMarked };
   }
 
   @Get(":id/contacts")
