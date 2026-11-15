@@ -5,6 +5,7 @@ import { MCPServer } from "@mastra/mcp";
 import { McpToolsFactory } from "./mcp-tools.factory";
 import { AppointmentsService } from "../appointments/appointments.service";
 import { ContactsService } from "../contacts/contacts.service";
+import { MediaService } from "../media/media.service";
 
 interface JsonRpcResult {
   result?: { content?: { type: string; text: string }[]; isError?: boolean; tools?: { name: string }[] };
@@ -13,6 +14,7 @@ interface JsonRpcResult {
 describe("MCP server HTTP transport", () => {
   let appointments: { list: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let contacts: { search: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
+  let media: { listForAgent: jest.Mock };
   let server: http.Server;
   let baseUrl: string;
 
@@ -22,6 +24,7 @@ describe("MCP server HTTP transport", () => {
     const factory = new McpToolsFactory(
       appointments as unknown as AppointmentsService,
       contacts as unknown as ContactsService,
+      media as unknown as MediaService,
     );
     server = http.createServer(async (req, res) => {
       const mcp = new MCPServer({ name: "tkana-crm", version: "1.0.0", tools: factory.build(workspaceId) });
@@ -54,21 +57,34 @@ describe("MCP server HTTP transport", () => {
   beforeEach(() => {
     appointments = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     contacts = { search: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
+    media = { listForAgent: jest.fn() };
   });
 
   afterEach(() => {
     server?.close();
   });
 
-  it("lists all nine tools and no delete tool", async () => {
+  it("mcp tools list includes list_photos: all ten tools and no delete tool", async () => {
     await startFor("ws1");
     const { result } = await call("tools/list", {});
     const names = (result?.tools ?? []).map((t) => t.name).sort();
     expect(names).toEqual([
       "cancel_appointment", "create_appointment", "create_contact", "get_appointment",
-      "get_contact", "list_appointments", "search_contacts", "update_appointment", "update_contact",
+      "get_contact", "list_appointments", "list_photos", "search_contacts", "update_appointment", "update_contact",
     ]);
     expect(names.some((n) => n.includes("delete"))).toBe(false);
+  });
+
+  it("list_photos answers over the transport, scoped to the server's workspace", async () => {
+    await startFor("ws-7");
+    media.listForAgent.mockResolvedValue({ photos: [{ id: "p1", url: "https://cdn.test/p1" }] });
+    const { result } = await call("tools/call", { name: "list_photos", arguments: { query: "menu" } });
+    expect(result?.isError).toBe(false);
+    expect(media.listForAgent).toHaveBeenCalledWith("ws-7", { query: "menu", limit: 5 });
+    expect(JSON.parse(result!.content![0].text)).toEqual({ photos: [{ id: "p1", url: "https://cdn.test/p1" }] });
+    const refused = await call("tools/call", { name: "list_photos", arguments: { limit: 11 } });
+    expect(refused.result?.isError).toBe(true);
+    expect(media.listForAgent).toHaveBeenCalledTimes(1);
   });
 
   it("scopes a tool call to the workspace baked into this server instance", async () => {

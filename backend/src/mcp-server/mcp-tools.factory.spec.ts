@@ -2,27 +2,31 @@ import { NotFoundException } from "@nestjs/common";
 import { McpToolsFactory } from "./mcp-tools.factory";
 import { AppointmentsService } from "../appointments/appointments.service";
 import { ContactsService } from "../contacts/contacts.service";
+import { MediaService } from "../media/media.service";
 
 describe("McpToolsFactory", () => {
   let appointments: { list: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let contacts: { search: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
+  let media: { listForAgent: jest.Mock };
   let factory: McpToolsFactory;
 
   beforeEach(() => {
     appointments = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     contacts = { search: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
+    media = { listForAgent: jest.fn() };
     factory = new McpToolsFactory(
       appointments as unknown as AppointmentsService,
       contacts as unknown as ContactsService,
+      media as unknown as MediaService,
     );
   });
 
   const tools = (workspaceId = "ws1") => factory.build(workspaceId);
 
-  it("exposes exactly the nine expected tools and no delete tool", () => {
+  it("exposes exactly the ten expected tools and no delete tool (SP-17 adds list_photos)", () => {
     expect(Object.keys(tools()).sort()).toEqual([
       "cancel_appointment", "create_appointment", "create_contact", "get_appointment",
-      "get_contact", "list_appointments", "search_contacts", "update_appointment", "update_contact",
+      "get_contact", "list_appointments", "list_photos", "search_contacts", "update_appointment", "update_contact",
     ]);
   });
 

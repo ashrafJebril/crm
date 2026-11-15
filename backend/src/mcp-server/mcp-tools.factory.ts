@@ -3,6 +3,7 @@ import { createTool, type Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { AppointmentsService } from "../appointments/appointments.service";
 import { ContactsService } from "../contacts/contacts.service";
+import { AGENT_PHOTO_LIMIT_DEFAULT, AGENT_PHOTO_LIMIT_MAX, MediaService } from "../media/media.service";
 
 const APPOINTMENT_STATUSES = ["confirmed", "pending", "completed", "cancelled", "no-show"] as const;
 const APPOINTMENT_SOURCES = ["human", "self-booking"] as const;
@@ -29,6 +30,7 @@ export class McpToolsFactory {
   constructor(
     private readonly appointments: AppointmentsService,
     private readonly contacts: ContactsService,
+    private readonly media: MediaService,
   ) {}
 
   build(workspaceId: string): Record<string, Tool> {
@@ -138,6 +140,27 @@ export class McpToolsFactory {
           tags: z.array(z.string()).optional(),
         }),
         execute: ({ id, ...dto }) => unwrap(() => this.contacts.update(workspaceId, id, dto)),
+      }),
+
+      // SP-17 (ruling 1): approved photos only; the filter lives in
+      // MediaService.listForAgent's query and is re-applied on every call.
+      list_photos: createTool({
+        id: "list_photos",
+        description:
+          "List photos this business approved for you to send to customers. Each photo has a title, " +
+          "alt text, tags and a 'use when' note. To send one, use its url as your reply's image. " +
+          "Only photos returned by this tool may be sent. An empty list means there is no approved photo for that request.",
+        inputSchema: z.object({
+          query: z
+            .string()
+            .trim()
+            .max(100)
+            .optional()
+            .describe("Words to match in title, alt text, use-when, file name or tags"),
+          tag: z.string().trim().max(40).optional(),
+          limit: z.number().int().min(1).max(AGENT_PHOTO_LIMIT_MAX).default(AGENT_PHOTO_LIMIT_DEFAULT),
+        }),
+        execute: (input) => unwrap(() => this.media.listForAgent(workspaceId, input)),
       }),
     };
   }

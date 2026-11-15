@@ -54,7 +54,8 @@ describe("LAgentSetupService", () => {
     tokens.status.mockResolvedValue({ connected: true });
     client.request.mockImplementation(async (path: string) => {
       if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 2 }];
-      if (path.endsWith("/prompts")) return [{ version: 2, content: "x\n<!-- kewy-crm-tools -->" }];
+      // SP-17: both sections present.
+      if (path.endsWith("/prompts")) return [{ version: 2, content: "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->" }];
       return undefined;
     });
 
@@ -73,6 +74,54 @@ describe("LAgentSetupService", () => {
 
     expect(mcp.remove).toHaveBeenCalledWith("ws-1", "old");
     expect(tokens.generate).toHaveBeenCalled();
+  });
+
+  describe("prompt setup appends the photos section once", () => {
+    const withPrompt = (content: string) =>
+      client.request.mockImplementation(async (path: string) => {
+        if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 1 }];
+        if (path.endsWith("/prompts")) return [{ version: 1, content }];
+        return undefined;
+      });
+    const puts = () => client.request.mock.calls.filter(([, o]: any[]) => o?.method === "PUT");
+
+    it("no section: one PUT with both markers, tools first", async () => {
+      withPrompt("You are support.");
+      expect((await svc.ensure("ws-1")).prompt).toBe("updated");
+      expect(puts()).toHaveLength(1);
+      const content: string = puts()[0][1].body.content;
+      expect(content.startsWith("You are support.\n\n<!-- kewy-crm-tools -->")).toBe(true);
+      expect(content.indexOf("<!-- kewy-crm-tools -->")).toBeLessThan(content.indexOf("<!-- kewy-crm-photos -->"));
+      expect(content).toContain("list_photos");
+      expect(content.split("<!-- kewy-crm-photos -->")).toHaveLength(2);
+    });
+
+    it("tools marker only: one PUT adding the photos section, the rest kept", async () => {
+      const before = "You are support.\n\n<!-- kewy-crm-tools -->\n## Booking";
+      withPrompt(before);
+      expect((await svc.ensure("ws-1")).prompt).toBe("updated");
+      expect(puts()).toHaveLength(1);
+      const content: string = puts()[0][1].body.content;
+      expect(content.startsWith(`${before}\n\n<!-- kewy-crm-photos -->`)).toBe(true);
+      expect(content.split("<!-- kewy-crm-tools -->")).toHaveLength(2);
+    });
+
+    it("both present: no PUT, already-present", async () => {
+      withPrompt("x <!-- kewy-crm-photos --> y <!-- kewy-crm-tools -->");
+      expect((await svc.ensure("ws-1")).prompt).toBe("already-present");
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("an empty prompt gets both sections without a leading blank line", async () => {
+      withPrompt("");
+      await svc.ensure("ws-1");
+      expect(puts()[0][1].body.content.startsWith("<!-- kewy-crm-tools -->")).toBe(true);
+    });
+
+    it("a new registration describes approved photos", async () => {
+      await svc.ensure("ws-1");
+      expect(mcp.create.mock.calls[0][1].description).toContain("approved photos");
+    });
   });
 
   it("refuses a workspace that is not linked to Kewy AI", async () => {

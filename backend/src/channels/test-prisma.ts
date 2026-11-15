@@ -36,7 +36,11 @@ function matchValue(v: any, cond: any): boolean {
     if ("has" in cond && !(Array.isArray(v) && v.includes(cond.has))) return false;
     if ("hasSome" in cond && !(Array.isArray(v) && (cond.hasSome as any[]).some((x) => v.includes(x)))) return false;
     if ("isEmpty" in cond && (Array.isArray(v) && v.length === 0) !== cond.isEmpty) return false;
-    if ("contains" in cond && !String(v ?? "").includes(cond.contains)) return false;
+    // SP-17: `mode: "insensitive"` (Postgres ILIKE) lowercases both sides.
+    if ("contains" in cond) {
+      const fold = (x: string) => (cond.mode === "insensitive" ? x.toLowerCase() : x);
+      if (!fold(String(v ?? "")).includes(fold(String(cond.contains)))) return false;
+    }
     if ("gt" in cond && !(v != null && v > cond.gt)) return false;
     if ("lt" in cond && !(v != null && v < cond.lt)) return false;
     if ("gte" in cond && !(v != null && v >= cond.gte)) return false;
@@ -273,6 +277,17 @@ const DEFAULTS: Record<string, () => Row> = {
     lastError: null,
   }),
   template: () => ({ headerMediaId: null }),
+  // SP-17: media details (only rows created through the double get these).
+  media: () => ({
+    uploadedById: null,
+    publicToken: null,
+    publicTokenExpiresAt: null,
+    title: null,
+    alt: null,
+    tags: [],
+    useWhen: null,
+    approvedForAgent: false,
+  }),
   customFieldDef: () => ({ entity: "contact", options: null, order: 0, archivedAt: null }),
 };
 

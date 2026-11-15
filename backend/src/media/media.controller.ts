@@ -1,10 +1,12 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
   Logger,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
   Res,
@@ -17,6 +19,7 @@ import { diskStorage } from "multer";
 import { tmpdir } from "node:os";
 import { MEDIA_KINDS, MEDIA_LIST_MAX, MediaService, type MediaKind } from "./media.service";
 import { mediaError } from "./media-errors";
+import { UpdateMediaDto } from "./media.dto";
 import {
   CurrentViewer,
   CurrentWorkspace,
@@ -37,6 +40,8 @@ const INLINE_TYPES = new Set([
 
 /** Response header with the library's next-page cursor (SP-13 I2). */
 export const NEXT_BEFORE_HEADER = "X-Media-Next-Before";
+/** SP-17: longest accepted `GET /media?q=` (after trimming). */
+export const MEDIA_QUERY_MAX = 100;
 
 /**
  * RFC 5987 `ext-value` encoding: encodeURIComponent leaves `'`, `(`, `)` and
@@ -80,6 +85,10 @@ export class MediaController {
    * videos, newest first. The body is always a plain array; the
    * `X-Media-Next-Before` header carries the cursor for the next page and is
    * absent at the true end of the list (no header = end).
+   *
+   * SP-17: `q` (search, trimmed, ≤ 100; empty is ignored) and
+   * `approved=true|false` combine with the above; anything else is 400
+   * media.invalid_query {param}.
    */
   @Get()
   list(
@@ -89,6 +98,8 @@ export class MediaController {
     @Query("kind") kind?: string,
     @Query("before") before?: string,
     @Query("limit") limit?: string,
+    @Query("q") q?: string,
+    @Query("approved") approved?: string,
   ) {
     if (kind !== undefined && !MEDIA_KINDS.includes(kind as MediaKind)) {
       throw mediaError("media.invalid_query", { param: "kind" });
@@ -100,11 +111,20 @@ export class MediaController {
         throw mediaError("media.invalid_query", { param: "limit" });
       }
     }
+    if (q !== undefined && (typeof q !== "string" || q.trim().length > MEDIA_QUERY_MAX)) {
+      throw mediaError("media.invalid_query", { param: "q" });
+    }
+    if (approved !== undefined && approved !== "true" && approved !== "false") {
+      throw mediaError("media.invalid_query", { param: "approved" });
+    }
+    const search = q?.trim();
     return this.svc
       .listPage(workspaceId, viewer, {
         kind: kind as MediaKind | undefined,
         before: before || undefined,
         limit: n,
+        ...(search ? { q: search } : {}),
+        ...(approved !== undefined ? { approved: approved === "true" } : {}),
       })
       .then(({ items, nextBefore }) => {
         if (nextBefore) res.setHeader(NEXT_BEFORE_HEADER, nextBefore);
@@ -196,6 +216,22 @@ export class MediaController {
     applyServeHeaders(res, resolved.mimeType, resolved.fileName);
     res.setHeader("Cache-Control", "public, max-age=900");
     res.sendFile(resolved.absolutePath);
+  }
+
+  /**
+   * SP-17: edit a file's details and its agent switch (`knowledge.update`,
+   * ruling 5). 404 "Media not found" for a foreign id or a file the viewer
+   * cannot see; 400 media.no_changes / media.not_approvable {reason} /
+   * media.title_required. Returns the updated row.
+   */
+  @Patch(":id")
+  update(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: UpdateMediaDto,
+    @CurrentViewer() viewer: Viewer,
+  ) {
+    return this.svc.update(workspaceId, id, dto, viewer);
   }
 
   @Delete(":id")

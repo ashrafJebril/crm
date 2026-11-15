@@ -13,6 +13,16 @@ import { LocalStorage } from "./storage/local-storage";
 import type { MediaStorage } from "./storage/storage.types";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
+import {
+  AGENT_PHOTO_MAX_BYTES,
+  AGENT_PHOTO_MIMES,
+  AGENT_PHOTO_URL_TTL_S,
+  approvalBlock,
+  normalizeDetails,
+  normalizeTag,
+  searchTokens,
+  type MediaDetailsInput,
+} from "./media-details";
 
 const ALLOWED_IMAGE = new Set([
   "image/jpeg",
@@ -76,6 +86,44 @@ export async function lockMediaForReference(tx: LockTx, workspaceId: string, med
   if (!row) throw new NotFoundException("Media not found");
 }
 
+/**
+ * SP-17 search (ruling 7), shared by `GET /media?q` and the agent's
+ * `list_photos`: up to 5 whitespace tokens, every token must match (AND); a
+ * token matches when it is contained, case-insensitively, in the title, alt
+ * text, "use when" or file name, or equals a (normalised) tag. Arabic matches
+ * as typed. `{}` for an empty query. Always ANDed onto the caller's filter.
+ */
+export function mediaSearchWhere(q: string | null | undefined) {
+  const tokens = searchTokens(q);
+  if (tokens.length === 0) return {};
+  return {
+    AND: tokens.map((token) => ({
+      OR: [
+        { title: { contains: token, mode: "insensitive" as const } },
+        { alt: { contains: token, mode: "insensitive" as const } },
+        { useWhen: { contains: token, mode: "insensitive" as const } },
+        { fileName: { contains: token, mode: "insensitive" as const } },
+        { tags: { has: normalizeTag(token) } },
+      ],
+    })),
+  };
+}
+
+/** One photo as the agent sees it (no storage path, token, uploader or size). */
+export interface AgentPhoto {
+  id: string;
+  title: string;
+  alt: string | null;
+  tags: string[];
+  useWhen: string | null;
+  mimeType: string;
+  url: string;
+}
+
+/** `list_photos` limit: default and maximum. */
+export const AGENT_PHOTO_LIMIT_DEFAULT = 5;
+export const AGENT_PHOTO_LIMIT_MAX = 10;
+
 /** The upload cap for a declared library mime type, or null outside the library. */
 function capOf(mime: string): number | null {
   if (ALLOWED_IMAGE.has(mime)) return MAX_IMAGE_BYTES;
@@ -100,6 +148,16 @@ async function readHead(filePath: string): Promise<Buffer> {
   }
 }
 
+export interface ListOptions {
+  kind?: MediaKind;
+  before?: string;
+  limit?: number;
+  /** SP-17: search text (already trimmed by the controller). */
+  q?: string;
+  /** SP-17: filter by approvedForAgent. */
+  approved?: boolean;
+}
+
 @Injectable()
 export class MediaService {
   constructor(
@@ -115,7 +173,7 @@ export class MediaService {
   async list(
     workspaceId: string,
     viewer?: Viewer,
-    opts: { kind?: MediaKind; before?: string; limit?: number } = {},
+    opts: ListOptions = {},
   ) {
     return (await this.listPage(workspaceId, viewer, opts)).items;
   }
@@ -129,7 +187,8 @@ export class MediaService {
    * - `before`: keyset cursor, a media id of this workspace; only rows
    *   strictly older are returned (400 media.invalid_query {param: "before"}
    *   when unknown or foreign);
-   * - `limit` 1..200, default 200.
+   * - `limit` 1..200, default 200;
+   * - SP-17 `q`: search (mediaSearchWhere); `approved`: approvedForAgent.
    *
    * `nextBefore` is where the scan stopped: pass it as `before` for the next
    * page. It is null only at the true end of the list, so paging never stops
@@ -144,12 +203,17 @@ export class MediaService {
   async listPage(
     workspaceId: string,
     viewer?: Viewer,
-    opts: { kind?: MediaKind; before?: string; limit?: number } = {},
+    opts: ListOptions = {},
   ) {
     const limit = Math.min(Math.max(1, Math.floor(opts.limit ?? MEDIA_LIST_MAX)), MEDIA_LIST_MAX);
-    const base = opts.kind
-      ? { workspaceId, mimeType: { in: MIME_BY_KIND[opts.kind] } }
-      : { workspaceId, mimeType: { in: [...ALLOWED_IMAGE, ...ALLOWED_VIDEO] } };
+    // SP-17: `q` and `approved` live in `base`, so the keyset cursor keeps its
+    // meaning across the pages of a filtered list (a cursor is a position).
+    const base = {
+      workspaceId,
+      mimeType: { in: opts.kind ? MIME_BY_KIND[opts.kind] : [...ALLOWED_IMAGE, ...ALLOWED_VIDEO] },
+      ...(opts.approved !== undefined ? { approvedForAgent: opts.approved } : {}),
+      ...mediaSearchWhere(opts.q),
+    };
 
     let cursor: { id: string; createdAt: Date } | null = null;
     if (opts.before) {
@@ -250,6 +314,80 @@ export class MediaService {
     const visible = await this.visibleTo(workspaceId, [row], viewer);
     if (visible && !visible.has(row.id)) throw new NotFoundException("Media not found");
     return row;
+  }
+
+  /**
+   * SP-17 `PATCH /media/:id`: edit the details and the agent switch. Loads
+   * through `get` (404 for a foreign id, or a file a restricted viewer cannot
+   * see). The approval rules (ruling 3) and the title rule (ruling 4) run only
+   * when the result is approved and the body approves it or clears the title
+   * of an approved row; the agent read path filters older data anyway. Last
+   * write wins (ruling 12).
+   */
+  async update(workspaceId: string, id: string, dto: MediaDetailsInput, viewer?: Viewer) {
+    const row = await this.get(workspaceId, id, viewer);
+    const data = normalizeDetails(dto ?? {});
+    if (Object.keys(data).length === 0) throw mediaError("media.no_changes");
+    const merged = { ...row, ...data };
+    const approving = data.approvedForAgent === true;
+    const clearingTitle = "title" in data && data.title == null;
+    if (merged.approvedForAgent && (approving || clearingTitle)) {
+      if (approving) {
+        const reason = approvalBlock(row);
+        if (reason) throw mediaError("media.not_approvable", { reason });
+      }
+      if (!merged.title) throw mediaError("media.title_required");
+    }
+    return this.prisma.media.update({ where: { id: row.id, workspaceId }, data });
+  }
+
+  /**
+   * SP-17 (ruling 1, 3): the photos the AI agent may send, for `list_photos`
+   * only. Workspace, approval, photo type and size cap are applied in the
+   * query on every call, whatever was true at approval time; the search is
+   * ANDed onto them, so a query can never widen the set. Newest first,
+   * `limit` 1..10 (default 5). Each url lives AGENT_PHOTO_URL_TTL_S (24 h).
+   * No viewer: the MCP token is a workspace credential, and only staff uploads
+   * can be approved.
+   */
+  async listForAgent(
+    workspaceId: string,
+    opts: { query?: string; tag?: string; limit?: number } = {},
+  ): Promise<{ photos: AgentPhoto[] }> {
+    const limit = Math.min(
+      Math.max(1, Math.floor(opts.limit ?? AGENT_PHOTO_LIMIT_DEFAULT)),
+      AGENT_PHOTO_LIMIT_MAX,
+    );
+    const tag = opts.tag ? normalizeTag(opts.tag) : "";
+    const rows = await this.prisma.media.findMany({
+      where: {
+        AND: [
+          {
+            workspaceId,
+            approvedForAgent: true,
+            mimeType: { in: [...AGENT_PHOTO_MIMES] },
+            sizeBytes: { lte: AGENT_PHOTO_MAX_BYTES },
+          },
+          mediaSearchWhere(opts.query),
+          tag ? { tags: { has: tag } } : {},
+        ],
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: limit,
+    });
+    const photos: AgentPhoto[] = [];
+    for (const r of rows) {
+      photos.push({
+        id: r.id,
+        title: r.title ?? r.fileName,
+        alt: r.alt ?? null,
+        tags: r.tags ?? [],
+        useWhen: r.useWhen ?? null,
+        mimeType: r.mimeType,
+        url: await this.resolveExternalUrl(workspaceId, r.id, AGENT_PHOTO_URL_TTL_S),
+      });
+    }
+    return { photos };
   }
 
   /** Resolve a media row to either a streamable absolute path (legacy local
