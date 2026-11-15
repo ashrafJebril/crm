@@ -276,20 +276,20 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 13. **Size.** The roadmap says M. Two build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending.*
-- **R1** (SLA by trigger + TS mirror; DB spec). Recommend: accept.
-- **R2** (wall-clock SLA from stage entry; no recompute on `slaMinutes` edits; one-off approved backfill). Recommend: accept.
-- **R3** (fixed category key list). Recommend: accept.
-- **R4** (request number = existing `number`; channel derived at read time). Recommend: accept.
-- **R5** (stream attachments, never 302). Recommend: accept.
-- **R6** (manual customer attachments with a candidates list). Recommend: accept.
-- **R7** (booking cards = the contact's upcoming pending/confirmed bookings; no booking-request entity). Recommend: accept; booking requests as a follow-up after SP-10.
-- **R8** (media delete refused with `media.in_use` tickets; FK cascade backstop). Recommend: accept.
-- **R9** (SP-13 library types only). Recommend: accept.
-- **R10** (conversation visibility for customer files and channel; counts only visible). Recommend: accept.
-- **R11** (base on the SP-17 ship commit; Task 1 owns the schema; migration order SP-09 → SP-10 → SP-11). Recommend: accept.
-- **R12** (verification on the production DB with throwaway workspaces and a Zernio stub; migration and backfill each need explicit user approval). Recommend: accept.
-- **R13** (size M; 2 build tasks + verification). Recommend: accept.
+*Decided 2026-11-15: every recommendation below is accepted. Base commit: c006bf1 (after SP-16/17 shipped). Migration 20261116120000_support_tickets and the SLA backfill each need explicit user approval before they run.*
+- **R1** (SLA by trigger + TS mirror; DB spec). Accepted.
+- **R2** (wall-clock SLA from stage entry; no recompute on `slaMinutes` edits; one-off approved backfill). Accepted.
+- **R3** (fixed category key list). Accepted.
+- **R4** (request number = existing `number`; channel derived at read time). Accepted.
+- **R5** (stream attachments, never 302). Accepted.
+- **R6** (manual customer attachments with a candidates list). Accepted.
+- **R7** (booking cards = the contact's upcoming pending/confirmed bookings; no booking-request entity). Accepted; booking requests as a follow-up after SP-10.
+- **R8** (media delete refused with `media.in_use` tickets; FK cascade backstop). Accepted.
+- **R9** (SP-13 library types only). Accepted.
+- **R10** (conversation visibility for customer files and channel; counts only visible). Accepted.
+- **R11** (base on the SP-17 ship commit; Task 1 owns the schema; migration order SP-09 → SP-10 → SP-11). Accepted.
+- **R12** (verification on the production DB with throwaway workspaces and a Zernio stub; migration and backfill each need explicit user approval). Accepted.
+- **R13** (size M; 2 build tasks + verification). Accepted.
 
 ---
 
