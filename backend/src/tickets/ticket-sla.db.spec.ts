@@ -61,9 +61,64 @@ d("SP-09 SLA trigger against Postgres", () => {
     contactId = c.id;
   });
 
+  /**
+   * Cleanup in FK order, failing loudly (review M5): Ticket.stageId is
+   * ON DELETE RESTRICT, so a workspace cascade could hit a stage while its
+   * tickets still exist. Any error or residue fails the run and names the
+   * workspace id, so Task 3 can clean up by hand on the production DB.
+   */
   afterAll(async () => {
-    if (wsId) await prisma.raw.workspace.delete({ where: { id: wsId } }).catch(() => undefined);
-    await prisma.onModuleDestroy();
+    try {
+      if (!wsId) return;
+      const where = { workspaceId: wsId };
+      try {
+        await prisma.raw.ticketActivity.deleteMany({ where });
+        await prisma.raw.ticket.deleteMany({ where });
+        await prisma.raw.ticketStage.deleteMany({ where });
+        await prisma.raw.pipeline.deleteMany({ where });
+        await prisma.raw.contact.deleteMany({ where });
+        await prisma.raw.workspace.delete({ where: { id: wsId } });
+      } catch (e) {
+        throw new Error(`SP-09 DB spec cleanup failed for workspace ${wsId}: ${(e as Error).message}`);
+      }
+      const residue = {
+        workspace: await prisma.raw.workspace.count({ where: { id: wsId } }),
+        ticket: await prisma.raw.ticket.count({ where }),
+        ticketStage: await prisma.raw.ticketStage.count({ where }),
+        pipeline: await prisma.raw.pipeline.count({ where }),
+        contact: await prisma.raw.contact.count({ where }),
+      };
+      if (Object.values(residue).some((n) => n > 0)) {
+        throw new Error(`SP-09 DB spec left rows for workspace ${wsId}: ${JSON.stringify(residue)}`);
+      }
+    } finally {
+      await prisma.onModuleDestroy();
+    }
+  });
+
+  it("the trigger's default entry time and due date are UTC-correct on a non-UTC session (M6)", async () => {
+    // A Prisma create inside a session whose TimeZone is Asia/Riyadh (UTC+3).
+    const created = await prisma.raw.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE 'Asia/Riyadh'`);
+      const [tz] = await tx.$queryRawUnsafe<Array<{ tz: string }>>(`SELECT current_setting('TimeZone') AS tz`);
+      expect(tz.tz).toBe("Asia/Riyadh");
+      const n = await tx.ticket.count({ where: { pipelineId } });
+      return tx.ticket.create({
+        data: { workspaceId: wsId, number: 8000 + n, pipelineId, stageId: stage.open, contactId, title: "tz create" },
+      });
+    });
+    let r = await row(created.id);
+    near(r.enteredStageAt, await dbNow());
+    expect(r.slaDueAt).toEqual(new Date(r.enteredStageAt.getTime() + 120 * MIN));
+
+    // A raw stage UPDATE without enteredStageAt on that session: the trigger's
+    // own default (UTC now) must not shift by the session offset (3 h).
+    await prisma.raw.$transaction([
+      prisma.raw.$executeRawUnsafe(`SET LOCAL TIME ZONE 'Asia/Riyadh'`),
+      prisma.raw.$executeRawUnsafe(`UPDATE "Ticket" SET "stageId" = $1 WHERE "id" = $2`, stage.in_progress, created.id),
+    ]);
+    r = await row(created.id);
+    near(r.slaDueAt, new Date((await dbNow()).getTime() + 1440 * MIN));
   });
 
   it("slaDueAt recalculated on stage change", async () => {

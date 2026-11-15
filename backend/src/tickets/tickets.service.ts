@@ -188,8 +188,14 @@ export class TicketsService {
     if (rows.length === 0) return [];
     const convIds = [...new Set(rows.map((r) => r.conversationId).filter((x): x is string => !!x))];
     const channels = new Map<string, TicketChannelDto>();
+    // Same rule as TicketAttachmentsService.conversationVisible (review M3): an
+    // unrestricted viewer's customer files count even if the conversation row
+    // is gone (they are listed and must stay unlinkable); a restricted viewer
+    // needs the row inside their scope.
+    let unrestricted = true;
     if (convIds.length > 0) {
       const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
+      unrestricted = Object.keys(scope).length === 0;
       const convs = await this.prisma.conversation.findMany({
         where: { AND: [{ id: { in: convIds }, workspaceId }, scope] },
         select: { id: true, channel: true, channelId: true, channelRef: { select: { kind: true, displayName: true } } },
@@ -209,10 +215,11 @@ export class TicketsService {
     });
     return rows.map((r) => {
       const channel = r.conversationId ? (channels.get(r.conversationId) ?? null) : null;
+      const customerVisible = !!r.conversationId && (unrestricted || !!channel);
       let attachmentCount = 0;
       for (const g of groups) {
         if (g.ticketId !== r.id) continue;
-        if (g.source === "customer" && !channel) continue;
+        if (g.source === "customer" && !customerVisible) continue;
         attachmentCount += g._count._all;
       }
       return { ...r, channel, attachmentCount };
@@ -914,12 +921,23 @@ export class TicketsService {
     });
     if (!target) throw ticketError("tickets.no_resolved_stage");
     const note = dto.note?.trim();
-    await this.moveTicket(
-      workspaceId,
-      id,
-      { stageId: target.id, ...(note ? { note } : {}), ...(viewer ? { byUserId: viewer.userId } : {}) },
-      viewer,
-    );
+    try {
+      // expectStageId (review M1): the move is a conditional write on the stage
+      // read above, so a concurrent close (e.g. Lost) between that read and
+      // this move is a 409, never a silent Lost -> Won flip.
+      await this.moveTicket(
+        workspaceId,
+        id,
+        { stageId: target.id, ...(note ? { note } : {}), ...(viewer ? { byUserId: viewer.userId } : {}) },
+        viewer,
+        { expectStageId: ticket.stageId },
+      );
+    } catch (e) {
+      if (e instanceof ConflictException && e.message === "tickets.undo_not_latest") {
+        throw ticketError("tickets.already_closed");
+      }
+      throw e;
+    }
     return this.getTicket(workspaceId, id, viewer);
   }
 

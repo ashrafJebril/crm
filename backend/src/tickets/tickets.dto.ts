@@ -82,13 +82,16 @@ export class ListTicketsQuery {
   sort?: "createdAt" | "updatedAt" | "value" | "enteredStageAt" | "slaDueAt" | "priority";
   @IsOptional() @IsIn(["asc", "desc"]) dir?: "asc" | "desc";
 
-  // SP-09 filters. Unknown values are ignored (never a 400 or a 500).
-  /** CSV of TICKET_PRIORITIES. */
-  @IsOptional() @IsString() priority?: string;
-  /** CSV of TICKET_CATEGORIES. */
-  @IsOptional() @IsString() category?: string;
-  /** "overdue" | "due_soon" | "none". */
-  @IsOptional() @IsString() sla?: string;
+  // SP-09 filters. Unknown values are ignored (never a 400 or a 500), and a
+  // repeated param (`?priority=high&priority=urgent`) arrives as an array,
+  // which is joined: no type check here on purpose (review M4); the filter
+  // builder sanitizes every shape.
+  /** CSV (or repeated params) of TICKET_PRIORITIES. */
+  @IsOptional() priority?: string | string[];
+  /** CSV (or repeated params) of TICKET_CATEGORIES. */
+  @IsOptional() category?: string | string[];
+  /** "overdue" | "due_soon" | "none"; repeated values are joined (so two different ones are ignored). */
+  @IsOptional() sla?: string | string[];
 }
 
 export const TICKET_BULK_OPS = ["assign", "lost", "notALead"] as const;

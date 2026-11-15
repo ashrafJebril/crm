@@ -38,11 +38,12 @@ export function priorityRank(p: string | null | undefined): number {
  * undefined when nothing valid remains, so the filter is not applied.
  */
 export function parseCsvList<T extends string>(
-  v: string | string[] | null | undefined,
+  v: unknown,
   allowed: readonly T[],
 ): T[] | undefined {
-  if (v == null) return undefined;
-  const raw = (Array.isArray(v) ? v.join(",") : String(v))
+  // Strings and repeated params (arrays) only; any other shape (`?p[a]=b`) is ignored.
+  if (typeof v !== "string" && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) return undefined;
+  const raw = (Array.isArray(v) ? v.join(",") : v)
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);

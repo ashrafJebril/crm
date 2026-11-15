@@ -38,6 +38,8 @@ export interface TicketAttachmentCandidate {
 /** Candidates listed (newest first) and inbound messages scanned for them. */
 export const TICKET_CANDIDATES_MAX = 50;
 const CANDIDATE_SCAN_MESSAGES = 500;
+/** Advisory-lock key for one ticket's attachment set (review M2). */
+const ticketAttachmentLockKey = (ticketId: string) => `ticket-att:${ticketId}`;
 /** Download cache lifetime (Global Constraints → API). */
 const DOWNLOAD_CACHE_CONTROL = "private, max-age=300";
 /** Signed URL lifetime when a Spaces object is proxied (never sent to the client). */
@@ -120,7 +122,12 @@ export class TicketAttachmentsService {
     return t;
   }
 
-  /** Can the viewer see this ticket's conversation (its customer files)? */
+  /**
+   * Can the viewer see this ticket's conversation (its customer files)? The
+   * one rule shared with TicketsService's attachmentCount (review M3): an
+   * unrestricted viewer sees them even when the conversation row is gone; a
+   * restricted viewer needs the row inside their scope.
+   */
   private async conversationVisible(workspaceId: string, conversationId: string | null, viewer?: Viewer) {
     if (!conversationId) return false;
     if (!this.perm) return true;
@@ -273,8 +280,10 @@ export class TicketAttachmentsService {
 
   /**
    * One link write: in a transaction holding the media lock (the same lock
-   * MediaService.remove takes), re-read the ticket by (id, workspace), then
-   * refuse a duplicate (409) or a full ticket (400), then insert.
+   * MediaService.remove takes) and then the ticket's attachment lock (so two
+   * links of different files cannot both pass the cap check, review M2),
+   * re-read the ticket by (id, workspace), then refuse a duplicate (409) or a
+   * full ticket (400), then insert. Lock order is always media, then ticket.
    */
   private async link(
     workspaceId: string,
@@ -289,6 +298,7 @@ export class TicketAttachmentsService {
         if (e instanceof NotFoundException) throw opts.gone();
         throw e;
       }
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ticketAttachmentLockKey(ticketId)}))`;
       const t = await tx.ticket.findFirst({ where: { id: ticketId, workspaceId }, select: { id: true } });
       if (!t) throw new NotFoundException("Ticket not found");
       const dup = await tx.ticketAttachment.findFirst({ where: { ticketId, mediaId }, select: { id: true } });

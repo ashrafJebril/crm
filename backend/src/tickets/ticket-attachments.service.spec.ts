@@ -441,3 +441,89 @@ describe("unlink and media delete", () => {
     expect(prisma.db.ticketAttachment).toHaveLength(0);
   });
 });
+
+/**
+ * A lock-honouring $transaction for the double: pg_advisory_xact_lock keys are
+ * held until the callback settles, so concurrent callers queue like Postgres.
+ */
+function withAdvisoryLocks(prisma: any) {
+  const held = new Map<string, Promise<void>>();
+  const base = prisma.$executeRaw;
+  prisma.$transaction = jest.fn(async (cb: any) => {
+    const releases: Array<() => void> = [];
+    const tx = Object.create(prisma);
+    tx.$executeRaw = async (strings: TemplateStringsArray, ...vals: any[]) => {
+      const sql = strings.join("?");
+      if (/pg_advisory_xact_lock/.test(sql)) {
+        const key = String(vals[0]);
+        while (held.has(key)) await held.get(key);
+        let release!: () => void;
+        held.set(key, new Promise<void>((r) => (release = r)));
+        releases.push(() => {
+          held.delete(key);
+          release();
+        });
+      }
+      return base(strings, ...vals);
+    };
+    try {
+      return await cb(tx);
+    } finally {
+      releases.forEach((r) => r());
+    }
+  });
+}
+
+describe("attachment cap under concurrent links (M2)", () => {
+  it("two links of different files at 49 -> exactly one wins, the other is 400 attachments_full", async () => {
+    const { svc, prisma } = world();
+    withAdvisoryLocks(prisma);
+    for (let i = 0; i < TICKET_ATTACHMENTS_MAX - 1; i++) {
+      prisma.db.ticketAttachment.push({ id: `fill-${i}`, workspaceId: A, ticketId: "tA", mediaId: `fill-m-${i}`, source: "staff", createdAt: new Date() });
+    }
+    const results = await Promise.allSettled([
+      svc.attach(A, "tA", "md-cust", owner),
+      svc.attach(A, "tA", "md-url0001", owner),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const lost = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(lost.reason.getResponse()).toEqual({ statusCode: 400, message: "tickets.attachments_full", limit: 50 });
+    expect(prisma.db.ticketAttachment.filter((a: any) => a.ticketId === "tA")).toHaveLength(TICKET_ATTACHMENTS_MAX);
+  });
+
+  it("the link takes the ticket lock (ticket-att:<id>) before counting, plus the media lock", async () => {
+    const { svc, prisma } = world();
+    await svc.attach(A, "tA", "md-cust", owner);
+    const locks = prisma.$executeRaw.mock.calls
+      .filter((c: any[]) => c[0].join("?").includes("pg_advisory_xact_lock"))
+      .map((c: any[]) => c[1]);
+    expect(locks).toEqual(expect.arrayContaining(["media:md-cust", "ticket-att:tA"]));
+  });
+});
+
+describe("attachmentCount uses the same visibility rule as the list (M3)", () => {
+  it("a deleted conversation: an unrestricted viewer sees and counts the customer file; an assigned-only agent neither", async () => {
+    const { svc, prisma, perm } = world();
+    const { TicketsService } = await import("./tickets.service");
+    const tickets = new TicketsService(prisma, { emitToWorkspace: jest.fn() } as never, undefined, undefined, perm);
+    await svc.attach(A, "tA", "md-cust", owner);
+    prisma.db.ticketAttachment.push({ id: "att-s", workspaceId: A, ticketId: "tA", mediaId: "md-staff", source: "staff", createdAt: new Date() });
+    // The conversation row is deleted; Ticket.conversationId has no FK, so it dangles.
+    prisma.db.conversation = prisma.db.conversation.filter((c: any) => c.id !== "cA");
+
+    for (const [viewer, n] of [
+      [owner, 2],
+      [{ userId: "x", bypass: true }, 2],
+      [{ userId: "me" }, 1],
+    ] as const) {
+      const listed = (await svc.list(A, "tA", viewer)).items.length;
+      const t: any = await tickets.getTicket(A, "tA", viewer);
+      expect({ viewer: viewer.userId, listed, count: t.attachmentCount, channel: t.channel }).toEqual({
+        viewer: viewer.userId,
+        listed: n,
+        count: n,
+        channel: null,
+      });
+    }
+  });
+});

@@ -117,6 +117,27 @@ describe("ticket filters ignore unknown values", () => {
     const { svc } = world();
     await expect(svc.listTickets(WS, { view: "table", priority: "nope", sla: "whenever" })).resolves.toMatchObject({ total: 0 });
   });
+
+  it("repeated filter params (arrays) are tolerated and joined, never a 400 (M4)", async () => {
+    const q = plainToInstance(ListTicketsQuery, {
+      priority: ["high", "urgent"],
+      category: ["complaint", "nope"],
+      sla: ["overdue"],
+    });
+    expect(await validate(q, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
+    expect(buildTicketWhere(WS, q, "UTC", NOW)).toEqual({
+      workspaceId: WS,
+      priority: { in: ["urgent", "high"] },
+      category: { in: ["complaint"] },
+      AND: [{ slaDueAt: { lt: NOW }, stage: { isTerminal: false } }],
+    });
+    // Two different sla values join into an unknown value: ignored.
+    expect(buildTicketWhere(WS, { sla: ["overdue", "none"] }, "UTC", NOW)).toEqual({ workspaceId: WS });
+    // Odd shapes (an object from `?priority[a]=b`) are ignored too.
+    expect(buildTicketWhere(WS, { priority: { a: "high" } as never, sla: { x: 1 } as never }, "UTC", NOW)).toEqual({
+      workspaceId: WS,
+    });
+  });
 });
 
 describe("ticket list filters and sorts by priority, category and sla", () => {
@@ -216,6 +237,22 @@ describe("resolve", () => {
     const e = await errOf(svc.resolveTicket(WS, "t1", {}, undefined));
     expect(e.getResponse()).toEqual({ statusCode: 409, message: "tickets.already_closed" });
     expect(prisma.db.ticketActivity).toHaveLength(0);
+  });
+
+  it("resolve racing a concurrent close is 409 already_closed, never Lost -> Won (M1)", async () => {
+    const { svc, prisma } = world({ kind: "leads" });
+    prisma.db.ticket.push(ticket("t1"));
+    // Another agent closes the ticket as Lost after resolve's read, before its move.
+    const find = prisma.ticketStage.findFirst;
+    prisma.ticketStage.findFirst = jest.fn((a: any) => {
+      if (a?.where?.isWon === true) prisma.db.ticket[0].stageId = "s-lost";
+      return find(a);
+    });
+    const e = await errOf(svc.resolveTicket(WS, "t1", { note: "done" }, undefined));
+    expect(e.getResponse()).toEqual({ statusCode: 409, message: "tickets.already_closed" });
+    expect(prisma.db.ticket[0].stageId).toBe("s-lost");
+    expect(prisma.db.ticketActivity.filter((x: any) => x.kind === "won")).toHaveLength(0);
+    expect(prisma.db.contact.find((c: any) => c.id === "ct").lifecycle).toBe("lead");
   });
 
   it("a pipeline with no won terminal stage -> 409 tickets.no_resolved_stage; foreign id -> 404", async () => {

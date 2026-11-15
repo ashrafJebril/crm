@@ -19,11 +19,11 @@ export interface TicketFilter {
   from?: string;
   to?: string;
   /** SP-09: CSV of priorities; unknown entries are ignored. */
-  priority?: string;
+  priority?: string | string[];
   /** SP-09: CSV of category keys; unknown entries are ignored. */
-  category?: string;
+  category?: string | string[];
   /** SP-09: "overdue" | "due_soon" | "none"; anything else is ignored. */
-  sla?: string;
+  sla?: string | string[];
 }
 
 export const TICKET_SLA_FILTERS = ["overdue", "due_soon", "none"] as const;
@@ -107,7 +107,9 @@ export function buildTicketWhere(
  * - none: no due date.
  * Unknown values give no filter.
  */
-export function slaWhere(sla: string | undefined, now: Date): Prisma.TicketWhereInput | null {
+export function slaWhere(raw: unknown, now: Date): Prisma.TicketWhereInput | null {
+  // A repeated param is joined (review M4): one value repeated still filters, two different ones are unknown.
+  const sla = Array.isArray(raw) ? [...new Set(raw.map(String))].join(",") : raw;
   if (sla === "overdue") return { slaDueAt: { lt: now }, stage: { isTerminal: false } };
   if (sla === "due_soon") {
     return { slaDueAt: { gte: now, lte: new Date(now.getTime() + SLA_DUE_SOON_MS) }, stage: { isTerminal: false } };

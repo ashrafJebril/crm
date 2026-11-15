@@ -160,4 +160,27 @@ describe("SP-09 support tickets migration", () => {
     expect(backfill).not.toMatch(/"stageId"\s*=\s*(?!t\.)/); // never rewrites a stage
     expect(code).not.toMatch(/\bUPDATE "Ticket"/);
   });
+
+  it("the backfill commits per batch and only touches tickets that entered their stage before a cutoff (I1, M7)", () => {
+    const backfill = readFileSync(join(__dirname, "..", "..", "scripts", "backfill-ticket-sla.sql"), "utf8");
+    const body = backfill
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*--/.test(l))
+      .join("\n");
+    // A COMMIT inside the loop, after each batch's UPDATE (a top-level DO allows it on PG >= 11).
+    const loop = body.slice(body.indexOf("  LOOP"), body.lastIndexOf("END LOOP"));
+    expect(loop).toMatch(/UPDATE "Ticket"[\s\S]*COMMIT;/);
+    // No EXCEPTION handler (it would forbid COMMIT) and no explicit transaction wrapper.
+    expect(body).not.toMatch(/EXCEPTION WHEN/);
+    expect(body).not.toMatch(/^\s*BEGIN;/m);
+    // The cutoff: a parameter, defaulting to when the migration was applied; refuses to run without one.
+    expect(body).toMatch(/:'cutoff'/);
+    expect(body).toMatch(/"_prisma_migrations"[\s\S]*'20261116120000_support_tickets'[\s\S]*finished_at/);
+    expect(body).toMatch(/RAISE EXCEPTION/);
+    // Both the batch selection and the UPDATE are bounded by the cutoff.
+    expect((body.match(/"enteredStageAt" < cutoff/g) ?? []).length).toBe(2);
+    // The header documents how to run it (autocommit psql, never --single-transaction).
+    expect(backfill).toMatch(/psql/);
+    expect(backfill).toMatch(/single-transaction/);
+  });
 });
