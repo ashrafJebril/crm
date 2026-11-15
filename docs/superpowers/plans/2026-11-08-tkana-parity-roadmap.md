@@ -251,8 +251,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `legacy filter JSON evaluates identically`; `cyclic group membership rule rejected`; `delete-tag-in-rule warns with affected audiences` (Review Focus 2).
 
 #### SP-17 Media details for the AI agent. Size S
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-15-sp17-media-ai-details.md`)
+- [x] Shipped on `feat/tkana-parity`; migration applied and live-verified 2026-11-15 against local l and Zernio stubs (198 pass; F1 fixed in 2421705). **Pending:** not yet seen on real l / WhatsApp: whether l re-hosts `image_url` (if it does, the send-time check cannot apply), whether l re-reads tools each turn, and whether real Zernio fetches our photo URLs. **Deploy:** API before web.
 - **Gaps:** title, alt text, tags, "use when", approved/hidden switch and search on media; a "Photos" tab in agent knowledge; the agent can send approved photos.
 - **Read in Tkana:** `routes/media.tsx:141-170`, `routes/knowledge.tsx` (photos).
 - **Data:** `Media` + `title, alt, tags String[], useWhen, approvedForAgent Boolean @default(false)`.
