@@ -192,6 +192,11 @@ export const CAMPAIGN_ERROR_COPY: Record<string, CopyFn> = {
     "This campaign may still be sending. Cancel it first.",
     "قد تكون هذه الحملة لا تزال قيد الإرسال. ألغِها أولاً.",
   ],
+  // ── SP-16: the campaign's audience was deleted (preview and launch) ──
+  "campaigns.audience_missing": () => [
+    "This campaign's audience was deleted. Choose another audience.",
+    "حُذف جمهور هذه الحملة. اختر جمهورًا آخر.",
+  ],
   "channels.sender_invalid": () => [
     "One of the chosen numbers can't send campaigns any more. Pick the numbers again.",
     "أحد الأرقام المختارة لم يعد يستطيع إرسال الحملات. اختر الأرقام مرة أخرى.",

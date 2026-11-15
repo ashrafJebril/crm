@@ -27,6 +27,8 @@ interface Props {
   onClose: (runningJobId: string | null) => void;
   /** Contacts or groups changed (import finished and the user chose to view the result). */
   onImported: () => void;
+  /** SP-16: an audience import started from a group's page is preset to that group. */
+  initialGroupId?: string;
 }
 
 function Steps({ tx, step }: { tx: Tx; step: Step }) {
@@ -48,13 +50,15 @@ function Steps({ tx, step }: { tx: Tx; step: Step }) {
   );
 }
 
-export function ImportWizard({ tx, lang, kind, onClose, onImported }: Props) {
+export function ImportWizard({ tx, lang, kind, onClose, onImported, initialGroupId }: Props) {
   const perms = usePermissions();
   const can = (p: string) => perms.can(p as Permission);
   const [step, setStep] = useState<Step>(0);
   const [upload, setUpload] = useState<ImportUpload | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [options, setOptions] = useState<OptionsDraft>(() => EMPTY_OPTIONS(kind));
+  const [options, setOptions] = useState<OptionsDraft>(() =>
+    initialGroupId ? { ...EMPTY_OPTIONS(kind), groupMode: "existing", groupId: initialGroupId } : EMPTY_OPTIONS(kind),
+  );
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

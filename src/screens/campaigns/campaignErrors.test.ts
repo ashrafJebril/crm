@@ -50,10 +50,13 @@ const SP13_KEYS = [
 // SP-14 (task-2 report): paused / disabled templates refuse launch.
 const SP14_KEYS = ["campaigns.template_paused", "campaigns.template_disabled", "campaigns.template_paused_on_number"];
 
+// SP-16 (task-2 report): a deleted audience refuses preview and launch.
+const SP16_KEYS = ["campaigns.audience_missing"];
+
 describe("campaignErrorText", () => {
   it("maps every error key to copy in both languages", () => {
-    expect(Object.keys(CAMPAIGN_ERROR_COPY).sort()).toEqual([...KEYS, ...SP13_KEYS, ...SP14_KEYS].sort());
-    for (const key of KEYS) {
+    expect(Object.keys(CAMPAIGN_ERROR_COPY).sort()).toEqual([...KEYS, ...SP13_KEYS, ...SP14_KEYS, ...SP16_KEYS].sort());
+    for (const key of [...KEYS, ...SP16_KEYS]) {
       const err = new ApiError(key, 400, undefined, { statusCode: 400, message: key });
       const e = campaignErrorText(err, en);
       const a = campaignErrorText(err, ar);

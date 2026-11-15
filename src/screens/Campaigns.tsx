@@ -37,7 +37,8 @@ import { SendFromField } from "./campaigns/SendFromField";
 import { VariableMappingField } from "./campaigns/VariableMappingField";
 import { HEADER_MEDIA_MAX_DAYS, HeaderMediaField } from "./campaigns/HeaderMediaField";
 import { ReviewSamples } from "./campaigns/ReviewSamples";
-import { audienceCountLabel } from "./campaigns/audienceCount";
+import { audienceKind, audienceKindLabel, type AudienceKind } from "./campaigns/audienceCount";
+import { countLabel } from "./contacts/audiences/rulesModel";
 import { LaunchProgress } from "./campaigns/LaunchProgress";
 
 type View = "list" | "builder";
@@ -77,6 +78,24 @@ function Field({ label, children }: FieldProps) {
   );
 }
 
+/** SP-16: "Smart" / "Group" / "Deleted audience" next to a campaign's audience. */
+function AudienceBadge({ kind, tx }: { kind: AudienceKind; tx: Tx }) {
+  const label = audienceKindLabel(kind, tx);
+  if (!label) return null;
+  return (
+    <span
+      className="mono"
+      style={{
+        fontSize: 10, textTransform: "uppercase", padding: "1px 7px", borderRadius: 999, whiteSpace: "nowrap",
+        background: kind === "deleted" ? "color-mix(in oklab, var(--bad) 14%, var(--bg-2))" : kind === "smart" ? "var(--accent-soft)" : "var(--bg-2)",
+        color: kind === "deleted" ? "var(--bad)" : kind === "smart" ? "var(--accent)" : "var(--ink-2)",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 interface AudienceStepProps {
   tx: Tx;
   segments: Segment[];
@@ -87,18 +106,19 @@ interface AudienceStepProps {
 }
 
 function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStepProps) {
-  // SP-16: a segment count is null when it timed out on the server ("all contacts" shows none).
-  const options: { id: string | null; label: string; count: number | null; showCount: boolean }[] = [
-    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: null, showCount: false },
-    ...segments.map((s) => ({ id: s.id, label: s.name, count: (s.count as number | null | undefined) ?? null, showCount: true })),
+  // SP-16: a segment count is null while unknown: "Counting…", or "Too large to count right now" when it timed out.
+  const options: { id: string | null; label: string; count: number | null; timedOut: boolean; smart: boolean; showCount: boolean }[] = [
+    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: null, timedOut: false, smart: false, showCount: false },
+    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count ?? null, timedOut: !!s.timedOut, smart: s.origin === "crm", showCount: true })),
   ];
-  const total = audienceCountLabel(count, tx);
+  const selected = segments.find((s) => s.id === segmentId);
+  const total = countLabel(count, count === null && !!selected?.timedOut, tx);
   return (
     <div className="card">
       <div className="card-h">
         <h3>{tx("Audience", "الجمهور")}</h3>
         <span className="sub mono" title={total.title}>
-          {total.text} {tx("contacts match", "جهة اتصال")}
+          {total.short} {tx("contacts match", "جهة اتصال")}
         </span>
       </div>
       <div style={{ padding: 18, display: "grid", gap: 8 }}>
@@ -121,10 +141,11 @@ function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStep
                 onChange={() => onSelect(opt.id)}
                 style={{ accentColor: "var(--accent)" }}
               />
-              <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{opt.label}</span>
+              <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}><bdi dir="auto">{opt.label}</bdi></span>
+              {opt.smart && <AudienceBadge kind="smart" tx={tx} />}
               {opt.showCount && (
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }} title={audienceCountLabel(opt.count, tx).title}>
-                  {audienceCountLabel(opt.count, tx).text}
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }} title={countLabel(opt.count, opt.timedOut, tx).title}>
+                  {countLabel(opt.count, opt.timedOut, tx).text}
                 </span>
               )}
             </label>
@@ -132,7 +153,7 @@ function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStep
         })}
         {segments.length === 0 && (
           <div className="mono muted" style={{ fontSize: 11 }}>
-            {tx("No segments yet — create them in Contacts.", "لا توجد شرائح بعد — أنشئها من جهات الاتصال.")}
+            {tx("No audiences yet — create them in Contacts → Audiences.", "لا توجد جماهير بعد — أنشئها من جهات الاتصال ← الجماهير.")}
           </div>
         )}
       </div>
@@ -287,6 +308,8 @@ function ScheduleStep({ tx, choice, onChoose, when, onWhen, maxDays }: ScheduleS
 interface ReviewStepProps {
   tx: Tx;
   audienceLabel: string;
+  /** SP-16 (ruling 8): a smart audience is worked out when the campaign starts. */
+  smartAudience?: boolean;
   preview: CampaignPreviewV2 | null;
   previewLoading: boolean;
   previewError: string | null;
@@ -296,7 +319,7 @@ interface ReviewStepProps {
   samples: ReactNode;
 }
 
-function ReviewStep({ tx, audienceLabel, preview, previewLoading, previewError, template, scheduleLabel, senderLabel, samples }: ReviewStepProps) {
+function ReviewStep({ tx, audienceLabel, smartAudience, preview, previewLoading, previewError, template, scheduleLabel, senderLabel, samples }: ReviewStepProps) {
   const reach = preview
     ? `${preview.reachable.toLocaleString()} ${tx("of", "من")} ${preview.total.toLocaleString()} ${tx("contacts", "جهة")}`
     : previewLoading
@@ -324,6 +347,14 @@ function ReviewStep({ tx, audienceLabel, preview, previewLoading, previewError, 
             <span style={{ fontWeight: 500, textAlign: "end" }}>{v}</span>
           </div>
         ))}
+        {smartAudience && (
+          <div style={{ fontSize: 12, color: "var(--ink-2)" }}>
+            {tx(
+              "Smart audience: members are worked out when the campaign starts",
+              "جمهور ذكي: يُحدَّد الأعضاء عند بدء الحملة",
+            )}
+          </div>
+        )}
         {previewError && (
           <div role="alert" style={{ fontSize: 12, color: "var(--bad)" }}>
             {previewError}
@@ -438,7 +469,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   const pv = preview.data;
   const errCtx = { senders: senders?.senders ?? [] };
   // SP-16: a smart audience's cached count may be null (too large to count right now).
-  const audienceCount: number | null = pv?.total ?? (selectedSegment ? ((selectedSegment.count as number | null | undefined) ?? null) : 0);
+  const audienceCount: number | null = pv?.total ?? (selectedSegment ? (selectedSegment.count ?? null) : 0);
 
   const selectTemplate = (id: string | null) => {
     setTemplateId(id);
@@ -515,7 +546,8 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
     name: name.trim(),
     audience: audienceLabel,
     channel: "Broadcast",
-    recipients: audienceCount ?? 0,
+    // SP-16 (review m3): an unknown count is left out, never stored as 0 (a launch writes the planned count).
+    ...(audienceCount !== null ? { recipients: audienceCount } : {}),
     schedule: scheduleLabel,
     segmentId: segmentId ?? undefined,
     templateId: templateId ?? undefined,
@@ -704,6 +736,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
             <ReviewStep
               tx={tx}
               audienceLabel={audienceLabel}
+              smartAudience={selectedSegment?.origin === "crm"}
               preview={pv}
               previewLoading={preview.loading}
               previewError={preview.error ? campaignErrorText(preview.error, tx, errCtx) : null}
@@ -811,6 +844,8 @@ function CampaignsImpl() {
   // Sending campaigns update every minute while the page is open; every 5 s while one is launching.
   const pollRef = useRef(60_000);
   const { data, loading, error, refetch } = useFetch<Campaign[]>("/campaigns", { pollMs: pollRef.current });
+  // SP-16: the audience badge (smart / group / deleted) joins campaign.segmentId to the audience list.
+  const segmentsQ = useFetch<Segment[]>("/segments");
   const campaigns: Campaign[] = data ?? [];
   pollRef.current = campaigns.some((c) => c.status === "launching") ? LAUNCH_POLL_MS : 60_000;
   const { connected } = useWhatsAppConnection(view === "list" && !openId);
@@ -1096,7 +1131,10 @@ function CampaignsImpl() {
                         </div>
                       )}
                     </td>
-                    <td className="muted">{c.audience}</td>
+                    <td className="muted">
+                      <bdi dir="auto">{c.audience}</bdi>{" "}
+                      <AudienceBadge kind={audienceKind(c.segmentId, segmentsQ.data)} tx={tx} />
+                    </td>
                     <td className="mono">{c.recipients.toLocaleString()}</td>
                     <td>
                       <InlineBar pct={deliveredPct} label={`${deliveredPct}%`} color="var(--info)" />

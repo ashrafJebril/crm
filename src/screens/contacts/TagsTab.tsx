@@ -1,21 +1,25 @@
 import { useState } from "react";
-import type { TagRow } from "@/lib/types";
+import type { Lang, TagReferences, TagRow } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
 import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { IconPlus, IconTrash } from "@/icons";
+import { useToast } from "@/components/Toast";
+import { TagDeleteDialog } from "./audiences/DeleteDialogs";
+import { audienceErrorText, isForbidden, tagDeleteStateFromRefs, type TagDeleteState } from "./audiences/audienceErrors";
 
 const HUES = ["0", "30", "60", "90", "120", "150", "180", "210", "240", "270", "300", "330"];
 
 interface TagsTabProps {
   tx: (en: string, ar: string) => string;
+  lang?: Lang;
   onCatalogChanged: () => void;
 }
 
 /** The tag catalog: colored chips with usage counts, inline rename, recolor,
  *  delete-with-impact. Contacts keep tag NAMES; this manages the metadata. */
-export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
+export function TagsTab({ tx, lang = "en", onCatalogChanged }: TagsTabProps) {
   // Tag delete and merge both map to contacts.update on the backend.
   const canTagWrite = usePermissions().can("contacts.update");
   const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
@@ -24,7 +28,10 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
   const [editing, setEditing] = useState<string | null>(null); // tag id
   const [editName, setEditName] = useState("");
   const [colorFor, setColorFor] = useState<TagRow | null>(null);
-  const [deleting, setDeleting] = useState<TagRow | null>(null);
+  // SP-16: delete first reads GET /tags/:id/references, so smart audiences that use the tag are listed before anything changes.
+  const [deleting, setDeleting] = useState<{ tag: TagRow; state: TagDeleteState } | null>(null);
+  const [checking, setChecking] = useState<string | null>(null);
+  const { toast } = useToast();
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
@@ -36,9 +43,17 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
   const updateMut = useMutation<{ id: string; name?: string; color?: string }, { tag: TagRow; contactsUpdated: number }>(
     ({ id, ...body }) => api.patch(`/tags/${id}`, body),
   );
-  const deleteMut = useMutation<{ id: string }, { ok: true; contactsUpdated: number }>(({ id }) =>
-    api.delete(`/tags/${id}`),
-  );
+  const startDelete = async (t: TagRow) => {
+    setChecking(t.id);
+    try {
+      const refs = await api.get<TagReferences>(`/tags/${encodeURIComponent(t.id)}/references`);
+      setDeleting({ tag: t, state: tagDeleteStateFromRefs(refs) });
+    } catch (e) {
+      toast(isForbidden(e) ? noPerm : audienceErrorText(e, tx), "error");
+    } finally {
+      setChecking(null);
+    }
+  };
 
   const refresh = () => {
     tagsQ.refetch();
@@ -72,8 +87,8 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       closeMerge();
       setMergeResult(
         tx(
-          `Merged ${r.removed} tag(s) into "${target.name}" · ${r.contactsUpdated} contact(s), ${r.segmentsUpdated} segment(s) updated.`,
-          `تم دمج ${r.removed} وسم في "${target.name}" · تحديث ${r.contactsUpdated} جهة و${r.segmentsUpdated} شريحة.`,
+          `Merged ${r.removed} tag(s) into "${target.name}" · ${r.contactsUpdated} contact(s), ${r.segmentsUpdated} audience(s) updated.`,
+          `تم دمج ${r.removed} وسم في "${target.name}" · تحديث ${r.contactsUpdated} جهة و${r.segmentsUpdated} جمهور.`,
         ),
       );
       refresh();
@@ -188,7 +203,7 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)", fontVariantNumeric: "tabular-nums" }}>
               {t.usageCount} {tx("contacts", "جهة")}
             </span>
-            <button type="button" className="btn ghost icon sm" aria-label={tx("Delete tag", "حذف الوسم")} disabled={!canTagWrite} title={canTagWrite ? undefined : noPerm} onClick={() => setDeleting(t)}>
+            <button type="button" className="btn ghost icon sm" aria-label={tx("Delete tag", "حذف الوسم")} disabled={!canTagWrite || checking === t.id} title={canTagWrite ? undefined : noPerm} onClick={() => void startDelete(t)}>
               <IconTrash w={13} />
             </button>
           </div>
@@ -243,8 +258,8 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
           {target && (
             <div style={{ fontSize: 13, lineHeight: 1.5 }}>
               {tx(
-                `Up to ${sources.reduce((n, t) => n + t.usageCount, 0)} contact(s) will be re-tagged "${target.name}", saved segments are updated, and the ${sources.length} merged tag(s) are removed. This cannot be undone.`,
-                `ستُوسَم حتى ${sources.reduce((n, t) => n + t.usageCount, 0)} جهة بالوسم "${target.name}"، وتُحدَّث الشرائح المحفوظة، ويُحذف ${sources.length} وسم مدموج. لا يمكن التراجع.`,
+                `Up to ${sources.reduce((n, t) => n + t.usageCount, 0)} contact(s) will be re-tagged "${target.name}", saved audiences are updated, and the ${sources.length} merged tag(s) are removed. This cannot be undone.`,
+                `ستُوسَم حتى ${sources.reduce((n, t) => n + t.usageCount, 0)} جهة بالوسم "${target.name}"، وتُحدَّث الجماهير المحفوظة، ويُحذف ${sources.length} وسم مدموج. لا يمكن التراجع.`,
               )}
             </div>
           )}
@@ -259,35 +274,17 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       )}
 
       {deleting && (
-        <Modal onClose={deleteMut.loading ? () => {} : () => setDeleting(null)} width={380} label={tx("Delete tag", "حذف الوسم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Delete this tag?", "حذف هذا الوسم؟")}</h3>
-          <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
-            {tx(
-              `"${deleting.name}" will be removed from ${deleting.usageCount} contact(s). This cannot be undone.`,
-              `سيُزال "${deleting.name}" من ${deleting.usageCount} جهة اتصال. لا يمكن التراجع.`,
-            )}
-          </div>
-          {deleteMut.error && <div style={{ fontSize: 12, color: "var(--bad)" }}>{deleteMut.error}</div>}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" className="btn ghost" onClick={() => setDeleting(null)} disabled={deleteMut.loading}>
-              {tx("Cancel", "إلغاء")}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              style={{ background: "var(--bad)", color: "white", borderColor: "transparent" }}
-              disabled={deleteMut.loading}
-              onClick={() => {
-                void deleteMut.mutate({ id: deleting.id }).then(() => {
-                  setDeleting(null);
-                  refresh();
-                }).catch(() => {});
-              }}
-            >
-              <IconTrash w={13} /> {deleteMut.loading ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "حذف")}
-            </button>
-          </div>
-        </Modal>
+        <TagDeleteDialog
+          tx={tx}
+          lang={lang}
+          tag={deleting.tag}
+          initial={deleting.state}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            refresh();
+          }}
+        />
       )}
     </div>
   );

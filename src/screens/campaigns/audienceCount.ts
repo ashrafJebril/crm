@@ -13,3 +13,31 @@ export function audienceCountLabel(
   }
   return { text: n.toLocaleString(), unknown: false, title: undefined };
 }
+
+/** SP-16: what a campaign's audience is, for its badge. */
+export type AudienceKind = "all" | "smart" | "group" | "deleted" | "unknown";
+
+/**
+ * `segmentId` null is everyone. A segment id missing from `GET /segments` is a
+ * deleted audience (launch answers `campaigns.audience_missing`); while the
+ * list is still loading it is "unknown", never "deleted".
+ */
+export function audienceKind(
+  segmentId: string | null | undefined,
+  segments: readonly { id: string; origin: string }[] | null | undefined,
+): AudienceKind {
+  if (!segmentId) return "all";
+  if (!segments) return "unknown";
+  const s = segments.find((x) => x.id === segmentId);
+  if (!s) return "deleted";
+  return s.origin === "crm" ? "smart" : "group";
+}
+
+export function audienceKindLabel(kind: AudienceKind, tx: Tx): string | null {
+  switch (kind) {
+    case "smart": return tx("Smart", "ذكي");
+    case "group": return tx("Group", "مجموعة");
+    case "deleted": return tx("Deleted audience", "جمهور محذوف");
+    default: return null;
+  }
+}

@@ -24,8 +24,9 @@ import { Pager } from "./contacts/Pager";
 import { Modal } from "@/components/Modal";
 import type { Contact, CustomFieldDef, Pipeline, Segment, TagRow, TeamMember } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
-import { SegmentManager } from "./contacts/SegmentManager";
-import { GroupsTab } from "./contacts/GroupsTab";
+import { AudiencesTab } from "./contacts/AudiencesTab";
+import { contactsTabFromHash, withContactsTab, type ContactsTabId } from "./contacts/contactsTab";
+import { countLabel } from "./contacts/audiences/rulesModel";
 import { TagsTab } from "./contacts/TagsTab";
 import { FieldsTab } from "./contacts/FieldsTab";
 import { NewContactModal } from "./contacts/NewContactModal";
@@ -38,8 +39,6 @@ import {
   decodeContactFilter, encodeContactFilter, isEmptyFilter, isSelectAllCurrent, pruneFieldFilters, toQuery,
   type ContactFilter,
 } from "./contacts/contactFilter";
-
-type ContactsTabId = "contacts" | "groups" | "tags" | "fields";
 
 type View = "table" | "pipeline";
 
@@ -464,7 +463,20 @@ function Pipeline({ tx, contacts }: PipelineProps) {
 function ContactsImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const [activeTab, setActiveTab] = useState<ContactsTabId>("contacts");
+  // SP-16: the tab lives in the hash (`ct`); the old `ct=groups` link opens Audiences.
+  const [activeTab, setActiveTabState] = useState<ContactsTabId>(() => contactsTabFromHash(window.location.hash));
+  const setActiveTab = (tab: ContactsTabId) => {
+    setActiveTabState(tab);
+    const next = withContactsTab(window.location.hash, tab);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  useEffect(() => {
+    const on = () => setActiveTabState(contactsTabFromHash(window.location.hash));
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
   const [view, setView] = useState<View>("table");
   const [selected, setSelected] = useState<Set<string>>(new Set<string>());
   const [showNew, setShowNew] = useState(false);
@@ -501,7 +513,6 @@ function ContactsImpl() {
   useOpenParam("contacts", setOpenContactId);
 
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const [showSegmentManager, setShowSegmentManager] = useState(false);
   const [search, setSearch] = useState("");
 
   const [page, setPage] = useState(1);
@@ -555,6 +566,10 @@ function ContactsImpl() {
     refetch: refetchSegments,
   } = useFetch<Segment[]>("/segments");
   const segments = segmentsData ?? [];
+  // A chip whose audience was deleted (Audiences tab) would 404 the listing: fall back to everyone.
+  useEffect(() => {
+    if (activeSegmentId && segmentsData && !segmentsData.some((s) => s.id === activeSegmentId)) setActiveSegmentId(null);
+  }, [segmentsData, activeSegmentId]);
   const manualGroups = useMemo(
     () => segments.filter((s) => s.origin === "manual"),
     [segments],
@@ -577,15 +592,9 @@ function ContactsImpl() {
   );
 
   const allCount = statsQ.data?.total ?? 0;
-  // The group editor and segment manager pick from everyone, so only they
-  // load the full list, and only while open.
-  const fullQ = useFetch<Contact[]>(activeTab === "groups" || showSegmentManager ? "/contacts" : null);
-  const allContacts = fullQ.data ?? [];
-
   const refetch = () => {
     refetchPage();
     statsQ.refetch();
-    if (fullQ.data) fullQ.refetch();
   };
 
   // A contact edited or deleted from the record sheet: refetch the list behind it.
@@ -821,7 +830,7 @@ function ContactsImpl() {
         {(
           [
             ["contacts", tx("Contacts", "جهات الاتصال")],
-            ["groups", tx("Groups", "المجموعات")],
+            ["audiences", tx("Audiences", "الجماهير")],
             ["tags", tx("Tags", "الوسوم")],
             ...(canManageFields ? ([["fields", tx("Fields", "الحقول")]] as const) : []),
           ] as const
@@ -845,6 +854,7 @@ function ContactsImpl() {
           <SegmentChip
             label={tx("All", "الكل")}
             count={allCount}
+            tx={tx}
             active={activeSegmentId === null}
             onClick={() => setActiveSegmentId(null)}
           />
@@ -853,6 +863,8 @@ function ContactsImpl() {
               key={s.id}
               label={t.lang === "ar" ? s.nameAr || s.name : s.name}
               count={s.count}
+              timedOut={s.timedOut}
+              tx={tx}
               active={activeSegmentId === s.id}
               color={s.color}
               onClick={() => setActiveSegmentId(s.id)}
@@ -861,10 +873,10 @@ function ContactsImpl() {
           <span style={{ flex: 1 }} />
           <button
             className="btn ghost sm"
-            onClick={() => setShowSegmentManager(true)}
+            onClick={() => setActiveTab("audiences")}
           >
             <IconFilter w={12} />
-            {tx("Manage segments", "إدارة الشرائح")}
+            {tx("Manage audiences", "إدارة الجماهير")}
           </button>
           <input
             placeholder={tx("Search contacts…", "ابحث…")}
@@ -985,14 +997,23 @@ function ContactsImpl() {
       </div>
       )}
 
-      {/* The member-add picker searches the FULL contact list, independent of
-          whatever segment chip / name search is active on the Contacts tab. */}
-      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={allContacts} />}
+      {activeTab === "audiences" && (
+        <AudiencesTab
+          tx={tx}
+          lang={t.lang}
+          onChanged={() => {
+            refetchSegments();
+            refetch();
+          }}
+        />
+      )}
       {activeTab === "tags" && (
         <TagsTab
           tx={tx}
+          lang={t.lang}
           onCatalogChanged={() => {
             tagsQ.refetch();
+            refetchSegments();
             refetch();
           }}
         />
@@ -1124,21 +1145,6 @@ function ContactsImpl() {
         />
       )}
 
-      {showSegmentManager && (
-        <SegmentManager
-          lang={t.lang}
-          contacts={allContacts}
-          segments={segments}
-          onClose={() => setShowSegmentManager(false)}
-          onChanged={() => {
-            refetchSegments();
-            // If the active segment was just edited (or deleted), refetch the
-            // contacts too so the table matches the new filter / clears if it
-            // was removed.
-            refetch();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -1147,13 +1153,17 @@ function ContactsImpl() {
 
 interface SegmentChipProps {
   label: string;
-  count: number;
+  /** SP-16: null while a smart audience's count is unknown (never shown as 0). */
+  count: number | null;
+  timedOut?: boolean;
+  tx: Tx;
   active: boolean;
   color?: string | null;
   onClick: () => void;
 }
 
-function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps) {
+function SegmentChip({ label, count, timedOut, tx, active, color, onClick }: SegmentChipProps) {
+  const c = countLabel(count, timedOut, tx);
   return (
     <button
       onClick={onClick}
@@ -1182,15 +1192,16 @@ function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps)
           }}
         />
       )}
-      {label}
+      <bdi dir="auto">{label}</bdi>
       <span
         className="mono muted"
+        title={c.title}
         style={{
           fontSize: 10,
           color: active ? "var(--accent)" : "var(--ink-3)",
         }}
       >
-        {count.toLocaleString()}
+        {c.short}
       </span>
     </button>
   );

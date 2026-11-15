@@ -622,6 +622,62 @@ export interface SegmentFilter {
  *  hjz = membership snapshot pushed by the HJZ sync (read-only here). */
 export type SegmentOrigin = "crm" | "manual" | "hjz";
 
+// ─── SP-16 smart audience rules (mirror of backend segments/audience-rules.ts) ──
+
+export type RelUnit = "hours" | "days" | "weeks" | "months";
+export interface RelTime {
+  amount: number;
+  unit: RelUnit;
+}
+export type AudienceFieldOp = "eq" | "contains" | "gt" | "lt" | "set" | "unset";
+export type CampaignRuleOp = "received" | "read" | "replied" | "not_replied" | "failed";
+export type FollowUpRuleOp = "open" | "overdue" | "none_open";
+
+export type AudienceRule = (
+  | { field: "tag"; op: "has" | "not_has"; tag: string }
+  | { field: "lifecycle"; op: "in" | "not_in"; values: string[] }
+  | { field: "not_a_lead"; op: "is" | "is_not" }
+  | { field: "last_active"; op: "within" | "more_than"; value: RelTime }
+  | { field: "conversations"; op: "none" | "any" }
+  | { field: "channel"; op: "is" | "is_not"; channel: string }
+  | { field: "group"; op: "in" | "not_in"; segmentId: string }
+  | { field: "created"; op: "within" | "more_than"; value: RelTime }
+  | { field: "created"; op: "before" | "after"; date: string }
+  | { field: "pipeline_stage"; op: "in" | "not_in"; pipelineId: string; stageId?: string }
+  | { field: "custom_field"; op: AudienceFieldOp; defId: string; value?: string }
+  | { field: "campaign"; op: CampaignRuleOp; campaignId: string }
+  | { field: "follow_up"; op: FollowUpRuleOp }
+  | { field: "industry" | "source"; op: "in"; values: string[] }
+  | { field: "name"; op: "contains"; value: string }
+  | { field: "phone"; op: "set" | "unset" }
+  | { field: "stage_key"; op: "in"; keys: string[] }
+) & { missing?: true };
+
+export type AudienceField = AudienceRule["field"];
+export interface AudienceGroup {
+  op: "and" | "or";
+  rules: AudienceNode[];
+}
+export type AudienceNode = AudienceGroup | AudienceRule;
+export type AudienceRules = AudienceGroup & { v: 2 };
+
+export type RuleIssueKind =
+  | "tag_deleted"
+  | "group_missing"
+  | "field_missing"
+  | "pipeline_missing"
+  | "pipeline_archived"
+  | "stage_missing"
+  | "campaign_missing"
+  | "cycle"
+  | "too_deep";
+/** `path` is the child-index path of the rule in the tree. */
+export interface RuleIssue {
+  path: number[];
+  kind: RuleIssueKind;
+}
+
+/** SP-16 `AudienceRow` (backend segments/audience-dto.ts). */
 export interface Segment {
   id: string;
   name: string;
@@ -629,9 +685,61 @@ export interface Segment {
   color: string | null;
   origin: SegmentOrigin;
   filter: SegmentFilter;
-  count: number;
+  /** crm: always a tree (a legacy filter converted); manual/hjz: null. */
+  rules?: AudienceRules | null;
+  rulesSource?: "rules" | "legacy" | null;
+  /** null while unknown: the count timed out (`timedOut`) or is not computed yet. Never read it as 0. */
+  count: number | null;
+  countedAt?: string | null;
+  timedOut?: boolean;
+  issues?: RuleIssue[];
+  version?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AudienceRefAudience {
+  id: string;
+  name: string;
+  nameAr: string | null;
+}
+export interface AudienceRefCampaign {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/** `GET /segments/:id`. */
+export interface AudienceDetail extends Segment {
+  references: { audiences: AudienceRefAudience[]; campaigns: AudienceRefCampaign[] };
+}
+
+export interface AudienceContact {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  lifecycle: string;
+}
+
+/** `GET /segments/:id/contacts` and `/candidates`: keyset pages. */
+export interface AudienceContactsPage {
+  items: AudienceContact[];
+  nextCursor: string | null;
+  timedOut: boolean;
+}
+
+/** `POST /segments/preview`. */
+export interface AudiencePreview {
+  count: number | null;
+  timedOut: boolean;
+  sample: { id: string; name: string; phone: string | null }[];
+  issues: RuleIssue[];
+}
+
+/** `GET /tags/:id/references`. */
+export interface TagReferences {
+  audiences: AudienceRefAudience[];
 }
 
 // ─── Tags ─────────────────────────────────────────────────────────────────
