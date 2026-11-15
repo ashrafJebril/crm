@@ -421,7 +421,42 @@ export interface RuleLookups {
   }[];
   defs?: { id: string; label: string; labelAr?: string | null; type: CustomFieldType; archivedAt?: string | null }[];
   campaigns?: { id: string; name: string }[];
+  /**
+   * Final review M5: a list that is `undefined` is not loaded yet, or not
+   * visible to this role (403). Its references read "…" or "(not visible to
+   * you)", never "(deleted …)", which only a loaded list can prove.
+   */
+  forbidden?: Partial<Record<LookupKind, boolean>>;
 }
+
+export type LookupKind = "segments" | "pipelines" | "defs" | "campaigns" | "tags";
+
+const DELETED: Record<LookupKind | "stages", [string, string]> = {
+  segments: ["(deleted group)", "(مجموعة محذوفة)"],
+  pipelines: ["(deleted pipeline)", "(مسار محذوف)"],
+  stages: ["(removed stage)", "(مرحلة محذوفة)"],
+  defs: ["(deleted field)", "(حقل محذوف)"],
+  campaigns: ["(deleted campaign)", "(حملة محذوفة)"],
+  tags: ["(deleted tag)", "(وسم محذوف)"],
+};
+
+/**
+ * The label for a reference that is not in its lookup list: "(deleted …)"
+ * only when the list is loaded; "(not visible to you)" when the role can't
+ * read it; "…" while it loads (M5).
+ */
+export function missingRefText(
+  kind: LookupKind | "stages",
+  loaded: boolean,
+  forbidden: boolean | undefined,
+  tx: Tx,
+): string {
+  if (!loaded) return forbidden ? tx("(not visible to you)", "(غير ظاهر لك)") : "…";
+  return tx(...DELETED[kind]);
+}
+
+const missingRef = (kind: Exclude<LookupKind, "tags">, lk: RuleLookups, tx: Tx): RulePart =>
+  T(missingRefText(kind, lk[kind] !== undefined, lk.forbidden?.[kind], tx));
 
 export const partsText = (parts: RulePart[]): string => parts.map((p) => p.text).join("");
 
@@ -487,7 +522,7 @@ const lifecyclePart = (v: string, tx: Tx): RulePart => {
 function segmentRef(id: string, tx: Tx, lk: RuleLookups): { part: RulePart; smart: boolean } {
   if (!id) return { part: T("…"), smart: false };
   const s = lk.segments?.find((x) => x.id === id);
-  if (!s) return { part: T(tx("(deleted group)", "(مجموعة محذوفة)")), smart: false };
+  if (!s) return { part: missingRef("segments", lk, tx), smart: false };
   return { part: B(name2(tx, s.name, s.nameAr)), smart: s.origin === "crm" };
 }
 
@@ -528,10 +563,10 @@ function phrase(r: AudienceRule, tx: Tx, lk: RuleLookups): RulePart[] {
       return [T(r.op === "before" ? tx("created before ", "أُنشئ قبل ") : tx("created after ", "أُنشئ بعد ")), r.date ? B(r.date) : T("…")];
     case "pipeline_stage": {
       const p = lk.pipelines?.find((x) => x.id === r.pipelineId);
-      const pPart = !r.pipelineId ? T("…") : p ? B(name2(tx, p.name, p.nameAr)) : T(tx("(deleted pipeline)", "(مسار محذوف)"));
+      const pPart = !r.pipelineId ? T("…") : p ? B(name2(tx, p.name, p.nameAr)) : missingRef("pipelines", lk, tx);
       if (r.stageId) {
         const s = p?.stages.find((x) => x.id === r.stageId);
-        const sPart = s ? B(name2(tx, s.label, s.labelAr)) : T(tx("(removed stage)", "(مرحلة محذوفة)"));
+        const sPart = s ? B(name2(tx, s.label, s.labelAr)) : T(missingRefText("stages", !!p, lk.forbidden?.pipelines, tx));
         const lead = r.op === "in" ? tx("has a card in ", "لديه بطاقة في ") : tx("has no card in ", "ليست لديه بطاقة في ");
         return [T(lead), pPart, T(tx(" › ", " ‹ ")), sPart];
       }
@@ -539,7 +574,7 @@ function phrase(r: AudienceRule, tx: Tx, lk: RuleLookups): RulePart[] {
     }
     case "custom_field": {
       const d = lk.defs?.find((x) => x.id === r.defId);
-      const f = !r.defId ? T("…") : d ? B(name2(tx, d.label, d.labelAr)) : T(tx("(deleted field)", "(حقل محذوف)"));
+      const f = !r.defId ? T("…") : d ? B(name2(tx, d.label, d.labelAr)) : missingRef("defs", lk, tx);
       const op = T(` ${opLabel("custom_field", r.op, tx, d?.type)}`);
       if (r.op === "set" || r.op === "unset") return [f, op];
       const raw = r.value ?? "";
@@ -548,7 +583,7 @@ function phrase(r: AudienceRule, tx: Tx, lk: RuleLookups): RulePart[] {
     }
     case "campaign": {
       const c = lk.campaigns?.find((x) => x.id === r.campaignId);
-      const cPart = !r.campaignId ? T("…") : c ? B(c.name) : T(tx("(deleted campaign)", "(حملة محذوفة)"));
+      const cPart = !r.campaignId ? T("…") : c ? B(c.name) : missingRef("campaigns", lk, tx);
       switch (r.op) {
         case "received": return [T(tx("received campaign ", "استلم الحملة ")), cPart];
         case "read": return [T(tx("read campaign ", "قرأ الحملة ")), cPart];
@@ -679,14 +714,22 @@ export interface CountLabel {
   /** For tight places (chips): a number, "—" or "…"; pair with `title`. */
   short: string;
   title: string | undefined;
-  state: "known" | "too_large" | "counting";
+  state: "known" | "too_large" | "counting" | "not_counted";
 }
 
-/** A member count that may be unknown. A null count is never shown as 0 or blank. */
-export function countLabel(count: number | null | undefined, timedOut: boolean | undefined, tx: Tx): CountLabel {
+/**
+ * A member count that may be unknown. A null count is never shown as 0 or blank.
+ * `skipped` (final review M4): the server did not count it in this request
+ * (list deadline or a busy pool), which is not "too large".
+ */
+export function countLabel(count: number | null | undefined, timedOut: boolean | undefined, tx: Tx, skipped?: boolean): CountLabel {
   if (typeof count === "number" && Number.isFinite(count)) {
     const s = count.toLocaleString("en-US");
     return { text: s, short: s, title: undefined, state: "known" };
+  }
+  if (skipped) {
+    const t = tx("Not counted yet", "لم يُحسب بعد");
+    return { text: t, short: "…", title: t, state: "not_counted" };
   }
   if (timedOut) {
     const t = tx("Too large to count right now", "العدد كبير جدًا لحسابه الآن");
@@ -710,3 +753,40 @@ export function countedAtLabel(iso: string | null | undefined, tx: Tx, now: numb
 }
 
 export { fmtNum };
+
+// ─── Final review M2: a confirmed-deleted reference stays missing ────────
+
+/** What a rule points at; null for rules that reference nothing. */
+export function referenceKey(r: AudienceRule): string | null {
+  switch (r.field) {
+    case "tag": return `tag:${r.tag}`;
+    case "group": return `group:${r.segmentId}`;
+    case "pipeline_stage": return `pipeline:${r.pipelineId}:${r.stageId ?? ""}`;
+    case "custom_field": return `field:${r.defId}`;
+    case "campaign": return `campaign:${r.campaignId}`;
+    default: return null;
+  }
+}
+
+/**
+ * An edit of a rule. A rule marked `missing` (its tag, group, pipeline, field
+ * or campaign was deleted on confirm) stays missing until the user picks a
+ * different reference: changing only the operator must not revive it (a
+ * `not_has` of a deleted tag would match everyone).
+ */
+export function applyRuleEdit(prev: AudienceRule, next: AudienceRule): AudienceRule {
+  const { missing: _m, ...rest } = next as AudienceRule & { missing?: true };
+  const keep = prev.missing === true && prev.field === next.field && referenceKey(prev) === referenceKey(next);
+  return keep ? ({ ...rest, missing: true } as AudienceRule) : (rest as AudienceRule);
+}
+
+// ─── Final review M3: the preview never sits on "Counting…" after an error ─
+
+export type PreviewState = "incomplete" | "error" | "counting" | "ready";
+
+export function previewState(p: { complete: boolean; hasPreview: boolean; error: boolean; loading: boolean }): PreviewState {
+  if (!p.complete) return "incomplete";
+  if (p.error && !p.loading) return "error";
+  if (p.hasPreview && !p.error) return "ready";
+  return "counting";
+}

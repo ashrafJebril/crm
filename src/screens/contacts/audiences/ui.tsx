@@ -2,7 +2,7 @@ import { useMemo, type CSSProperties } from "react";
 import { useFetch } from "@/api/useFetch";
 import type { Tx } from "@/lib/tx";
 import type { Campaign, CustomFieldDef, Lang, Pipeline, Segment, TagRow } from "@/lib/types";
-import { countLabel, type RuleLookups, type RulePart } from "./rulesModel";
+import { countLabel, type LookupKind, type RuleLookups, type RulePart } from "./rulesModel";
 
 export const FIELD: CSSProperties = {
   height: 32,
@@ -37,14 +37,15 @@ export function RuleText({ parts }: { parts: RulePart[] }) {
 }
 
 /** A member count that may be unknown; null never shows as 0 or blank. */
-export function CountText({ count, timedOut, tx, short = false, style }: {
+export function CountText({ count, timedOut, skipped, tx, short = false, style }: {
   count: number | null | undefined;
   timedOut?: boolean;
+  skipped?: boolean;
   tx: Tx;
   short?: boolean;
   style?: CSSProperties;
 }) {
-  const l = countLabel(count, timedOut, tx);
+  const l = countLabel(count, timedOut, tx, skipped);
   return (
     <bdi title={l.title} style={style} data-count-state={l.state}>
       {short ? l.short : l.text}
@@ -80,13 +81,21 @@ export function IssueDot({ count, tx }: { count: number; tx: Tx }) {
   );
 }
 
-/** Everything the editor and the rule sentences look names up in (shared react-query cache). */
+/**
+ * Everything the editor and the rule sentences look names up in (shared
+ * react-query cache). A list that is still loading or not readable by this
+ * role is `undefined` in the lookups (final review M5), so its references read
+ * "…" or "(not visible to you)", never "(deleted …)". The `*Rows` arrays are
+ * always arrays, for the pickers.
+ */
 export function useRuleLookups(enabled = true): RuleLookups & {
-  tags: TagRow[];
+  tags?: TagRow[];
+  tagRows: TagRow[];
   segmentRows: Segment[];
   pipelineRows: Pipeline[];
   defRows: CustomFieldDef[];
   campaignRows: Campaign[];
+  loaded: Record<LookupKind, boolean>;
 } {
   const segmentsQ = useFetch<Segment[]>(enabled ? "/segments" : null);
   const pipelinesQ = useFetch<Pipeline[]>(enabled ? "/pipelines" : null);
@@ -94,20 +103,36 @@ export function useRuleLookups(enabled = true): RuleLookups & {
   const campaignsQ = useFetch<Campaign[]>(enabled ? "/campaigns" : null);
   const tagsQ = useFetch<TagRow[]>(enabled ? "/tags" : null);
   return useMemo(() => {
-    const segmentRows = segmentsQ.data ?? [];
-    const pipelineRows = pipelinesQ.data ?? [];
-    const defRows = defsQ.data ?? [];
-    const campaignRows = campaignsQ.data ?? [];
+    const denied = (err: string | null, data: unknown) => !data && !!err && FORBIDDEN_RE.test(err);
+    const pipelines = pipelinesQ.data ? pipelinesQ.data.map((p) => ({ ...p, stages: p.stages ?? [] })) : undefined;
     return {
-      segments: segmentRows,
-      pipelines: pipelineRows.map((p) => ({ ...p, stages: p.stages ?? [] })),
-      defs: defRows,
-      campaigns: campaignRows,
-      tags: tagsQ.data ?? [],
-      segmentRows,
-      pipelineRows,
-      defRows,
-      campaignRows,
+      segments: segmentsQ.data ?? undefined,
+      pipelines,
+      defs: defsQ.data ?? undefined,
+      campaigns: campaignsQ.data ?? undefined,
+      tags: tagsQ.data ?? undefined,
+      forbidden: {
+        segments: denied(segmentsQ.error, segmentsQ.data),
+        pipelines: denied(pipelinesQ.error, pipelinesQ.data),
+        defs: denied(defsQ.error, defsQ.data),
+        campaigns: denied(campaignsQ.error, campaignsQ.data),
+        tags: denied(tagsQ.error, tagsQ.data),
+      },
+      loaded: {
+        segments: !!segmentsQ.data,
+        pipelines: !!pipelinesQ.data,
+        defs: !!defsQ.data,
+        campaigns: !!campaignsQ.data,
+        tags: !!tagsQ.data,
+      },
+      tagRows: tagsQ.data ?? [],
+      segmentRows: segmentsQ.data ?? [],
+      pipelineRows: pipelinesQ.data ?? [],
+      defRows: defsQ.data ?? [],
+      campaignRows: campaignsQ.data ?? [],
     };
-  }, [segmentsQ.data, pipelinesQ.data, defsQ.data, campaignsQ.data, tagsQ.data]);
+  }, [segmentsQ.data, segmentsQ.error, pipelinesQ.data, pipelinesQ.error, defsQ.data, defsQ.error, campaignsQ.data, campaignsQ.error, tagsQ.data, tagsQ.error]);
 }
+
+/** useFetch exposes only the message; the server's 403 text is "Missing permission" or a no-permission key. */
+const FORBIDDEN_RE = /permission|forbidden|HTTP 403/i;

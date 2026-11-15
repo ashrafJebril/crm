@@ -9,9 +9,11 @@ import {
   audienceDeleteStateFromRefs,
   audienceErrorText,
   audienceKeyText,
+  campaignEditState,
   errorRulePath,
   invalidReasonText,
   isForbidden,
+  liveCampaignWarning,
   tagDeleteStateFromError,
   tagDeleteStateFromRefs,
   versionConflict,
@@ -149,5 +151,32 @@ describe("delete dialogs are built from the 409 bodies", () => {
     expect(tagDeleteStateFromError(err(404, { message: "Tag not found" }))).toBeNull();
     expect(tagDeleteStateFromRefs({ audiences: [] })).toEqual({ kind: "plain" });
     expect(tagDeleteStateFromRefs({ audiences: [A] })).toEqual({ kind: "in_use", audiences: [A] });
+  });
+});
+
+describe("editing warns about live campaigns that use the audience (final review I1)", () => {
+  const camps = [
+    { id: "c1", name: "Tonight", status: "scheduled" },
+    { id: "c2", name: "Now", status: "running" },
+    { id: "c3", name: "Prep", status: "launching" },
+    { id: "c4", name: "Draft one", status: "draft" },
+    { id: "c5", name: "Old", status: "completed" },
+  ];
+
+  it("splits live campaigns from drafts", () => {
+    const s = campaignEditState(camps);
+    expect(s.live.map((c) => c.id)).toEqual(["c1", "c2", "c3"]);
+    expect(s.drafts.map((c) => c.id)).toEqual(["c4"]);
+    expect(campaignEditState(undefined)).toEqual({ live: [], drafts: [] });
+  });
+
+  it("names each live campaign in both languages, with the name in <bdi>", () => {
+    const e = liveCampaignWarning(camps[0]!, en);
+    expect(e.map((p) => p.text).join("")).toBe("Campaign Tonight is scheduled and will send to whoever matches when it starts.");
+    expect(e.filter((p) => p.bdi).map((p) => p.text)).toEqual(["Tonight"]);
+    const a = liveCampaignWarning(camps[0]!, ar).filter((p) => !p.bdi).map((p) => p.text).join("");
+    expect(a).toMatch(ARABIC);
+    expect(a).not.toMatch(LATIN);
+    expect(liveCampaignWarning(camps[1]!, en).map((p) => p.text).join("")).toMatch(/sending now/);
   });
 });

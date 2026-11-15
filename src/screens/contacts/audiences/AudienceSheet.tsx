@@ -4,11 +4,11 @@ import { Modal } from "@/components/Modal";
 import { useToast } from "@/components/Toast";
 import { NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type { Tx } from "@/lib/tx";
-import type { AudienceRefAudience, AudienceRules, Lang, RuleIssue, Segment } from "@/lib/types";
+import type { AudienceRefAudience, AudienceRefCampaign, AudienceRules, Lang, RuleIssue, Segment } from "@/lib/types";
 import { AudienceRulesEditor, type RuleError } from "./AudienceRulesEditor";
-import { audienceErrorText, errorRulePath, isForbidden, versionConflict } from "./audienceErrors";
+import { audienceErrorText, campaignEditState, errorRulePath, isForbidden, liveCampaignWarning, versionConflict } from "./audienceErrors";
 import { AUDIENCE_LIMITS, emptyTree, legacyToTree, treeComplete } from "./rulesModel";
-import { FIELD, segName } from "./ui";
+import { FIELD, RuleText, segName } from "./ui";
 
 const HUES = ["0", "30", "60", "90", "120", "150", "180", "210", "240", "270", "300", "330"];
 
@@ -21,6 +21,8 @@ interface Props {
   initial?: Segment | null;
   /** Smart audiences whose rules use this one (GET /segments/:id references.audiences), review m1. */
   dependents?: AudienceRefAudience[];
+  /** Campaigns that use this audience (GET /segments/:id references.campaigns), final review I1. */
+  campaigns?: AudienceRefCampaign[];
   onClose: () => void;
   onSaved: (row: Segment) => void;
 }
@@ -28,7 +30,7 @@ interface Props {
 const treeOf = (s: Segment | null | undefined): AudienceRules => (s?.rules ? s.rules : s ? legacyToTree(s.filter) : emptyTree());
 
 /** Create or edit an audience: name, Arabic name, colour and (smart) the rule editor. */
-export function AudienceSheet({ tx, lang, mode, initial, dependents = [], onClose, onSaved }: Props) {
+export function AudienceSheet({ tx, lang, mode, initial, dependents = [], campaigns, onClose, onSaved }: Props) {
   const { toast } = useToast();
   const [name, setName] = useState(initial?.name ?? "");
   const [nameAr, setNameAr] = useState(initial?.nameAr ?? "");
@@ -42,6 +44,15 @@ export function AudienceSheet({ tx, lang, mode, initial, dependents = [], onClos
   const [confirmEmpty, setConfirmEmpty] = useState(false);
   const smart = mode === "smart";
   const editing = !!initial;
+  const camp = campaignEditState(campaigns);
+  // Scheduled, launching or running campaigns read this audience when they run: name them (I1).
+  const liveWarnings = smart && camp.live.length > 0 && (
+    <ul style={{ margin: 0, paddingInlineStart: 18, display: "grid", gap: 2 }}>
+      {camp.live.map((c) => (
+        <li key={c.id}><RuleText parts={liveCampaignWarning(c, tx)} /></li>
+      ))}
+    </ul>
+  );
   const ready = !!name.trim() && (!smart || treeComplete(rules));
   const title = editing
     ? smart ? tx("Edit smart audience", "تعديل الجمهور الذكي") : tx("Edit group", "تعديل المجموعة")
@@ -143,6 +154,30 @@ export function AudienceSheet({ tx, lang, mode, initial, dependents = [], onClos
           </div>
         )}
 
+        {smart && (camp.live.length > 0 || camp.drafts.length > 0) && (
+          <div
+            role="note"
+            style={{
+              padding: 10, borderRadius: 10, fontSize: 12.5, lineHeight: 1.5, display: "grid", gap: 4,
+              background: camp.live.length ? "color-mix(in oklab, var(--warn) 12%, var(--bg-2))" : "var(--bg-2)",
+              border: camp.live.length ? "1px solid var(--warn)" : "1px solid var(--line-soft)",
+            }}
+          >
+            {liveWarnings}
+            {camp.drafts.length > 0 && (
+              <span className="muted">
+                {tx("Draft campaigns that use it: ", "حملات مسودة تستخدمه: ")}
+                {camp.drafts.map((c, i) => (
+                  <span key={c.id}>
+                    {i > 0 ? tx(", ", "، ") : ""}
+                    <bdi dir="auto">{c.name}</bdi>
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+        )}
+
         {smart && (
           <AudienceRulesEditor
             tx={tx}
@@ -181,6 +216,7 @@ export function AudienceSheet({ tx, lang, mode, initial, dependents = [], onClos
                 "لا شروط في هذا الجمهور، لذا يضم كل جهات الاتصال في مساحة العمل، ومن يُضاف لاحقًا. هل تحفظه رغم ذلك؟",
               )}
             </span>
+            {liveWarnings}
             <div style={{ display: "flex", gap: 8 }}>
               <button type="button" className="btn sm" onClick={() => void save(true)}>{tx("Save for everyone", "احفظه للجميع")}</button>
               <button type="button" className="btn ghost sm" onClick={() => setConfirmEmpty(false)}>{tx("Add conditions", "أضف شروطًا")}</button>

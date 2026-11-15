@@ -37,6 +37,9 @@ import {
   isGroup,
   isLegacyExpressible,
   isRuleComplete,
+  applyRuleEdit,
+  missingRefText,
+  previewState,
   issueText,
   issuesAt,
   opLabel,
@@ -84,6 +87,7 @@ export function AudienceRulesEditor({ tx, lang, value, onChange, excludeId, save
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<RuleError | null>(null);
   const seq = useRef(0);
+  const [retry, setRetry] = useState(0);
   const body = useMemo(() => JSON.stringify({ rules: value, ...(excludeId ? { excludeId } : {}) }), [value, excludeId]);
   useEffect(() => {
     const my = ++seq.current;
@@ -112,7 +116,7 @@ export function AudienceRulesEditor({ tx, lang, value, onChange, excludeId, save
     return () => window.clearTimeout(t);
     // `value` is captured through `body`; tx only words the error.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [body, complete]);
+  }, [body, complete, retry]);
 
   const issues = preview?.issues ?? savedIssues ?? [];
   const highlight = saveError ?? previewError;
@@ -145,7 +149,15 @@ export function AudienceRulesEditor({ tx, lang, value, onChange, excludeId, save
         <div role="alert" style={{ fontSize: 12, color: "var(--bad)" }}>{highlight.message}</div>
       )}
 
-      <PreviewPanel tx={tx} preview={preview} loading={previewing} complete={complete} empty={value.rules.length === 0} />
+      <PreviewPanel
+        tx={tx}
+        preview={preview}
+        loading={previewing}
+        complete={complete}
+        failed={!!previewError}
+        onRetry={() => setRetry((n) => n + 1)}
+        empty={value.rules.length === 0}
+      />
     </div>
   );
 }
@@ -238,9 +250,9 @@ function RuleRow({ ctx, rule, path }: { ctx: Ctx; rule: AudienceRule; path: Path
   const err = highlight && highlight.path && samePath(highlight.path, path) ? highlight.message : null;
   const incomplete = !isRuleComplete(rule);
   // Editing a rule clears its "missing" mark: the user chose a replacement (ruling 6 "Fix").
+  // A rule whose reference was deleted stays `missing` until the user picks another one (final review M2).
   const set = (next: AudienceRule) => {
-    const { missing: _m, ...rest } = next as AudienceRule & { missing?: true };
-    onChange(replaceAt(root, path, rest as AudienceRule));
+    onChange(replaceAt(root, path, applyRuleEdit(rule, next)));
   };
   const fields = NEW_RULE_FIELDS.includes(rule.field) ? NEW_RULE_FIELDS : [rule.field, ...NEW_RULE_FIELDS];
   const def = rule.field === "custom_field" ? ctx.lk.defRows.find((d) => d.id === rule.defId) : undefined;
@@ -310,12 +322,15 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
   const { tx, lang, lk, tz, excludeId } = ctx;
   switch (rule.field) {
     case "tag": {
-      const names = lk.tags.map((t) => t.name);
-      if (rule.tag && !names.includes(rule.tag)) names.unshift(rule.tag);
+      const names = lk.tagRows.map((t) => t.name);
+      // A deleted tag (marked missing, or absent from the loaded catalog) is labelled, as the other pickers do.
+      const stray = !!rule.tag && (rule.missing === true || !names.includes(rule.tag));
+      const strayLabel = rule.missing ? missingRefText("tags", true, false, tx) : missingRefText("tags", lk.loaded.tags, lk.forbidden?.tags, tx);
       return (
         <select dir="auto" aria-label={tx("Tag", "الوسم")} value={rule.tag} onChange={(e) => set({ ...rule, tag: e.target.value })} style={FIELD}>
           <option value="">{tx("Choose a tag…", "اختر وسمًا…")}</option>
-          {names.map((n) => (
+          {stray && <option value={rule.tag}>{`${rule.tag} ${strayLabel}`}</option>}
+          {names.filter((n) => !(stray && n === rule.tag)).map((n) => (
             <option key={n} value={n}>{n}</option>
           ))}
         </select>
@@ -371,7 +386,7 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
       return (
         <select dir="auto" aria-label={tx("Group or audience", "مجموعة أو جمهور")} value={rule.segmentId} onChange={(e) => set({ ...rule, segmentId: e.target.value })} style={FIELD}>
           <option value="">{tx("Choose a group or audience…", "اختر مجموعة أو جمهورًا…")}</option>
-          {rule.segmentId && !known && <option value={rule.segmentId}>{tx("(deleted group)", "(مجموعة محذوفة)")}</option>}
+          {rule.segmentId && !known && <option value={rule.segmentId}>{missingRefText("segments", lk.loaded.segments, lk.forbidden?.segments, tx)}</option>}
           {rows.map((s) => (
             <option key={s.id} value={s.id}>
               {segName(s, lang)}{s.origin === "crm" ? ` · ${tx("Smart", "ذكي")}` : ""}
@@ -387,7 +402,7 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
         <>
           <select dir="auto" aria-label={tx("Pipeline", "المسار")} value={rule.pipelineId} onChange={(e) => set({ field: "pipeline_stage", op: rule.op, pipelineId: e.target.value })} style={FIELD}>
             <option value="">{tx("Choose a pipeline…", "اختر مسارًا…")}</option>
-            {rule.pipelineId && !p && <option value={rule.pipelineId}>{tx("(deleted pipeline)", "(مسار محذوف)")}</option>}
+            {rule.pipelineId && !p && <option value={rule.pipelineId}>{missingRefText("pipelines", lk.loaded.pipelines, lk.forbidden?.pipelines, tx)}</option>}
             {live.map((x) => (
               <option key={x.id} value={x.id}>{lang === "ar" && x.nameAr ? x.nameAr : x.name}</option>
             ))}
@@ -401,7 +416,7 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
               style={FIELD}
             >
               <option value="">{tx("Any stage (open cards)", "أي مرحلة (بطاقات مفتوحة)")}</option>
-              {rule.stageId && !p?.stages.some((s) => s.id === rule.stageId) && <option value={rule.stageId}>{tx("(removed stage)", "(مرحلة محذوفة)")}</option>}
+              {rule.stageId && !p?.stages.some((s) => s.id === rule.stageId) && <option value={rule.stageId}>{missingRefText("stages", !!p, lk.forbidden?.pipelines, tx)}</option>}
               {(p?.stages ?? []).map((s) => (
                 <option key={s.id} value={s.id}>{lang === "ar" && s.labelAr ? s.labelAr : s.label}</option>
               ))}
@@ -429,7 +444,7 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
             style={FIELD}
           >
             <option value="">{tx("Choose a field…", "اختر حقلًا…")}</option>
-            {rule.defId && !def && <option value={rule.defId}>{tx("(deleted field)", "(حقل محذوف)")}</option>}
+            {rule.defId && !def && <option value={rule.defId}>{missingRefText("defs", lk.loaded.defs, lk.forbidden?.defs, tx)}</option>}
             {defs.map((d) => (
               <option key={d.id} value={d.id}>{lang === "ar" && d.labelAr ? d.labelAr : d.label}</option>
             ))}
@@ -469,7 +484,7 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
         <select dir="auto" aria-label={tx("Campaign", "الحملة")} value={rule.campaignId} onChange={(e) => set({ ...rule, campaignId: e.target.value })} style={FIELD}>
           <option value="">{tx("Choose a campaign…", "اختر حملة…")}</option>
           {rule.campaignId && !known && (
-            <option value={rule.campaignId}>{lk.campaignRows.find((c) => c.id === rule.campaignId)?.name ?? tx("(deleted campaign)", "(حملة محذوفة)")}</option>
+            <option value={rule.campaignId}>{lk.campaignRows.find((c) => c.id === rule.campaignId)?.name ?? missingRefText("campaigns", lk.loaded.campaigns, lk.forbidden?.campaigns, tx)}</option>
           )}
           {launched.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
@@ -508,15 +523,30 @@ function ValueInput({ ctx, rule, set, def }: { ctx: Ctx; rule: AudienceRule; set
   }
 }
 
-function PreviewPanel({ tx, preview, loading, complete, empty }: { tx: Tx; preview: AudiencePreview | null; loading: boolean; complete: boolean; empty: boolean }) {
-  const label = preview ? countLabel(preview.count, preview.timedOut, tx) : null;
+function PreviewPanel({ tx, preview, loading, complete, failed, onRetry, empty }: {
+  tx: Tx;
+  preview: AudiencePreview | null;
+  loading: boolean;
+  complete: boolean;
+  failed: boolean;
+  onRetry: () => void;
+  empty: boolean;
+}) {
+  const state = previewState({ complete, hasPreview: !!preview, error: failed, loading });
+  const label = preview && state === "ready" ? countLabel(preview.count, preview.timedOut, tx, preview.skipped) : null;
   return (
     <div aria-live="polite" style={{ padding: "10px 12px", borderRadius: 10, background: "var(--bg-2)", border: "1px solid var(--line-soft)", display: "grid", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
         <span style={{ color: "var(--ink-2)" }}>{tx("Matches", "يطابق")}</span>
         <strong className="mono" style={{ color: "var(--accent)" }}>
-          {!complete ? "—" : label ? <bdi title={label.title}>{label.text}</bdi> : tx("Counting…", "جارٍ العدّ…")}
+          {state === "incomplete" || state === "error" ? "—" : label ? <bdi title={label.title}>{label.text}</bdi> : tx("Counting…", "جارٍ العدّ…")}
         </strong>
+        {state === "error" && (
+          <>
+            <span style={{ fontSize: 12, color: "var(--bad)" }}>{tx("Couldn't preview this audience.", "تعذرت معاينة هذا الجمهور.")}</span>
+            <button type="button" className="btn ghost sm" onClick={onRetry}>{tx("Try again", "حاول مجددًا")}</button>
+          </>
+        )}
         {label?.state === "known" && <span className="muted" style={{ fontSize: 12 }}>{tx("contacts", "جهة اتصال")}</span>}
         {loading && preview && <span className="muted" style={{ fontSize: 11 }}>{tx("Updating…", "جارٍ التحديث…")}</span>}
       </div>
@@ -526,7 +556,7 @@ function PreviewPanel({ tx, preview, loading, complete, empty }: { tx: Tx; previ
       {complete && empty && (
         <div style={{ fontSize: 12, color: "var(--warn)" }}>{tx("With no conditions, this audience is every contact in the workspace.", "بلا شروط، يضم هذا الجمهور كل جهات الاتصال في مساحة العمل.")}</div>
       )}
-      {complete && preview && preview.sample.length > 0 && (
+      {state === "ready" && preview && preview.sample.length > 0 && (
         <div style={{ fontSize: 12, color: "var(--ink-2)" }}>
           {tx("For example: ", "مثلًا: ")}
           {preview.sample.map((s, i) => (

@@ -173,6 +173,7 @@ function AudienceCard({ seg, lang, tx, onOpen }: { seg: Segment; lang: Lang; tx:
       <CountText
         count={seg.count}
         timedOut={seg.timedOut}
+        skipped={seg.skipped}
         tx={tx}
         style={{ fontSize: seg.count === null ? 13 : 26, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: seg.count === null ? "var(--ink-2)" : undefined }}
       />

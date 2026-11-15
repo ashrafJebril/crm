@@ -35,7 +35,7 @@ export function AudienceDetail({ tx, lang, id, onBack, onOpen, onChanged }: Prop
   const [reload, setReload] = useState(0);
   const detailQ = useFetch<Detail>(`/segments/${encodeURIComponent(id)}`, { key: reload });
   const lk = useRuleLookups();
-  const [count, setCount] = useState<{ count: number | null; countedAt: string | null; timedOut: boolean } | null>(null);
+  const [count, setCount] = useState<{ count: number | null; countedAt: string | null; timedOut: boolean; skipped?: boolean } | null>(null);
   const [recounting, setRecounting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -73,7 +73,7 @@ export function AudienceDetail({ tx, lang, id, onBack, onOpen, onChanged }: Prop
   const hjz = d.origin === "hjz";
   const tree = smart ? d.rules ?? legacyToTree(d.filter) : null;
   const issues = d.issues ?? [];
-  const shown = count ?? { count: d.count, countedAt: d.countedAt ?? null, timedOut: !!d.timedOut };
+  const shown = count ?? { count: d.count, countedAt: d.countedAt ?? null, timedOut: !!d.timedOut, skipped: d.skipped };
   const counted = countedAtLabel(shown.countedAt, tx);
   const canEdit = !hjz && can("audiences.update");
   const canDelete = !hjz && can("audiences.delete");
@@ -81,7 +81,7 @@ export function AudienceDetail({ tx, lang, id, onBack, onOpen, onChanged }: Prop
   const recount = async () => {
     setRecounting(true);
     try {
-      setCount(await api.get<{ count: number | null; countedAt: string | null; timedOut: boolean }>(`/segments/${encodeURIComponent(id)}/count`));
+      setCount(await api.get<{ count: number | null; countedAt: string | null; timedOut: boolean; skipped?: boolean }>(`/segments/${encodeURIComponent(id)}/count`));
     } catch (e) {
       toast(audienceErrorText(e, tx), "error");
     } finally {
@@ -108,7 +108,7 @@ export function AudienceDetail({ tx, lang, id, onBack, onOpen, onChanged }: Prop
           )}
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <CountText count={shown.count} timedOut={shown.timedOut} tx={tx} style={{ fontSize: shown.count === null ? 15 : 26, fontWeight: 700, fontVariantNumeric: "tabular-nums" }} />
+          <CountText count={shown.count} timedOut={shown.timedOut} skipped={shown.skipped} tx={tx} style={{ fontSize: shown.count === null ? 15 : 26, fontWeight: 700, fontVariantNumeric: "tabular-nums" }} />
           {shown.count !== null && <span className="muted" style={{ fontSize: 12 }}>{tx("contacts", "جهة اتصال")}</span>}
           {counted && <span className="mono muted" style={{ fontSize: 11 }}>{counted}</span>}
           <button type="button" className="btn ghost sm" disabled={recounting} onClick={() => void recount()}>
@@ -247,6 +247,7 @@ export function AudienceDetail({ tx, lang, id, onBack, onOpen, onChanged }: Prop
           mode={smart ? "smart" : "manual"}
           initial={d}
           dependents={d.references.audiences}
+          campaigns={d.references.campaigns}
           onClose={() => setEditing(false)}
           onSaved={(_row: Segment) => {
             setEditing(false);

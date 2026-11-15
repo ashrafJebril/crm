@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTx } from "@/lib/tx";
-import { audienceCountLabel, audienceKind, audienceKindLabel } from "./audienceCount";
+import { audienceCountLabel, audienceKind, audienceKindLabel, recipientsLabel } from "./audienceCount";
 
 const en = makeTx("en");
 const ar = makeTx("ar");
@@ -37,5 +37,21 @@ describe("audienceKind", () => {
     expect(audienceKindLabel("smart", ar)).toBe("ذكي");
     expect(audienceKindLabel("deleted", ar)).toBe("جمهور محذوف");
     expect(audienceKindLabel("all", en)).toBeNull();
+  });
+});
+
+describe("recipientsLabel (final review M1)", () => {
+  it("shows — for draft or scheduled campaigns on a smart audience", () => {
+    for (const status of ["draft", "scheduled"]) {
+      const l = recipientsLabel({ status, recipients: 0 }, "smart", en);
+      expect(l.text).toBe("—");
+      expect(l.title).toBe("Worked out when the campaign starts");
+      expect(recipientsLabel({ status, recipients: 0 }, "smart", ar).title).toBe("يُحدَّد عند بدء الحملة");
+    }
+  });
+  it("keeps the number for launched campaigns and for groups", () => {
+    expect(recipientsLabel({ status: "completed", recipients: 1200 }, "smart", en).text).toBe("1,200");
+    expect(recipientsLabel({ status: "draft", recipients: 7 }, "group", en).text).toBe("7");
+    expect(recipientsLabel({ status: "draft", recipients: 7 }, "unknown", en).text).toBe("7");
   });
 });

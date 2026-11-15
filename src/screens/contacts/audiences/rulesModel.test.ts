@@ -7,6 +7,7 @@ import {
   RULE_ISSUE_KINDS,
   addGroup,
   addRule,
+  applyRuleEdit,
   canAddGroup,
   canAddRule,
   countConditions,
@@ -19,8 +20,10 @@ import {
   isRuleComplete,
   issueText,
   legacyToTree,
+  missingRefText,
   partsText,
   pathOfReference,
+  previewState,
   relTimeLabel,
   removeAt,
   replaceAt,
@@ -304,5 +307,87 @@ describe("rule parts", () => {
   it("joins parts into plain text", () => {
     const parts: RulePart[] = [{ text: "Has tag " }, { text: "VIP", bdi: true }];
     expect(partsText(parts)).toBe("Has tag VIP");
+  });
+});
+
+describe("deleted references stay missing until the reference changes (final review M2)", () => {
+  const vip = { field: "tag", op: "has", tag: "VIP", missing: true } as const;
+
+  it("keeps missing when only the operator changes", () => {
+    expect(applyRuleEdit(vip, { field: "tag", op: "not_has", tag: "VIP" })).toEqual({ field: "tag", op: "not_has", tag: "VIP", missing: true });
+    const g = { field: "group", op: "in", segmentId: "gone", missing: true } as const;
+    expect(applyRuleEdit(g, { field: "group", op: "not_in", segmentId: "gone" })).toMatchObject({ missing: true });
+    const c = { field: "campaign", op: "read", campaignId: "x", missing: true } as const;
+    expect(applyRuleEdit(c, { field: "campaign", op: "replied", campaignId: "x" })).toMatchObject({ missing: true });
+  });
+
+  it("clears missing when the user picks another tag, group, pipeline, field or campaign", () => {
+    expect(applyRuleEdit(vip, { field: "tag", op: "has", tag: "Gold" })).toEqual({ field: "tag", op: "has", tag: "Gold" });
+    const p = { field: "pipeline_stage", op: "in", pipelineId: "p", stageId: "s", missing: true } as const;
+    expect(applyRuleEdit(p, { field: "pipeline_stage", op: "in", pipelineId: "p", stageId: "s2" })).not.toHaveProperty("missing");
+    const f = { field: "custom_field", op: "eq", defId: "d", value: "x", missing: true } as const;
+    expect(applyRuleEdit(f, { field: "custom_field", op: "eq", defId: "d2", value: "x" })).not.toHaveProperty("missing");
+    expect(applyRuleEdit(vip, emptyRule("conversations"))).not.toHaveProperty("missing");
+  });
+
+  it("never adds missing to a rule that was not missing", () => {
+    expect(applyRuleEdit({ field: "tag", op: "has", tag: "A" }, { field: "tag", op: "not_has", tag: "A" })).not.toHaveProperty("missing");
+  });
+
+  it("labels a deleted tag in the picker", () => {
+    expect(missingRefText("tags", true, false, en)).toBe("(deleted tag)");
+    expect(missingRefText("tags", true, false, ar)).toBe("(وسم محذوف)");
+  });
+});
+
+describe("unloaded or forbidden lookups never read as deleted (final review M5)", () => {
+  const rules: AudienceRule[] = [
+    { field: "group", op: "in", segmentId: "x" },
+    { field: "pipeline_stage", op: "in", pipelineId: "x", stageId: "y" },
+    { field: "custom_field", op: "set", defId: "x" },
+    { field: "campaign", op: "read", campaignId: "x" },
+  ];
+
+  it("shows … while lists load", () => {
+    for (const r of rules) {
+      const t = partsText(describeRule(r, en, {}));
+      expect(t, r.field).not.toMatch(/deleted|removed/);
+      expect(t).toContain("…");
+    }
+  });
+
+  it("shows (not visible to you) for a list the role cannot read", () => {
+    const lk: RuleLookups = { forbidden: { segments: true, pipelines: true, defs: true, campaigns: true } };
+    for (const r of rules) {
+      expect(partsText(describeRule(r, en, lk)), r.field).toContain("(not visible to you)");
+      expect(partsText(describeRule(r, ar, lk))).toContain("(غير ظاهر لك)");
+    }
+  });
+
+  it("says deleted only when the loaded list lacks it", () => {
+    const lk: RuleLookups = { segments: [], pipelines: [], defs: [], campaigns: [] };
+    expect(partsText(describeRule(rules[0]!, en, lk))).toContain("(deleted group)");
+    expect(partsText(describeRule(rules[1]!, en, lk))).toContain("(deleted pipeline)");
+    expect(partsText(describeRule(rules[2]!, en, lk))).toContain("(deleted field)");
+    expect(partsText(describeRule(rules[3]!, en, lk))).toContain("(deleted campaign)");
+  });
+});
+
+describe("preview error replaces Counting… (final review M3)", () => {
+  it("moves to an error state, and back to counting on retry", () => {
+    expect(previewState({ complete: true, hasPreview: false, error: true, loading: false })).toBe("error");
+    expect(previewState({ complete: true, hasPreview: false, error: true, loading: true })).toBe("counting");
+    expect(previewState({ complete: true, hasPreview: false, error: false, loading: true })).toBe("counting");
+    expect(previewState({ complete: true, hasPreview: true, error: false, loading: false })).toBe("ready");
+    expect(previewState({ complete: false, hasPreview: false, error: true, loading: false })).toBe("incomplete");
+  });
+});
+
+describe("a count the server skipped reads Not counted yet (final review M4)", () => {
+  it("is neither 0, nor Too large, nor blank", () => {
+    expect(countLabel(null, false, en, true)).toMatchObject({ text: "Not counted yet", state: "not_counted" });
+    expect(countLabel(null, false, ar, true).text).toBe("لم يُحسب بعد");
+    expect(countLabel(null, true, en).state).toBe("too_large");
+    expect(countLabel(5, false, en, true).text).toBe("5");
   });
 });

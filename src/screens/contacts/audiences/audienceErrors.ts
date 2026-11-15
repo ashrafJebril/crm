@@ -2,7 +2,7 @@ import { ApiError } from "@/api/client";
 import { NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type { Tx } from "@/lib/tx";
 import type { AudienceGroup, AudienceRefAudience, AudienceRefCampaign, Segment, TagReferences } from "@/lib/types";
-import { AUDIENCE_LIMITS, pathOfReference, type Path } from "./rulesModel";
+import { AUDIENCE_LIMITS, pathOfReference, type Path, type RulePart } from "./rulesModel";
 
 /**
  * SP-16 copy for every audience error key (backend segments/audience-errors.ts),
@@ -206,4 +206,33 @@ export function tagDeleteStateFromRefs(refs: TagReferences): TagDeleteState {
 export function tagDeleteStateFromError(e: unknown): TagDeleteState | null {
   if (!(e instanceof ApiError) || e.status !== 409 || keyOf(e) !== "tags.in_use_by_audiences") return null;
   return { kind: "in_use", audiences: audiencesOf(bodyOf(e).audiences) };
+}
+
+// ─── Final review I1: editing an audience a live campaign reads ──────────
+
+/**
+ * The campaigns an edit of this audience reaches: `live` ones (scheduled,
+ * launching or running) send to whoever matches when they run, so the sheet
+ * warns about them by name; `drafts` are listed for information.
+ */
+export function campaignEditState(campaigns: readonly AudienceRefCampaign[] | undefined): {
+  live: AudienceRefCampaign[];
+  drafts: AudienceRefCampaign[];
+} {
+  const list = campaigns ?? [];
+  return {
+    live: list.filter((c) => BLOCKING_CAMPAIGN_STATUSES.includes(c.status)),
+    drafts: list.filter((c) => c.status === "draft"),
+  };
+}
+
+/** One sentence per live campaign; the campaign name is a `<bdi>` part. */
+export function liveCampaignWarning(c: AudienceRefCampaign, tx: Tx): RulePart[] {
+  const lead = { text: tx("Campaign ", "الحملة ") };
+  const name = { text: c.name, bdi: true };
+  const tail =
+    c.status === "scheduled"
+      ? tx(" is scheduled and will send to whoever matches when it starts.", " مجدولة وستُرسل إلى كل من يطابق عند بدئها.")
+      : tx(" is starting or sending now and may reach whoever matches after this change.", " قيد البدء أو الإرسال الآن وقد تصل إلى من يطابق بعد هذا التعديل.");
+  return [lead, name, { text: tail }];
 }

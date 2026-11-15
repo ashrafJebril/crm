@@ -37,7 +37,7 @@ import { SendFromField } from "./campaigns/SendFromField";
 import { VariableMappingField } from "./campaigns/VariableMappingField";
 import { HEADER_MEDIA_MAX_DAYS, HeaderMediaField } from "./campaigns/HeaderMediaField";
 import { ReviewSamples } from "./campaigns/ReviewSamples";
-import { audienceKind, audienceKindLabel, type AudienceKind } from "./campaigns/audienceCount";
+import { audienceKind, audienceKindLabel, recipientsLabel, type AudienceKind } from "./campaigns/audienceCount";
 import { countLabel } from "./contacts/audiences/rulesModel";
 import { LaunchProgress } from "./campaigns/LaunchProgress";
 
@@ -107,12 +107,12 @@ interface AudienceStepProps {
 
 function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStepProps) {
   // SP-16: a segment count is null while unknown: "Counting…", or "Too large to count right now" when it timed out.
-  const options: { id: string | null; label: string; count: number | null; timedOut: boolean; smart: boolean; showCount: boolean }[] = [
-    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: null, timedOut: false, smart: false, showCount: false },
-    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count ?? null, timedOut: !!s.timedOut, smart: s.origin === "crm", showCount: true })),
+  const options: { id: string | null; label: string; count: number | null; timedOut: boolean; skipped: boolean; smart: boolean; showCount: boolean }[] = [
+    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: null, timedOut: false, skipped: false, smart: false, showCount: false },
+    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count ?? null, timedOut: !!s.timedOut, skipped: !!s.skipped, smart: s.origin === "crm", showCount: true })),
   ];
   const selected = segments.find((s) => s.id === segmentId);
-  const total = countLabel(count, count === null && !!selected?.timedOut, tx);
+  const total = countLabel(count, count === null && !!selected?.timedOut, tx, count === null && !!selected?.skipped);
   return (
     <div className="card">
       <div className="card-h">
@@ -144,8 +144,8 @@ function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStep
               <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}><bdi dir="auto">{opt.label}</bdi></span>
               {opt.smart && <AudienceBadge kind="smart" tx={tx} />}
               {opt.showCount && (
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }} title={countLabel(opt.count, opt.timedOut, tx).title}>
-                  {countLabel(opt.count, opt.timedOut, tx).text}
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }} title={countLabel(opt.count, opt.timedOut, tx, opt.skipped).title}>
+                  {countLabel(opt.count, opt.timedOut, tx, opt.skipped).text}
                 </span>
               )}
             </label>
@@ -1135,7 +1135,11 @@ function CampaignsImpl() {
                       <bdi dir="auto">{c.audience}</bdi>{" "}
                       <AudienceBadge kind={audienceKind(c.segmentId, segmentsQ.data)} tx={tx} />
                     </td>
-                    <td className="mono">{c.recipients.toLocaleString()}</td>
+                    {(() => {
+                      // SP-16 final review M1: a draft or scheduled smart-audience campaign has no real count yet.
+                      const r = recipientsLabel(c, audienceKind(c.segmentId, segmentsQ.data), tx);
+                      return <td className="mono" title={r.title}>{r.text}</td>;
+                    })()}
                     <td>
                       <InlineBar pct={deliveredPct} label={`${deliveredPct}%`} color="var(--info)" />
                     </td>

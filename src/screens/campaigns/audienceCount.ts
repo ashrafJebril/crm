@@ -41,3 +41,19 @@ export function audienceKindLabel(kind: AudienceKind, tx: Tx): string | null {
     default: return null;
   }
 }
+
+/**
+ * SP-16 final review M1: a draft or scheduled campaign on a smart audience has
+ * no real recipient count yet (it is worked out when the campaign starts), so
+ * the list shows "—" rather than a stored 0 or a stale number.
+ */
+export function recipientsLabel(
+  c: { status: string; recipients: number },
+  kind: AudienceKind,
+  tx: Tx,
+): { text: string; title: string | undefined } {
+  if (kind === "smart" && (c.status === "draft" || c.status === "scheduled")) {
+    return { text: "—", title: tx("Worked out when the campaign starts", "يُحدَّد عند بدء الحملة") };
+  }
+  return { text: c.recipients.toLocaleString("en-US"), title: undefined };
+}

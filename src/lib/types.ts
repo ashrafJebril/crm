@@ -692,6 +692,8 @@ export interface Segment {
   count: number | null;
   countedAt?: string | null;
   timedOut?: boolean;
+  /** Not counted in this request (list deadline or a busy pool): "Not counted yet", not "too large". */
+  skipped?: boolean;
   issues?: RuleIssue[];
   version?: number;
   createdAt: string;
@@ -733,6 +735,7 @@ export interface AudienceContactsPage {
 export interface AudiencePreview {
   count: number | null;
   timedOut: boolean;
+  skipped?: boolean;
   sample: { id: string; name: string; phone: string | null }[];
   issues: RuleIssue[];
 }

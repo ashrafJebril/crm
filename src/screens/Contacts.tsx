@@ -864,6 +864,7 @@ function ContactsImpl() {
               label={t.lang === "ar" ? s.nameAr || s.name : s.name}
               count={s.count}
               timedOut={s.timedOut}
+              skipped={s.skipped}
               tx={tx}
               active={activeSegmentId === s.id}
               color={s.color}
@@ -1156,14 +1157,15 @@ interface SegmentChipProps {
   /** SP-16: null while a smart audience's count is unknown (never shown as 0). */
   count: number | null;
   timedOut?: boolean;
+  skipped?: boolean;
   tx: Tx;
   active: boolean;
   color?: string | null;
   onClick: () => void;
 }
 
-function SegmentChip({ label, count, timedOut, tx, active, color, onClick }: SegmentChipProps) {
-  const c = countLabel(count, timedOut, tx);
+function SegmentChip({ label, count, timedOut, skipped, tx, active, color, onClick }: SegmentChipProps) {
+  const c = countLabel(count, timedOut, tx, skipped);
   return (
     <button
       onClick={onClick}
