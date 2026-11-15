@@ -8,6 +8,7 @@ import {
   toQuery,
   nextSort,
   bulkResultText,
+  SORT_KEYS,
 } from "./boardQuery";
 
 const tz = "Asia/Riyadh"; // UTC+3
@@ -91,5 +92,47 @@ describe("bulkResultText", () => {
   it("reports updated and skipped", () => {
     expect(bulkResultText(tx, { affected: 3, skipped: ["a", "b"] })).toBe("3 updated · 2 skipped");
     expect(bulkResultText(tx, { affected: 3, skipped: [] })).toBe("3 updated");
+  });
+});
+
+describe("SP-09 support filters", () => {
+  const ctx = { now, tz };
+  it("board query round-trips priority, category and sla filters through the hash", () => {
+    const f = {
+      ...EMPTY_BOARD_FILTERS,
+      priority: ["urgent" as const, "high" as const],
+      category: ["complaint" as const],
+      sla: "overdue" as const,
+    };
+    expect(decodeBoardFilters(encodeBoardFilters(f))).toEqual(f);
+    expect(filtersActive(f)).toBe(true);
+    expect(filtersActive({ ...EMPTY_BOARD_FILTERS, sla: "none" })).toBe(true);
+    expect(filtersActive({ ...EMPTY_BOARD_FILTERS, category: ["other"] })).toBe(true);
+
+    // Sent to GET /tickets as CSV params in the backend's list order.
+    const qs = new URLSearchParams(toQuery({ ...f, priority: ["high", "urgent"] }, null, ctx));
+    expect(qs.get("priority")).toBe("urgent,high");
+    expect(qs.get("category")).toBe("complaint");
+    expect(qs.get("sla")).toBe("overdue");
+    expect(toQuery(EMPTY_BOARD_FILTERS, null, ctx)).toBe("");
+
+    // Old hashes (before SP-09) decode to no support filter.
+    const old = encodeBoardFilters({ q: "ali", status: "open" });
+    expect(decodeBoardFilters(old)).toEqual({ ...EMPTY_BOARD_FILTERS, q: "ali", status: "open" });
+    expect(decodeBoardFilters(old).priority).toEqual([]);
+    expect(decodeBoardFilters(old).category).toEqual([]);
+    expect(decodeBoardFilters(old).sla).toBe("");
+
+    // Unknown values are dropped; duplicates collapse; non-arrays are ignored.
+    const junk = encodeBoardFilters({ priority: ["urgent", "medium", "urgent", 3], category: "complaint", sla: "late" });
+    expect(decodeBoardFilters(junk)).toEqual({ ...EMPTY_BOARD_FILTERS, priority: ["urgent"] });
+  });
+
+  it("sorts by slaDueAt and priority in the table", () => {
+    expect(SORT_KEYS).toContain("slaDueAt");
+    expect(SORT_KEYS).toContain("priority");
+    const qs = new URLSearchParams(toQuery(EMPTY_BOARD_FILTERS, { key: "slaDueAt", dir: "asc" }, ctx));
+    expect(Object.fromEntries(qs)).toEqual({ view: "table", sort: "slaDueAt", dir: "asc" });
+    expect(nextSort({ key: "updatedAt", dir: "desc" }, "priority")).toEqual({ key: "priority", dir: "desc" });
   });
 });

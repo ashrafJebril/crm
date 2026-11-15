@@ -92,6 +92,74 @@ export interface Ticket {
   enteredStageAt: string;
   contact?: TicketContact;
   stage?: TicketStage;
+  /** SP-09: "urgent" | "high" | "normal" | "low"; legacy rows read "normal". */
+  priority?: TicketPriority | string;
+  /** SP-09: a TICKET_CATEGORIES key, null = not set. */
+  category?: TicketCategory | string | null;
+  /** SP-09: set by the database on stage entry; null = no SLA (or terminal). */
+  slaDueAt?: string | null;
+  /** SP-09: derived from the linked conversation; null when none or hidden.
+   *  Absent on realtime payloads (raw rows). */
+  channel?: TicketChannel | null;
+  /** SP-09: files the viewer can open. Absent on realtime payloads. */
+  attachmentCount?: number;
+}
+
+/** SP-09 (mirrors backend/src/tickets/ticket-fields.ts). */
+export type TicketPriority = "urgent" | "high" | "normal" | "low";
+export type TicketCategory =
+  | "general_inquiry"
+  | "complaint"
+  | "service_request"
+  | "payment_problem"
+  | "execution_delay"
+  | "incorrect_data"
+  | "ticket_follow_up"
+  | "data_modification"
+  | "other";
+
+export interface TicketChannel {
+  kind: string;
+  channelId: string | null;
+  displayName: string | null;
+}
+
+/** SP-09: GET /tickets/:id/attachments item. `url` is an API path served with auth. */
+export interface TicketAttachment {
+  id: string;
+  ticketId: string;
+  mediaId: string;
+  source: "customer" | "staff";
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  messageId: string | null;
+  addedBy: { id: string; name: string } | null;
+  createdAt: string;
+  url: string;
+}
+
+/** SP-09: GET /tickets/:id/attachments/candidates item (customer files not yet linked). */
+export interface TicketAttachmentCandidate {
+  mediaId: string;
+  messageId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  at: string;
+}
+
+/** SP-09: GET /tickets/:id/bookings item. */
+export interface TicketBookingCard {
+  id: string;
+  startAt: string;
+  durationMin: number;
+  status: AppointmentStatus | string;
+  service: string;
+  serviceAr: string;
+  staffId: string | null;
+  source: string;
+  hjzSyncError: string | null;
 }
 
 export interface TicketsListPage {

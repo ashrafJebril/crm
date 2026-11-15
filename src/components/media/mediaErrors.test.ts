@@ -61,6 +61,39 @@ describe("mediaErrorText", () => {
     expect(mediaErrorText(inUse, ar)).toContain("promo_header");
   });
 
+  it("SP-09: media.in_use lists the tickets that hold the file", () => {
+    const only = new ApiError("media.in_use", 409, undefined, {
+      message: "media.in_use",
+      templates: [],
+      campaigns: [],
+      tickets: [{ id: "t1", number: 7, pipelineId: "p1" }, { id: "t2", number: 12, pipelineId: "p1" }],
+    });
+    expect(mediaErrorText(only, en)).toBe(
+      "This file is attached to tickets #7 and #12, so it can't be deleted. Remove it from those first.",
+    );
+    expect(mediaErrorText(only, ar)).toMatch(ARABIC);
+    expect(mediaErrorText(only, ar)).toContain("#7");
+    const mixed = new ApiError("media.in_use", 409, undefined, {
+      message: "media.in_use",
+      templates: [{ id: "x", name: "promo_header" }],
+      campaigns: [],
+      tickets: [{ id: "t1", number: 3, pipelineId: "p1" }],
+    });
+    expect(mediaErrorText(mixed, en)).toBe(
+      "This file is used by template “promo_header” and ticket #3, so it can't be deleted. Change those first.",
+    );
+    const many = new ApiError("media.in_use", 409, undefined, {
+      message: "media.in_use",
+      templates: [],
+      campaigns: [],
+      tickets: [1, 2, 3, 4].map((n) => ({ id: `t${n}`, number: n, pipelineId: "p" })),
+    });
+    expect(mediaErrorText(many, en)).toContain("tickets #1, #2 and 2 more");
+    // Empty lists keep the plain fallback.
+    const none = new ApiError("media.in_use", 409, undefined, { message: "media.in_use", templates: [], campaigns: [], tickets: [] });
+    expect(mediaErrorText(none, en)).toContain("can't be deleted");
+  });
+
   it("falls back for unknown errors and words a 403", () => {
     expect(mediaErrorText(new ApiError("Missing permission", 403), en)).toBe("You don't have permission to do this");
     expect(mediaErrorText(new Error("HTTP 500"), en, "Upload failed")).toBe("Upload failed");

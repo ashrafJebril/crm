@@ -5,8 +5,15 @@ import { Modal } from "@/components/Modal";
 import { ApiError } from "@/api/client";
 import { makeTx } from "@/lib/tx";
 import { openRecord } from "@/lib/openRecord";
-import { ticketActionError } from "./boardQuery";
-import type { Lang, Pipeline, TicketStage } from "@/lib/types";
+import { ticketErrorText } from "./ticketErrors";
+import {
+  DEFAULT_TICKET_PRIORITY,
+  TICKET_CATEGORIES,
+  TICKET_PRIORITIES,
+  categoryLabel,
+  priorityLabel,
+} from "./ticketFields";
+import type { Lang, Pipeline, TicketCategory, TicketPriority, TicketStage } from "@/lib/types";
 
 interface BaseProps {
   lang: Lang;
@@ -44,6 +51,9 @@ export function NewTicketModal(props: Props) {
   const [title, setTitle] = useState(defaultTitle ?? "");
   const [value, setValue] = useState<string>("");
   const [description, setDescription] = useState<string>("");
+  // SP-09
+  const [priority, setPriority] = useState<TicketPriority>(DEFAULT_TICKET_PRIORITY);
+  const [category, setCategory] = useState<TicketCategory | "">("");
 
   useEffect(() => {
     if (!pipelineId && defaultPipeline) {
@@ -80,6 +90,8 @@ export function NewTicketModal(props: Props) {
           title,
           description: description || undefined,
           value: numericValue,
+          priority,
+          category: category || undefined,
         });
       } else {
         await create.mutateAsync({
@@ -90,6 +102,8 @@ export function NewTicketModal(props: Props) {
           title,
           description: description || undefined,
           value: numericValue,
+          priority,
+          category: category || undefined,
         });
       }
       localStorage.setItem(LAST_USED_KEY, pipelineId);
@@ -100,7 +114,7 @@ export function NewTicketModal(props: Props) {
       const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : "";
       const body = e instanceof ApiError && e.body && typeof e.body === "object" ? (e.body as { ticketId?: unknown }) : null;
       const existing = msg.includes("tickets.lead_exists") && typeof body?.ticketId === "string" ? body.ticketId : undefined;
-      setError({ text: ticketActionError(tx, msg), existingTicketId: existing });
+      setError({ text: ticketErrorText(e, tx), existingTicketId: existing });
     }
   };
 
@@ -172,6 +186,44 @@ export function NewTicketModal(props: Props) {
           autoFocus
           style={inputStyle}
         />
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="new-ticket-priority" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              {tx("Priority", "الأولوية")}
+            </label>
+            <select
+              id="new-ticket-priority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as TicketPriority)}
+              style={selectStyle}
+            >
+              {TICKET_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {priorityLabel(tx, p)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="new-ticket-category" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              {tx("Category", "التصنيف")}
+            </label>
+            <select
+              id="new-ticket-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value as TicketCategory | "")}
+              style={selectStyle}
+            >
+              <option value="">{tx("Not set", "غير محدد")}</option>
+              {TICKET_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {categoryLabel(tx, c)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         <label style={{ fontSize: 11, color: "var(--ink-3)" }}>
           {lang === "ar" ? "القيمة" : "Value"}

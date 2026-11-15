@@ -11,6 +11,10 @@ import { makeTx } from "@/lib/tx";
 import { daysInStage } from "./stale";
 import { NextStepChip, type NextStep } from "@/components/activities/NextStepChip";
 import { LeadActionMenu } from "./LeadActionMenu";
+import { useWorkspaceTz } from "@/components/activities/activityApi";
+import { AttachmentCount, PriorityChip, SlaBadgeChip } from "./TicketBadges";
+import { priorityChipShown } from "./ticketFields";
+import { ticketSlaState } from "./ticketSla";
 
 export type LeadAction = "won" | "lost" | "notALead" | "reopen";
 
@@ -33,6 +37,8 @@ interface TicketCardProps {
   onToggleSelect?: (id: string) => void;
   /** Leads pipelines: Won / Lost / Not a lead / Reopen menu. */
   onLeadAction?: (ticket: Ticket, action: LeadAction) => void;
+  /** SP-09: the column's stage is terminal (no SLA badge). */
+  stageIsTerminal?: boolean;
 }
 
 const cardBase: CSSProperties = {
@@ -76,6 +82,7 @@ export const TicketCard = memo(function TicketCard({
   selectionActive = false,
   onToggleSelect,
   onLeadAction,
+  stageIsTerminal,
 }: TicketCardProps) {
   const { t: tw } = useTweaks();
   const tx = makeTx(tw.lang);
@@ -89,6 +96,9 @@ export const TicketCard = memo(function TicketCard({
   const canMove = canUpdate && !moveLocked;
   const canNotLead = canUpdate && usePermissions().can("contacts.update");
   const closed = !!ticket.closedAt;
+  const tz = useWorkspaceTz();
+  const sla = ticketSlaState(t, stageIsTerminal);
+  const showSupport = priorityChipShown(t.priority) || (sla !== "finished" && sla !== "none") || !!t.attachmentCount;
   const lockedTip = tx(
     "Only managers can move cards in this pipeline",
     "يمكن للمديرين فقط نقل البطاقات في هذا المسار",
@@ -183,7 +193,7 @@ export const TicketCard = memo(function TicketCard({
               style={{ marginInlineEnd: 6, verticalAlign: "middle" }}
             />
           ) : null}
-          #{String(t.number).padStart(3, "0")}
+          <bdi>#{String(t.number).padStart(3, "0")}</bdi>
           {stale ? (
             <span
               style={{
@@ -322,6 +332,17 @@ export const TicketCard = memo(function TicketCard({
       >
         {t.title}
       </div>
+
+      {/* SP-09: priority (high/urgent), SLA badge, attachment count */}
+      {showSupport ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <PriorityChip tx={tx} priority={t.priority} />
+          <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={stageIsTerminal} />
+          <span style={{ marginInlineStart: "auto" }}>
+            <AttachmentCount tx={tx} count={t.attachmentCount} />
+          </span>
+        </div>
+      ) : null}
 
       {/* Footer: contact + value */}
       <div

@@ -2,10 +2,14 @@ import { decodeJson, encodeJson } from "@/lib/hashState";
 import type { Tx } from "@/lib/tx";
 import { NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { safeTz } from "@/screens/followups/followupsLogic";
+import type { TicketCategory, TicketPriority } from "@/lib/types";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES } from "./ticketFields";
 
 export type DatePreset = "today" | "7d" | "30d" | "month" | "custom";
 export type TicketStatus = "open" | "won" | "lost";
-export type SortKey = "createdAt" | "updatedAt" | "value" | "enteredStageAt";
+export type SortKey = "createdAt" | "updatedAt" | "value" | "enteredStageAt" | "slaDueAt" | "priority";
+/** SP-09: GET /tickets?sla=… */
+export type SlaFilter = "overdue" | "due_soon" | "none";
 export interface Sort {
   key: SortKey;
   dir: "asc" | "desc";
@@ -23,6 +27,12 @@ export interface BoardFilters {
   /** A user id or "none" (unassigned); "" = anyone. */
   ownerId: string;
   status: TicketStatus | "";
+  /** SP-09: any of these priorities; [] = any. */
+  priority: TicketPriority[];
+  /** SP-09: any of these categories; [] = any. */
+  category: TicketCategory[];
+  /** SP-09: SLA state; "" = any. */
+  sla: SlaFilter | "";
 }
 
 export const EMPTY_BOARD_FILTERS: BoardFilters = {
@@ -34,10 +44,20 @@ export const EMPTY_BOARD_FILTERS: BoardFilters = {
   contactName: "",
   ownerId: "",
   status: "",
+  priority: [],
+  category: [],
+  sla: "",
 };
 
 export const DEFAULT_SORT: Sort = { key: "updatedAt", dir: "desc" };
-export const SORT_KEYS: SortKey[] = ["createdAt", "updatedAt", "value", "enteredStageAt"];
+export const SORT_KEYS: SortKey[] = ["createdAt", "updatedAt", "value", "enteredStageAt", "slaDueAt", "priority"];
+export const SLA_FILTERS: SlaFilter[] = ["overdue", "due_soon", "none"];
+
+/** `v` narrowed to `allowed`, deduplicated, in `allowed` order (the backend's parseCsvList). */
+function pickList<T extends string>(v: unknown, allowed: readonly T[]): T[] {
+  if (!Array.isArray(v)) return [];
+  return allowed.filter((a) => v.includes(a));
+}
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -102,6 +122,11 @@ export function toQuery(
   }
   if (from) p.set("from", from);
   if (to) p.set("to", to);
+  const priority = pickList(f.priority, TICKET_PRIORITIES);
+  if (priority.length) p.set("priority", priority.join(","));
+  const category = pickList(f.category, TICKET_CATEGORIES);
+  if (category.length) p.set("category", category.join(","));
+  if (f.sla && SLA_FILTERS.includes(f.sla)) p.set("sla", f.sla);
   if (sort) {
     p.set("view", "table");
     p.set("sort", sort.key);
@@ -116,7 +141,16 @@ export function nextSort(cur: Sort, key: SortKey): Sort {
 }
 
 export function filtersActive(f: BoardFilters): boolean {
-  return !!(f.q.trim() || f.preset || f.contactId || f.ownerId || f.status);
+  return !!(
+    f.q.trim() ||
+    f.preset ||
+    f.contactId ||
+    f.ownerId ||
+    f.status ||
+    f.priority.length ||
+    f.category.length ||
+    f.sla
+  );
 }
 
 export const encodeBoardFilters = (f: unknown): string => encodeJson(f);
@@ -138,6 +172,9 @@ export function decodeBoardFilters(raw: string | null | undefined): BoardFilters
     contactName: s(o.contactName),
     ownerId: s(o.ownerId),
     status: STATUSES.includes(o.status as TicketStatus) ? (o.status as TicketStatus) : "",
+    priority: pickList(o.priority, TICKET_PRIORITIES),
+    category: pickList(o.category, TICKET_CATEGORIES),
+    sla: SLA_FILTERS.includes(o.sla as SlaFilter) ? (o.sla as SlaFilter) : "",
   };
 }
 

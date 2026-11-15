@@ -2,7 +2,16 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Tx } from "@/lib/tx";
 import type { TeamMember } from "@/lib/types";
 import { useContactSearch } from "./hooks/useBoardData";
-import { EMPTY_BOARD_FILTERS, filtersActive, type BoardFilters as Filters, type DatePreset, type TicketStatus } from "./boardQuery";
+import {
+  EMPTY_BOARD_FILTERS,
+  SLA_FILTERS,
+  filtersActive,
+  type BoardFilters as Filters,
+  type DatePreset,
+  type SlaFilter,
+  type TicketStatus,
+} from "./boardQuery";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES, categoryLabel, priorityLabel } from "./ticketFields";
 
 interface Props {
   tx: Tx;
@@ -22,7 +31,7 @@ const ctrl: CSSProperties = {
   height: 32,
 };
 
-/** Date range presets, customer typeahead, assignee and status pickers. */
+/** Date range presets, customer typeahead, assignee and status pickers; SP-09 priority, category and SLA. */
 export function BoardFilters({ tx, filters, onChange, team }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
   const presets: Array<[DatePreset, string]> = [
@@ -37,6 +46,11 @@ export function BoardFilters({ tx, filters, onChange, team }: Props) {
     ["won", tx("Won", "رابحة")],
     ["lost", tx("Lost", "خاسرة")],
   ];
+  const slaLabels: Record<SlaFilter, string> = {
+    overdue: tx("Overdue", "متأخرة"),
+    due_soon: tx("Due soon", "تستحق قريبًا"),
+    none: tx("No SLA", "بلا مهلة"),
+  };
 
   return (
     <div
@@ -110,6 +124,38 @@ export function BoardFilters({ tx, filters, onChange, team }: Props) {
         ))}
       </select>
 
+      <MultiPick
+        tx={tx}
+        label={tx("Priority", "الأولوية")}
+        anyLabel={tx("Any priority", "أي أولوية")}
+        options={TICKET_PRIORITIES.map((p) => [p, priorityLabel(tx, p)] as const)}
+        value={filters.priority}
+        onChange={(priority) => set({ priority })}
+      />
+
+      <MultiPick
+        tx={tx}
+        label={tx("Category", "التصنيف")}
+        anyLabel={tx("Any category", "أي تصنيف")}
+        options={TICKET_CATEGORIES.map((c) => [c, categoryLabel(tx, c) ?? c] as const)}
+        value={filters.category}
+        onChange={(category) => set({ category })}
+      />
+
+      <select
+        aria-label={tx("SLA", "المهلة")}
+        value={filters.sla}
+        onChange={(e) => set({ sla: e.target.value as SlaFilter | "" })}
+        style={ctrl}
+      >
+        <option value="">{tx("Any SLA", "أي مهلة")}</option>
+        {SLA_FILTERS.map((v) => (
+          <option key={v} value={v}>
+            {slaLabels[v]}
+          </option>
+        ))}
+      </select>
+
       {filtersActive(filters) ? (
         <button
           type="button"
@@ -118,6 +164,92 @@ export function BoardFilters({ tx, filters, onChange, team }: Props) {
         >
           {tx("Clear filters", "مسح المرشحات")}
         </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** A compact checkbox popover for a multi-value filter ("Priority: Urgent, High"). */
+function MultiPick<T extends string>({
+  tx,
+  label,
+  anyLabel,
+  options,
+  value,
+  onChange,
+}: {
+  tx: Tx;
+  label: string;
+  anyLabel: string;
+  options: ReadonlyArray<readonly [T, string]>;
+  value: T[];
+  onChange: (v: T[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const chosen = options.filter(([v]) => value.includes(v)).map(([, l]) => l);
+  const summary = chosen.length === 0 ? anyLabel : chosen.length <= 2 ? `${label}: ${chosen.join(tx(", ", "، "))}` : `${label}: ${chosen.length}`;
+  const toggle = (v: T) => {
+    const next = value.includes(v) ? value.filter((x) => x !== v) : [...value, v];
+    // Keep the list's order so the hash and the query stay stable.
+    onChange(options.map(([o]) => o).filter((o) => next.includes(o)));
+  };
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => setOpen((o) => !o)}
+        style={{ ...ctrl, cursor: "pointer", color: value.length ? "var(--ink)" : "var(--ink-2)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
+        {summary} ▾
+      </button>
+      {open ? (
+        <div
+          role="group"
+          aria-label={label}
+          style={{
+            position: "absolute",
+            insetInlineStart: 0,
+            top: "calc(100% + 4px)",
+            zIndex: 41,
+            minWidth: 200,
+            maxHeight: 300,
+            overflowY: "auto",
+            background: "var(--bg-1)",
+            border: "1px solid var(--line)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,.18)",
+            padding: 4,
+          }}
+        >
+          {options.map(([v, l]) => (
+            <label
+              key={v}
+              style={{ display: "flex", alignItems: "center", gap: 8, paddingInline: 8, paddingBlock: 6, fontSize: 12.5, color: "var(--ink)", cursor: "pointer", borderRadius: 6 }}
+            >
+              <input type="checkbox" checked={value.includes(v)} onChange={() => toggle(v)} />
+              <span>{l}</span>
+            </label>
+          ))}
+        </div>
       ) : null}
     </div>
   );

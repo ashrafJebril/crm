@@ -7,7 +7,7 @@ import { formatBytes } from "./mediaKinds";
  * Localized copy for the media library and template-header error keys
  * (backend media/media-errors.ts and integrations/template-header.ts). The
  * backend puts the key in `message` and extras (`limit`, `allowed`, `templates`,
- * `campaigns`) next to it, which `ApiError` exposes as `.message` and `.body`.
+ * `campaigns`, SP-09 `tickets`) next to it, which `ApiError` exposes as `.message` and `.body`.
  */
 
 type Extra = Record<string, unknown>;
@@ -43,9 +43,17 @@ const names = (v: unknown): string[] =>
         .filter(Boolean)
     : [];
 
+/** SP-09: `tickets: [{id, number, pipelineId}]` of a media.in_use body → "#7", "#12". */
+const ticketRefs = (v: unknown): string[] =>
+  Array.isArray(v)
+    ? v
+        .map((x) => (isObject(x) && typeof x.number === "number" && Number.isFinite(x.number) ? `#${x.number}` : ""))
+        .filter(Boolean)
+    : [];
+
 /** "a", "a and b", "a, b and 2 more" (en) / Arabic equivalents. */
-function nameList(list: string[], tx: Tx): string {
-  const quoted = list.map((n) => `“${n}”`);
+function nameList(list: string[], tx: Tx, quote = true): string {
+  const quoted = quote ? list.map((n) => `“${n}”`) : list;
   if (quoted.length <= 2) return quoted.join(tx(" and ", " و"));
   const more = quoted.length - 2;
   return tx(`${quoted.slice(0, 2).join(", ")} and ${more} more`, `${quoted.slice(0, 2).join("، ")} و${more} غيرها`);
@@ -109,8 +117,8 @@ export const MEDIA_ERROR_COPY: Record<string, CopyFn> = {
   ],
   // `media.in_use` needs the names, so its copy is built in mediaErrorText; this is the plain fallback.
   "media.in_use": () => [
-    "This file is used by a template or a campaign, so it can't be deleted.",
-    "هذا الملف مستخدم في قالب أو حملة، لذا لا يمكن حذفه.",
+    "This file is used by a template, a campaign or a ticket, so it can't be deleted.",
+    "هذا الملف مستخدم في قالب أو حملة أو تذكرة، لذا لا يمكن حذفه.",
   ],
   "Media not found": () => ["That file no longer exists.", "هذا الملف لم يعد موجودًا."],
   "templates.header_media_too_large": (x) => {
@@ -135,10 +143,27 @@ export function mediaKeyText(key: string, extra: unknown, tx: Tx): string | null
   if (key === "media.in_use") {
     const tpl = names(x.templates);
     const cmp = names(x.campaigns);
+    const tkt = ticketRefs(x.tickets);
+    if (tkt.length && !tpl.length && !cmp.length) {
+      const list = nameList(tkt, tx, false);
+      return tkt.length === 1
+        ? tx(
+            `This file is attached to ticket ${list}, so it can't be deleted. Remove it from that ticket first.`,
+            `هذا الملف مرفق بالتذكرة ${list}، لذا لا يمكن حذفه. أزله من التذكرة أولًا.`,
+          )
+        : tx(
+            `This file is attached to tickets ${list}, so it can't be deleted. Remove it from those first.`,
+            `هذا الملف مرفق بالتذاكر ${list}، لذا لا يمكن حذفه. أزله منها أولًا.`,
+          );
+    }
     if (tpl.length || cmp.length) {
       const parts: string[] = [];
       if (tpl.length) parts.push(tx(`template ${nameList(tpl, tx)}`, `القالب ${nameList(tpl, tx)}`));
       if (cmp.length) parts.push(tx(`campaign ${nameList(cmp, tx)}`, `الحملة ${nameList(cmp, tx)}`));
+      if (tkt.length) {
+        const list = nameList(tkt, tx, false);
+        parts.push(tkt.length === 1 ? tx(`ticket ${list}`, `التذكرة ${list}`) : tx(`tickets ${list}`, `التذاكر ${list}`));
+      }
       const used = parts.join(tx(" and ", " و"));
       return tx(
         `This file is used by ${used}, so it can't be deleted. Change those first.`,

@@ -19,9 +19,20 @@ import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePe
 import type {
   Lang,
   TicketActivity,
+  TicketCategory,
   TicketDetail,
+  TicketPriority,
   TicketStage,
 } from "@/lib/types";
+import type { Tx } from "@/lib/tx";
+import { useWorkspaceTz } from "@/components/activities/activityApi";
+import { ChannelChip, PriorityChip, SlaBadgeChip } from "./TicketBadges";
+import { TicketAttachments } from "./TicketAttachments";
+import { TicketBookingCards } from "./TicketBookingCards";
+import { ResolveDialog } from "./ResolveDialog";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES, categoryLabel, isCategory, priorityLabel, ticketPriority } from "./ticketFields";
+import { formatSlaDue, ticketSlaState } from "./ticketSla";
+import { ticketErrorText } from "./ticketErrors";
 
 interface Props {
   ticketId: string;
@@ -75,7 +86,18 @@ export function TicketDetailContent({
 
   const [noteText, setNoteText] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const tz = useWorkspaceTz();
   const t = q.data;
+  const isSupport = t?.pipeline?.kind === "support";
+  const canResolve = !!t && canUpdate && !t.closedAt && !t.stage?.isTerminal && isSupport;
+  const saveField = (patch: { priority?: TicketPriority; category?: TicketCategory | null }) => {
+    if (!t) return;
+    update.mutate(
+      { id: t.id, patch },
+      { onError: (e) => toast(ticketErrorText(e, tx, tx("Couldn't save the change.", "تعذّر حفظ التغيير.")), "error") },
+    );
+  };
 
   // Quick lookup of stage label + color by stage key for activity entries.
   const stageByKey = useMemo(() => {
@@ -146,7 +168,7 @@ export function TicketDetailContent({
                     fontWeight: 500,
                   }}
                 >
-                  #{String(t.number).padStart(3, "0")}
+                  <bdi>#{String(t.number).padStart(3, "0")}</bdi>
                 </div>
                 <button
                   onClick={onClose}
@@ -194,11 +216,14 @@ export function TicketDetailContent({
                   alignItems: "center",
                   gap: 8,
                   marginTop: 10,
+                  flexWrap: "wrap",
                 }}
               >
                 {currentStage ? (
                   <StagePill stage={currentStage} lang={lang} />
                 ) : null}
+                <PriorityChip tx={tx} priority={t.priority} />
+                <ChannelChip tx={tx} channel={t.channel} />
                 {t.value != null ? (
                   <div
                     className="mono"
@@ -220,6 +245,9 @@ export function TicketDetailContent({
 
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ flex: 1, overflowY: "auto" }}>
+              {isSupport ? (
+                <SupportFields t={t} tx={tx} tz={tz} canUpdate={canUpdate} saving={update.isPending} onSave={saveField} />
+              ) : null}
               <Section title={lang === "ar" ? "العميل" : "Contact"}>
                 <div
                   style={{
@@ -305,6 +333,26 @@ export function TicketDetailContent({
                   style={input}
                 />
               </Section>
+
+              {!isSupport ? (
+                <SupportFields t={t} tx={tx} tz={tz} canUpdate={canUpdate} saving={update.isPending} onSave={saveField} />
+              ) : null}
+
+              <Section title={tx("Files", "الملفات")}>
+                <TicketAttachments
+                  ticketId={t.id}
+                  tx={tx}
+                  tz={tz}
+                  canUpdate={canUpdate}
+                  hasConversation={!!t.conversationId}
+                />
+              </Section>
+
+              {can("bookings.view") && t.contactId ? (
+                <Section title={tx("Bookings", "الحجوزات")}>
+                  <TicketBookingCards ticketId={t.id} tx={tx} lang={lang} tz={tz} canUpdate={can("bookings.update")} />
+                </Section>
+              ) : null}
 
               <Section title={lang === "ar" ? "المتابعات" : "Follow-ups"}>
                 <ActivityList ticketId={ticketId} />
@@ -421,6 +469,24 @@ export function TicketDetailContent({
                   ) : null}
                 </div>
               ) : null}
+              {canResolve ? (
+                <button
+                  type="button"
+                  disabled={moveLocked}
+                  title={moveLocked ? lockedTip : undefined}
+                  onClick={() => setResolving(true)}
+                  style={{
+                    ...ghostBtn,
+                    marginInlineEnd: "auto",
+                    color: "var(--ok, #10b981)",
+                    borderColor: "color-mix(in srgb, var(--ok, #10b981) 40%, var(--line))",
+                    fontWeight: 600,
+                  }}
+                >
+                  {tx("Resolve", "حل")}
+                </button>
+              ) : null}
+              {resolving ? <ResolveDialog ticketId={t.id} lang={lang} onClose={() => setResolving(false)} /> : null}
               {confirmDelete ? (
                 <>
                   <span
@@ -543,6 +609,95 @@ export function TicketDetailDrawer({ ticketId, lang, onClose, onOpenConversation
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
+
+/** SP-09: priority and category (editable with tickets.update), the SLA line and the channel. */
+function SupportFields({
+  t,
+  tx,
+  tz,
+  canUpdate,
+  saving,
+  onSave,
+}: {
+  t: TicketDetail;
+  tx: Tx;
+  tz: string;
+  canUpdate: boolean;
+  saving: boolean;
+  onSave: (patch: { priority?: TicketPriority; category?: TicketCategory | null }) => void;
+}) {
+  const priority = ticketPriority(t.priority);
+  const category = isCategory(t.category) ? t.category : "";
+  const sla = ticketSlaState(t, t.stage?.isTerminal);
+  const label: React.CSSProperties = { fontSize: 11, color: "var(--ink-3)", minWidth: 72 };
+  const row: React.CSSProperties = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" };
+  return (
+    <Section title={tx("Support", "الدعم")}>
+      <div style={row}>
+        <span style={label}>{tx("Priority", "الأولوية")}</span>
+        {canUpdate ? (
+          <select
+            aria-label={tx("Priority", "الأولوية")}
+            value={priority}
+            disabled={saving}
+            onChange={(e) => onSave({ priority: e.target.value as TicketPriority })}
+            style={{ ...input, width: "auto", paddingBlock: 4 }}
+          >
+            {TICKET_PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {priorityLabel(tx, p)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <PriorityChip tx={tx} priority={priority} always />
+        )}
+      </div>
+      <div style={row}>
+        <span style={label}>{tx("Category", "التصنيف")}</span>
+        {canUpdate ? (
+          <select
+            aria-label={tx("Category", "التصنيف")}
+            value={category}
+            disabled={saving}
+            onChange={(e) => onSave({ category: (e.target.value || null) as TicketCategory | null })}
+            style={{ ...input, width: "auto", paddingBlock: 4 }}
+          >
+            <option value="">{tx("Not set", "غير محدد")}</option>
+            {TICKET_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {categoryLabel(tx, c)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span style={{ fontSize: 12.5, color: "var(--ink)" }}>{categoryLabel(tx, t.category) ?? "—"}</span>
+        )}
+      </div>
+      <div style={row}>
+        <span style={label}>{tx("SLA", "المهلة")}</span>
+        {sla === "finished" ? (
+          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Closed", "مغلقة")}</span>
+        ) : (
+          <>
+            <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={t.stage?.isTerminal} showNone showOnTrack={false} />
+            {t.slaDueAt ? (
+              <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                {tx("Due", "تستحق")} <bdi>{formatSlaDue(t.slaDueAt, tz, tx)}</bdi>
+              </span>
+            ) : null}
+          </>
+        )}
+      </div>
+      {t.channel ? (
+        <div style={row}>
+          <span style={label}>{tx("Channel", "القناة")}</span>
+          <ChannelChip tx={tx} channel={t.channel} />
+        </div>
+      ) : null}
+    </Section>
+  );
+}
 
 function Section({
   title,

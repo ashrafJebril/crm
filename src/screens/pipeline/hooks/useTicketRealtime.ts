@@ -4,6 +4,7 @@ import { useRealtime } from "@/api/useRealtime";
 import { qk } from "@/api/queryKeys";
 import type { Ticket, TicketsListPage } from "@/lib/types";
 import { isRefetchOnRealtimeKey, isUnfilteredStageKey } from "./realtimeKeys";
+import { mergeTicket } from "../ticketMerge";
 
 const REFETCH_DEBOUNCE_MS = 500;
 
@@ -30,6 +31,17 @@ function stripFromAllStages(
   );
 }
 
+/** The cached card for a ticket, so a raw realtime row keeps channel and attachmentCount (SP-09). */
+function cachedTicket(qc: ReturnType<typeof useQueryClient>, ticketId: string): Ticket | undefined {
+  for (const [, data] of qc.getQueriesData<StageCache>({ queryKey: ["tickets", "stage"] })) {
+    for (const p of data?.pages ?? []) {
+      const hit = p.items.find((t) => t.id === ticketId);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
 /** Subscribe to realtime ticket events for a given pipeline. Each handler
  *  enforces the invariant: a ticket exists in AT MOST one stage cache. */
 export function useTicketRealtime(pipelineId: string | null) {
@@ -54,6 +66,7 @@ export function useTicketRealtime(pipelineId: string | null) {
       (data) => {
         if (!pipelineId) return;
         if (data.ticket.pipelineId !== pipelineId) return;
+        const moved = mergeTicket(cachedTicket(qc, data.ticket.id), data.ticket);
         stripFromAllStages(qc, pipelineId, data.ticket.id);
         qc.setQueriesData<StageCache>(
           { queryKey: ["tickets", "stage", pipelineId, data.toStageId], predicate: (q) => isUnfilteredStageKey(q.queryKey, pipelineId) },
@@ -63,7 +76,7 @@ export function useTicketRealtime(pipelineId: string | null) {
             return {
               ...curr,
               pages: [
-                { ...first, items: [data.ticket, ...first.items] },
+                { ...first, items: [moved, ...first.items] },
                 ...rest,
               ],
             };
@@ -112,7 +125,9 @@ export function useTicketRealtime(pipelineId: string | null) {
     "ticket.updated",
     useCallback(
       (data) => {
-        qc.setQueryData(qk.ticket(data.ticket.id), data.ticket);
+        // Raw row: keep the detail's pipeline, activities and read-time fields.
+        qc.setQueryData<Ticket>(qk.ticket(data.ticket.id), (prev) => mergeTicket(prev, data.ticket));
+        const updated = mergeTicket(cachedTicket(qc, data.ticket.id), data.ticket);
         if (!pipelineId || data.ticket.pipelineId !== pipelineId) {
           // Different pipeline — just update in place without rearranging.
           qc.setQueriesData<StageCache>(
@@ -124,7 +139,7 @@ export function useTicketRealtime(pipelineId: string | null) {
                 pages: curr.pages.map((p) => ({
                   ...p,
                   items: p.items.map((t) =>
-                    t.id === data.ticket.id ? data.ticket : t,
+                    t.id === data.ticket.id ? mergeTicket(t, data.ticket) : t,
                   ),
                 })),
               };
@@ -141,7 +156,7 @@ export function useTicketRealtime(pipelineId: string | null) {
             return {
               ...curr,
               pages: [
-                { ...first, items: [data.ticket, ...first.items] },
+                { ...first, items: [updated, ...first.items] },
                 ...rest,
               ],
             };

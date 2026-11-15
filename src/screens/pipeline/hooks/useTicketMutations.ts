@@ -2,9 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { qk } from "@/api/queryKeys";
 import { invalidateContactCaches } from "./useBoardData";
+import { mergeTicket } from "../ticketMerge";
 import type {
   Ticket,
   TicketActivity,
+  TicketCategory,
+  TicketDetail,
+  TicketPriority,
   TicketsListPage,
 } from "@/lib/types";
 
@@ -118,6 +122,9 @@ interface CreateVars {
   value?: number;
   ownerId?: string;
   conversationId?: string;
+  /** SP-09 */
+  priority?: TicketPriority;
+  category?: TicketCategory | null;
 }
 
 export function useCreateTicket() {
@@ -146,6 +153,8 @@ export function useCreateTicketFromConversation() {
       description?: string;
       value?: number;
       ownerId?: string;
+      priority?: TicketPriority;
+      category?: TicketCategory | null;
     }) =>
       api.post<Ticket>(`/tickets/from-conversation/${v.conversationId}`, {
         pipelineId: v.pipelineId,
@@ -154,6 +163,8 @@ export function useCreateTicketFromConversation() {
         description: v.description,
         value: v.value,
         ownerId: v.ownerId,
+        priority: v.priority,
+        category: v.category,
       }),
     onSuccess: (ticket, v) => {
       patchStageCache(qc, v.pipelineId, v.stageId, (items) => [ticket, ...items]);
@@ -170,10 +181,20 @@ export function useUpdateTicket() {
   return useMutation({
     mutationFn: async (v: {
       id: string;
-      patch: { title?: string; description?: string; value?: number; ownerId?: string };
+      patch: {
+        title?: string;
+        description?: string;
+        value?: number;
+        ownerId?: string;
+        priority?: TicketPriority;
+        category?: TicketCategory | null;
+      };
     }) => api.patch<Ticket>(`/tickets/${v.id}`, v.patch),
     onSuccess: (ticket) => {
-      qc.setQueryData(qk.ticket(ticket.id), ticket);
+      // The PATCH returns the raw row: keep pipeline, activities, channel and attachmentCount.
+      qc.setQueryData<TicketDetail>(qk.ticket(ticket.id), (prev) => mergeTicket(prev, ticket as TicketDetail));
+      // The table and filtered columns may now sort or filter it differently.
+      void qc.invalidateQueries({ queryKey: ["tickets", "table"] });
       void qc.invalidateQueries({ queryKey: ["record", "ticket", ticket.id] });
       // Patch every stage cache that might contain it (pipelineId may vary)
       qc.setQueriesData<StageTicketsCache>(
@@ -184,7 +205,7 @@ export function useUpdateTicket() {
             ...curr,
             pages: curr.pages.map((p) => ({
               ...p,
-              items: p.items.map((t) => (t.id === ticket.id ? ticket : t)),
+              items: p.items.map((t) => (t.id === ticket.id ? mergeTicket(t, ticket) : t)),
             })),
           };
         },

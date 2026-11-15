@@ -286,6 +286,7 @@ export function StageColumn({
                     lang={lang}
                     accent={accent}
                     stale={isStaleTicket(ticket.enteredStageAt, staleDays, nowTick, stage.isTerminal)}
+                    stageIsTerminal={stage.isTerminal}
                     moveLocked={moveLocked}
                     selected={selectedIds?.has(ticket.id) ?? false}
                     selectionActive={(selectedIds?.size ?? 0) > 0}
