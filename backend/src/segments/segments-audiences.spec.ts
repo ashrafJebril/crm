@@ -232,7 +232,7 @@ describe("count timeout returns null", () => {
   it("GET /segments/:id/count and POST /segments/preview answer 200 with {count: null, timedOut: true}", async () => {
     const { fake, ctrl } = setup();
     const events = timeoutCounts(fake);
-    await expect(ctrl.count(WS, "S")).resolves.toEqual({ count: null, countedAt: null, timedOut: true });
+    await expect(ctrl.count(WS, "S")).resolves.toEqual({ count: null, countedAt: expect.any(String), timedOut: true });
     await expect(ctrl.preview(WS, { rules: tree(lead) as never })).resolves.toEqual({ count: null, timedOut: true, sample: [], issues: [] });
     // SET LOCAL precedes the count, in the same transaction.
     const byTx = new Map<string, string[]>();
@@ -243,8 +243,14 @@ describe("count timeout returns null", () => {
     const withCount = [...byTx.values()].filter((l) => l.includes("count"));
     expect(withCount).toHaveLength(2);
     for (const l of withCount) expect(l).toEqual(["SET LOCAL statement_timeout = 8000", "count"]);
-    // A timed-out count is never cached.
-    expect(fake.calls.filter((c) => c.op === "$executeRaw" && /memberCount/.test(c.args.sql))).toEqual([]);
+    // Fix I1: a timed-out count is cached as null with countedAt, so it is not retried at once.
+    const writes = fake.calls.filter((c) => c.op === "$executeRaw" && /memberCount/.test(c.args.sql));
+    expect(writes.map((c) => [c.args.values[0], c.args.values[2], c.args.values[3]])).toEqual([[null, "S", WS]]);
+    expect(fake.db.segment.find((r) => r.id === "S")).toMatchObject({ memberCount: null, countedAt: expect.any(Date) });
+    // Within 10 s the count route serves the cached timeout without counting again.
+    const before = events.filter((e) => e.endsWith(":count")).length;
+    await expect(ctrl.count(WS, "S")).resolves.toMatchObject({ count: null, timedOut: true });
+    expect(events.filter((e) => e.endsWith(":count")).length).toBe(before);
   });
 
   it("a member page that times out answers {items: [], timedOut: true}", async () => {
@@ -333,6 +339,120 @@ describe("segment list recomputes stale counts with bounded concurrency", () => 
     expect(row).toMatchObject({ memberCount: 2, countedAt: NOW, updatedAt });
     expect(rows.find((r) => r.id === "G")).toMatchObject({ origin: "manual", count: 2, rules: null, rulesSource: null });
     expect(fake.calls.filter((c) => c.model === "segmentMember" && c.op === "count").map((c) => c.args.where.segmentId).sort()).toEqual(["G", "H"]);
+  });
+});
+
+describe("segment list: one overall count deadline and cached timeouts (fix I1)", () => {
+  function staleWorld(n: number) {
+    const t = predicateWorld();
+    for (let i = 0; i < n; i++) {
+      t.segment.push(seg(`stale${i}`, WS, "crm", { rules: tree(lead), memberCount: null, countedAt: null }));
+    }
+    return t;
+  }
+
+  it("10 stale audiences whose counts time out, listed twice: the second list runs no counts", async () => {
+    const fake = createAudienceDb(staleWorld(10));
+    const events = timeoutCounts(fake);
+    const svc = new SegmentsService(fake.prisma as never);
+    const first = await svc.listRows(WS, { now: NOW });
+    const counted = events.filter((e) => e.endsWith(":count")).length;
+    expect(counted).toBe(11); // S + the 10 stale ones
+    for (const r of first.filter((x) => x.origin === "crm")) {
+      expect(r).toMatchObject({ count: null, timedOut: true, countedAt: NOW.toISOString() });
+    }
+    expect(fake.db.segment.filter((r) => r.origin === "crm").every((r) => r.memberCount === null && r.countedAt?.getTime() === NOW.getTime())).toBe(true);
+
+    const second = await svc.listRows(WS, { now: new Date(NOW.getTime() + 60_000) });
+    expect(events.filter((e) => e.endsWith(":count")).length).toBe(counted);
+    for (const r of second.filter((x) => x.origin === "crm")) expect(r).toMatchObject({ count: null, timedOut: true });
+
+    // After the 5-minute TTL they are retried.
+    await svc.listRows(WS, { now: new Date(NOW.getTime() + 6 * 60_000) });
+    expect(events.filter((e) => e.endsWith(":count")).length).toBe(counted * 2);
+  });
+
+  it("the list stops counting at its deadline: late rows keep a stale count or answer null, uncached", async () => {
+    const t = staleWorld(10);
+    t.segment.find((r) => r.id === "stale9")!.memberCount = 42;
+    t.segment.find((r) => r.id === "stale9")!.countedAt = new Date(NOW.getTime() - 60 * 60_000);
+    const fake = createAudienceDb(t);
+    let counts = 0;
+    const orig = fake.prisma.__tx;
+    fake.prisma.__tx = (id: number) => {
+      const tx = orig(id);
+      const count = tx.contact.count;
+      tx.contact.count = async (args: unknown) => {
+        counts++;
+        await new Promise((r) => setTimeout(r, 80));
+        return count(args);
+      };
+      return tx;
+    };
+    const prev = process.env.AUDIENCE_LIST_DEADLINE_MS;
+    process.env.AUDIENCE_LIST_DEADLINE_MS = "150";
+    let rows: Awaited<ReturnType<SegmentsService["listRows"]>> = [];
+    const started = Date.now();
+    try {
+      rows = await new SegmentsService(fake.prisma as never).listRows(WS, { now: NOW });
+    } finally {
+      if (prev === undefined) delete process.env.AUDIENCE_LIST_DEADLINE_MS;
+      else process.env.AUDIENCE_LIST_DEADLINE_MS = prev;
+    }
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(counts).toBeGreaterThan(0);
+    expect(counts).toBeLessThan(11);
+    // Every statement timeout handed to a count fits inside the remaining list budget.
+    for (const c of fake.calls.filter((x) => x.op === "$executeRawUnsafe")) {
+      expect(Number(/= (\d+)$/.exec(c.args.sql)![1])).toBeLessThanOrEqual(150);
+    }
+    const crm = rows.filter((r) => r.origin === "crm");
+    const late = crm.filter((r) => r.count !== 2);
+    expect(crm.filter((r) => r.count === 2)).toHaveLength(counts);
+    expect(late.length).toBe(11 - counts);
+    for (const r of late) {
+      if (r.id === "stale9") expect(r).toMatchObject({ count: 42, timedOut: false });
+      else expect(r).toMatchObject({ count: null, timedOut: true, countedAt: null });
+    }
+    // Rows skipped by the deadline are not cached: only the counted ones were written.
+    expect(fake.calls.filter((c) => c.op === "$executeRaw")).toHaveLength(counts);
+  });
+});
+
+describe("reference chain depth is capped on save and preview (fix I2)", () => {
+  function chain(n: number) {
+    const t = predicateWorld();
+    for (let i = 1; i <= n; i++) {
+      const rules = i === n ? tree(lead) : tree({ field: "group", op: "in", segmentId: `S${i + 1}` });
+      t.segment.push(seg(`S${i}`, WS, "crm", { rules }));
+    }
+    return t;
+  }
+
+  it("a chain at the cap (5) saves and previews; one deeper is 400 invalid_rules too_deep", async () => {
+    const ok = setup(createAudienceDb(chain(5)));
+    await expect(ok.svc.save(WS, { name: "T", rules: tree({ field: "group", op: "in", segmentId: "S1" }) })).resolves.toMatchObject({ issues: [] });
+    await expect(ok.svc.preview(WS, { rules: tree({ field: "group", op: "not_in", segmentId: "S1" }) })).resolves.toMatchObject({ issues: [] });
+
+    const deep = setup(createAudienceDb(chain(6)));
+    const t6 = tree(lead, { op: "or", rules: [{ field: "group", op: "not_in", segmentId: "S1" }, lead] });
+    for (const p of [deep.svc.save(WS, { name: "T", rules: t6 }), deep.svc.preview(WS, { rules: t6 })]) {
+      expect(await bodyOf(p)).toEqual({ statusCode: 400, message: "audiences.invalid_rules", path: [1, 0], reason: "too_deep", max: 5 });
+    }
+    expect(deep.fake.calls.filter((c) => c.op === "create" || c.op === "update")).toEqual([]);
+  });
+
+  it("the longest chain counts, not the shortest path the walk finds first", async () => {
+    // T names S4 directly (1 hop) and S1, whose chain S1 to S6 is 6 long.
+    const { svc } = setup(createAudienceDb(chain(6)));
+    const t = tree({ field: "group", op: "in", segmentId: "S4" }, { field: "group", op: "in", segmentId: "S1" });
+    expect(await bodyOf(svc.save(WS, { name: "T", rules: t }))).toMatchObject({ reason: "too_deep", path: [1] });
+  });
+
+  it("a new audience in front of a full chain is rejected", async () => {
+    const { svc, t } = setup(createAudienceDb(chain(5)));
+    t.segment.push(seg("NEW", WS, "crm", { rules: tree({ field: "group", op: "in", segmentId: "S1" }) }));
+    expect(await bodyOf(svc.save(WS, { name: "front", rules: tree({ field: "group", op: "in", segmentId: "NEW" }) }))).toMatchObject({ reason: "too_deep", path: [0] });
   });
 });
 

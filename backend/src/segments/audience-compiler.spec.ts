@@ -1,9 +1,9 @@
 import { compileAudience, MATCH_NONE } from "./audience-compiler";
 import { loadLookups, type LookupsPrisma } from "./audience-lookups";
-import { legacyProjection, legacyToTree, readRules, type AudienceNode, type AudienceRules, type SegmentFilter } from "./audience-rules";
+import { AUDIENCE_LIMITS, legacyProjection, legacyToTree, readRules, type AudienceNode, type AudienceRules, type SegmentFilter } from "./audience-rules";
 import { createAudienceDb, evaluateContacts, type AudienceTables } from "./audience-test-db";
 import { legacyBuildWhere, legacyParseFilter } from "./__fixtures__/legacy-build-where";
-import { legacyWorld, NOW, predicateWorld, WS } from "./__fixtures__/audience-world";
+import { legacyWorld, NOW, predicateWorld, seg, WS } from "./__fixtures__/audience-world";
 import { SegmentsService } from "./segments.service";
 
 async function compileIn(t: AudienceTables, tree: AudienceRules, now = NOW) {
@@ -202,5 +202,99 @@ describe("broken references match nobody for both operators", () => {
     const c = await compileIn(w, tree({ op: "or", rules: [{ field: "group", op: "not_in", segmentId: "gone" }, { field: "lifecycle", op: "in", values: ["lead"] }] }));
     expect(c.issues).toEqual([{ path: [0, 0], kind: "group_missing" }]);
     expect(evaluateContacts(w, c.where)).toEqual(["a1", "a4"]);
+  });
+});
+
+describe("broken references inside an expanded audience match nobody (fix C1)", () => {
+  /** A world where smart audience B (and, two levels down, C) can be broken. */
+  function world(bRules: AudienceRules, cRules?: AudienceRules) {
+    const w = predicateWorld();
+    w.segment.push(seg("B", WS, "crm", { rules: bRules }));
+    if (cRules) w.segment.push(seg("C", WS, "crm", { rules: cRules }));
+    return w;
+  }
+  const notInB = tree({ field: "group", op: "not_in", segmentId: "B" });
+  const inB = tree({ field: "group", op: "in", segmentId: "B" });
+
+  it("A = not_in B, where B's tag was deleted → nobody (not everyone), with the issue on A's rule", async () => {
+    const w = world(tree({ field: "tag", op: "has", tag: "VIP", missing: true }));
+    for (const t of [notInB, inB]) {
+      const c = await compileIn(w, t);
+      expect(evaluateContacts(w, c.where)).toEqual([]);
+      expect(c.issues).toEqual([{ path: [0], kind: "tag_deleted" }]);
+    }
+  });
+
+  const NESTED: Array<[string, AudienceNode, string]> = [
+    ["an archived pipeline", { field: "pipeline_stage", op: "in", pipelineId: "P2" }, "pipeline_archived"],
+    ["a stage of another pipeline", { field: "pipeline_stage", op: "not_in", pipelineId: "P1", stageId: "s3new" }, "stage_missing"],
+    ["an archived field", { field: "custom_field", op: "unset", defId: "dX" }, "field_missing"],
+    ["a deleted campaign", { field: "campaign", op: "not_replied", campaignId: "gone" }, "campaign_missing"],
+    ["a deleted group", { field: "group", op: "not_in", segmentId: "gone" }, "group_missing"],
+  ];
+
+  it.each(NESTED)("%s nested 2 levels deep (A → B → C) → nobody for in and not_in", async (_n, broken, kind) => {
+    // C's broken rule sits beside a healthy one, inside an `or`, so C alone would still match people.
+    const w = world(tree({ field: "group", op: "in", segmentId: "C" }), tree({ op: "or", rules: [{ field: "lifecycle", op: "in", values: ["lead"] }, broken] }));
+    for (const t of [notInB, inB]) {
+      const c = await compileIn(w, t);
+      expect(c.where.AND).toEqual([MATCH_NONE]);
+      expect(evaluateContacts(w, c.where)).toEqual([]);
+      expect(c.issues).toEqual([{ path: [0], kind }]);
+    }
+  });
+
+  it("siblings of the broken reference in an `or` group still match", async () => {
+    const w = world(tree({ field: "tag", op: "has", tag: "VIP", missing: true }));
+    const c = await compileIn(w, tree({ op: "or", rules: [{ field: "group", op: "not_in", segmentId: "B" }, { field: "lifecycle", op: "in", values: ["lead"] }] }));
+    expect(c.issues).toEqual([{ path: [0, 0], kind: "tag_deleted" }]);
+    expect(evaluateContacts(w, c.where)).toEqual(["a1", "a4"]);
+  });
+
+  it("a healthy referenced audience still inlines (not_in excludes its members)", async () => {
+    const w = world(tree({ field: "lifecycle", op: "in", values: ["lead"] }));
+    const c = await compileIn(w, notInB);
+    expect(c.issues).toEqual([]);
+    expect(evaluateContacts(w, c.where)).toEqual(["a2", "a3", "a5"]);
+  });
+});
+
+describe("one reference-chain depth limit at evaluation (fix I2)", () => {
+  /** T → S1 → … → Sn, where Sn is `lifecycle in lead`. */
+  function chain(n: number) {
+    const w = predicateWorld();
+    for (let i = 1; i <= n; i++) {
+      const rules = i === n ? tree({ field: "lifecycle", op: "in", values: ["lead"] }) : tree({ field: "group", op: "in", segmentId: `S${i + 1}` });
+      w.segment.push(seg(`S${i}`, WS, "crm", { rules }));
+    }
+    return w;
+  }
+
+  it(`a chain of ${AUDIENCE_LIMITS.maxReferenceDepth} smart audiences evaluates`, async () => {
+    const w = chain(AUDIENCE_LIMITS.maxReferenceDepth);
+    const c = await compileIn(w, tree({ field: "group", op: "in", segmentId: "S1" }));
+    expect(c.issues).toEqual([]);
+    expect(evaluateContacts(w, c.where)).toEqual(["a1", "a4"]);
+  });
+
+  it("a chain longer than the limit matches nobody for in and not_in, with issue too_deep (never a false cycle)", async () => {
+    const w = chain(AUDIENCE_LIMITS.maxReferenceDepth + 1);
+    for (const op of ["in", "not_in"] as const) {
+      const c = await compileIn(w, tree({ field: "group", op, segmentId: "S1" }));
+      expect(c.issues).toEqual([{ path: [0], kind: "too_deep" }]);
+      expect(evaluateContacts(w, c.where)).toEqual([]);
+    }
+    // A much longer stored chain behaves the same and never recurses unboundedly.
+    const long = chain(40);
+    const c = await compileIn(long, tree({ field: "group", op: "not_in", segmentId: "S1" }));
+    expect(c.issues).toEqual([{ path: [0], kind: "too_deep" }]);
+  });
+
+  it("a manual group named by the deepest allowed audience still resolves (the lookups load one hop further)", async () => {
+    const w = chain(AUDIENCE_LIMITS.maxReferenceDepth);
+    w.segment.find((s) => s.id === `S${AUDIENCE_LIMITS.maxReferenceDepth}`)!.rules = tree({ field: "group", op: "in", segmentId: "G" });
+    const c = await compileIn(w, tree({ field: "group", op: "in", segmentId: "S1" }));
+    expect(c.issues).toEqual([]);
+    expect(evaluateContacts(w, c.where)).toEqual(["a1", "a3"]);
   });
 });

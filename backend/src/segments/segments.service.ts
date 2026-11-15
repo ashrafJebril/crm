@@ -3,11 +3,12 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { fieldWhere } from "../custom-fields/custom-fields.service";
 import { compileAudience, type CompileResult } from "./audience-compiler";
-import { assertExpansionWithinLimit, assertNoCycle } from "./audience-cycles";
+import { assertExpansionWithinLimit, assertNoCycle, assertReferenceDepth } from "./audience-cycles";
 import {
   countTimeoutMs,
   countTtlMs,
   countWithTimeout,
+  listDeadlineMs,
   mapLimit,
   withStatementTimeout,
   writeCountCache,
@@ -194,7 +195,13 @@ export class SegmentsService {
     return row;
   }
 
-  /** `GET /segments`: every row, counts served from the cache when fresh, stale ones recomputed 3 at a time. */
+  /**
+   * `GET /segments`: every row. Counts are served from the cache when
+   * `countedAt` is fresh (a cached `null` is a recent timeout: "too large to
+   * count right now"); stale ones are recomputed 3 at a time under ONE
+   * overall deadline (fix I1). After the deadline a row keeps its stale count
+   * or answers `count: null, timedOut: true`; `GET /segments/:id/count` fills it in.
+   */
   async listRows(workspaceId: string, opts: { now?: Date } = {}): Promise<AudienceRow[]> {
     const now = opts.now ?? new Date();
     const rows = (await this.prisma.segment.findMany({
@@ -206,6 +213,7 @@ export class SegmentsService {
     const lookups = smart.length ? await loadLookups(this.lookupsPrisma, workspaceId, [...trees.values()]) : emptyLookups();
     const ttl = countTtlMs();
     const ms = countTimeoutMs();
+    const deadline = Date.now() + listDeadlineMs();
 
     return mapLimit(rows, LIST_COUNT_CONCURRENCY, async (row) => {
       if (row.origin !== "crm") {
@@ -213,13 +221,29 @@ export class SegmentsService {
         return toAudienceRow(row, { count });
       }
       const compiled = await this.compile(workspaceId, trees.get(row.id)!, { now, selfId: row.id, lookups });
-      const fresh = row.countedAt && row.memberCount !== null && now.getTime() - new Date(row.countedAt).getTime() < ttl;
-      if (fresh) return toAudienceRow(row, { count: row.memberCount, countedAt: row.countedAt, issues: compiled.issues });
-      const r = await countWithTimeout(this.timed, compiled.where, ms);
-      if (r.count !== null) await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
+      const fresh = row.countedAt && now.getTime() - new Date(row.countedAt).getTime() < ttl;
+      if (fresh) {
+        return toAudienceRow(row, {
+          count: row.memberCount,
+          countedAt: row.countedAt,
+          timedOut: row.memberCount === null,
+          issues: compiled.issues,
+        });
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        // Out of time for this request: keep a stale count if there is one, never block.
+        return row.memberCount !== null
+          ? toAudienceRow(row, { count: row.memberCount, countedAt: row.countedAt, issues: compiled.issues })
+          : toAudienceRow(row, { count: null, timedOut: true, issues: compiled.issues });
+      }
+      const budget = Math.min(ms, remaining);
+      const r = await countWithTimeout(this.timed, compiled.where, budget);
+      // A full-length timeout is cached as null (retried after the TTL); one cut short by the deadline is not.
+      if (r.count !== null || budget === ms) await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
       return toAudienceRow(row, {
         count: r.count,
-        countedAt: r.count !== null ? now : null,
+        countedAt: r.count !== null || budget === ms ? now : null,
         timedOut: r.timedOut,
         issues: compiled.issues,
       });
@@ -275,12 +299,13 @@ export class SegmentsService {
       return { count, countedAt: now, timedOut: false, issues: [] };
     }
     const compiled = await this.compile(workspaceId, readRules(row).tree, { now, selfId: row.id });
-    if (row.countedAt && row.memberCount !== null && now.getTime() - new Date(row.countedAt).getTime() < freshMs) {
-      return { count: row.memberCount, countedAt: new Date(row.countedAt), timedOut: false, issues: compiled.issues };
+    if (row.countedAt && now.getTime() - new Date(row.countedAt).getTime() < freshMs) {
+      // A cached null is a recent timeout (fix I1).
+      return { count: row.memberCount, countedAt: new Date(row.countedAt), timedOut: row.memberCount === null, issues: compiled.issues };
     }
     const r = await countWithTimeout(this.timed, compiled.where);
-    if (r.count !== null) await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
-    return { count: r.count, countedAt: r.count !== null ? now : null, timedOut: r.timedOut, issues: compiled.issues };
+    await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
+    return { count: r.count, countedAt: now, timedOut: r.timedOut, issues: compiled.issues };
   }
 
   /** Keyset page over `audienceWhere` (never `skip`), under the statement timeout. */
@@ -322,8 +347,8 @@ export class SegmentsService {
 
   /**
    * Validate a client tree against the workspace: references (404), custom
-   * field values (SP-02's 400), cycles through `selfId` (400) and the
-   * expansion cap (400). Returns the lookups for compiling it.
+   * field values (SP-02's 400), cycles through `selfId` (400), the reference
+   * chain depth (400 `invalid_rules` / `too_deep`, fix I2) and the expansion cap (400). Returns the lookups for compiling it.
    */
   private async checkTree(
     client: LookupsPrisma,
@@ -345,8 +370,9 @@ export class SegmentsService {
       })) as Array<{ id: string; rules: unknown; filter: string }>;
       return new Map(rows.map((r) => [r.id, readRules(r).tree]));
     };
-    const trees = await assertNoCycle(workspaceId, selfId, tree, loadSmart, lookups.segments);
-    assertExpansionWithinLimit(tree, trees);
+    const walk = await assertNoCycle(workspaceId, selfId, tree, loadSmart, lookups.segments);
+    assertReferenceDepth(tree, walk);
+    assertExpansionWithinLimit(tree, walk.trees);
     return lookups;
   }
 

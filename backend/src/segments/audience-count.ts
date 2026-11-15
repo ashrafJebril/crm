@@ -7,6 +7,8 @@ import type { Prisma } from "@prisma/client";
 
 export const DEFAULT_COUNT_TIMEOUT_MS = 8000;
 export const DEFAULT_COUNT_TTL_MS = 5 * 60_000;
+/** Fix I1: `GET /segments` spends at most this long on counts overall. */
+export const DEFAULT_LIST_DEADLINE_MS = 10_000;
 
 function envMs(name: string, fallback: number): number {
   const n = Number(process.env[name]);
@@ -15,6 +17,7 @@ function envMs(name: string, fallback: number): number {
 
 export const countTimeoutMs = () => envMs("AUDIENCE_COUNT_TIMEOUT_MS", DEFAULT_COUNT_TIMEOUT_MS);
 export const countTtlMs = () => envMs("AUDIENCE_COUNT_TTL_MS", DEFAULT_COUNT_TTL_MS);
+export const listDeadlineMs = () => envMs("AUDIENCE_LIST_DEADLINE_MS", DEFAULT_LIST_DEADLINE_MS);
 
 /** The transaction-client surface the timed queries use. */
 export interface TimedTx {
@@ -75,13 +78,15 @@ export async function countWithTimeout(
 
 /**
  * Cache a smart audience's count. Raw SQL on purpose: a Prisma update would
- * move `updatedAt`, which the UI shows as "edited".
+ * move `updatedAt`, which the UI shows as "edited". `count: null` caches a
+ * timed-out count (fix I1): a recent `countedAt` with a null `memberCount`
+ * means "too large to count right now", and the TTL suppresses retries.
  */
 export async function writeCountCache(
   prisma: { $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<unknown> },
   ws: string,
   id: string,
-  count: number,
+  count: number | null,
   at: Date,
 ): Promise<void> {
   await prisma.$executeRaw`UPDATE "Segment" SET "memberCount" = ${count}, "countedAt" = ${at} WHERE "id" = ${id} AND "workspaceId" = ${ws}`;

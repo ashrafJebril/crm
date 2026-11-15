@@ -13,6 +13,7 @@ import { localMidnight } from "../activities/buckets";
 import { fieldWhere } from "../custom-fields/custom-fields.service";
 import type { AudienceLookups } from "./audience-lookups";
 import {
+  AUDIENCE_LIMITS,
   isGroup,
   readRules,
   relativeSince,
@@ -41,9 +42,6 @@ export interface CompileResult {
   where: Prisma.ContactWhereInput;
   issues: RuleIssue[];
 }
-
-/** Hard stop for inlining (a saved tree is capped well below this; ruling 5). */
-const MAX_INLINE_DEPTH = 16;
 
 /** Root keys the legacy `buildWhere` set directly (not in `AND`). */
 const HOISTED_FIELDS = new Set(["industry", "source", "name", "phone", "stage_key"]);
@@ -191,13 +189,20 @@ export function compileAudience(ws: string, tree: AudienceGroup, ctx: CompileCtx
     }
     const visited = ctx.visited ?? new Set<string>();
     const depth = ctx.depth ?? 0;
-    if (visited.has(seg.id) || depth >= MAX_INLINE_DEPTH) return none(path, "cycle");
+    if (visited.has(seg.id)) return none(path, "cycle");
+    // One chain bound for save, lookups, the cycle walk and here (fix I2).
+    if (depth + 1 > AUDIENCE_LIMITS.maxReferenceDepth) return none(path, "too_deep");
     const sub = compileAudience(ws, readRules(seg).tree, {
       ...ctx,
       visited: new Set([...visited, seg.id]),
       depth: depth + 1,
     });
-    if (sub.issues.some((i) => i.kind === "cycle")) return none(path, "cycle");
+    // Fix C1: ANY issue inside the referenced audience's closure (a deleted tag,
+    // a broken stage, field, campaign or group, a cycle, the depth bound) makes
+    // this rule match nobody for BOTH operators. `NOT (nobody)` would otherwise
+    // widen `not_in` to the whole workspace. The issue is reported here, on the
+    // referencing rule, with the inner issue's kind.
+    if (sub.issues.length) return none(path, sub.issues[0].kind);
     inner = sub.where;
     return r.op === "in" ? inner : { NOT: inner };
   };
