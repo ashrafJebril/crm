@@ -19,6 +19,7 @@ import {
   CreateTicketDto,
   ListTicketsQuery,
   MoveTicketDto,
+  ResolveTicketDto,
   UpdateTicketDto,
 } from "./tickets.dto";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
@@ -26,18 +27,60 @@ import { DEFAULT_TZ } from "../activities/buckets";
 import { assignConversationToTicketOwner } from "./ticket-conversation-assign";
 import { UNDO_NOTE, undoRefusal } from "./undo-stage";
 import {
+  PRIORITY_BUCKETS,
   TICKET_SORTS,
   buildTicketWhere,
   decodeCursor,
   encodeCursor,
+  priorityBucketOrder,
   ticketCursorWhere,
   ticketOrderBy,
   type SortDir,
   type TicketSort,
 } from "./ticket-filter";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES } from "./ticket-fields";
+import { ticketError } from "./ticket-errors";
 
 /** Marker activity: this card changed the contact's lifecycle (note "lifecycle:<from>-><to>"). */
 export const LIFECYCLE_ACTIVITY = "lifecycle_changed";
+
+/** SP-09: the channel of a ticket's conversation, derived at read time (ruling 4). */
+export interface TicketChannelDto {
+  kind: string;
+  channelId: string | null;
+  displayName: string | null;
+}
+
+/** SP-09: a booking card on the ticket sheet (ruling 7). */
+export interface TicketBookingCardDto {
+  id: string;
+  startAt: Date;
+  durationMin: number;
+  status: string;
+  service: string;
+  serviceAr: string;
+  staffId: string | null;
+  source: string;
+  hjzSyncError: string | null;
+}
+
+/** Booking cards: upcoming pending/confirmed bookings, from one day back, at most this many. */
+export const TICKET_BOOKINGS_MAX = 20;
+const TICKET_BOOKINGS_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * SP-09: priority / category from a DTO (internal callers skip the
+ * ValidationPipe). Unknown values are 400, never coerced; `null` category
+ * clears it.
+ */
+function assertTicketFields(d: { priority?: unknown; category?: unknown }) {
+  if (d.priority !== undefined && !(TICKET_PRIORITIES as readonly unknown[]).includes(d.priority)) {
+    throw ticketError("tickets.invalid_priority");
+  }
+  if (d.category !== undefined && d.category !== null && !(TICKET_CATEGORIES as readonly unknown[]).includes(d.category)) {
+    throw ticketError("tickets.invalid_category");
+  }
+}
 
 @Injectable()
 export class TicketsService {
@@ -54,7 +97,7 @@ export class TicketsService {
   // Pipelines (list/get/edit) live in PipelinesService (SP-07).
 
   // ─── Tickets ───────────────────────────────────────────────────────────
-  async listTickets(workspaceId: string, query: ListTicketsQuery) {
+  async listTickets(workspaceId: string, query: ListTicketsQuery, viewer?: Viewer) {
     const take = query.limit ?? 50;
     // One builder for table and kanban, so the same filters always match the same tickets.
     const tz = query.from || query.to ? await this.workspaceTimezone(workspaceId) : DEFAULT_TZ;
@@ -64,20 +107,23 @@ export class TicketsService {
       const sort: TicketSort = (query.sort ?? "updatedAt") as TicketSort;
       if (!TICKET_SORTS.includes(sort)) throw new BadRequestException("Unknown sort field");
       const dir: SortDir = query.dir === "asc" ? "asc" : "desc";
-      const after = query.cursor ? ticketCursorWhere(sort, dir, decodeCursor(query.cursor, sort)) : undefined;
       const [rows, total] = await Promise.all([
-        this.prisma.ticket.findMany({
-          where: after ? { AND: [where, after] } : where,
-          orderBy: ticketOrderBy(sort, dir),
-          take: take + 1,
-          include: { contact: true, stage: true },
-        }),
+        sort === "priority"
+          ? this.priorityPage(where, dir, take + 1, query.cursor)
+          : this.prisma.ticket.findMany({
+              where: query.cursor
+                ? { AND: [where, ticketCursorWhere(sort, dir, decodeCursor(query.cursor, sort))] }
+                : where,
+              orderBy: ticketOrderBy(sort, dir),
+              take: take + 1,
+              include: { contact: true, stage: true },
+            }),
         this.prisma.ticket.count({ where }),
       ]);
       const hasMore = rows.length > take;
       const page = hasMore ? rows.slice(0, take) : rows;
       return {
-        items: page,
+        items: await this.decorate(workspaceId, page, viewer),
         nextCursor: hasMore ? encodeCursor(sort, page[page.length - 1]) : null,
         total,
       };
@@ -97,9 +143,80 @@ export class TicketsService {
     const hasMore = items.length > take;
     const page = hasMore ? items.slice(0, take) : items;
     return {
-      items: page,
+      items: await this.decorate(workspaceId, page, viewer),
       nextCursor: hasMore ? page[page.length - 1].id : null,
     };
+  }
+
+  /**
+   * SP-09 `sort=priority`: rank order (urgent → low for desc), id within a
+   * rank. Prisma cannot order by a CASE, so walk the rank buckets in order,
+   * starting inside the cursor's bucket after its id (a stable keyset).
+   */
+  private async priorityPage(where: Prisma.TicketWhereInput, dir: SortDir, want: number, cursor?: string) {
+    const order = priorityBucketOrder(dir);
+    const c = cursor ? decodeCursor(cursor, "priority") : null;
+    const start = c ? order.indexOf(c.v as number) : 0;
+    const rows: Prisma.TicketGetPayload<{ include: { contact: true; stage: true } }>[] = [];
+    for (let k = start; k < order.length && rows.length < want; k++) {
+      const and: Prisma.TicketWhereInput[] = [where, PRIORITY_BUCKETS[order[k]]];
+      if (c && k === start) and.push(ticketCursorWhere("priority", dir, c));
+      rows.push(
+        ...(await this.prisma.ticket.findMany({
+          where: { AND: and },
+          orderBy: ticketOrderBy("priority", dir),
+          take: want - rows.length,
+          include: { contact: true, stage: true },
+        })),
+      );
+    }
+    return rows;
+  }
+
+  /**
+   * SP-09 DTO additions on list rows and getTicket:
+   * - `channel`: from the linked conversation when the viewer can see it, else
+   *   null (ruling 4, 10);
+   * - `attachmentCount`: staff files, plus customer files only when the
+   *   conversation is visible (a hidden attachment is not counted, ruling 10).
+   */
+  private async decorate<T extends { id: string; conversationId: string | null }>(
+    workspaceId: string,
+    rows: T[],
+    viewer?: Viewer,
+  ): Promise<Array<T & { channel: TicketChannelDto | null; attachmentCount: number }>> {
+    if (rows.length === 0) return [];
+    const convIds = [...new Set(rows.map((r) => r.conversationId).filter((x): x is string => !!x))];
+    const channels = new Map<string, TicketChannelDto>();
+    if (convIds.length > 0) {
+      const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
+      const convs = await this.prisma.conversation.findMany({
+        where: { AND: [{ id: { in: convIds }, workspaceId }, scope] },
+        select: { id: true, channel: true, channelId: true, channelRef: { select: { kind: true, displayName: true } } },
+      });
+      for (const c of convs) {
+        channels.set(c.id, {
+          kind: c.channelRef?.kind ?? c.channel,
+          channelId: c.channelId ?? null,
+          displayName: c.channelRef?.displayName ?? null,
+        });
+      }
+    }
+    const groups = await this.prisma.ticketAttachment.groupBy({
+      by: ["ticketId", "source"],
+      where: { workspaceId, ticketId: { in: rows.map((r) => r.id) } },
+      _count: { _all: true },
+    });
+    return rows.map((r) => {
+      const channel = r.conversationId ? (channels.get(r.conversationId) ?? null) : null;
+      let attachmentCount = 0;
+      for (const g of groups) {
+        if (g.ticketId !== r.id) continue;
+        if (g.source === "customer" && !channel) continue;
+        attachmentCount += g._count._all;
+      }
+      return { ...r, channel, attachmentCount };
+    });
   }
 
   private async workspaceTimezone(workspaceId: string): Promise<string> {
@@ -107,7 +224,13 @@ export class TicketsService {
     return ws?.timezone || DEFAULT_TZ;
   }
 
-  async getTicket(workspaceId: string, id: string) {
+  /** The ticket with the SP-09 DTO additions (`channel` under the viewer's scope, `attachmentCount`). */
+  async getTicket(workspaceId: string, id: string, viewer?: Viewer) {
+    const [t] = await this.decorate(workspaceId, [await this.findTicket(workspaceId, id)], viewer);
+    return t;
+  }
+
+  private async findTicket(workspaceId: string, id: string) {
     const t = await this.prisma.ticket.findFirst({
       where: { id, workspaceId },
       include: {
@@ -159,6 +282,7 @@ export class TicketsService {
   }
 
   async createTicket(workspaceId: string, dto: CreateTicketDto, actorId?: string) {
+    assertTicketFields(dto);
     // Validate pipeline and stage and that the stage belongs to the pipeline.
     const stage = await this.prisma.ticketStage.findFirst({
       where: { id: dto.stageId, workspaceId },
@@ -208,6 +332,9 @@ export class TicketsService {
           currency: "SAR",
           // Created straight into a terminal stage: it is closed from the start.
           closedAt: stage.isTerminal ? new Date() : null,
+          // SP-09. slaDueAt is set by the "ticket_sla_due_at" trigger.
+          ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
+          category: dto.category ?? null,
         },
         include: { contact: true, stage: true },
       });
@@ -277,6 +404,7 @@ export class TicketsService {
       where: { id, workspaceId },
     });
     if (!existing) throw new NotFoundException("Ticket not found");
+    assertTicketFields(dto);
 
     // A reassigned owner must be a member of this workspace.
     await this.assertTicketRefs(workspaceId, { ownerId: dto.ownerId });
@@ -288,6 +416,9 @@ export class TicketsService {
         description: dto.description,
         value: dto.value,
         ownerId: dto.ownerId,
+        // SP-09: undefined leaves a field alone; a null category clears it.
+        priority: dto.priority,
+        category: dto.category,
       },
       include: { contact: true, stage: true },
     });
@@ -733,9 +864,12 @@ export class TicketsService {
       description?: string;
       value?: number;
       ownerId?: string;
+      priority?: string;
+      category?: string | null;
     },
     actorId?: string,
   ) {
+    assertTicketFields(dto);
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
     });
@@ -752,13 +886,84 @@ export class TicketsService {
         description: dto.description,
         value: dto.value,
         ownerId: dto.ownerId,
+        priority: dto.priority,
+        category: dto.category,
       },
       actorId,
     );
   }
 
+  /**
+   * SP-09 resolve: a normal move (activity, lead lifecycle, realtime and
+   * workflow triggers unchanged) to the pipeline's won terminal stage with the
+   * lowest order, with the note as the move's activity note (kind `won`).
+   * 409 tickets.already_closed for a ticket in a terminal stage; 409
+   * tickets.no_resolved_stage when the pipeline has no won terminal stage.
+   * Never messages the customer. Returns the ticket DTO.
+   */
+  async resolveTicket(workspaceId: string, id: string, dto: ResolveTicketDto, viewer?: Viewer) {
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id, workspaceId },
+      include: { stage: true },
+    });
+    if (!ticket) throw new NotFoundException("Ticket not found");
+    if (ticket.stage.isTerminal) throw ticketError("tickets.already_closed");
+    const target = await this.prisma.ticketStage.findFirst({
+      where: { workspaceId, pipelineId: ticket.pipelineId, isTerminal: true, isWon: true },
+      orderBy: [{ order: "asc" }, { id: "asc" }],
+    });
+    if (!target) throw ticketError("tickets.no_resolved_stage");
+    const note = dto.note?.trim();
+    await this.moveTicket(
+      workspaceId,
+      id,
+      { stageId: target.id, ...(note ? { note } : {}), ...(viewer ? { byUserId: viewer.userId } : {}) },
+      viewer,
+    );
+    return this.getTicket(workspaceId, id, viewer);
+  }
+
+  /**
+   * SP-09 booking cards (ruling 7): the ticket contact's pending and
+   * confirmed bookings from one day back, soonest first, at most
+   * TICKET_BOOKINGS_MAX. The route needs bookings.view (guard); the ticket
+   * itself needs tickets.view. A foreign ticket id is 404.
+   */
+  async bookingsForTicket(workspaceId: string, id: string, viewer?: Viewer): Promise<{ items: TicketBookingCardDto[] }> {
+    if (this.perm && !(await this.perm.viewerCan(workspaceId, viewer, "tickets.view"))) {
+      throw new ForbiddenException({ statusCode: 403, message: "Missing permission", permission: "tickets.view" });
+    }
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id, workspaceId },
+      select: { contactId: true },
+    });
+    if (!ticket) throw new NotFoundException("Ticket not found");
+    const items = await this.prisma.appointment.findMany({
+      where: {
+        workspaceId,
+        contactId: ticket.contactId,
+        status: { in: ["pending", "confirmed"] },
+        startAt: { gte: new Date(Date.now() - TICKET_BOOKINGS_LOOKBACK_MS) },
+      },
+      orderBy: [{ startAt: "asc" }, { id: "asc" }],
+      take: TICKET_BOOKINGS_MAX,
+      select: {
+        id: true,
+        startAt: true,
+        durationMin: true,
+        status: true,
+        service: true,
+        serviceAr: true,
+        staffId: true,
+        source: true,
+        hjzSyncError: true,
+      },
+    });
+    return { items };
+  }
+
   async addNote(workspaceId: string, id: string, dto: AddNoteDto) {
-    const ticket = await this.getTicket(workspaceId, id);
+    const ticket = await this.findTicket(workspaceId, id);
     const activity = await this.prisma.ticketActivity.create({
       data: {
         workspaceId,
@@ -773,7 +978,7 @@ export class TicketsService {
   }
 
   async deleteTicket(workspaceId: string, id: string) {
-    await this.getTicket(workspaceId, id);
+    await this.findTicket(workspaceId, id);
     await this.prisma.ticket.delete({ where: { id } });
     return { ok: true };
   }

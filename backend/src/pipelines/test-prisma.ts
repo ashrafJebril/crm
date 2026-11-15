@@ -1,4 +1,6 @@
 /** In-memory Prisma double for PipelinesService specs (not a runtime file). */
+import { slaDueAtFor } from "../tickets/ticket-sla";
+
 export interface PipeFixture {
   pipeline: any;
   stages: any[];
@@ -54,9 +56,22 @@ export function makePrisma(f: PipeFixture) {
       findMany: rec("ticket.findMany", (a) => f.tickets.filter((t) => t.stageId === a.where.stageId)),
       updateMany: rec("ticket.updateMany", (a) => {
         const hit = f.tickets.filter((t) => t.stageId === a.where.stageId);
-        hit.forEach((t) => Object.assign(t, a.data));
+        hit.forEach((t) => {
+          const moved = a.data.stageId !== undefined && a.data.stageId !== t.stageId;
+          Object.assign(t, a.data);
+          // SP-09: mirror of the "ticket_sla_due_at" trigger on a stage change.
+          if (moved) {
+            const entered = a.data.enteredStageAt instanceof Date ? a.data.enteredStageAt : new Date();
+            t.slaDueAt = slaDueAtFor(f.stages.find((s) => s.id === t.stageId), entered);
+          }
+        });
         return { count: hit.length };
       }),
+    },
+    // SP-09: a stage delete never touches attachments; present for completeness.
+    ticketAttachment: {
+      findMany: rec("ticketAttachment.findMany", () => []),
+      count: rec("ticketAttachment.count", () => 0),
     },
     ticketActivity: {
       createMany: rec("ticketActivity.createMany", (a) => ({ count: a.data.length })),
@@ -89,8 +104,8 @@ export const baseFixture = (): PipeFixture => ({
     { id: "lost", key: "lost", label: "Lost", labelAr: "خسارة", color: "bad", order: 3, isTerminal: true, isWon: false, slaMinutes: null, pipelineId: "pl_1", groupKey: "done" },
   ],
   tickets: [
-    { id: "t1", stageId: "work", pipelineId: "pl_1", lostReasonId: null },
-    { id: "t2", stageId: "work", pipelineId: "pl_1", lostReasonId: null },
+    { id: "t1", stageId: "work", pipelineId: "pl_1", lostReasonId: null, priority: "normal", category: null, slaDueAt: null },
+    { id: "t2", stageId: "work", pipelineId: "pl_1", lostReasonId: null, priority: "normal", category: null, slaDueAt: null },
   ],
   reasons: [
     { id: "r1", pipelineId: "pl_1", label: "Price", labelAr: "السعر", order: 0, archivedAt: null },

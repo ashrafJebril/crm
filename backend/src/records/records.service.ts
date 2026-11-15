@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { canOpenRecord } from "../notifications/record-access";
+import { slaState } from "../tickets/ticket-sla";
 
 export const RECORD_KINDS = ["contact", "conversation", "ticket", "booking", "campaign"] as const;
 export type RecordKind = (typeof RECORD_KINDS)[number];
@@ -216,7 +217,7 @@ export class RecordsService {
       where: { id, workspaceId },
       include: {
         pipeline: { select: { name: true } },
-        stage: { select: { label: true, labelAr: true } },
+        stage: { select: { label: true, labelAr: true, isTerminal: true } },
         contact: { select: { id: true, name: true, phone: true } },
       },
     });
@@ -254,6 +255,11 @@ export class RecordsService {
         { key: "value", value: t.value ?? null },
         { key: "owner", value: owner },
         { key: "createdAt", value: iso(t.createdAt) },
+        // SP-09: support fields. `sla` is slaState (none | finished | breached | due_soon | on_track).
+        { key: "priority", value: t.priority ?? "normal" },
+        { key: "category", value: t.category ?? null },
+        { key: "slaDueAt", value: iso(t.slaDueAt) },
+        { key: "sla", value: slaState({ slaDueAt: t.slaDueAt ?? null, stageIsTerminal: t.stage?.isTerminal ?? false }) },
       ],
       links: await this.filterLinks(workspaceId, viewer, links),
     };

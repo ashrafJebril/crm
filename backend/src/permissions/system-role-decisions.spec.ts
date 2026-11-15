@@ -3,6 +3,7 @@ import { SYSTEM_ROLES, SystemRoleKey } from "./system-roles";
 import { hasPermission } from "./permission.service";
 import { blockedForImpersonation } from "./impersonation";
 import { assertRequestPermission } from "./permission.guard";
+import type { PermissionsJson } from "./catalog";
 
 /** Review Focus 3: the system roles reproduce today's decisions. */
 function allowed(role: SystemRoleKey, key: string): boolean {
@@ -393,6 +394,54 @@ describe("system-role decision table", () => {
 
     it("none is blocked for impersonation", () => {
       for (const route of [...READS, ...MUTATIONS, "DELETE /tags/:id"]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
+  // SP-09: ticket attachments, resolve and booking cards.
+  describe("SP-09 ticket routes", () => {
+    const VIEW = ["GET /tickets/:id/attachments", "GET /tickets/:id/attachments/:attId"];
+    const CHANGE = [
+      "GET /tickets/:id/attachments/candidates",
+      "POST /tickets/:id/attachments",
+      "POST /tickets/:id/attachments/upload",
+      "DELETE /tickets/:id/attachments/:attId",
+      "POST /tickets/:id/resolve",
+    ];
+    const BOOKINGS = "GET /tickets/:id/bookings";
+
+    it("owner, admin and agent can view, attach, upload, unlink and resolve", () => {
+      for (const route of [...VIEW, ...CHANGE]) {
+        for (const role of ["owner", "admin", "agent"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    it("viewer can list and download, but not attach, upload, unlink or resolve", () => {
+      for (const route of VIEW) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: true });
+      for (const route of CHANGE) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
+    });
+
+    it("every role with bookings.view reads the booking cards", () => {
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, BOOKINGS) }).toEqual({
+          role,
+          ok: hasPermission(SYSTEM_ROLES[role].permissions, "bookings.view"),
+        });
+        expect(allowed(role, BOOKINGS)).toBe(true);
+      }
+    });
+
+    it("a custom role with tickets.update but not conversations.create can upload a ticket file (not a library file)", () => {
+      const custom: PermissionsJson = { tickets: ["view", "update"] };
+      expect(hasPermission(custom, ROUTE_PERMISSIONS["POST /tickets/:id/attachments/upload"] as string)).toBe(true);
+      expect(hasPermission(custom, ROUTE_PERMISSIONS["POST /media/upload"] as string)).toBe(false);
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of [...VIEW, ...CHANGE, BOOKINGS]) {
         expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
       }
     });

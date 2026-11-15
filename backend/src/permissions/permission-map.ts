@@ -291,6 +291,17 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /tickets/:id/undo-stage": "tickets.update", // author or tickets.manage, enforced in the service
   "POST /tickets/:id/notes": "tickets.update",
   "DELETE /tickets/:id": "tickets.delete",
+  // SP-09: attachments, resolve and booking cards. Customer files also follow
+  // conversation visibility in the service; the booking cards also need
+  // tickets.view (service).
+  "GET /tickets/:id/attachments": "tickets.view",
+  "GET /tickets/:id/attachments/candidates": "tickets.update",
+  "POST /tickets/:id/attachments": "tickets.update",
+  "POST /tickets/:id/attachments/upload": "tickets.update",
+  "GET /tickets/:id/attachments/:attId": "tickets.view",
+  "DELETE /tickets/:id/attachments/:attId": "tickets.update",
+  "POST /tickets/:id/resolve": "tickets.update",
+  "GET /tickets/:id/bookings": "bookings.view",
 
   // ── Bookings ──────────────────────────────────────────────────────────
   "GET /appointments": "bookings.view",

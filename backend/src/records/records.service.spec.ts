@@ -97,9 +97,27 @@ describe("RecordsService", () => {
       { key: "value", value: 250 },
       { key: "owner", value: "Sara" },
       { key: "createdAt", value: created.toISOString() },
+      // SP-09: a legacy row reads normal / no category / no SLA.
+      { key: "priority", value: "normal" },
+      { key: "category", value: null },
+      { key: "slaDueAt", value: null },
+      { key: "sla", value: "none" },
     ]);
     expect(r.links.map((l) => `${l.kind}:${l.id}`)).toEqual(["contact:c1", "conversation:v1"]);
     expect(r.links[1].updatedAt).toBe(created.toISOString());
+  });
+
+  it("ticket record adds priority, category and SLA fields (SP-09)", async () => {
+    const due = new Date(Date.now() - 60_000);
+    prisma.ticket.findFirst.mockResolvedValue({
+      id: "t1", number: 7, title: "Broken AC", value: null, ownerId: null, conversationId: null, createdAt: created,
+      priority: "urgent", category: "complaint", slaDueAt: due,
+      pipeline: { name: "Support" }, stage: { label: "Open", labelAr: "مفتوحة", isTerminal: false }, contact: { id: "c1", name: "Layla", phone: null },
+    });
+    const r = await svc.get(WS, ME, "ticket", "t1");
+    const f = Object.fromEntries(r.fields.map((x) => [x.key, x.value]));
+    expect(f).toMatchObject({ priority: "urgent", category: "complaint", slaDueAt: due.toISOString(), sla: "breached" });
+    expect(prisma.ticket.findFirst.mock.calls[0][0].include.stage.select).toMatchObject({ isTerminal: true });
   });
 
   it("ticket: opaque conversation id yields no conversation link", async () => {

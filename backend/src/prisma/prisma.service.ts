@@ -50,6 +50,8 @@ export class PrismaService implements OnModuleDestroy {
   get ticketStage() { return this.client.ticketStage; }
   get ticket() { return this.client.ticket; }
   get ticketActivity() { return this.client.ticketActivity; }
+  /** SP-09: files linked to tickets. */
+  get ticketAttachment() { return this.client.ticketAttachment; }
   get lostReason() { return this.client.lostReason; }
   get savedReply() { return this.client.savedReply; }
   get integration() { return this.client.integration; }

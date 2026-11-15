@@ -19,6 +19,7 @@ import {
   CreateTicketDto,
   ListTicketsQuery,
   MoveTicketDto,
+  ResolveTicketDto,
   UpdateTicketDto,
 } from "./tickets.dto";
 import { CurrentUserId, CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
@@ -37,8 +38,13 @@ export class TicketsController {
 
   // ── Tickets ────────────────────────────────────────────────────────────
   @Get("tickets")
-  listTickets(@CurrentWorkspace() workspaceId: string, @Query() query: ListTicketsQuery) {
-    return this.svc.listTickets(workspaceId, query);
+  listTickets(
+    @CurrentWorkspace() workspaceId: string,
+    @Query() query: ListTicketsQuery,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    // SP-09: the viewer scopes the derived channel and the attachment count.
+    return this.svc.listTickets(workspaceId, query, viewer);
   }
 
   @Get("tickets/dashboard/summary")
@@ -61,8 +67,12 @@ export class TicketsController {
   }
 
   @Get("tickets/:id")
-  getTicket(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.svc.getTicket(workspaceId, id);
+  getTicket(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    return this.svc.getTicket(workspaceId, id, viewer);
   }
 
   @Post("tickets")
@@ -133,6 +143,27 @@ export class TicketsController {
     @CurrentViewer() viewer?: Viewer,
   ) {
     return this.svc.reopenTicket(workspaceId, id, viewer, userId);
+  }
+
+  /** SP-09: move to the pipeline's won terminal stage with a resolution note. */
+  @Post("tickets/:id/resolve")
+  resolve(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @Body() dto: ResolveTicketDto,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    return this.svc.resolveTicket(workspaceId, id, { note: stripReservedMarker(dto.note) }, viewer);
+  }
+
+  /** SP-09: the ticket contact's upcoming pending/confirmed bookings (bookings.view; tickets.view in the service). */
+  @Get("tickets/:id/bookings")
+  bookings(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    return this.svc.bookingsForTicket(workspaceId, id, viewer);
   }
 
   @Post("tickets/:id/notes")

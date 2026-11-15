@@ -4,6 +4,8 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import type { Response } from "express";
+import { sendResolved, type ResolvedServe } from "./serve-headers";
 import { randomBytes } from "node:crypto";
 import { mediaError } from "./media-errors";
 import { familyOfMime, MIME_OF_FAMILY, sniffFamily, SNIFF_BYTES } from "./sniff";
@@ -433,6 +435,15 @@ export class MediaService {
     return { kind: "local-file", absolutePath, mimeType: row.mimeType, fileName: row.fileName ?? undefined };
   }
 
+  /**
+   * SP-09: stream a resolved file (local `sendFile`, or the Spaces object
+   * proxied, never a 302). Shared by `GET /media/:id/file` and the ticket
+   * attachment download; see `sendResolved` in serve-headers.ts.
+   */
+  sendResolved(res: Response, resolved: ResolvedServe, opts: { cacheControl: string; label: string }): Promise<void> {
+    return sendResolved(res, resolved, opts);
+  }
+
   /** Read the file bytes for a media row, regardless of which backend stored
    *  it. Used by the social publisher to attach images to Graph/IG/WhatsApp
    *  multipart uploads. */
@@ -663,8 +674,11 @@ export class MediaService {
   /**
    * Delete a file. SP-13 (ruling 10): a file used as the header of a template,
    * or of a campaign that may still send, is refused with 409 media.in_use
-   * {templates: {id, name}[], campaigns: {id, name, status}[]}. The FKs are
-   * SET NULL as a backstop for a reference added after this check.
+   * {templates: {id, name}[], campaigns: {id, name, status}[], tickets:
+   * {id, number, pipelineId}[]}. SP-09 (ruling 8): a file attached to a ticket
+   * is in use too. The header FKs are SET NULL and the TicketAttachment FK is
+   * CASCADE, as a backstop for a reference added after this check (and for
+   * the deployed main, which does not know TicketAttachment).
    */
   async remove(workspaceId: string, id: string, viewer?: Viewer) {
     const row = await this.get(workspaceId, id, viewer);
@@ -682,8 +696,14 @@ export class MediaService {
         where: { workspaceId, headerMediaId: row.id, status: { in: LIVE_CAMPAIGN_STATUSES } },
         select: { id: true, name: true, status: true },
       });
-      if (templates.length > 0 || campaigns.length > 0) {
-        throw mediaError("media.in_use", { templates, campaigns });
+      const links = await tx.ticketAttachment.findMany({
+        where: { workspaceId, mediaId: row.id },
+        select: { ticket: { select: { id: true, number: true, pipelineId: true } } },
+        orderBy: { createdAt: "asc" },
+      });
+      const tickets = links.map((l) => l.ticket).filter((t): t is NonNullable<typeof t> => !!t);
+      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0) {
+        throw mediaError("media.in_use", { templates, campaigns, tickets });
       }
       await tx.media.delete({ where: { id: row.id } });
     });

@@ -437,6 +437,8 @@ describe("media in use cannot be deleted", () => {
       message: "media.in_use",
       templates: [{ id: "t1", name: "promo" }],
       campaigns: [],
+      // SP-09: ticket attachments are listed too (none here).
+      tickets: [],
     });
     expect(prisma.db.media).toHaveLength(1);
     expect(storage.delete).not.toHaveBeenCalled();

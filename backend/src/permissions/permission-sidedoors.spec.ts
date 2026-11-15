@@ -24,6 +24,8 @@ import { createAudienceDb } from "../segments/audience-test-db";
 import { predicateWorld, WS as SP16_WS } from "../segments/__fixtures__/audience-world";
 import { SegmentsController } from "../segments/segments.controller";
 import { SegmentsService } from "../segments/segments.service";
+import { TicketAttachmentsService } from "../tickets/ticket-attachments.service";
+import { TicketsService } from "../tickets/tickets.service";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -710,5 +712,91 @@ describe("audience routes expose no conversation data", () => {
     // Only contact columns, in the documented page and sample shapes.
     for (const item of page.items) expect(Object.keys(item).sort()).toEqual(["email", "id", "lifecycle", "name", "phone"]);
     for (const s of preview.sample) expect(Object.keys(s).sort()).toEqual(["id", "name", "phone"]);
+  });
+});
+
+/**
+ * SP-09 (ruling 10, Review Focus 2): a ticket's customer files and its derived
+ * channel follow the viewer's conversation visibility; the ticket itself and
+ * its staff files follow tickets.view only.
+ */
+describe("SP-09 ticket attachments and channel follow conversation visibility", () => {
+  const W = "ws-t";
+  function build() {
+    const prisma = makeFakePrisma({
+      workspace: [{ id: W }],
+      user: [{ id: "owner", name: "Owner" }, { id: ME, name: "Me" }],
+      role: [
+        { id: "r-owner", workspaceId: W, key: "owner", isSystem: true, name: "Owner", nameAr: "Owner", permissions: { "*": ["*"] }, conversationVisibility: "all" },
+        { id: "r-assigned", workspaceId: W, key: null, isSystem: false, name: "A", nameAr: "A", permissions: { tickets: ["view", "update"], conversations: ["view"] }, conversationVisibility: "assigned" },
+      ],
+      workspaceMember: [
+        { id: "wm1", workspaceId: W, userId: "owner", role: "owner", roleId: null },
+        { id: "wm2", workspaceId: W, userId: ME, role: "custom", roleId: "r-assigned" },
+      ],
+      channel: [{ id: "ch-1", workspaceId: W, kind: "whatsapp", displayName: "Main line", provider: "zernio" }],
+      conversation: [{ id: "cv-hidden", workspaceId: W, contactId: "ct", channel: "whatsapp", channelId: "ch-1", assigneeId: "someone" }],
+      message: [{ id: "m1", workspaceId: W, conversationId: "cv-hidden", from: "them", body: "", t: "10:00", attach: "md-cust", createdAt: new Date() }],
+      media: [
+        { id: "md-cust", workspaceId: W, fileName: "c.jpg", mimeType: "image/jpeg", sizeBytes: 1, storedPath: "w/c.jpg", storageKind: "local", uploadedById: null, createdAt: new Date() },
+        { id: "md-cand", workspaceId: W, fileName: "d.jpg", mimeType: "image/jpeg", sizeBytes: 1, storedPath: "w/d.jpg", storageKind: "local", uploadedById: null, createdAt: new Date() },
+        { id: "md-staff", workspaceId: W, fileName: "s.png", mimeType: "image/png", sizeBytes: 1, storedPath: "w/s.png", storageKind: "local", uploadedById: "owner", createdAt: new Date() },
+      ],
+      ticket: [
+        { id: "tk", workspaceId: W, number: 3, pipelineId: "pl", stageId: "st", contactId: "ct", conversationId: "cv-hidden", title: "T", priority: "normal", category: null, slaDueAt: null },
+      ],
+      ticketAttachment: [
+        { id: "att-cust", workspaceId: W, ticketId: "tk", mediaId: "md-cust", source: "customer", messageId: "m1", addedById: "owner", createdAt: new Date() },
+        { id: "att-staff", workspaceId: W, ticketId: "tk", mediaId: "md-staff", source: "staff", messageId: null, addedById: "owner", createdAt: new Date() },
+      ],
+    });
+    prisma.db.message.push({ id: "m2", workspaceId: W, conversationId: "cv-hidden", from: "them", body: "", t: "10:01", attach: "md-cand", createdAt: new Date() });
+    const perm = new PermissionService(prisma);
+    const storage = { kind: "local", resolveAbsolute: jest.fn((p: string) => `/abs/${p}`), getSignedUrl: jest.fn(), put: jest.fn(), delete: jest.fn() };
+    const media = new MediaService(prisma, storage as never, perm);
+    const attachments = new TicketAttachmentsService(prisma, media, perm);
+    const tickets = new TicketsService(prisma, { emitToWorkspace: jest.fn() } as never, undefined, undefined, perm);
+    return { prisma, perm, storage, attachments, tickets };
+  }
+  const res = () => ({ setHeader: jest.fn(), sendFile: jest.fn(), destroy: jest.fn() });
+
+  it("ticket attachment from a hidden conversation is 404 for an assigned-only agent", async () => {
+    const { attachments, storage } = build();
+    const me = { userId: ME };
+
+    expect((await attachments.list(W, "tk", me)).items.map((a) => a.id)).toEqual(["att-staff"]);
+    await expect(attachments.serve(W, "tk", "att-cust", res() as never, me)).rejects.toMatchObject({
+      status: 404,
+      response: { message: "tickets.attachment_not_found" },
+    });
+    await expect(attachments.unlink(W, "tk", "att-cust", me)).rejects.toBeInstanceOf(NotFoundException);
+    expect(await attachments.candidates(W, "tk", me)).toEqual({ items: [] });
+    await expect(attachments.attach(W, "tk", "md-cand", me)).rejects.toMatchObject({ status: 404 });
+    expect(storage.resolveAbsolute).not.toHaveBeenCalledWith("w/c.jpg");
+
+    // The staff file on the same ticket downloads (200: the bytes are sent).
+    const ok = res();
+    await attachments.serve(W, "tk", "att-staff", ok as never, me);
+    expect(ok.sendFile).toHaveBeenCalledWith("/abs/w/s.png");
+
+    // The owner (visibility "all") and a bypass session see both.
+    expect((await attachments.list(W, "tk", { userId: "owner" })).items).toHaveLength(2);
+    expect((await attachments.list(W, "tk", { userId: "x", bypass: true })).items).toHaveLength(2);
+    expect((await attachments.candidates(W, "tk", { userId: "owner" })).items.map((c) => c.mediaId)).toEqual(["md-cand"]);
+  });
+
+  it("ticket channel is null when its conversation is hidden", async () => {
+    const { tickets } = build();
+    const mine: any = await tickets.getTicket(W, "tk", { userId: ME });
+    expect(mine.channel).toBeNull();
+    expect(mine.attachmentCount).toBe(1); // the hidden customer file is not counted
+    const list: any = await tickets.listTickets(W, { view: "table" }, { userId: ME });
+    expect(list.items[0]).toMatchObject({ channel: null, attachmentCount: 1 });
+
+    const owner: any = await tickets.getTicket(W, "tk", { userId: "owner" });
+    expect(owner.channel).toEqual({ kind: "whatsapp", channelId: "ch-1", displayName: "Main line" });
+    expect(owner.attachmentCount).toBe(2);
+    // A non-member fails closed.
+    expect(((await tickets.getTicket(W, "tk", { userId: "stranger" })) as any).channel).toBeNull();
   });
 });

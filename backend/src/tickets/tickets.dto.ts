@@ -10,8 +10,14 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from "class-validator";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES } from "./ticket-fields";
+
+/** SP-09: unknown values are refused (400 with the key), never defaulted. */
+const PRIORITY_OPTS = { message: "tickets.invalid_priority" };
+const CATEGORY_OPTS = { message: "tickets.invalid_category" };
 
 export class CreateTicketDto {
   @IsString() @IsNotEmpty() pipelineId!: string;
@@ -22,6 +28,10 @@ export class CreateTicketDto {
   @IsOptional() @IsNumber() @Min(0) value?: number;
   @IsOptional() @IsString() ownerId?: string;
   @IsOptional() @IsString() conversationId?: string;
+  /** SP-09: one of TICKET_PRIORITIES (default "normal"). */
+  @IsOptional() @IsIn(TICKET_PRIORITIES as unknown as string[], PRIORITY_OPTS) priority?: string;
+  /** SP-09: one of TICKET_CATEGORIES, or null for none. */
+  @IsOptional() @IsIn(TICKET_CATEGORIES as unknown as string[], CATEGORY_OPTS) category?: string | null;
 }
 
 export class UpdateTicketDto {
@@ -29,6 +39,10 @@ export class UpdateTicketDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsNumber() @Min(0) value?: number;
   @IsOptional() @IsString() ownerId?: string;
+  /** SP-09 */
+  @IsOptional() @IsIn(TICKET_PRIORITIES as unknown as string[], PRIORITY_OPTS) priority?: string;
+  /** SP-09: null clears the category. */
+  @IsOptional() @IsIn(TICKET_CATEGORIES as unknown as string[], CATEGORY_OPTS) category?: string | null;
 }
 
 export class MoveTicketDto {
@@ -63,8 +77,18 @@ export class ListTicketsQuery {
   @IsOptional() @IsString() to?: string;
   /** "table" switches to the sorted, keyset-paged response with a total. */
   @IsOptional() @IsIn(["table"]) view?: "table";
-  @IsOptional() @IsIn(["createdAt", "updatedAt", "value", "enteredStageAt"]) sort?: "createdAt" | "updatedAt" | "value" | "enteredStageAt";
+  @IsOptional()
+  @IsIn(["createdAt", "updatedAt", "value", "enteredStageAt", "slaDueAt", "priority"])
+  sort?: "createdAt" | "updatedAt" | "value" | "enteredStageAt" | "slaDueAt" | "priority";
   @IsOptional() @IsIn(["asc", "desc"]) dir?: "asc" | "desc";
+
+  // SP-09 filters. Unknown values are ignored (never a 400 or a 500).
+  /** CSV of TICKET_PRIORITIES. */
+  @IsOptional() @IsString() priority?: string;
+  /** CSV of TICKET_CATEGORIES. */
+  @IsOptional() @IsString() category?: string;
+  /** "overdue" | "due_soon" | "none". */
+  @IsOptional() @IsString() sla?: string;
 }
 
 export const TICKET_BULK_OPS = ["assign", "lost", "notALead"] as const;
@@ -86,4 +110,18 @@ export class CreateFromConversationDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsNumber() @Min(0) value?: number;
   @IsOptional() @IsString() ownerId?: string;
+  /** SP-09 */
+  @IsOptional() @IsIn(TICKET_PRIORITIES as unknown as string[], PRIORITY_OPTS) priority?: string;
+  @IsOptional() @IsIn(TICKET_CATEGORIES as unknown as string[], CATEGORY_OPTS) category?: string | null;
+}
+
+/** SP-09: `POST /tickets/:id/resolve`. */
+export const RESOLVE_NOTE_MAX = 2000;
+export class ResolveTicketDto {
+  @IsOptional() @IsString() @MaxLength(RESOLVE_NOTE_MAX) note?: string;
+}
+
+/** SP-09: `POST /tickets/:id/attachments` (a customer file from the ticket's conversation). */
+export class AttachTicketFileDto {
+  @IsString() @IsNotEmpty() mediaId!: string;
 }

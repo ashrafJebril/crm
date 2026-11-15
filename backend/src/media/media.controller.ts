@@ -3,7 +3,6 @@ import {
   Controller,
   Delete,
   Get,
-  Logger,
   NotFoundException,
   Param,
   Patch,
@@ -19,6 +18,7 @@ import { diskStorage } from "multer";
 import { tmpdir } from "node:os";
 import { MEDIA_KINDS, MEDIA_LIST_MAX, MediaService, type MediaKind } from "./media.service";
 import { mediaError } from "./media-errors";
+import { applyServeHeaders, sendResolved } from "./serve-headers";
 import { UpdateMediaDto } from "./media.dto";
 import {
   CurrentViewer,
@@ -28,55 +28,16 @@ import {
 import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 
-/** Types served inline. Everything else is a sandboxed download (SP-13). */
-const INLINE_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "video/mp4",
-  "video/quicktime",
-]);
+/** Kept exported here for existing importers; lives in serve-headers.ts (SP-09). */
+export { applyServeHeaders };
 
 /** Response header with the library's next-page cursor (SP-13 I2). */
 export const NEXT_BEFORE_HEADER = "X-Media-Next-Before";
 /** SP-17: longest accepted `GET /media?q=` (after trimming). */
 export const MEDIA_QUERY_MAX = 100;
 
-/**
- * RFC 5987 `ext-value` encoding: encodeURIComponent leaves `'`, `(`, `)` and
- * `*` alone, but they are not `attr-char`s, so strict parsers would drop the
- * whole `filename*` (and fall back to the ASCII name).
- */
-function rfc5987(value: string): string {
-  return encodeURIComponent(value).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
-}
-
-/**
- * Serving headers for a media response. `nosniff` always; anything that is
- * not a library image or video (PDFs, legacy CSV/XLSX, unknown types) is sent
- * as an attachment with a `sandbox` CSP, so a crafted file can never run as a
- * page on our origin.
- */
-export function applyServeHeaders(
-  res: Pick<Response, "setHeader">,
-  mimeType: string,
-  fileName?: string | null,
-) {
-  res.setHeader("Content-Type", mimeType);
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  if (INLINE_TYPES.has(String(mimeType).toLowerCase())) return;
-  const name = (fileName ?? "").trim() || "download";
-  // ASCII fallback: printable ASCII only, no quote or backslash.
-  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  res.setHeader("Content-Disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${rfc5987(name)}`);
-  res.setHeader("Content-Security-Policy", "sandbox");
-}
-
 @Controller("media")
 export class MediaController {
-  private readonly log = new Logger(MediaController.name);
-
   constructor(private readonly svc: MediaService) {}
 
   /**
@@ -165,44 +126,8 @@ export class MediaController {
     @CurrentViewer() viewer: Viewer,
   ) {
     const resolved = await this.svc.resolveServe(workspaceId, id, 3600, viewer);
-    if (resolved.kind === "signed-url") {
-      // Proxy the bytes instead of 302-redirecting. The frontend's fetch()
-      // sends an Authorization header, which triggers a CORS preflight on
-      // the redirect target — and DO Spaces' header allowlist doesn't
-      // include `authorization`. Streaming through the backend keeps the
-      // browser same-origin so CORS never enters the picture. Cost: one
-      // extra hop. Videos are capped at 300 MB, so the response is piped
-      // through rather than buffered in memory.
-      const upstream = await fetch(resolved.url);
-      if (!upstream.ok) {
-        throw new NotFoundException(
-          `Upstream fetch failed (${upstream.status})`,
-        );
-      }
-      applyServeHeaders(res, resolved.mimeType, resolved.fileName);
-      res.setHeader("Cache-Control", "private, max-age=3600");
-      const contentLength = upstream.headers.get("content-length");
-      if (contentLength) res.setHeader("Content-Length", contentLength);
-      const { Readable } = await import("node:stream");
-      const { pipeline } = await import("node:stream/promises");
-      try {
-        await pipeline(Readable.fromWeb(upstream.body as never), res);
-      } catch (e) {
-        // Upstream (DO Spaces) can die mid-transfer on a large video — a
-        // plain .pipe() leaves that as an unhandled stream error that kills
-        // the whole process. pipeline() surfaces it here instead; headers
-        // are already sent, so just destroy the response (client sees a
-        // truncated/failed download) rather than trying to respond again.
-        this.log.warn(
-          `Media stream from Spaces failed for ${id}: ${(e as Error).message}`,
-        );
-        res.destroy();
-      }
-      return;
-    }
-    applyServeHeaders(res, resolved.mimeType, resolved.fileName);
-    res.setHeader("Cache-Control", "private, max-age=3600");
-    res.sendFile(resolved.absolutePath);
+    // SP-09: the streaming code is shared with the ticket attachment download.
+    await sendResolved(res, resolved, { cacheControl: "private, max-age=3600", label: id });
   }
 
   @Public()

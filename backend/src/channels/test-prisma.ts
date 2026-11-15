@@ -9,6 +9,7 @@
  * "one default per kind" partial index), which throw P2002 like Postgres.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { slaDueAtFor } from "../tickets/ticket-sla";
 
 type Row = Record<string, any>;
 export type Tables = Record<string, Row[]>;
@@ -80,6 +81,18 @@ export function matches(row: Row, where: any, db: Tables, model: string): boolea
       const some = (cond as any)?.some ?? {};
       const hit = (db.segmentMember ?? []).some((m) => m.contactId === row.id && matches(m, some, db, "segmentMember"));
       if (!hit) return false;
+      continue;
+    }
+    // SP-09: to-one relation filters on tickets, attachments and messages
+    // (`stage: { isTerminal: false }`, `conversation: <scope>`).
+    if (RELATION_FILTERS[model]?.includes(k)) {
+      const inner = (cond as any)?.is ?? cond;
+      const rel = relation(model, row, k, db) as Row | null | undefined;
+      if (inner === null) {
+        if (rel) return false;
+        continue;
+      }
+      if (!rel || !matches(rel, inner, db, RELATIONS[model][k][0])) return false;
       continue;
     }
     // SP-15: AdReferral -> Conversation relation filter (`{ is: {...} }` or a plain where).
@@ -296,6 +309,23 @@ const DEFAULTS: Record<string, () => Row> = {
     approvedForAgent: false,
   }),
   customFieldDef: () => ({ entity: "contact", options: null, order: 0, archivedAt: null }),
+  // SP-09: tickets (the DB defaults; slaDueAt comes from the trigger mirror below).
+  ticket: () => ({
+    conversationId: null,
+    ownerId: null,
+    description: null,
+    value: null,
+    currency: "SAR",
+    lostReason: null,
+    lostReasonId: null,
+    closedAt: null,
+    enteredStageAt: new Date(),
+    priority: "normal",
+    category: null,
+    slaDueAt: null,
+  }),
+  ticketAttachment: () => ({ messageId: null, addedById: null }),
+  ticketActivity: () => ({ fromStage: null, toStage: null, note: null, byUserId: null }),
 };
 
 /** SP-15 unique constraints, as Postgres enforces them (P2002). */
@@ -305,6 +335,8 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   adSpendDaily: [["AdSpendDaily_adSourceId_date_key", ["adSourceId", "date"]]],
   metaAdsConnection: [["MetaAdsConnection_workspaceId_key", ["workspaceId"]]],
   metaLead: [["MetaLead_workspaceId_leadgenId_key", ["workspaceId", "leadgenId"]]],
+  // SP-09
+  ticketAttachment: [["TicketAttachment_ticketId_mediaId_key", ["ticketId", "mediaId"]]],
 };
 const keyPart = (v: any) => (v instanceof Date ? v.getTime() : v);
 function sp15Clash(model: string, rows: Row[], row: Row): string | null {
@@ -316,7 +348,12 @@ function sp15Clash(model: string, rows: Row[], row: Row): string | null {
 
 /** SP-15: the relations specs read through `include` / nested `select`. */
 const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>> = {
-  conversation: { adSource: ["adSource", "adSourceId", "one"], adReferrals: ["adReferral", "conversationId", "many"] },
+  conversation: {
+    adSource: ["adSource", "adSourceId", "one"],
+    adReferrals: ["adReferral", "conversationId", "many"],
+    // SP-09: the derived ticket channel.
+    channelRef: ["channel", "channelId", "one"],
+  },
   adReferral: {
     conversation: ["conversation", "conversationId", "one"],
     adSource: ["adSource", "adSourceId", "one"],
@@ -324,7 +361,43 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
   },
   adSource: { media: ["media", "mediaId", "one"], referrals: ["adReferral", "adSourceId", "many"] },
   metaLead: { adSource: ["adSource", "adSourceId", "one"], contact: ["contact", "contactId", "one"] },
+  // SP-09
+  ticket: {
+    stage: ["ticketStage", "stageId", "one"],
+    contact: ["contact", "contactId", "one"],
+    pipeline: ["pipeline", "pipelineId", "one"],
+    activities: ["ticketActivity", "ticketId", "many"],
+    attachments: ["ticketAttachment", "ticketId", "many"],
+  },
+  pipeline: { stages: ["ticketStage", "pipelineId", "many"] },
+  ticketAttachment: {
+    ticket: ["ticket", "ticketId", "one"],
+    media: ["media", "mediaId", "one"],
+    addedBy: ["user", "addedById", "one"],
+  },
+  message: { conversation: ["conversation", "conversationId", "one"] },
 };
+/** SP-09: to-one relations `matches` follows as filters. */
+const RELATION_FILTERS: Record<string, string[]> = {
+  ticket: ["stage", "pipeline", "contact"],
+  ticketAttachment: ["ticket", "media"],
+  message: ["conversation"],
+};
+
+/**
+ * SP-09: mirror of the "ticket_sla_due_at" trigger (BEFORE INSERT OR UPDATE OF
+ * "stageId"): on insert, or when stageId changes, slaDueAt = entry +
+ * slaMinutes of the new stage (null for none/terminal). The entry time is the
+ * writer's own enteredStageAt when it set one in this statement, else now.
+ */
+function ticketSlaHook(db: Tables, prev: Row | null, next: Row, data: Row) {
+  if (prev && (!("stageId" in data) || next.stageId === prev.stageId)) return;
+  const stage = (db.ticketStage ?? []).find((s) => s.id === next.stageId);
+  const setEntered =
+    !prev || ("enteredStageAt" in data && keyPart(next.enteredStageAt) !== keyPart(prev.enteredStageAt));
+  const entered = setEntered && next.enteredStageAt instanceof Date ? next.enteredStageAt : new Date();
+  next.slaDueAt = slaDueAtFor(stage, entered);
+}
 function relation(model: string, row: Row, key: string, db: Tables): Row | Row[] | null | undefined {
   const rel = RELATIONS[model]?.[key];
   if (!rel) return undefined;
@@ -482,23 +555,26 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
           updatedAt: new Date(),
           ...a.data,
         };
+        if (name === "ticket") ticketSlaHook(db, null, row, a.data);
         write(row);
         rows().push(row);
-        return project(row, a.select, a.include, db);
+        return project(row, a.select, a.include, db, name);
       }),
       update: op((a) => {
         const row = rows().find((x) => matches(x, a.where, db, name));
         if (!row) throw p2025();
         const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
         if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
+        if (name === "ticket") ticketSlaHook(db, row, next, a.data);
         Object.assign(row, next);
-        return project(row, a.select, a.include, db);
+        return project(row, a.select, a.include, db, name);
       }),
       updateMany: op((a) => {
         const hit = rows().filter((x) => matches(x, a.where, db, name));
         for (const row of hit) {
           const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
           if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
+          if (name === "ticket") ticketSlaHook(db, row, next, a.data);
           Object.assign(row, next);
         }
         return { count: hit.length };
@@ -561,6 +637,13 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     for (const s of db.adSource ?? []) if (s.mediaId === row.id) s.mediaId = null;
     for (const l of db.metaLead ?? []) if (l.adSourceId === row.id) l.adSourceId = null;
     if (db.metaLead) db.metaLead = db.metaLead.filter((l) => l.contactId !== row.id);
+    // SP-09: TicketAttachment.ticketId / mediaId / workspaceId -> CASCADE, addedById -> SET NULL.
+    if (db.ticketAttachment) {
+      db.ticketAttachment = db.ticketAttachment.filter(
+        (a) => a.ticketId !== row.id && a.mediaId !== row.id && a.workspaceId !== row.id,
+      );
+      for (const a of db.ticketAttachment) if (a.addedById === row.id) a.addedById = null;
+    }
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -610,6 +693,14 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     metaLead: model("metaLead"),
     // SP-15 Task 2: MetaAdsConnection.connectedBy.
     user: model("user"),
+    // SP-09: tickets, stages, attachments, activities and bookings.
+    pipeline: model("pipeline"),
+    ticket: model("ticket"),
+    ticketStage: model("ticketStage"),
+    ticketActivity: model("ticketActivity"),
+    ticketAttachment: model("ticketAttachment"),
+    lostReason: model("lostReason"),
+    appointment: model("appointment"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();
@@ -759,6 +850,8 @@ function p2025(): Error {
 function applyData(row: Row, data: Row): Row {
   const out: Row = {};
   for (const [k, v] of Object.entries(data ?? {})) {
+    // Like Prisma, an undefined field is "leave it alone" (SP-09).
+    if (v === undefined) continue;
     // Prisma.DbNull / Prisma.JsonNull on a Json column store SQL/JSON null.
     if (v && typeof v === "object" && ["DbNull", "JsonNull"].includes((v as object).constructor?.name)) {
       out[k] = null;

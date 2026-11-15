@@ -44,6 +44,8 @@ const SCOPED_MODELS = new Set([
   "AdSpendDaily",
   "MetaAdsConnection",
   "MetaLead",
+  // SP-09
+  "TicketAttachment",
 ]);
 
 const READ_ACTIONS = new Set([

@@ -17,6 +17,8 @@ function makeSvc() {
     ticketActivity: { create: jest.fn().mockResolvedValue({}), findFirst: jest.fn().mockResolvedValue(null) },
     contact: { findFirst: jest.fn(), update: jest.fn().mockResolvedValue({}) },
     lostReason: { findFirst: jest.fn() },
+    // SP-09: attachment counts on list rows.
+    ticketAttachment: { groupBy: jest.fn().mockResolvedValue([]) },
   };
   prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
   const realtime = { emitToWorkspace: jest.fn() };

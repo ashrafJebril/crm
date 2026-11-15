@@ -198,6 +198,28 @@ describe("permission map", () => {
     expect(at("GET /ad-sources/overview")).toBeLessThan(at("GET /ad-sources/:id"));
   });
 
+  it("permission map covers SP-09 routes", () => {
+    const sp09: Record<string, string> = {
+      "GET /tickets/:id/attachments": "tickets.view",
+      "GET /tickets/:id/attachments/candidates": "tickets.update",
+      "POST /tickets/:id/attachments": "tickets.update",
+      "POST /tickets/:id/attachments/upload": "tickets.update",
+      "GET /tickets/:id/attachments/:attId": "tickets.view",
+      "DELETE /tickets/:id/attachments/:attId": "tickets.update",
+      "POST /tickets/:id/resolve": "tickets.update",
+      "GET /tickets/:id/bookings": "bookings.view",
+    };
+    for (const [k, p] of Object.entries(sp09)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // Route order: the literal segments are declared before `:attId`.
+    const att = routes.filter((r) => r.key.includes("/tickets/:id/attachments"));
+    const at = (k: string) => att.findIndex((r) => r.key === k);
+    expect(at("GET /tickets/:id/attachments/candidates")).toBeLessThan(at("GET /tickets/:id/attachments/:attId"));
+    expect(at("POST /tickets/:id/attachments/upload")).toBeGreaterThanOrEqual(0);
+    expect(at("POST /tickets/:id/attachments/upload")).toBeLessThan(at("GET /tickets/:id/attachments/:attId"));
+  });
+
   it("permission map covers SP-17 routes", () => {
     const sp17: Record<string, string> = {
       "PATCH /media/:id": "knowledge.update",

@@ -53,6 +53,8 @@ model User {
   notifications Notification[] @relation("UserNotifications")
   /// SP-15 back-relation.
   metaAdsConnections MetaAdsConnection[] @relation("MetaAdsConnectedBy")
+  /// SP-09 back-relation.
+  ticketAttachmentsAdded TicketAttachment[] @relation("TicketAttachmentAddedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -540,6 +542,13 @@ model Ticket {
   closedAt       DateTime?
   enteredStageAt DateTime  @default(now())
 
+  /// SP-09: "low" | "normal" | "high" | "urgent".
+  priority  String    @default("normal")
+  /// SP-09: a key of TICKET_CATEGORIES; null = not set.
+  category  String?
+  /// SP-09: set by the "ticket_sla_due_at" trigger on stage entry; null = no SLA (or terminal).
+  slaDueAt  DateTime?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceTickets", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -550,6 +559,7 @@ model Ticket {
   activities TicketActivity[]
   notes      Note[]
   followUps  Activity[]
+  attachments TicketAttachment[]
 
   @@unique([pipelineId, number])
   @@index([contactId])
@@ -557,6 +567,27 @@ model Ticket {
   @@index([ownerId])
   @@index([workspaceId])
   @@index([lostReasonId])
+  @@index([workspaceId, slaDueAt])
+}
+
+/// SP-09: a file on a ticket. The file itself is a Media row (library, storage, sniffing).
+model TicketAttachment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTicketAttachments", fields: [workspaceId], references: [id], onDelete: Cascade)
+  ticketId    String
+  ticket      Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  mediaId     String
+  media       Media     @relation("MediaTicketAttachments", fields: [mediaId], references: [id], onDelete: Cascade)
+  source      String    // "customer" | "staff"
+  messageId   String?   // the inbound Message that carried a customer file (no FK: messages may be pruned)
+  addedById   String?
+  addedBy     User?     @relation("TicketAttachmentAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@unique([ticketId, mediaId])
+  @@index([workspaceId])
+  @@index([mediaId])
 }
 
 model LostReason {
@@ -1092,6 +1123,8 @@ model Workspace {
   lostReasons       LostReason[]       @relation("WorkspaceLostReasons")
   savedReplies      SavedReply[]       @relation("WorkspaceSavedReplies")
   tickets           Ticket[]           @relation("WorkspaceTickets")
+  /// SP-09 back-relation.
+  ticketAttachments TicketAttachment[] @relation("WorkspaceTicketAttachments")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
   channels          Channel[]          @relation("WorkspaceChannels")
@@ -1269,6 +1302,8 @@ model Media {
   templateHeaders Template[] @relation("TemplateHeaderMedia")
   /// SP-15 back-relation: ad creatives re-hosted into this file.
   adSources AdSource[] @relation("AdSourceMedia")
+  /// SP-09 back-relation: tickets this file is attached to.
+  ticketAttachments TicketAttachment[] @relation("MediaTicketAttachments")
 
   createdAt DateTime @default(now())
 
