@@ -7,8 +7,9 @@ import { PageHeader } from "@/components/PageHeader";
 import { KnowledgeTab } from "./kewy-agent/KnowledgeTab";
 import { ToolsTab } from "./kewy-agent/ToolsTab";
 import { McpServersTab } from "./kewy-agent/McpServersTab";
+import { PhotosTab } from "./kewy-agent/PhotosTab";
 
-type Tab = "knowledge" | "tools" | "mcp";
+type Tab = "knowledge" | "photos" | "tools" | "mcp";
 
 interface LStatus {
   connected: boolean;
@@ -21,6 +22,8 @@ function KewyAgentImpl() {
   const canEditKnowledge = can("knowledge.create");
   const canEditTools = can("agent.update");
   const canEditMcp = can("connectors.update");
+  // SP-17: the Photos tab is shown with knowledge.view; its switch needs knowledge.update.
+  const canViewPhotos = can("knowledge.view");
   const [tab, setTab] = useState<Tab>("knowledge");
 
   const statusQ = useFetch<LStatus>("/integrations/l/status");
@@ -28,6 +31,7 @@ function KewyAgentImpl() {
 
   const tabs: Array<{ id: Tab; label: string; ar: string }> = [
     { id: "knowledge", label: "Knowledge", ar: "المعرفة" },
+    ...(canViewPhotos ? [{ id: "photos" as const, label: "Photos", ar: "الصور" }] : []),
     { id: "tools", label: "Tools", ar: "الأدوات" },
     { id: "mcp", label: "MCP Servers", ar: "خوادم MCP" },
   ];
@@ -37,8 +41,8 @@ function KewyAgentImpl() {
       <PageHeader
         title={tx("Kewy AI agent", "وكيل كيوي الذكاء")}
         subtitle={tx(
-          "Manage your agent's knowledge base, tools, and MCP connections.",
-          "إدارة قاعدة معرفة وكيلك وأدواته واتصالات MCP.",
+          "Manage your agent's knowledge base, photos, tools, and MCP connections.",
+          "إدارة قاعدة معرفة وكيلك وصوره وأدواته واتصالات MCP.",
         )}
       />
 
@@ -81,6 +85,7 @@ function KewyAgentImpl() {
 
           <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
             {tab === "knowledge" && <KnowledgeTab tx={tx} canEdit={canEditKnowledge} canDelete={can("knowledge.delete")} />}
+            {tab === "photos" && canViewPhotos && <PhotosTab tx={tx} canEdit={can("knowledge.update")} />}
             {tab === "tools" && <ToolsTab tx={tx} canEdit={canEditTools} />}
             {tab === "mcp" && <McpServersTab tx={tx} canEdit={canEditMcp} canCreate={can("connectors.create")} canDelete={can("connectors.delete")} />}
           </div>

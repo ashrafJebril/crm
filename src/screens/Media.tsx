@@ -9,6 +9,8 @@ import { useFetch, useMutation } from "@/api/useFetch";
 import { API_BASE, api, tokenStore } from "@/api/client";
 import { uploadMedia } from "@/api/uploadMedia";
 import { mediaErrorText } from "@/components/media/mediaErrors";
+import { AgentBadge, MediaDetailsDialog } from "@/components/media/MediaDetailsDialog";
+import { displayTitle } from "@/components/media/mediaDetails";
 import { IconPlus, IconTrash } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -22,7 +24,11 @@ function MediaImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   // DELETE /media/:id maps to conversations.update on the backend.
-  const canDeleteMedia = usePermissions().can("conversations.update");
+  const { can } = usePermissions();
+  const canDeleteMedia = can("conversations.update");
+  // SP-17: PATCH /media/:id maps to knowledge.update; without it the dialog is read-only.
+  const canEditDetails = can("knowledge.update");
+  const [details, setDetails] = useState<Media | null>(null);
 
   const listQ = useFetch<Media[]>("/media");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -153,10 +159,26 @@ function MediaImpl() {
           }}
         >
           {items.map((m) => (
-            <MediaTile key={m.id} m={m} canDelete={canDeleteMedia} onDelete={() => requestDelete(m)} />
+            <MediaTile
+              key={m.id}
+              m={m}
+              canDelete={canDeleteMedia}
+              onDelete={() => requestDelete(m)}
+              onDetails={() => setDetails(m)}
+            />
           ))}
         </div>
       </div>
+
+      {details && (
+        <MediaDetailsDialog
+          media={details}
+          tx={tx}
+          canEdit={canEditDetails}
+          onClose={() => setDetails(null)}
+          onSaved={() => listQ.refetch()}
+        />
+      )}
 
       {confirmTarget && (
         <DeleteConfirmDialog
@@ -295,7 +317,17 @@ function DeleteConfirmDialog({
   );
 }
 
-function MediaTile({ m, onDelete, canDelete }: { m: Media; onDelete: () => void; canDelete: boolean }) {
+function MediaTile({
+  m,
+  onDelete,
+  canDelete,
+  onDetails,
+}: {
+  m: Media;
+  onDelete: () => void;
+  canDelete: boolean;
+  onDetails: () => void;
+}) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
 
@@ -326,21 +358,27 @@ function MediaTile({ m, onDelete, canDelete }: { m: Media; onDelete: () => void;
         {m.mimeType.startsWith("video/") ? (
           <VideoTile url={previewUrl} token={tok} label={tx("Load video", "تحميل الفيديو")} />
         ) : (
-          <AuthorizedImage url={previewUrl} alt={m.fileName} token={tok} />
+          <AuthorizedImage url={previewUrl} alt={m.alt ?? m.fileName} token={tok} />
         )}
       </div>
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 500,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-          title={m.fileName}
-        >
-          {m.fileName}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <div
+            dir="auto"
+            style={{
+              fontSize: 12,
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              flex: 1,
+              minWidth: 0,
+            }}
+            title={m.fileName}
+          >
+            {displayTitle(m)}
+          </div>
+          {m.approvedForAgent && <AgentBadge tx={tx} />}
         </div>
         <div
           className="mono"
@@ -353,6 +391,10 @@ function MediaTile({ m, onDelete, canDelete }: { m: Media; onDelete: () => void;
           }}
         >
           <span>{formatBytes(m.sizeBytes)}</span>
+          <span style={{ flex: 1 }} />
+          <button type="button" className="btn ghost sm" onClick={onDetails} style={{ padding: "0 6px" }}>
+            {tx("Details", "التفاصيل")}
+          </button>
           <button
             type="button"
             className="btn ghost sm"

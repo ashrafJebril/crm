@@ -113,9 +113,26 @@ export const MEDIA_PAGE = 60;
 /** Response header naming the next `before`; absent only at the true end of the list. */
 export const NEXT_BEFORE_HEADER = "X-Media-Next-Before";
 
-export function mediaPagePath(kind: MediaCategory, before: string | null, limit = MEDIA_PAGE): string {
+/** SP-17: search text (≤ 100 after trimming) and the agent-approval filter. */
+export interface MediaFilters {
+  q?: string;
+  approved?: boolean;
+}
+
+/** Longest `q` the backend accepts. */
+export const MEDIA_QUERY_MAX = 100;
+
+export function mediaPagePath(
+  kind: MediaCategory,
+  before: string | null,
+  limit = MEDIA_PAGE,
+  filters: MediaFilters = {},
+): string {
   const q = new URLSearchParams({ kind, limit: String(limit) });
   if (before) q.set("before", before);
+  const text = (filters.q ?? "").trim().slice(0, MEDIA_QUERY_MAX).trim();
+  if (text) q.set("q", text);
+  if (filters.approved !== undefined) q.set("approved", String(filters.approved));
   return `/media?${q.toString()}`;
 }
 

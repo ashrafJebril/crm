@@ -5,6 +5,10 @@ import { usePermissions } from "@/auth/usePermissions";
 import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { Modal } from "@/components/Modal";
 import { useMediaPages } from "@/components/media/mediaApi";
+import { AgentBadge, MediaDetailsDialog } from "@/components/media/MediaDetailsDialog";
+import { displayTitle } from "@/components/media/mediaDetails";
+import { MediaSearchBar, approvedParam, type ApprovalFilter } from "@/components/media/MediaSearchBar";
+import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import { mediaErrorText, mediaLibraryBlocked, mediaNoAccessText } from "@/components/media/mediaErrors";
 import { LIBRARY_MIMES, MEDIA_CATEGORIES, formatBytes, kindOfMime, type MediaCategory } from "@/components/media/mediaKinds";
 import { useToast } from "@/components/Toast";
@@ -36,6 +40,10 @@ async function downloadMedia(m: Media): Promise<void> {
  * map); hidden actions are not rendered. Listing needs conversations.view:
  * without it (or on a 403) the tab shows a no-access line, never an error,
  * and fetches nothing (SP-13 final review).
+ *
+ * SP-17: a search box (debounced 300 ms) and an agent-approval filter; each
+ * tile shows its title and an "Agent" badge when approved, and "Details"
+ * opens the details dialog (editable with knowledge.update, read-only else).
  */
 export function GalleryTab({ tx }: { tx: Tx }) {
   const { can } = usePermissions();
@@ -43,8 +51,13 @@ export function GalleryTab({ tx }: { tx: Tx }) {
   const canUpload = can("conversations.create");
   const canDelete = can("conversations.update");
   const canView = can("conversations.view");
+  const canEditDetails = can("knowledge.update");
   const [category, setCategory] = useState<MediaCategory>("all");
-  const pages = useMediaPages(category, canView);
+  const [query, setQuery] = useState("");
+  const [approval, setApproval] = useState<ApprovalFilter>("all");
+  const q = useDebouncedValue(query, 300);
+  const pages = useMediaPages(category, canView, { q, approved: approvedParam(approval) });
+  const [details, setDetails] = useState<Media | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,6 +158,7 @@ export function GalleryTab({ tx }: { tx: Tx }) {
           </>
         )}
       </div>
+      <MediaSearchBar tx={tx} query={query} onQuery={setQuery} approval={approval} onApproval={setApproval} />
       <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
         {tx(
           "Images up to 20 MB, videos up to 300 MB and PDFs up to 100 MB. WhatsApp template headers take JPG/PNG up to 5 MB, MP4 up to 16 MB and PDF up to 100 MB.",
@@ -170,7 +184,9 @@ export function GalleryTab({ tx }: { tx: Tx }) {
           className="muted"
           style={{ fontSize: 13, padding: "32px 16px", textAlign: "center", border: "1px dashed var(--line-soft)", borderRadius: 12 }}
         >
-          {tx("No files here yet.", "لا توجد ملفات هنا بعد.")}
+          {q.trim() || approval !== "all"
+            ? tx("No files match this search.", "لا توجد ملفات تطابق هذا البحث.")
+            : tx("No files here yet.", "لا توجد ملفات هنا بعد.")}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 12 }}>
@@ -190,18 +206,28 @@ export function GalleryTab({ tx }: { tx: Tx }) {
                   }}
                 >
                   {kind === "image" ? (
-                    <AuthorizedImage url={`${API_BASE}/media/${m.id}/file`} alt={m.fileName} token={token} retryable={false} />
+                    <AuthorizedImage url={`${API_BASE}/media/${m.id}/file`} alt={m.alt ?? m.fileName} token={token} retryable={false} />
                   ) : (
                     <span aria-hidden>{kind === "video" ? "🎬" : "📄"}</span>
                   )}
                 </div>
-                <div dir="auto" title={m.fileName} style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {m.fileName}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  <div
+                    dir="auto"
+                    title={m.fileName}
+                    style={{ fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}
+                  >
+                    {displayTitle(m)}
+                  </div>
+                  {m.approvedForAgent && <AgentBadge tx={tx} />}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span className="mono" style={{ fontSize: 10.5, color: "var(--ink-3)", flex: 1 }}>
                     <bdi dir="ltr">{formatBytes(m.sizeBytes)}</bdi>
                   </span>
+                  <button type="button" className="btn ghost sm" onClick={() => setDetails(m)}>
+                    {tx("Details", "التفاصيل")}
+                  </button>
                   {kind === "document" && (
                     <button
                       type="button"
@@ -240,6 +266,10 @@ export function GalleryTab({ tx }: { tx: Tx }) {
             {pages.loadingMore ? tx("Loading…", "جارٍ التحميل…") : tx("Load more", "تحميل المزيد")}
           </button>
         </div>
+      )}
+
+      {details && (
+        <MediaDetailsDialog media={details} tx={tx} canEdit={canEditDetails} onClose={() => setDetails(null)} />
       )}
 
       {confirm && (
