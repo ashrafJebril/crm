@@ -31,7 +31,14 @@ function matchValue(v: any, cond: any): boolean {
     if ("not" in cond) {
       if (cond.not === null ? v === null || v === undefined : matchValue(v, cond.not)) return false;
     }
-    if ("equals" in cond && v !== cond.equals) return false;
+    if ("equals" in cond) {
+      // SP-17: `mode: "insensitive"` on a string equals.
+      const eq =
+        cond.mode === "insensitive" && typeof v === "string" && typeof cond.equals === "string"
+          ? v.toLowerCase() === cond.equals.toLowerCase()
+          : v === cond.equals;
+      if (!eq) return false;
+    }
     // SP-13: Postgres array columns (String[]).
     if ("has" in cond && !(Array.isArray(v) && v.includes(cond.has))) return false;
     if ("hasSome" in cond && !(Array.isArray(v) && (cond.hasSome as any[]).some((x) => v.includes(x)))) return false;
