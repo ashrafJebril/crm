@@ -787,6 +787,14 @@ export interface Media {
   height: number | null;
   uploadedById: string | null;
   createdAt: string;
+  /** SP-17: agent-facing details. Null = not described. */
+  title: string | null;
+  alt: string | null;
+  /** Normalised (trimmed, Latin lowercased, deduped), at most 20. */
+  tags: string[];
+  useWhen: string | null;
+  /** The AI agent may list and send this file (list_photos). Off by default. */
+  approvedForAgent: boolean;
 }
 
 // ─── Social publishing ────────────────────────────────────────────────────

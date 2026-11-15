@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, setUnauthorizedHandler, tokenStore } from "@/api/client";
 import { makeTx } from "@/lib/tx";
-import { fetchMediaPage } from "./mediaApi";
+import { fetchMediaPage, mediaFilterKey } from "./mediaApi";
 import { mediaLibraryBlocked, mediaNoAccessText } from "./mediaErrors";
 
 const respond = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -63,5 +63,21 @@ describe("media library access (roles without conversations.view)", () => {
   it("has a no-access line in English and Arabic", () => {
     expect(mediaNoAccessText(makeTx("en"))).toMatch(/media library/i);
     expect(mediaNoAccessText(makeTx("ar"))).toMatch(/[؀-ۿ]/);
+  });
+});
+
+describe("SP-17 filters on the paged list", () => {
+  it("fetchMediaPage sends q and approved", async () => {
+    tokenStore.set("tok");
+    const fetchMock = respond(200, [], {});
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchMediaPage("image", null, undefined, { q: "menu", approved: true });
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toContain("/media?kind=image&limit=60&q=menu&approved=true");
+  });
+
+  it("the query key normalises the filters", () => {
+    expect(mediaFilterKey()).toEqual({ q: "", approved: null });
+    expect(mediaFilterKey({ q: "  menu ", approved: false })).toEqual({ q: "menu", approved: false });
   });
 });

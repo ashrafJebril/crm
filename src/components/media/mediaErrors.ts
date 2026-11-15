@@ -85,7 +85,28 @@ export const MEDIA_ERROR_COPY: Record<string, CopyFn> = {
     "The file's contents don't match its type. It may be renamed or damaged.",
     "محتوى الملف لا يطابق نوعه. ربما أُعيدت تسميته أو أنه تالف.",
   ],
-  "media.invalid_query": () => ["The file list couldn't be loaded. Refresh and try again.", "تعذّر تحميل قائمة الملفات. حدّث الصفحة وحاول مجددًا."],
+  "media.invalid_query": (x) => {
+    // SP-17: the search and approval filters.
+    if (x.param === "q") return ["Search is too long. Use at most 100 characters.", "نص البحث طويل جدًا. استخدم 100 حرف على الأكثر."];
+    if (x.param === "approved")
+      return ["The approval filter is not valid. Refresh and try again.", "مرشّح الاعتماد غير صالح. حدّث الصفحة وحاول مجددًا."];
+    return ["The file list couldn't be loaded. Refresh and try again.", "تعذّر تحميل قائمة الملفات. حدّث الصفحة وحاول مجددًا."];
+  },
+  // SP-17: details and agent approval (PATCH /media/:id).
+  "media.no_changes": () => ["Nothing changed.", "لم يتغيّر شيء."],
+  "media.not_approvable": (x) => {
+    if (x.reason === "type")
+      return ["Only JPG or PNG photos can be sent by the agent.", "يستطيع الوكيل إرسال صور JPG أو PNG فقط."];
+    if (x.reason === "size")
+      return ["Photos larger than 5 MB can't be sent by the agent.", "لا يستطيع الوكيل إرسال صور أكبر من 5 ميغابايت."];
+    if (x.reason === "inbound")
+      return ["Customer attachments can't be approved for the agent.", "لا يمكن اعتماد مرفقات العملاء للوكيل."];
+    return ["This file can't be approved for the agent.", "لا يمكن اعتماد هذا الملف للوكيل."];
+  },
+  "media.title_required": () => [
+    "Add a title before approving this photo for the agent.",
+    "أضف عنوانًا قبل اعتماد هذه الصورة للوكيل.",
+  ],
   // `media.in_use` needs the names, so its copy is built in mediaErrorText; this is the plain fallback.
   "media.in_use": () => [
     "This file is used by a template or a campaign, so it can't be deleted.",

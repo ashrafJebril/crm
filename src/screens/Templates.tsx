@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { templatesTabFromHash, type TemplatesTab } from "./templates/templatesTab";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -30,7 +31,7 @@ import { templateQualityCell, templateStatusView, toFullStatus } from "./channel
 import { SourceMark, fmtWhen } from "./channels/health/healthUi";
 import { TemplateHealthSheet } from "./templates/TemplateHealthSheet";
 
-type Tab = "library" | "quick" | "gallery";
+type Tab = TemplatesTab;
 type CategoryFilter = "ALL" | TemplateCategory;
 
 const CATEGORY_FILTERS: CategoryFilter[] = [
@@ -283,7 +284,8 @@ function TemplatesImpl() {
   const createGate = gatedTitle("template.create", connected, tx);
   const isAr = t.lang === "ar";
 
-  const [tab, setTab] = useState<Tab>("library");
+  // SP-17: `#/templates?tab=gallery` (the agent Photos tab's link) opens the Gallery.
+  const [tab, setTab] = useState<Tab>(() => templatesTabFromHash(typeof window === "undefined" ? "" : window.location.hash));
   const [filter, setFilter] = useState<CategoryFilter>("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState<string>("");

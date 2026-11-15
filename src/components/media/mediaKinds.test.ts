@@ -32,6 +32,11 @@ const file = (id: string, mimeType: string, sizeBytes = 1000): Media => ({
   height: null,
   uploadedById: null,
   createdAt: "2026-11-01T00:00:00Z",
+  title: null,
+  alt: null,
+  tags: [],
+  useWhen: null,
+  approvedForAgent: false,
 });
 
 describe("mediaKinds", () => {
@@ -96,5 +101,21 @@ describe("mediaKinds", () => {
     // Pages concatenate in order without duplicates.
     const again = parseMediaPage([file("m2", "image/png"), file("m4", "image/png")], null);
     expect(flattenMediaPages([p1, p2, again]).map((m) => m.id)).toEqual(["m1", "m2", "m4"]);
+  });
+});
+
+describe("SP-17 media search filters", () => {
+  it("media page path carries q and approved", () => {
+    expect(mediaPagePath("image", null, 60, { q: "menu", approved: true })).toBe("/media?kind=image&limit=60&q=menu&approved=true");
+    expect(mediaPagePath("image", "c1", 60, { approved: false })).toBe("/media?kind=image&limit=60&before=c1&approved=false");
+    // q is trimmed and encoded (Arabic, spaces, & and #).
+    const p = mediaPagePath("all", null, 60, { q: "  قائمة الطعام & #1 " });
+    expect(p).toBe(`/media?kind=all&limit=60&q=${encodeURIComponent("قائمة الطعام & #1").replace(/%20/g, "+")}`);
+    expect(new URLSearchParams(p.split("?")[1]).get("q")).toBe("قائمة الطعام & #1");
+    // Empty q and no approved filter are omitted; no filters = the SP-13 path.
+    expect(mediaPagePath("image", null, 60, { q: "   ", approved: undefined })).toBe("/media?kind=image&limit=60");
+    expect(mediaPagePath("image", null)).toBe("/media?kind=image&limit=60");
+    // q is cut to the backend's 100 characters.
+    expect(new URLSearchParams(mediaPagePath("all", null, 60, { q: "a".repeat(120) }).split("?")[1]).get("q")).toHaveLength(100);
   });
 });

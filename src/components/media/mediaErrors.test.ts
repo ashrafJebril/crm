@@ -19,6 +19,10 @@ const KEYS = [
   "templates.header_media_too_large",
   "templates.header_media_mismatch",
   "templates.header_media_required",
+  // SP-17
+  "media.no_changes",
+  "media.not_approvable",
+  "media.title_required",
 ];
 
 describe("mediaErrorText", () => {
@@ -61,5 +65,33 @@ describe("mediaErrorText", () => {
     expect(mediaErrorText(new ApiError("Missing permission", 403), en)).toBe("You don't have permission to do this");
     expect(mediaErrorText(new Error("HTTP 500"), en, "Upload failed")).toBe("Upload failed");
     expect(mediaErrorText(new Error("boom"), ar)).toMatch(ARABIC);
+  });
+});
+
+describe("SP-17 media keys", () => {
+  it("media error copy covers the SP-17 keys in both languages", () => {
+    const err = (key: string, extra: Record<string, unknown> = {}) =>
+      new ApiError(key, 400, undefined, { statusCode: 400, message: key, ...extra });
+    const cases: Array<[ApiError, string]> = [
+      [err("media.no_changes"), "Nothing changed."],
+      [err("media.not_approvable", { reason: "type" }), "Only JPG or PNG photos can be sent by the agent."],
+      [err("media.not_approvable", { reason: "size" }), "Photos larger than 5 MB can't be sent by the agent."],
+      [err("media.not_approvable", { reason: "inbound" }), "Customer attachments can't be approved for the agent."],
+      [err("media.not_approvable"), "This file can't be approved for the agent."],
+      [err("media.title_required"), "Add a title before approving this photo for the agent."],
+      [err("media.invalid_query", { param: "q" }), "Search is too long. Use at most 100 characters."],
+      [err("media.invalid_query", { param: "approved" }), "The approval filter is not valid. Refresh and try again."],
+      [err("media.invalid_query", { param: "before" }), "The file list couldn't be loaded. Refresh and try again."],
+    ];
+    const arabic = new Set<string>();
+    for (const [e, text] of cases) {
+      expect(mediaErrorText(e, en)).toBe(text);
+      const a = mediaErrorText(e, ar);
+      expect(a, e.message).toMatch(ARABIC);
+      arabic.add(a);
+    }
+    // Each case has its own Arabic copy.
+    expect(arabic.size).toBe(cases.length);
+    expect(mediaErrorText(err("media.not_approvable", { reason: "size" }), ar)).toContain("5");
   });
 });
