@@ -1522,3 +1522,113 @@ export interface AdConversationItem {
   status: string;
   assigneeId: string | null;
 }
+
+// ─── SP-11 insights (mirror of backend/src/insights/insights.dto.ts) ─────────
+
+/** One independently computed block: `unavailable` renders a notice, `forbidden` is hidden. */
+export type Section<T> = { status: "ok"; data: T } | { status: "unavailable" } | { status: "forbidden" };
+
+export interface InsightsRange {
+  /** First local day, inclusive (`YYYY-MM-DD`). */
+  from: string;
+  /** Last local day, inclusive. */
+  to: string;
+  tz: string;
+}
+
+export interface SupportHeadline {
+  conversations: number;
+  decided: number;
+  aiResolved: number;
+  /** Percent, one decimal; null when nothing was decided. */
+  aiResolutionRate: number | null;
+  /** Whole seconds; null without samples. */
+  medianFirstResponseSec: number | null;
+  unanswered: number;
+  medianHandlingSec: number | null;
+  timeSaved: { customerMessages: number; hours: number };
+  ticketShare: number | null;
+}
+
+export interface ResolutionMix {
+  ai: number;
+  human: number;
+  escalated: number;
+  closed: number;
+}
+
+export interface Peaks {
+  /** [dayOfWeek 0=Sunday … 6=Saturday][hour 0–23], workspace-local. */
+  matrix: number[][];
+  byHour: number[];
+}
+
+export interface ByNumberRow {
+  /** null = "Unassigned number". */
+  channelId: string | null;
+  label: string;
+  conversations: number;
+  aiResolutionRate: number | null;
+}
+
+export interface TopicFrictionRow {
+  topic: string;
+  count: number;
+  escalatedShare: number;
+  negativeShare: number;
+}
+
+export interface TeamRow {
+  /** null for the "Former member" and "Unattributed" rows (told apart by `former`). */
+  userId: string | null;
+  name: string;
+  former: boolean;
+  assigned: number;
+  replies: number;
+  medianFirstResponseSec: number | null;
+  resolved: number;
+}
+
+export interface SupportInsights {
+  range: InsightsRange;
+  channelId: string | null;
+  headline: Section<SupportHeadline>;
+  resolutionMix: Section<ResolutionMix>;
+  peaks: Section<Peaks>;
+  byNumber: Section<ByNumberRow[]>;
+  topicFriction: Section<TopicFrictionRow[]>;
+  team: Section<TeamRow[]>;
+}
+
+export type SpeedBucket = "lt_5m" | "5_15m" | "15_60m" | "1_4h" | "4_24h" | "gt_24h" | "not_replied";
+
+/** Without tickets.view only `id` is present. */
+export interface SalesPipelineRef {
+  id: string;
+  name?: string;
+  nameAr?: string;
+  kind?: string;
+}
+
+export interface SalesRepRow {
+  userId: string | null;
+  name: string;
+  former: boolean;
+  leads: number;
+  won: number;
+  lost: number;
+  medianSpeedToReplySec: number | null;
+  followUps: { done: number; overdue: number; dueToday: number };
+}
+
+export interface SalesInsights {
+  range: InsightsRange;
+  pipeline: SalesPipelineRef;
+  headline: Section<{ leads: number; replied: number; medianSpeedToReplySec: number | null; waiting: number; won: number }>;
+  distribution: Section<{ bucket: SpeedBucket | string; count: number }[]>;
+  weekly: Section<{ weekStart: string; leads: number; won: number }[]>;
+  sources: Section<{ kind: string; key: string; id?: string; label: string; leads: number; won: number }[]>;
+  funnel: Section<{ stageId: string; key: string; label: string; labelAr: string; reached: number; isWon: boolean; isTerminal: boolean }[]>;
+  lostReasons: Section<{ reasonId: string | null; label: string; labelAr: string; count: number }[]>;
+  reps: Section<SalesRepRow[]>;
+}
