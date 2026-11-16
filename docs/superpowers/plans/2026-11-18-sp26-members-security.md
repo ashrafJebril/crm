@@ -809,3 +809,7 @@ Apply `20261118120000_members_security` with `npx prisma migrate deploy`, only w
 - Stop :4250, the stub, and remove the outDir and `sp26-run/`.
 
 Then tick SP-26's "Detailed plan written" and "Shipped" boxes in the roadmap, noting the rulings and deviations. Add the pending user actions: choose and configure the email provider (D3: domain, `RESEND_API_KEY`, `EMAIL_FROM`), set `TOKEN_ENC_KEY` on Fly if not done for SP-19. Add the deferred items: per-kind handover recipients (ruling 7), audit retention, WebAuthn/passkeys, and SSO 2FA (ruling 9).
+
+
+### User decisions (2026-11-16)
+- Email provider: **Resend** (R1/D3). Needs `RESEND_API_KEY` and a verified sender domain on Fly; until then invites fall back to copy-link.

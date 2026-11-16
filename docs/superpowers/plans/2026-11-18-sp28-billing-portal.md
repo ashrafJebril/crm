@@ -577,3 +577,7 @@ Then tick SP-28's boxes with rulings and deviations. Pending user actions:
 - set `BILLING_STRIPE_ENABLED=1` when ready.
 
 Deferred: embedded checkout, usage charging, trial emails, e-invoicing (D4) and the wallet table rename.
+
+
+### User decisions (2026-11-16)
+- Billing source of truth stays **Kewy/Joteck** (no Stripe). SP-28 builds read-only billing status, usage metering and plan-feature gates on Kewy data. The Stripe tasks are dropped.

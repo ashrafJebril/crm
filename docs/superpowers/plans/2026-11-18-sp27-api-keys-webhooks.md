@@ -689,3 +689,7 @@ Apply `20261118130000_api_keys_webhooks` with `npx prisma migrate deploy`, only 
 - Stop :4260 and the receiver; remove the outDir and `sp27-run/`.
 
 Then tick SP-27's boxes in the roadmap with the rulings and deviations. Pending user actions: confirm the backend host serves `/.well-known/*` at its root (ruling 11), set `TOKEN_ENC_KEY` on Fly. Deferred: the remaining Tkana webhook events, OpenAPI docs, and retiring the legacy MCP token.
+
+
+### User decisions (2026-11-16)
+- **Defer OAuth** (R6): ship API keys and signed webhooks. The in-app OAuth server for AI tools is a follow-up; AI tools keep the existing workspace MCP token.
