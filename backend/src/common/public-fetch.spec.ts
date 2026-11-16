@@ -79,6 +79,22 @@ describe("public fetch (shared by catalog import and the knowledge crawler)", ()
     expect(testBase()).toBeNull();
   });
 
+  it("the test base is ignored in production", () => {
+    const prev = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.PUBLIC_FETCH_TEST_BASE = "http://127.0.0.1:4555";
+      expect(testBase()).toBeNull();
+      delete process.env.PUBLIC_FETCH_TEST_BASE;
+      process.env.CATALOG_FETCH_TEST_BASE = "http://127.0.0.1:4556";
+      expect(testBase()).toBeNull();
+      process.env.NODE_ENV = "test";
+      expect(testBase()).toBe("http://127.0.0.1:4556");
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+  });
+
   it("a private address is refused before any request", async () => {
     const n = net({}, { "intranet.example": ["10.1.2.3"] });
     expect(await code(fetchPublic("https://intranet.example/", { accept: ["text/html"] }, n.deps))).toBe("url_blocked");

@@ -26,6 +26,7 @@ import {
   KB_FILE_MAX_BYTES,
   PAGE_STATES,
   PREVIEW_MAX_ITEMS,
+  TOMBSTONE_KIND,
   type KbFileType,
   type KnowledgeKind,
   type KnowledgeStatus,
@@ -171,14 +172,21 @@ export class KnowledgeSourcesService {
 
   /** The row, or 404 `knowledge.not_found` (unknown or another workspace's). */
   async load(workspaceId: string, id: string): Promise<SourceWithMedia> {
-    const row = await this.prisma.knowledgeSource.findFirst({ where: { id: String(id ?? ""), workspaceId }, include: this.include });
+    const row = await this.prisma.knowledgeSource.findFirst({
+      where: { id: String(id ?? ""), workspaceId, kind: { not: TOMBSTONE_KIND } },
+      include: this.include,
+    });
     if (!row) throw knowledgeError("knowledge.not_found");
     return row as SourceWithMedia;
   }
 
   async list(workspaceId: string, q: { kind?: string; status?: string } = {}): Promise<{ items: KnowledgeSourceDto[] }> {
     const rows = (await this.prisma.knowledgeSource.findMany({
-      where: { workspaceId, ...(q.kind ? { kind: q.kind } : {}), ...(q.status ? { status: q.status } : {}) },
+      where: {
+        workspaceId,
+        kind: { not: TOMBSTONE_KIND, ...(q.kind ? { equals: q.kind } : {}) },
+        ...(q.status ? { status: q.status } : {}),
+      },
       include: this.include,
       orderBy: [{ kind: "asc" }, { order: "asc" }, { createdAt: "desc" }],
     })) as SourceWithMedia[];

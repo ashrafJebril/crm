@@ -139,7 +139,7 @@ async function migrateKewy(deps: MigrateInDeps, workspaceId: string, dryRun: boo
 /** TONE docs are appended to the guidelines singleton, each once. */
 async function migrateTone(deps: MigrateInDeps, workspaceId: string, docs: KewyKnowledgeDoc[], dryRun: boolean, counts: MigrateInCounts) {
   const row = await deps.db.knowledgeSource.findFirst({ where: { workspaceId, kind: "guideline" } });
-  const upstream = (row?.upstream as { kewyTone?: string[] } | null) ?? {};
+  const upstream = (row?.upstream as { kewyTone?: string[]; kewy?: { docId: string } } | null) ?? {};
   const taken = new Set(upstream.kewyTone ?? []);
   const fresh = docs.filter((d) => !taken.has(d.id));
   counts.existing += docs.length - fresh.length;
@@ -158,7 +158,10 @@ async function migrateTone(deps: MigrateInDeps, workspaceId: string, docs: KewyK
   if (!added.length) return;
   counts.guidelines += added.length;
   if (dryRun) return;
-  const nextUpstream = { ...upstream, kewyTone: [...taken, ...added] };
+  // The guidelines publish reuses the first migrated TONE doc's id, so the next
+  // guidelines save updates that doc in place instead of creating a second TONE
+  // doc. Any further TONE docs stay upstream as they were: this never deletes.
+  const nextUpstream = { ...upstream, kewyTone: [...taken, ...added], ...(upstream.kewy?.docId ? {} : { kewy: { docId: added[0] } }) };
   if (row) {
     await deps.db.knowledgeSource.update({ where: { id: row.id }, data: { body, upstream: nextUpstream, version: { increment: 1 } } });
   } else {

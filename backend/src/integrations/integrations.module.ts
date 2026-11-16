@@ -85,6 +85,8 @@ import { AdAttributionModule } from "../ad-attribution/ad-attribution.module";
     LAgentService,
     LAgentSetupService,
     McpTokenService,
+    // SP-21: deleting a migrated l document with its knowledge source.
+    LKnowledgeService,
   ],
 })
 export class IntegrationsModule {}

@@ -57,6 +57,8 @@ describe("knowledge migrate-in", () => {
     expect(by("l:L2")).toMatchObject({ status: "failed" });
     const g = w.db.knowledgeSource.find((s) => s.kind === "guideline");
     expect(g.body).toBe("Be warm and brief.\n\nAnswer in the customer's language.");
+    // The guidelines reuse the migrated TONE doc upstream, so a later save updates it in place.
+    expect(g.upstream).toMatchObject({ kewy: { docId: "k3" }, kewyTone: ["k3", "k4"] });
     const rows = w.db.knowledgeSource.length;
 
     // Second run: nothing new, nothing appended twice.
@@ -64,6 +66,7 @@ describe("knowledge migrate-in", () => {
     expect(second).toMatchObject({ faq: 0, file: 0, guidelines: 0, lDocuments: 0, existing: 6 });
     expect(w.db.knowledgeSource).toHaveLength(rows);
     expect(w.db.knowledgeSource.find((s) => s.kind === "guideline").body).toBe(g.body);
+    expect(w.db.knowledgeSource.find((s) => s.kind === "guideline").upstream.kewy).toEqual({ docId: "k3" });
     // Upstream is only read, never changed or deleted.
     expect(Object.keys(w.deps).sort()).toEqual(["db", "kewyDocs", "lDocs"]);
   });

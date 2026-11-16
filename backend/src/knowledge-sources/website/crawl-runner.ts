@@ -20,6 +20,14 @@
  *    WEBSITE_PAGE_CAP pages (the rest `capped`, their chunks dropped), depth
  *    WEBSITE_LINK_DEPTH, WEBSITE_RUN_BUDGET_MS per run.
  *
+ * Writes stay bounded however big the site is: at most SITEMAP_URL_CAP
+ * in-scope sitemap URLs are collected; capped URLs get a row only when one
+ * already exists (its chunks must go) or within the first CAPPED_ROW_SAMPLE,
+ * and the full capped count is kept in `lastRun.pagesCapped`. The apply
+ * transaction runs with an explicit APPLY_TX_TIMEOUT_MS / APPLY_TX_MAX_WAIT_MS
+ * (Prisma's 5 s default would fail a large first sync every time). Chunk
+ * re-creation stays inside it: that is what keeps it guarded by the lease.
+ *
  * A failed run never deletes knowledge: a run that read no page fails and
  * changes no page; 401/403 keeps the last copy (`needs_login`); a page leaves
  * only after MAX_MISSED_RUNS complete runs without it (`removed`, chunks
@@ -64,6 +72,13 @@ export const CRAWL_SLEEP = Symbol("CRAWL_SLEEP");
 export const WEBSITE_STALE_MS = 30 * 60 * 1000;
 export const MIN_REQUEST_GAP_MS = 1000;
 export const MAX_CRAWL_DELAY_MS = 10_000;
+/** In-scope URLs collected from sitemaps per run; the rest are never queued. */
+export const SITEMAP_URL_CAP = 1000;
+/** Capped URLs that get a new row (a sample for the UI); the rest are only counted. */
+export const CAPPED_ROW_SAMPLE = 20;
+/** The apply transaction's limits (Prisma's interactive default is 5 s). */
+export const APPLY_TX_TIMEOUT_MS = 30_000;
+export const APPLY_TX_MAX_WAIT_MS = 10_000;
 /** Characters of text kept per page. */
 export const PAGE_TEXT_MAX = 200_000;
 const HTML_TYPES = ["text/html", "text/plain"];
@@ -92,6 +107,8 @@ export interface RunSummary {
   pagesSame: number;
   pagesChanged: number;
   pagesNew: number;
+  /** URLs past WEBSITE_PAGE_CAP (only a sample of them has a row). */
+  pagesCapped: number;
   failed: boolean;
   reason?: string;
 }
@@ -215,7 +232,7 @@ export class CrawlRunner {
     const seen = new Set<string>();
     const queue = [...candidates];
     let fetched = 0;
-    while (queue.length && fetched < 5) {
+    while (queue.length && fetched < 5 && out.length < SITEMAP_URL_CAP) {
       const raw = queue.shift() as string;
       let url: URL;
       try {
@@ -235,8 +252,11 @@ export class CrawlRunner {
         if (isSitemapIndex(res.body)) queue.push(...locs);
         else
           for (const loc of locs) {
+            if (out.length >= SITEMAP_URL_CAP) break;
             try {
-              out.push(new URL(loc));
+              const u = new URL(loc);
+              // Only in-scope URLs count towards the cap (the rest are never requested).
+              if (inScope(site, u)) out.push(u);
             } catch {
               // skip
             }
@@ -336,9 +356,11 @@ export class CrawlRunner {
       pagesSame: 0,
       pagesChanged: 0,
       pagesNew: 0,
+      pagesCapped: outcomes.filter((o) => o.state === "capped").length,
       failed: false,
     };
     const ws = src.workspaceId;
+    let cappedCreated = 0;
     await this.prisma.$transaction(async (tx) => {
       // Our lease, re-checked first: a run that lost it writes nothing.
       const mine = await tx.knowledgeSource.updateMany({ where: { id: src.id, syncStartedAt: lease }, data: { error: null } });
@@ -380,7 +402,8 @@ export class CrawlRunner {
         if (prev) {
           await tx.knowledgePage.update({ where: { id: prev.id }, data: { ...base, missedRuns: 0, removedAt: null } });
           if (!keep) await dropChunks(prev.id);
-        } else {
+        } else if (o.state !== "capped" || cappedCreated++ < CAPPED_ROW_SAMPLE) {
+          // A capped URL without a row gets one only within the sample.
           await tx.knowledgePage.create({ data: { workspaceId: ws, sourceId: src.id, urlKey: o.key, ...base } });
         }
       }
@@ -415,7 +438,7 @@ export class CrawlRunner {
           syncStartedAt: null,
         },
       });
-    });
+    }, { timeout: APPLY_TX_TIMEOUT_MS, maxWait: APPLY_TX_MAX_WAIT_MS });
     this.publisher?.schedule(src.id);
     return summary;
   }
@@ -442,6 +465,7 @@ export class CrawlRunner {
       pagesSame: 0,
       pagesChanged: 0,
       pagesNew: 0,
+      pagesCapped: 0,
       failed: true,
       reason,
     };

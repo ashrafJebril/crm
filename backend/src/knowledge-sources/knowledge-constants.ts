@@ -9,6 +9,15 @@ export type KnowledgeKind = (typeof KNOWLEDGE_KINDS)[number];
 export const KNOWLEDGE_STATUSES = ["draft", "queued", "processing", "ready", "failed", "paused"] as const;
 export type KnowledgeStatus = (typeof KNOWLEDGE_STATUSES)[number];
 
+/**
+ * Internal, never a member-visible kind: a deleted source whose upstream
+ * copies (kewy-ai doc, l document, l guidelines block) could not be removed
+ * yet. The publisher's retry sweep retries it with backoff, then drops it.
+ * Listing and loading exclude it; every other reader filters on a real kind
+ * or on `status: "ready"`, which a tombstone (`status: "deleted"`) never has.
+ */
+export const TOMBSTONE_KIND = "tombstone";
+
 export const PAGE_STATES = ["synced", "needs_login", "blocked", "removed", "error", "capped"] as const;
 export type PageState = (typeof PAGE_STATES)[number];
 

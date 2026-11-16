@@ -21,7 +21,7 @@
  *
  * Test override (SP-15 `META_CDN_TEST_BASE` pattern): `PUBLIC_FETCH_TEST_BASE`
  * (or its SP-10 alias `CATALOG_FETCH_TEST_BASE`) is honoured only when it is
- * exactly `http://127.0.0.1:<port>`; it rewrites `https://<host>/<path>` to
+ * exactly `http://127.0.0.1:<port>` and NODE_ENV is not production; it rewrites `https://<host>/<path>` to
  * `<base>/<host>/<path>` and skips DNS. Anything else in it is ignored.
  *
  * Never logs the page, and never logs a URL's query string.
@@ -167,8 +167,13 @@ export function redactedUrl(url: URL | string): string {
   }
 }
 
-/** The loopback test base, when set and valid (PUBLIC_FETCH_TEST_BASE, alias CATALOG_FETCH_TEST_BASE). */
+/**
+ * The loopback test base, when set and valid (PUBLIC_FETCH_TEST_BASE, alias
+ * CATALOG_FETCH_TEST_BASE). Never in production: there it is ignored, so a
+ * stray variable cannot route fetches past the SSRF guard.
+ */
 export function testBase(): string | null {
+  if (process.env.NODE_ENV === "production") return null;
   for (const name of ["PUBLIC_FETCH_TEST_BASE", "CATALOG_FETCH_TEST_BASE"]) {
     const v = process.env[name]?.trim();
     if (v) return TEST_BASE_RE.test(v) ? v : null;

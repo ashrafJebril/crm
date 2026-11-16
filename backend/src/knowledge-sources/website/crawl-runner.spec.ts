@@ -1,5 +1,5 @@
 import { crawlWorld, fakeNet, html, PUBLIC_IP, website, A } from "./crawl-test-world";
-import { MIN_REQUEST_GAP_MS } from "./crawl-runner";
+import { APPLY_TX_MAX_WAIT_MS, APPLY_TX_TIMEOUT_MS, CAPPED_ROW_SAMPLE, MIN_REQUEST_GAP_MS, SITEMAP_URL_CAP } from "./crawl-runner";
 import { WEBSITE_PAGE_CAP } from "../knowledge-constants";
 
 const ROBOTS = [
@@ -257,6 +257,48 @@ describe("CrawlRunner", () => {
     expect(capped.map((p) => p.id)).toContain(lastId);
     expect(w.db.knowledgeChunk.some((c) => c.pageId === lastId)).toBe(false);
     expect(w.db.knowledgeChunk.some((c) => capped.some((p) => p.id === c.pageId))).toBe(false);
+  });
+
+  it("a 5 000-URL sitemap completes with a bounded sample of capped rows and a count", async () => {
+    const n = 5000;
+    const locs = Array.from({ length: n }, (_, i) => `<url><loc>https://shop.example/s${i}</loc></url>`).join("");
+    const pages: Record<string, { body: string; headers?: Record<string, string> } | { status: number }> = {
+      "https://shop.example/robots.txt": notFound,
+      "https://shop.example/sitemap.xml": { headers: { "content-type": "application/xml" }, body: `<urlset>${locs}</urlset>` },
+      "https://shop.example/": { body: html("Home", "Welcome to the shop, open every day of the week.") },
+    };
+    for (let i = 0; i < n; i++) pages[`https://shop.example/s${i}`] = { body: html(`S${i}`, `Sitemap page number ${i} with a long enough description.`) };
+    const net = fakeNet({ dns: SHOP, pages });
+    const w = crawlWorld(net.deps);
+    const src = website(w.db);
+    const summary = await w.runner.run(src.id);
+    expect(summary).toMatchObject({ failed: false, pagesRead: WEBSITE_PAGE_CAP });
+    expect(pageUrls(net.urls())).toHaveLength(WEBSITE_PAGE_CAP);
+    // Only the sitemap's first SITEMAP_URL_CAP in-scope URLs are kept; the rest are counted as capped.
+    expect(summary!.pagesCapped).toBe(SITEMAP_URL_CAP + 1 - WEBSITE_PAGE_CAP);
+    const capped = w.db.knowledgePage.filter((p) => p.state === "capped");
+    expect(capped.length).toBeLessThanOrEqual(CAPPED_ROW_SAMPLE);
+    expect(w.db.knowledgePage).toHaveLength(WEBSITE_PAGE_CAP + capped.length);
+    expect(w.db.knowledgeSource[0]).toMatchObject({ status: "ready", consecutiveFailures: 0, syncStartedAt: null });
+    expect(w.db.knowledgeSource[0].lastRun).toMatchObject({ pagesCapped: SITEMAP_URL_CAP + 1 - WEBSITE_PAGE_CAP });
+  });
+
+  it("the apply transaction gets an explicit timeout and maxWait", async () => {
+    const net = fakeNet({
+      dns: SHOP,
+      pages: {
+        "https://shop.example/robots.txt": notFound,
+        "https://shop.example/sitemap.xml": notFound,
+        "https://shop.example/": { body: html("Home", "Welcome to the shop, open every day of the week.") },
+      },
+    });
+    const w = crawlWorld(net.deps);
+    const src = website(w.db);
+    await w.runner.run(src.id);
+    const calls = (w.prisma.$transaction as jest.Mock).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c[1]).toEqual({ timeout: APPLY_TX_TIMEOUT_MS, maxWait: APPLY_TX_MAX_WAIT_MS });
+    expect(APPLY_TX_TIMEOUT_MS).toBeGreaterThan(5000);
   });
 
   it("failed source emits knowledge_source_failed", async () => {
