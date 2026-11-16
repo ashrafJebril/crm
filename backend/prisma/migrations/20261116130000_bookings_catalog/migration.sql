@@ -1,7 +1,8 @@
 -- SP-10 bookings catalog. Hand-written, additive and idempotent.
 -- Equal to `prisma migrate diff --from-schema-datamodel <9b2a29d schema>
--- --to-schema-datamodel prisma/schema.prisma --script`, plus IF NOT EXISTS
--- and the duplicate_object wrappers around the foreign keys.
+-- --to-schema-datamodel prisma/schema.prisma --script`, plus IF NOT EXISTS,
+-- the duplicate_object wrappers around the foreign keys, the lock_timeout
+-- below, and one reordering: every "Appointment" statement runs last.
 -- Safe for the deployed main:
 --   * Four new tables (Service, StaffResource, StaffService, CatalogImport)
 --     that main never reads.
@@ -14,15 +15,21 @@
 --     The "Appointment_status_changed_at" trigger is untouched.
 --   * No existing column, constraint or index changes; no data is rewritten.
 --     No backfill: legacy bookings stay free-text (ruling 2).
---   * Locks: the two Appointment FKs validate all-null columns (short SHARE
---     ROW EXCLUSIVE); the three Appointment indexes block booking writes for
---     their build (seconds at our size).
+--   * Locks: `prisma migrate deploy` runs this file as one transaction. The
+--     ALTER TABLE "Appointment" takes ACCESS EXCLUSIVE on "Appointment" and
+--     holds it until commit, so READS AND WRITES on "Appointment" (the
+--     Calendar, the HJZ sweep, the agent) are blocked from that statement to
+--     the end of the migration: its three index builds and the two FK
+--     validations (all-null columns). The Appointment statements are
+--     therefore last, to keep that hold short (seconds at our size; Task 6
+--     records the row count). The new tables are created before it.
+--   * lock_timeout: if a long transaction holds "Appointment", the ALTER gives
+--     up after 5 s instead of queueing every later request behind it. The
+--     whole migration then rolls back; it is idempotent, so just re-run it.
 -- Apply with `prisma migrate deploy` only, after the user's explicit approval.
 
--- AlterTable
-ALTER TABLE "Appointment" ADD COLUMN IF NOT EXISTS "resourceId" TEXT,
-ADD COLUMN IF NOT EXISTS "serviceId" TEXT,
-ADD COLUMN IF NOT EXISTS "version" INTEGER NOT NULL DEFAULT 0;
+-- Give up instead of stalling the lock queue (review M1).
+SET lock_timeout = '5s';
 
 -- CreateTable
 CREATE TABLE IF NOT EXISTS "Service" (
@@ -121,27 +128,6 @@ CREATE INDEX IF NOT EXISTS "CatalogImport_workspaceId_createdAt_idx" ON "Catalog
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "CatalogImport_status_heartbeatAt_idx" ON "CatalogImport"("status", "heartbeatAt");
 
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Appointment_workspaceId_startAt_idx" ON "Appointment"("workspaceId", "startAt");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Appointment_workspaceId_resourceId_startAt_idx" ON "Appointment"("workspaceId", "resourceId", "startAt");
-
--- CreateIndex
-CREATE INDEX IF NOT EXISTS "Appointment_workspaceId_serviceId_idx" ON "Appointment"("workspaceId", "serviceId");
-
--- AddForeignKey
-DO $$ BEGIN
-    ALTER TABLE "Appointment" ADD CONSTRAINT "Appointment_serviceId_fkey" FOREIGN KEY ("serviceId") REFERENCES "Service"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
--- AddForeignKey
-DO $$ BEGIN
-    ALTER TABLE "Appointment" ADD CONSTRAINT "Appointment_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES "StaffResource"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
 -- AddForeignKey
 DO $$ BEGIN
     ALTER TABLE "Service" ADD CONSTRAINT "Service_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -187,5 +173,31 @@ END $$;
 -- AddForeignKey
 DO $$ BEGIN
     ALTER TABLE "CatalogImport" ADD CONSTRAINT "CatalogImport_fileMediaId_fkey" FOREIGN KEY ("fileMediaId") REFERENCES "Media"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- AlterTable
+ALTER TABLE "Appointment" ADD COLUMN IF NOT EXISTS "resourceId" TEXT,
+ADD COLUMN IF NOT EXISTS "serviceId" TEXT,
+ADD COLUMN IF NOT EXISTS "version" INTEGER NOT NULL DEFAULT 0;
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Appointment_workspaceId_startAt_idx" ON "Appointment"("workspaceId", "startAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Appointment_workspaceId_resourceId_startAt_idx" ON "Appointment"("workspaceId", "resourceId", "startAt");
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Appointment_workspaceId_serviceId_idx" ON "Appointment"("workspaceId", "serviceId");
+
+-- AddForeignKey
+DO $$ BEGIN
+    ALTER TABLE "Appointment" ADD CONSTRAINT "Appointment_serviceId_fkey" FOREIGN KEY ("serviceId") REFERENCES "Service"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- AddForeignKey
+DO $$ BEGIN
+    ALTER TABLE "Appointment" ADD CONSTRAINT "Appointment_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES "StaffResource"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;

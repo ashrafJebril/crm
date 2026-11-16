@@ -25,6 +25,7 @@ describe("MCP server HTTP transport", () => {
       appointments as unknown as AppointmentsService,
       contacts as unknown as ContactsService,
       media as unknown as MediaService,
+      {} as never, // SP-10: BookingsService (no booking-catalog tool is called here)
     );
     server = http.createServer(async (req, res) => {
       const mcp = new MCPServer({ name: "tkana-crm", version: "1.0.0", tools: factory.build(workspaceId) });
@@ -64,13 +65,14 @@ describe("MCP server HTTP transport", () => {
     server?.close();
   });
 
-  it("mcp tools list includes list_photos: all ten tools and no delete tool", async () => {
+  it("mcp tools list includes list_photos and the SP-10 catalog tools: all twelve tools and no delete tool", async () => {
     await startFor("ws1");
     const { result } = await call("tools/list", {});
     const names = (result?.tools ?? []).map((t) => t.name).sort();
     expect(names).toEqual([
-      "cancel_appointment", "create_appointment", "create_contact", "get_appointment",
-      "get_contact", "list_appointments", "list_photos", "search_contacts", "update_appointment", "update_contact",
+      "cancel_appointment", "create_appointment", "create_contact", "find_slots", "get_appointment",
+      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "update_appointment",
+      "update_contact",
     ]);
     expect(names.some((n) => n.includes("delete"))).toBe(false);
   });

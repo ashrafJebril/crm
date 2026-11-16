@@ -46,6 +46,7 @@ import { PermissionsModule } from "./permissions/permissions.module";
 import { RolesModule } from "./roles/roles.module";
 import { ServicesModule } from "./services/services.module";
 import { StaffModule } from "./staff/staff.module";
+import { BookingsModule } from "./bookings/bookings.module";
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { StaffModule } from "./staff/staff.module";
     // SP-10: the bookings catalog.
     ServicesModule,
     StaffModule,
+    BookingsModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,

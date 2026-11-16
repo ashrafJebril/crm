@@ -135,9 +135,20 @@ describe("validateSchedule rejects malformed schedules", () => {
     ["from == to", { sat: [{ from: "10:00", to: "10:00" }] }, { day: "sat", index: 0, reason: "from_not_before_to" }],
     ["from > to (overnight)", { sat: [{ from: "22:00", to: "02:00" }] }, { day: "sat", index: 0, reason: "from_not_before_to" }],
     [
-      "overlapping windows",
+      // The 12:00 window (input index 0) starts inside the 09:00 one: reported by its input index.
+      "overlapping windows (unsorted input)",
       { sun: [{ from: "12:00", to: "15:00" }, { from: "09:00", to: "12:30" }] },
-      { day: "sun", index: 1, reason: "overlap" },
+      { day: "sun", index: 0, reason: "overlap" },
+    ],
+    [
+      "overlapping windows (review M3 case)",
+      { mon: [{ from: "16:00", to: "21:00" }, { from: "09:00", to: "17:00" }] },
+      { day: "mon", index: 0, reason: "overlap" },
+    ],
+    [
+      "overlapping windows (sorted input)",
+      { mon: [{ from: "08:00", to: "09:00" }, { from: "09:00", to: "12:00" }, { from: "11:00", to: "13:00" }] },
+      { day: "mon", index: 2, reason: "overlap" },
     ],
   ];
 

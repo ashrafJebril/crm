@@ -4,6 +4,7 @@ import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { canOpenRecord } from "../notifications/record-access";
 import { slaState } from "../tickets/ticket-sla";
+import { BookingsService } from "../bookings/bookings.service";
 
 export const RECORD_KINDS = ["contact", "conversation", "ticket", "booking", "campaign"] as const;
 export type RecordKind = (typeof RECORD_KINDS)[number];
@@ -271,7 +272,14 @@ export class RecordsService {
       include: { contact: { select: { id: true, name: true, phone: true } } },
     });
     if (!b) return null;
-    const staff = await this.userName(workspaceId, b.staffId);
+    // SP-10: the catalog resource, schedule fit and overlap of the booking.
+    const [staff, [annotated], resource] = await Promise.all([
+      this.userName(workspaceId, b.staffId),
+      new BookingsService(this.prisma).annotate(workspaceId, [b]),
+      b.resourceId
+        ? this.prisma.staffResource.findFirst({ where: { id: b.resourceId, workspaceId }, select: { name: true } })
+        : null,
+    ]);
     return {
       kind: "booking",
       id: b.id,
@@ -284,6 +292,9 @@ export class RecordsService {
         { key: "start", value: iso(b.startAt) },
         { key: "status", value: b.status },
         { key: "staff", value: staff },
+        { key: "resource", value: resource?.name ?? null },
+        { key: "fit", value: annotated.fit },
+        { key: "conflict", value: annotated.conflict },
       ],
       links: await this.filterLinks(workspaceId, viewer, [
         {

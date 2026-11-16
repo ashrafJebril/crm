@@ -14,6 +14,7 @@ import {
 } from "./booking-time";
 
 const NY = "America/New_York";
+const LON = "Europe/London";
 
 describe("booking-time", () => {
   describe("dst day has correct slots", () => {
@@ -31,6 +32,45 @@ describe("booking-time", () => {
       expect(instantOf("2026-11-01", 9 * 60, NY).toISOString()).toBe("2026-11-01T14:00:00.000Z");
       const { start, end } = localDayRange("2026-11-01", NY);
       expect((end.getTime() - start.getTime()) / 3_600_000).toBe(25);
+    });
+
+    it("a wall time inside the spring-forward gap resolves to after the gap, west and east of UTC (review I1)", () => {
+      // New York 2026-03-08: 02:00-02:59 never happens (EST → EDT).
+      expect(instantOf("2026-03-08", 2 * 60, NY).toISOString()).toBe("2026-03-08T07:00:00.000Z"); // 03:00 EDT
+      expect(instantOf("2026-03-08", 2 * 60 + 30, NY).toISOString()).toBe("2026-03-08T07:30:00.000Z"); // 03:30 EDT
+      expect(wallClock(instantOf("2026-03-08", 2 * 60 + 30, NY), NY).minutes).toBe(3 * 60 + 30);
+      // The minutes either side of the gap are exact.
+      expect(instantOf("2026-03-08", 60 + 59, NY).toISOString()).toBe("2026-03-08T06:59:00.000Z"); // 01:59 EST
+      expect(instantOf("2026-03-08", 3 * 60, NY).toISOString()).toBe("2026-03-08T07:00:00.000Z"); // 03:00 EDT
+      // London 2026-03-29: 01:00-01:59 never happens (GMT → BST).
+      expect(instantOf("2026-03-29", 60, LON).toISOString()).toBe("2026-03-29T01:00:00.000Z"); // 02:00 BST
+      expect(instantOf("2026-03-29", 90, LON).toISOString()).toBe("2026-03-29T01:30:00.000Z"); // 02:30 BST
+      expect(instantOf("2026-03-29", 59, LON).toISOString()).toBe("2026-03-29T00:59:00.000Z"); // 00:59 GMT
+    });
+
+    it("a wall time in the fall-back overlap resolves to its first occurrence (New York and London)", () => {
+      // New York 2026-11-01: 01:00-01:59 happens twice (EDT, then EST).
+      expect(instantOf("2026-11-01", 90, NY).toISOString()).toBe("2026-11-01T05:30:00.000Z"); // 01:30 EDT
+      expect(instantOf("2026-11-01", 2 * 60, NY).toISOString()).toBe("2026-11-01T07:00:00.000Z"); // 02:00 EST
+      // London 2026-10-25: 01:00-01:59 happens twice (BST, then GMT).
+      expect(instantOf("2026-10-25", 90, LON).toISOString()).toBe("2026-10-25T00:30:00.000Z"); // 01:30 BST
+      expect(instantOf("2026-10-25", 2 * 60, LON).toISOString()).toBe("2026-10-25T02:00:00.000Z"); // 02:00 GMT
+    });
+
+    it("every 15-minute step of the spring-forward days reads back, or (in the gap) lands an hour later", () => {
+      for (const [zone, spring, gapFrom, gapTo] of [
+        [NY, "2026-03-08", 120, 180],
+        [LON, "2026-03-29", 60, 120],
+      ] as const) {
+        for (let min = 0; min < 1440; min += 15) {
+          const w = wallClock(instantOf(spring, min, zone), zone);
+          expect({ zone, min, w }).toEqual({
+            zone,
+            min,
+            w: { dateISO: spring, minutes: min >= gapFrom && min < gapTo ? min + 60 : min, weekday: "sun" },
+          });
+        }
+      }
     });
 
     it("wallClock inverts instantOf on both DST days", () => {

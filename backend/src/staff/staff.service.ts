@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { Prisma, type StaffResource } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { bookingError } from "../bookings/booking-errors";
-import { lockResource } from "../bookings/booking-locks";
+import { lockResource, lockService } from "../bookings/booking-locks";
 import { BLOCKING_STATUSES, parseColor, parseIds, parseName, parseOptionalName, parseRole } from "../bookings/catalog-fields";
 import { nameMatches } from "../bookings/names";
 import { isConfigured, readSchedule, validateSchedule } from "../bookings/schedule";
@@ -43,9 +43,10 @@ export class StaffService {
       userId: await this.memberOrNull(workspaceId, dto.userId, null),
     };
     const serviceIds = dto.serviceIds === undefined ? [] : parseIds(dto.serviceIds, "serviceIds");
-    if (serviceIds.length) await this.assertServices(workspaceId, serviceIds);
     const row = await this.uniqueMember(workspaceId, data.userId, () =>
       this.prisma.$transaction(async (tx) => {
+        // Review M4: the linked services are checked under their locks.
+        await this.lockAndAssertServices(tx, workspaceId, serviceIds);
         const created = await tx.staffResource.create({ data });
         if (serviceIds.length) {
           await tx.staffService.createMany({
@@ -86,8 +87,15 @@ export class StaffService {
   async setServices(workspaceId: string, id: string, serviceIdsIn: unknown): Promise<StaffResourceDto> {
     await this.find(workspaceId, id);
     const serviceIds = parseIds(serviceIdsIn, "serviceIds");
-    await this.assertServices(workspaceId, serviceIds);
     await this.prisma.$transaction(async (tx) => {
+      // Review M4: lock order services → resource (booking-locks.ts), then
+      // re-check inside the transaction (concurrent delete → 404, archive →
+      // the archived key, never a 500).
+      await this.lockAndAssertServices(tx, workspaceId, serviceIds);
+      await lockResource(tx, id);
+      if (!(await tx.staffResource.findFirst({ where: { id, workspaceId }, select: { id: true } }))) {
+        throw bookingError("bookings.resource_not_found");
+      }
       await tx.staffService.deleteMany({ where: { resourceId: id, workspaceId } });
       if (serviceIds.length) {
         await tx.staffService.createMany({
@@ -99,12 +107,23 @@ export class StaffService {
     return this.get(workspaceId, id);
   }
 
+  /**
+   * `bookingCount` (any status) is FK references only: it alone decides
+   * archive vs delete. `upcomingCount` is for display and also counts the
+   * member's upcoming legacy bookings (staffId only, no resource), which block
+   * this resource's slots (rulings 2 and 4; review M2).
+   */
   async deletePreview(workspaceId: string, id: string): Promise<{ bookingCount: number; upcomingCount: number; serviceCount: number }> {
-    await this.find(workspaceId, id);
+    const row = await this.find(workspaceId, id);
     const [bookingCount, upcomingCount, serviceCount] = await Promise.all([
       this.prisma.appointment.count({ where: { workspaceId, resourceId: id } }),
       this.prisma.appointment.count({
-        where: { workspaceId, resourceId: id, status: { in: [...BLOCKING_STATUSES] }, startAt: { gte: new Date() } },
+        where: {
+          workspaceId,
+          status: { in: [...BLOCKING_STATUSES] },
+          startAt: { gte: new Date() },
+          OR: [{ resourceId: id }, ...(row.userId ? [{ resourceId: null, staffId: row.userId }] : [])],
+        },
       }),
       this.prisma.staffService.count({ where: { workspaceId, resourceId: id } }),
     ]);
@@ -190,9 +209,11 @@ export class StaffService {
     }
   }
 
-  private async assertServices(workspaceId: string, ids: string[]) {
+  /** Locks each service (sorted), then: every id must be a non-archived service of this workspace. */
+  private async lockAndAssertServices(tx: Pick<PrismaService, "service" | "$executeRaw">, workspaceId: string, ids: string[]) {
     if (!ids.length) return;
-    const found = await this.prisma.service.findMany({
+    for (const sid of [...ids].sort()) await lockService(tx, sid);
+    const found = await tx.service.findMany({
       where: { workspaceId, id: { in: ids } },
       select: { id: true, archivedAt: true },
     });
@@ -204,7 +225,7 @@ export class StaffService {
     if (!rows.length) return [];
     const ids = rows.map((r) => r.id);
     const userIds = [...new Set(rows.map((r) => r.userId).filter((u): u is string => !!u))];
-    const [links, upcoming, users] = await Promise.all([
+    const [links, upcoming, legacy, users] = await Promise.all([
       this.prisma.staffService.findMany({
         where: { workspaceId, resourceId: { in: ids } },
         select: { serviceId: true, resourceId: true },
@@ -220,11 +241,26 @@ export class StaffService {
         },
         _count: { _all: true },
       }),
+      // Review M2 (display only): the members' upcoming legacy bookings.
+      userIds.length
+        ? this.prisma.appointment.groupBy({
+            by: ["staffId"],
+            where: {
+              workspaceId,
+              resourceId: null,
+              staffId: { in: userIds },
+              status: { in: [...BLOCKING_STATUSES] },
+              startAt: { gte: new Date() },
+            },
+            _count: { _all: true },
+          })
+        : Promise.resolve([] as { staffId: string | null; _count: { _all: number } }[]),
       userIds.length
         ? this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
         : Promise.resolve([] as { id: string; name: string }[]),
     ]);
     const counts = new Map(upcoming.map((g) => [g.resourceId, g._count._all]));
+    const legacyCounts = new Map(legacy.map((g) => [g.staffId, g._count._all]));
     const byUser = new Map(users.map((u) => [u.id, u]));
     return rows.map((r) => {
       const schedule = readSchedule(r.schedule);
@@ -243,7 +279,7 @@ export class StaffService {
         archivedAt: r.archivedAt,
         version: r.version,
         serviceIds: links.filter((l) => l.resourceId === r.id).map((l) => l.serviceId),
-        upcomingCount: counts.get(r.id) ?? 0,
+        upcomingCount: (counts.get(r.id) ?? 0) + (r.userId ? legacyCounts.get(r.userId) ?? 0 : 0),
       };
     });
   }

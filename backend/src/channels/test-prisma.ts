@@ -431,6 +431,12 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
     addedBy: ["user", "addedById", "one"],
   },
   message: { conversation: ["conversation", "conversationId", "one"] },
+  // SP-10: the booking's contact (so a nested select is honoured) and catalog links.
+  appointment: {
+    contact: ["contact", "contactId", "one"],
+    serviceRef: ["service", "serviceId", "one"],
+    resource: ["staffResource", "resourceId", "one"],
+  },
 };
 /** SP-09: to-one relations `matches` follows as filters. */
 const RELATION_FILTERS: Record<string, string[]> = {
