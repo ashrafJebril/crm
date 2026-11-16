@@ -143,6 +143,23 @@ async function postBlob(path: string, body?: unknown): Promise<{ blob: Blob; fil
   return { blob: await res.blob(), filename: /filename="?([^";]+)"?/i.exec(cd)?.[1] ?? null };
 }
 
+// GET whose successful response is a file (e.g. an .xlsx template): same
+// token, 401 and error handling as request(), returned as a Blob with the
+// server's filename.
+async function getBlob(path: string): Promise<{ blob: Blob; filename: string | null }> {
+  const headers: Record<string, string> = {};
+  const tok = tokenStore.get();
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  const res = await fetch(`${BASE}${path}`, { method: "GET", headers });
+  if (res.status === 401 && tok) onUnauthorized?.();
+  if (!res.ok) {
+    const raw = await res.text();
+    throw errorFromBody(raw ? safeJson(raw) : undefined, res.status);
+  }
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  return { blob: await res.blob(), filename: /filename="?([^";]+)"?/i.exec(cd)?.[1] ?? null };
+}
+
 function safeJson(s: string): unknown {
   try { return JSON.parse(s); } catch { return s; }
 }
@@ -251,6 +268,7 @@ export const api = {
     request<T>(path, { method: "POST", body, localPaymentError: o?.localPaymentError }),
   postForm:   <T,>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
   postBlob:   (path: string, body?: unknown) => postBlob(path, body),
+  getBlob:    (path: string) => getBlob(path),
   patch:      <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
   put:        <T,>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
   delete:     <T,>(path: string) => request<T>(path, { method: "DELETE" }),

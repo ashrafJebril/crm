@@ -37,6 +37,13 @@ import type {
   Contact,
   TeamMember,
 } from "@/lib/types";
+import { usePermissions } from "@/auth/usePermissions";
+import { useAuth } from "@/auth/context";
+import { ServicesTab } from "./calendar/ServicesTab";
+import { StaffTab } from "./calendar/StaffTab";
+import { useCatalogParams } from "./calendar/useCatalogParams";
+import type { CalendarTab } from "./calendar/catalogParams";
+import { workspaceTz } from "./calendar/bookingTime";
 
 interface TeamApiMember extends TeamMember {
   status?: "online" | "away" | "offline";
@@ -2029,5 +2036,67 @@ function CalendarImpl() {
   );
 }
 
-const Calendar = memo(CalendarImpl);
+/* ─────────────────────────────────────────────────────────────────────── */
+/* SP-10: Schedule | Services | Staff tabs (ruling 11)                      */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The calendar route with its catalog tabs. The tab, search, layout and
+ * archived filter live in the hash (`#/calendar?tab=services&q=…`). Services
+ * and Staff are visible with bookings.view; their writes and the import
+ * wizard need bookings.manage. All times are in the workspace timezone.
+ */
+function CalendarScreen() {
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
+  const { can } = usePermissions();
+  const { activeWorkspace } = useAuth();
+  const [params, setParams] = useCatalogParams();
+  const canView = can("bookings.view");
+  const canManage = can("bookings.manage");
+  const tz = workspaceTz(activeWorkspace?.timezone);
+  const tab: CalendarTab = canView ? params.tab : "schedule";
+  const tabs: [CalendarTab, string][] = [
+    ["schedule", tx("Schedule", "المواعيد")],
+    ["services", tx("Services", "الخدمات")],
+    ["staff", tx("Staff", "الموظفون")],
+  ];
+  return (
+    <div>
+      {canView && (
+        <div className="tabs" role="tablist" aria-label={tx("Calendar sections", "أقسام التقويم")} style={{ padding: "12px 24px 0" }}>
+          {tabs.map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              className={`tab ${tab === id ? "active" : ""}`.trim()}
+              onClick={() => setParams({ tab: id })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {tab === "schedule" && <CalendarImpl />}
+      {tab === "services" && (
+        <ServicesTab tx={tx} lang={t.lang} tz={tz} canManage={canManage} params={params} setParams={setParams} />
+      )}
+      {tab === "staff" && (
+        <StaffTab tx={tx} lang={t.lang} tz={tz} canManage={canManage} params={params} setParams={setParams} />
+      )}
+      <style>{`
+        .cal-chip { display: inline-flex; align-items: center; gap: 5px;
+          height: 28px; padding: 0 12px; border-radius: 999px;
+          border: 1px solid var(--line-soft); background: var(--bg-1);
+          color: var(--ink-2); font-size: 12px; cursor: pointer; }
+        .cal-chip:hover { color: var(--ink); border-color: var(--line); }
+        .cal-chip.active { background: var(--accent-soft); color: var(--accent);
+          border-color: var(--accent-ring); }
+      `}</style>
+    </div>
+  );
+}
+
+const Calendar = memo(CalendarScreen);
 export default Calendar;
