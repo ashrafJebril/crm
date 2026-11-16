@@ -4,8 +4,8 @@
  * `support-metrics.db.spec.ts` pins the SQL against the same expectations.
  */
 import { CH, EMPTY_WORLD, INSIGHTS_WORLD, RANGE, U } from "./__fixtures__/insights-world";
-import { ASSIGNED, EMPTY, OWNER, OWNER_JEDDAH_HEADLINE, SUPPORT_METRIC_TESTS } from "./insights-expected";
-import { supportOracle } from "./insights-oracle";
+import { ASSIGNED, ATTRIBUTION_SINCE, EMPTY, OWNER, OWNER_JEDDAH_HEADLINE, SUPPORT_METRIC_TESTS } from "./insights-expected";
+import { attributionSinceOracle, supportOracle } from "./insights-oracle";
 import { parseRange } from "./insights-range";
 
 const NOW = new Date("2026-11-10T09:00:00Z");
@@ -53,5 +53,21 @@ describe("support metrics (oracle over the fixture world)", () => {
     const jeddah = supportOracle(INSIGHTS_WORLD, { range, scope: {}, channelId: CH.b });
     expect(jeddah.headline).toEqual(OWNER_JEDDAH_HEADLINE);
     expect(jeddah.byNumber.map((r) => r.channelId)).toEqual([CH.b]);
+  });
+});
+
+describe("attribution date (oracle)", () => {
+  it("attribution begins when the sender migration finished, as a local day", () => {
+    expect(attributionSinceOracle(INSIGHTS_WORLD)).toBe(ATTRIBUTION_SINCE.world);
+  });
+
+  it("a workspace created after the migration uses its own creation day", () => {
+    const newer = { ...INSIGHTS_WORLD, workspace: { ...INSIGHTS_WORLD.workspace, createdAt: "2026-11-03T21:30:00" } };
+    expect(attributionSinceOracle(newer)).toBe(ATTRIBUTION_SINCE.newerWorkspace);
+  });
+
+  it("a missing migration row is null", () => {
+    expect(attributionSinceOracle({ ...INSIGHTS_WORLD, migrationAppliedAt: null })).toBe(ATTRIBUTION_SINCE.noMigration);
+    expect(attributionSinceOracle(EMPTY_WORLD)).toBeNull();
   });
 });

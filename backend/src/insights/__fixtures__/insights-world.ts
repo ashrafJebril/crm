@@ -145,7 +145,9 @@ export interface WorldFollowUp {
 }
 
 export interface InsightsWorld {
-  workspace: { name: string; timezone: string; lang: "ar" | "en" };
+  workspace: { name: string; timezone: string; lang: "ar" | "en"; /** UTC ISO without Z. */ createdAt?: string };
+  /** When the insights_home migration finished (UTC ISO without Z); null = no row. */
+  migrationAppliedAt?: string | null;
   roles: WorldRole[];
   users: WorldUser[];
   channels: WorldChannel[];
@@ -488,7 +490,9 @@ const SALES_FOLLOW_UPS: WorldFollowUp[] = [
 ];
 
 export const INSIGHTS_WORLD: InsightsWorld = {
-  workspace: { name: "Insights world", timezone: "Asia/Riyadh", lang: "ar" },
+  workspace: { name: "Insights world", timezone: "Asia/Riyadh", lang: "ar", createdAt: "2026-09-01T08:00:00" },
+  // 22:30Z on the 19th is 01:30 on the 20th in Riyadh: the local day counts.
+  migrationAppliedAt: "2026-10-19T22:30:00",
   roles: [
     {
       id: "role-assigned",

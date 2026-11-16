@@ -29,6 +29,7 @@ import { localDayBounds } from "../activities/buckets";
 import { assembleSalesHeadline, salesSections } from "./sales-sections";
 import {
   aiResolutionSql,
+  attributionSinceSql,
   byNumberSql,
   conversationsSql,
   firstResponseSql,
@@ -250,7 +251,7 @@ export class InsightsService {
     // The headline's six statements each run in their own one-statement
     // transaction (and budget); the headline is unavailable if any of them is.
     const h = sections.headlineParts;
-    const [conv, ai, fr, handling, saved, tickets, resolutionMix, peaks, byNumber, topicFriction, team] = await Promise.all([
+    const [conv, ai, fr, handling, saved, tickets, resolutionMix, peaks, byNumber, topicFriction, team, attribution] = await Promise.all([
       sec("support.headline.conversations", h.conversations),
       sec("support.headline.aiResolution", h.aiResolution),
       sec("support.headline.firstResponse", h.firstResponse),
@@ -262,6 +263,7 @@ export class InsightsService {
       sec("support.byNumber", sections.byNumber),
       sec("support.topicFriction", sections.topicFriction),
       sec("support.team", sections.team, 2),
+      sec("support.attributionSince", sections.attributionSince),
     ]);
     const headline: Section<SupportHeadline> =
       conv.status === "ok" &&
@@ -281,6 +283,8 @@ export class InsightsService {
       byNumber,
       topicFriction,
       team,
+      // Only a date for the Team note: an unavailable lookup reads as "none yet".
+      attributionSince: attribution.status === "ok" ? attribution.data : null,
     };
   }
 
@@ -424,6 +428,8 @@ export function supportSections(ws: string, range: InsightsRange, scope: Convers
       }
       return teamRows(members, totals);
     },
+    attributionSince: async (tx: SectionTx): Promise<string | null> =>
+      (await q<{ since: string | null }>(tx, attributionSinceSql(ws, range.tz)))[0]?.since ?? null,
   };
 }
 

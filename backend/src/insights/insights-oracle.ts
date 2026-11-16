@@ -81,6 +81,17 @@ function localDowHour(d: Date, tz: string): { dow: number; hour: number } {
   return { dow: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(wd), hour: Number(parts.find((p) => p.type === "hour")?.value) };
 }
 
+/**
+ * `attributionSince`: the local day of GREATEST(migration finished, workspace
+ * created); null without a migration row. Workspace-wide, range-free.
+ */
+export function attributionSinceOracle(world: Pick<InsightsWorld, "workspace" | "migrationAppliedAt">): string | null {
+  if (!world.migrationAppliedAt) return null;
+  const applied = new Date(`${world.migrationAppliedAt}Z`).getTime();
+  const created = world.workspace.createdAt ? new Date(`${world.workspace.createdAt}Z`).getTime() : -Infinity;
+  return localDate(new Date(Math.max(applied, created)), world.workspace.timezone);
+}
+
 export function supportOracle(world: InsightsWorld, opts: OracleOpts): SupportData {
   const { range, scope, channelId } = opts;
   const F = range.fromUtc.getTime();

@@ -1,10 +1,11 @@
 import { Prisma } from "@prisma/client";
 import * as sql from "./support-metrics.sql";
 import { parseRange } from "./insights-range";
+import { INSIGHTS_HOME_MIGRATION } from "./insights-constants";
 
 /** Structural checks on every support builder (the DB spec runs them for real). */
 const range = parseRange("2026-11-01", "2026-11-07", "Asia/Riyadh", new Date("2026-11-10T09:00:00Z"));
-const builders = Object.entries(sql).filter(([name]) => name.endsWith("Sql") && !["utcTimestampSql", "inRangeSql", "teamMembersSql", "medianSecondsSql"].includes(name)) as [
+const builders = Object.entries(sql).filter(([name]) => name.endsWith("Sql") && !["utcTimestampSql", "inRangeSql", "teamMembersSql", "medianSecondsSql", "attributionSinceSql"].includes(name)) as [
   string,
   (ws: string, r: typeof range, scope: object, opts: { channelId: string | null }) => Prisma.Sql,
 ][];
@@ -58,5 +59,22 @@ describe("support metric SQL builders", () => {
     expect(text).toContain(`FILTER (WHERE x."humanAt" IS NOT NULL)`);
     expect(text).toContain(`n."from" = 'human'`);
     expect(text).toContain(`FILTER (WHERE x."replyFrom" IS NULL)`);
+  });
+
+  it("the attribution date reads the migration row and the workspace, never Message", () => {
+    const s = sql.attributionSinceSql("ws1", "Asia/Riyadh");
+    const text = s.strings.join("?");
+    expect(s.strings[0]).toMatch(/^\s*\/\* insights:support\.attributionSince \*\//);
+    expect(text).toContain(`FROM "_prisma_migrations" pm`);
+    expect(text).toContain(`pm."migration_name" = ?`);
+    expect(text).toContain(`pm."finished_at" IS NOT NULL AND pm."rolled_back_at" IS NULL`);
+    expect(text).toContain(`GREATEST(mig."at", w."createdAt")`);
+    expect(text).toContain(`CASE WHEN mig."at" IS NULL THEN NULL`);
+    expect(text).toContain("'YYYY-MM-DD'");
+    expect(text).not.toContain(`"Message"`);
+    // The migration name is bound, never spliced into the text.
+    expect(text).not.toContain(INSIGHTS_HOME_MIGRATION);
+    expect(s.values).toEqual(expect.arrayContaining(["ws1", "Asia/Riyadh", INSIGHTS_HOME_MIGRATION]));
+    expect(sql.attributionSinceSql("ws1", "Asia/Riyadh", "x_missing").values).toContain("x_missing");
   });
 });

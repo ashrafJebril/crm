@@ -1,9 +1,10 @@
 import { createHash } from "crypto";
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
+import { INSIGHTS_HOME_MIGRATION } from "./insights-constants";
 
 const MIGRATIONS = join(__dirname, "..", "..", "prisma", "migrations");
-const FOLDER = "20261116140000_insights_home";
+const FOLDER = INSIGHTS_HOME_MIGRATION;
 /** sha256 of earlier files (LF, as committed). Never edit them. SP-09's is
  *  applied; SP-10's is written and reviewed (unapplied when this was written). */
 const PINNED: Record<string, string> = {

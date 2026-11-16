@@ -197,6 +197,20 @@ export const EMPTY: SupportExpectation = {
   team: [],
 };
 
+/**
+ * `attributionSince` for the fixture worlds (oracle runner; the DB runner
+ * checks the SQL against the real migration row, see the DB spec).
+ */
+export const ATTRIBUTION_SINCE = {
+  // Migration finished 2026-10-19T22:30Z = 01:30 on the 20th in Riyadh; the
+  // workspace (2026-09-01) is older, so the migration wins.
+  world: "2026-10-20",
+  // A workspace created after the migration: its own day wins (2026-11-03T21:30Z = 00:30 on the 4th).
+  newerWorkspace: "2026-11-04",
+  // No migration row.
+  noMigration: null,
+} as const;
+
 /** Named metric tests → the part of the expectation each one asserts. */
 export const SUPPORT_METRIC_TESTS: Record<string, (e: SupportExpectation) => unknown> = {
   "conversations counts distinct conversations with a customer message in range": (e) => e.headline.conversations,

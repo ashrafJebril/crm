@@ -103,6 +103,14 @@ export interface SupportInsights {
   byNumber: Section<ByNumberRow[]>;
   topicFriction: Section<TopicFrictionRow[]>;
   team: Section<TeamRow[]>;
+  /**
+   * The workspace-local day (`YYYY-MM-DD`) sender recording began for this
+   * workspace: GREATEST(the insights_home migration's `finished_at`,
+   * `Workspace.createdAt`). Earlier staff replies are "Unattributed". null
+   * when the migration row is missing or unfinished, or the lookup was
+   * unavailable.
+   */
+  attributionSince: string | null;
 }
 
 /** Task 2's shape, declared here so the contract is in one file. */
