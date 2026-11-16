@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Tx } from "@/lib/tx";
 import { IconMore, IconPhone } from "@/icons";
+import { useAuth } from "@/auth/context";
 
 interface PhonePreviewProps {
   body: ReactNode;
@@ -19,6 +20,9 @@ interface PhonePreviewProps {
  * Sticky so it stays in view while the form scrolls.
  */
 export function PhonePreview({ body, buttons = [], tx, dir, caption, footer }: PhonePreviewProps) {
+  // The sender the customer sees: this workspace (never a hardcoded brand).
+  const { activeWorkspace } = useAuth();
+  const sender = activeWorkspace?.name?.trim() || tx("Your business", "نشاطك التجاري");
   return (
     <div style={{ position: "sticky", top: 12, alignSelf: "start", display: "grid", gap: 14 }}>
       <div>
@@ -55,8 +59,10 @@ export function PhonePreview({ body, buttons = [], tx, dir, caption, footer }: P
             }}
           >
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>Samemha</div>
-              <div style={{ fontSize: 10, color: "var(--ok)" }}>● online</div>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>
+                <bdi>{sender}</bdi>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--ok)" }}>● {tx("online", "متصل")}</div>
             </div>
             <IconPhone w={14} className="muted" />
             <IconMore w={14} className="muted" />

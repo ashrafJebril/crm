@@ -11,6 +11,7 @@ import { notificationText } from "@/lib/notificationText";
 import { notificationHref } from "@/lib/recordLink";
 import { NotificationsList } from "./NotificationsList";
 import { NotificationPrefsDialog } from "./NotificationPrefsDialog";
+import { getHashParam, setHashParam } from "@/lib/hashState";
 import {
   armNotificationSound,
   isNotificationSoundOn,
@@ -182,6 +183,17 @@ export function NotificationsBell(): React.ReactElement {
   const [storedLoading, setStoredLoading] = useState(false);
   const [storedError, setStoredError] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
+  // SP-11: the module settings hub links here with `notifPrefs=1` in the hash.
+  useEffect(() => {
+    const check = () => {
+      if (getHashParam(window.location.hash, "notifPrefs") === null) return;
+      setPrefsOpen(true);
+      window.history.replaceState(null, "", setHashParam(window.location.hash, "notifPrefs", null));
+    };
+    check();
+    window.addEventListener("hashchange", check);
+    return () => window.removeEventListener("hashchange", check);
+  }, []);
   const storedIds = useRef<Set<string>>(new Set());
   const storedRef = useRef<StoredNotification[]>([]);
   storedRef.current = stored;

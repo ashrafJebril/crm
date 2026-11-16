@@ -9,7 +9,7 @@ export const DAY1_STEPS: { key: Day1StepKey; href: string; permission: string }[
   { key: "connect_channel", href: "#/channels", permission: "channels.create" },
   { key: "add_knowledge", href: "#/settings?tab=aiKnowledge", permission: "knowledge.create" },
   { key: "invite_team", href: "#/settings?tab=members", permission: "members.create" },
-  { key: "set_pipeline", href: "#/settings?tab=pipelines", permission: "pipelines.update" },
+  { key: "set_pipeline", href: "#/settings?tab=pipelines", permission: "pipelines.manage" },
   { key: "add_services", href: "#/calendar?tab=services", permission: "bookings.manage" },
   { key: "first_reply", href: "#/inbox", permission: "conversations.create" },
 ];

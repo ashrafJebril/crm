@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useRoute } from "@/router";
@@ -20,6 +20,12 @@ import {
   PipelineSkeleton,
 } from "./dashboard/DashboardSkeletons";
 import { CHANNEL_LABEL } from "@/lib/types";
+import { useAuth } from "@/auth/context";
+import type { HomeDto } from "@/lib/homeTypes";
+import { firstNameOf, greeting, homeSubtitle } from "./dashboard/greeting";
+import { showDay1 } from "./home/homeModel";
+import { WorkingHome } from "./home/WorkingHome";
+import { Day1Home } from "./home/Day1Home";
 import type {
   Campaign,
   Conversation,
@@ -165,10 +171,24 @@ function StatTile({ label, value, unit, delta, sub, spark, invert, loading }: St
   );
 }
 
+/** How often the greeting is recomputed (morning → afternoon → evening). */
+const GREETING_REFRESH_MS = 60_000;
+
 function DashboardImpl() {
   const { t } = useTweaks();
   const [, setRoute] = useRoute();
   const tx = makeTx(t.lang);
+  // SP-11: the working home on top (or the Day-1 home while it shows).
+  const { user, activeWorkspace } = useAuth();
+  const homeQ = useFetch<HomeDto>("/home");
+  const home = homeQ.data;
+  const workspaceTz = home?.tz ?? activeWorkspace?.timezone ?? null;
+  // Re-render the greeting every minute so it follows the part of the day.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), GREETING_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, []);
   const {
     data: summary,
     loading: summaryLoading,
@@ -237,11 +257,8 @@ function DashboardImpl() {
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
       <PageHeader
-        title={tx("Welcome back, Yara", "أهلاً يا يارا")}
-        subtitle={tx(
-          "Here's how Samemha's WhatsApp ran today",
-          "إليك ما حدث على واتساب اليوم",
-        )}
+        title={greeting(now, workspaceTz, firstNameOf(user?.name), t.lang)}
+        subtitle={homeSubtitle(activeWorkspace?.name, t.lang)}
         actions={
           <>
             <button className="btn">
@@ -258,6 +275,13 @@ function DashboardImpl() {
       />
 
       <div style={{ padding: "0 24px 24px", display: "grid", gap: 16 }}>
+        {home && showDay1(home) ? (
+          <Day1Home steps={home.day1.steps} tx={tx} onDismissed={() => void homeQ.refetch()} />
+        ) : (
+          <WorkingHome home={home} loading={homeQ.loading} tx={tx} lang={t.lang} />
+        )}
+
+        <h2 style={{ fontSize: 15, margin: "8px 0 0" }}>{tx("Overview", "نظرة عامة")}</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
           <StatTile
             label={tx("Conversations", "المحادثات")}

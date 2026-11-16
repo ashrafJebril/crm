@@ -11,10 +11,11 @@ import { AiKnowledgeTab } from "./settings/AiKnowledgeTab";
 import { ProfileTab } from "./settings/ProfileTab";
 import { PipelinesTab } from "./settings/PipelinesTab";
 import { SavedRepliesTab } from "./settings/SavedRepliesTab";
+import { ModulesTab } from "./settings/ModulesTab";
 
-type Tab = "workspace" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "savedReplies" | "profile";
+type Tab = "workspace" | "modules" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "savedReplies" | "profile";
 
-const TAB_IDS: readonly Tab[] = ["workspace", "members", "integrations", "aiKnowledge", "pipelines", "savedReplies", "profile"];
+const TAB_IDS: readonly Tab[] = ["workspace", "modules", "members", "integrations", "aiKnowledge", "pipelines", "savedReplies", "profile"];
 
 /**
  * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
@@ -65,6 +66,8 @@ function SettingsImpl() {
 
   const tabs: Array<{ id: Tab; label: string; ar: string }> = [
     { id: "workspace", label: "Workspace", ar: "مساحة العمل" },
+    // SP-11: one place listing every module the member can configure.
+    { id: "modules", label: "Modules", ar: "الوحدات" },
     { id: "members", label: "Members", ar: "الأعضاء" },
     { id: "integrations", label: "Integrations", ar: "التكاملات" },
     { id: "aiKnowledge", label: "AI Knowledge", ar: "معرفة الذكاء" },
@@ -103,6 +106,7 @@ function SettingsImpl() {
       <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
         <div style={{ maxWidth: tab === "pipelines" ? 860 : 720, margin: "0 auto" }}>
           {tab === "workspace" && <WorkspaceTab />}
+          {tab === "modules" && <ModulesTab />}
           {tab === "members" && <MembersTab />}
           {tab === "integrations" && <IntegrationsTab />}
           {tab === "aiKnowledge" && <AiKnowledgeTab />}
