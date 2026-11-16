@@ -91,7 +91,8 @@ describe("htmlToText is linear (review I1)", () => {
       <BODY><HEADER>Top</HEADER><Script type="x">var a = "<p>no</p>";</SCRIPT ><svg><text>icon</text></svg>
       <table><tr><td>Cut</td><td>50</td></tr><tr><th>Shave</th></tr></table><p-x>custom</p-x><pre>a  b</pre>
       <template><p>tpl</p></template><iframe src="x"></iframe ><br/><hr><option>Opt</option><headline>keep</headline></BODY></HTML>`,
-    `<div>a<!-- one --> b <!-- two --><span>c</span></div><title>Late title</title><p>after</p><object>o</object><embed>e</embed>`,
+    `<div>a<!-- one --> b <!-- two --><span>c</span></div><title>Late title</title><p>after</p><object>o</object><embed src="x.swf"><p>tail</p>`,
+    `<p>a</p><svg viewBox="0 0 1 1"><path d="M0 0"/></svg><p>b</p><noscript>ns</noscript><object data="x"><param name="a"></object>`,
     `plain text, no tags at all & an ampersand`,
     `<p>x < y and y > z</p><a href="#">link</a><<p>>`,
   ];
@@ -100,11 +101,40 @@ describe("htmlToText is linear (review I1)", () => {
     for (const html of WELL_FORMED) expect({ html, out: htmlToText(html, 10_000) }).toEqual({ html, out: legacyHtmlToText(html, 10_000) });
   });
 
-  it("an unclosed <script>, <style>, comment or <title> drops the rest of the page", () => {
+  it("an unclosed <script>, <style> or comment drops the rest of the page (raw text: nothing visible after it)", () => {
     expect(htmlToText(`<p>Menu</p><script>evil()<p>Cut</p>`, 1000)).toBe("Menu");
     expect(htmlToText(`<p>Menu</p><style>.a{}<p>Cut</p>`, 1000)).toBe("Menu");
     expect(htmlToText(`<p>Menu</p><!-- note <p>Cut</p>`, 1000)).toBe("Menu");
-    expect(htmlToText(`<p>Menu</p><title>Shop<p>Cut</p>`, 1000)).toBe("Menu");
+  });
+
+  it("void, self-closing and unclosed optional elements keep the content after them (re-review I-A)", () => {
+    expect(htmlToText(`<p>Before</p><embed src=x.swf><p>Haircut 100 SAR</p>`, 1000)).toBe("Before\nHaircut 100 SAR");
+    expect(htmlToText(`<html><head><meta charset=utf-8><title>Salon</title><body><p>Haircut 100</p>`, 1000)).toBe("Salon\nHaircut 100");
+    expect(htmlToText(`<p>A</p><svg viewBox='0 0 1 1'/><p>Haircut 100</p>`, 1000)).toBe("A\nHaircut 100");
+    // No </head> and no <body>: only the opener goes.
+    expect(htmlToText(`<head><meta charset=utf-8><p>Haircut 100</p>`, 1000)).toBe("Haircut 100");
+    // An unclosed <head> ends at <body>; head content stays dropped.
+    expect(htmlToText(`<head><style>.a{}</style>hidden<BODY class=x><p>Cut 50</p></body>`, 1000)).toBe("Cut 50");
+    // An unclosed <title>, <noscript>, <iframe> or <object> loses only its opener.
+    expect(htmlToText(`<p>Menu</p><title>Shop<p>Cut</p>`, 1000)).toBe("Menu\nShop\nCut");
+    expect(htmlToText(`<p>Menu</p><noscript><p>Cut</p>`, 1000)).toBe("Menu\nCut");
+    expect(htmlToText(`<p>Menu</p><object data=x><p>Cut</p><iframe src=y><p>Shave</p>`, 1000)).toBe("Menu\nCut\nShave");
+    // A later closed element of the same name is still dropped whole.
+    expect(htmlToText(`<svg/><p>A</p><svg><text>icon</text></svg><p>B</p>`, 1000)).toBe("A\nB");
+  });
+
+  it.each([
+    ["<embed>"],
+    ["<svg/>"],
+    ["<head>"],
+    ["<object>"],
+    ["<noscript>x"],
+    ["<head><p>"],
+  ])("2 MB of %j (no closers) finishes quickly", (unit) => {
+    const html = unit.repeat(Math.ceil((2 * 1024 * 1024) / unit.length));
+    const t0 = Date.now();
+    htmlToText(html, 200_000);
+    expect(Date.now() - t0).toBeLessThan(500);
   });
 
   it.each([
