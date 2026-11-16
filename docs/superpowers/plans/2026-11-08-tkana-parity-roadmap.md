@@ -245,7 +245,7 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 #### SP-16 Smart audiences. Size M
 - [x] Detailed plan written (`docs/superpowers/plans/2026-11-15-sp16-smart-audiences.md`)
 - [x] Shipped on `feat/tkana-parity`; migration applied 2026-11-15 and live-verified against real Postgres (94 pass, plus a re-check at 89bd5f3: 4/4). R8: no campaign uses a rule audience. **Deploy:** backend before frontend; reload open tabs. **Follow-ups:**
-  - M4: counts that time out on a busy pool/transaction are labelled "too large" (waiting on the user).
+  - ~~M4: counts that time out on a busy pool/transaction are labelled "too large".~~ Fixed in 0c9f4c4.
   - A tag rename that races a create with the same name returns 500 instead of 409.
   - The first audiences list after a burst of changes can time out for the last rows (cosmetic).
 - **Gaps:** rule conditions on last active, conversation count, channel, membership of another group, created date (relative/absolute), lifecycle, not-a-lead, pipeline stage, custom fields, combined with AND/OR; an audience detail page with candidate search; import a file into an audience (through SP-03).
