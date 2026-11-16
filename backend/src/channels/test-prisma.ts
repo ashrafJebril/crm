@@ -102,6 +102,15 @@ export function matches(row: Row, where: any, db: Tables, model: string): boolea
       if (!conv || !matches(conv, inner, db, "conversation")) return false;
       continue;
     }
+    // SP-21: to-many relation filters (`knowledgeSources: { none: {} }` / `{ some: {...} }`).
+    if (RELATIONS[model]?.[k]?.[2] === "many" && cond && typeof cond === "object" && ("none" in cond || "some" in cond)) {
+      const related = relation(model, row, k, db) as Row[];
+      const target = RELATIONS[model][k][0];
+      const inner = (cond as any).none ?? (cond as any).some;
+      const hit = related.some((r) => matches(r, inner, db, target));
+      if ("none" in (cond as any) ? hit : !hit) return false;
+      continue;
+    }
     if (model === "integration" && k === "channel") {
       const linked = (db.channel ?? []).some((c) => c.integrationId === row.id);
       const wantNull = cond === null || (cond as any)?.is === null;
@@ -366,6 +375,36 @@ const DEFAULTS: Record<string, () => Row> = {
     startedAt: null,
     finishedAt: null,
   }),
+  // SP-21: knowledge (the DB defaults).
+  knowledgeSource: () => ({
+    status: "ready",
+    error: null,
+    bodyJson: null,
+    body: null,
+    question: null,
+    order: 0,
+    mediaId: null,
+    typedKind: null,
+    url: null,
+    scope: null,
+    schedule: null,
+    nextSyncAt: null,
+    lastSyncAt: null,
+    syncStartedAt: null,
+    refreshRequestedAt: null,
+    consecutiveFailures: 0,
+    lastRun: null,
+    itemCount: 0,
+    contentHash: null,
+    leaseUntil: null,
+    upstream: null,
+    publishState: "none",
+    legacyRef: null,
+    createdById: null,
+    version: 0,
+  }),
+  knowledgePage: () => ({ httpStatus: null, title: null, contentHash: null, missedRuns: 0, lastSeenAt: null, lastReadAt: null, removedAt: null }),
+  knowledgeChunk: () => ({ pageId: null, heading: null, rowRef: null, validTo: null }),
   appointment: () => ({
     serviceId: null,
     resourceId: null,
@@ -384,10 +423,14 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   ticketAttachment: [["TicketAttachment_ticketId_mediaId_key", ["ticketId", "mediaId"]]],
   // SP-10
   staffService: [["StaffService_pkey", ["resourceId", "serviceId"]]],
+  // SP-21
+  knowledgePage: [["KnowledgePage_sourceId_urlKey_key", ["sourceId", "urlKey"]]],
 };
 /** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
 const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
   staffResource: [["StaffResource_workspaceId_userId_key", ["workspaceId", "userId"]]],
+  // SP-21: @@unique([workspaceId, legacyRef]) (NULL legacyRefs are distinct).
+  knowledgeSource: [["KnowledgeSource_workspaceId_legacyRef_key", ["workspaceId", "legacyRef"]]],
 };
 const keyPart = (v: any) => (v instanceof Date ? v.getTime() : v);
 function sp15Clash(model: string, rows: Row[], row: Row): string | null {
@@ -437,6 +480,14 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
     serviceRef: ["service", "serviceId", "one"],
     resource: ["staffResource", "resourceId", "one"],
   },
+  // SP-21
+  knowledgeSource: {
+    media: ["media", "mediaId", "one"],
+    chunks: ["knowledgeChunk", "sourceId", "many"],
+    pages: ["knowledgePage", "sourceId", "many"],
+  },
+  knowledgeChunk: { source: ["knowledgeSource", "sourceId", "one"], page: ["knowledgePage", "pageId", "one"] },
+  media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"] },
 };
 /** SP-09: to-one relations `matches` follows as filters. */
 const RELATION_FILTERS: Record<string, string[]> = {
@@ -726,6 +777,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
       if (c.createdById === row.id) c.createdById = null;
       if (c.fileMediaId === row.id) c.fileMediaId = null;
     }
+    // SP-21: KnowledgeSource.mediaId -> SET NULL; source deletes cascade into pages and chunks;
+    // page deletes cascade into chunks.
+    for (const s of db.knowledgeSource ?? []) if (s.mediaId === row.id) s.mediaId = null;
+    if (db.knowledgePage) db.knowledgePage = db.knowledgePage.filter((p) => p.sourceId !== row.id);
+    if (db.knowledgeChunk) db.knowledgeChunk = db.knowledgeChunk.filter((c) => c.sourceId !== row.id && c.pageId !== row.id);
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -788,6 +844,10 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     staffResource: model("staffResource"),
     staffService: model("staffService"),
     catalogImport: model("catalogImport"),
+    // SP-21: knowledge.
+    knowledgeSource: model("knowledgeSource"),
+    knowledgePage: model("knowledgePage"),
+    knowledgeChunk: model("knowledgeChunk"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();

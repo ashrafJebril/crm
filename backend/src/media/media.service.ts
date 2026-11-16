@@ -45,6 +45,17 @@ export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
 export const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB — IG's ceiling; FB/TikTok allow more
 export const MAX_PDF_BYTES = 100 * 1024 * 1024; // 100 MB — WhatsApp's document maximum
 
+/** SP-21: knowledge files (stored as Media rows hidden from the library, ruling 9). */
+export const KNOWLEDGE_FILE_MIMES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+export const KNOWLEDGE_FILE_MAX_BYTES = 20 * 1024 * 1024;
+
 /** Every type the library accepts on upload, in the order the error lists them. */
 export const LIBRARY_MIME_TYPES = [...ALLOWED_IMAGE, ...ALLOWED_VIDEO, ...ALLOWED_PDF];
 
@@ -191,6 +202,8 @@ export class MediaService {
    *   when unknown or foreign);
    * - `limit` 1..200, default 200;
    * - SP-17 `q`: search (mediaSearchWhere); `approved`: approvedForAgent.
+   * - SP-21 (ruling 9): files stored for a knowledge source are not library
+   *   assets and never appear.
    *
    * `nextBefore` is where the scan stopped: pass it as `before` for the next
    * page. It is null only at the true end of the list, so paging never stops
@@ -213,6 +226,7 @@ export class MediaService {
     const base = {
       workspaceId,
       mimeType: { in: opts.kind ? MIME_BY_KIND[opts.kind] : [...ALLOWED_IMAGE, ...ALLOWED_VIDEO] },
+      knowledgeSources: { none: {} },
       ...(opts.approved !== undefined ? { approvedForAgent: opts.approved } : {}),
       ...mediaSearchWhere(opts.q),
     };
@@ -593,6 +607,35 @@ export class MediaService {
     });
   }
 
+  /**
+   * SP-21 (ruling 9): store the bytes of a knowledge file (PDF, XLSX, CSV,
+   * JPEG, PNG, WebP; the caller has checked type, signature and size). Only
+   * the object is written: the caller creates the Media row in the same
+   * transaction as the KnowledgeSource that references it, so the file never
+   * shows in the library, and calls `discardStored` if that transaction fails.
+   */
+  async putKnowledgeFile(input: { workspaceId: string; buffer: Buffer; mimeType: string; fileName: string }) {
+    if (!KNOWLEDGE_FILE_MIMES.has(input.mimeType)) throw mediaError("media.unsupported_type", { allowed: [...KNOWLEDGE_FILE_MIMES] });
+    if (input.buffer.length > KNOWLEDGE_FILE_MAX_BYTES) throw mediaError("media.too_large", { limit: KNOWLEDGE_FILE_MAX_BYTES });
+    const { key } = await this.storage.put({
+      workspaceId: input.workspaceId,
+      buffer: input.buffer,
+      mimeType: input.mimeType,
+      originalFilename: input.fileName,
+    });
+    return { storedPath: key, storageKind: this.storage.kind };
+  }
+
+  /** Best-effort delete of a stored object whose Media row was never created (or is gone). */
+  async discardStored(stored: { storageKind: string; storedPath: string }): Promise<void> {
+    try {
+      if (stored.storageKind === "spaces") await this.storage.delete(stored.storedPath);
+      else await (this.storage.kind === "local" ? (this.storage as LocalStorage) : new LocalStorage()).delete(stored.storedPath);
+    } catch {
+      // An orphaned object costs storage only; never fail the caller.
+    }
+  }
+
   async mintPublicToken(
     workspaceId: string,
     mediaId: string,
@@ -676,7 +719,8 @@ export class MediaService {
    * or of a campaign that may still send, is refused with 409 media.in_use
    * {templates: {id, name}[], campaigns: {id, name, status}[], tickets:
    * {id, number, pipelineId}[]}. SP-09 (ruling 8): a file attached to a ticket
-   * is in use too. The header FKs are SET NULL and the TicketAttachment FK is
+   * is in use too. SP-21 (ruling 9): so is the file of a knowledge source
+   * (`knowledge: {id, title}[]`). The header FKs are SET NULL and the TicketAttachment FK is
    * CASCADE, as a backstop for a reference added after this check (and for
    * the deployed main, which does not know TicketAttachment).
    */
@@ -702,8 +746,14 @@ export class MediaService {
         orderBy: { createdAt: "asc" },
       });
       const tickets = links.map((l) => l.ticket).filter((t): t is NonNullable<typeof t> => !!t);
-      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0) {
-        throw mediaError("media.in_use", { templates, campaigns, tickets });
+      // SP-21: knowledge sources reading this file (inside the same lock).
+      const knowledge = await tx.knowledgeSource.findMany({
+        where: { workspaceId, mediaId: row.id },
+        select: { id: true, title: true },
+        orderBy: { createdAt: "asc" },
+      });
+      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0) {
+        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge });
       }
       await tx.media.delete({ where: { id: row.id } });
     });

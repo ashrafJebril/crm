@@ -157,3 +157,41 @@ describe("availability uses the workspace day", () => {
     expect(huge.truncated).toBe(true);
   });
 });
+
+describe("reschedule availability: the booking itself and its own duration (final review M2, M5)", () => {
+  it("excludeAppointmentId ignores that booking, so its own time and overlapping times are offered", async () => {
+    const w = await world();
+    w.prisma.db.appointment.push(
+      booking({ id: "mine", resourceId: w.resource.id, staffId: "uAgent", status: "confirmed", startAt: new Date("2026-11-17T07:00:00Z"), durationMin: 60 }),
+    );
+    const without = await w.bookings.availability(A, { serviceId: w.service.id, date: TUE }, NOW);
+    expect(without.slots.map((s) => local(s.startAt))).toEqual(["09:00", "11:00"]);
+    const own = await w.bookings.availability(A, { serviceId: w.service.id, date: TUE, excludeAppointmentId: "mine" }, NOW);
+    expect(own.slots.map((s) => local(s.startAt))).toEqual(["09:00", "09:15", "09:30", "09:45", "10:00", "10:15", "10:30", "10:45", "11:00"]);
+  });
+
+  it("a foreign or unknown excludeAppointmentId is 404", async () => {
+    const w = await world();
+    w.prisma.db.appointment.push(booking({ id: "theirs", workspaceId: B, contactId: "cB", startAt: new Date("2026-11-17T07:00:00Z") }));
+    for (const id of ["theirs", "nope"]) {
+      expect(await failure(w.bookings.availability(A, { serviceId: w.service.id, date: TUE, excludeAppointmentId: id }, NOW))).toEqual({
+        status: 404,
+        body: expect.objectContaining({ message: "Appointment not found" }),
+      });
+    }
+  });
+
+  it("durationMin overrides the service duration (validated 5..1440) and is echoed", async () => {
+    const w = await world();
+    const out = await w.bookings.availability(A, { serviceId: w.service.id, date: TUE, durationMin: 150 }, NOW);
+    expect(out.durationMin).toBe(150);
+    expect(out.slots.map((s) => local(s.startAt))).toEqual(["09:00", "09:15", "09:30"]); // must end by 12:00
+    for (const d of [4, 1441, 2.5]) {
+      expect((await failure(w.bookings.availability(A, { serviceId: w.service.id, date: TUE, durationMin: d }, NOW))).body).toMatchObject({
+        message: "bookings.duration_invalid",
+        min: 5,
+        max: 1440,
+      });
+    }
+  });
+});

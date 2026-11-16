@@ -36,12 +36,45 @@ interface SourceRow {
   cells: string[];
 }
 
-export async function parseFile(buffer: Buffer, fileName: string): Promise<ParsedFile> {
+export interface ParseOptions {
+  /** Size cap (default MAX_IMPORT_BYTES). SP-21 knowledge files allow 20 MB. */
+  maxBytes?: number;
+}
+
+export async function parseFile(buffer: Buffer, fileName: string, opts: ParseOptions = {}): Promise<ParsedFile> {
   const ext = /\.([^.\\/]+)$/.exec(fileName || "")?.[1]?.toLowerCase();
   if (ext !== "csv" && ext !== "xlsx") throw new ImportFileError("imports.unsupported_type");
-  if (buffer.length > MAX_IMPORT_BYTES) throw new ImportFileError("imports.file_too_large");
-  const table = ext === "csv" ? parseCsv(buffer) : await parseXlsx(buffer);
+  if (buffer.length > (opts.maxBytes ?? MAX_IMPORT_BYTES)) throw new ImportFileError("imports.file_too_large");
+  const table = ext === "csv" ? parseCsv(buffer) : sheetRows((await loadWorkbook(buffer)).worksheets[0]);
   return shape(table);
+}
+
+export interface ParsedSheet extends ParsedFile {
+  /** The worksheet name ("" for CSV). */
+  name: string;
+}
+
+/**
+ * SP-21: every non-empty sheet of an XLSX (a CSV is one sheet named ""),
+ * each shaped like parseFile. Empty sheets are skipped; a workbook with no
+ * data at all throws imports.file_empty.
+ */
+export async function parseFileSheets(buffer: Buffer, fileName: string, opts: ParseOptions = {}): Promise<ParsedSheet[]> {
+  const ext = /\.([^.\\/]+)$/.exec(fileName || "")?.[1]?.toLowerCase();
+  if (ext !== "csv" && ext !== "xlsx") throw new ImportFileError("imports.unsupported_type");
+  if (buffer.length > (opts.maxBytes ?? MAX_IMPORT_BYTES)) throw new ImportFileError("imports.file_too_large");
+  if (ext === "csv") return [{ name: "", ...shape(parseCsv(buffer)) }];
+  const out: ParsedSheet[] = [];
+  for (const ws of (await loadWorkbook(buffer)).worksheets) {
+    try {
+      out.push({ name: ws.name, ...shape(sheetRows(ws)) });
+    } catch (e) {
+      if (e instanceof ImportFileError && e.messageKey === "imports.file_empty") continue;
+      throw e;
+    }
+  }
+  if (out.length === 0) throw new ImportFileError("imports.file_empty");
+  return out;
 }
 
 // ─── CSV ────────────────────────────────────────────────────────────────
@@ -129,14 +162,17 @@ function detectDelimiter(text: string): "," | ";" {
 
 // ─── XLSX ───────────────────────────────────────────────────────────────
 
-async function parseXlsx(buffer: Buffer): Promise<SourceRow[]> {
+async function loadWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
   try {
     await wb.xlsx.load(buffer as any);
   } catch {
     throw new ImportFileError("imports.file_invalid");
   }
-  const ws = wb.worksheets[0];
+  return wb;
+}
+
+function sheetRows(ws: ExcelJS.Worksheet | undefined): SourceRow[] {
   if (!ws) throw new ImportFileError("imports.file_empty");
   const rows: SourceRow[] = [];
   let nonBlank = 0;

@@ -50,13 +50,25 @@ export interface BookingPatch {
   version?: number;
 }
 
-export function availabilityPath(q: { serviceId: string; resourceId?: string | null; date: string }): string {
+export interface AvailabilityQuery {
+  serviceId: string;
+  resourceId?: string | null;
+  date: string;
+  /** Reschedule: the booking being moved does not block its own slots (final review M2). */
+  excludeAppointmentId?: string;
+  /** Reschedule: slots for the booking's own duration (final review M5). */
+  durationMin?: number;
+}
+
+export function availabilityPath(q: AvailabilityQuery): string {
   const p = new URLSearchParams({ serviceId: q.serviceId, date: q.date });
   if (q.resourceId) p.set("resourceId", q.resourceId);
+  if (q.excludeAppointmentId) p.set("excludeAppointmentId", q.excludeAppointmentId);
+  if (q.durationMin !== undefined) p.set("durationMin", String(q.durationMin));
   return `/bookings/availability?${p.toString()}`;
 }
 
-export const getAvailability = (q: { serviceId: string; resourceId?: string | null; date: string }) =>
+export const getAvailability = (q: AvailabilityQuery) =>
   api.get<AvailabilityDto>(availabilityPath(q));
 export const createBooking = (body: NewBookingInput) => api.post<Appointment>("/appointments", body);
 export const updateBooking = (id: string, body: BookingPatch) => api.patch<Appointment>(`/appointments/${id}`, body);
@@ -73,4 +85,19 @@ export function reschedulePatch(
   if (next.durationMin !== undefined && next.durationMin !== appt.durationMin) body.durationMin = next.durationMin;
   if (next.resourceId !== undefined && (next.resourceId ?? null) !== (appt.resourceId ?? null)) body.resourceId = next.resourceId;
   return body;
+}
+
+/**
+ * The reschedule body (final review M3 with R-M1): a picked slot always
+ * carries its resource (a slot pick is an explicit choice, so "Any available"
+ * on a row without a resource gets gated on the slot's staff); a manual time
+ * sends the staff field only when the user changed it.
+ */
+export function rescheduleBody(
+  appt: Pick<Appointment, "startAt" | "durationMin" | "resourceId" | "version">,
+  next: { startAt: string; slotResourceId?: string; staff?: { touched: boolean; value: string | null } },
+): BookingPatch {
+  if (next.slotResourceId) return reschedulePatch(appt, { startAt: next.startAt, resourceId: next.slotResourceId });
+  if (next.staff?.touched) return reschedulePatch(appt, { startAt: next.startAt, resourceId: next.staff.value });
+  return reschedulePatch(appt, { startAt: next.startAt });
 }
