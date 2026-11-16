@@ -23,6 +23,14 @@ describe("sales metrics (oracle over the fixture world)", () => {
     expect(salesOracle(INSIGHTS_WORLD, { ...base, scope: {}, lang: "en" }).weekly).toEqual(SALES_WEEKLY_EN);
   });
 
+  it("an old done follow-up is not counted and the figures are unchanged", () => {
+    const old = (INSIGHTS_WORLD.followUps ?? []).find((f) => f.id === "fu12");
+    expect(old?.doneAt?.getTime()).toBeLessThan(range.fromUtc.getTime());
+    const without = { ...INSIGHTS_WORLD, followUps: (INSIGHTS_WORLD.followUps ?? []).filter((f) => f.id !== "fu12") };
+    expect(salesOracle(without, { ...base, scope: {} }).reps).toEqual(SALES_OWNER.reps);
+    expect(owner.reps).toEqual(SALES_OWNER.reps);
+  });
+
   it("sales waiting ignores hidden threads (oracle)", () => {
     expect(owner.headline.waiting).toBe(3);
     expect(assigned.headline.waiting).toBe(0);

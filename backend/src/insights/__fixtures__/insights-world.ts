@@ -483,6 +483,8 @@ const SALES_FOLLOW_UPS: WorldFollowUp[] = [
   fu("fu9", U.former, "2026-11-28T10:00:00", null), // overdue, former member
   fu("fu10", null, "2026-11-26T10:00:00", null), // overdue, unassigned
   fu("fu11", U.owner, "2026-11-12T10:00:00", "2026-11-12T10:00:00"),
+  // Done long before the range: never read by the reps statement, never counted.
+  fu("fu12", U.agent, "2026-10-01T10:00:00", "2026-10-01T11:00:00"),
 ];
 
 export const INSIGHTS_WORLD: InsightsWorld = {

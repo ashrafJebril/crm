@@ -6,6 +6,7 @@ import type { Viewer } from "../permissions/visibility";
 import {
   MAX_CONCURRENT_SECTIONS,
   SECTION_MAX_WAIT_MS,
+  SECTION_QUEUE_TIMEOUT_MS,
   SECTION_STATEMENT_TIMEOUT,
   sectionTransactionTimeoutMs,
 } from "./insights-constants";
@@ -57,44 +58,98 @@ export interface SectionDb {
  * A tiny in-memory concurrency limiter (no dependency): at most `limit` tasks
  * run at once; the rest wait in FIFO order.
  */
-export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
+export function createLimiter(limit: number, defaults: { queueTimeoutMs?: number } = {}): Limiter {
   let active = 0;
-  const queue: (() => void)[] = [];
+  const queue: { start: () => void }[] = [];
   const next = () => {
-    if (active >= limit) return;
-    const start = queue.shift();
-    if (!start) return;
-    active += 1;
-    start();
+    while (active < limit && queue.length > 0) {
+      const entry = queue.shift() as { start: () => void };
+      active += 1;
+      entry.start();
+    }
   };
-  return <T>(task: () => Promise<T>) =>
+  return <T>(task: () => Promise<T>, o: LimitOptions = {}) =>
     new Promise<T>((resolve, reject) => {
-      queue.push(() => {
-        Promise.resolve()
-          .then(task)
-          .then(resolve, reject)
-          .finally(() => {
-            active -= 1;
-            next();
-          });
-      });
+      if (o.signal?.aborted) {
+        reject(new SectionAborted());
+        return;
+      }
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const release = () => {
+        settled = true;
+        if (timer) clearTimeout(timer);
+        o.signal?.removeEventListener("abort", onAbort);
+      };
+      const entry = {
+        start: () => {
+          release();
+          Promise.resolve()
+            .then(task)
+            .then(resolve, reject)
+            .finally(() => {
+              active -= 1;
+              next();
+            });
+        },
+      };
+      // Still queued: leave the queue without ever running the task.
+      const drop = (err: Error) => {
+        if (settled) return;
+        release();
+        const i = queue.indexOf(entry);
+        if (i >= 0) queue.splice(i, 1);
+        reject(err);
+      };
+      const onAbort = () => drop(new SectionAborted());
+      o.signal?.addEventListener("abort", onAbort, { once: true });
+      const timeoutMs = o.queueTimeoutMs ?? defaults.queueTimeoutMs;
+      if (timeoutMs !== undefined) timer = setTimeout(() => drop(new SectionQueueTimeout(timeoutMs)), timeoutMs);
+      queue.push(entry);
       next();
     });
 }
 
+/** A section waited for a connection slot past its deadline (never ran). */
+export class SectionQueueTimeout extends Error {
+  constructor(ms: number) {
+    super(`waited ${ms} ms for a section slot`);
+  }
+}
+
+/** The request went away while the section was still queued (never ran). */
+export class SectionAborted extends Error {
+  constructor() {
+    super("request aborted before the section started");
+  }
+}
+
+export interface LimitOptions {
+  /** Give up (reject with SectionQueueTimeout) if not started by then. */
+  queueTimeoutMs?: number;
+  /** Give up (reject with SectionAborted) when this aborts while queued. */
+  signal?: AbortSignal;
+}
+
+export type Limiter = <T>(task: () => Promise<T>, opts?: LimitOptions) => Promise<T>;
+
 /**
  * Process-wide: at most MAX_CONCURRENT_SECTIONS insight sections hold a pooled
  * connection at once, however many report loads run concurrently, so a report
- * never starves webhooks and sends of connections (P2024).
+ * never starves webhooks and sends of connections (P2024). A section still
+ * queued after SECTION_QUEUE_TIMEOUT_MS is `unavailable` without ever taking
+ * a connection.
  */
-export const sectionLimiter = createLimiter(MAX_CONCURRENT_SECTIONS);
+export const sectionLimiter = createLimiter(MAX_CONCURRENT_SECTIONS, { queueTimeoutMs: SECTION_QUEUE_TIMEOUT_MS });
 
 export interface SectionOptions {
   /** Statements the section runs; its transaction budget covers each one's
    *  statement_timeout plus a margin. Default 1. */
   statements?: number;
   /** The limiter to queue on (tests); default the process-wide one. */
-  limiter?: <R>(task: () => Promise<R>) => Promise<R>;
+  limiter?: Limiter;
+  /** The request's abort signal: a section still queued when it fires never runs. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -115,18 +170,24 @@ export async function runSection<T>(
 ): Promise<Section<T>> {
   const limit = opts.limiter ?? sectionLimiter;
   try {
-    const data = await limit(() =>
-      db.$transaction(
-        async (tx) => {
-          await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${SECTION_STATEMENT_TIMEOUT}'`);
-          await tx.$executeRawUnsafe(`SET LOCAL jit = off`);
-          return fn(tx);
-        },
-        { maxWait: SECTION_MAX_WAIT_MS, timeout: sectionTransactionTimeoutMs(opts.statements ?? 1) },
-      ),
+    const data = await limit(
+      () =>
+        db.$transaction(
+          async (tx) => {
+            await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${SECTION_STATEMENT_TIMEOUT}'`);
+            await tx.$executeRawUnsafe(`SET LOCAL jit = off`);
+            return fn(tx);
+          },
+          { maxWait: SECTION_MAX_WAIT_MS, timeout: sectionTransactionTimeoutMs(opts.statements ?? 1) },
+        ),
+      { signal: opts.signal },
     );
     return { status: "ok", data };
   } catch (e) {
+    if (e instanceof SectionQueueTimeout || e instanceof SectionAborted) {
+      logger?.warn(`insights section ${label} unavailable (${e.message})`);
+      return { status: "unavailable" };
+    }
     const err = e as { code?: string; meta?: { code?: string }; message?: string };
     const timedOut = err?.code === "57014" || err?.meta?.code === "57014" || /57014|statement timeout/.test(String(err?.message ?? ""));
     logger?.warn(`insights section ${label} unavailable${timedOut ? " (statement timeout)" : ""}: ${String(err?.message ?? e).slice(0, 300)}`);
@@ -168,12 +229,19 @@ export class InsightsService {
     return ch.id;
   }
 
-  private section<T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1): Promise<Section<T>> {
-    return runSection(this.prisma as unknown as SectionDb, label, fn, this.logger, { statements });
+  private section<T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1, signal?: AbortSignal): Promise<Section<T>> {
+    return runSection(this.prisma as unknown as SectionDb, label, fn, this.logger, { statements, signal });
   }
 
   /** `GET /insights/support`. */
-  async support(workspaceId: string, q: SupportQuery, viewer?: Viewer, now: Date = new Date()): Promise<SupportInsights> {
+  async support(
+    workspaceId: string,
+    q: SupportQuery,
+    viewer?: Viewer,
+    now: Date = new Date(),
+    signal?: AbortSignal,
+  ): Promise<SupportInsights> {
+    const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1) => this.section(label, fn, statements, signal);
     const { tz } = await this.workspaceLocale(workspaceId);
     const range = parseRange(q.from, q.to, tz, now);
     const channelId = await this.supportChannel(workspaceId, q.channelId);
@@ -183,17 +251,17 @@ export class InsightsService {
     // transaction (and budget); the headline is unavailable if any of them is.
     const h = sections.headlineParts;
     const [conv, ai, fr, handling, saved, tickets, resolutionMix, peaks, byNumber, topicFriction, team] = await Promise.all([
-      this.section("support.headline.conversations", h.conversations),
-      this.section("support.headline.aiResolution", h.aiResolution),
-      this.section("support.headline.firstResponse", h.firstResponse),
-      this.section("support.headline.handling", h.handling),
-      this.section("support.headline.timeSaved", h.timeSaved),
-      this.section("support.headline.ticketShare", h.ticketShare),
-      this.section("support.resolutionMix", sections.resolutionMix),
-      this.section("support.peaks", sections.peaks),
-      this.section("support.byNumber", sections.byNumber),
-      this.section("support.topicFriction", sections.topicFriction),
-      this.section("support.team", sections.team, 2),
+      sec("support.headline.conversations", h.conversations),
+      sec("support.headline.aiResolution", h.aiResolution),
+      sec("support.headline.firstResponse", h.firstResponse),
+      sec("support.headline.handling", h.handling),
+      sec("support.headline.timeSaved", h.timeSaved),
+      sec("support.headline.ticketShare", h.ticketShare),
+      sec("support.resolutionMix", sections.resolutionMix),
+      sec("support.peaks", sections.peaks),
+      sec("support.byNumber", sections.byNumber),
+      sec("support.topicFriction", sections.topicFriction),
+      sec("support.team", sections.team, 2),
     ]);
     const headline: Section<SupportHeadline> =
       conv.status === "ok" &&
@@ -246,15 +314,26 @@ export class InsightsService {
    * are still validated). Conversation-derived parts run under the viewer's
    * scope inside the SQL.
    */
-  async sales(workspaceId: string, q: SalesQuery, viewer?: Viewer, now: Date = new Date()): Promise<SalesInsights> {
+  async sales(
+    workspaceId: string,
+    q: SalesQuery,
+    viewer?: Viewer,
+    now: Date = new Date(),
+    signal?: AbortSignal,
+  ): Promise<SalesInsights> {
+    const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1) => this.section(label, fn, statements, signal);
     const { tz, lang } = await this.workspaceLocale(workspaceId);
     const range = parseRange(q.from, q.to, tz, now);
     const pipeline = await this.salesPipeline(workspaceId, q.pipelineId);
-    const base = { range: { from: range.from, to: range.to, tz: range.tz }, pipeline };
+    const rangeDto = { from: range.from, to: range.to, tz: range.tz };
+    const base = { range: rangeDto, pipeline };
     if (!(await this.perm.viewerCan(workspaceId, viewer, "tickets.view"))) {
+      // Stated choice (review of Task 2): without tickets.view the pipeline is
+      // returned by id only; its name and kind are ticket data like the rest.
       const forbidden = { status: "forbidden" } as const;
       return {
-        ...base,
+        range: rangeDto,
+        pipeline: { id: pipeline.id },
         headline: forbidden,
         distribution: forbidden,
         weekly: forbidden,
@@ -273,17 +352,17 @@ export class InsightsService {
     });
     const h = s.headlineParts;
     const [leads, replied, speed, waiting, won, distribution, weekly, sources, funnel, lostReasons, reps] = await Promise.all([
-      this.section("sales.headline.leads", h.leads),
-      this.section("sales.headline.replied", h.replied),
-      this.section("sales.headline.speed", h.speed),
-      this.section("sales.headline.waiting", h.waiting),
-      this.section("sales.headline.won", h.won),
-      this.section("sales.distribution", s.distribution),
-      this.section("sales.weekly", s.weekly),
-      this.section("sales.sources", s.sources),
-      this.section("sales.funnel", s.funnel),
-      this.section("sales.lostReasons", s.lostReasons),
-      this.section("sales.reps", s.reps, 2),
+      sec("sales.headline.leads", h.leads),
+      sec("sales.headline.replied", h.replied),
+      sec("sales.headline.speed", h.speed),
+      sec("sales.headline.waiting", h.waiting),
+      sec("sales.headline.won", h.won),
+      sec("sales.distribution", s.distribution),
+      sec("sales.weekly", s.weekly),
+      sec("sales.sources", s.sources),
+      sec("sales.funnel", s.funnel),
+      sec("sales.lostReasons", s.lostReasons),
+      sec("sales.reps", s.reps, 2),
     ]);
     const headline: SalesInsights["headline"] =
       leads.status === "ok" && replied.status === "ok" && speed.status === "ok" && waiting.status === "ok" && won.status === "ok"

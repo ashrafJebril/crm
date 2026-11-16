@@ -43,6 +43,12 @@ export const SECTION_MAX_WAIT_MS = 5_000;
  * (P2024). Further sections queue in memory before taking a connection.
  */
 export const MAX_CONCURRENT_SECTIONS = 2;
+/**
+ * How long a section may wait in that queue. Past it, the section is
+ * `unavailable` without ever taking a connection (a busy process degrades a
+ * report instead of stacking up minutes of queued work).
+ */
+export const SECTION_QUEUE_TIMEOUT_MS = 10_000;
 
 /** Sales speed-to-reply bucket edges, in minutes. An edge belongs to the
  *  higher bucket (exactly 5 min is "5–15m"). */
@@ -51,5 +57,6 @@ export const SPEED_BUCKETS = [5, 15, 60, 240, 1440] as const;
 export const SPEED_BUCKET_KEYS = ["lt_5m", "5_15m", "15_60m", "1_4h", "4_24h", "gt_24h", "not_replied"] as const;
 export type SpeedBucket = (typeof SPEED_BUCKET_KEYS)[number];
 
-/** Conversation statuses whose messages never make a lead "waiting". */
-export const WAITING_EXCLUDED_STATUSES = ["resolved", "closed", "spam"] as const;
+/** Conversation statuses whose messages never make a lead "waiting" ("resolved"
+ *  is a verdict, `resolutionStatus`, not a Conversation status). */
+export const WAITING_EXCLUDED_STATUSES = ["closed", "spam"] as const;

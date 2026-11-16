@@ -256,7 +256,11 @@ export function repsSql(ws: string, r: InsightsRange, scope: ConversationScope, 
         (CASE WHEN f."doneAt" IS NOT NULL AND ${inRangeSql(Prisma.sql`f."doneAt"`, r)} THEN 1 ELSE 0 END),
         (CASE WHEN f."doneAt" IS NULL AND f."dueAt" < ${now} THEN 1 ELSE 0 END),
         (CASE WHEN f."doneAt" IS NULL AND f."dueAt" >= ${now} AND f."dueAt" < ${utcTimestampSql(opts.todayEnd)} THEN 1 ELSE 0 END)
-      FROM "Activity" f WHERE f."workspaceId" = ${ws}
+      FROM "Activity" f
+      WHERE f."workspaceId" = ${ws}
+        -- Only rows that can count: open ones (overdue / due today) and those
+        -- done in range. Old done follow-ups are never read (review of Task 2).
+        AND (f."doneAt" IS NULL OR (${inRangeSql(Prisma.sql`f."doneAt"`, r)}))
     ),
     tot AS (
       SELECT ${memberKeySql(ws, Prisma.sql`src."uid"`)} AS "key",

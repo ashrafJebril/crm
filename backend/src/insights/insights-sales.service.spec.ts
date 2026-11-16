@@ -164,7 +164,8 @@ describe("InsightsService.sales", () => {
     for (const k of ["headline", "distribution", "weekly", "sources", "funnel", "lostReasons", "reps"] as const) {
       expect({ k, s: res[k] }).toEqual({ k, s: { status: "forbidden" } });
     }
-    expect(res.pipeline.id).toBe("pl-leads");
+    // Stated choice: the pipeline by id only (its name is ticket data too).
+    expect(res.pipeline).toEqual({ id: "pl-leads" });
     // Nothing is read.
     expect(prisma.$transaction).not.toHaveBeenCalled();
     // The range and pipeline are still validated.

@@ -67,6 +67,13 @@ describe("sales metric SQL builders", () => {
     expect(sql.repliedSql("ws1", range, {}, opts).strings.join("?")).toContain(`m."from" IN ('ai', 'human')`);
   });
 
+  it("reps never read follow-ups done before (or after) the range", () => {
+    const s = sql.repsSql("ws1", range, {}, opts);
+    const text = s.strings.join("?");
+    expect(text).toContain('AND (f."doneAt" IS NULL OR (f."doneAt" >= ');
+    expect(s.values).toContain(range.fromUtc.toISOString());
+  });
+
   it("weeks follow the workspace language (ruling 10)", () => {
     const ar = sql.weeklySql("ws1", range, {}, opts).strings.join("?");
     const en = sql.weeklySql("ws1", range, {}, { ...opts, lang: "en" }).strings.join("?");

@@ -2,7 +2,8 @@ import type { Prisma } from "@prisma/client";
 import { CH, U } from "./__fixtures__/insights-world";
 import { OWNER } from "./insights-expected";
 import { FORMER_KEY, UNATTRIBUTED_KEY } from "./insights-format";
-import { createLimiter, InsightsService, runSection, type SectionTx } from "./insights.service";
+import { createLimiter, InsightsService, runSection, SectionQueueTimeout, sectionLimiter, type SectionTx } from "./insights.service";
+import { SECTION_QUEUE_TIMEOUT_MS } from "./insights-constants";
 import { MAX_CONCURRENT_SECTIONS, SECTION_STATEMENT_TIMEOUT_MS, sectionTransactionTimeoutMs } from "./insights-constants";
 
 /** The `/* insights:support.<name> *\/` tag a statement starts with. */
@@ -175,6 +176,49 @@ describe("InsightsService.support", () => {
     expect(peak).toBe(2);
     expect(a.headline).toEqual({ status: "ok", data: OWNER.headline });
     expect(b.team).toEqual({ status: "ok", data: OWNER.team });
+  });
+
+  it("a section queued past the deadline is unavailable and never opens a transaction", async () => {
+    expect(SECTION_QUEUE_TIMEOUT_MS).toBe(10_000);
+    const limiter = createLimiter(1, { queueTimeoutMs: 30 });
+    let release!: () => void;
+    const busy = limiter(() => new Promise<void>((r) => (release = r)));
+    const db = { $transaction: jest.fn(async (fn: (t: SectionTx) => Promise<unknown>) => fn({ $executeRawUnsafe: async () => 0, $queryRaw: async () => [] as never })) };
+    const warn = jest.fn();
+    const res = await runSection(db as never, "late", async () => 1, { warn }, { limiter });
+    expect(res).toEqual({ status: "unavailable" });
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toContain("waited 30 ms");
+    // The slot frees up: the next section runs normally.
+    release();
+    await busy;
+    expect(await runSection(db as never, "next", async () => 2, { warn }, { limiter })).toEqual({ status: "ok", data: 2 });
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("a section whose request was aborted while queued never runs", async () => {
+    const limiter = createLimiter(1, { queueTimeoutMs: 5_000 });
+    let release!: () => void;
+    const busy = limiter(() => new Promise<void>((r) => (release = r)));
+    const db = { $transaction: jest.fn() };
+    const ac = new AbortController();
+    const pending = runSection(db as never, "aborted", async () => 1, undefined, { limiter, signal: ac.signal });
+    ac.abort();
+    expect(await pending).toEqual({ status: "unavailable" });
+    // Already aborted before queueing: rejected at once.
+    expect(await runSection(db as never, "aborted2", async () => 1, undefined, { limiter, signal: ac.signal })).toEqual({ status: "unavailable" });
+    release();
+    await busy;
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("without contention every section runs as before, under the process-wide deadline", async () => {
+    await expect(sectionLimiter(async () => "ran")).resolves.toBe("ran");
+    const { svc, prisma } = build();
+    const res = await svc.support("ws1", Q, { userId: U.owner }, NOW, new AbortController().signal);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(11);
+    expect(res.headline).toEqual({ status: "ok", data: OWNER.headline });
+    expect(new SectionQueueTimeout(5).message).toBe("waited 5 ms for a section slot");
   });
 
   it("the limiter runs tasks FIFO, never above its limit, and keeps going after a failure", async () => {
