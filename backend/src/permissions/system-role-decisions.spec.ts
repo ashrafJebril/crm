@@ -550,6 +550,29 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-11: insights and the working home. Support part (Task 1); the sales
+  // and home routes join in Tasks 2 and 3.
+  describe("SP-11 insights and home routes", () => {
+    const SUPPORT = "GET /insights/support";
+
+    it("owner, admin, agent and viewer read the support insights (reports.view)", () => {
+      expect(ROUTE_PERMISSIONS[SUPPORT]).toBe("reports.view");
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, SUPPORT) }).toEqual({ role, ok: true });
+      }
+    });
+
+    it("a custom role without reports.view gets 403", () => {
+      const noReports: PermissionsJson = { conversations: ["view", "update"], tickets: ["view"] };
+      expect(hasPermission(noReports, ROUTE_PERMISSIONS[SUPPORT] as string)).toBe(false);
+      expect(hasPermission({ ...noReports, reports: ["view"] }, ROUTE_PERMISSIONS[SUPPORT] as string)).toBe(true);
+    });
+
+    it("impersonation is not blocked", () => {
+      expect(blockedForImpersonation(ROUTE_PERMISSIONS[SUPPORT] as string)).toBe(false);
+    });
+  });
+
     it("billing.manage and roles.manage are owner-only", () => {
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "billing.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "roles.manage")).toBe(false);

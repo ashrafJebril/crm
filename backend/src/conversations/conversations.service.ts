@@ -24,6 +24,7 @@ import {
   UpdateConversationDto,
 } from "./conversations.dto";
 import { AD_SOURCE_CHIP_SELECT, toAdSourceChip } from "../ad-attribution/ad-source-chip";
+import { sentByData, staffSenderId } from "./message-sender";
 
 @Injectable()
 export class ConversationsService {
@@ -338,7 +339,8 @@ export class ConversationsService {
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const message = await this.prisma.message.create({
-      data: { ...dto, conversationId, workspaceId, t },
+      // SP-11: a staff message records its sender (the Team tab).
+      data: { ...dto, conversationId, workspaceId, t, ...(dto.from === "human" ? sentByData(staffSenderId(viewer)) : {}) },
     });
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -414,6 +416,7 @@ export class ConversationsService {
         metaMessageId: providerMessageId,
         deliveryStatus: providerMessageId ? "sent" : null,
         deliveryStatusAt: providerMessageId ? now : null,
+        ...sentByData(staffSenderId(viewer)),
       },
     });
     await this.prisma.conversation.update({

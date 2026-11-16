@@ -19,6 +19,7 @@ import { InstagramController } from "../integrations/instagram.controller";
 import { WorkflowsController } from "../workflows/workflows.controller";
 import { MediaController } from "../media/media.controller";
 import { AdSourcesController } from "../ad-attribution/ad-sources.controller";
+import { InsightsController } from "../insights/insights.controller";
 
 // Some modules read secrets at import time (JwtModule.register in AuthModule).
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret-for-permission-viewer-coverage-spec";
@@ -88,6 +89,8 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   // SP-17: update loads through MediaService.get with the viewer (a hidden inbound file is 404).
   ["media", MediaController, ["list", "serve", "remove", "update"]],
   ["ad-sources", AdSourcesController, ["conversations"]],
+  // SP-11: every support figure is computed under the viewer's scope.
+  ["insights", InsightsController, ["support"]],
 ];
 
 const SRC = path.resolve(__dirname, "..");

@@ -17,6 +17,7 @@ import { TemplatesModule } from "./templates/templates.module";
 import { TeamModule } from "./team/team.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
+import { InsightsModule } from "./insights/insights.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { ChannelsCoreModule } from "./channels/channels-core.module";
 import { ChannelsModule } from "./channels/channels.module";
@@ -76,6 +77,8 @@ import { BookingsModule } from "./bookings/bookings.module";
     TeamModule,
     CampaignsModule,
     DashboardModule,
+    // SP-11: support insights (sales and the working home join later).
+    InsightsModule,
     // SP-19: global routing core (resolver, transports, inbound sink) before
     // anything that sends or receives, then the /channels hub.
     ChannelsCoreModule,

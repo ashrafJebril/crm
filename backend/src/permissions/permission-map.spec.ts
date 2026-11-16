@@ -279,6 +279,15 @@ describe("permission map", () => {
     expect(catalog).toEqual(Object.keys(sp10).sort());
   });
 
+  it("permission map covers SP-11 routes (support part)", () => {
+    expect({ declared: keys.includes("GET /insights/support"), p: ROUTE_PERMISSIONS["GET /insights/support"] }).toEqual({
+      declared: true,
+      p: "reports.view",
+    });
+    // Every declared insights route is mapped to reports.view.
+    for (const k of keys.filter((x) => / \/insights(\/|$)/.test(x))) expect({ k, p: ROUTE_PERMISSIONS[k] }).toEqual({ k, p: "reports.view" });
+  });
+
     it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

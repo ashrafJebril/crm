@@ -24,6 +24,7 @@ import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.dec
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
+import { staffSenderId } from "../conversations/message-sender";
 
 @Controller()
 export class WhatsAppController {
@@ -100,6 +101,7 @@ export class WhatsAppController {
       conversationId,
       dto.message,
       dto.mediaId,
+      staffSenderId(viewer),
     );
     await this.handoff.humanReplied(workspaceId, conversationId);
     return res;
@@ -121,6 +123,7 @@ export class WhatsAppController {
       dto.variables ?? [],
       dto.header,
       viewer,
+      staffSenderId(viewer),
     );
     await this.handoff.humanReplied(workspaceId, conversationId);
     return res;
