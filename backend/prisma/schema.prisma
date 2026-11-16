@@ -1266,6 +1266,9 @@ model Workspace {
   staffResources    StaffResource[]    @relation("WorkspaceStaffResources")
   catalogImports    CatalogImport[]    @relation("WorkspaceCatalogImports")
 
+  /// SP-21: agent knowledge sources.
+  knowledgeSources  KnowledgeSource[]  @relation("WorkspaceKnowledgeSources")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1421,6 +1424,8 @@ model Media {
   ticketAttachments TicketAttachment[] @relation("MediaTicketAttachments")
   /// SP-10 back-relation: catalog imports read from this file.
   catalogImports CatalogImport[] @relation("CatalogImportFile")
+  /// SP-21 back-relation: knowledge sources stored in this file (hidden from the library).
+  knowledgeSources KnowledgeSource[] @relation("MediaKnowledgeSources")
 
   createdAt DateTime @default(now())
 
@@ -1703,4 +1708,109 @@ model MetaLead {
 
   @@unique([workspaceId, leadgenId])
   @@index([workspaceId, contactId])
+}
+
+/// SP-21: one piece of agent knowledge. Kinds: "content" | "faq" | "guideline" | "file" | "typed_doc" | "website".
+model KnowledgeSource {
+  id                  String          @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace       @relation("WorkspaceKnowledgeSources", fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind                String
+  /// "draft" | "queued" | "processing" | "ready" | "failed" | "paused"
+  status              String          @default("ready")
+  /// an error key of knowledge-errors.ts, never provider text
+  error               String?
+  title               String
+  /// content: TipTap JSON; other kinds null
+  bodyJson            Json?
+  /// derived text (content, guideline), or the FAQ answer
+  body                String?
+  /// faq: the question (title holds it too, trimmed to 200)
+  question            String?
+  order               Int             @default(0)
+  /// file / typed_doc: the stored file
+  mediaId             String?
+  media               Media?          @relation("MediaKnowledgeSources", fields: [mediaId], references: [id], onDelete: SetNull)
+  /// typed_doc: "offers" | "inventory" | "packages"
+  typedKind           String?
+  /// website
+  url                 String?
+  scope               String? // "site" | "path"
+  schedule            String? // "daily" | "weekly" | "monthly" | "manual"
+  nextSyncAt          DateTime?
+  lastSyncAt          DateTime?
+  syncStartedAt       DateTime?
+  refreshRequestedAt  DateTime?
+  consecutiveFailures Int             @default(0)
+  lastRun             Json? // {startedAt, finishedAt, pagesRead, pagesSame, pagesChanged, pagesNew, failed, reason?}
+  /// processing
+  itemCount           Int             @default(0)
+  contentHash         String?
+  leaseUntil          DateTime?
+  /// publishing (ruling 2)
+  upstream            Json? // {kewy?: {docId, truncated?}, l?: {documentId}}
+  publishState        String          @default("none") // "none" | "pending" | "published" | "failed"
+  /// migrated-in rows (ruling 3)
+  legacyRef           String?
+  createdById         String?
+  version             Int             @default(0)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  pages               KnowledgePage[]
+  chunks              KnowledgeChunk[]
+
+  @@unique([workspaceId, legacyRef])
+  @@index([workspaceId, kind, order])
+  @@index([status, nextSyncAt])
+  @@index([mediaId])
+}
+
+/// SP-21: one page of a website source.
+model KnowledgePage {
+  id          String           @id @default(cuid())
+  workspaceId String
+  sourceId    String
+  source      KnowledgeSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  url         String
+  /// normalised key (no scheme, no www, no fragment, no tracking params)
+  urlKey      String
+  /// "synced" | "needs_login" | "blocked" | "removed" | "error" | "capped"
+  state       String
+  httpStatus  Int?
+  title       String?
+  contentHash String?
+  missedRuns  Int              @default(0)
+  lastSeenAt  DateTime?
+  lastReadAt  DateTime?
+  removedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  chunks      KnowledgeChunk[]
+
+  @@unique([sourceId, urlKey])
+  @@index([workspaceId])
+}
+
+/// SP-21: a searchable piece of a source. The FTS index
+/// "KnowledgeChunk_fts_idx" (GIN on to_tsvector('simple', "text")) lives in
+/// the migration only, outside Prisma's model.
+model KnowledgeChunk {
+  id          String          @id @default(cuid())
+  workspaceId String
+  sourceId    String
+  source      KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  pageId      String?
+  page        KnowledgePage?  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  ord         Int
+  /// section heading, sheet name, or null ("General")
+  heading     String?
+  text        String
+  /// typed / sheet rows: the 1-based row number the user sees
+  rowRef      Int?
+  /// offers: end of validity (date only, workspace TZ)
+  validTo     DateTime?       @db.Date
+  createdAt   DateTime        @default(now())
+
+  @@index([workspaceId, sourceId])
+  @@index([pageId])
 }

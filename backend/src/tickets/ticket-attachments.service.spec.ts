@@ -426,6 +426,7 @@ describe("unlink and media delete", () => {
         templates: [],
         campaigns: [],
         tickets: [{ id: "tA", number: 7, pipelineId: "pl" }],
+        knowledge: [],
       });
       expect(prisma.db.media.some((m: any) => m.id === "md-cust")).toBe(true);
       expect(storage.delete).not.toHaveBeenCalled();

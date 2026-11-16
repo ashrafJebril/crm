@@ -431,6 +431,21 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /integrations/l/knowledge": "knowledge.view",
   "POST /integrations/l/knowledge": "knowledge.create",
   "DELETE /integrations/l/knowledge/:documentId": "knowledge.delete",
+  // SP-21 knowledge store (Task 2 adds the website routes).
+  "GET /knowledge/sources": "knowledge.view",
+  "GET /knowledge/sources/:id": "knowledge.view",
+  "GET /knowledge/sources/:id/preview": "knowledge.view",
+  "GET /knowledge/sources/:id/pages": "knowledge.view",
+  "GET /knowledge/sources/:id/file": "knowledge.view",
+  "GET /knowledge/templates/:kind": "knowledge.view",
+  "PUT /knowledge/content": "knowledge.update",
+  "PUT /knowledge/guidelines": "knowledge.update",
+  "PATCH /knowledge/faqs/:id": "knowledge.update",
+  "POST /knowledge/faqs/reorder": "knowledge.update",
+  "POST /knowledge/sources/:id/reprocess": "knowledge.update",
+  "POST /knowledge/faqs": "knowledge.create",
+  "POST /knowledge/files": "knowledge.create",
+  "DELETE /knowledge/sources/:id": "knowledge.delete",
 
   // ── Connectors (MCP servers bound to the agent) ───────────────────────
   "GET /integrations/l/mcp-servers": "connectors.view",

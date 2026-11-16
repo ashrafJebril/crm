@@ -2,7 +2,7 @@
   "name": "tkana-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "tkana \u2014 NestJS + Prisma backend",
+  "description": "tkana — NestJS + Prisma backend",
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "nest build",
@@ -20,6 +20,7 @@
     "kewy:export-identities": "dotenv -e .env -- tsx scripts/export-identities-to-kewy.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
     "@aws-sdk/client-s3": "^3.1060.0",
     "@aws-sdk/s3-request-presigner": "^3.1060.0",
     "@mastra/core": "^1.67.0",

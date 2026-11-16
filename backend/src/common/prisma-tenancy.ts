@@ -51,6 +51,10 @@ const SCOPED_MODELS = new Set([
   "StaffResource",
   "StaffService",
   "CatalogImport",
+  // SP-21
+  "KnowledgeSource",
+  "KnowledgePage",
+  "KnowledgeChunk",
 ]);
 
 const READ_ACTIONS = new Set([

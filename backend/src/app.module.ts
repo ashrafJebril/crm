@@ -48,6 +48,7 @@ import { ServicesModule } from "./services/services.module";
 import { StaffModule } from "./staff/staff.module";
 import { BookingsModule } from "./bookings/bookings.module";
 import { CatalogImportModule } from "./catalog-import/catalog-import.module";
+import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.module";
 
 @Module({
   imports: [
@@ -74,6 +75,8 @@ import { CatalogImportModule } from "./catalog-import/catalog-import.module";
     StaffModule,
     BookingsModule,
     CatalogImportModule,
+    // SP-21: knowledge sources.
+    KnowledgeSourcesModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,

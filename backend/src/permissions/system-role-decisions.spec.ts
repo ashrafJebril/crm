@@ -543,6 +543,46 @@ describe("system-role decision table", () => {
   });
 
   // SP-17: media details and the agent switch (ruling 5).
+  describe("SP-21 knowledge routes", () => {
+    const READS = [
+      "GET /knowledge/sources",
+      "GET /knowledge/sources/:id",
+      "GET /knowledge/sources/:id/preview",
+      "GET /knowledge/sources/:id/pages",
+      "GET /knowledge/sources/:id/file",
+      "GET /knowledge/templates/:kind",
+    ];
+    const WRITES = [
+      "PUT /knowledge/content",
+      "PUT /knowledge/guidelines",
+      "POST /knowledge/faqs",
+      "PATCH /knowledge/faqs/:id",
+      "POST /knowledge/faqs/reorder",
+      "POST /knowledge/files",
+      "POST /knowledge/sources/:id/reprocess",
+      "DELETE /knowledge/sources/:id",
+    ];
+
+    it("owner and admin do everything", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...READS, ...WRITES]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("agent and viewer read sources, previews, pages, files and templates; every write is 403", () => {
+      for (const role of ["agent", "viewer"] as const) {
+        for (const route of READS) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        for (const route of WRITES) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of [...READS, ...WRITES]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
   describe("SP-17 media details", () => {
     const PATCH = "PATCH /media/:id";
 

@@ -800,3 +800,41 @@ describe("SP-09 ticket attachments and channel follow conversation visibility", 
     expect(((await tickets.getTicket(W, "tk", { userId: "stranger" })) as any).channel).toBeNull();
   });
 });
+
+describe("SP-21 knowledge files", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const kw = require("../knowledge-sources/knowledge-test-world") as typeof import("../knowledge-sources/knowledge-test-world");
+
+  it("knowledge file of another workspace is 404", async () => {
+    const w = kw.knowledgeWorld();
+    const { items } = await w.svc.uploadFiles(kw.A, "uOwner", [kw.pdf()]);
+    const id = items[0].id;
+    const mediaId = w.db.knowledgeSource[0].mediaId as string;
+    const res = { setHeader: jest.fn(), send: jest.fn(), sendFile: jest.fn() } as never;
+    const notFound = { status: 404, body: { statusCode: 404, message: "knowledge.not_found" } };
+    expect(await kw.failure(w.svc.sendFile(kw.B, id, res))).toEqual(notFound);
+    expect(await kw.failure(w.svc.get(kw.B, id))).toEqual(notFound);
+    expect(await kw.failure(w.svc.remove(kw.B, id))).toEqual(notFound);
+    // The stored file is not reachable from the other workspace through media either.
+    await expect(w.media.get(kw.B, mediaId)).rejects.toThrow(NotFoundException);
+    expect(w.db.knowledgeSource).toHaveLength(1);
+  });
+
+  it("media delete refuses a knowledge file", async () => {
+    const w = kw.knowledgeWorld();
+    const { items } = await w.svc.uploadFiles(kw.A, "uOwner", [kw.pdf()]);
+    const mediaId = w.db.knowledgeSource[0].mediaId as string;
+    const e = await kw.failure(w.media.remove(kw.A, mediaId));
+    expect(e).toEqual({
+      status: 409,
+      body: { statusCode: 409, message: "media.in_use", templates: [], campaigns: [], tickets: [], knowledge: [{ id: items[0].id, title: "menu.pdf" }] },
+    });
+    expect(w.db.media).toHaveLength(1);
+    expect(w.storage.delete).not.toHaveBeenCalled();
+    // The check and the delete run under the media lock.
+    const locks = w.prisma.$executeRaw.mock.calls.map((c: any[]) => `${c[0].join("?")}|${c.slice(1).join(",")}`);
+    expect(locks.some((l: string) => l.includes("pg_advisory_xact_lock") && l.endsWith(`|media:${mediaId}`))).toBe(true);
+    // And the library never lists it.
+    expect((await w.media.listPage(kw.A, undefined, { kind: "all" })).items).toEqual([]);
+  });
+});
