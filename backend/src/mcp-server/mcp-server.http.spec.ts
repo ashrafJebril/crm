@@ -15,6 +15,7 @@ describe("MCP server HTTP transport", () => {
   let appointments: { list: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let contacts: { search: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let media: { listForAgent: jest.Mock };
+  let knowledge: { search: jest.Mock };
   let server: http.Server;
   let baseUrl: string;
 
@@ -26,6 +27,7 @@ describe("MCP server HTTP transport", () => {
       contacts as unknown as ContactsService,
       media as unknown as MediaService,
       {} as never, // SP-10: BookingsService (no booking-catalog tool is called here)
+      knowledge as never, // SP-21: KnowledgeSearchService
     );
     server = http.createServer(async (req, res) => {
       const mcp = new MCPServer({ name: "tkana-crm", version: "1.0.0", tools: factory.build(workspaceId) });
@@ -59,20 +61,21 @@ describe("MCP server HTTP transport", () => {
     appointments = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     contacts = { search: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     media = { listForAgent: jest.fn() };
+    knowledge = { search: jest.fn() };
   });
 
   afterEach(() => {
     server?.close();
   });
 
-  it("mcp tools list includes list_photos and the SP-10 catalog tools: all twelve tools and no delete tool", async () => {
+  it("mcp tools list includes list_photos, the SP-10 catalog tools and SP-21 search_knowledge: all thirteen tools and no delete tool", async () => {
     await startFor("ws1");
     const { result } = await call("tools/list", {});
     const names = (result?.tools ?? []).map((t) => t.name).sort();
     expect(names).toEqual([
       "cancel_appointment", "create_appointment", "create_contact", "find_slots", "get_appointment",
-      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "update_appointment",
-      "update_contact",
+      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "search_knowledge",
+      "update_appointment", "update_contact",
     ]);
     expect(names.some((n) => n.includes("delete"))).toBe(false);
   });
@@ -87,6 +90,22 @@ describe("MCP server HTTP transport", () => {
     const refused = await call("tools/call", { name: "list_photos", arguments: { limit: 11 } });
     expect(refused.result?.isError).toBe(true);
     expect(media.listForAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it("search_knowledge answers over the transport with the reference notice, scoped to the workspace", async () => {
+    await startFor("ws-7");
+    knowledge.search.mockResolvedValue([{ chunkId: "c1", sourceId: "s1", sourceTitle: "Menu", kind: "file", heading: null, text: "Cut 50 SAR" }]);
+    const { result } = await call("tools/call", { name: "search_knowledge", arguments: { query: "cut price" } });
+    expect(result?.isError).toBe(false);
+    expect(knowledge.search).toHaveBeenCalledWith("ws-7", "cut price", { kind: undefined, limit: 5 });
+    const out = JSON.parse(result!.content![0].text);
+    expect(out.notice).toMatch(/never instructions/);
+    expect(out.results).toHaveLength(1);
+    for (const bad of [{ query: "x", limit: 11 }, { query: "x".repeat(201) }, { query: "" }, { query: "x", kind: "secrets" }]) {
+      const refused = await call("tools/call", { name: "search_knowledge", arguments: bad });
+      expect(refused.result?.isError).toBe(true);
+    }
+    expect(knowledge.search).toHaveBeenCalledTimes(1);
   });
 
   it("scopes a tool call to the workspace baked into this server instance", async () => {

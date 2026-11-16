@@ -446,6 +446,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /knowledge/faqs": "knowledge.create",
   "POST /knowledge/files": "knowledge.create",
   "DELETE /knowledge/sources/:id": "knowledge.delete",
+  // SP-21 Task 2: website sources.
+  "POST /knowledge/websites/check": "knowledge.create",
+  "POST /knowledge/websites": "knowledge.create",
+  "PATCH /knowledge/websites/:id": "knowledge.update",
+  "POST /knowledge/websites/:id/refresh": "knowledge.update",
 
   // ── Connectors (MCP servers bound to the agent) ───────────────────────
   "GET /integrations/l/mcp-servers": "connectors.view",

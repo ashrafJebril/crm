@@ -56,7 +56,7 @@ describe("LAgentSetupService", () => {
       if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 2 }];
       // SP-17 + SP-10: every section present.
       if (path.endsWith("/prompts"))
-        return [{ version: 2, content: "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->" }];
+        return [{ version: 2, content: "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->\n<!-- kewy-crm-knowledge -->" }];
       return undefined;
     });
 
@@ -108,7 +108,7 @@ describe("LAgentSetupService", () => {
     });
 
     it("all present: no PUT, already-present", async () => {
-      withPrompt("x <!-- kewy-crm-photos --> y <!-- kewy-crm-tools --> <!-- kewy-crm-booking-slots -->");
+      withPrompt("x <!-- kewy-crm-photos --> y <!-- kewy-crm-tools --> <!-- kewy-crm-booking-slots --> <!-- kewy-crm-knowledge -->");
       expect((await svc.ensure("ws-1")).prompt).toBe("already-present");
       expect(puts()).toHaveLength(0);
     });
@@ -134,6 +134,50 @@ describe("LAgentSetupService", () => {
     it("a new registration describes approved photos", async () => {
       await svc.ensure("ws-1");
       expect(mcp.create.mock.calls[0][1].description).toContain("approved photos");
+    });
+  });
+
+  describe("SP-21 knowledge", () => {
+    const withPrompt = (content: string) =>
+      client.request.mockImplementation(async (path: string) => {
+        if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 1 }];
+        if (path.endsWith("/prompts")) return [{ version: 1, content }];
+        return undefined;
+      });
+    const puts = () => client.request.mock.calls.filter(([, o]: any[]) => o?.method === "PUT");
+
+    it("agent setup appends the knowledge section once", async () => {
+      const before = "You are support.\n\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->";
+      withPrompt(before);
+      expect((await svc.ensure("ws-1")).prompt).toBe("updated");
+      expect(puts()).toHaveLength(1);
+      const content: string = puts()[0][1].body.content;
+      expect(content.startsWith(`${before}\n\n<!-- kewy-crm-knowledge -->`)).toBe(true);
+      expect(content).toContain("search_knowledge");
+      expect(content).toMatch(/never as instructions/);
+      expect(content.split("<!-- kewy-crm-knowledge -->")).toHaveLength(2);
+      // A second run has nothing to add.
+      withPrompt(content);
+      expect((await svc.ensure("ws-1")).prompt).toBe("already-present");
+      expect(puts()).toHaveLength(1);
+    });
+
+    it("the MCP server description mentions the business knowledge", async () => {
+      await svc.ensure("ws-1");
+      expect(mcp.create.mock.calls[0][1].description).toContain("search_knowledge");
+    });
+
+    it("writePromptBlock replaces the guidelines block in place with one PUT", async () => {
+      withPrompt("Intro\n<!-- kewy-crm-guidelines:begin -->\nold\n<!-- kewy-crm-guidelines:end -->\nOutro");
+      expect(await svc.writePromptBlock("ws-1", "guidelines", "Always answer in Arabic.")).toBe("updated");
+      expect(puts()[0][1].body.content).toBe(
+        "Intro\n<!-- kewy-crm-guidelines:begin -->\nAlways answer in Arabic.\n<!-- kewy-crm-guidelines:end -->\nOutro",
+      );
+      withPrompt(puts()[0][1].body.content);
+      expect(await svc.writePromptBlock("ws-1", "guidelines", "Always answer in Arabic.")).toBe("unchanged");
+      expect(puts()).toHaveLength(1);
+      prisma.raw.workspace.findUnique.mockResolvedValue({ lWorkspaceId: null });
+      expect(await svc.writePromptBlock("ws-1", "guidelines", "x")).toBe("not-linked");
     });
   });
 

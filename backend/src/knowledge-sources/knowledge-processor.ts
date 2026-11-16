@@ -47,6 +47,8 @@ import { isTypedKind } from "./typed-docs";
 
 export const KNOWLEDGE_VISION = Symbol("KNOWLEDGE_VISION");
 export const KNOWLEDGE_PDF_TEXT = Symbol("KNOWLEDGE_PDF_TEXT");
+/** After-commit publishing hook (the KnowledgePublisher; SP-21 Task 2). */
+export const KNOWLEDGE_PUBLISH_HOOK = Symbol("KNOWLEDGE_PUBLISH_HOOK");
 /** Sources picked per sweep. */
 export const SWEEP_BATCH = 10;
 /** Runs in flight per process (memory bound: files are read whole). */
@@ -105,6 +107,8 @@ export class KnowledgeProcessor {
     private readonly media: MediaService,
     @Inject(KNOWLEDGE_VISION) private readonly vision: KnowledgeVisionPort,
     @Optional() @Inject(KNOWLEDGE_PDF_TEXT) pdfText?: PdfTextFn,
+    /** SP-21 Task 2: publish a source once it is ready (after commit). */
+    @Optional() @Inject(KNOWLEDGE_PUBLISH_HOOK) private readonly publisher?: { schedule(sourceId: string): void },
   ) {
     this.pdfText = pdfText ?? defaultPdfText;
   }
@@ -303,5 +307,6 @@ export class KnowledgeProcessor {
       await tx.knowledgeChunk.deleteMany({ where: { workspaceId: src.workspaceId, sourceId: src.id } });
       await tx.knowledgeChunk.createMany({ data: chunkRowsFor(src.workspaceId, src.id, chunks) });
     });
+    this.publisher?.schedule(src.id);
   }
 }

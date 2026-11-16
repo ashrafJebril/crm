@@ -10,7 +10,7 @@
  * hidden from the library (ruling 9), created in the same transaction as the
  * sources that reference them; a batch with one bad file creates nothing.
  */
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { Response } from "express";
 import type { KnowledgeSource, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -26,6 +26,8 @@ import {
   KB_FILE_MAX_BYTES,
   PAGE_STATES,
   PREVIEW_MAX_ITEMS,
+  TOMBSTONE_KIND,
+  WEBSITE_STALE_MS,
   type KbFileType,
   type KnowledgeKind,
   type KnowledgeStatus,
@@ -36,6 +38,7 @@ import { tiptapToText } from "./knowledge-content";
 import { knowledgeError, KnowledgeFailure } from "./knowledge-errors";
 import { MIME_OF_TYPE, readTyped } from "./knowledge-extract";
 import { chunkRowsFor, KnowledgeProcessor } from "./knowledge-processor";
+import { KnowledgePublisher } from "./knowledge-publisher";
 import type {
   KnowledgePageDto,
   KnowledgePreviewDto,
@@ -104,6 +107,11 @@ export function classifyUpload(f: { originalname: string; mimetype: string; buff
   }
 }
 
+/** A website crawl holds a live lease (the crawler's staleness rule: a lease older than WEBSITE_STALE_MS is stale). */
+export function isSyncing(row: { kind: string; syncStartedAt?: Date | null }, now = new Date()): boolean {
+  return row.kind === "website" && row.syncStartedAt instanceof Date && now.getTime() - row.syncStartedAt.getTime() <= WEBSITE_STALE_MS;
+}
+
 @Injectable()
 export class KnowledgeSourcesService {
   private readonly log = new Logger(KnowledgeSourcesService.name);
@@ -112,11 +120,13 @@ export class KnowledgeSourcesService {
     private readonly prisma: PrismaService,
     private readonly media: MediaService,
     private readonly processor: KnowledgeProcessor,
+    /** SP-21 Task 2: after-commit publishing (absent in specs that do not need it). */
+    @Optional() private readonly publisher?: KnowledgePublisher,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────
 
-  toDto(row: SourceWithMedia, pageCounts?: Partial<Record<PageState, number>>): KnowledgeSourceDto {
+  toDto(row: SourceWithMedia, pageCounts?: Partial<Record<PageState, number>>, now = new Date()): KnowledgeSourceDto {
     const dto: KnowledgeSourceDto = {
       id: row.id,
       kind: row.kind as KnowledgeKind,
@@ -131,6 +141,7 @@ export class KnowledgeSourcesService {
       lastSyncAt: row.lastSyncAt ?? null,
       nextSyncAt: row.nextSyncAt ?? null,
       consecutiveFailures: row.consecutiveFailures,
+      syncing: isSyncing(row, now),
       lastRun: row.lastRun ?? null,
       itemCount: row.itemCount,
       publishState: row.publishState,
@@ -168,14 +179,21 @@ export class KnowledgeSourcesService {
 
   /** The row, or 404 `knowledge.not_found` (unknown or another workspace's). */
   async load(workspaceId: string, id: string): Promise<SourceWithMedia> {
-    const row = await this.prisma.knowledgeSource.findFirst({ where: { id: String(id ?? ""), workspaceId }, include: this.include });
+    const row = await this.prisma.knowledgeSource.findFirst({
+      where: { id: String(id ?? ""), workspaceId, kind: { not: TOMBSTONE_KIND } },
+      include: this.include,
+    });
     if (!row) throw knowledgeError("knowledge.not_found");
     return row as SourceWithMedia;
   }
 
   async list(workspaceId: string, q: { kind?: string; status?: string } = {}): Promise<{ items: KnowledgeSourceDto[] }> {
     const rows = (await this.prisma.knowledgeSource.findMany({
-      where: { workspaceId, ...(q.kind ? { kind: q.kind } : {}), ...(q.status ? { status: q.status } : {}) },
+      where: {
+        workspaceId,
+        kind: { not: TOMBSTONE_KIND, ...(q.kind ? { equals: q.kind } : {}) },
+        ...(q.status ? { status: q.status } : {}),
+      },
       include: this.include,
       orderBy: [{ kind: "asc" }, { order: "asc" }, { createdAt: "desc" }],
     })) as SourceWithMedia[];
@@ -254,6 +272,8 @@ export class KnowledgeSourcesService {
   async remove(workspaceId: string, id: string): Promise<{ ok: true }> {
     const src = await this.load(workspaceId, id);
     await this.prisma.knowledgeSource.deleteMany({ where: { id: src.id, workspaceId } });
+    // The upstream copies go too (best-effort; never fails the delete).
+    await this.publisher?.unpublish(src);
     if (src.mediaId) {
       const others = await this.prisma.knowledgeSource.count({ where: { workspaceId, mediaId: src.mediaId } });
       if (others === 0) {
@@ -304,6 +324,7 @@ export class KnowledgeSourcesService {
     if ("conflict" in saved) {
       throw knowledgeError("knowledge.version_conflict", { current: await this.get(workspaceId, saved.conflict as string) });
     }
+    this.publisher?.schedule(saved.id);
     return this.get(workspaceId, saved.id);
   }
 
@@ -372,6 +393,7 @@ export class KnowledgeSourcesService {
       await tx.knowledgeChunk.createMany({ data: chunkRowsFor(workspaceId, row.id, this.faqChunk(question, answer)) });
       return row.id;
     });
+    this.publisher?.schedule(id);
     return this.get(workspaceId, id);
   }
 
@@ -397,6 +419,7 @@ export class KnowledgeSourcesService {
       return "ok" as const;
     });
     if (outcome === "conflict") throw knowledgeError("knowledge.version_conflict", { current: await this.get(workspaceId, src.id) });
+    this.publisher?.schedule(src.id);
     return this.get(workspaceId, src.id);
   }
 

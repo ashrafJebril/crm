@@ -4,9 +4,9 @@
  * content rules live in the service so every refusal carries a knowledge key.
  */
 import { Type } from "class-transformer";
-import { ArrayMaxSize, IsArray, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Min } from "class-validator";
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Min } from "class-validator";
 import type { KnowledgeKind, KnowledgeStatus, PageState, Schedule, TypedKind } from "./knowledge-constants";
-import { FAQ_MAX, KNOWLEDGE_KINDS, KNOWLEDGE_STATUSES, TYPED_KINDS } from "./knowledge-constants";
+import { FAQ_MAX, KNOWLEDGE_KINDS, KNOWLEDGE_STATUSES, SCHEDULES, TYPED_KINDS } from "./knowledge-constants";
 
 export class PutContentDto {
   @IsObject()
@@ -121,6 +121,12 @@ export interface KnowledgeSourceDto {
    * the website wording ("failed N times in a row") for files.
    */
   consecutiveFailures: number;
+  /**
+   * Websites: a crawl run holds a live lease (`syncStartedAt` set and younger
+   * than WEBSITE_STALE_MS, the crawler's own staleness rule). Always false for
+   * other kinds, whose progress is `status` (`queued` / `processing`).
+   */
+  syncing: boolean;
   lastRun: unknown;
   itemCount: number;
   publishState: string;
@@ -153,4 +159,41 @@ export interface KnowledgePageDto {
   httpStatus: number | null;
   lastReadAt: Date | null;
   removedAt: Date | null;
+}
+
+// ── SP-21 Task 2: websites ──────────────────────────────────────────────
+
+export class CheckWebsiteDto {
+  @IsString()
+  @IsNotEmpty()
+  url!: string;
+}
+
+export class CreateWebsiteDto {
+  @IsString()
+  @IsNotEmpty()
+  url!: string;
+
+  @IsOptional()
+  @IsIn(["site", "path"])
+  scope?: "site" | "path";
+
+  @IsOptional()
+  @IsIn(SCHEDULES as unknown as string[])
+  schedule?: Schedule;
+}
+
+export class PatchWebsiteDto {
+  @IsOptional()
+  @IsIn(SCHEDULES as unknown as string[])
+  schedule?: Schedule;
+
+  @IsOptional()
+  @IsBoolean()
+  paused?: boolean;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  version!: number;
 }
