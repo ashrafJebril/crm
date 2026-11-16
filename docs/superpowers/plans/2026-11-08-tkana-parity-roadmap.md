@@ -265,8 +265,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 ### Phase 4: Support, bookings and insights
 
 #### SP-09 Support tickets. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-16-sp09-support-tickets.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-16. The SLA trigger was live-verified on real Postgres (127 pass; F1 fixed in 07ad4e9). **Ruling:** the SLA is shown and backfilled for support pipelines only. Sales stages still compute it but do not show it. The backfill is a no-op today (there are 0 support tickets), so it was not run.
 - **Gaps:** priority, category, channel, request number, SLA due date with overdue display; ticket attachments (customer and staff files, served through gated routes); resolve/comment actions; booking-request cards on a ticket.
 - **Read in Tkana:** `routes/pipeline.tickets.tsx`, `components/tickets/{tickets-page,ticket-attachments,booking-request-card}.tsx`, `routes/media.ticket*.ts`.
 - **Data:** `Ticket` + `priority:"low"|"normal"|"high"|"urgent"`, `category String?`, `slaDueAt DateTime?` (computed from `TicketStage.slaMinutes` on stage entry); `TicketAttachment {ticketId, mediaId, source:"customer"|"staff"}`.
