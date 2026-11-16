@@ -198,3 +198,21 @@ export function ticketActionError(tx: Tx, msg: string): string {
     return tx("That lost reason isn't available for this pipeline.", "سبب الخسارة هذا غير متاح لهذا المسار.");
   return msg || tx("Something went wrong", "حدث خطأ ما");
 }
+
+/**
+ * Final review I1: the SLA filter and the SLA sort exist only on support
+ * pipelines. Elsewhere a remembered `sla` (from the hash, or a pipeline
+ * switch) is dropped and an `slaDueAt` sort falls back to the default, so the
+ * board never filters by something it does not show. Support is unchanged.
+ */
+export function scopeToPipeline(
+  filters: BoardFilters,
+  sort: Sort,
+  kind: string | null | undefined,
+): { filters: BoardFilters; sort: Sort } {
+  if (kind === "support") return { filters, sort };
+  return {
+    filters: filters.sla ? { ...filters, sla: "" } : filters,
+    sort: sort.key === "slaDueAt" ? DEFAULT_SORT : sort,
+  };
+}

@@ -25,6 +25,8 @@ interface Props {
   selected: Set<string>;
   onToggle: (id: string) => void;
   onToggleAll: (ids: string[], on: boolean) => void;
+  /** Final review I1: the SLA column on support pipelines only. */
+  showSla?: boolean;
 }
 
 const th: CSSProperties = {
@@ -44,7 +46,7 @@ const th: CSSProperties = {
 };
 const td: CSSProperties = { padding: "8px 10px", fontSize: 12.5, color: "var(--ink)", borderBottom: "1px solid var(--line)", whiteSpace: "nowrap" };
 
-export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort, onSort, selected, onToggle, onToggleAll }: Props) {
+export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort, onSort, selected, onToggle, onToggleAll, showSla = true }: Props) {
   const q = useTableTickets(pipelineId, qs);
   const canUpdate = usePermissions().can("tickets.update");
   const num = (n: number) => n.toLocaleString(lang === "ar" ? "ar" : "en");
@@ -113,7 +115,7 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
             {sortable("priority", tx("Priority", "الأولوية"))}
             <th style={th}>{tx("Category", "التصنيف")}</th>
             <th style={th}>{tx("Channel", "القناة")}</th>
-            {sortable("slaDueAt", tx("SLA", "المهلة"))}
+            {showSla ? sortable("slaDueAt", tx("SLA", "المهلة")) : null}
             {sortable("value", tx("Value", "القيمة"))}
             {sortable("createdAt", tx("Created", "أُنشئت"))}
             {sortable("updatedAt", tx("Updated", "حُدّثت"))}
@@ -123,7 +125,7 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={14} style={{ ...td, textAlign: "center", color: "var(--ink-3)", padding: 32 }}>
+              <td colSpan={showSla ? 14 : 13} style={{ ...td, textAlign: "center", color: "var(--ink-3)", padding: 32 }}>
                 {tx("No tickets match these filters", "لا توجد تذاكر تطابق هذه المرشحات")}
               </td>
             </tr>
@@ -175,9 +177,11 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
                 <td style={td}><PriorityChip tx={tx} priority={t.priority} always /></td>
                 <td style={td}>{categoryLabel(tx, t.category) ?? "—"}</td>
                 <td style={td}>{t.channel ? <ChannelChip tx={tx} channel={t.channel} /> : "—"}</td>
-                <td style={td}>
-                  <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={stage?.isTerminal} showNone />
-                </td>
+                {showSla ? (
+                  <td style={td}>
+                    <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={stage?.isTerminal} showNone />
+                  </td>
+                ) : null}
                 <td style={td} className="mono">{t.value != null ? `${num(t.value)} ${t.currency ?? "SAR"}` : "—"}</td>
                 <td style={td}>{date(t.createdAt)}</td>
                 <td style={td}>{date(t.updatedAt)}</td>

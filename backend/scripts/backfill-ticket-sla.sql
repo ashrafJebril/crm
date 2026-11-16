@@ -14,22 +14,48 @@
 -- tickets holds its row locks only for its own UPDATE, and an error in a late
 -- batch keeps the batches already committed (rerun to finish).
 --
--- What it does: for each ticket with "slaDueAt" IS NULL, whose current stage
--- has "slaMinutes" and is not terminal, and which entered that stage BEFORE the
--- cutoff, sets "slaDueAt" = "enteredStageAt" + slaMinutes (wall clock), in
--- batches of 1 000 tickets by id. Old tickets in an SLA stage may therefore
--- show as overdue on day one (accepted in ruling 2).
+-- What it does: for each ticket in a pipeline of kind 'support' with
+-- "slaDueAt" IS NULL, whose current stage has "slaMinutes" and is not
+-- terminal, and which entered that stage BEFORE the cutoff, sets "slaDueAt" =
+-- "enteredStageAt" + slaMinutes (wall clock), in batches of 1 000 tickets by
+-- id. Old support tickets in an SLA stage may therefore show as overdue on day
+-- one (accepted in ruling 2).
+--
+-- Support pipelines only (final review I1, controller ruling): the SLA is a
+-- support feature. Sales and leads stages carry default slaMinutes too, but
+-- their tickets are never backfilled here and the UI shows no SLA for them.
+-- (The trigger still computes slaDueAt for every ticket; it is harmless and
+-- keeps a later "SLA for sales" switch possible.)
+--
+-- Preflight (read-only; run it first and show the counts to whoever approves):
+-- what this script would update, split by pipeline kind (only 'support' is
+-- touched; the other rows show what is deliberately left alone), and how many
+-- of those would be overdue right away. Replace the cutoff literal with the
+-- migration's "_prisma_migrations".finished_at (UTC) or your -v cutoff.
+--   SELECT p."kind", count(*) AS would_match,
+--          count(*) FILTER (WHERE t."enteredStageAt" + make_interval(mins => s."slaMinutes")
+--                                 < timezone('UTC', now())) AS overdue_on_day_one
+--   FROM "Ticket" t
+--   JOIN "TicketStage" s ON s."id" = t."stageId"
+--   JOIN "Pipeline" p ON p."id" = t."pipelineId"
+--   WHERE t."slaDueAt" IS NULL AND s."slaMinutes" IS NOT NULL AND s."isTerminal" = false
+--     AND t."enteredStageAt" < '2026-11-16 12:00:00'::timestamp
+--   GROUP BY p."kind" ORDER BY p."kind";
 --
 -- The cutoff (UTC, a timestamp): `-v cutoff=...` when given; otherwise the
 -- moment the migration finished, read from "_prisma_migrations". Every ticket
--- that entered its stage after that went through the trigger already, so a
--- rerun later (for example after a stage gains slaMinutes) never changes
--- tickets the trigger left without a due date (ruling 2). Without a cutoff
--- (migration not applied) the script refuses to run.
+-- that entered its stage after that went through the trigger already, so this
+-- script never touches a ticket that entered its stage after the migration.
+-- Without a cutoff (migration not applied) the script refuses to run.
 --
--- Rerunnable: it only touches rows still NULL and older than the cutoff. It
--- never changes "stageId" or "enteredStageAt" (the trigger does not fire: it
--- is `UPDATE OF "stageId"` only), and never clears a due date.
+-- Run it once, right after the migration. A rerun only touches rows still
+-- NULL and older than the cutoff, so it is a
+-- no-op only for stages whose slaMinutes did not change since: if a support stage gained slaMinutes in
+-- the meantime, a rerun also gives that stage's pre-migration tickets a due
+-- date (ruling 2 says editing slaMinutes moves no due dates, so don't rerun
+-- after such an edit). It never changes "stageId" or "enteredStageAt" (the
+-- trigger does not fire: it is `UPDATE OF "stageId"` only), and never clears
+-- a due date.
 
 \if :{?cutoff}
 SELECT set_config('sp09.backfill_cutoff', :'cutoff', false);
@@ -66,6 +92,7 @@ BEGIN
       SELECT t."id"
       FROM "Ticket" t
       JOIN "TicketStage" s ON s."id" = t."stageId"
+      JOIN "Pipeline" p ON p."id" = t."pipelineId" AND p."kind" = 'support'
       WHERE t."slaDueAt" IS NULL
         AND s."slaMinutes" IS NOT NULL
         AND s."isTerminal" = false
@@ -79,8 +106,9 @@ BEGIN
 
     UPDATE "Ticket" t
     SET "slaDueAt" = t."enteredStageAt" + make_interval(mins => s."slaMinutes")
-    FROM "TicketStage" s
+    FROM "TicketStage" s, "Pipeline" p
     WHERE s."id" = t."stageId"
+      AND p."id" = t."pipelineId" AND p."kind" = 'support'
       AND t."id" = ANY (batch_ids)
       AND t."slaDueAt" IS NULL
       AND s."slaMinutes" IS NOT NULL

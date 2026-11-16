@@ -921,22 +921,29 @@ export class TicketsService {
     });
     if (!target) throw ticketError("tickets.no_resolved_stage");
     const note = dto.note?.trim();
-    try {
-      // expectStageId (review M1): the move is a conditional write on the stage
-      // read above, so a concurrent close (e.g. Lost) between that read and
-      // this move is a 409, never a silent Lost -> Won flip.
-      await this.moveTicket(
-        workspaceId,
-        id,
-        { stageId: target.id, ...(note ? { note } : {}), ...(viewer ? { byUserId: viewer.userId } : {}) },
-        viewer,
-        { expectStageId: ticket.stageId },
-      );
-    } catch (e) {
-      if (e instanceof ConflictException && e.message === "tickets.undo_not_latest") {
-        throw ticketError("tickets.already_closed");
+    const move = { stageId: target.id, ...(note ? { note } : {}), ...(viewer ? { byUserId: viewer.userId } : {}) };
+    const isRace = (e: unknown) => e instanceof ConflictException && e.message === "tickets.undo_not_latest";
+    // expectStageId (review M1): the move is a conditional write on the stage
+    // read above, so a concurrent change is a conflict, never a silent
+    // Lost -> Won flip. On a conflict (final review M3) re-read the ticket:
+    // closed meanwhile -> 409 already_closed; moved to another open stage ->
+    // retry once from there; moved again during the retry -> 409 stage_changed.
+    let expectStageId = ticket.stageId;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.moveTicket(workspaceId, id, move, viewer, { expectStageId });
+        break;
+      } catch (e) {
+        if (!isRace(e)) throw e;
+        const now = await this.prisma.ticket.findFirst({
+          where: { id, workspaceId },
+          include: { stage: true },
+        });
+        if (!now) throw new NotFoundException("Ticket not found");
+        if (now.stage.isTerminal) throw ticketError("tickets.already_closed");
+        if (attempt >= 1) throw ticketError("tickets.stage_changed");
+        expectStageId = now.stageId;
       }
-      throw e;
     }
     return this.getTicket(workspaceId, id, viewer);
   }

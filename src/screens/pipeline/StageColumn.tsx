@@ -24,6 +24,8 @@ interface StageColumnProps {
   onOpenMoveMenu: (ticket: Ticket, anchorRect: DOMRect) => void;
   /** Pipeline stale threshold in days (null = off). */
   staleDays?: number | null;
+  /** Final review I1: SLA chips on support pipelines only. */
+  showSla?: boolean;
   /** Moves are disabled for this viewer (agentCanMove=false, no pipelines.update). */
   moveLocked?: boolean;
   selectedIds?: Set<string>;
@@ -42,6 +44,7 @@ export function StageColumn({
   onOpenConversation,
   onOpenMoveMenu,
   staleDays = null,
+  showSla = false,
   moveLocked = false,
   selectedIds,
   onToggleSelect,
@@ -287,6 +290,7 @@ export function StageColumn({
                     accent={accent}
                     stale={isStaleTicket(ticket.enteredStageAt, staleDays, nowTick, stage.isTerminal)}
                     stageIsTerminal={stage.isTerminal}
+                    showSla={showSla}
                     moveLocked={moveLocked}
                     selected={selectedIds?.has(ticket.id) ?? false}
                     selectionActive={(selectedIds?.size ?? 0) > 0}

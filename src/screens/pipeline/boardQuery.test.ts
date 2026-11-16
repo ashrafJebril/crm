@@ -136,3 +136,26 @@ describe("SP-09 support filters", () => {
     expect(nextSort({ key: "updatedAt", dir: "desc" }, "priority")).toEqual({ key: "priority", dir: "desc" });
   });
 });
+
+describe("SLA filter and sort only on support pipelines (final review I1)", () => {
+  it("scopeToPipeline drops the sla filter and the slaDueAt sort off support pipelines", async () => {
+    const { scopeToPipeline, DEFAULT_SORT } = await import("./boardQuery");
+    const f = { ...EMPTY_BOARD_FILTERS, sla: "overdue" as const, priority: ["urgent" as const] };
+    const sort = { key: "slaDueAt" as const, dir: "asc" as const };
+    for (const kind of ["deals", "leads", undefined]) {
+      const out = scopeToPipeline(f, sort, kind);
+      expect(out.filters).toEqual({ ...f, sla: "" });
+      expect(out.sort).toEqual(DEFAULT_SORT);
+      const qs = toQuery(out.filters, out.sort, { now: new Date("2026-11-16T09:00:00Z"), tz: "Asia/Riyadh" });
+      expect(new URLSearchParams(qs).get("sla")).toBeNull();
+      expect(new URLSearchParams(qs).get("priority")).toBe("urgent");
+    }
+    // Support is unchanged (same objects).
+    const sup = scopeToPipeline(f, sort, "support");
+    expect(sup.filters).toBe(f);
+    expect(sup.sort).toBe(sort);
+    // Other sorts are kept on sales.
+    const byPriority = { key: "priority" as const, dir: "desc" as const };
+    expect(scopeToPipeline(f, byPriority, "deals").sort).toBe(byPriority);
+  });
+});

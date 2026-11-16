@@ -13,6 +13,8 @@ describe("SP-09 ticket error keys", () => {
       "tickets.attachment_exists": 409,
       "tickets.no_resolved_stage": 409,
       "tickets.already_closed": 409,
+      // Final review M3: resolve retried once and the ticket moved again.
+      "tickets.stage_changed": 409,
     });
   });
 

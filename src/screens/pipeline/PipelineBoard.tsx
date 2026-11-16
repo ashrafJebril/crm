@@ -33,10 +33,13 @@ interface PipelineBoardProps {
   onToggleSelect: (id: string) => void;
   onCardClick: (ticket: Ticket) => void;
   onOpenConversation: (conversationId: string) => void;
+  /** Final review I1: SLA chips on support pipelines only. */
+  showSla?: boolean;
 }
 
 export function PipelineBoard({
   pipeline,
+  showSla = pipeline.kind === "support",
   lang,
   filterQs,
   selectedIds,
@@ -201,6 +204,7 @@ export function PipelineBoard({
               onCardClick={onCardClick}
               onOpenConversation={onOpenConversation}
               staleDays={pipeline.staleDays ?? null}
+              showSla={showSla}
               moveLocked={moveLocked}
               selectedIds={selectedIds}
               onToggleSelect={onToggleSelect}

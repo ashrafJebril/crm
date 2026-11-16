@@ -13,8 +13,7 @@ import { NextStepChip, type NextStep } from "@/components/activities/NextStepChi
 import { LeadActionMenu } from "./LeadActionMenu";
 import { useWorkspaceTz } from "@/components/activities/activityApi";
 import { AttachmentCount, PriorityChip, SlaBadgeChip } from "./TicketBadges";
-import { priorityChipShown } from "./ticketFields";
-import { ticketSlaState } from "./ticketSla";
+import { cardSupportBits } from "./ticketSla";
 
 export type LeadAction = "won" | "lost" | "notALead" | "reopen";
 
@@ -39,6 +38,8 @@ interface TicketCardProps {
   onLeadAction?: (ticket: Ticket, action: LeadAction) => void;
   /** SP-09: the column's stage is terminal (no SLA badge). */
   stageIsTerminal?: boolean;
+  /** Final review I1: the SLA chip shows on support pipelines only. */
+  showSla?: boolean;
 }
 
 const cardBase: CSSProperties = {
@@ -83,6 +84,7 @@ export const TicketCard = memo(function TicketCard({
   onToggleSelect,
   onLeadAction,
   stageIsTerminal,
+  showSla = false,
 }: TicketCardProps) {
   const { t: tw } = useTweaks();
   const tx = makeTx(tw.lang);
@@ -97,8 +99,7 @@ export const TicketCard = memo(function TicketCard({
   const canNotLead = canUpdate && usePermissions().can("contacts.update");
   const closed = !!ticket.closedAt;
   const tz = useWorkspaceTz();
-  const sla = ticketSlaState(t, stageIsTerminal);
-  const showSupport = priorityChipShown(t.priority) || (sla !== "finished" && sla !== "none") || !!t.attachmentCount;
+  const { show: showSupport } = cardSupportBits(t, stageIsTerminal, showSla);
   const lockedTip = tx(
     "Only managers can move cards in this pipeline",
     "يمكن للمديرين فقط نقل البطاقات في هذا المسار",
@@ -337,7 +338,7 @@ export const TicketCard = memo(function TicketCard({
       {showSupport ? (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           <PriorityChip tx={tx} priority={t.priority} />
-          <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={stageIsTerminal} />
+          {showSla ? <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={stageIsTerminal} /> : null}
           <span style={{ marginInlineStart: "auto" }}>
             <AttachmentCount tx={tx} count={t.attachmentCount} />
           </span>

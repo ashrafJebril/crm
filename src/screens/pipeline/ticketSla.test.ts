@@ -68,3 +68,23 @@ describe("slaBadge", () => {
     expect(slaBadge("none", null, "Asia/Riyadh", ar)!.label).toBe("بلا مهلة");
   });
 });
+
+describe("SLA is a support feature (final review I1)", () => {
+  it("slaShownFor: only pipelines of kind support", async () => {
+    const { slaShownFor } = await import("./ticketSla");
+    expect(slaShownFor("support")).toBe(true);
+    for (const k of ["deals", "leads", "sales", "", undefined, null]) expect(slaShownFor(k as never)).toBe(false);
+  });
+
+  it("no SLA chip on a sales card, even when its slaDueAt is past; the support card is unchanged", async () => {
+    const { cardSupportBits } = await import("./ticketSla");
+    const overdue = { slaDueAt: at(-H), closedAt: null, priority: "normal", attachmentCount: 0 };
+    expect(cardSupportBits(overdue, false, false, now)).toEqual({ show: false, sla: null });
+    expect(cardSupportBits(overdue, false, true, now)).toEqual({ show: true, sla: "breached" });
+    // A sales card still shows its priority chip and file count.
+    expect(cardSupportBits({ ...overdue, priority: "urgent" }, false, false, now)).toEqual({ show: true, sla: null });
+    expect(cardSupportBits({ ...overdue, attachmentCount: 2 }, false, false, now)).toEqual({ show: true, sla: null });
+    // Support: finished / none never show the chip row on their own.
+    expect(cardSupportBits({ ...overdue, slaDueAt: null }, false, true, now)).toEqual({ show: false, sla: "none" });
+  });
+});

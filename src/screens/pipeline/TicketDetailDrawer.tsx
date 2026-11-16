@@ -246,7 +246,7 @@ export function TicketDetailContent({
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {isSupport ? (
-                <SupportFields t={t} tx={tx} tz={tz} canUpdate={canUpdate} saving={update.isPending} onSave={saveField} />
+                <SupportFields t={t} tx={tx} tz={tz} canUpdate={canUpdate} saving={update.isPending} onSave={saveField} showSla />
               ) : null}
               <Section title={lang === "ar" ? "العميل" : "Contact"}>
                 <div
@@ -618,12 +618,15 @@ function SupportFields({
   canUpdate,
   saving,
   onSave,
+  showSla = false,
 }: {
   t: TicketDetail;
   tx: Tx;
   tz: string;
   canUpdate: boolean;
   saving: boolean;
+  /** Final review I1: the SLA line on support pipelines only. */
+  showSla?: boolean;
   onSave: (patch: { priority?: TicketPriority; category?: TicketCategory | null }) => void;
 }) {
   const priority = ticketPriority(t.priority);
@@ -674,21 +677,23 @@ function SupportFields({
           <span style={{ fontSize: 12.5, color: "var(--ink)" }}>{categoryLabel(tx, t.category) ?? "—"}</span>
         )}
       </div>
-      <div style={row}>
-        <span style={label}>{tx("SLA", "المهلة")}</span>
-        {sla === "finished" ? (
-          <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Closed", "مغلقة")}</span>
-        ) : (
-          <>
-            <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={t.stage?.isTerminal} showNone showOnTrack={false} />
-            {t.slaDueAt ? (
-              <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                {tx("Due", "تستحق")} <bdi>{formatSlaDue(t.slaDueAt, tz, tx)}</bdi>
-              </span>
-            ) : null}
-          </>
-        )}
-      </div>
+      {showSla ? (
+        <div style={row}>
+          <span style={label}>{tx("SLA", "المهلة")}</span>
+          {sla === "finished" ? (
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Closed", "مغلقة")}</span>
+          ) : (
+            <>
+              <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={t.stage?.isTerminal} showNone showOnTrack={false} />
+              {t.slaDueAt ? (
+                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                  {tx("Due", "تستحق")} <bdi>{formatSlaDue(t.slaDueAt, tz, tx)}</bdi>
+                </span>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
       {t.channel ? (
         <div style={row}>
           <span style={label}>{tx("Channel", "القناة")}</span>

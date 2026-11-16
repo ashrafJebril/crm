@@ -10,3 +10,13 @@ export function mergeTicket<T extends { id: string }>(prev: T | undefined, next:
   for (const [k, v] of Object.entries(next)) if (v !== undefined) out[k] = v;
   return out as T;
 }
+
+/**
+ * Final review M1: a detail-cache write from a raw row (realtime event, PATCH,
+ * resolve). With nothing cached it stays a no-op (React Query ignores an
+ * updater that returns undefined), so a raw row can never pose as a fresh
+ * detail without `pipeline` / `activities` / `channel` for the staleTime.
+ */
+export function mergeCachedTicket<T extends { id: string }>(prev: T | undefined, next: T): T | undefined {
+  return prev ? mergeTicket(prev, next) : prev;
+}

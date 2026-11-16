@@ -10,7 +10,8 @@ import type {
   TicketDetail,
 } from "@/lib/types";
 import { withAttachment, withoutAttachment } from "../ticketAttachmentModel";
-import { mergeTicket } from "../ticketMerge";
+import { mergeCachedTicket } from "../ticketMerge";
+import { ApiError } from "@/api/client";
 
 /** SP-09 ticket support data: attachments, candidates, resolve and booking cards. */
 
@@ -90,12 +91,22 @@ export function useResolveTicket(ticketId: string) {
   return useMutation({
     mutationFn: (note: string) => api.post<TicketDetail>(`/tickets/${ticketId}/resolve`, note.trim() ? { note: note.trim() } : {}),
     onSuccess: (t) => {
-      qc.setQueryData<TicketDetail>(qk.ticket(ticketId), (prev) => mergeTicket(prev, t));
+      qc.setQueryData<TicketDetail>(qk.ticket(ticketId), (prev) => mergeCachedTicket(prev, t));
       void qc.invalidateQueries({ queryKey: qk.ticket(ticketId) });
       void qc.invalidateQueries({ queryKey: ["record", "ticket", ticketId] });
       void qc.invalidateQueries({ queryKey: ["tickets", "stage", (t as Ticket).pipelineId] });
       void qc.invalidateQueries({ queryKey: ["tickets", "table"] });
       void qc.invalidateQueries({ queryKey: qk.summary((t as Ticket).pipelineId) });
+    },
+    // Final review M3: any 409 (already closed, moved meanwhile, no resolved
+    // stage) means our copy is stale: refetch the detail and the board.
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409) {
+        void qc.invalidateQueries({ queryKey: qk.ticket(ticketId) });
+        void qc.invalidateQueries({ queryKey: ["record", "ticket", ticketId] });
+        void qc.invalidateQueries({ queryKey: ["tickets", "stage"] });
+        void qc.invalidateQueries({ queryKey: ["tickets", "table"] });
+      }
     },
   });
 }

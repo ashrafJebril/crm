@@ -255,6 +255,65 @@ describe("resolve", () => {
     expect(prisma.db.contact.find((c: any) => c.id === "ct").lifecycle).toBe("lead");
   });
 
+  describe("resolve conflicts re-read the ticket (final review M3)", () => {
+    const stages = [
+      { id: "s-open", workspaceId: WS, pipelineId: "pl", key: "open", label: "Open", order: 0, isTerminal: false, isWon: false, slaMinutes: 120 },
+      { id: "s-prog", workspaceId: WS, pipelineId: "pl", key: "in_progress", label: "In progress", order: 1, isTerminal: false, isWon: false, slaMinutes: 1440 },
+      { id: "s-done", workspaceId: WS, pipelineId: "pl", key: "resolved", label: "Resolved", order: 5, isTerminal: true, isWon: true, slaMinutes: null },
+      { id: "s-lost", workspaceId: WS, pipelineId: "pl", key: "closed", label: "Closed", order: 4, isTerminal: true, isWon: false, slaMinutes: null },
+    ];
+    /** Run `race` when the move's conditional write (updateMany on stageId) is about to run, `times` times. */
+    function raceAtWrite(prisma: any, race: () => void, times = 1) {
+      const um = prisma.ticket.updateMany;
+      let left = times;
+      prisma.ticket.updateMany = jest.fn((a: any) => {
+        if (left > 0 && a?.where?.stageId !== undefined) {
+          left--;
+          race();
+        }
+        return um(a);
+      });
+    }
+
+    it("moved to another open stage meanwhile (at the conditional write): one retry resolves it", async () => {
+      const { svc, prisma } = world({ stages });
+      prisma.db.ticket.push(ticket("t1"));
+      raceAtWrite(prisma, () => (prisma.db.ticket[0].stageId = "s-prog"));
+      const out: any = await svc.resolveTicket(WS, "t1", { note: "fixed" }, undefined);
+      expect(out.stageId).toBe("s-done");
+      const won = prisma.db.ticketActivity.filter((a: any) => a.kind === "won");
+      expect(won).toHaveLength(1);
+      expect(won[0]).toMatchObject({ fromStage: "in_progress", toStage: "resolved", note: "fixed" });
+    });
+
+    it("closed meanwhile at the conditional write -> 409 already_closed, nothing written", async () => {
+      const { svc, prisma } = world({ stages });
+      prisma.db.ticket.push(ticket("t1"));
+      raceAtWrite(prisma, () => (prisma.db.ticket[0].stageId = "s-lost"));
+      const e = await errOf(svc.resolveTicket(WS, "t1", {}, undefined));
+      expect(e.getResponse()).toEqual({ statusCode: 409, message: "tickets.already_closed" });
+      expect(prisma.db.ticket[0].stageId).toBe("s-lost");
+      expect(prisma.db.ticketActivity).toHaveLength(0);
+    });
+
+    it("moved again during the retry -> 409 tickets.stage_changed", async () => {
+      const { svc, prisma } = world({ stages });
+      prisma.db.ticket.push(ticket("t1"));
+      let flip = false;
+      raceAtWrite(
+        prisma,
+        () => {
+          flip = !flip;
+          prisma.db.ticket[0].stageId = flip ? "s-prog" : "s-open";
+        },
+        2,
+      );
+      const e = await errOf(svc.resolveTicket(WS, "t1", {}, undefined));
+      expect(e.getResponse()).toEqual({ statusCode: 409, message: "tickets.stage_changed" });
+      expect(prisma.db.ticketActivity).toHaveLength(0);
+    });
+  });
+
   it("a pipeline with no won terminal stage -> 409 tickets.no_resolved_stage; foreign id -> 404", async () => {
     const { svc, prisma } = world({
       stages: [
@@ -354,5 +413,26 @@ describe("ticket booking cards list upcoming pending and confirmed bookings of t
     const g = await errOf(guard.canActivate(ctx));
     expect(g).toBeInstanceOf(ForbiddenException);
     expect(g.getResponse()).toMatchObject({ message: "Missing permission", permission: "bookings.view" });
+  });
+});
+
+describe("PATCH /tickets/:id returns the full ticket (final review M2)", () => {
+  it("activities (fresh owner/value entries), pipeline, channel and attachmentCount, under the viewer", async () => {
+    const { svc, prisma } = world();
+    prisma.db.workspaceMember.push({ id: "wm", workspaceId: WS, userId: "u2", role: "agent" });
+    prisma.db.ticket.push(ticket("t1", { conversationId: "cv", value: 10 }));
+    (prisma.db.ticketAttachment ??= []).push({ id: "a1", workspaceId: WS, ticketId: "t1", mediaId: "m1", source: "staff", createdAt: NOW });
+    const ctrl = new TicketsController(svc, {} as never);
+    const out: any = await ctrl.updateTicket(WS, "actor", "t1", { ownerId: "u2", value: 25, priority: "high" }, undefined);
+    expect(out).toMatchObject({
+      id: "t1",
+      ownerId: "u2",
+      value: 25,
+      priority: "high",
+      pipeline: expect.objectContaining({ id: "pl" }),
+      channel: { kind: "whatsapp", channelId: null, displayName: null },
+      attachmentCount: 1,
+    });
+    expect(out.activities.map((a: any) => a.kind).sort()).toEqual(["owner_changed", "value_changed"]);
   });
 });

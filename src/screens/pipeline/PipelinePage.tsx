@@ -20,6 +20,7 @@ import {
   encodeBoardFilters,
   filtersActive,
   nextSort,
+  scopeToPipeline,
   toQuery,
   type BoardFilters as Filters,
   type Sort,
@@ -28,6 +29,7 @@ import { getHashParam, setHashParam } from "@/lib/hashState";
 import { makeTx } from "@/lib/tx";
 import { useTeam, useWorkspaceTz } from "@/components/activities/activityApi";
 import type { Ticket } from "@/lib/types";
+import { slaShownFor } from "./ticketSla";
 
 const LAST_USED_KEY = "pipeline:lastUsed";
 
@@ -95,8 +97,12 @@ export default function PipelinePage() {
   const { can } = usePermissions();
   // "Today"-relative presets must not freeze while the page stays open past midnight.
   const dayKey = useLocalDayKey(tz);
-  const filterQs = useMemo(() => toQuery(filters, null, { now: new Date(), tz }), [filters, tz, dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tableQs = useMemo(() => toQuery(filters, sort, { now: new Date(), tz }), [filters, sort, tz, dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Final review I1: the SLA filter, sort, column and chips are support-only.
+  const pipelineKind = (pipelines.find((p) => p.id === pipelineId) ?? pipelines[0])?.kind;
+  const showSla = slaShownFor(pipelineKind);
+  const scoped = useMemo(() => scopeToPipeline(filters, sort, pipelineKind), [filters, sort, pipelineKind]);
+  const filterQs = useMemo(() => toQuery(scoped.filters, null, { now: new Date(), tz }), [scoped.filters, tz, dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tableQs = useMemo(() => toQuery(scoped.filters, scoped.sort, { now: new Date(), tz }), [scoped, tz, dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bulk selection (cards and table rows). Anything that changes the visible set clears it.
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -188,7 +194,8 @@ export default function PipelinePage() {
       />
       <BoardFilters
         tx={tx}
-        filters={filters}
+        filters={scoped.filters}
+        showSla={showSla}
         team={team}
         onChange={(f) => {
           if (f.q !== filters.q) setSearch(f.q);
@@ -205,7 +212,8 @@ export default function PipelinePage() {
             stages={pipeline.stages}
             team={team}
             qs={tableQs}
-            sort={sort}
+            sort={scoped.sort}
+            showSla={showSla}
             onSort={(k) => setSort((s) => nextSort(s, k))}
             selected={selected}
             onToggle={toggleSelect}
@@ -214,6 +222,7 @@ export default function PipelinePage() {
         ) : (
           <PipelineBoard
             pipeline={pipeline}
+            showSla={showSla}
             lang={lang}
             filterQs={filterQs}
             selectedIds={selected}

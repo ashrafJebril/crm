@@ -19,7 +19,8 @@ export type TicketErrorKey =
   | "tickets.attachment_source_not_found"
   | "tickets.attachment_exists"
   | "tickets.no_resolved_stage"
-  | "tickets.already_closed";
+  | "tickets.already_closed"
+  | "tickets.stage_changed";
 
 export const TICKET_ERROR_STATUS: Record<TicketErrorKey, 400 | 404 | 409> = {
   "tickets.invalid_priority": 400,
@@ -31,6 +32,7 @@ export const TICKET_ERROR_STATUS: Record<TicketErrorKey, 400 | 404 | 409> = {
   "tickets.attachment_exists": 409,
   "tickets.no_resolved_stage": 409,
   "tickets.already_closed": 409,
+  "tickets.stage_changed": 409,
 };
 
 export const TICKET_ERROR_KEYS = Object.keys(TICKET_ERROR_STATUS) as TicketErrorKey[];

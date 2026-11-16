@@ -4,7 +4,7 @@ import { useRealtime } from "@/api/useRealtime";
 import { qk } from "@/api/queryKeys";
 import type { Ticket, TicketsListPage } from "@/lib/types";
 import { isRefetchOnRealtimeKey, isUnfilteredStageKey } from "./realtimeKeys";
-import { mergeTicket } from "../ticketMerge";
+import { mergeCachedTicket, mergeTicket } from "../ticketMerge";
 
 const REFETCH_DEBOUNCE_MS = 500;
 
@@ -126,7 +126,9 @@ export function useTicketRealtime(pipelineId: string | null) {
     useCallback(
       (data) => {
         // Raw row: keep the detail's pipeline, activities and read-time fields.
-        qc.setQueryData<Ticket>(qk.ticket(data.ticket.id), (prev) => mergeTicket(prev, data.ticket));
+        // Nothing cached: leave it empty (final review M1), so opening the
+        // ticket fetches the full detail instead of trusting a raw row.
+        qc.setQueryData<Ticket>(qk.ticket(data.ticket.id), (prev) => mergeCachedTicket(prev, data.ticket));
         const updated = mergeTicket(cachedTicket(qc, data.ticket.id), data.ticket);
         if (!pipelineId || data.ticket.pipelineId !== pipelineId) {
           // Different pipeline — just update in place without rearranging.

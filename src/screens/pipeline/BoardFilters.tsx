@@ -18,6 +18,8 @@ interface Props {
   filters: Filters;
   onChange: (f: Filters) => void;
   team: TeamMember[];
+  /** Final review I1: the SLA filter is offered on support pipelines only. */
+  showSla?: boolean;
 }
 
 const ctrl: CSSProperties = {
@@ -32,7 +34,7 @@ const ctrl: CSSProperties = {
 };
 
 /** Date range presets, customer typeahead, assignee and status pickers; SP-09 priority, category and SLA. */
-export function BoardFilters({ tx, filters, onChange, team }: Props) {
+export function BoardFilters({ tx, filters, onChange, team, showSla = true }: Props) {
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
   const presets: Array<[DatePreset, string]> = [
     ["today", tx("Today", "اليوم")],
@@ -142,19 +144,21 @@ export function BoardFilters({ tx, filters, onChange, team }: Props) {
         onChange={(category) => set({ category })}
       />
 
-      <select
-        aria-label={tx("SLA", "المهلة")}
-        value={filters.sla}
-        onChange={(e) => set({ sla: e.target.value as SlaFilter | "" })}
-        style={ctrl}
-      >
-        <option value="">{tx("Any SLA", "أي مهلة")}</option>
-        {SLA_FILTERS.map((v) => (
-          <option key={v} value={v}>
-            {slaLabels[v]}
-          </option>
-        ))}
-      </select>
+      {showSla ? (
+        <select
+          aria-label={tx("SLA", "المهلة")}
+          value={filters.sla}
+          onChange={(e) => set({ sla: e.target.value as SlaFilter | "" })}
+          style={ctrl}
+        >
+          <option value="">{tx("Any SLA", "أي مهلة")}</option>
+          {SLA_FILTERS.map((v) => (
+            <option key={v} value={v}>
+              {slaLabels[v]}
+            </option>
+          ))}
+        </select>
+      ) : null}
 
       {filtersActive(filters) ? (
         <button

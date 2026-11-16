@@ -183,4 +183,25 @@ describe("SP-09 support tickets migration", () => {
     expect(backfill).toMatch(/psql/);
     expect(backfill).toMatch(/single-transaction/);
   });
+
+  it("the backfill only touches support pipelines and documents a read-only preflight (final review I1, M4)", () => {
+    const backfill = readFileSync(join(__dirname, "..", "..", "scripts", "backfill-ticket-sla.sql"), "utf8");
+    const lines = backfill.split(/\r?\n/);
+    const body = lines.filter((l) => !/^\s*--/.test(l)).join("\n");
+    const header = lines.filter((l) => /^\s*--/.test(l)).join("\n");
+    // Both the batch selection and the UPDATE are limited to pipelines of kind 'support'.
+    const kindFilter = /"Pipeline" p ON p\."id" = t\."pipelineId" AND p\."kind" = 'support'/g;
+    expect((body.match(kindFilter) ?? []).length).toBe(1);
+    expect((body.match(/p\."kind" = 'support'/g) ?? []).length).toBe(2);
+    const update = body.slice(body.indexOf('UPDATE "Ticket"'));
+    expect(update).toMatch(/"Pipeline"/);
+    expect(update).toMatch(/p\."kind" = 'support'/);
+    // A read-only preflight in the header: what it would update, split by pipeline kind.
+    expect(header).toMatch(/Preflight/i);
+    expect(header).toMatch(/SELECT p\."kind", count\(\*\)/);
+    expect(header).toMatch(/GROUP BY p\."kind"/);
+    // M4: honest rerun wording.
+    expect(header).toMatch(/no-op only for stages whose slaMinutes did not change/);
+    expect(header).not.toMatch(/never changes tickets the trigger left/);
+  });
 });

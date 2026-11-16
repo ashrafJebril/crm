@@ -1,6 +1,6 @@
 import type { Tx } from "@/lib/tx";
 import { safeTz } from "@/screens/followups/followupsLogic";
-import type { Tone } from "./ticketFields";
+import { priorityChipShown, type Tone } from "./ticketFields";
 
 /**
  * SP-09 SLA, pure. Mirror of backend/src/tickets/ticket-sla.ts `slaState`:
@@ -85,4 +85,25 @@ export function slaBadge(state: SlaState, slaDueAt: Date | string | null | undef
     case "on_track":
       return { state, label: dueSentence, due, title: dueSentence, tone: "info" };
   }
+}
+
+/**
+ * Final review I1 (controller ruling): the SLA is a support feature. The
+ * chip, the table column, the drawer line and the `sla` filter show only on
+ * pipelines of kind `support`; the database still computes slaDueAt for all.
+ */
+export function slaShownFor(kind: string | null | undefined): boolean {
+  return kind === "support";
+}
+
+/** What a board card shows in its support row: the row at all, and the SLA state when the SLA is shown. */
+export function cardSupportBits(
+  t: { slaDueAt?: string | null; closedAt?: string | null; stage?: { isTerminal: boolean } | null; priority?: string | null; attachmentCount?: number | null },
+  stageIsTerminal: boolean | undefined,
+  showSla: boolean,
+  now: Date = new Date(),
+): { show: boolean; sla: SlaState | null } {
+  const sla = showSla ? ticketSlaState(t, stageIsTerminal, now) : null;
+  const slaChip = sla !== null && sla !== "finished" && sla !== "none";
+  return { show: priorityChipShown(t.priority as never) || slaChip || !!t.attachmentCount, sla };
 }

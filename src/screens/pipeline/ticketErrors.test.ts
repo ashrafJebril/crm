@@ -18,7 +18,7 @@ function backendKeys(): string[] {
 describe("ticketErrorText", () => {
   it("ticket error copy covers every SP-09 key in both languages", () => {
     const keys = backendKeys();
-    expect(keys).toHaveLength(9);
+    expect(keys).toHaveLength(10);
     expect(Object.keys(TICKET_ERROR_COPY).filter((k) => k.startsWith("tickets.")).sort()).toEqual([...keys].sort());
     const arSeen = new Set<string>();
     for (const key of keys) {

@@ -44,6 +44,10 @@ export const TICKET_ERROR_COPY: Record<string, CopyFn> = {
     "لا توجد مرحلة حل في هذا المسار. أضف مرحلة إغلاق ناجحة من إعدادات المسار.",
   ],
   "tickets.already_closed": () => ["This ticket is already closed.", "هذه التذكرة مغلقة بالفعل."],
+  "tickets.stage_changed": () => [
+    "Someone moved this ticket while you were resolving it. Check its stage and try again.",
+    "نقل شخص آخر هذه التذكرة أثناء حلّها. تحقق من مرحلتها ثم حاول مرة أخرى.",
+  ],
   "Ticket not found": () => ["This ticket no longer exists.", "هذه التذكرة لم تعد موجودة."],
 };
 

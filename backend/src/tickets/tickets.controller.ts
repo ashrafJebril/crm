@@ -103,13 +103,17 @@ export class TicketsController {
   }
 
   @Patch("tickets/:id")
-  updateTicket(
+  async updateTicket(
     @CurrentWorkspace() workspaceId: string,
     @CurrentUserId() userId: string,
     @Param("id") id: string,
     @Body() dto: UpdateTicketDto,
+    @CurrentViewer() viewer?: Viewer,
   ) {
-    return this.svc.updateTicket(workspaceId, id, dto, userId);
+    await this.svc.updateTicket(workspaceId, id, dto, userId);
+    // SP-09 (final review M2): the full ticket DTO under the viewer's scope, so
+    // the drawer gets the fresh owner/value activities, channel and attachmentCount.
+    return this.svc.getTicket(workspaceId, id, viewer);
   }
 
   @Post("tickets/:id/move")

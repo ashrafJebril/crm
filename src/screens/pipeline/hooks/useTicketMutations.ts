@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { qk } from "@/api/queryKeys";
 import { invalidateContactCaches } from "./useBoardData";
-import { mergeTicket } from "../ticketMerge";
+import { mergeCachedTicket, mergeTicket } from "../ticketMerge";
 import type {
   Ticket,
   TicketActivity,
@@ -189,10 +189,15 @@ export function useUpdateTicket() {
         priority?: TicketPriority;
         category?: TicketCategory | null;
       };
-    }) => api.patch<Ticket>(`/tickets/${v.id}`, v.patch),
-    onSuccess: (ticket) => {
-      // The PATCH returns the raw row: keep pipeline, activities, channel and attachmentCount.
-      qc.setQueryData<TicketDetail>(qk.ticket(ticket.id), (prev) => mergeTicket(prev, ticket as TicketDetail));
+    }) => api.patch<TicketDetail>(`/tickets/${v.id}`, v.patch),
+    onSuccess: (full) => {
+      // The PATCH returns the full ticket (final review M2): fresh activities
+      // (owner/value changes), pipeline, channel and attachmentCount. Only an
+      // existing detail entry is replaced (M1); cards get the row fields only.
+      qc.setQueryData<TicketDetail>(qk.ticket(full.id), (prev) => mergeCachedTicket(prev, full));
+      const { activities: _activities, pipeline: _pipeline, ...ticket } = full;
+      void _activities;
+      void _pipeline;
       // The table and filtered columns may now sort or filter it differently.
       void qc.invalidateQueries({ queryKey: ["tickets", "table"] });
       void qc.invalidateQueries({ queryKey: ["record", "ticket", ticket.id] });
