@@ -182,7 +182,7 @@ d("working home SQL against Postgres", () => {
 
   it("day-1 home shows until dismissed or set up", async () => {
     // Sami can only use the inbox step, and a staff reply exists.
-    expect((await home("sami")).day1).toEqual({ show: false, steps: [{ key: "first_reply", done: true, href: "#/inbox" }] });
+    expect((await home("sami")).day1).toEqual({ show: false, steps: [{ key: "first_reply", done: true, href: "#/inbox" }], canDismiss: true });
     const owner = await home("owner");
     expect(owner.day1.show).toBe(true);
     expect(owner.day1.steps.find((s) => s.key === "invite_team")?.done).toBe(true);

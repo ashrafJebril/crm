@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import {
-  MAX_CONCURRENT_SECTIONS,
+  maxConcurrentSections,
   SECTION_MAX_WAIT_MS,
   SECTION_QUEUE_TIMEOUT_MS,
   SECTION_STATEMENT_TIMEOUT,
@@ -55,17 +55,49 @@ export interface SectionDb {
   $transaction<R>(fn: (tx: SectionTx) => Promise<R>, options?: { maxWait?: number; timeout?: number }): Promise<R>;
 }
 
+/** A limiter lane: `home` work (the working home) goes before `report` work (Analytics). */
+export type SectionLane = "home" | "report";
+const LANES: readonly SectionLane[] = ["home", "report"];
+
+interface QueueEntry {
+  lane: SectionLane;
+  key: string | undefined;
+  start: () => void;
+}
+
 /**
  * A tiny in-memory concurrency limiter (no dependency): at most `limit` tasks
- * run at once; the rest wait in FIFO order.
+ * run at once; the rest wait. When a slot frees, the next task is chosen by:
+ *  1. fairness: a task of a key (workspace) with nothing in flight goes before
+ *     a key that already holds a slot, so one workspace never holds every
+ *     slot while another workspace's work waits;
+ *  2. lane: `home` before `report`;
+ *  3. FIFO within a lane.
+ * A task without a key is never held back by fairness (and counts as nobody's).
  */
 export function createLimiter(limit: number, defaults: { queueTimeoutMs?: number } = {}): Limiter {
   let active = 0;
-  const queue: { start: () => void }[] = [];
+  const inFlight = new Map<string, number>();
+  const queues: Record<SectionLane, QueueEntry[]> = { home: [], report: [] };
+  const busy = (key: string | undefined) => key !== undefined && (inFlight.get(key) ?? 0) > 0;
+  const pick = (): QueueEntry | undefined => {
+    // A waiting key with nothing in flight first (by lane, then FIFO) …
+    for (const lane of LANES) {
+      const e = queues[lane].find((x) => !busy(x.key));
+      if (e) return e;
+    }
+    // … else every waiting key already runs something: plain lane order.
+    for (const lane of LANES) if (queues[lane].length) return queues[lane][0];
+    return undefined;
+  };
   const next = () => {
-    while (active < limit && queue.length > 0) {
-      const entry = queue.shift() as { start: () => void };
+    while (active < limit) {
+      const entry = pick();
+      if (!entry) return;
+      const q = queues[entry.lane];
+      q.splice(q.indexOf(entry), 1);
       active += 1;
+      if (entry.key !== undefined) inFlight.set(entry.key, (inFlight.get(entry.key) ?? 0) + 1);
       entry.start();
     }
   };
@@ -82,7 +114,10 @@ export function createLimiter(limit: number, defaults: { queueTimeoutMs?: number
         if (timer) clearTimeout(timer);
         o.signal?.removeEventListener("abort", onAbort);
       };
-      const entry = {
+      const lane: SectionLane = o.lane ?? "report";
+      const entry: QueueEntry = {
+        lane,
+        key: o.key,
         start: () => {
           release();
           Promise.resolve()
@@ -90,6 +125,11 @@ export function createLimiter(limit: number, defaults: { queueTimeoutMs?: number
             .then(resolve, reject)
             .finally(() => {
               active -= 1;
+              if (o.key !== undefined) {
+                const n = (inFlight.get(o.key) ?? 1) - 1;
+                if (n > 0) inFlight.set(o.key, n);
+                else inFlight.delete(o.key);
+              }
               next();
             });
         },
@@ -98,15 +138,15 @@ export function createLimiter(limit: number, defaults: { queueTimeoutMs?: number
       const drop = (err: Error) => {
         if (settled) return;
         release();
-        const i = queue.indexOf(entry);
-        if (i >= 0) queue.splice(i, 1);
+        const i = queues[lane].indexOf(entry);
+        if (i >= 0) queues[lane].splice(i, 1);
         reject(err);
       };
       const onAbort = () => drop(new SectionAborted());
       o.signal?.addEventListener("abort", onAbort, { once: true });
       const timeoutMs = o.queueTimeoutMs ?? defaults.queueTimeoutMs;
       if (timeoutMs !== undefined) timer = setTimeout(() => drop(new SectionQueueTimeout(timeoutMs)), timeoutMs);
-      queue.push(entry);
+      queues[lane].push(entry);
       next();
     });
 }
@@ -130,18 +170,25 @@ export interface LimitOptions {
   queueTimeoutMs?: number;
   /** Give up (reject with SectionAborted) when this aborts while queued. */
   signal?: AbortSignal;
+  /** The lane; default `report`. */
+  lane?: SectionLane;
+  /** The fairness key (the workspace id). */
+  key?: string;
 }
 
 export type Limiter = <T>(task: () => Promise<T>, opts?: LimitOptions) => Promise<T>;
 
 /**
- * Process-wide: at most MAX_CONCURRENT_SECTIONS insight sections hold a pooled
- * connection at once, however many report loads run concurrently, so a report
- * never starves webhooks and sends of connections (P2024). A section still
- * queued after SECTION_QUEUE_TIMEOUT_MS is `unavailable` without ever taking
- * a connection.
+ * Process-wide: at most `maxConcurrentSections()` (env
+ * INSIGHTS_MAX_CONCURRENT_SECTIONS, default MAX_CONCURRENT_SECTIONS = 2,
+ * clamped 1–4) insight sections hold a pooled connection at once, however
+ * many report loads run concurrently, so a report never starves webhooks and
+ * sends of connections (P2024). Home sections take the `home` lane ahead of
+ * Analytics; one workspace never holds every slot while another waits. A
+ * section still queued after SECTION_QUEUE_TIMEOUT_MS is `unavailable`
+ * without ever taking a connection.
  */
-export const sectionLimiter = createLimiter(MAX_CONCURRENT_SECTIONS, { queueTimeoutMs: SECTION_QUEUE_TIMEOUT_MS });
+export const sectionLimiter = createLimiter(maxConcurrentSections(), { queueTimeoutMs: SECTION_QUEUE_TIMEOUT_MS });
 
 export interface SectionOptions {
   /** Statements the section runs; its transaction budget covers each one's
@@ -151,6 +198,10 @@ export interface SectionOptions {
   limiter?: Limiter;
   /** The request's abort signal: a section still queued when it fires never runs. */
   signal?: AbortSignal;
+  /** `home` for the working home, `report` (default) for Analytics. */
+  lane?: SectionLane;
+  /** The workspace the section reads (limiter fairness). */
+  workspaceId?: string;
 }
 
 /**
@@ -181,7 +232,7 @@ export async function runSection<T>(
           },
           { maxWait: SECTION_MAX_WAIT_MS, timeout: sectionTransactionTimeoutMs(opts.statements ?? 1) },
         ),
-      { signal: opts.signal },
+      { signal: opts.signal, lane: opts.lane, key: opts.workspaceId },
     );
     return { status: "ok", data };
   } catch (e) {
@@ -230,8 +281,14 @@ export class InsightsService {
     return ch.id;
   }
 
-  private section<T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1, signal?: AbortSignal): Promise<Section<T>> {
-    return runSection(this.prisma as unknown as SectionDb, label, fn, this.logger, { statements, signal });
+  private section<T>(
+    workspaceId: string,
+    label: string,
+    fn: (tx: SectionTx) => Promise<T>,
+    statements = 1,
+    signal?: AbortSignal,
+  ): Promise<Section<T>> {
+    return runSection(this.prisma as unknown as SectionDb, label, fn, this.logger, { statements, signal, lane: "report", workspaceId });
   }
 
   /** `GET /insights/support`. */
@@ -242,7 +299,7 @@ export class InsightsService {
     now: Date = new Date(),
     signal?: AbortSignal,
   ): Promise<SupportInsights> {
-    const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1) => this.section(label, fn, statements, signal);
+    const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1) => this.section(workspaceId, label, fn, statements, signal);
     const { tz } = await this.workspaceLocale(workspaceId);
     const range = parseRange(q.from, q.to, tz, now);
     const channelId = await this.supportChannel(workspaceId, q.channelId);
@@ -325,7 +382,7 @@ export class InsightsService {
     now: Date = new Date(),
     signal?: AbortSignal,
   ): Promise<SalesInsights> {
-    const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1) => this.section(label, fn, statements, signal);
+    const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1) => this.section(workspaceId, label, fn, statements, signal);
     const { tz, lang } = await this.workspaceLocale(workspaceId);
     const range = parseRange(q.from, q.to, tz, now);
     const pipeline = await this.salesPipeline(workspaceId, q.pipelineId);

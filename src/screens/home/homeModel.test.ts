@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HomeDto, HomeSection } from "@/lib/homeTypes";
-import { day1Progress, followUpHref, homeView, sectionView, showDay1, waitingSinceWords } from "./homeModel";
+import { canDismissDay1, day1Progress, followUpHref, homeView, sectionView, showDay1, waitingSinceWords } from "./homeModel";
 
 const ok = <T>(data: T): HomeSection<T> => ({ status: "ok", data });
 const forbidden = { status: "forbidden" } as const;
@@ -78,6 +78,10 @@ describe("home model", () => {
     expect(showDay1(home({ day1: { show: true, steps: [...steps] } }))).toBe(true);
     expect(showDay1(home({ day1: { show: false, steps: [...steps] } }))).toBe(false);
     expect(showDay1(null)).toBe(false);
+    // Super-admin / impersonation: the steps show, Dismiss does not.
+    expect(canDismissDay1(home({ day1: { show: true, steps: [...steps], canDismiss: false } }))).toBe(false);
+    expect(canDismissDay1(home({ day1: { show: true, steps: [...steps], canDismiss: true } }))).toBe(true);
+    expect(canDismissDay1(home({ day1: { show: true, steps: [...steps] } }))).toBe(true);
   });
 
   it("waiting-since words use Latin digits in both languages", () => {
