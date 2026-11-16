@@ -16,7 +16,6 @@ export interface SupportExpectation {
   byNumber: ByNumberRow[];
   topicFriction: TopicFrictionRow[];
   team: TeamRow[];
-  attributionSince: string | null;
 }
 
 function peaks(cells: [dow: number, hour: number][]): Peaks {
@@ -126,8 +125,6 @@ export const OWNER: SupportExpectation = {
     { userId: null, name: "Former member", former: true, assigned: 1, replies: 1, medianFirstResponseSec: 1200, resolved: 0 },
     { userId: null, name: "Unattributed", former: false, assigned: 0, replies: 1, medianFirstResponseSec: 120, resolved: 0 },
   ],
-  // cv9's staff reply 2026-10-20T10:05Z (13:05 Riyadh) is the earliest with a sender; workspace-wide.
-  attributionSince: "2026-10-20",
 };
 
 /**
@@ -165,8 +162,6 @@ export const ASSIGNED: SupportExpectation = {
     member(U.viewer, "Huda"),
     member(U.owner, "Omar"),
   ],
-  // Workspace-wide: the same day for every viewer.
-  attributionSince: "2026-10-20",
 };
 
 /** The owner, filtered to the Jeddah line (cv3, cv4). */
@@ -200,9 +195,21 @@ export const EMPTY: SupportExpectation = {
   byNumber: [],
   topicFriction: [],
   team: [],
-  // No reply with a sender.
-  attributionSince: null,
 };
+
+/**
+ * `attributionSince` for the fixture worlds (oracle runner; the DB runner
+ * checks the SQL against the real migration row, see the DB spec).
+ */
+export const ATTRIBUTION_SINCE = {
+  // Migration finished 2026-10-19T22:30Z = 01:30 on the 20th in Riyadh; the
+  // workspace (2026-09-01) is older, so the migration wins.
+  world: "2026-10-20",
+  // A workspace created after the migration: its own day wins (2026-11-03T21:30Z = 00:30 on the 4th).
+  newerWorkspace: "2026-11-04",
+  // No migration row.
+  noMigration: null,
+} as const;
 
 /** Named metric tests → the part of the expectation each one asserts. */
 export const SUPPORT_METRIC_TESTS: Record<string, (e: SupportExpectation) => unknown> = {
@@ -224,7 +231,6 @@ export const SUPPORT_METRIC_TESTS: Record<string, (e: SupportExpectation) => unk
   "by number splits conversations and ai rate per WhatsApp channel": (e) => e.byNumber,
   "topic friction ranks topics with escalation and negative share": (e) => e.topicFriction,
   "team rows attribute replies to the sending member": (e) => e.team,
-  "attribution starts at the first staff reply with a sender": (e) => e.attributionSince,
 };
 
 // ── Sales (SP-11 Task 2) ────────────────────────────────────────────────

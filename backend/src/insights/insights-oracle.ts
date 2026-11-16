@@ -60,8 +60,6 @@ export interface SupportData {
   byNumber: ByNumberRow[];
   topicFriction: TopicFrictionRow[];
   team: TeamRow[];
-  /** Local day of the workspace's first staff reply with a sender, or null. */
-  attributionSince: string | null;
 }
 
 type Bucket = "closed" | "escalated" | "ai" | "human";
@@ -81,6 +79,17 @@ function localDowHour(d: Date, tz: string): { dow: number; hour: number } {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", hourCycle: "h23" }).formatToParts(d);
   const wd = parts.find((p) => p.type === "weekday")?.value ?? "Sun";
   return { dow: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(wd), hour: Number(parts.find((p) => p.type === "hour")?.value) };
+}
+
+/**
+ * `attributionSince`: the local day of GREATEST(migration finished, workspace
+ * created); null without a migration row. Workspace-wide, range-free.
+ */
+export function attributionSinceOracle(world: Pick<InsightsWorld, "workspace" | "migrationAppliedAt">): string | null {
+  if (!world.migrationAppliedAt) return null;
+  const applied = new Date(`${world.migrationAppliedAt}Z`).getTime();
+  const created = world.workspace.createdAt ? new Date(`${world.workspace.createdAt}Z`).getTime() : -Infinity;
+  return localDate(new Date(Math.max(applied, created)), world.workspace.timezone);
 }
 
 export function supportOracle(world: InsightsWorld, opts: OracleOpts): SupportData {
@@ -253,12 +262,7 @@ export function supportOracle(world: InsightsWorld, opts: OracleOpts): SupportDa
     totals,
   );
 
-  // Workspace-wide (not scoped, not filtered by number or range).
-  let first: Date | null = null;
-  for (const m of world.messages) if (m.sentById && (!first || m.createdAt.getTime() < first.getTime())) first = m.createdAt;
-  const attributionSince = first ? localDate(first, range.tz) : null;
-
-  return { headline, resolutionMix, peaks: peaksFrom(peakRows), byNumber, topicFriction, team, attributionSince };
+  return { headline, resolutionMix, peaks: peaksFrom(peakRows), byNumber, topicFriction, team };
 }
 
 // ── Sales (SP-11 Task 2) ────────────────────────────────────────────────

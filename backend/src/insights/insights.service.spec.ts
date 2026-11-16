@@ -1,9 +1,9 @@
 import type { Prisma } from "@prisma/client";
 import { CH, U } from "./__fixtures__/insights-world";
-import { OWNER } from "./insights-expected";
+import { ATTRIBUTION_SINCE, OWNER } from "./insights-expected";
 import { FORMER_KEY, UNATTRIBUTED_KEY } from "./insights-format";
 import { createLimiter, InsightsService, runSection, SectionQueueTimeout, sectionLimiter, type SectionTx } from "./insights.service";
-import { SECTION_QUEUE_TIMEOUT_MS } from "./insights-constants";
+import { INSIGHTS_HOME_MIGRATION, SECTION_QUEUE_TIMEOUT_MS } from "./insights-constants";
 import { MAX_CONCURRENT_SECTIONS, SECTION_STATEMENT_TIMEOUT_MS, sectionTransactionTimeoutMs } from "./insights-constants";
 
 /** The `/* insights:support.<name> *\/` tag a statement starts with. */
@@ -59,7 +59,7 @@ const OWNER_ROWS: Record<string, unknown[]> = {
     { key: FORMER_KEY, assigned: 1, replies: 1, resolved: 0, median: 1200 },
     { key: UNATTRIBUTED_KEY, assigned: 0, replies: 1, resolved: 0, median: 120 },
   ],
-  attributionSince: [{ since: "2026-10-20" }],
+  attributionSince: [{ since: ATTRIBUTION_SINCE.world }],
 };
 
 function build(opts: { rows?: Record<string, unknown[]>; fail?: Record<string, unknown>; channels?: any[] } = {}) {
@@ -113,7 +113,7 @@ describe("InsightsService.support", () => {
     expect(res.byNumber).toEqual({ status: "ok", data: OWNER.byNumber });
     expect(res.topicFriction).toEqual({ status: "ok", data: OWNER.topicFriction });
     expect(res.team).toEqual({ status: "ok", data: OWNER.team });
-    expect(res.attributionSince).toBe(OWNER.attributionSince);
+    expect(res.attributionSince).toBe(ATTRIBUTION_SINCE.world);
   });
 
   it("attribution date: null when no reply has a sender or when its lookup fails", async () => {
@@ -125,8 +125,10 @@ describe("InsightsService.support", () => {
     expect(res.team).toEqual({ status: "ok", data: OWNER.team });
     // One aggregate in its own one-statement transaction, bound to the workspace.
     const sql = failed.queried.find((q) => tagOf(q) === "attributionSince")!;
-    expect(sql.strings.join("?")).toContain(`"sentById" IS NOT NULL`);
-    expect(sql.values).toContain("ws1");
+    const text = sql.strings.join("?");
+    expect(text).toContain(`"_prisma_migrations"`);
+    expect(text).not.toContain(`"Message"`);
+    expect(sql.values).toEqual(expect.arrayContaining(["ws1", INSIGHTS_HOME_MIGRATION, "Asia/Riyadh"]));
   });
 
   it("every section runs in its own transaction with statement_timeout and jit off", async () => {

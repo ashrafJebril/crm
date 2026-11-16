@@ -104,10 +104,11 @@ export interface SupportInsights {
   topicFriction: Section<TopicFrictionRow[]>;
   team: Section<TeamRow[]>;
   /**
-   * The workspace-local day (`YYYY-MM-DD`) of the first staff reply that
-   * carries its sender (`Message.sentById`); earlier replies are
-   * "Unattributed". null when no reply has a sender yet, or when the
-   * lookup was unavailable.
+   * The workspace-local day (`YYYY-MM-DD`) sender recording began for this
+   * workspace: GREATEST(the insights_home migration's `finished_at`,
+   * `Workspace.createdAt`). Earlier staff replies are "Unattributed". null
+   * when the migration row is missing or unfinished, or the lookup was
+   * unavailable.
    */
   attributionSince: string | null;
 }

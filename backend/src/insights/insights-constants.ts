@@ -60,3 +60,10 @@ export type SpeedBucket = (typeof SPEED_BUCKET_KEYS)[number];
 /** Conversation statuses whose messages never make a lead "waiting" ("resolved"
  *  is a verdict, `resolutionStatus`, not a Conversation status). */
 export const WAITING_EXCLUDED_STATUSES = ["closed", "spam"] as const;
+
+/**
+ * The migration that added `Message.sentById` (SP-11 ruling 4). Sender
+ * recording began when it finished (or when the workspace was created, if
+ * later): the support response's `attributionSince`.
+ */
+export const INSIGHTS_HOME_MIGRATION = "20261116140000_insights_home";

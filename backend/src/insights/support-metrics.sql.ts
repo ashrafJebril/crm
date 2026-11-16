@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { RESOLUTION_LOOKBACK, TOP_TOPICS, TOPIC_MIN_CONVERSATIONS } from "./insights-constants";
+import { INSIGHTS_HOME_MIGRATION, RESOLUTION_LOOKBACK, TOP_TOPICS, TOPIC_MIN_CONVERSATIONS } from "./insights-constants";
 import type { InsightsRange } from "./insights-range";
 import { localTimeSql } from "./insights-range";
 import { conversationScopeSql, type ConversationScope } from "./insights-scope";
@@ -344,15 +344,27 @@ export function teamSql(ws: string, r: InsightsRange, scope: ConversationScope, 
 
 /** The workspace's current members and their names (team rows). */
 /**
- * The first staff reply with a sender in the workspace, as a local day:
- * replies before it count as "Unattributed" (no backfill, ruling 4).
- * Workspace-wide (not scoped: it is a date, not a figure). One aggregate.
+ * When sender recording began for this workspace, as a local day:
+ * GREATEST(the insights_home migration's first successful `finished_at`,
+ * `Workspace.createdAt`); replies before it are "Unattributed" (no backfill,
+ * ruling 4). NULL when the migration row is missing or unfinished (GREATEST
+ * ignores NULLs, hence the CASE). Reads the workspace by primary key and the
+ * small `_prisma_migrations` table; never touches "Message".
+ * `finished_at` is timestamptz; `createdAt` a UTC timestamp(3).
  */
-export function attributionSinceSql(ws: string, tz: string): Prisma.Sql {
+export function attributionSinceSql(ws: string, tz: string, migration: string = INSIGHTS_HOME_MIGRATION): Prisma.Sql {
+  const began = Prisma.sql`GREATEST(mig."at", w."createdAt")`;
   return Prisma.sql`/* insights:support.attributionSince */
-    SELECT to_char(${localTimeSql(Prisma.sql`MIN(m."createdAt")`, tz)}, 'YYYY-MM-DD') AS "since"
-    FROM "Message" m
-    WHERE m."workspaceId" = ${ws} AND m."sentById" IS NOT NULL`;
+    SELECT CASE WHEN mig."at" IS NULL THEN NULL
+                ELSE to_char(${localTimeSql(began, tz)}, 'YYYY-MM-DD') END AS "since"
+    FROM "Workspace" w
+    CROSS JOIN (
+      SELECT MIN(pm."finished_at" AT TIME ZONE 'UTC') AS "at"
+      FROM "_prisma_migrations" pm
+      WHERE pm."migration_name" = ${migration}
+        AND pm."finished_at" IS NOT NULL AND pm."rolled_back_at" IS NULL
+    ) mig
+    WHERE w."id" = ${ws}`;
 }
 
 export function teamMembersSql(ws: string): Prisma.Sql {

@@ -12,6 +12,9 @@ import { PermissionService } from "../permissions/permission.service";
 import { CH, EMPTY_WORLD, INSIGHTS_WORLD, RANGE, U } from "./__fixtures__/insights-world";
 import { ASSIGNED, EMPTY, OWNER, OWNER_JEDDAH_HEADLINE, SUPPORT_METRIC_TESTS, type SupportExpectation } from "./insights-expected";
 import { InsightsService } from "./insights.service";
+import { INSIGHTS_HOME_MIGRATION } from "./insights-constants";
+import { localDate } from "./insights-range";
+import { attributionSinceSql } from "./support-metrics.sql";
 import type { Section, SupportInsights } from "./insights.dto";
 import { seedInsightsWorld, type SeededWorld } from "./world-seed";
 
@@ -34,7 +37,6 @@ function asExpectation(res: SupportInsights, world: SeededWorld): SupportExpecta
     byNumber: ok(res.byNumber).map((r) => ({ ...r, channelId: world.toLogical(r.channelId) })),
     topicFriction: ok(res.topicFriction),
     team: ok(res.team).map((r) => ({ ...r, userId: world.toLogical(r.userId) })),
-    attributionSince: res.attributionSince,
   };
 }
 
@@ -89,5 +91,35 @@ d("support insights SQL against Postgres", () => {
     const notFound = { response: { statusCode: 404, message: "insights.channel_not_found" } };
     await expect(svc.support(world.workspaceId, { ...RANGE, channelId: foreign.id }, undefined, NOW)).rejects.toMatchObject(notFound);
     await expect(svc.support(world.workspaceId, { ...RANGE, channelId: world.id(CH.ig) }, undefined, NOW)).rejects.toMatchObject(notFound);
+  });
+
+  describe("attribution date (real SQL; the database is migrated, so the row exists)", () => {
+    const TZ = INSIGHTS_WORLD.workspace.timezone;
+    const appliedAt = async () => {
+      const rows = await prisma.raw.$queryRaw<{ at: Date }[]>`
+        SELECT MIN("finished_at") AS "at" FROM "_prisma_migrations"
+        WHERE "migration_name" = ${INSIGHTS_HOME_MIGRATION} AND "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`;
+      return rows[0].at;
+    };
+
+    it("a workspace created after the migration uses its own creation day", async () => {
+      // The seeded throwaway workspace was created just now, after the migration.
+      const ws = await prisma.raw.workspace.findUniqueOrThrow({ where: { id: world.workspaceId } });
+      expect(ws.createdAt.getTime()).toBeGreaterThan((await appliedAt()).getTime());
+      const res = await svc.support(world.workspaceId, RANGE, { userId: world.id(U.owner) }, NOW);
+      expect(res.attributionSince).toBe(localDate(ws.createdAt, TZ));
+    });
+
+    it("an older workspace uses the migration's finish day", async () => {
+      // Only the throwaway empty workspace is changed.
+      await prisma.raw.workspace.update({ where: { id: empty.workspaceId }, data: { createdAt: new Date("2020-01-01T00:00:00Z") } });
+      const res = await svc.support(empty.workspaceId, RANGE, undefined, NOW);
+      expect(res.attributionSince).toBe(localDate(await appliedAt(), TZ));
+    });
+
+    it("a missing migration row is null", async () => {
+      const rows = await prisma.raw.$queryRaw<{ since: string | null }[]>(attributionSinceSql(world.workspaceId, TZ, "00000000000000_missing"));
+      expect(rows).toEqual([{ since: null }]);
+    });
   });
 });
