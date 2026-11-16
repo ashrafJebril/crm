@@ -45,7 +45,8 @@ const dayCase = (col: Prisma.Sql, d: HomeDays) =>
 
 /**
  * Waiting conversations: visible, not resolved/closed/spam/pending_customer,
- * mine or unassigned, the AI off or escalated, and the latest message is the
+ * mine or unassigned, the AI off, escalated or paused (a staff takeover:
+ * controller ruling on Task 3), and the latest message is the
  * customer's. `waitingSince` = the first customer message after the last
  * reply. Oldest first; `total` counts them all.
  */
@@ -58,7 +59,7 @@ export function waitingConversationsSql(ws: string, me: string, scope: Conversat
       FROM "Conversation" c
       WHERE c."workspaceId" = ${ws}
         AND c."status" NOT IN (${statuses})
-        AND (c."aiEnabled" = FALSE OR c."escalated" = TRUE)
+        AND (c."aiEnabled" = FALSE OR c."escalated" = TRUE OR c."aiPausedAt" IS NOT NULL)
         AND (c."assigneeId" = ${me} OR c."assigneeId" IS NULL)
         ${conversationScopeSql(scope, "c")}
     ),
@@ -227,19 +228,26 @@ export function awaySql(ws: string, since: Date, now: Date, scope: ConversationS
       } AS "rows"`;
 }
 
-/** Which Day-1 steps are done (from data). */
-export function day1Sql(ws: string, hasSp10: boolean): Prisma.Sql {
+/**
+ * Which Day-1 steps are done (from data). add_knowledge: a `ready`
+ * KnowledgeSource (SP-21) when that table exists, else (before SP-21's
+ * migration) an agent-approved Media file (SP-17).
+ */
+export function day1Sql(ws: string, hasSp10: boolean, hasKnowledge = false): Prisma.Sql {
+  const knowledge = hasKnowledge
+    ? Prisma.sql`EXISTS (SELECT 1 FROM "KnowledgeSource" ks WHERE ks."workspaceId" = ${ws} AND ks."status" = 'ready')`
+    : Prisma.sql`EXISTS (SELECT 1 FROM "Media" md WHERE md."workspaceId" = ${ws} AND md."approvedForAgent" = TRUE)`;
   return Prisma.sql`/* home:day1 */
     SELECT
       EXISTS (SELECT 1 FROM "Channel" ch WHERE ch."workspaceId" = ${ws} AND ch."status" = 'active') AS "connect_channel",
-      EXISTS (SELECT 1 FROM "Media" md WHERE md."workspaceId" = ${ws} AND md."approvedForAgent" = TRUE) AS "add_knowledge",
+      ${knowledge} AS "add_knowledge",
       (SELECT COUNT(*) FROM "WorkspaceMember" wm WHERE wm."workspaceId" = ${ws}) > 1 AS "invite_team",
       EXISTS (SELECT 1 FROM "Pipeline" p WHERE p."workspaceId" = ${ws} AND (p."isDefault" = FALSE OR p."version" > 0)) AS "set_pipeline",
       ${hasSp10 ? Prisma.sql`EXISTS (SELECT 1 FROM "Service" sv WHERE sv."workspaceId" = ${ws})` : Prisma.sql`FALSE`} AS "add_services",
       EXISTS (SELECT 1 FROM "Message" hm WHERE hm."workspaceId" = ${ws} AND hm."from" = 'human') AS "first_reply"`;
 }
 
-/** Ruling 11: do SP-09's and SP-10's columns exist in this database? */
+/** Ruling 11: do SP-09's, SP-10's and SP-21's columns exist in this database? */
 export function schemaCheckSql(): Prisma.Sql {
   return Prisma.sql`/* home:schema */
     SELECT table_name AS "table", column_name AS "column" FROM information_schema.columns
@@ -247,5 +255,6 @@ export function schemaCheckSql(): Prisma.Sql {
       AND ((table_name = 'Ticket' AND column_name = 'slaDueAt')
         OR (table_name = 'Appointment' AND column_name = 'resourceId')
         OR (table_name = 'StaffResource' AND column_name = 'userId')
-        OR (table_name = 'Service' AND column_name = 'id'))`;
+        OR (table_name = 'Service' AND column_name = 'id')
+        OR (table_name = 'KnowledgeSource' AND column_name = 'status'))`;
 }

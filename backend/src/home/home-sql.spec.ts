@@ -24,6 +24,7 @@ const statements: [string, Prisma.Sql][] = [
   ["away", sql.awaySql("ws1", new Date("2026-11-09T09:00:00Z"), now, scope, { conversations: false, bookings: false, tickets: false })],
   ["day1", sql.day1Sql("ws1", true)],
   ["day1", sql.day1Sql("ws1", false)],
+  ["day1", sql.day1Sql("ws1", true, true)],
   ["openable", openableSql("ws1", scope, { conversation: true, ticket: true, booking: true }, { conversation: ["c1"], ticket: ["t1"], booking: ["b1"] }) as Prisma.Sql],
 ];
 

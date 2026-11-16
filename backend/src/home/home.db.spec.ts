@@ -83,6 +83,11 @@ d("working home SQL against Postgres", () => {
     await conv("sami-wait", ws, sami, [["them", ago(180)]]);
     await conv("sami-ai", ws, sami, [["them", ago(120)], ["ai", ago(300)]], { aiEnabled: true });
     await conv("sami-esc", ws, sami, [["them", ago(60)]], { aiEnabled: true, escalated: true });
+    // AI on but paused by a staff takeover, and the customer wrote last: needs a person (ruling).
+    await conv("sami-paused", ws, sami, [["them", ago(170)], ["human", ago(160), sami], ["them", ago(150)]], {
+      aiEnabled: true,
+      aiPausedAt: ago(160),
+    });
     await conv("sami-pending", ws, sami, [["them", ago(50)]], { status: "pending_customer" });
     await conv("sami-closed", ws, sami, [["them", ago(40)]], { status: "closed" });
     await conv("sami-staff", ws, sami, [["them", ago(90)], ["human", ago(30), sami]]);
@@ -132,8 +137,11 @@ d("working home SQL against Postgres", () => {
 
   it("waiting conversations are unanswered, visible and need a person", async () => {
     const sami = ok((await home("sami")).needsPerson.waitingConversations);
-    expect(sami.items.map((r) => r.id)).toEqual([ids["sami-wait"], ids["sami-esc"]]);
-    expect(sami.total).toBe(2);
+    // sami-ai (AI on, not paused, not escalated), pending, closed and staff-last are out;
+    // the paused one is in, waiting since the customer's message after the takeover.
+    expect(sami.items.map((r) => r.id)).toEqual([ids["sami-wait"], ids["sami-paused"], ids["sami-esc"]]);
+    expect(sami.total).toBe(3);
+    expect(sami.items[1].waitingSince).toBe(ago(150).toISOString());
   });
 
   it("home lists only permitted records", async () => {

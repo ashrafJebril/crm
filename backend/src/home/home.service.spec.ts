@@ -33,6 +33,7 @@ const SCHEMA_ROWS = [
   { table: "Appointment", column: "resourceId" },
   { table: "StaffResource", column: "userId" },
   { table: "Service", column: "id" },
+  { table: "KnowledgeSource", column: "status" },
 ];
 
 function rowsFor(over: Record<string, unknown[]> = {}): Record<string, unknown[]> {
@@ -92,6 +93,10 @@ function build(o: BuildOpts = {}) {
       calls += 1;
       queried.push(sql);
       const tag = tagOf(sql);
+      if (tag === "schema") {
+        if (o.schema instanceof Error) throw o.schema;
+        return (o.schema ?? SCHEMA_ROWS) as never;
+      }
       if (tag === "openable") {
         // values: per branch [kind, ws, ids, (scope)]
         const out: { kind: string; id: string }[] = [];
@@ -166,7 +171,8 @@ describe("HomeService", () => {
       const reads = (t.match(/"Conversation" c\s/g) ?? []).length;
       expect({ tag: tagOf(sql), scoped: (t.match(/AND c\."assigneeId" = \?/g) ?? []).length }).toEqual({ tag: tagOf(sql), scoped: reads });
       // Every statement is bound to this workspace.
-      if (tagOf(sql) !== "?") expect(sql.values).toContain(WS);
+      // (The schema check reads information_schema only.)
+      if (tagOf(sql) !== "?" && tagOf(sql) !== "schema") expect(sql.values).toContain(WS);
     }
     // Waiting = mine or unassigned.
     const w = hidden.queried.find((s) => tagOf(s) === "waitingConversations")!;
@@ -238,7 +244,8 @@ describe("HomeService", () => {
     );
     expect(t).toContain('c."status" NOT IN (');
     // AI-handled and not escalated: excluded.
-    expect(t).toContain('(c."aiEnabled" = FALSE OR c."escalated" = TRUE)');
+    // AI-handled, not escalated, not paused: excluded; paused (staff took over): included.
+    expect(t).toContain('(c."aiEnabled" = FALSE OR c."escalated" = TRUE OR c."aiPausedAt" IS NOT NULL)');
     // Latest message is the customer's: a customer message after the last reply.
     expect(t).toContain(`m."from" = 'them'`);
     expect(t).toContain(`m."createdAt" > COALESCE(b."lastReplyAt", '-infinity'::timestamp)`);
@@ -379,17 +386,41 @@ describe("HomeService", () => {
     expect(res.day1.steps.map((s) => s.key)).not.toContain("add_services");
     expect(text(b.queried.find((s) => tagOf(s) === "day1")!)).not.toContain('"Service"');
 
-    // A failing schema check degrades the same way, without an error.
+    // A failing schema check degrades the same way, without an error, and the
+    // failure is remembered for 30 s (not re-queried on every load).
     const broken = build({ schema: new Error("permission denied for information_schema") });
     const r2 = await broken.svc.home(WS, { userId: ME }, NOW);
     expect(r2.today.ticketsDue).toEqual({ status: "unavailable" });
     expect(r2.needsPerson.waitingConversations.status).toBe("ok");
+    const schemaQueries = () => broken.queried.filter((s) => tagOf(s) === "schema").length;
+    expect(schemaQueries()).toBe(1);
+    await broken.svc.home(WS, { userId: ME }, new Date(NOW.getTime() + 20_000));
+    expect(schemaQueries()).toBe(1);
+    await broken.svc.home(WS, { userId: ME }, new Date(NOW.getTime() + 31_000));
+    expect(schemaQueries()).toBe(2);
+    // The check runs with its own statement timeout.
+    expect(broken.tx.$executeRawUnsafe).toHaveBeenCalledWith("SET LOCAL statement_timeout = '2s'");
 
     // With both shipped, SLA ordering and staff resources are used.
     const full = build();
     await full.svc.home(WS, { userId: ME }, NOW);
     expect(text(full.queried.find((s) => tagOf(s) === "unassignedTickets")!)).toContain('t."slaDueAt" ASC NULLS LAST');
     expect(text(full.queried.find((s) => tagOf(s) === "dayBookings")!)).toContain('"StaffResource"');
+  });
+
+  it("day-1 knowledge step reads ready knowledge sources, or approved media before SP-21", async () => {
+    const withKs = build();
+    await withKs.svc.home(WS, { userId: ME }, NOW);
+    const t1 = text(withKs.queried.find((s) => tagOf(s) === "day1")!);
+    expect(t1).toContain(`FROM "KnowledgeSource" ks WHERE ks."workspaceId" = ? AND ks."status" = 'ready'`);
+    expect(t1).not.toContain('"approvedForAgent"');
+    // Table absent (SP-21 migration not applied yet): the Media rule, no error.
+    const without = build({ schema: SCHEMA_ROWS.filter((r) => r.table !== "KnowledgeSource") });
+    const res = await without.svc.home(WS, { userId: ME }, NOW);
+    const t2 = text(without.queried.find((s) => tagOf(s) === "day1")!);
+    expect(t2).not.toContain("KnowledgeSource");
+    expect(t2).toContain('md."approvedForAgent" = TRUE');
+    expect(res.day1.steps.map((s) => s.key)).toContain("add_knowledge");
   });
 
   it("a failed re-check fails record lists closed; a failed section is unavailable alone", async () => {

@@ -35,6 +35,11 @@ import {
 
 /** How long the SP-09/SP-10 schema check is trusted (ruling 11). */
 export const SCHEMA_CHECK_TTL_MS = 10 * 60_000;
+/** A failed schema check is remembered as "degraded" this long, so a broken
+ *  information_schema is not re-queried on every home load. */
+export const SCHEMA_CHECK_FAILURE_TTL_MS = 30_000;
+/** The schema check's own statement timeout. */
+export const SCHEMA_CHECK_STATEMENT_TIMEOUT = "2s";
 /** "While you were away" for a member who never looked: the last 24 h. */
 export const AWAY_DEFAULT_MS = 24 * 3_600_000;
 
@@ -43,6 +48,8 @@ export interface SchemaFlags {
   sp09: boolean;
   /** SP-10: Appointment.resourceId, StaffResource and Service exist. */
   sp10: boolean;
+  /** SP-21: KnowledgeSource exists (the Day-1 knowledge step reads it). */
+  knowledge: boolean;
 }
 
 type Row = Record<string, unknown>;
@@ -120,7 +127,7 @@ function list<T>(rows: Row[], map: (r: Row) => T): ListSection<T> {
 @Injectable()
 export class HomeService {
   private readonly logger = new Logger(HomeService.name);
-  private schema: { flags: SchemaFlags; at: number } | null = null;
+  private schema: { flags: SchemaFlags; at: number; ttl: number } | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -134,19 +141,28 @@ export class HomeService {
   /** Ruling 11: which of SP-09's and SP-10's columns exist. Cached; a failed
    *  check degrades both (never fails the home). */
   async schemaFlags(now = Date.now()): Promise<SchemaFlags> {
-    if (this.schema && now - this.schema.at < SCHEMA_CHECK_TTL_MS) return this.schema.flags;
+    if (this.schema && now - this.schema.at < this.schema.ttl) return this.schema.flags;
     try {
-      const rows = await this.prisma.$queryRaw<{ table: string; column: string }[]>(schemaCheckSql());
+      const rows = await this.db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${SCHEMA_CHECK_STATEMENT_TIMEOUT}'`);
+          return tx.$queryRaw<{ table: string; column: string }[]>(schemaCheckSql());
+        },
+        { maxWait: 5_000, timeout: 5_000 },
+      );
       const has = (t: string, c: string) => rows.some((r) => r.table === t && r.column === c);
       const flags = {
         sp09: has("Ticket", "slaDueAt"),
         sp10: has("Appointment", "resourceId") && has("StaffResource", "userId") && has("Service", "id"),
+        knowledge: has("KnowledgeSource", "status"),
       };
-      this.schema = { flags, at: now };
+      this.schema = { flags, at: now, ttl: SCHEMA_CHECK_TTL_MS };
       return flags;
     } catch (e) {
       this.logger.warn(`home schema check failed: ${(e as Error).message}`);
-      return { sp09: false, sp10: false };
+      const flags = { sp09: false, sp10: false, knowledge: false };
+      this.schema = { flags, at: now, ttl: SCHEMA_CHECK_FAILURE_TTL_MS };
+      return flags;
     }
   }
 
@@ -199,7 +215,7 @@ export class HomeService {
       sec("home.away", async (tx) =>
         q(tx, awaySql(ws, since, now, scope, { conversations: canConv, bookings: canBookings, tickets: canTickets })),
       ),
-      sec("home.day1", async (tx) => q(tx, day1Sql(ws, schema.sp10))),
+      sec("home.day1", async (tx) => q(tx, day1Sql(ws, schema.sp10, schema.knowledge))),
     ]);
 
     // Re-check every record row by kind, in one statement (canOpenRecord's rules).
@@ -223,6 +239,12 @@ export class HomeService {
       const all = list(s.data, map);
       if (!kind) return { status: "ok", data: all };
       const kept = s.data.filter(keep(kind));
+      // The SQL already applies every rule the re-check does (permissions are
+      // checked before the statement runs; the conversation scope and the
+      // workspace are in its WHERE), so the re-check is defence in depth and
+      // drops nothing in practice. Adjusting the total only by what it dropped
+      // from the capped page is therefore exact: rows beyond the cap passed the
+      // same SQL rules and would pass the re-check too.
       return gate({ status: "ok", data: { total: Math.max(0, all.total - (s.data.length - kept.length)), items: kept.map(map) } });
     };
     const daySection = <T>(s: Section<Row[]>, kind: HomeRecordKind | null, map: (r: Row) => T) => {
