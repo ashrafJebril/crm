@@ -2,7 +2,8 @@ import type { Prisma } from "@prisma/client";
 import { CH, U } from "./__fixtures__/insights-world";
 import { OWNER } from "./insights-expected";
 import { FORMER_KEY, UNATTRIBUTED_KEY } from "./insights-format";
-import { InsightsService, runSection, type SectionTx } from "./insights.service";
+import { createLimiter, InsightsService, runSection, type SectionTx } from "./insights.service";
+import { MAX_CONCURRENT_SECTIONS, SECTION_STATEMENT_TIMEOUT_MS, sectionTransactionTimeoutMs } from "./insights-constants";
 
 /** The `/* insights:support.<name> *\/` tag a statement starts with. */
 const tagOf = (sql: Prisma.Sql) => /insights:support\.(\w+)/.exec(sql.strings[0])?.[1] ?? "?";
@@ -115,12 +116,94 @@ describe("InsightsService.support", () => {
   it("every section runs in its own transaction with statement_timeout and jit off", async () => {
     const { svc, prisma, executed } = build();
     await svc.support("ws1", Q, { userId: U.owner }, NOW);
-    expect(prisma.$transaction).toHaveBeenCalledTimes(6);
-    for (const call of prisma.$transaction.mock.calls as unknown as [unknown, { timeout: number }][]) {
-      expect(call[1].timeout).toBeGreaterThan(8_000);
-    }
-    expect(executed.filter((q) => q === "SET LOCAL statement_timeout = '8s'")).toHaveLength(6);
-    expect(executed.filter((q) => q === "SET LOCAL jit = off")).toHaveLength(6);
+    // Six headline statements, four sections, Team.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(11);
+    expect(executed.filter((q) => q === "SET LOCAL statement_timeout = '8s'")).toHaveLength(11);
+    expect(executed.filter((q) => q === "SET LOCAL jit = off")).toHaveLength(11);
+  });
+
+  it("each transaction's budget covers statement_timeout for every statement it runs", async () => {
+    const { svc, prisma, tx } = build();
+    const perCall: number[] = [];
+    // Count each transaction's statements on its own tx (sections overlap).
+    prisma.$transaction.mockImplementation(async (fn: (t: SectionTx) => Promise<unknown>) => {
+      const i = perCall.push(0) - 1;
+      const own: SectionTx = {
+        $executeRawUnsafe: tx.$executeRawUnsafe,
+        $queryRaw: ((sql: Prisma.Sql) => {
+          perCall[i] += 1;
+          return tx.$queryRaw(sql);
+        }) as never,
+      };
+      return fn(own);
+    });
+    await svc.support("ws1", Q, { userId: U.owner }, NOW);
+    const calls = prisma.$transaction.mock.calls as unknown as [unknown, { timeout: number; maxWait: number }][];
+    expect(calls).toHaveLength(11);
+    calls.forEach((call, i) => {
+      expect({ i, ok: call[1].timeout > SECTION_STATEMENT_TIMEOUT_MS * perCall[i] }).toEqual({ i, ok: true });
+    });
+    // The headline is split: no transaction runs more than Team's two statements.
+    expect(Math.max(...perCall)).toBe(2);
+    expect(sectionTransactionTimeoutMs(1)).toBeGreaterThan(SECTION_STATEMENT_TIMEOUT_MS);
+    expect(sectionTransactionTimeoutMs(6)).toBeGreaterThan(6 * SECTION_STATEMENT_TIMEOUT_MS);
+  });
+
+  it("no more than MAX_CONCURRENT_SECTIONS (2) sections hold a connection at once", async () => {
+    expect(MAX_CONCURRENT_SECTIONS).toBe(2);
+    const { svc, prisma, tx } = build();
+    let inFlight = 0;
+    let peak = 0;
+    let started = 0;
+    prisma.$transaction.mockImplementation(async (fn: (t: SectionTx) => Promise<unknown>) => {
+      inFlight += 1;
+      started += 1;
+      peak = Math.max(peak, inFlight);
+      try {
+        await new Promise((r) => setTimeout(r, 5));
+        return await fn(tx);
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    // Two concurrent report loads share the process-wide limit.
+    const [a, b] = await Promise.all([
+      svc.support("ws1", Q, { userId: U.owner }, NOW),
+      svc.support("ws1", Q, { userId: U.owner }, NOW),
+    ]);
+    expect(started).toBe(22);
+    expect(peak).toBe(2);
+    expect(a.headline).toEqual({ status: "ok", data: OWNER.headline });
+    expect(b.team).toEqual({ status: "ok", data: OWNER.team });
+  });
+
+  it("the limiter runs tasks FIFO, never above its limit, and keeps going after a failure", async () => {
+    const limit = createLimiter(2);
+    let inFlight = 0;
+    let peak = 0;
+    const order: number[] = [];
+    const task = (n: number, fail = false) => async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      order.push(n);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight -= 1;
+      if (fail) throw new Error(`t${n}`);
+      return n;
+    };
+    const results = await Promise.allSettled([1, 2, 3, 4, 5].map((n) => limit(task(n, n === 2))));
+    expect(peak).toBe(2);
+    expect(order).toEqual([1, 2, 3, 4, 5]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled", "fulfilled", "fulfilled"]);
+  });
+
+  it("one slow headline statement makes the headline unavailable, not the other sections", async () => {
+    const timeout = Object.assign(new Error("canceling statement due to statement timeout"), { meta: { code: "57014" } });
+    const { svc } = build({ fail: { handling: timeout } });
+    const res = await svc.support("ws1", Q, { userId: U.owner }, NOW);
+    expect(res.headline).toEqual({ status: "unavailable" });
+    expect(res.team).toEqual({ status: "ok", data: OWNER.team });
+    expect(res.resolutionMix).toEqual({ status: "ok", data: OWNER.resolutionMix });
   });
 
   it("a timed-out section is unavailable and others answer", async () => {

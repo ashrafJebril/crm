@@ -3,7 +3,12 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
-import { SECTION_STATEMENT_TIMEOUT, SECTION_TRANSACTION_TIMEOUT_MS } from "./insights-constants";
+import {
+  MAX_CONCURRENT_SECTIONS,
+  SECTION_MAX_WAIT_MS,
+  SECTION_STATEMENT_TIMEOUT,
+  sectionTransactionTimeoutMs,
+} from "./insights-constants";
 import { insightsError } from "./insights-errors";
 import {
   byNumberRows,
@@ -47,26 +52,76 @@ export interface SectionDb {
 }
 
 /**
+ * A tiny in-memory concurrency limiter (no dependency): at most `limit` tasks
+ * run at once; the rest wait in FIFO order.
+ */
+export function createLimiter(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  const next = () => {
+    if (active >= limit) return;
+    const start = queue.shift();
+    if (!start) return;
+    active += 1;
+    start();
+  };
+  return <T>(task: () => Promise<T>) =>
+    new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        Promise.resolve()
+          .then(task)
+          .then(resolve, reject)
+          .finally(() => {
+            active -= 1;
+            next();
+          });
+      });
+      next();
+    });
+}
+
+/**
+ * Process-wide: at most MAX_CONCURRENT_SECTIONS insight sections hold a pooled
+ * connection at once, however many report loads run concurrently, so a report
+ * never starves webhooks and sends of connections (P2024).
+ */
+export const sectionLimiter = createLimiter(MAX_CONCURRENT_SECTIONS);
+
+export interface SectionOptions {
+  /** Statements the section runs; its transaction budget covers each one's
+   *  statement_timeout plus a margin. Default 1. */
+  statements?: number;
+  /** The limiter to queue on (tests); default the process-wide one. */
+  limiter?: <R>(task: () => Promise<R>) => Promise<R>;
+}
+
+/**
  * Runs one report section in its own transaction with `SET LOCAL
- * statement_timeout` and `jit = off` (Tkana D9). A section that times out
- * (Postgres 57014) or fails for any other reason is `unavailable`; the other
- * sections still answer. Nothing is cached (ruling 9). Shared by every SP-11
- * report (support, sales, home).
+ * statement_timeout` and `jit = off` (Tkana D9), queued on the process-wide
+ * section limiter. The transaction budget is statement_timeout × statements
+ * plus a margin, so only Postgres's own timeout can cut a section short. A
+ * section that times out (Postgres 57014) or fails for any other reason is
+ * `unavailable`; the other sections still answer. Nothing is cached
+ * (ruling 9). Shared by every SP-11 report (support, sales, home).
  */
 export async function runSection<T>(
   db: SectionDb,
   label: string,
   fn: (tx: SectionTx) => Promise<T>,
   logger?: Pick<Logger, "warn">,
+  opts: SectionOptions = {},
 ): Promise<Section<T>> {
+  const limit = opts.limiter ?? sectionLimiter;
   try {
-    const data = await db.$transaction(
-      async (tx) => {
-        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${SECTION_STATEMENT_TIMEOUT}'`);
-        await tx.$executeRawUnsafe(`SET LOCAL jit = off`);
-        return fn(tx);
-      },
-      { maxWait: 5_000, timeout: SECTION_TRANSACTION_TIMEOUT_MS },
+    const data = await limit(() =>
+      db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${SECTION_STATEMENT_TIMEOUT}'`);
+          await tx.$executeRawUnsafe(`SET LOCAL jit = off`);
+          return fn(tx);
+        },
+        { maxWait: SECTION_MAX_WAIT_MS, timeout: sectionTransactionTimeoutMs(opts.statements ?? 1) },
+      ),
     );
     return { status: "ok", data };
   } catch (e) {
@@ -111,8 +166,8 @@ export class InsightsService {
     return ch.id;
   }
 
-  private section<T>(label: string, fn: (tx: SectionTx) => Promise<T>): Promise<Section<T>> {
-    return runSection(this.prisma as unknown as SectionDb, label, fn, this.logger);
+  private section<T>(label: string, fn: (tx: SectionTx) => Promise<T>, statements = 1): Promise<Section<T>> {
+    return runSection(this.prisma as unknown as SectionDb, label, fn, this.logger, { statements });
   }
 
   /** `GET /insights/support`. */
@@ -122,14 +177,31 @@ export class InsightsService {
     const channelId = await this.supportChannel(workspaceId, q.channelId);
     const scope = await this.perm.conversationScope(workspaceId, viewer);
     const sections = supportSections(workspaceId, range, scope, { channelId });
-    const [headline, resolutionMix, peaks, byNumber, topicFriction, team] = await Promise.all([
-      this.section("support.headline", sections.headline),
+    // The headline's six statements each run in their own one-statement
+    // transaction (and budget); the headline is unavailable if any of them is.
+    const h = sections.headlineParts;
+    const [conv, ai, fr, handling, saved, tickets, resolutionMix, peaks, byNumber, topicFriction, team] = await Promise.all([
+      this.section("support.headline.conversations", h.conversations),
+      this.section("support.headline.aiResolution", h.aiResolution),
+      this.section("support.headline.firstResponse", h.firstResponse),
+      this.section("support.headline.handling", h.handling),
+      this.section("support.headline.timeSaved", h.timeSaved),
+      this.section("support.headline.ticketShare", h.ticketShare),
       this.section("support.resolutionMix", sections.resolutionMix),
       this.section("support.peaks", sections.peaks),
       this.section("support.byNumber", sections.byNumber),
       this.section("support.topicFriction", sections.topicFriction),
-      this.section("support.team", sections.team),
+      this.section("support.team", sections.team, 2),
     ]);
+    const headline: Section<SupportHeadline> =
+      conv.status === "ok" &&
+      ai.status === "ok" &&
+      fr.status === "ok" &&
+      handling.status === "ok" &&
+      saved.status === "ok" &&
+      tickets.status === "ok"
+        ? { status: "ok", data: assembleHeadline(conv.data, ai.data, fr.data, handling.data, saved.data, tickets.data) }
+        : { status: "unavailable" };
     return {
       range: { from: range.from, to: range.to, tz: range.tz },
       channelId,
@@ -148,27 +220,14 @@ export class InsightsService {
 export function supportSections(ws: string, range: InsightsRange, scope: ConversationScope, opts: SupportOpts) {
   const q = <T>(tx: SectionTx, sql: Prisma.Sql) => tx.$queryRaw<T[]>(sql);
   return {
-    headline: async (tx: SectionTx): Promise<SupportHeadline> => {
-      const conv = one(await q<{ conversations: number }>(tx, conversationsSql(ws, range, scope, opts)));
-      const ai = one(await q<{ decided: number; aiResolved: number }>(tx, aiResolutionSql(ws, range, scope, opts)));
-      const fr = one(await q<{ median: number | null; unanswered: number }>(tx, firstResponseSql(ws, range, scope, opts)));
-      const handling = one(await q<{ median: number | null }>(tx, handlingSql(ws, range, scope, opts)));
-      const saved = one(await q<{ customerMessages: number }>(tx, timeSavedSql(ws, range, scope, opts)));
-      const tickets = one(await q<{ conversations: number; ticketed: number }>(tx, ticketShareSql(ws, range, scope, opts)));
-      const decided = num(ai.decided);
-      const aiResolved = num(ai.aiResolved);
-      const customerMessages = num(saved.customerMessages);
-      return {
-        conversations: num(conv.conversations),
-        decided,
-        aiResolved,
-        aiResolutionRate: ratePct(aiResolved, decided),
-        medianFirstResponseSec: wholeSeconds(fr.median),
-        unanswered: num(fr.unanswered),
-        medianHandlingSec: wholeSeconds(handling.median),
-        timeSaved: { customerMessages, hours: hoursSaved(customerMessages) },
-        ticketShare: ratePct(num(tickets.ticketed), num(tickets.conversations)),
-      };
+    /** The headline's statements, one transaction each (see `support`). */
+    headlineParts: {
+      conversations: async (tx: SectionTx) => one(await q<HeadlineRows["conv"]>(tx, conversationsSql(ws, range, scope, opts))),
+      aiResolution: async (tx: SectionTx) => one(await q<HeadlineRows["ai"]>(tx, aiResolutionSql(ws, range, scope, opts))),
+      firstResponse: async (tx: SectionTx) => one(await q<HeadlineRows["fr"]>(tx, firstResponseSql(ws, range, scope, opts))),
+      handling: async (tx: SectionTx) => one(await q<HeadlineRows["handling"]>(tx, handlingSql(ws, range, scope, opts))),
+      timeSaved: async (tx: SectionTx) => one(await q<HeadlineRows["saved"]>(tx, timeSavedSql(ws, range, scope, opts))),
+      ticketShare: async (tx: SectionTx) => one(await q<HeadlineRows["tickets"]>(tx, ticketShareSql(ws, range, scope, opts))),
     },
     resolutionMix: async (tx: SectionTx): Promise<ResolutionMix> => {
       const mix: ResolutionMix = { ai: 0, human: 0, escalated: 0, closed: 0 };
@@ -202,5 +261,40 @@ export function supportSections(ws: string, range: InsightsRange, scope: Convers
       }
       return teamRows(members, totals);
     },
+  };
+}
+
+/** Rows of the headline's six statements. */
+export interface HeadlineRows {
+  conv: { conversations: number };
+  ai: { decided: number; aiResolved: number };
+  fr: { median: number | null; unanswered: number };
+  handling: { median: number | null };
+  saved: { customerMessages: number };
+  tickets: { conversations: number; ticketed: number };
+}
+
+/** The headline from its six statements' rows (missing rows read as empty). */
+export function assembleHeadline(
+  conv: Partial<HeadlineRows["conv"]>,
+  ai: Partial<HeadlineRows["ai"]>,
+  fr: Partial<HeadlineRows["fr"]>,
+  handling: Partial<HeadlineRows["handling"]>,
+  saved: Partial<HeadlineRows["saved"]>,
+  tickets: Partial<HeadlineRows["tickets"]>,
+): SupportHeadline {
+  const decided = num(ai.decided);
+  const aiResolved = num(ai.aiResolved);
+  const customerMessages = num(saved.customerMessages);
+  return {
+    conversations: num(conv.conversations),
+    decided,
+    aiResolved,
+    aiResolutionRate: ratePct(aiResolved, decided),
+    medianFirstResponseSec: wholeSeconds(fr.median),
+    unanswered: num(fr.unanswered),
+    medianHandlingSec: wholeSeconds(handling.median),
+    timeSaved: { customerMessages, hours: hoursSaved(customerMessages) },
+    ticketShare: ratePct(num(tickets.ticketed), num(tickets.conversations)),
   };
 }
