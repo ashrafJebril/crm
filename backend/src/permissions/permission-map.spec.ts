@@ -248,16 +248,25 @@ describe("permission map", () => {
       "POST /knowledge/faqs": "knowledge.create",
       "POST /knowledge/files": "knowledge.create",
       "DELETE /knowledge/sources/:id": "knowledge.delete",
+      // Task 2: websites.
+      "POST /knowledge/websites/check": "knowledge.create",
+      "POST /knowledge/websites": "knowledge.create",
+      "PATCH /knowledge/websites/:id": "knowledge.update",
+      "POST /knowledge/websites/:id/refresh": "knowledge.update",
     };
     for (const [k, p] of Object.entries(sp21)) {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
     }
-    // Every declared /knowledge route is in the table (Task 2 extends it with the website routes).
+    // Every declared /knowledge route is in the table (the exact set, websites included).
     expect(keys.filter((k) => / \/knowledge(\/|$)/.test(k)).sort()).toEqual(Object.keys(sp21).sort());
     // Route order: faqs/reorder before faqs/:id.
     const kn = routes.filter((r) => r.key.includes(" /knowledge/faqs"));
     const at = (k: string) => kn.findIndex((r) => r.key === k);
     expect(at("POST /knowledge/faqs/reorder")).toBeLessThan(at("PATCH /knowledge/faqs/:id"));
+    // websites/check before the :id routes.
+    const web = routes.filter((r) => r.key.includes(" /knowledge/websites"));
+    const w = (k: string) => web.findIndex((r) => r.key === k);
+    expect(w("POST /knowledge/websites/check")).toBeLessThan(w("POST /knowledge/websites/:id/refresh"));
   });
 
   it("permission map covers SP-10 routes (booking part)", () => {

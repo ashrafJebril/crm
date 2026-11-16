@@ -10,7 +10,7 @@
  * hidden from the library (ruling 9), created in the same transaction as the
  * sources that reference them; a batch with one bad file creates nothing.
  */
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import type { Response } from "express";
 import type { KnowledgeSource, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -36,6 +36,7 @@ import { tiptapToText } from "./knowledge-content";
 import { knowledgeError, KnowledgeFailure } from "./knowledge-errors";
 import { MIME_OF_TYPE, readTyped } from "./knowledge-extract";
 import { chunkRowsFor, KnowledgeProcessor } from "./knowledge-processor";
+import { KnowledgePublisher } from "./knowledge-publisher";
 import type {
   KnowledgePageDto,
   KnowledgePreviewDto,
@@ -112,6 +113,8 @@ export class KnowledgeSourcesService {
     private readonly prisma: PrismaService,
     private readonly media: MediaService,
     private readonly processor: KnowledgeProcessor,
+    /** SP-21 Task 2: after-commit publishing (absent in specs that do not need it). */
+    @Optional() private readonly publisher?: KnowledgePublisher,
   ) {}
 
   // ─── Reads ──────────────────────────────────────────────────────────────
@@ -254,6 +257,8 @@ export class KnowledgeSourcesService {
   async remove(workspaceId: string, id: string): Promise<{ ok: true }> {
     const src = await this.load(workspaceId, id);
     await this.prisma.knowledgeSource.deleteMany({ where: { id: src.id, workspaceId } });
+    // The upstream copies go too (best-effort; never fails the delete).
+    await this.publisher?.unpublish(src);
     if (src.mediaId) {
       const others = await this.prisma.knowledgeSource.count({ where: { workspaceId, mediaId: src.mediaId } });
       if (others === 0) {
@@ -304,6 +309,7 @@ export class KnowledgeSourcesService {
     if ("conflict" in saved) {
       throw knowledgeError("knowledge.version_conflict", { current: await this.get(workspaceId, saved.conflict as string) });
     }
+    this.publisher?.schedule(saved.id);
     return this.get(workspaceId, saved.id);
   }
 
@@ -372,6 +378,7 @@ export class KnowledgeSourcesService {
       await tx.knowledgeChunk.createMany({ data: chunkRowsFor(workspaceId, row.id, this.faqChunk(question, answer)) });
       return row.id;
     });
+    this.publisher?.schedule(id);
     return this.get(workspaceId, id);
   }
 
@@ -397,6 +404,7 @@ export class KnowledgeSourcesService {
       return "ok" as const;
     });
     if (outcome === "conflict") throw knowledgeError("knowledge.version_conflict", { current: await this.get(workspaceId, src.id) });
+    this.publisher?.schedule(src.id);
     return this.get(workspaceId, src.id);
   }
 

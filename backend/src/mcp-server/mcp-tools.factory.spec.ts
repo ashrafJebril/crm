@@ -23,16 +23,17 @@ describe("McpToolsFactory", () => {
       contacts as unknown as ContactsService,
       media as unknown as MediaService,
       bookings as unknown as BookingsService,
+      {} as never, // SP-21: KnowledgeSearchService (search-knowledge.spec.ts covers search_knowledge)
     );
   });
 
   const tools = (workspaceId = "ws1") => factory.build(workspaceId);
 
-  it("exposes exactly the twelve expected tools and no delete tool (SP-17 list_photos, SP-10 list_services and find_slots)", () => {
+  it("exposes exactly the thirteen expected tools and no delete tool (SP-17 list_photos, SP-10 list_services and find_slots, SP-21 search_knowledge)", () => {
     expect(Object.keys(tools()).sort()).toEqual([
       "cancel_appointment", "create_appointment", "create_contact", "find_slots", "get_appointment",
-      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "update_appointment",
-      "update_contact",
+      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "search_knowledge",
+      "update_appointment", "update_contact",
     ]);
   });
 

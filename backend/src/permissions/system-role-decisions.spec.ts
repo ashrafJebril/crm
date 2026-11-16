@@ -561,6 +561,11 @@ describe("system-role decision table", () => {
       "POST /knowledge/files",
       "POST /knowledge/sources/:id/reprocess",
       "DELETE /knowledge/sources/:id",
+      // Task 2: websites.
+      "POST /knowledge/websites/check",
+      "POST /knowledge/websites",
+      "PATCH /knowledge/websites/:id",
+      "POST /knowledge/websites/:id/refresh",
     ];
 
     it("owner and admin do everything", () => {
