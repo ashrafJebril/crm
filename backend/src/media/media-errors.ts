@@ -11,7 +11,7 @@ export type MediaErrorKey =
   | "media.unsupported_type" // {allowed}
   | "media.too_large" // {limit}
   | "media.invalid_query" // {param}
-  | "media.in_use" // {templates, campaigns}
+  | "media.in_use" // {templates, campaigns, tickets, knowledge}
   // SP-17
   | "media.no_changes"
   | "media.not_approvable" // {reason: "type" | "size" | "inbound"}

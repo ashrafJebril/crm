@@ -232,6 +232,34 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-21 routes", () => {
+    const sp21: Record<string, string> = {
+      "GET /knowledge/sources": "knowledge.view",
+      "GET /knowledge/sources/:id": "knowledge.view",
+      "GET /knowledge/sources/:id/preview": "knowledge.view",
+      "GET /knowledge/sources/:id/pages": "knowledge.view",
+      "GET /knowledge/sources/:id/file": "knowledge.view",
+      "GET /knowledge/templates/:kind": "knowledge.view",
+      "PUT /knowledge/content": "knowledge.update",
+      "PUT /knowledge/guidelines": "knowledge.update",
+      "PATCH /knowledge/faqs/:id": "knowledge.update",
+      "POST /knowledge/faqs/reorder": "knowledge.update",
+      "POST /knowledge/sources/:id/reprocess": "knowledge.update",
+      "POST /knowledge/faqs": "knowledge.create",
+      "POST /knowledge/files": "knowledge.create",
+      "DELETE /knowledge/sources/:id": "knowledge.delete",
+    };
+    for (const [k, p] of Object.entries(sp21)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // Every declared /knowledge route is in the table (Task 2 extends it with the website routes).
+    expect(keys.filter((k) => / \/knowledge(\/|$)/.test(k)).sort()).toEqual(Object.keys(sp21).sort());
+    // Route order: faqs/reorder before faqs/:id.
+    const kn = routes.filter((r) => r.key.includes(" /knowledge/faqs"));
+    const at = (k: string) => kn.findIndex((r) => r.key === k);
+    expect(at("POST /knowledge/faqs/reorder")).toBeLessThan(at("PATCH /knowledge/faqs/:id"));
+  });
+
   it("permission map covers SP-10 routes (booking part)", () => {
     const sp10: Record<string, string> = {
       "GET /bookings/availability": "bookings.view",

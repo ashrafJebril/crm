@@ -80,6 +80,10 @@ export class PrismaService implements OnModuleDestroy {
   get staffResource() { return this.client.staffResource; }
   get staffService() { return this.client.staffService; }
   get catalogImport() { return this.client.catalogImport; }
+  // SP-21: agent knowledge.
+  get knowledgeSource() { return this.client.knowledgeSource; }
+  get knowledgePage() { return this.client.knowledgePage; }
+  get knowledgeChunk() { return this.client.knowledgeChunk; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }
