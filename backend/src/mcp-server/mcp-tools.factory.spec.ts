@@ -3,31 +3,55 @@ import { McpToolsFactory } from "./mcp-tools.factory";
 import { AppointmentsService } from "../appointments/appointments.service";
 import { ContactsService } from "../contacts/contacts.service";
 import { MediaService } from "../media/media.service";
+import { BookingsService } from "../bookings/bookings.service";
+import { bookingError } from "../bookings/booking-errors";
 
 describe("McpToolsFactory", () => {
   let appointments: { list: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let contacts: { search: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let media: { listForAgent: jest.Mock };
+  let bookings: { activeServices: jest.Mock; availability: jest.Mock };
   let factory: McpToolsFactory;
 
   beforeEach(() => {
     appointments = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     contacts = { search: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     media = { listForAgent: jest.fn() };
+    bookings = { activeServices: jest.fn(), availability: jest.fn() };
     factory = new McpToolsFactory(
       appointments as unknown as AppointmentsService,
       contacts as unknown as ContactsService,
       media as unknown as MediaService,
+      bookings as unknown as BookingsService,
     );
   });
 
   const tools = (workspaceId = "ws1") => factory.build(workspaceId);
 
-  it("exposes exactly the ten expected tools and no delete tool (SP-17 adds list_photos)", () => {
+  it("exposes exactly the twelve expected tools and no delete tool (SP-17 list_photos, SP-10 list_services and find_slots)", () => {
     expect(Object.keys(tools()).sort()).toEqual([
-      "cancel_appointment", "create_appointment", "create_contact", "get_appointment",
-      "get_contact", "list_appointments", "list_photos", "search_contacts", "update_appointment", "update_contact",
+      "cancel_appointment", "create_appointment", "create_contact", "find_slots", "get_appointment",
+      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "update_appointment",
+      "update_contact",
     ]);
+  });
+
+  it("SP-10: list_services and find_slots scope to the workspace", async () => {
+    bookings.activeServices.mockResolvedValue([{ id: "s1" }]);
+    bookings.availability.mockResolvedValue({ slots: [] });
+    expect(await tools("ws1").list_services.execute!({}, {} as never)).toEqual([{ id: "s1" }]);
+    expect(bookings.activeServices).toHaveBeenCalledWith("ws1");
+    await tools("ws1").find_slots.execute!({ serviceId: "s1", date: "2026-11-17" }, {} as never);
+    expect(bookings.availability).toHaveBeenCalledWith("ws1", { serviceId: "s1", date: "2026-11-17" });
+  });
+
+  it("SP-10: a booking error reaches the agent as its key plus its details (no internals)", async () => {
+    appointments.update.mockRejectedValue(
+      bookingError("bookings.illegal_transition", { from: "completed", to: "pending", allowed: [] }),
+    );
+    await expect(tools("ws1").update_appointment.execute!({ id: "a1", status: "pending" }, {} as never)).rejects.toThrow(
+      'bookings.illegal_transition {"from":"completed","to":"pending","allowed":[]}',
+    );
   });
 
   it("list_appointments scopes to the workspace and forwards filters", async () => {

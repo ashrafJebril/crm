@@ -55,7 +55,7 @@ function setup() {
     delete: jest.fn(),
   };
   const media = new MediaService(prisma, storage as never);
-  const factory = new McpToolsFactory({} as never, {} as never, media);
+  const factory = new McpToolsFactory({} as never, {} as never, media, {} as never);
   const listPhotos = async (input: Record<string, unknown>) => {
     const out: any = await factory.build("wsA").list_photos.execute!(input as never, {} as never);
     return out;

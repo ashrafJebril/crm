@@ -305,6 +305,9 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
 
   // ── Bookings ──────────────────────────────────────────────────────────
   "GET /appointments": "bookings.view",
+  // SP-10: booking search typeahead (declared before :id) and availability.
+  "GET /appointments/search": "bookings.view",
+  "GET /bookings/availability": "bookings.view",
   "GET /appointments/:id": "bookings.view",
   "POST /appointments": "bookings.create",
   "PATCH /appointments/:id": "bookings.update",

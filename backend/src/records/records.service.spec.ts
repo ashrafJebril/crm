@@ -22,6 +22,9 @@ describe("RecordsService", () => {
       appointment: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       campaign: { findFirst: jest.fn().mockResolvedValue(null) },
       user: { findFirst: jest.fn().mockResolvedValue({ name: "Sara" }) },
+      // SP-10: the booking sheet's resource, fit and conflict.
+      workspace: { findUnique: jest.fn().mockResolvedValue({ timezone: "Asia/Riyadh" }) },
+      staffResource: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(null) },
     };
     perm = { conversationScope: jest.fn().mockResolvedValue({}) };
     canOpen.mockReset().mockResolvedValue(true);
@@ -153,8 +156,32 @@ describe("RecordsService", () => {
       { key: "start", value: created.toISOString() },
       { key: "status", value: "confirmed" },
       { key: "staff", value: "Sara" },
+      { key: "resource", value: null },
+      { key: "fit", value: "unchecked" },
+      { key: "conflict", value: false },
     ]);
     expect(r.links).toEqual([{ kind: "contact", id: "c1", title: "Layla" }]);
+  });
+
+  it("SP-10 booking: catalog resource, fit in the workspace timezone and conflict", async () => {
+    const startAt = new Date("2026-11-17T05:30:00Z"); // 08:30 Riyadh, Tuesday
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: "b1", service: "Cut", serviceAr: "قص", startAt, durationMin: 60, status: "confirmed", staffId: "u2",
+      resourceId: "r1", contact: { id: "c1", name: "Layla", phone: null },
+    });
+    prisma.staffResource.findMany.mockResolvedValue([
+      { id: "r1", userId: "u2", schedule: { tue: [{ from: "09:00", to: "17:00" }] } },
+    ]);
+    prisma.staffResource.findFirst.mockResolvedValue({ name: "Sara chair" });
+    prisma.appointment.findMany.mockResolvedValue([
+      { id: "b2", startAt: new Date("2026-11-17T06:00:00Z"), durationMin: 30, status: "pending", resourceId: null, staffId: "u2" },
+    ]);
+    const r = await svc.get(WS, ME, "booking", "b1");
+    expect(r.fields.slice(-3)).toEqual([
+      { key: "resource", value: "Sara chair" },
+      { key: "fit", value: "outside_hours" },
+      { key: "conflict", value: true },
+    ]);
   });
 
   it("Arabic keys are omitted/null when no Arabic value exists", async () => {

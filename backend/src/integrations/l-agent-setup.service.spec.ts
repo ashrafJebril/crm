@@ -54,8 +54,9 @@ describe("LAgentSetupService", () => {
     tokens.status.mockResolvedValue({ connected: true });
     client.request.mockImplementation(async (path: string) => {
       if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 2 }];
-      // SP-17: both sections present.
-      if (path.endsWith("/prompts")) return [{ version: 2, content: "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->" }];
+      // SP-17 + SP-10: every section present.
+      if (path.endsWith("/prompts"))
+        return [{ version: 2, content: "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->" }];
       return undefined;
     });
 
@@ -106,8 +107,8 @@ describe("LAgentSetupService", () => {
       expect(content.split("<!-- kewy-crm-tools -->")).toHaveLength(2);
     });
 
-    it("both present: no PUT, already-present", async () => {
-      withPrompt("x <!-- kewy-crm-photos --> y <!-- kewy-crm-tools -->");
+    it("all present: no PUT, already-present", async () => {
+      withPrompt("x <!-- kewy-crm-photos --> y <!-- kewy-crm-tools --> <!-- kewy-crm-booking-slots -->");
       expect((await svc.ensure("ws-1")).prompt).toBe("already-present");
       expect(puts()).toHaveLength(0);
     });
@@ -116,6 +117,18 @@ describe("LAgentSetupService", () => {
       withPrompt("");
       await svc.ensure("ws-1");
       expect(puts()[0][1].body.content.startsWith("<!-- kewy-crm-tools -->")).toBe(true);
+    });
+
+    it("SP-10: an agent set up before SP-10 gets the booking-slots section appended once", async () => {
+      const before = "You are support.\n\n<!-- kewy-crm-tools -->\n## Booking\n\n<!-- kewy-crm-photos -->\n## Photos";
+      withPrompt(before);
+      expect((await svc.ensure("ws-1")).prompt).toBe("updated");
+      expect(puts()).toHaveLength(1);
+      const content: string = puts()[0][1].body.content;
+      expect(content.startsWith(`${before}\n\n<!-- kewy-crm-booking-slots -->`)).toBe(true);
+      expect(content).toContain("Use find_slots before booking a catalog service");
+      expect(content).toContain("list_services");
+      expect(content.split("<!-- kewy-crm-booking-slots -->")).toHaveLength(2);
     });
 
     it("a new registration describes approved photos", async () => {

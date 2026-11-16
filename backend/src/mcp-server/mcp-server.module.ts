@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { AppointmentsModule } from "../appointments/appointments.module";
+import { BookingsModule } from "../bookings/bookings.module";
 import { ContactsModule } from "../contacts/contacts.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { MediaModule } from "../media/media.module";
@@ -8,7 +9,7 @@ import { McpServerController } from "./mcp-server.controller";
 import { McpToolsFactory } from "./mcp-tools.factory";
 
 @Module({
-  imports: [AppointmentsModule, ContactsModule, IntegrationsModule, MediaModule],
+  imports: [AppointmentsModule, BookingsModule, ContactsModule, IntegrationsModule, MediaModule],
   controllers: [McpServerController],
   providers: [McpAuthGuard, McpToolsFactory],
 })

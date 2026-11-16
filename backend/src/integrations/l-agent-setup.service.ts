@@ -35,9 +35,19 @@ with a few words from their request. Send at most one photo per reply by using i
 and follow its "use when" note. Never send a photo that list_photos did not return, and never describe a
 photo as sent unless you attached it.`;
 
+// SP-10 (ruling 10): catalog services and free slots. Its own marker, so an
+// agent set up before SP-10 gets it appended on the next setup run.
+const BOOKING_SLOTS_MARKER = "<!-- kewy-crm-booking-slots -->";
+
+export const CRM_BOOKING_SLOTS_SECTION = `${BOOKING_SLOTS_MARKER}
+## Services and free times
+Use find_slots before booking a catalog service: call list_services, and when the customer's service is listed, call find_slots for the date and offer only the times it returns.
+Book with create_appointment passing that service's serviceId and the slot's resourceId; if it fails because the time was taken or is outside working hours, offer other times from find_slots.`;
+
 const PROMPT_SECTIONS: ReadonlyArray<readonly [marker: string, section: string]> = [
   [PROMPT_MARKER, CRM_PROMPT_SECTION],
   [PHOTOS_MARKER, CRM_PHOTOS_SECTION],
+  [BOOKING_SLOTS_MARKER, CRM_BOOKING_SLOTS_SECTION],
 ];
 
 interface LAgent {

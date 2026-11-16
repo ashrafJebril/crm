@@ -449,7 +449,7 @@ describe("system-role decision table", () => {
 
   // SP-10: the bookings catalog (ruling 12). The booking routes join in Task 2.
   describe("SP-10 booking routes", () => {
-    const READ = ["GET /services", "GET /staff"];
+    const READ = ["GET /services", "GET /staff", "GET /bookings/availability", "GET /appointments/search"];
     const CATALOG_WRITES = [
       "POST /services",
       "PATCH /services/:id",
@@ -465,6 +465,17 @@ describe("system-role decision table", () => {
       "POST /staff/:id/restore",
     ];
     const BOOKING_WORK = ["POST /appointments", "PATCH /appointments/:id", "DELETE /appointments/:id"];
+
+    it("every role reads services, staff, availability and search; agent books, viewer cannot", () => {
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        for (const route of [...READ, "GET /appointments", "GET /appointments/:id"]) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+      for (const role of ["owner", "admin", "agent"] as const) {
+        for (const route of BOOKING_WORK) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
 
     it("owner and admin manage the catalog", () => {
       for (const role of ["owner", "admin"] as const) {

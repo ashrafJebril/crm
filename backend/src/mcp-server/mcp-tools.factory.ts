@@ -2,6 +2,7 @@ import { HttpException, Injectable } from "@nestjs/common";
 import { createTool, type Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { AppointmentsService } from "../appointments/appointments.service";
+import { BookingsService } from "../bookings/bookings.service";
 import { ContactsService } from "../contacts/contacts.service";
 import { AGENT_PHOTO_LIMIT_DEFAULT, AGENT_PHOTO_LIMIT_MAX, MediaService } from "../media/media.service";
 
@@ -19,10 +20,22 @@ async function unwrap<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (err) {
     if (err instanceof HttpException) {
-      throw new Error(err.message);
+      throw new Error(err.message + detailOf(err));
     }
     throw new Error("Unexpected error");
   }
+}
+
+/**
+ * SP-10: booking errors carry details the agent needs to recover (the
+ * allowed transitions, the taken slot, the working windows). They are
+ * appended as JSON after the key; nothing internal is in them.
+ */
+function detailOf(err: HttpException): string {
+  const res = err.getResponse();
+  if (!res || typeof res !== "object") return "";
+  const { statusCode: _s, message: _m, error: _e, ...extra } = res as Record<string, unknown>;
+  return Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : "";
 }
 
 @Injectable()
@@ -31,6 +44,7 @@ export class McpToolsFactory {
     private readonly appointments: AppointmentsService,
     private readonly contacts: ContactsService,
     private readonly media: MediaService,
+    private readonly bookings: BookingsService,
   ) {}
 
   build(workspaceId: string): Record<string, Tool> {
@@ -56,13 +70,18 @@ export class McpToolsFactory {
 
       create_appointment: createTool({
         id: "create_appointment",
-        description: "Create a new appointment for an existing contact.",
+        description:
+          "Create a new appointment for an existing contact. For a catalog service pass serviceId (from list_services) " +
+          "and the slot's resourceId (from find_slots); service, serviceAr and durationMin then default to the service's. " +
+          "Without serviceId, service, serviceAr and durationMin are required.",
         inputSchema: z.object({
           contactId: z.string(),
-          service: z.string(),
-          serviceAr: z.string(),
+          serviceId: z.string().optional(),
+          resourceId: z.string().optional(),
+          service: z.string().optional(),
+          serviceAr: z.string().optional(),
           startAt: z.string().datetime({ offset: true }),
-          durationMin: z.number().int().min(1),
+          durationMin: z.number().int().min(1).optional(),
           status: z.enum(APPOINTMENT_STATUSES),
           source: z.enum(APPOINTMENT_SOURCES),
           staffId: z.string().optional(),
@@ -77,6 +96,8 @@ export class McpToolsFactory {
         description: "Update fields on an existing appointment.",
         inputSchema: z.object({
           id: z.string(),
+          serviceId: z.string().optional(),
+          resourceId: z.string().optional(),
           service: z.string().optional(),
           serviceAr: z.string().optional(),
           startAt: z.string().datetime({ offset: true }).optional(),
@@ -95,6 +116,27 @@ export class McpToolsFactory {
         description: "Cancel an appointment (sets status to cancelled). Never permanently deletes it.",
         inputSchema: z.object({ id: z.string() }),
         execute: ({ id }) => unwrap(() => this.appointments.update(workspaceId, id, { status: "cancelled" })),
+      }),
+
+      // SP-10 (ruling 10): the catalog and its free times.
+      list_services: createTool({
+        id: "list_services",
+        description: "List the services this business offers (active ones), with their duration in minutes and price.",
+        inputSchema: z.object({}),
+        execute: () => unwrap(() => this.bookings.activeServices(workspaceId)),
+      }),
+
+      find_slots: createTool({
+        id: "find_slots",
+        description:
+          "Find free start times for a service on one date (YYYY-MM-DD, in the business's timezone). " +
+          "Each slot has startAt (ISO 8601 with offset) and the resourceId to book on. Optionally limit to one resourceId.",
+        inputSchema: z.object({
+          serviceId: z.string(),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          resourceId: z.string().optional(),
+        }),
+        execute: (input) => unwrap(() => this.bookings.availability(workspaceId, input)),
       }),
 
       search_contacts: createTool({

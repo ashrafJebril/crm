@@ -232,6 +232,27 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-10 routes (booking part)", () => {
+    const sp10: Record<string, string> = {
+      "GET /bookings/availability": "bookings.view",
+      "GET /appointments/search": "bookings.view",
+      // Existing rows unchanged.
+      "GET /appointments": "bookings.view",
+      "GET /appointments/:id": "bookings.view",
+      "POST /appointments": "bookings.create",
+      "PATCH /appointments/:id": "bookings.update",
+      "DELETE /appointments/:id": "bookings.delete",
+    };
+    for (const [k, p] of Object.entries(sp10)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    expect(keys.filter((k) => / \/bookings(\/|$)/.test(k))).toEqual(["GET /bookings/availability"]);
+    // Route order: search before :id.
+    const appts = routes.filter((r) => r.key.startsWith("GET /appointments/"));
+    const at = (k: string) => appts.findIndex((r) => r.key === k);
+    expect(at("GET /appointments/search")).toBeLessThan(at("GET /appointments/:id"));
+  });
+
   it("permission map covers SP-10 routes (catalog part)", () => {
     const sp10: Record<string, string> = {
       "GET /services": "bookings.view",
@@ -253,6 +274,7 @@ describe("permission map", () => {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
     }
     // Every declared catalog route is in the table above (nothing unmapped or extra).
+    // (Booking part below.)
     const catalog = keys.filter((k) => / \/(services|staff)(\/|$)/.test(k)).sort();
     expect(catalog).toEqual(Object.keys(sp10).sort());
   });

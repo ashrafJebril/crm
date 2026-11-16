@@ -166,3 +166,20 @@ export function parseHHMM(s: unknown): number | null {
   if (h > 24 || (h === 24 && min !== 0)) return null;
   return h * 60 + min;
 }
+
+/**
+ * SP-10 Task 2: `instant` as an ISO 8601 string in the local time of `tz`,
+ * with its offset (e.g. `2026-11-17T09:00:00+03:00`). Slot start times are
+ * returned this way so clients never re-interpret them in their own zone.
+ */
+export function isoWithOffset(instant: Date, tz: string): string {
+  const zone = workspaceTz(tz);
+  const p = parts(instant, zone);
+  const off = Math.round(offsetMs(instant, zone) / 60_000);
+  const sign = off < 0 ? "-" : "+";
+  const abs = Math.abs(off);
+  return (
+    `${pad(p.year, 4)}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}` +
+    `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+  );
+}
