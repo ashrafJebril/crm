@@ -144,15 +144,29 @@ describe("SP-10 bookings catalog migration", () => {
     expect(raw.includes(Buffer.from("\r\n"))).toBe(false);
   });
 
-  it("equals prisma migrate diff apart from IF NOT EXISTS and the DO wrappers", () => {
+  it("equals prisma migrate diff apart from IF NOT EXISTS, the DO wrappers, lock_timeout and Appointment-last order", () => {
     const statements = code
+      .replace(/^SET lock_timeout = '5s';$/m, "")
       .replace(/IF NOT EXISTS /g, "")
       .replace(/DO \$\$ BEGIN([\s\S]*?)EXCEPTION WHEN duplicate_object THEN NULL;\s*END \$\$;/g, "$1")
       .split(";")
       .map((s) => s.replace(/\s+/g, " ").trim())
       .filter(Boolean)
       .map((s) => `${s};`);
-    expect(statements).toEqual(PRISMA_DIFF);
+    // Review M1: every "Appointment" statement runs last (it holds ACCESS
+    // EXCLUSIVE until commit), otherwise in Prisma's order.
+    const onAppointment = (st: string) => st.startsWith('ALTER TABLE "Appointment"') || st.includes(' ON "Appointment"(');
+    expect(statements).toEqual([...PRISMA_DIFF.filter((st) => !onAppointment(st)), ...PRISMA_DIFF.filter(onAppointment)]);
+    expect(PRISMA_DIFF.filter(onAppointment)).toHaveLength(6);
+  });
+
+  it("sets lock_timeout first and documents that Appointment reads and writes block (review M1)", () => {
+    const firstStatement = code.split(";")[0].trim();
+    expect(firstStatement).toBe("SET lock_timeout = '5s'");
+    expect((code.match(/^SET /gm) ?? []).length).toBe(1);
+    expect(sql).toMatch(/ACCESS EXCLUSIVE/);
+    expect(sql).toMatch(/READS AND WRITES on "Appointment"/);
+    expect(sql).not.toMatch(/block booking writes for/);
   });
 
   it.each(Object.entries(PINNED))("the applied %s file is unchanged (sha256)", (folder, sha) => {

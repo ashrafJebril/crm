@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import type { Prisma, Service } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { bookingError } from "../bookings/booking-errors";
-import { lockService } from "../bookings/booking-locks";
+import { lockResource, lockService } from "../bookings/booking-locks";
 import {
   BLOCKING_STATUSES,
   parseColor,
@@ -54,8 +54,9 @@ export class ServicesService {
       order: dto.order ?? (await this.prisma.service.count({ where: { workspaceId } })),
     };
     const staffIds = dto.staffIds === undefined ? [] : parseIds(dto.staffIds, "staffIds");
-    if (staffIds.length) await this.assertResources(workspaceId, staffIds);
     const row = await this.prisma.$transaction(async (tx) => {
+      // Review M4: the linked resources are checked under their locks.
+      await this.lockAndAssertResources(tx, workspaceId, staffIds);
       const created = await tx.service.create({ data });
       if (staffIds.length) {
         await tx.staffService.createMany({
@@ -95,8 +96,15 @@ export class ServicesService {
   async setStaff(workspaceId: string, id: string, staffIdsIn: unknown): Promise<ServiceDto> {
     await this.find(workspaceId, id);
     const staffIds = parseIds(staffIdsIn, "staffIds");
-    await this.assertResources(workspaceId, staffIds);
     await this.prisma.$transaction(async (tx) => {
+      // Review M4: lock order service → resources (booking-locks.ts), then
+      // re-check every row inside the transaction, so a concurrent delete is a
+      // 404 and a concurrent archive is the archived key, never a 500.
+      await lockService(tx, id);
+      if (!(await tx.service.findFirst({ where: { id, workspaceId }, select: { id: true } }))) {
+        throw bookingError("bookings.service_not_found");
+      }
+      await this.lockAndAssertResources(tx, workspaceId, staffIds);
       await tx.staffService.deleteMany({ where: { serviceId: id, workspaceId } });
       if (staffIds.length) {
         await tx.staffService.createMany({
@@ -169,10 +177,11 @@ export class ServicesService {
     return bookingError("bookings.version_conflict", { current });
   }
 
-  /** Every id must be a non-archived resource of this workspace. */
-  private async assertResources(workspaceId: string, ids: string[]) {
+  /** Locks each resource (sorted, after any service lock), then: every id must be a non-archived resource of this workspace. */
+  private async lockAndAssertResources(tx: Pick<PrismaService, "staffResource" | "$executeRaw">, workspaceId: string, ids: string[]) {
     if (!ids.length) return;
-    const found = await this.prisma.staffResource.findMany({
+    for (const rid of [...ids].sort()) await lockResource(tx, rid);
+    const found = await tx.staffResource.findMany({
       where: { workspaceId, id: { in: ids } },
       select: { id: true, archivedAt: true },
     });

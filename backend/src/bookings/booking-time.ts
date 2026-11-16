@@ -97,16 +97,31 @@ export function wallClock(instant: Date, tz: string): WallClock {
 
 /**
  * The instant at which the local wall clock in `tz` reads `dateISO` +
- * `minutes` (0..1440; 1440 is the next local midnight). A wall time inside a
- * spring-forward gap resolves to the instant after the gap.
+ * `minutes` (0..1440; 1440 is the next local midnight), in every zone east
+ * or west of UTC:
+ *  - candidates use the offset a day before and a day after the wall time,
+ *    and only those whose wall clock reads back as asked are kept;
+ *  - both kept (fall-back overlap, the wall time occurs twice): the earlier;
+ *  - none kept (spring-forward gap, the wall time never occurs): the
+ *    pre-transition offset, which is the instant just after the gap
+ *    (New York 02:30 on the spring-forward day → 03:30 EDT).
  */
 export function instantOf(dateISO: string, minutes: number, tz: string): Date {
   const zone = workspaceTz(tz);
   const [y, m, d] = ymd(dateISO);
   const wall = Date.UTC(y, m - 1, d) + minutes * 60_000;
-  let guess = wall - offsetMs(new Date(wall), zone);
-  guess = wall - offsetMs(new Date(guess), zone);
-  return new Date(guess);
+  // The wall clock asked for, normalized (1440 → next day 00:00).
+  const asked = new Date(wall);
+  const want = `${pad(asked.getUTCFullYear(), 4)}-${pad(asked.getUTCMonth() + 1)}-${pad(asked.getUTCDate())}`;
+  const wantMin = asked.getUTCHours() * 60 + asked.getUTCMinutes();
+  const oBefore = offsetMs(new Date(wall - 86_400_000), zone);
+  const oAfter = offsetMs(new Date(wall + 86_400_000), zone);
+  const reads = (t: number) => {
+    const w = wallClock(new Date(t), zone);
+    return w.dateISO === want && w.minutes === wantMin;
+  };
+  const ok = [...new Set([wall - oBefore, wall - oAfter])].filter(reads).sort((a, b) => a - b);
+  return new Date(ok.length ? ok[0] : wall - oBefore);
 }
 
 /** [start, end) of a local calendar day as instants. */

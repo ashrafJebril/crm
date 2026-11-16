@@ -67,11 +67,13 @@ export function validateSchedule(json: unknown): WeeklySchedule {
       if (from === null || to === null) invalid("time_invalid", day, index);
       if (from === 1440) invalid("start_at_24", day, index);
       if (from >= to) invalid("from_not_before_to", day, index);
-      return { from, to, window: { from: w.from as string, to: w.to as string } };
+      return { from, to, index, window: { from: w.from as string, to: w.to as string } };
     });
-    parsed.sort((a, b) => a.from - b.from);
+    parsed.sort((a, b) => a.from - b.from || a.index - b.index);
+    // Report the overlapping window by its position in the caller's input
+    // (the later-starting one of the pair), so an editor highlights the right row.
     for (let i = 1; i < parsed.length; i++) {
-      if (parsed[i].from < parsed[i - 1].to) invalid("overlap", day, i);
+      if (parsed[i].from < parsed[i - 1].to) invalid("overlap", day, parsed[i].index);
     }
     if (parsed.length) out[day] = parsed.map((p) => p.window);
   }

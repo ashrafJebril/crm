@@ -75,6 +75,89 @@ describe("delete-staff-with-references archives instead", () => {
     expect(await staff.create(A, { name: "Sara", userId: "uAgent" })).toMatchObject({ userId: "uAgent" });
   });
 
+  it("the preview and upcomingCount also show the member's upcoming legacy bookings; the delete decision stays on the FK (review M2)", async () => {
+    const { staff, prisma } = catalogWorld();
+    const r = await staff.create(A, { name: "Sara", userId: "uAgent" });
+    prisma.db.appointment.push(
+      booking({ staffId: "uAgent", resourceId: null, status: "confirmed" }),
+      booking({ staffId: "uAgent", resourceId: null, status: "pending" }),
+      booking({ staffId: "uAgent", resourceId: null, status: "cancelled" }),
+      booking({ staffId: "uAgent", resourceId: null, status: "confirmed", startAt: new Date(Date.now() - 86_400_000) }),
+      booking({ staffId: "uOwner", resourceId: null, status: "confirmed" }),
+      booking({ resourceId: r.id, staffId: "uAgent", status: "confirmed" }),
+    );
+    expect(await staff.deletePreview(A, r.id)).toEqual({ bookingCount: 1, upcomingCount: 3, serviceCount: 0 });
+    expect((await staff.get(A, r.id)).upcomingCount).toBe(3);
+    // A resource without a member counts only its own rows.
+    const room = await staff.create(A, { name: "Room" });
+    expect(await staff.deletePreview(A, room.id)).toEqual({ bookingCount: 0, upcomingCount: 0, serviceCount: 0 });
+    // Legacy-only references never turn a delete into an archive.
+    prisma.db.appointment = prisma.db.appointment.filter((x: any) => x.resourceId !== r.id);
+    expect(await staff.remove(A, r.id)).toEqual({ deleted: true });
+  });
+
+  describe("links race-safe against deletes and archives (review M4)", () => {
+    it("PUT /staff/:id/services while a linked service is deleted → 404, never a 500 or an orphan link", async () => {
+      const { staff, services, prisma, locks } = catalogWorld({ locks: true });
+      const r = await staff.create(A, { name: "Sara" });
+      const s = await services.create(A, { name: "Cut", durationMin: 30 });
+      const count = prisma.appointment.count.getMockImplementation();
+      prisma.appointment.count.mockImplementation((a: any) => sleep(20).then(() => count(a)));
+      const del = services.remove(A, s.id);
+      await until(() => locks!.held().some((k) => k.includes(`booking-service:${s.id}`)));
+      const [deleted, refused] = await Promise.all([del, failure(staff.setServices(A, r.id, [s.id]))]);
+      expect(deleted).toEqual({ deleted: true });
+      expect(refused).toEqual({ status: 404, body: { statusCode: 404, message: "bookings.service_not_found" } });
+      expect(prisma.db.staffService).toEqual([]);
+    });
+
+    it("PUT /staff/:id/services while the service is archived → bookings.service_archived", async () => {
+      const { staff, services, prisma, locks } = catalogWorld({ locks: true });
+      const r = await staff.create(A, { name: "Sara" });
+      const s = await services.create(A, { name: "Cut", durationMin: 30 });
+      prisma.db.appointment.push(booking({ serviceId: s.id, status: "completed" }));
+      const count = prisma.appointment.count.getMockImplementation();
+      prisma.appointment.count.mockImplementation((a: any) => sleep(20).then(() => count(a)));
+      const del = services.remove(A, s.id);
+      await until(() => locks!.held().some((k) => k.includes(`booking-service:${s.id}`)));
+      const [archived, refused] = await Promise.all([del, failure(staff.setServices(A, r.id, [s.id]))]);
+      expect(archived).toEqual({ archived: true, bookingCount: 1 });
+      expect(refused.body.message).toBe("bookings.service_archived");
+      expect(prisma.db.staffService).toEqual([]);
+    });
+
+    it("PUT /services/:id/staff while a linked resource is deleted → 404; the link takes service then resource locks", async () => {
+      const { staff, services, prisma, locks } = catalogWorld({ locks: true });
+      const r = await staff.create(A, { name: "Sara" });
+      const s = await services.create(A, { name: "Cut", durationMin: 30 });
+      const count = prisma.appointment.count.getMockImplementation();
+      prisma.appointment.count.mockImplementation((a: any) => sleep(20).then(() => count(a)));
+      const del = staff.remove(A, r.id);
+      await until(() => locks!.held().some((k) => k.includes(`booking-resource:${r.id}`)));
+      const [deleted, refused] = await Promise.all([del, failure(services.setStaff(A, s.id, [r.id]))]);
+      expect(deleted).toEqual({ deleted: true });
+      expect(refused.body.message).toBe("bookings.resource_not_found");
+      expect(prisma.db.staffService).toEqual([]);
+      const mine = locks!.order.filter((k) => k.includes(s.id) || k.includes(r.id));
+      expect(mine.indexOf(mine.find((k) => k.includes(`booking-service:${s.id}`))!)).toBeLessThan(
+        mine.lastIndexOf(mine.find((k) => k.includes(`booking-resource:${r.id}`))!),
+      );
+    });
+
+    it("the linked row itself deleted meanwhile → its own 404", async () => {
+      const { staff, services, prisma, locks } = catalogWorld({ locks: true });
+      const r = await staff.create(A, { name: "Sara" });
+      const s = await services.create(A, { name: "Cut", durationMin: 30 });
+      const count = prisma.appointment.count.getMockImplementation();
+      prisma.appointment.count.mockImplementation((a: any) => sleep(20).then(() => count(a)));
+      const del = staff.remove(A, r.id);
+      await until(() => locks!.held().some((k) => k.includes(`booking-resource:${r.id}`)));
+      const [, refused] = await Promise.all([del, failure(staff.setServices(A, r.id, [s.id]))]);
+      expect(refused.body.message).toBe("bookings.resource_not_found");
+      expect(prisma.db.staffService).toEqual([]);
+    });
+  });
+
   describe("a concurrent booking on the resource is either counted (archive) or refused", () => {
     it("booking holds the lock first → the delete waits and counts it", async () => {
       const { staff, prisma, locks } = catalogWorld({ locks: true });
