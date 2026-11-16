@@ -447,6 +447,65 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-10: the bookings catalog (ruling 12). The booking routes join in Task 2.
+  describe("SP-10 booking routes", () => {
+    const READ = ["GET /services", "GET /staff"];
+    const CATALOG_WRITES = [
+      "POST /services",
+      "PATCH /services/:id",
+      "PUT /services/:id/staff",
+      "GET /services/:id/delete-preview",
+      "DELETE /services/:id",
+      "POST /services/:id/restore",
+      "POST /staff",
+      "PATCH /staff/:id",
+      "PUT /staff/:id/services",
+      "GET /staff/:id/delete-preview",
+      "DELETE /staff/:id",
+      "POST /staff/:id/restore",
+    ];
+    const BOOKING_WORK = ["POST /appointments", "PATCH /appointments/:id", "DELETE /appointments/:id"];
+
+    it("owner and admin manage the catalog", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...READ, ...CATALOG_WRITES]) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    it("agent reads services and staff and books, but gets 403 on every catalog write", () => {
+      for (const route of [...READ, ...BOOKING_WORK]) {
+        expect({ route, ok: allowed("agent", route) }).toEqual({ route, ok: true });
+      }
+      for (const route of CATALOG_WRITES) {
+        expect({ route, ok: allowed("agent", route) }).toEqual({ route, ok: false });
+      }
+    });
+
+    it("viewer reads only", () => {
+      for (const route of READ) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: true });
+      for (const route of [...CATALOG_WRITES, ...BOOKING_WORK]) {
+        expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
+      }
+    });
+
+    it("a custom role with bookings.manage manages the catalog; bookings.update alone does not", () => {
+      const manager: PermissionsJson = { bookings: ["view", "manage"] };
+      const booker: PermissionsJson = { bookings: ["view", "create", "update", "delete"] };
+      for (const route of CATALOG_WRITES) {
+        expect(hasPermission(manager, ROUTE_PERMISSIONS[route] as string)).toBe(true);
+        expect(hasPermission(booker, ROUTE_PERMISSIONS[route] as string)).toBe(false);
+      }
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of [...READ, ...CATALOG_WRITES]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
   // SP-17: media details and the agent switch (ruling 5).
   describe("SP-17 media details", () => {
     const PATCH = "PATCH /media/:id";

@@ -75,6 +75,11 @@ export class PrismaService implements OnModuleDestroy {
   get adSpendDaily() { return this.client.adSpendDaily; }
   get metaAdsConnection() { return this.client.metaAdsConnection; }
   get metaLead() { return this.client.metaLead; }
+  // SP-10: the bookings catalog and catalog imports.
+  get service() { return this.client.service; }
+  get staffResource() { return this.client.staffResource; }
+  get staffService() { return this.client.staffService; }
+  get catalogImport() { return this.client.catalogImport; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

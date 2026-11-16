@@ -232,6 +232,31 @@ describe("permission map", () => {
     }
   });
 
+  it("permission map covers SP-10 routes (catalog part)", () => {
+    const sp10: Record<string, string> = {
+      "GET /services": "bookings.view",
+      "POST /services": "bookings.manage",
+      "PATCH /services/:id": "bookings.manage",
+      "PUT /services/:id/staff": "bookings.manage",
+      "GET /services/:id/delete-preview": "bookings.manage",
+      "DELETE /services/:id": "bookings.manage",
+      "POST /services/:id/restore": "bookings.manage",
+      "GET /staff": "bookings.view",
+      "POST /staff": "bookings.manage",
+      "PATCH /staff/:id": "bookings.manage",
+      "PUT /staff/:id/services": "bookings.manage",
+      "GET /staff/:id/delete-preview": "bookings.manage",
+      "DELETE /staff/:id": "bookings.manage",
+      "POST /staff/:id/restore": "bookings.manage",
+    };
+    for (const [k, p] of Object.entries(sp10)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // Every declared catalog route is in the table above (nothing unmapped or extra).
+    const catalog = keys.filter((k) => / \/(services|staff)(\/|$)/.test(k)).sort();
+    expect(catalog).toEqual(Object.keys(sp10).sort());
+  });
+
     it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

@@ -44,6 +44,8 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
 import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
 import { PermissionsModule } from "./permissions/permissions.module";
 import { RolesModule } from "./roles/roles.module";
+import { ServicesModule } from "./services/services.module";
+import { StaffModule } from "./staff/staff.module";
 
 @Module({
   imports: [
@@ -65,6 +67,9 @@ import { RolesModule } from "./roles/roles.module";
     ActivitiesModule,
     ConversationsModule,
     AppointmentsModule,
+    // SP-10: the bookings catalog.
+    ServicesModule,
+    StaffModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,

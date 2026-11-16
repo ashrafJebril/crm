@@ -326,6 +326,51 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   ticketAttachment: () => ({ messageId: null, addedById: null }),
   ticketActivity: () => ({ fromStage: null, toStage: null, note: null, byUserId: null }),
+  // SP-10: the bookings catalog (the DB defaults) and the Appointment columns.
+  service: () => ({
+    color: "info",
+    price: null,
+    currency: "SAR",
+    active: true,
+    archivedAt: null,
+    order: 0,
+    version: 0,
+  }),
+  staffResource: () => ({
+    userId: null,
+    nameAr: null,
+    role: null,
+    color: "accent",
+    schedule: {},
+    active: true,
+    archivedAt: null,
+    version: 0,
+  }),
+  catalogImport: () => ({
+    createdById: null,
+    status: "extracting",
+    inputText: null,
+    sourceUrl: null,
+    fileMediaId: null,
+    fileName: null,
+    extractedBy: null,
+    proposal: null,
+    total: 0,
+    processed: 0,
+    created: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [],
+    errorKey: null,
+    heartbeatAt: null,
+    startedAt: null,
+    finishedAt: null,
+  }),
+  appointment: () => ({
+    serviceId: null,
+    resourceId: null,
+    version: 0,
+  }),
 };
 
 /** SP-15 unique constraints, as Postgres enforces them (P2002). */
@@ -337,10 +382,20 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   metaLead: [["MetaLead_workspaceId_leadgenId_key", ["workspaceId", "leadgenId"]]],
   // SP-09
   ticketAttachment: [["TicketAttachment_ticketId_mediaId_key", ["ticketId", "mediaId"]]],
+  // SP-10
+  staffService: [["StaffService_pkey", ["resourceId", "serviceId"]]],
+};
+/** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
+const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
+  staffResource: [["StaffResource_workspaceId_userId_key", ["workspaceId", "userId"]]],
 };
 const keyPart = (v: any) => (v instanceof Date ? v.getTime() : v);
 function sp15Clash(model: string, rows: Row[], row: Row): string | null {
   for (const [name, cols] of SP15_UNIQUES[model] ?? []) {
+    if (rows.some((o) => o !== row && cols.every((c) => keyPart(o[c]) === keyPart(row[c])))) return name;
+  }
+  for (const [name, cols] of NULLABLE_UNIQUES[model] ?? []) {
+    if (cols.some((c) => row[c] == null)) continue;
     if (rows.some((o) => o !== row && cols.every((c) => keyPart(o[c]) === keyPart(row[c])))) return name;
   }
   return null;
@@ -404,6 +459,13 @@ function relation(model: string, row: Row, key: string, db: Tables): Row | Row[]
   const [target, fk, kind] = rel;
   if (kind === "one") return (db[target] ?? []).find((r) => r.id === row[fk]) ?? null;
   return (db[target] ?? []).filter((r) => r[fk] === row.id);
+}
+
+/** SP-10: an update that would break a nullable unique index throws P2002. */
+function nullableUniqueCheck(model: string, rows: Row[], row: Row, next: Row) {
+  if (!NULLABLE_UNIQUES[model]) return;
+  const clash = sp15Clash(model, rows.filter((x) => x !== row), next);
+  if (clash) throw p2002(clash);
 }
 
 /** SP-13: @@unique([campaignId, partitionKey]). */
@@ -566,6 +628,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
         const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
         if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
         if (name === "ticket") ticketSlaHook(db, row, next, a.data);
+        nullableUniqueCheck(name, rows(), row, next);
         Object.assign(row, next);
         return project(row, a.select, a.include, db, name);
       }),
@@ -575,6 +638,7 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
           const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
           if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
           if (name === "ticket") ticketSlaHook(db, row, next, a.data);
+          nullableUniqueCheck(name, rows(), row, next);
           Object.assign(row, next);
         }
         return { count: hit.length };
@@ -644,6 +708,18 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
       );
       for (const a of db.ticketAttachment) if (a.addedById === row.id) a.addedById = null;
     }
+    // SP-10: StaffService.resourceId / serviceId -> CASCADE; Appointment.serviceId /
+    // resourceId, StaffResource.userId, CatalogImport.createdById / fileMediaId -> SET NULL.
+    if (db.staffService) db.staffService = db.staffService.filter((l) => l.resourceId !== row.id && l.serviceId !== row.id);
+    for (const ap of db.appointment ?? []) {
+      if (ap.serviceId === row.id) ap.serviceId = null;
+      if (ap.resourceId === row.id) ap.resourceId = null;
+    }
+    for (const r of db.staffResource ?? []) if (r.userId === row.id) r.userId = null;
+    for (const c of db.catalogImport ?? []) {
+      if (c.createdById === row.id) c.createdById = null;
+      if (c.fileMediaId === row.id) c.fileMediaId = null;
+    }
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -701,6 +777,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     ticketAttachment: model("ticketAttachment"),
     lostReason: model("lostReason"),
     appointment: model("appointment"),
+    // SP-10: the bookings catalog.
+    service: model("service"),
+    staffResource: model("staffResource"),
+    staffService: model("staffService"),
+    catalogImport: model("catalogImport"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();
@@ -830,6 +911,63 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     }),
   };
   return prisma;
+}
+
+/**
+ * SP-10: opt-in advisory locks for the double (shared by the SP-10 specs).
+ * Inside `$transaction(fn)`, `SELECT pg_advisory_xact_lock(...)` takes a real
+ * per-key async mutex held until the callback settles, so concurrent callers
+ * queue like Postgres sessions. The key is the statement with its values
+ * inlined, so `hashtext(${key})` and `hashtext('p:' || ${id})` both work.
+ * Re-entrant within one transaction, like Postgres. The call still reaches
+ * `prisma.$executeRaw` (and its mock) for assertions. Array transactions and
+ * statements outside a transaction are unchanged.
+ *
+ * Returns `held()` (the keys held right now) and `order` (every acquisition,
+ * in order) for interleaving assertions.
+ */
+export function withAdvisoryLocks(prisma: any): { held: () => string[]; order: string[] } {
+  const tails = new Map<string, Promise<void>>();
+  const holders = new Set<string>();
+  const order: string[] = [];
+  const baseTx = prisma.$transaction;
+  const keyOf = (strings: TemplateStringsArray, vals: any[]) =>
+    strings.reduce((acc, s, i) => acc + s + (i < vals.length ? String(vals[i]) : ""), "");
+
+  async function acquire(key: string): Promise<() => void> {
+    const prev = tails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((r) => (release = r));
+    const tail = prev.then(() => mine);
+    tails.set(key, tail);
+    await prev;
+    holders.add(key);
+    order.push(key);
+    return () => {
+      holders.delete(key);
+      if (tails.get(key) === tail) tails.delete(key);
+      release();
+    };
+  }
+
+  prisma.$transaction = jest.fn(async (arg: any) => {
+    if (typeof arg !== "function") return baseTx(arg);
+    const mine = new Map<string, () => void>();
+    const tx = Object.create(prisma);
+    tx.$executeRaw = async (strings: TemplateStringsArray, ...vals: any[]) => {
+      if (/pg_advisory_xact_lock/.test(strings.join("?"))) {
+        const key = keyOf(strings, vals);
+        if (!mine.has(key)) mine.set(key, await acquire(key));
+      }
+      return prisma.$executeRaw(strings, ...vals);
+    };
+    try {
+      return await arg(tx);
+    } finally {
+      for (const release of mine.values()) release();
+    }
+  });
+  return { held: () => [...holders], order };
 }
 
 function lazy<T>(run: () => T): PromiseLike<T> & { catch: Promise<T>["catch"] } {

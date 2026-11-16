@@ -46,6 +46,11 @@ const SCOPED_MODELS = new Set([
   "MetaLead",
   // SP-09
   "TicketAttachment",
+  // SP-10
+  "Service",
+  "StaffResource",
+  "StaffService",
+  "CatalogImport",
 ]);
 
 const READ_ACTIONS = new Set([

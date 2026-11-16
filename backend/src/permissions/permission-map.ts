@@ -309,6 +309,23 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /appointments": "bookings.create",
   "PATCH /appointments/:id": "bookings.update",
   "DELETE /appointments/:id": "bookings.delete",
+  // SP-10: the services and staff catalog. Reads need bookings.view; every
+  // catalog write needs bookings.manage (ruling 12: agents book, but do not
+  // edit the catalog).
+  "GET /services": "bookings.view",
+  "POST /services": "bookings.manage",
+  "GET /services/:id/delete-preview": "bookings.manage",
+  "PATCH /services/:id": "bookings.manage",
+  "PUT /services/:id/staff": "bookings.manage",
+  "DELETE /services/:id": "bookings.manage",
+  "POST /services/:id/restore": "bookings.manage",
+  "GET /staff": "bookings.view",
+  "POST /staff": "bookings.manage",
+  "GET /staff/:id/delete-preview": "bookings.manage",
+  "PATCH /staff/:id": "bookings.manage",
+  "PUT /staff/:id/services": "bookings.manage",
+  "DELETE /staff/:id": "bookings.manage",
+  "POST /staff/:id/restore": "bookings.manage",
 
   // ── Audiences (segments) ──────────────────────────────────────────────
   "GET /segments": "audiences.view",
