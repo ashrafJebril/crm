@@ -598,6 +598,16 @@ describe("system-role decision table", () => {
       expect(blockedForImpersonation(ROUTE_PERMISSIONS[SALES] as string)).toBe(false);
     });
 
+    // Home part (Task 3): every member reads the home; sections are filtered in the service.
+    it("every member reads the home, marks it seen and dismisses the Day-1 home", () => {
+      for (const route of ["GET /home", "POST /home/seen", "POST /home/day1/dismiss"]) {
+        expect(ROUTE_PERMISSIONS[route]).toBe("authenticated");
+        for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
     // Sales part (Task 2).
     const SALES = "GET /insights/sales";
 

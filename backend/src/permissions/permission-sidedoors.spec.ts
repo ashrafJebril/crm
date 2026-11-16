@@ -28,6 +28,7 @@ import { TicketAttachmentsService } from "../tickets/ticket-attachments.service"
 import { TicketsService } from "../tickets/tickets.service";
 import type { Prisma } from "@prisma/client";
 import { InsightsService } from "../insights/insights.service";
+import { HomeService } from "../home/home.service";
 import { salesOracle, supportOracle } from "../insights/insights-oracle";
 import { parseRange } from "../insights/insights-range";
 import { ASSIGNED, SALES_ASSIGNED, SALES_OWNER } from "../insights/insights-expected";
@@ -936,5 +937,74 @@ describe("SP-11 sales insights", () => {
     expect(res.headline).toEqual({ status: "forbidden" });
     expect(res.reps).toEqual({ status: "forbidden" });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SP-11 Review Focus 1 (home): every conversation the home lists or counts is
+ * read under the viewer's scope inside the SQL, and every record row is
+ * re-checked in bulk with canOpenRecord's rules before it is returned.
+ */
+describe("SP-11 working home", () => {
+  function build(perms: Record<string, string[]>, visibility: "assigned" | "all", openable: (kind: string, ids: string[]) => string[]) {
+    const prisma = makePrisma(perms, visibility);
+    const queried: Prisma.Sql[] = [];
+    const rows: Record<string, unknown[]> = {
+      waitingConversations: [
+        { id: MINE, contactName: "C", channel: "whatsapp", waitingSince: new Date(), assigneeId: ME, escalated: false, total: 2 },
+        { id: OTHER, contactName: "C", channel: "whatsapp", waitingSince: new Date(), assigneeId: "someone", escalated: false, total: 2 },
+      ],
+      unassignedTickets: [{ id: "tk", number: 1, title: "T", createdAt: new Date(), contactName: null, slaDueAt: null, priority: null, total: 1 }],
+      away: [{ aiReplies: 1, aiResolved: 1, agentBookings: 0, autoTickets: 0, rows: [{ id: OTHER, contactName: "C", resolvedAt: "2026-11-10T06:00:00" }] }],
+    };
+    const tx = {
+      $executeRawUnsafe: jest.fn(async () => 0),
+      $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+        queried.push(sql);
+        const tag = /home:(\w+)/.exec(sql.strings[0])?.[1] ?? "";
+        if (tag === "openable") {
+          const out: { kind: string; id: string }[] = [];
+          sql.values.forEach((v, i) => {
+            if (Array.isArray(v)) for (const id of openable(String(sql.values[i - 2]), v as string[])) out.push({ kind: String(sql.values[i - 2]), id });
+          });
+          return out;
+        }
+        return rows[tag] ?? [];
+      }),
+    };
+    prisma.$transaction = jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+    prisma.$queryRaw = jest.fn(async () => []); // schema check: degrade
+    prisma.workspace = { findUnique: jest.fn(async () => ({ timezone: "Asia/Riyadh" })) };
+    const perm = new PermissionService(prisma);
+    return { svc: new HomeService(prisma, perm), queried };
+  }
+
+  it("home lists only permitted records", async () => {
+    // The SQL already scopes; the bulk re-check keeps only what canOpenRecord would.
+    const { svc, queried } = build(ASSIGNED_PERMS, "assigned", (kind, ids) => ids.filter((id) => id !== OTHER));
+    const res = await svc.home(WS, viewer);
+    expect(JSON.stringify(res)).not.toContain(OTHER);
+    if (res.needsPerson.waitingConversations.status !== "ok") throw new Error("waiting");
+    expect(res.needsPerson.waitingConversations.data).toEqual({ total: 1, items: [expect.objectContaining({ id: MINE })] });
+    for (const sql of queried) {
+      const t = sql.strings.join("?");
+      const reads = (t.match(/"Conversation" c\s/g) ?? []).length;
+      expect((t.match(/AND c\."assigneeId" = \?/g) ?? []).length).toBe(reads);
+    }
+    const check = queried.find((s) => s.strings[0].includes("home:openable"))!;
+    expect(check.strings.join("?")).toContain('AND c."assigneeId" = ?');
+    expect(check.values).toEqual(expect.arrayContaining([WS, ME]));
+    // No bookings.view in this role: no bookings read at all.
+    expect(res.today.bookings).toEqual({ status: "forbidden" });
+  });
+
+  it("a role without tickets.view gets no ticket rows from the home", async () => {
+    const { svc, queried } = build({ conversations: ["view"], contacts: ["view"] }, "all", (_k, ids) => ids);
+    const res = await svc.home(WS, viewer);
+    expect(res.needsPerson.unassignedTickets).toEqual({ status: "forbidden" });
+    expect(queried.some((s) => s.strings[0].includes("home:unassignedTickets"))).toBe(false);
+    for (const tag of ["home:lateFollowUps", "home:dayFollowUps"]) {
+      expect(queried.find((s) => s.strings[0].includes(tag))!.strings.join("?")).toContain('AND a."ticketId" IS NULL');
+    }
   });
 });

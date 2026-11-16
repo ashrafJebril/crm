@@ -519,4 +519,9 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /insights/support": "reports.view",
   // SP-11: sales insights; every section also needs tickets.view (else forbidden).
   "GET /insights/sales": "reports.view",
+  // SP-11: the working home; every section is filtered in the service by the
+  // member's permissions and conversation scope.
+  "GET /home": "authenticated",
+  "POST /home/seen": "authenticated",
+  "POST /home/day1/dismiss": "authenticated",
 };
