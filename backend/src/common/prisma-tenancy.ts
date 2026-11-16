@@ -55,6 +55,9 @@ const SCOPED_MODELS = new Set([
   "KnowledgeSource",
   "KnowledgePage",
   "KnowledgeChunk",
+  // SP-20
+  "AgentSettings",
+  "AgentSandboxThread",
 ]);
 
 const READ_ACTIONS = new Set([

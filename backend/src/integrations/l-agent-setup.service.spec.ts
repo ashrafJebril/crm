@@ -181,6 +181,57 @@ describe("LAgentSetupService", () => {
     });
   });
 
+  describe("SP-20 persona", () => {
+    const ALL = "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->\n<!-- kewy-crm-knowledge -->";
+    let content: string;
+    beforeEach(() => {
+      content = ALL;
+      client.request.mockImplementation(async (path: string, o?: { method?: string; body?: { content: string } }) => {
+        if (o?.method === "PUT") {
+          content = o.body!.content;
+          return undefined;
+        }
+        if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 1 }];
+        if (path.endsWith("/prompts")) return [{ version: 1, content }];
+        return undefined;
+      });
+    });
+    const puts = () => client.request.mock.calls.filter(([, o]: any[]) => o?.method === "PUT");
+
+    it("ensure with a persona writes the block in the same single PUT and reports it", async () => {
+      const r = await svc.ensure("ws-1", { persona: "Your name is \"Salma\"." });
+      expect(r).toEqual({ mcpServer: "created", prompt: "already-present", persona: "updated" });
+      expect(puts()).toHaveLength(1);
+      expect(content).toContain("<!-- kewy-crm-persona:begin -->\nYour name is \"Salma\".\n<!-- kewy-crm-persona:end -->");
+      expect(content.startsWith(ALL)).toBe(true);
+      // Same persona again: no PUT.
+      const again = await svc.ensure("ws-1", { persona: "Your name is \"Salma\"." });
+      expect(again.persona).toBe("already-present");
+      expect(puts()).toHaveLength(1);
+      // An empty persona removes the block, everything else kept.
+      expect((await svc.ensure("ws-1", { persona: "" })).persona).toBe("updated");
+      expect(content).toBe(ALL);
+    });
+
+    it("resync appends missing CRM sections once", async () => {
+      content = "You are support.";
+      const r = await svc.ensure("ws-1", { persona: "P" });
+      expect(r).toMatchObject({ prompt: "updated", persona: "updated" });
+      expect(puts()).toHaveLength(1);
+      for (const m of ["<!-- kewy-crm-tools -->", "<!-- kewy-crm-photos -->", "<!-- kewy-crm-booking-slots -->", "<!-- kewy-crm-knowledge -->", "<!-- kewy-crm-persona:begin -->"]) {
+        expect(content.split(m)).toHaveLength(2);
+      }
+      // A second resync changes nothing.
+      const again = await svc.ensure("ws-1", { persona: "P" });
+      expect(again).toMatchObject({ prompt: "already-present", persona: "already-present" });
+      expect(puts()).toHaveLength(1);
+    });
+
+    it("without a persona the result has no persona field (existing callers unchanged)", async () => {
+      expect(await svc.ensure("ws-1")).toEqual({ mcpServer: "created", prompt: "already-present" });
+    });
+  });
+
   it("refuses a workspace that is not linked to Kewy AI", async () => {
     prisma.raw.workspace.findUnique.mockResolvedValue({ lWorkspaceId: null });
     await expect(svc.ensure("ws-1")).rejects.toThrow("not linked");

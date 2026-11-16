@@ -51,6 +51,7 @@ import { StaffModule } from "./staff/staff.module";
 import { BookingsModule } from "./bookings/bookings.module";
 import { CatalogImportModule } from "./catalog-import/catalog-import.module";
 import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.module";
+import { AgentModule } from "./agent/agent.module";
 
 @Module({
   imports: [
@@ -79,6 +80,8 @@ import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.mo
     CatalogImportModule,
     // SP-21: knowledge sources.
     KnowledgeSourcesModule,
+    // SP-20: agent settings (the reply gate lives in IntegrationsModule).
+    AgentModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,

@@ -74,7 +74,12 @@ interface LPrompt {
 export interface AgentSetupResult {
   mcpServer: "created" | "already-present";
   prompt: "updated" | "already-present";
+  /** SP-20: only when `ensure` was called with a persona. */
+  persona?: "updated" | "already-present";
 }
+
+/** SP-20: the persona block name (`<!-- kewy-crm-persona:begin/end -->`). */
+export const PERSONA_BLOCK_NAME = "persona";
 
 /**
  * Gives a workspace's Kewy AI agent access to this CRM, with no user action:
@@ -105,7 +110,12 @@ export class LAgentSetupService {
     }
   }
 
-  async ensure(workspaceId: string): Promise<AgentSetupResult> {
+  /**
+   * SP-20: with `opts.persona` (the text from `agent/persona-block.ts`; ""
+   * removes the block) the persona block is written in the same single prompt
+   * PUT as any missing CRM sections, and the result says whether it changed.
+   */
+  async ensure(workspaceId: string, opts: { persona?: string } = {}): Promise<AgentSetupResult> {
     const ws = await this.prisma.raw.workspace.findUnique({
       where: { id: workspaceId },
       select: { lWorkspaceId: true },
@@ -113,10 +123,9 @@ export class LAgentSetupService {
     if (!ws?.lWorkspaceId) throw new Error("Workspace is not linked to Kewy AI");
     const lWorkspaceId = ws.lWorkspaceId;
 
-    return {
-      mcpServer: await this.ensureMcpServer(workspaceId),
-      prompt: await this.ensurePrompt(workspaceId, lWorkspaceId),
-    };
+    const mcpServer = await this.ensureMcpServer(workspaceId);
+    const { prompt, persona } = await this.ensurePrompt(workspaceId, lWorkspaceId, opts.persona);
+    return persona === undefined ? { mcpServer, prompt } : { mcpServer, prompt, persona };
   }
 
   private async ensureMcpServer(workspaceId: string): Promise<AgentSetupResult["mcpServer"]> {
@@ -169,7 +178,8 @@ export class LAgentSetupService {
   private async ensurePrompt(
     workspaceId: string,
     lWorkspaceId: string,
-  ): Promise<AgentSetupResult["prompt"]> {
+    persona?: string,
+  ): Promise<{ prompt: AgentSetupResult["prompt"]; persona?: AgentSetupResult["persona"] }> {
     const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
     const base = `/workspaces/${lWorkspaceId}/agents`;
     const agents = await this.client.request<LAgent[]>(base);
@@ -178,11 +188,20 @@ export class LAgentSetupService {
     const live = prompts.find((p) => p.version === agent?.live_version);
     const current = live?.content ?? "";
     const missing = PROMPT_SECTIONS.filter(([marker]) => !current.includes(marker)).map(([, section]) => section);
-    if (missing.length === 0) return "already-present";
+    const withSections = missing.length === 0 ? current : [current.trimEnd(), ...missing].filter(Boolean).join("\n\n");
+    let content = withSections;
+    let personaResult: AgentSetupResult["persona"];
+    if (persona !== undefined) {
+      const next = upsertBlock(withSections, PERSONA_BLOCK_NAME, persona);
+      if (next.dangling) this.logger.warn(`prompt block ${PERSONA_BLOCK_NAME} for workspace ${workspaceId}: end marker missing, appended a fresh block`);
+      content = next.prompt;
+      personaResult = content === withSections ? "already-present" : "updated";
+    }
+    const prompt: AgentSetupResult["prompt"] = missing.length === 0 ? "already-present" : "updated";
+    if (content === current) return { prompt, persona: personaResult };
 
-    // One PUT carrying every missing section.
-    const content = [current.trimEnd(), ...missing].filter(Boolean).join("\n\n");
+    // One PUT carrying every missing section and the persona block.
     await this.client.request(`${base}/${slug}/prompt`, { method: "PUT", body: { content } });
-    return "updated";
+    return { prompt, persona: personaResult };
   }
 }

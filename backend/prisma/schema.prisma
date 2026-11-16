@@ -58,6 +58,8 @@ model User {
   /// SP-10 back-relations.
   staffResources        StaffResource[] @relation("StaffResourceUser")
   catalogImportsCreated CatalogImport[] @relation("CatalogImportCreatedBy")
+  /// SP-20 back-relation.
+  agentSandboxThreads AgentSandboxThread[] @relation("UserAgentSandboxThreads")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1273,6 +1275,12 @@ model Workspace {
   /// SP-21: agent knowledge sources.
   knowledgeSources  KnowledgeSource[]  @relation("WorkspaceKnowledgeSources")
 
+  /// SP-20: agent configuration, sandbox threads and onboarding.
+  agentSettings       AgentSettings?       @relation("WorkspaceAgentSettings")
+  agentSandboxThreads AgentSandboxThread[] @relation("WorkspaceAgentSandboxThreads")
+  /// SP-20: {status: "not_started"|"in_progress"|"skipped"|"done", step, businessName, websiteUrl, websiteSourceId, learnedAt, startedBy, updatedAt}; null = never started (existing workspaces).
+  onboardingState     Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1822,4 +1830,52 @@ model KnowledgeChunk {
 
   @@index([workspaceId, sourceId])
   @@index([pageId])
+}
+
+// ─── SP-20 agent configuration and sandbox ────────────────────────────────
+
+/// SP-20: the workspace's customer-facing agent configuration (local; kewy-ai keeps its own config upstream).
+model AgentSettings {
+  id             String    @id @default(cuid())
+  workspaceId    String    @unique
+  workspace      Workspace @relation("WorkspaceAgentSettings", fields: [workspaceId], references: [id], onDelete: Cascade)
+  nameEn         String?
+  nameAr         String?
+  greeting       String?
+  greetingAr     String?
+  /// subset of AGENT_TONES
+  tone           String[]  @default([])
+  /// "always" | "within" | "outside"
+  hoursMode      String    @default("always")
+  /// SP-10 WeeklySchedule shape {mon:[{from,to}],…}; kept when the mode returns to "always"
+  schedule       Json?
+  /// Tag ids (SP-16 catalog)
+  excludedTagIds String[]  @default([])
+  /// the emergency stop for every platform (ruling 3)
+  stoppedAt      DateTime?
+  stoppedReason  String?
+  stoppedById    String?
+  /// "none" | "pending" | "published" | "failed"
+  publishState   String    @default("none")
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+/// SP-20: a member's "Try your agent" thread. Never a Conversation.
+model AgentSandboxThread {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAgentSandboxThreads", fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation("UserAgentSandboxThreads", fields: [userId], references: [id], onDelete: Cascade)
+  /// [{role, text, toolCalls?, sources?, at}] ≤ 40 turns; plus the model transcript for the next turn
+  messages    Json      @default("[]")
+  transcript  Json      @default("[]")
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([expiresAt])
 }

@@ -452,6 +452,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "PATCH /knowledge/websites/:id": "knowledge.update",
   "POST /knowledge/websites/:id/refresh": "knowledge.update",
 
+  // ── SP-20 agent settings (Task 2 adds the sandbox and onboarding) ─────
+  "GET /agent/settings": "agent.view",
+  "PATCH /agent/settings": "agent.update",
+  "POST /agent/settings/resync": "agent.update",
+
   // ── Connectors (MCP servers bound to the agent) ───────────────────────
   "GET /integrations/l/mcp-servers": "connectors.view",
   "POST /integrations/l/mcp-servers": "connectors.create",

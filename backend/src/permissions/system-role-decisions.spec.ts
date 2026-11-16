@@ -588,6 +588,31 @@ describe("system-role decision table", () => {
     });
   });
 
+  describe("SP-20 agent routes", () => {
+    // Task 1: the settings part. Task 2 adds the sandbox and onboarding rows.
+    const READS = ["GET /agent/settings", "GET /ai/settings"];
+    const WRITES = ["PATCH /agent/settings", "POST /agent/settings/resync", "POST /ai/settings/toggle"];
+
+    it("owner and admin configure and resync", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...READS, ...WRITES]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("agent and viewer read settings and get 403 on the rest", () => {
+      for (const role of ["agent", "viewer"] as const) {
+        for (const route of READS) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        for (const route of WRITES) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of [...READS, ...WRITES]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
   describe("SP-17 media details", () => {
     const PATCH = "PATCH /media/:id";
 

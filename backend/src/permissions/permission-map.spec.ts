@@ -269,6 +269,24 @@ describe("permission map", () => {
     expect(w("POST /knowledge/websites/check")).toBeLessThan(w("POST /knowledge/websites/:id/refresh"));
   });
 
+  it("permission map covers SP-20 routes", () => {
+    const sp20: Record<string, string> = {
+      "GET /agent/settings": "agent.view",
+      "PATCH /agent/settings": "agent.update",
+      "POST /agent/settings/resync": "agent.update",
+      // Ruling 3: the existing toggle also writes the local stop; unchanged.
+      "POST /ai/settings/toggle": "agent.update",
+      "GET /ai/settings": "agent.view",
+    };
+    for (const [k, p] of Object.entries(sp20)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // Every declared /agent route is in the table (Task 1: the settings part).
+    expect(keys.filter((k) => / \/agent(\/|$)/.test(k)).sort()).toEqual(
+      ["GET /agent/settings", "PATCH /agent/settings", "POST /agent/settings/resync"].sort(),
+    );
+  });
+
   it("permission map covers SP-10 routes (booking part)", () => {
     const sp10: Record<string, string> = {
       "GET /bookings/availability": "bookings.view",

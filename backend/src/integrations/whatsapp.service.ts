@@ -37,6 +37,7 @@ import { providerFailure } from "../campaigns/tracking/failure-codes";
 import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
 import { normalizeTemplateQuality } from "../channels/health/health-model";
 import { sentByData } from "../conversations/message-sender";
+import { AgentReplyGate } from "../agent/agent-reply-gate";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -201,6 +202,9 @@ export class WhatsAppService {
     @Optional() private readonly healthTrigger?: HealthCheckTrigger,
     // SP-15, from AdAttributionModule; hand-built specs get one over the same Prisma double.
     @Optional() adReferrals?: AdReferralService,
+    // SP-20: the kewy-ai bridge asks the reply gate first (IntegrationsModule
+    // provides it; hand-built specs that do not pass one keep today's rules).
+    @Optional() private readonly replyGate?: AgentReplyGate,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
@@ -1480,7 +1484,14 @@ export class WhatsAppService {
     // last and awaited only for its own bounded timeout: everything above is
     // already persisted, so a slow or dead AI service cannot cost us the
     // message or the 200 Meta needs.
-    if (conv.aiEnabled && !conv.aiPausedAt && this.aiBridge.isConfigured()) {
+    // SP-20: the reply gate (emergency stop first); it never throws and a
+    // failure to decide means no reply.
+    if (
+      conv.aiEnabled &&
+      !conv.aiPausedAt &&
+      this.aiBridge.isConfigured() &&
+      (!this.replyGate || (await this.replyGate.allows(workspaceId, { conversationId: conv.id, contactId: contact.id }, "meta_bridge")))
+    ) {
       await this.aiBridge.notifyInbound({
         workspaceId,
         conversationId: conv.id,

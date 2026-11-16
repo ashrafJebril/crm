@@ -84,6 +84,9 @@ export class PrismaService implements OnModuleDestroy {
   get knowledgeSource() { return this.client.knowledgeSource; }
   get knowledgePage() { return this.client.knowledgePage; }
   get knowledgeChunk() { return this.client.knowledgeChunk; }
+  // SP-20: agent configuration and sandbox threads.
+  get agentSettings() { return this.client.agentSettings; }
+  get agentSandboxThread() { return this.client.agentSandboxThread; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

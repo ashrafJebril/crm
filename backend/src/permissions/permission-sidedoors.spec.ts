@@ -18,6 +18,8 @@ import { MediaService } from "../media/media.service";
 import { UpdateTicketDto } from "../tickets/tickets.dto";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
+import { AgentSettingsService } from "../agent/agent-settings.service";
+import { AgentReplyGate, invalidateAgentGate } from "../agent/agent-reply-gate";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { AdSourcesService } from "../ad-attribution/ad-sources.service";
 import { createAudienceDb } from "../segments/audience-test-db";
@@ -1044,5 +1046,47 @@ describe("SP-21 knowledge files", () => {
     expect(locks.some((l: string) => l.includes("pg_advisory_xact_lock") && l.endsWith(`|media:${mediaId}`))).toBe(true);
     // And the library never lists it.
     expect((await w.media.listPage(kw.A, undefined, { kind: "all" })).items).toEqual([]);
+  });
+});
+
+// ─── SP-20: agent settings and the reply gate stay inside the workspace ──
+describe("SP-20 agent settings", () => {
+  const two = () =>
+    makeFakePrisma({
+      workspace: [
+        { id: "wsA", name: "A", slug: "a", timezone: "Asia/Riyadh", lWorkspaceId: null },
+        { id: "wsB", name: "B", slug: "b", timezone: "Asia/Riyadh", lWorkspaceId: null },
+      ],
+      tag: [
+        { id: "tagA", workspaceId: "wsA", name: "VIP", color: "red" },
+        { id: "tagB", workspaceId: "wsB", name: "VIP", color: "red" },
+      ],
+      contact: [{ id: "cB", workspaceId: "wsB", name: "B's customer", tags: JSON.stringify(["VIP"]) }],
+      conversation: [{ id: "cvB", workspaceId: "wsB", contactId: "cB", channel: "whatsapp", aiEnabled: true, aiPausedAt: null }],
+      agentSettings: [
+        { id: "asB", workspaceId: "wsB", nameEn: "B bot", tone: [], hoursMode: "always", excludedTagIds: ["tagB"], stoppedAt: null, version: 4, publishState: "none" },
+      ],
+    });
+
+  beforeEach(() => invalidateAgentGate());
+
+  it("a workspace reads and writes only its own row; another workspace's tag id is unknown", async () => {
+    const prisma = two();
+    const svc = new AgentSettingsService(prisma as never);
+    const a = await svc.get("wsA");
+    expect(a).toMatchObject({ nameEn: null, version: 0, excludedTags: [] });
+    await expect(svc.update("wsA", { audience: { excludedTagIds: ["tagB"] }, version: 0 })).rejects.toMatchObject({
+      response: { message: "agent.tag_unknown" },
+    });
+    await svc.update("wsA", { identity: { nameEn: "A bot" }, version: 0 });
+    const b = prisma.db.agentSettings.find((r: { workspaceId: string }) => r.workspaceId === "wsB");
+    expect(b).toMatchObject({ nameEn: "B bot", version: 4, excludedTagIds: ["tagB"] });
+  });
+
+  it("the gate never reads another workspace's conversation or contact", async () => {
+    const gate = new AgentReplyGate(two() as never);
+    // wsA asking about wsB's thread is never a reply, and wsB's exclusion is never wsA's.
+    expect(await gate.decide("wsA", { conversationId: "cvB", contactId: "cB" })).toEqual({ reply: false, reason: "conversation_off" });
+    expect(await gate.decide("wsB", { conversationId: "cvB", contactId: "cB" })).toEqual({ reply: false, reason: "excluded" });
   });
 });

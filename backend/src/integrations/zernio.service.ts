@@ -37,6 +37,7 @@ import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
 import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
 import { applyTemplateProviderStatus } from "../templates/templates.service";
 import { sentByData } from "../conversations/message-sender";
+import { AgentReplyGate } from "../agent/agent-reply-gate";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -102,6 +103,9 @@ export class ZernioService {
     @Optional() private readonly healthTrigger?: HealthCheckTrigger,
     // SP-15, from AdAttributionModule; hand-built specs get one over the same Prisma double.
     @Optional() adReferrals?: AdReferralService,
+    // SP-20: every automatic reply asks the gate first (IntegrationsModule
+    // provides it; hand-built specs that do not pass one keep today's rules).
+    @Optional() private readonly replyGate?: AgentReplyGate,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
@@ -1797,7 +1801,7 @@ export class ZernioService {
     // auto-replies once someone has switched it into AI mode — and stops while
     // a human has taken it over (aiPausedAt), same as the kewy-ai path below.
     if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && this.lAgent.enabled) {
-      this.queueAgentReply(workspaceId, conv.id, text);
+      this.queueAgentReply(workspaceId, conv.id, text, contact.id);
     }
     // Lifecycle automation (never throws): a customer message opens a ticket
     // in 'new' unless one is already open; ANY outbound human message — from
@@ -1842,7 +1846,9 @@ export class ZernioService {
         conv.aiEnabled &&
         !conv.aiPausedAt &&
         this.aiBridge.isConfigured() &&
-        !(await this.lAgentAnswers(workspaceId))
+        !(await this.lAgentAnswers(workspaceId)) &&
+        // SP-20: the reply gate; never throws, fails closed.
+        (!this.replyGate || (await this.replyGate.allows(workspaceId, { conversationId: conv.id, contactId: contact.id }, "zernio_bridge")))
       ) {
         void this.aiBridge.notifyInbound({
           workspaceId,
@@ -1986,11 +1992,15 @@ export class ZernioService {
     workspaceId: string,
     conversationId: string,
     inbound: string,
+    contactId: string | null = null,
   ): void {
     void (async () => {
       // Locked workspaces get no automatic replies. The inbound message is
       // already stored; a failed lookup rejects into the catch below (no send).
       if (await this.paymentLock?.isLocked(workspaceId)) return;
+      // SP-20: the reply gate (emergency stop, conversation, excluded tag,
+      // working hours). A gate failure means no reply (it logs once).
+      if (this.replyGate && !(await this.replyGate.allows(workspaceId, { conversationId, contactId }, "l_auto_reply"))) return;
       const result = await this.lAgent.ask(workspaceId, {
         externalId: conversationId,
         message: inbound,

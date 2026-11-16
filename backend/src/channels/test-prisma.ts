@@ -405,6 +405,23 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   knowledgePage: () => ({ httpStatus: null, title: null, contentHash: null, missedRuns: 0, lastSeenAt: null, lastReadAt: null, removedAt: null }),
   knowledgeChunk: () => ({ pageId: null, heading: null, rowRef: null, validTo: null }),
+  // SP-20: agent settings and sandbox threads (the DB defaults).
+  agentSettings: () => ({
+    nameEn: null,
+    nameAr: null,
+    greeting: null,
+    greetingAr: null,
+    tone: [],
+    hoursMode: "always",
+    schedule: null,
+    excludedTagIds: [],
+    stoppedAt: null,
+    stoppedReason: null,
+    stoppedById: null,
+    publishState: "none",
+    version: 0,
+  }),
+  agentSandboxThread: () => ({ messages: [], transcript: [] }),
   appointment: () => ({
     serviceId: null,
     resourceId: null,
@@ -425,6 +442,9 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   staffService: [["StaffService_pkey", ["resourceId", "serviceId"]]],
   // SP-21
   knowledgePage: [["KnowledgePage_sourceId_urlKey_key", ["sourceId", "urlKey"]]],
+  // SP-20
+  agentSettings: [["AgentSettings_workspaceId_key", ["workspaceId"]]],
+  agentSandboxThread: [["AgentSandboxThread_workspaceId_userId_key", ["workspaceId", "userId"]]],
 };
 /** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
 const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
@@ -848,6 +868,9 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     knowledgeSource: model("knowledgeSource"),
     knowledgePage: model("knowledgePage"),
     knowledgeChunk: model("knowledgeChunk"),
+    // SP-20: agent settings and sandbox threads.
+    agentSettings: model("agentSettings"),
+    agentSandboxThread: model("agentSandboxThread"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();

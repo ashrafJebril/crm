@@ -35,6 +35,7 @@ import { TicketsModule } from "../tickets/tickets.module";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
 import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.module";
 import { AdAttributionModule } from "../ad-attribution/ad-attribution.module";
+import { AgentReplyGate } from "../agent/agent-reply-gate";
 
 @Module({
   imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule, CampaignTrackingModule, AdAttributionModule],
@@ -73,6 +74,8 @@ import { AdAttributionModule } from "../ad-attribution/ad-attribution.module";
     TiremallWebhooksService,
     AiBridgeService,
     AiHandoffService,
+    // SP-20: every automatic reply path asks the gate first.
+    AgentReplyGate,
   ],
   exports: [
     FacebookService,
@@ -87,6 +90,8 @@ import { AdAttributionModule } from "../ad-attribution/ad-attribution.module";
     McpTokenService,
     // SP-21: deleting a migrated l document with its knowledge source.
     LKnowledgeService,
+    // SP-20: the sandbox (Task 2) shows the gate decision.
+    AgentReplyGate,
   ],
 })
 export class IntegrationsModule {}
