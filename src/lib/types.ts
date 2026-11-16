@@ -410,6 +410,121 @@ export interface Appointment {
   hjzAppointmentId?: string | null;
   hjzSyncPending?: boolean;
   hjzSyncError?: string | null;
+  /** SP-10: catalog links (null for legacy free-text bookings). */
+  serviceId?: string | null;
+  resourceId?: string | null;
+  /** SP-10: optimistic-concurrency counter; send it back on PATCH. */
+  version?: number;
+  /** SP-10: another open booking of the same staff overlaps this one. */
+  conflict?: boolean;
+  /** SP-10: the staff schedule check in the workspace timezone. */
+  fit?: "ok" | "off_day" | "outside_hours" | "unchecked";
+}
+
+// ─── SP-10 bookings catalog ───────────────────────────────────────────────
+
+export type BookingWeekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export interface ScheduleWindow {
+  from: string; // "HH:MM"
+  to: string; // "HH:MM", 24:00 allowed
+}
+export type WeeklySchedule = Partial<Record<BookingWeekday, ScheduleWindow[]>>;
+
+/** GET /services row (backend ServiceDto). `price` is a decimal string. */
+export interface Service {
+  id: string;
+  name: string;
+  nameAr: string;
+  color: StageColor;
+  durationMin: number;
+  price: string | null;
+  currency: string;
+  active: boolean;
+  archivedAt: string | null;
+  order: number;
+  version: number;
+  staffIds: string[];
+  upcomingCount: number;
+}
+
+/** GET /staff row (backend StaffResourceDto). */
+export interface StaffResource {
+  id: string;
+  userId: string | null;
+  user: { id: string; name: string } | null;
+  name: string;
+  nameAr: string | null;
+  role: string | null;
+  color: StageColor;
+  schedule: WeeklySchedule;
+  scheduleConfigured: boolean;
+  active: boolean;
+  archivedAt: string | null;
+  version: number;
+  serviceIds: string[];
+  upcomingCount: number;
+}
+
+export interface ServiceDeletePreview {
+  bookingCount: number;
+  upcomingCount: number;
+  staffCount: number;
+}
+export interface StaffDeletePreview {
+  bookingCount: number;
+  upcomingCount: number;
+  serviceCount: number;
+}
+export type CatalogDeleteResult = { deleted: true } | { archived: true; bookingCount: number };
+
+export interface ProposalServiceData {
+  name: string;
+  nameAr: string;
+  durationMin: number;
+  durationDefaulted: boolean;
+  price: string | null;
+  currency: string | null;
+  color?: string;
+  description?: string | null;
+}
+export interface ProposalStaffData {
+  name: string;
+  nameAr: string | null;
+  role: string | null;
+  schedule: WeeklySchedule;
+  services: string[];
+}
+export interface ProposalItem {
+  key: string;
+  kind: "service" | "staff";
+  data: ProposalServiceData | ProposalStaffData;
+  duplicateOf: { id: string | null; key?: string; name: string } | null;
+  selected: boolean;
+  error?: { field: string; reason: string };
+}
+
+export type CatalogImportStatus = "extracting" | "review" | "running" | "done" | "failed" | "cancelled";
+
+/** GET /catalog-imports/:id (backend CatalogImportDto). */
+export interface CatalogImport {
+  id: string;
+  source: "paste" | "url" | "file";
+  kind: "auto" | "services" | "staff";
+  status: CatalogImportStatus;
+  extractedBy: "template" | "ai" | null;
+  fileName: string | null;
+  sourceUrl: string | null;
+  total: number;
+  processed: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  errors: { key: string; name: string; reason: string; missing?: string[] }[];
+  errorKey: string | null;
+  items?: ProposalItem[];
+  notes?: { kind: "services" | "staff"; kept: number; dropped: number }[];
+  createdAt: string;
+  finishedAt: string | null;
 }
 
 export interface Campaign {

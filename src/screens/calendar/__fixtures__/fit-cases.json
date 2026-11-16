@@ -1,0 +1,35 @@
+{
+  "_comment": "SP-10 fit fixture, the cases of backend/src/bookings/schedule.spec.ts ('schedule-fit rejects outside hours in workspace TZ'). schedule.test.ts runs them against src/screens/calendar/schedule.ts and checks each instant also appears in the backend spec.",
+  "schedules": {
+    "SUN_THU": {
+      "sun": [{ "from": "09:00", "to": "17:00" }],
+      "mon": [{ "from": "09:00", "to": "17:00" }],
+      "tue": [{ "from": "09:00", "to": "17:00" }],
+      "wed": [{ "from": "09:00", "to": "17:00" }],
+      "thu": [{ "from": "09:00", "to": "17:00" }]
+    },
+    "SPLIT": { "tue": [{ "from": "09:00", "to": "13:00" }, { "from": "16:00", "to": "21:00" }] },
+    "SEAM": { "tue": [{ "from": "09:00", "to": "13:00" }, { "from": "13:00", "to": "17:00" }] },
+    "ALL_DAY": { "tue": [{ "from": "00:00", "to": "24:00" }], "wed": [{ "from": "00:00", "to": "24:00" }] },
+    "NONE": {}
+  },
+  "cases": [
+    { "name": "09:00 local Tuesday fits (Riyadh)", "schedule": "SUN_THU", "tz": "Asia/Riyadh", "startAt": "2026-11-17T06:00:00Z", "durationMin": 60, "expect": { "kind": "ok" } },
+    { "name": "08:30 local is outside hours with the day's windows", "schedule": "SUN_THU", "tz": "Asia/Riyadh", "startAt": "2026-11-17T05:30:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "09:00", "to": "17:00" }] } },
+    { "name": "16:30-17:30 local is outside hours", "schedule": "SUN_THU", "tz": "Asia/Riyadh", "startAt": "2026-11-17T13:30:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "09:00", "to": "17:00" }] } },
+    { "name": "16:00-17:00 ends at close and fits", "schedule": "SUN_THU", "tz": "Asia/Riyadh", "startAt": "2026-11-17T13:00:00Z", "durationMin": 60, "expect": { "kind": "ok" } },
+    { "name": "Friday 10:00 local is a day off", "schedule": "SUN_THU", "tz": "Asia/Riyadh", "startAt": "2026-11-20T07:00:00Z", "durationMin": 60, "expect": { "kind": "off_day", "day": "fri" } },
+    { "name": "06:00Z is before opening in London", "schedule": "SUN_THU", "tz": "Europe/London", "startAt": "2026-11-17T06:00:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "09:00", "to": "17:00" }] } },
+    { "name": "13:30Z fits in London", "schedule": "SUN_THU", "tz": "Europe/London", "startAt": "2026-11-17T13:30:00Z", "durationMin": 60, "expect": { "kind": "ok" } },
+    { "name": "16:30Z for 60 min is outside hours in London", "schedule": "SUN_THU", "tz": "Europe/London", "startAt": "2026-11-17T16:30:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "09:00", "to": "17:00" }] } },
+    { "name": "Thursday 22:00Z is Friday in Riyadh", "schedule": "SUN_THU", "tz": "Asia/Riyadh", "startAt": "2026-11-19T22:00:00Z", "durationMin": 60, "expect": { "kind": "off_day", "day": "fri" } },
+    { "name": "Thursday 22:00Z is still Thursday in London", "schedule": "SUN_THU", "tz": "Europe/London", "startAt": "2026-11-19T22:00:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "thu", "windows": [{ "from": "09:00", "to": "17:00" }] } },
+    { "name": "12:30-13:30 must fit one window", "schedule": "SPLIT", "tz": "Asia/Riyadh", "startAt": "2026-11-17T09:30:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "09:00", "to": "13:00" }, { "from": "16:00", "to": "21:00" }] } },
+    { "name": "16:00-17:00 fits the second window", "schedule": "SPLIT", "tz": "Asia/Riyadh", "startAt": "2026-11-17T13:00:00Z", "durationMin": 60, "expect": { "kind": "ok" } },
+    { "name": "contiguous windows do not merge", "schedule": "SEAM", "tz": "Asia/Riyadh", "startAt": "2026-11-17T09:30:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "09:00", "to": "13:00" }, { "from": "13:00", "to": "17:00" }] } },
+    { "name": "23:30-00:30 crosses midnight", "schedule": "ALL_DAY", "tz": "Asia/Riyadh", "startAt": "2026-11-17T20:30:00Z", "durationMin": 60, "expect": { "kind": "outside_hours", "day": "tue", "windows": [{ "from": "00:00", "to": "24:00" }] } },
+    { "name": "23:00-24:00 ends at midnight and fits", "schedule": "ALL_DAY", "tz": "Asia/Riyadh", "startAt": "2026-11-17T20:00:00Z", "durationMin": 60, "expect": { "kind": "ok" } },
+    { "name": "an unconfigured schedule fits everything", "schedule": "NONE", "tz": "Asia/Riyadh", "startAt": "2026-11-20T23:30:00Z", "durationMin": 600, "expect": { "kind": "ok" } },
+    { "name": "an invalid zone falls back to Riyadh", "schedule": "SUN_THU", "tz": "Not/AZone", "startAt": "2026-11-17T06:00:00Z", "durationMin": 60, "expect": { "kind": "ok" } }
+  ]
+}
