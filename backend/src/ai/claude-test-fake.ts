@@ -14,7 +14,9 @@ export function fakeClaude(reply: Partial<Anthropic.Beta.BetaMessage> | Error | 
     if (typeof reply === "function") return reply(params);
     return { id: "msg_1", type: "message", role: "assistant", model: params.model, content: [], stop_reason: "end_turn", ...reply };
   });
-  const factory: ClaudeClientFactory & jest.Mock = jest.fn(() => ({ beta: { messages: { create } } }) as never) as never;
-  return { factory, create, calls };
+  // Streaming answers with the same reply: `finalMessage()` resolves (or rejects) with it.
+  const stream = jest.fn((params: any, _options?: any) => ({ finalMessage: () => create(params) }));
+  const factory: ClaudeClientFactory & jest.Mock = jest.fn(() => ({ beta: { messages: { create, stream } } }) as never) as never;
+  return { factory, create, stream, calls };
 }
 

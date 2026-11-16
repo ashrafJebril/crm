@@ -51,7 +51,11 @@ export class KnowledgeVision implements KnowledgeVisionPort {
       });
     } catch (e) {
       if (e instanceof ClaudeFailure) {
-        throw new KnowledgeFailure(e.key === "ai_unavailable" ? "knowledge.ai_unavailable" : "knowledge.ai_failed");
+        if (e.key === "ai_unavailable") throw new KnowledgeFailure("knowledge.ai_unavailable");
+        // A PDF whose transcription does not fit one reply is too long for us;
+        // the partial text is never stored.
+        if (e.stopReason === "max_tokens" && kind === "pdf") throw new KnowledgeFailure("knowledge.pdf_too_long");
+        throw new KnowledgeFailure("knowledge.ai_failed", e.transient);
       }
       throw new KnowledgeFailure("knowledge.ai_failed");
     }

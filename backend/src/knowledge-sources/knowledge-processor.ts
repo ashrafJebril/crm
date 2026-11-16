@@ -3,11 +3,23 @@
  * immediate kick after upload or reprocess, plus a sweep every minute.
  *
  * Lease (SP-03 / SP-10 runner pattern): a run claims a `queued` source by
- * compare-and-set to `processing` with `leaseUntil = claim + 20 min`. Every
- * later write is fenced on `{status: "processing", leaseUntil: <our lease>}`,
- * so two processes (or a run that outlived its lease) never both write. A
- * source still `processing` after its lease is failed by the sweep with
- * `knowledge.processing_stalled`.
+ * compare-and-set to `processing` with `leaseUntil = now + 20 min`. A
+ * heartbeat moves the lease forward while the run is alive (a long streamed
+ * transcription), each move a compare-and-set on the lease it holds. Every
+ * write is fenced on `{status: "processing", leaseUntil: <our lease>}`, so two
+ * processes (or a run that outlived its lease) never both write. A source
+ * still `processing` after its lease ran out is failed by the sweep with
+ * `knowledge.processing_stalled` (no heartbeat for 20 min).
+ *
+ * Concurrency: at most KNOWLEDGE_MAX_CONCURRENT_RUNS runs per process (each
+ * holds a file of up to 20 MB plus its base64 copy in memory). Kicks beyond
+ * that wait in an in-process queue; sources stay `queued` in the database, so
+ * the sweep (here or in another process) picks them up too.
+ *
+ * Transient provider failures (429, 529, 5xx, network after the SDK's own
+ * retries) are retried once: the source goes back to `queued` with
+ * `leaseUntil` as a "not before" time RETRY_BACKOFF_MS ahead and
+ * `consecutiveFailures = 1`; a second transient failure is `ai_failed`.
  *
  * The only outputs are the source's chunks and its status / error /
  * itemCount / contentHash. Extracted text and transcriptions are data: they
@@ -29,8 +41,18 @@ export const KNOWLEDGE_VISION = Symbol("KNOWLEDGE_VISION");
 export const KNOWLEDGE_PDF_TEXT = Symbol("KNOWLEDGE_PDF_TEXT");
 /** Sources picked per sweep. */
 export const SWEEP_BATCH = 10;
+/** Runs in flight per process (memory bound: files are read whole). */
+export const KNOWLEDGE_MAX_CONCURRENT_RUNS = 2;
+/** How often a live run extends its lease. */
+export const HEARTBEAT_MS = 5 * 60 * 1000;
+/** Wait before the single retry of a transient provider failure. */
+export const RETRY_BACKOFF_MS = 5 * 60 * 1000;
+/** Transient retries before the failure is final. */
+export const MAX_TRANSIENT_RETRIES = 1;
 
 class LeaseLost extends Error {}
+
+const FILE_KINDS = ["file", "typed_doc"];
 
 /** Chunk rows as stored. */
 export function chunkRowsFor(workspaceId: string, sourceId: string, chunks: Chunk[], pageId: string | null = null) {
@@ -46,12 +68,23 @@ export function chunkRowsFor(workspaceId: string, sourceId: string, chunks: Chun
   }));
 }
 
+/** The lease a run holds; the heartbeat moves `at` forward. */
+interface Lease {
+  at: Date;
+  /** The heartbeat write in flight, awaited before any fenced write. */
+  beat: Promise<void>;
+}
+
 @Injectable()
 export class KnowledgeProcessor {
   private readonly log = new Logger(KnowledgeProcessor.name);
   private readonly inFlight = new Set<string>();
+  private readonly pending = new Set<string>();
   private sweeping = false;
   private readonly pdfText: PdfTextFn;
+  /** Overridable in specs. */
+  protected heartbeatMs = HEARTBEAT_MS;
+  protected maxConcurrent = KNOWLEDGE_MAX_CONCURRENT_RUNS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -62,11 +95,26 @@ export class KnowledgeProcessor {
     this.pdfText = pdfText ?? defaultPdfText;
   }
 
-  /** Process a queued source in the background; never throws. */
+  /** Queue a source for processing in this process; never throws. */
   kick(sourceId: string): void {
-    setImmediate(() => {
-      void this.run(sourceId).catch(() => this.log.warn(`knowledge source ${sourceId}: run crashed`));
-    });
+    this.pending.add(sourceId);
+    setImmediate(() => this.pump());
+  }
+
+  /** Runs in flight in this process (specs, diagnostics). */
+  activeRuns(): number {
+    return this.inFlight.size;
+  }
+
+  /** Start queued kicks while slots are free. */
+  private pump(): void {
+    while (this.pending.size > 0 && this.inFlight.size < this.maxConcurrent) {
+      const id = this.pending.values().next().value as string;
+      this.pending.delete(id);
+      void this.run(id)
+        .catch(() => this.log.warn(`knowledge source ${id}: run crashed`))
+        .finally(() => this.pump());
+    }
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -76,13 +124,16 @@ export class KnowledgeProcessor {
     try {
       await this.failStalled(now);
       const queued = await this.prisma.knowledgeSource.findMany({
-        where: { status: "queued", kind: { in: ["file", "typed_doc"] } },
+        where: { status: "queued", kind: { in: FILE_KINDS }, OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] },
         select: { id: true },
         orderBy: { updatedAt: "asc" },
         take: SWEEP_BATCH,
       });
       let ran = 0;
-      for (const s of queued) if (await this.run(s.id, now)) ran += 1;
+      for (const s of queued) {
+        if (this.inFlight.size >= this.maxConcurrent) break;
+        if (await this.run(s.id, now)) ran += 1;
+      }
       return ran;
     } catch (e) {
       this.log.warn(`knowledge sweep failed (${(e as Error)?.name ?? "error"})`);
@@ -95,42 +146,84 @@ export class KnowledgeProcessor {
   /** Sources whose processing lease ran out are failed (`knowledge.processing_stalled`). */
   async failStalled(now = new Date()): Promise<number> {
     const r = await this.prisma.knowledgeSource.updateMany({
-      where: { status: "processing", kind: { in: ["file", "typed_doc"] }, leaseUntil: { lt: now } },
+      where: { status: "processing", kind: { in: FILE_KINDS }, leaseUntil: { lt: now } },
       data: { status: "failed", error: "knowledge.processing_stalled", leaseUntil: null },
     });
     return r.count;
   }
 
-  /** Claim and process one source. False when it was not queued or another run holds it. */
+  /**
+   * Claim and process one source. False when no slot is free, when it is not
+   * queued (or its retry time has not come), or when another run holds it.
+   */
   async run(sourceId: string, now = new Date()): Promise<boolean> {
-    if (this.inFlight.has(sourceId)) return false;
+    if (this.inFlight.has(sourceId) || this.inFlight.size >= this.maxConcurrent) return false;
     this.inFlight.add(sourceId);
+    let timer: NodeJS.Timeout | undefined;
     try {
-      const lease = new Date(now.getTime() + PROCESSING_STALL_MS);
+      const lease: Lease = { at: new Date(now.getTime() + PROCESSING_STALL_MS), beat: Promise.resolve() };
       const claim = await this.prisma.knowledgeSource.updateMany({
-        where: { id: sourceId, status: "queued", kind: { in: ["file", "typed_doc"] } },
-        data: { status: "processing", leaseUntil: lease, error: null },
+        where: {
+          id: sourceId,
+          status: "queued",
+          kind: { in: FILE_KINDS },
+          OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+        },
+        data: { status: "processing", leaseUntil: lease.at, error: null },
       });
       if (claim.count !== 1) return false;
+      timer = setInterval(() => {
+        lease.beat = lease.beat.then(() => this.heartbeat(sourceId, lease)).catch(() => undefined);
+      }, this.heartbeatMs);
+      timer.unref?.();
       try {
         await this.process(sourceId, lease);
       } catch (e) {
         if (e instanceof LeaseLost) return true;
-        const key = failureKey(e);
-        // Only the key is logged: never file text, never provider text.
-        this.log.warn(`knowledge source ${sourceId}: failed (${key})`);
-        await this.prisma.knowledgeSource.updateMany({
-          where: { id: sourceId, status: "processing", leaseUntil: lease },
-          data: { status: "failed", error: key, leaseUntil: null },
-        });
+        clearInterval(timer);
+        await lease.beat;
+        await this.fail(sourceId, lease, e);
       }
       return true;
     } finally {
+      if (timer) clearInterval(timer);
       this.inFlight.delete(sourceId);
     }
   }
 
-  private async process(sourceId: string, lease: Date): Promise<void> {
+  /** Move the lease forward if we still hold it. */
+  private async heartbeat(sourceId: string, lease: Lease): Promise<void> {
+    // Strictly later than the current lease, so every lease value is unique.
+    const next = new Date(Math.max(Date.now() + PROCESSING_STALL_MS, lease.at.getTime() + 1));
+    const r = await this.prisma.knowledgeSource.updateMany({
+      where: { id: sourceId, status: "processing", leaseUntil: lease.at },
+      data: { leaseUntil: next },
+    });
+    if (r.count === 1) lease.at = next;
+  }
+
+  /** Record a failure: a first transient provider failure is queued again after a backoff. */
+  private async fail(sourceId: string, lease: Lease, e: unknown): Promise<void> {
+    const key = failureKey(e);
+    if (e instanceof KnowledgeFailure && e.transient) {
+      const retry = await this.prisma.knowledgeSource.updateMany({
+        where: { id: sourceId, status: "processing", leaseUntil: lease.at, consecutiveFailures: { lt: MAX_TRANSIENT_RETRIES } },
+        data: { status: "queued", error: null, leaseUntil: new Date(Date.now() + RETRY_BACKOFF_MS), consecutiveFailures: { increment: 1 } },
+      });
+      if (retry.count === 1) {
+        this.log.warn(`knowledge source ${sourceId}: transient failure, retry queued`);
+        return;
+      }
+    }
+    // Only the key is logged: never file text, never provider text.
+    this.log.warn(`knowledge source ${sourceId}: failed (${key})`);
+    await this.prisma.knowledgeSource.updateMany({
+      where: { id: sourceId, status: "processing", leaseUntil: lease.at },
+      data: { status: "failed", error: key, leaseUntil: null },
+    });
+  }
+
+  private async process(sourceId: string, lease: Lease): Promise<void> {
     const src = await this.prisma.knowledgeSource.findFirst({ where: { id: sourceId } });
     if (!src) throw new LeaseLost();
     if (!src.mediaId) throw new KnowledgeFailure("knowledge.unreadable");
@@ -148,7 +241,6 @@ export class KnowledgeProcessor {
     }
 
     let chunks: Chunk[];
-    let itemCount: number;
     if (src.kind === "typed_doc") {
       if (!isTypedKind(src.typedKind)) throw new KnowledgeFailure("knowledge.unreadable");
       const typed = await readTyped({ buffer, fileName: file.fileName }, src.typedKind);
@@ -156,17 +248,16 @@ export class KnowledgeProcessor {
       // Upload refused bad rows unless the member confirmed "keep the valid rows":
       // only valid rows are ever stored.
       chunks = typedChunks(src.typedKind, typed);
-      itemCount = chunks.length;
     } else {
       chunks = await extractFile({ buffer, type, fileName: file.fileName }, { vision: this.vision, pdfText: this.pdfText });
-      itemCount = chunks.length;
     }
     const contentHash = createHash("sha256").update(buffer).digest("hex");
 
+    await lease.beat;
     await this.prisma.$transaction(async (tx) => {
       const done = await tx.knowledgeSource.updateMany({
-        where: { id: src.id, status: "processing", leaseUntil: lease },
-        data: { status: "ready", error: null, itemCount, contentHash, leaseUntil: null },
+        where: { id: src.id, status: "processing", leaseUntil: lease.at },
+        data: { status: "ready", error: null, itemCount: chunks.length, contentHash, leaseUntil: null, consecutiveFailures: 0 },
       });
       if (done.count !== 1) throw new LeaseLost();
       await tx.knowledgeChunk.deleteMany({ where: { workspaceId: src.workspaceId, sourceId: src.id } });

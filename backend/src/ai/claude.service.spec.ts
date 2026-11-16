@@ -1,6 +1,6 @@
 import { Logger } from "@nestjs/common";
 import Anthropic from "@anthropic-ai/sdk";
-import { ClaudeService, FALLBACK_BETA, allowedBaseUrl, resolveBaseUrl, type ClaudeClientFactory } from "./claude.service";
+import { ClaudeService, FALLBACK_BETA, TRANSCRIBE_MAX_TOKENS, TRANSCRIBE_TIMEOUT_MS, allowedBaseUrl, resolveBaseUrl } from "./claude.service";
 import { ClaudeFailure } from "./claude-errors";
 import { fakeClaude } from "./claude-test-fake";
 
@@ -101,12 +101,21 @@ describe("ClaudeService", () => {
     process.env.KNOWLEDGE_EXTRACT_MODEL = "";
     for (const stop of ["refusal", "max_tokens", "pause_turn", "tool_use"]) {
       const svc = new ClaudeService(fakeClaude(text("partial", stop)).factory);
-      await expect(svc.transcribe({ kind: "pdf", base64: "JVBERi0=", mediaType: "application/pdf" })).rejects.toMatchObject({ key: "ai_failed" });
+      // The partial text is never returned; the stop reason rides on the failure.
+      await expect(svc.transcribe({ kind: "pdf", base64: "JVBERi0=", mediaType: "application/pdf" })).rejects.toMatchObject({
+        key: "ai_failed",
+        stopReason: stop,
+        transient: false,
+      });
     }
 
     const ok = fakeClaude(text("Menu\nprice: 10"));
     const svc = new ClaudeService(ok.factory);
     await expect(svc.transcribe({ kind: "pdf", base64: "JVBERi0=", mediaType: "application/pdf" })).resolves.toBe("Menu\nprice: 10");
+    // Long output: streamed (the skill's rule for large max_tokens), collected with finalMessage().
+    expect(ok.stream).toHaveBeenCalledTimes(1);
+    expect(ok.stream.mock.calls[0][1]).toEqual({ timeout: TRANSCRIBE_TIMEOUT_MS });
+    expect(ok.create).toHaveBeenCalledTimes(1); // the fake's stream answers through create
     const req = ok.calls[0];
     expect(req.model).toBe("claude-opus-5-5");
     expect(req).not.toHaveProperty("temperature");
@@ -114,7 +123,7 @@ describe("ClaudeService", () => {
     expect(req).not.toHaveProperty("top_k");
     expect(req).not.toHaveProperty("thinking"); // adaptive by default; `disabled` is a 400 on this model
     expect(req.output_config).toEqual({ effort: "low" });
-    expect(req.max_tokens).toBe(16000);
+    expect(req.max_tokens).toBe(TRANSCRIBE_MAX_TOKENS);
     expect(req.betas).toEqual([FALLBACK_BETA]);
     expect(req.fallbacks).toBe("default");
     // The file block comes before the text, and no assistant prefill.
@@ -143,5 +152,39 @@ describe("ClaudeService", () => {
     process.env.KNOWLEDGE_EXTRACT_MODEL = "claude-haiku-5-5";
     expect(svc.model("KNOWLEDGE_EXTRACT_MODEL")).toBe("claude-haiku-5-5");
     expect(svc.model()).toBe("claude-opus-5-5");
+  });
+
+  it("an override to a model without server-side fallback omits the fallback and its beta", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    const svc = new ClaudeService(fakeClaude(text("")).factory);
+    for (const model of ["claude-haiku-5-5", "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"]) {
+      const req = svc.baseRequest({ model, effort: "low" });
+      expect({ model, req }).toEqual({ model, req: { model, max_tokens: 16000, output_config: { effort: "low" } } });
+    }
+    for (const model of ["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-fable-5-1"]) {
+      expect(svc.baseRequest({ model, effort: "low" })).toMatchObject({ model, betas: [FALLBACK_BETA], fallbacks: "default" });
+    }
+    // Through a real transcription request.
+    const fake = fakeClaude(text("ok"));
+    await new ClaudeService(fake.factory).transcribe({ kind: "image", base64: "AA", mediaType: "image/png", model: "claude-haiku-5-5" });
+    expect(fake.calls[0].model).toBe("claude-haiku-5-5");
+    expect(fake.calls[0]).not.toHaveProperty("betas");
+    expect(fake.calls[0]).not.toHaveProperty("fallbacks");
+  });
+
+  it("transient provider failures are flagged for one retry; client errors are not", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    const cases: [Error, boolean][] = [
+      [new Anthropic.RateLimitError(429, {}, "slow down", new Headers()), true],
+      [new Anthropic.InternalServerError(529, {}, "overloaded", new Headers()), true],
+      [new Anthropic.InternalServerError(500, {}, "boom", new Headers()), true],
+      [new Anthropic.APIConnectionError({ message: "down" }), true],
+      [new Anthropic.BadRequestError(400, {}, "bad", new Headers()), false],
+      [new Anthropic.NotFoundError(404, {}, "no model", new Headers()), false],
+    ];
+    for (const [e, transient] of cases) {
+      const svc = new ClaudeService(fakeClaude(e).factory);
+      await expect(svc.transcribe({ kind: "image", base64: "AA", mediaType: "image/jpeg" })).rejects.toMatchObject({ key: "ai_failed", transient });
+    }
   });
 });

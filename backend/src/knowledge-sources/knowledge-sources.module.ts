@@ -6,6 +6,7 @@ import { KnowledgeSearchService } from "./knowledge-search.service";
 import { KnowledgeSourcesController } from "./knowledge-sources.controller";
 import { KnowledgeSourcesService } from "./knowledge-sources.service";
 import { KnowledgeVision } from "./knowledge-vision";
+import { KnowledgeUploadInterceptor } from "./knowledge-upload.interceptor";
 
 /**
  * SP-21: the knowledge store (sources, chunks, processing, preview, search).
@@ -21,6 +22,7 @@ import { KnowledgeVision } from "./knowledge-vision";
     KnowledgeSearchService,
     KnowledgeProcessor,
     KnowledgeVision,
+    KnowledgeUploadInterceptor,
     { provide: KNOWLEDGE_VISION, useExisting: KnowledgeVision },
   ],
   exports: [KnowledgeSourcesService, KnowledgeSearchService, KnowledgeProcessor],

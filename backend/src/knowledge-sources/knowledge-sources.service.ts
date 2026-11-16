@@ -535,7 +535,7 @@ export class KnowledgeSourcesService {
     if (!src.mediaId) throw knowledgeError("knowledge.not_found");
     const r = await this.prisma.knowledgeSource.updateMany({
       where: { id: src.id, workspaceId, status: { in: ["ready", "failed", "queued"] } },
-      data: { status: "queued", error: null, leaseUntil: null },
+      data: { status: "queued", error: null, leaseUntil: null, consecutiveFailures: 0 },
     });
     if (r.count !== 1) throw knowledgeError("knowledge.syncing");
     this.processor.kick(src.id);

@@ -8,9 +8,12 @@
  *    depth is controlled with `output_config.effort`;
  *  - no `temperature` / `top_p` / `top_k` (a 400 on this model), no assistant
  *    prefill;
- *  - server-side refusal fallback by default: beta
- *    `server-side-fallback-2026-07-01` with `fallbacks: "default"`;
- *  - non-streaming requests keep `max_tokens` at 16 000;
+ *  - server-side refusal fallback by default on the models the skill lists
+ *    as supporting it (FALLBACK_MODELS): beta `server-side-fallback-2026-07-01`
+ *    with `fallbacks: "default"`. Other models (Claude Haiku 5.5, older ones)
+ *    get neither the parameter nor the beta;
+ *  - non-streaming requests keep `max_tokens` at 16 000; long outputs
+ *    (transcription) stream and are collected with `finalMessage()`;
  *  - a reply is trusted only when `stop_reason === "end_turn"`.
  *
  * Configuration (SP-10 `allowedApiUrl` rule): `available()` is true only with
@@ -32,6 +35,32 @@ export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 export const CLAUDE_MAX_TOKENS = 16_000;
 export const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000;
 export const CLAUDE_MAX_RETRIES = 2;
+/**
+ * Transcription streams (the skill: stream long outputs; 128K is the maximum
+ * output of this model family). 100 dense PDF pages fit at ~1 280 tokens a page.
+ */
+export const TRANSCRIBE_MAX_TOKENS = 128_000;
+/** Wall-clock cap of one streamed transcription. */
+export const TRANSCRIBE_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Models that accept the server-side refusal fallback (`fallbacks`), per the
+ * claude-api skill: Fable 5.2 / 5.1 (and the Mythos counterparts), Opus 5.5,
+ * Opus 5 and Sonnet 5.5. Claude Haiku 5.5 and older models have none.
+ */
+export const FALLBACK_MODELS: ReadonlySet<string> = new Set([
+  "claude-fable-5-2",
+  "claude-mythos-5-2",
+  "claude-fable-5-1",
+  "claude-mythos-5-1",
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-sonnet-5-5",
+]);
+
+export function supportsFallback(model: string): boolean {
+  return FALLBACK_MODELS.has(model);
+}
 
 export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -89,6 +118,7 @@ export const TRANSCRIBE_SYSTEM = [
 const TRANSCRIBE_INSTRUCTION = "Transcribe the visible text of this file.";
 
 type BetaParams = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
+type BetaStreamParams = Parameters<Anthropic["beta"]["messages"]["stream"]>[0];
 
 @Injectable()
 export class ClaudeService {
@@ -119,15 +149,22 @@ export class ClaudeService {
 
   /**
    * The shared request base (SP-20/SP-18 build on it): model, max_tokens,
-   * effort, and the refusal fallback. No thinking, no sampling parameters.
+   * effort, and the refusal fallback when the model supports it
+   * (FALLBACK_MODELS). No thinking, no sampling parameters.
    */
-  baseRequest(opts: { model?: string; effort: ClaudeEffort; maxTokens?: number }) {
+  baseRequest(opts: { model?: string; effort: ClaudeEffort; maxTokens?: number }): {
+    model: string;
+    max_tokens: number;
+    output_config: { effort: ClaudeEffort };
+    betas?: string[];
+    fallbacks?: "default";
+  } {
+    const model = opts.model || DEFAULT_CLAUDE_MODEL;
     return {
-      model: opts.model || DEFAULT_CLAUDE_MODEL,
+      model,
       max_tokens: opts.maxTokens ?? CLAUDE_MAX_TOKENS,
       output_config: { effort: opts.effort },
-      betas: [FALLBACK_BETA],
-      fallbacks: "default" as const,
+      ...(supportsFallback(model) ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
     };
   }
 
@@ -158,9 +195,26 @@ export class ClaudeService {
   }
 
   /**
+   * One streamed beta Messages call for long outputs, collected with the SDK's
+   * `finalMessage()`. Same error mapping as `create`.
+   */
+  async stream(params: BetaStreamParams, label = "claude stream", opts: { timeoutMs?: number } = {}): Promise<Anthropic.Beta.BetaMessage> {
+    const client = this.client();
+    try {
+      return await client.beta.messages.stream(params, opts.timeoutMs ? { timeout: opts.timeoutMs } : undefined).finalMessage();
+    } catch (e) {
+      const f = mapClaudeError(e);
+      this.log.warn(`${label} failed: ${f.detail || f.key}`);
+      throw f;
+    }
+  }
+
+  /**
    * Transcribe a PDF or an image to plain text (SP-21 knowledge files). The
-   * file block comes before the instruction; effort `low`. Only `end_turn`
-   * is accepted; `refusal`, `max_tokens` or anything else → `ai_failed`.
+   * file block comes before the instruction; effort `low`; streamed with
+   * TRANSCRIBE_MAX_TOKENS. Only `end_turn` is accepted: `refusal`,
+   * `max_tokens` or anything else → `ai_failed` with `stopReason` set, and
+   * the partial text is discarded (never returned truncated).
    */
   async transcribe(input: TranscribeInput): Promise<string> {
     const file: Anthropic.Beta.BetaContentBlockParam =
@@ -170,17 +224,18 @@ export class ClaudeService {
             type: "image",
             source: { type: "base64", media_type: input.mediaType as "image/jpeg" | "image/png" | "image/webp", data: input.base64 },
           };
-    const msg = await this.create(
+    const msg = await this.stream(
       {
-        ...this.baseRequest({ model: input.model, effort: "low" }),
+        ...this.baseRequest({ model: input.model, effort: "low", maxTokens: TRANSCRIBE_MAX_TOKENS }),
         system: TRANSCRIBE_SYSTEM,
         messages: [{ role: "user", content: [file, { type: "text", text: TRANSCRIBE_INSTRUCTION }] }],
       },
       "transcription",
+      { timeoutMs: TRANSCRIBE_TIMEOUT_MS },
     );
     if (msg.stop_reason !== "end_turn") {
       this.log.warn(`transcription not accepted: stop_reason ${String(msg.stop_reason)}`);
-      throw new ClaudeFailure("ai_failed", `stop_reason ${String(msg.stop_reason)}`);
+      throw new ClaudeFailure("ai_failed", `stop_reason ${String(msg.stop_reason)}`, false, String(msg.stop_reason));
     }
     const text = msg.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")

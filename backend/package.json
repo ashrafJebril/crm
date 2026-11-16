@@ -2,7 +2,7 @@
   "name": "tkana-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "tkana — NestJS + Prisma backend",
+  "description": "tkana \u2014 NestJS + Prisma backend",
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "nest build",

@@ -1,9 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Res, UploadedFiles, UseInterceptors } from "@nestjs/common";
-import { FilesInterceptor } from "@nestjs/platform-express";
-import { memoryStorage } from "multer";
 import type { Response } from "express";
 import { CurrentUserId, CurrentWorkspace } from "../common/current-workspace.decorator";
-import { KB_BATCH_MAX, KB_FILE_MAX_BYTES } from "./knowledge-constants";
 import { knowledgeError } from "./knowledge-errors";
 import {
   CreateFaqDto,
@@ -17,6 +14,7 @@ import {
 } from "./knowledge-sources.dto";
 import { KnowledgeSourcesService } from "./knowledge-sources.service";
 import { isTypedKind } from "./typed-docs";
+import { KnowledgeUploadInterceptor } from "./knowledge-upload.interceptor";
 import { buildTypedTemplate, templateFileName } from "./typed-templates";
 
 /**
@@ -91,15 +89,8 @@ export class KnowledgeSourcesController {
   }
 
   @Post("files")
-  @UseInterceptors(
-    FilesInterceptor("files", KB_BATCH_MAX + 1, {
-      // In memory: every file of the batch is checked before anything is stored.
-      // The service refuses > KB_FILE_MAX_BYTES with knowledge.file_too_large;
-      // multer's own cap sits just above it.
-      storage: memoryStorage(),
-      limits: { fileSize: KB_FILE_MAX_BYTES + 1024 * 1024, files: KB_BATCH_MAX + 1 },
-    }),
-  )
+  // multer with the knowledge limits and error keys, UTF-8 file names.
+  @UseInterceptors(KnowledgeUploadInterceptor)
   upload(
     @CurrentWorkspace() ws: string,
     @CurrentUserId() userId: string,

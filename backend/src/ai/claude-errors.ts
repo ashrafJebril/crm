@@ -12,6 +12,13 @@ export class ClaudeFailure extends Error {
     public readonly key: ClaudeErrorKey,
     /** Safe to log: an SDK class name and HTTP status, or a stop reason. Never provider text. */
     public readonly detail = "",
+    /**
+     * True when a later attempt may pass (429, 529 overloaded and other 5xx,
+     * network, timeout), after the SDK's own retries were spent.
+     */
+    public readonly transient = false,
+    /** The stop reason of a reply that was not accepted (`max_tokens`, `refusal`, …). */
+    public readonly stopReason: string | null = null,
   ) {
     super(key);
     this.name = "ClaudeFailure";
@@ -28,9 +35,11 @@ export function mapClaudeError(e: unknown): ClaudeFailure {
   if (e instanceof ClaudeFailure) return e;
   if (e instanceof Anthropic.AuthenticationError) return new ClaudeFailure("ai_unavailable", "AuthenticationError 401");
   if (e instanceof Anthropic.PermissionDeniedError) return new ClaudeFailure("ai_unavailable", "PermissionDeniedError 403");
-  if (e instanceof Anthropic.RateLimitError) return new ClaudeFailure("ai_failed", "RateLimitError 429");
-  if (e instanceof Anthropic.APIConnectionTimeoutError) return new ClaudeFailure("ai_failed", "APIConnectionTimeoutError");
-  if (e instanceof Anthropic.APIConnectionError) return new ClaudeFailure("ai_failed", "APIConnectionError");
+  if (e instanceof Anthropic.RateLimitError) return new ClaudeFailure("ai_failed", "RateLimitError 429", true);
+  if (e instanceof Anthropic.APIConnectionTimeoutError) return new ClaudeFailure("ai_failed", "APIConnectionTimeoutError", true);
+  if (e instanceof Anthropic.APIConnectionError) return new ClaudeFailure("ai_failed", "APIConnectionError", true);
+  // Every 5xx, 529 overloaded included.
+  if (e instanceof Anthropic.InternalServerError) return new ClaudeFailure("ai_failed", `InternalServerError ${e.status ?? ""}`.trim(), true);
   if (e instanceof Anthropic.APIError) return new ClaudeFailure("ai_failed", `${e.constructor?.name ?? "APIError"} ${e.status ?? ""}`.trim());
   return new ClaudeFailure("ai_failed", (e as Error)?.name ?? "error");
 }

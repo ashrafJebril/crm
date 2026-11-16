@@ -52,7 +52,11 @@ export function knowledgeError(key: KnowledgeErrorKey, extra: Record<string, unk
 
 /** A typed failure of a processing step; its key becomes `KnowledgeSource.error`. */
 export class KnowledgeFailure extends Error {
-  constructor(public readonly key: KnowledgeSourceError) {
+  constructor(
+    public readonly key: KnowledgeSourceError,
+    /** A provider failure that may pass later (the processor retries it once). */
+    public readonly transient = false,
+  ) {
     super(key);
     this.name = "KnowledgeFailure";
   }
