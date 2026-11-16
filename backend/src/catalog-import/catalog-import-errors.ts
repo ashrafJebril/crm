@@ -22,6 +22,8 @@ export const CATALOG_IMPORT_ERROR_STATUS = {
   "catalog_import.not_found": 404,
   "catalog_import.source_invalid": 400,
   "catalog_import.already_finished": 409, // {status}
+  // Review M3: a run that kept stalling, failed by the resume sweep (stored errorKey only).
+  "catalog_import.run_stalled": 500,
 } as const;
 
 export type CatalogImportErrorKey = keyof typeof CATALOG_IMPORT_ERROR_STATUS;

@@ -182,4 +182,12 @@ describe("page fetch refuses private and redirected-private hosts", () => {
     }
     expect(redactedUrl("https://shop.example/menu?token=secret#x")).toBe("https://shop.example/menu");
   });
+
+  it("IPv4-compatible ::/96 (dotted or hex) and local NAT64 64:ff9b:1::/48 are blocked (review M1)", () => {
+    for (const a of ["::7f00:1", "::a9fe:a9fe", "::a00:1", "::127.0.0.1", "::8.8.8.8", "::808:808", "[::7f00:1]", "64:ff9b:1::a00:1", "64:ff9b:1::808:808", "64:ff9b:1:ffff::1"]) {
+      expect({ a, ok: isPublicAddress(a) }).toEqual({ a, ok: false });
+    }
+    // The well-known NAT64 prefix and the mapped form still decode to the IPv4 rule.
+    for (const a of ["64:ff9b::808:808", "::ffff:8.8.8.8", "64:ff9b:2::1"]) expect({ a, ok: isPublicAddress(a) }).toEqual({ a, ok: true });
+  });
 });

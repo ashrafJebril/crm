@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { AnthropicCatalogExtractor, DEFAULT_CATALOG_IMPORT_MODEL, allowedApiUrl, parseReply } from "./anthropic-extractor";
+import { AnthropicCatalogExtractor, DEFAULT_CATALOG_IMPORT_MODEL, EXTRACTION_TIMEOUT_MS, allowedApiUrl, parseReply } from "./anthropic-extractor";
 import { buildProposal, fromExtraction } from "./extraction-schema";
 
 const reply = (json: unknown, over: Record<string, unknown> = {}) =>
@@ -70,6 +70,30 @@ describe("extraction leaves unstated durations empty", () => {
     process.env.CATALOG_IMPORT_MODEL = "claude-sonnet-5-5";
     await AnthropicCatalogExtractor.withFetch(f).extract("x", "auto");
     expect(JSON.parse(f.mock.calls[1][1].body).model).toBe("claude-sonnet-5-5");
+  });
+
+  it("one call, no retry, with a 180 s timeout by default; CATALOG_IMPORT_TIMEOUT_MS overrides it within bounds (review M2)", async () => {
+    const timeout = jest.spyOn(AbortSignal, "timeout");
+    try {
+      const f = fakeFetch(200, reply({ lang: "en", services: [], staff: [] }));
+      await AnthropicCatalogExtractor.withFetch(f).extract("x", "auto");
+      expect(timeout).toHaveBeenLastCalledWith(180_000);
+      expect(EXTRACTION_TIMEOUT_MS).toBe(180_000);
+      for (const [env, want] of [["240000", 240_000], ["abc", 180_000], ["0", 180_000], ["1000", 10_000], ["9999999", 270_000]] as const) {
+        process.env.CATALOG_IMPORT_TIMEOUT_MS = env;
+        await AnthropicCatalogExtractor.withFetch(f).extract("x", "auto");
+        expect({ env, ms: timeout.mock.calls.at(-1)?.[0] }).toEqual({ env, ms: want });
+      }
+      // A timed-out call is ai_failed after exactly one attempt.
+      const slow = jest.fn(async () => {
+        throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+      });
+      expect(await key(AnthropicCatalogExtractor.withFetch(slow as any).extract("t", "auto"))).toBe("catalog_import.ai_failed");
+      expect(slow).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.CATALOG_IMPORT_TIMEOUT_MS;
+      timeout.mockRestore();
+    }
   });
 
   it("the source cannot close its wrapper; instructions inside it stay data", async () => {

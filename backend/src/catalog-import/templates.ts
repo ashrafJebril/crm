@@ -97,12 +97,21 @@ export interface TemplateRows {
   staff: { name: string; nameAr: string; role: string; services: string[]; schedule: unknown }[];
 }
 
-/** Deterministic parse of a template's data rows (blank rows skipped). */
+/** True when `r` is exactly the example row `buildTemplate` writes (review M4). */
+function isExampleRow(kind: TemplateKind, r: string[]): boolean {
+  const want = EXAMPLE[kind].map((v) => String(v).trim());
+  const got = r.map((c) => (c ?? "").toString().trim());
+  while (got.length > want.length && !got[got.length - 1]) got.pop();
+  return got.length <= want.length && want.every((v, i) => (got[i] ?? "") === v);
+}
+
+/** Deterministic parse of a template's data rows (blank rows and the template's own example row skipped). */
 export function parseTemplateRows(kind: TemplateKind, rows: string[][]): TemplateRows {
   const out: TemplateRows = { services: [], staff: [] };
   for (const r of rows) {
     const cell = (i: number) => (r[i] ?? "").toString().trim();
     if (r.every((c) => !(c ?? "").toString().trim())) continue;
+    if (isExampleRow(kind, r)) continue;
     if (kind === "services") {
       const d = cell(2);
       out.services.push({

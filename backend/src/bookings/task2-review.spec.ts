@@ -187,6 +187,40 @@ describe("I2: availability does not silently truncate", () => {
   });
 });
 
+describe("R-M2: find_slots gives the agent one entry per start time", () => {
+  it("5 staff 09:00–21:00, 15-min service: 48 entries {startAt, resourceIds[5]}, far smaller than the REST list, which is unchanged", async () => {
+    const w = await bookingWorld();
+    const svc = await w.services.create(A, { name: "Quick", nameAr: "سريع", durationMin: 15 });
+    const day = { from: "09:00", to: "21:00" };
+    const sched = { sun: [day], mon: [day], tue: [day], wed: [day], thu: [day] };
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) ids.push((await w.staff.create(A, { name: "S" + i, schedule: sched, serviceIds: [svc.id] })).id);
+    const now = new Date("2027-01-04T00:00:00Z");
+    const orig = w.bookings.availability.bind(w.bookings);
+    jest.spyOn(w.bookings, "availability").mockImplementation((ws, q) => orig(ws, q, now));
+    const rest = await orig(A, { serviceId: svc.id, date: "2027-01-05" }, now);
+    expect(rest.slots).toHaveLength(5 * 48);
+    expect(rest.slots[0]).toEqual({ startAt: "2027-01-05T09:00:00+03:00", resourceId: expect.any(String) });
+
+    const tools = new McpToolsFactory(w.appointments, {} as never, {} as never, w.bookings).build(A);
+    const out: any = await tools.find_slots.execute!({ serviceId: svc.id, date: "2027-01-05" } as never, {} as never);
+    expect(out).toMatchObject({ date: "2027-01-05", serviceId: svc.id, durationMin: 15, unconfigured: [], truncated: false });
+    expect(out.slots).toHaveLength(48);
+    expect(out.slots[0]).toEqual({ startAt: "2027-01-05T09:00:00+03:00", resourceIds: expect.any(Array) });
+    expect(out.slots.at(-1).startAt).toBe("2027-01-05T20:45:00+03:00");
+    for (const s of out.slots) {
+      expect(Object.keys(s).sort()).toEqual(["resourceIds", "startAt"]);
+      expect([...s.resourceIds].sort()).toEqual([...ids].sort());
+    }
+    // Every (start, resource) pair of the REST list is still there.
+    const pairs = out.slots.flatMap((s: any) => s.resourceIds.map((r: string) => `${s.startAt}|${r}`)).sort();
+    expect(pairs).toEqual(rest.slots.map((s) => `${s.startAt}|${s.resourceId}`).sort());
+    const size = JSON.stringify(out).length;
+    expect(size).toBeLessThan(JSON.stringify(rest).length / 2);
+    expect(size).toBeLessThan(12_000);
+  });
+});
+
 describe("I3: duration cap and the overlap look-back", () => {
   it("the writer refuses durationMin outside 1..1440 for every caller; the MCP schemas cap it", async () => {
     const w = await bookingWorld();

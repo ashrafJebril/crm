@@ -15,7 +15,9 @@
  *  - Server-side refusal fallback (`fallbacks: "default"`, beta
  *    `server-side-fallback-2026-07-01`), the recommended default.
  *  - `anthropic-version: 2026-10-21` (no sampling parameters are sent).
- *  - One request, no retry, 60 s timeout. A refusal, a cut-off reply, a
+ *  - One request, no retry, 180 s timeout (CATALOG_IMPORT_TIMEOUT_MS, kept
+ *    within 10..270 s so the 5-minute stale-extraction sweep still covers
+ *    it; review M2). A refusal, a cut-off reply, a
  *    non-JSON reply or one failing the `zod` schema → `catalog_import.ai_failed`.
  *
  * `ANTHROPIC_API_URL` must be the Anthropic URL or, for verification only,
@@ -41,7 +43,18 @@ export const DEFAULT_CATALOG_IMPORT_MODEL = "claude-opus-5-5";
 const API_VERSION = "2026-10-21";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const MAX_TOKENS = 16_000;
-export const EXTRACTION_TIMEOUT_MS = 60_000;
+/** Default call timeout: a large catalog's structured reply plus adaptive thinking can take minutes (review M2). */
+export const EXTRACTION_TIMEOUT_MS = 180_000;
+const MIN_TIMEOUT_MS = 10_000;
+/** Below the scheduler's 5-minute STALE_EXTRACTION_MS, so a live call is never failed as stale. */
+const MAX_TIMEOUT_MS = 270_000;
+
+/** CATALOG_IMPORT_TIMEOUT_MS (ms), clamped to 10..270 s; unset or invalid → 180 s. */
+export function extractionTimeoutMs(): number {
+  const n = Number(process.env.CATALOG_IMPORT_TIMEOUT_MS?.trim());
+  if (!Number.isFinite(n) || n <= 0) return EXTRACTION_TIMEOUT_MS;
+  return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, Math.round(n)));
+}
 const LOOPBACK_RE = /^http:\/\/127\.0\.0\.1:\d{2,5}\//;
 
 export function allowedApiUrl(url: string): boolean {
@@ -103,7 +116,7 @@ export class AnthropicCatalogExtractor implements CatalogExtractor {
           "anthropic-beta": FALLBACK_BETA,
         },
         body,
-        signal: AbortSignal.timeout(EXTRACTION_TIMEOUT_MS),
+        signal: AbortSignal.timeout(extractionTimeoutMs()),
       });
       status = res.status;
       raw = await res.text();

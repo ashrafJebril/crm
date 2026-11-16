@@ -98,6 +98,28 @@ describe("template file imports without ai", () => {
     expect(w.prisma.db.catalogImport[0].inputText).toBe("Service: Haircut | Cost: 80");
   });
 
+  it("the downloaded template's example row is skipped; rows added below it are imported (review M4)", async () => {
+    for (const [kind, added, name] of [
+      ["services", ["Colour", "صبغة", 120, "250", "SAR", ""], "Colour"],
+      ["staff", ["Lina", "", "", "", "09:00-17:00", "", "", "", "", "", ""], "Lina"],
+    ] as const) {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await buildTemplate(kind)) as any);
+      wb.worksheets[0].addRow([...added]);
+      const file = { buffer: Buffer.from(await wb.xlsx.writeBuffer()), originalname: `catalog-${kind}-template.xlsx` };
+      const w = importWorld();
+      const dto = await w.svc.create(A, "uOwner", { file });
+      expect({ kind, names: dto.items!.map((i) => (i.data as any).name), total: dto.total }).toEqual({ kind, names: [name], total: 1 });
+    }
+    // A row that only resembles the example (another price) is real data.
+    const w = importWorld();
+    const dto = await w.svc.create(A, "uOwner", { file: csv([SVC_HEADERS, ["Haircut", "قص الشعر", "45", "90.00", "SAR", "Wash and cut"]]) });
+    expect(dto.items!.map((i) => (i.data as any).name)).toEqual(["Haircut"]);
+    // The untouched template alone holds nothing to import.
+    const bare = { buffer: await buildTemplate("services"), originalname: "catalog-services-template.xlsx" };
+    expect((await failure(importWorld().svc.create(A, "uOwner", { file: bare }))).body.message).toBe("catalog_import.nothing_found");
+  });
+
   it("file refusals: too many rows, not a spreadsheet, empty template", async () => {
     const w = importWorld();
     const rows = [SVC_HEADERS, ...Array.from({ length: 2001 }, (_, i) => [`S${i}`, "", "30", "", "", ""])];

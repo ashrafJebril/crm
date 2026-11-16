@@ -42,7 +42,7 @@ const BOOKING_SLOTS_MARKER = "<!-- kewy-crm-booking-slots -->";
 export const CRM_BOOKING_SLOTS_SECTION = `${BOOKING_SLOTS_MARKER}
 ## Services and free times
 Use find_slots before booking a catalog service: call list_services, and when the customer's service is listed, call find_slots for the date and offer only the times it returns.
-Book with create_appointment passing that service's serviceId and the slot's resourceId; if it fails because the time was taken or is outside working hours, offer other times from find_slots.`;
+Book with create_appointment passing that service's serviceId and one of the slot's resourceIds; if it fails because the time was taken or is outside working hours, offer other times from find_slots.`;
 
 const PROMPT_SECTIONS: ReadonlyArray<readonly [marker: string, section: string]> = [
   [PROMPT_MARKER, CRM_PROMPT_SECTION],

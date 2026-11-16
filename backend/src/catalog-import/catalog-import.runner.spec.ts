@@ -2,7 +2,7 @@
 import { ImportsService } from "../imports/imports.service";
 import { buildProposal } from "./extraction-schema";
 import { CatalogImportRunner } from "./catalog-import.runner";
-import { CatalogImportResumeScheduler, STALE_RUN_MS } from "./catalog-import-resume.scheduler";
+import { CatalogImportResumeScheduler, RUN_STALL_MS, STALE_RUN_MS } from "./catalog-import-resume.scheduler";
 import { A, B, importWorld } from "./catalog-import-test-world";
 
 /** A runner that "dies" right after committing item `at` (between transactions). */
@@ -144,6 +144,46 @@ describe("catalog run resumes without duplicates", () => {
       errorKey: "catalog_import.ai_failed",
       inputText: null,
     });
+  });
+});
+
+describe("a run that keeps stalling is cut off (review M3)", () => {
+  it("a stale running job started more than 30 minutes ago is failed with run_stalled, not resumed; a younger one resumes", async () => {
+    const w = importWorld();
+    const { job } = await runningJob(w);
+    const { job: young } = await runningJob(w);
+    const now = new Date();
+    const old = w.prisma.db.catalogImport.find((j: any) => j.id === job.id);
+    old.startedAt = new Date(now.getTime() - RUN_STALL_MS - 60_000);
+    old.heartbeatAt = new Date(now.getTime() - STALE_RUN_MS - 1000);
+    old.processed = 4;
+    const fresh = w.prisma.db.catalogImport.find((j: any) => j.id === young.id);
+    fresh.startedAt = new Date(now.getTime() - 10 * 60_000);
+    fresh.heartbeatAt = new Date(now.getTime() - STALE_RUN_MS - 1000);
+
+    expect(await w.scheduler.sweep(now)).toBe(1);
+    expect(w.runner.kick).toHaveBeenCalledTimes(1);
+    expect(w.runner.kick).toHaveBeenCalledWith(young.id);
+    expect(old).toMatchObject({ status: "failed", errorKey: "catalog_import.run_stalled", inputText: null, heartbeatAt: null, processed: 4 });
+    expect(old.finishedAt).toEqual(now);
+    expect(fresh.status).toBe("running");
+    expect(RUN_STALL_MS).toBe(30 * 60_000);
+  });
+
+  it("CATALOG_IMPORT_RUN_MAX_MS overrides the cut-off", async () => {
+    process.env.CATALOG_IMPORT_RUN_MAX_MS = String(5 * 60_000);
+    try {
+      const w = importWorld();
+      const { job } = await runningJob(w);
+      const now = new Date();
+      const row = w.prisma.db.catalogImport.find((j: any) => j.id === job.id);
+      row.startedAt = new Date(now.getTime() - 6 * 60_000);
+      row.heartbeatAt = new Date(now.getTime() - STALE_RUN_MS - 1000);
+      expect(await w.scheduler.sweep(now)).toBe(0);
+      expect(row).toMatchObject({ status: "failed", errorKey: "catalog_import.run_stalled" });
+    } finally {
+      delete process.env.CATALOG_IMPORT_RUN_MAX_MS;
+    }
   });
 });
 

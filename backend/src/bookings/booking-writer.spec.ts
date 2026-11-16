@@ -282,7 +282,10 @@ describe("mcp tools without catalog ids behave as before", () => {
     const date = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
     const viaTool = await t.find_slots.execute!({ serviceId: w.service.id, date } as never, {} as never);
     const viaRoute = await w.bookings.availability(A, { serviceId: w.service.id, date });
-    expect(viaTool).toEqual(viaRoute);
+    // The tool groups the route's slots by start time (review R-M2).
+    const byStart = new Map<string, string[]>();
+    for (const s of viaRoute.slots) byStart.set(s.startAt, [...(byStart.get(s.startAt) ?? []), s.resourceId]);
+    expect(viaTool).toEqual({ ...viaRoute, slots: [...byStart].map(([startAt, resourceIds]) => ({ startAt, resourceIds })) });
     expect((viaRoute as any).slots.length).toBeGreaterThan(0);
     expect(await t.list_services.execute!({} as never, {} as never)).toEqual([
       { id: w.service.id, name: "Haircut", nameAr: "قص شعر", durationMin: 60, price: "100.00", currency: "SAR" },

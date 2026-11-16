@@ -80,8 +80,8 @@ for (const [net, prefix] of [
   BLOCKED.addSubnet(net, prefix, "ipv4");
 }
 for (const [net, prefix] of [
-  ["::", 128],
-  ["::1", 128],
+  ["::", 96], // unspecified, loopback and IPv4-compatible ::a.b.c.d / ::7f00:1 (deprecated; review M1)
+  ["64:ff9b:1::", 48], // local-use NAT64 (RFC 8215): translation depends on the host's network
   ["100::", 64],
   ["2001:db8::", 32],
   ["2001::", 23], // IETF protocol assignments (incl. Teredo 2001::/32)
@@ -94,10 +94,13 @@ for (const [net, prefix] of [
   BLOCKED.addSubnet(net, prefix, "ipv6");
 }
 
-/** IPv4 embedded in an IPv6 address (mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`, compatible `::a.b.c.d`). */
+/**
+ * IPv4 embedded in an IPv6 address (mapped `::ffff:a.b.c.d`, NAT64 `64:ff9b::/96`).
+ * The IPv4-compatible `::/96` is not decoded: it is blocked whole (review M1).
+ */
 function embeddedV4(v6: string): string | null {
   const lower = v6.toLowerCase();
-  const dotted = /^(?:::ffff:|64:ff9b::|::)(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
+  const dotted = /^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
   if (dotted) return dotted[1];
   const hex = /^(?:::ffff:|64:ff9b::)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
   if (hex) {

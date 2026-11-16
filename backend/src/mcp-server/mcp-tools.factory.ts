@@ -2,10 +2,28 @@ import { HttpException, Injectable } from "@nestjs/common";
 import { createTool, type Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { AppointmentsService } from "../appointments/appointments.service";
-import { BookingsService } from "../bookings/bookings.service";
+import { BookingsService, type AvailabilityDto } from "../bookings/bookings.service";
 import { SERVICE_DURATION_MAX } from "../bookings/booking-constants";
 import { ContactsService } from "../contacts/contacts.service";
 import { AGENT_PHOTO_LIMIT_DEFAULT, AGENT_PHOTO_LIMIT_MAX, MediaService } from "../media/media.service";
+
+/**
+ * `find_slots` groups the availability list by start time (review R-M2): one
+ * `{startAt, resourceIds}` per start keeps the agent's payload small (a
+ * 5-staff, 12-hour day is 48 entries, not 240). `GET /bookings/availability`
+ * keeps its per-resource list.
+ */
+export function compactSlots(dto: AvailabilityDto) {
+  const byStart = new Map<string, string[]>();
+  for (const s of dto.slots) {
+    const ids = byStart.get(s.startAt);
+    if (ids) ids.push(s.resourceId);
+    else byStart.set(s.startAt, [s.resourceId]);
+  }
+  const slots = [...byStart].map(([startAt, resourceIds]) => ({ startAt, resourceIds }));
+  slots.sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt));
+  return { ...dto, slots };
+}
 
 const APPOINTMENT_STATUSES = ["confirmed", "pending", "completed", "cancelled", "no-show"] as const;
 const APPOINTMENT_SOURCES = ["human", "self-booking"] as const;
@@ -73,7 +91,7 @@ export class McpToolsFactory {
         id: "create_appointment",
         description:
           "Create a new appointment for an existing contact. For a catalog service pass serviceId (from list_services) " +
-          "and the slot's resourceId (from find_slots); service, serviceAr and durationMin then default to the service's. " +
+          "and one of the slot's resourceIds (from find_slots); service, serviceAr and durationMin then default to the service's. " +
           "Without serviceId, service, serviceAr and durationMin are required.",
         inputSchema: z.object({
           contactId: z.string(),
@@ -131,13 +149,14 @@ export class McpToolsFactory {
         id: "find_slots",
         description:
           "Find free start times for a service on one date (YYYY-MM-DD, in the business's timezone). " +
-          "Each slot has startAt (ISO 8601 with offset) and the resourceId to book on. Optionally limit to one resourceId.",
+          "Each slot has startAt (ISO 8601 with offset) and resourceIds, the resources free then; book on one of them. " +
+          "Optionally limit to one resourceId.",
         inputSchema: z.object({
           serviceId: z.string(),
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
           resourceId: z.string().optional(),
         }),
-        execute: (input) => unwrap(() => this.bookings.availability(workspaceId, input)),
+        execute: (input) => unwrap(async () => compactSlots(await this.bookings.availability(workspaceId, input))),
       }),
 
       search_contacts: createTool({
