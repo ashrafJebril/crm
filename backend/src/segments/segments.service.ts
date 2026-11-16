@@ -221,7 +221,9 @@ export class SegmentsService {
    * `countedAt` is fresh (a cached `null` is a recent timeout: "too large to
    * count right now"); stale ones are recomputed 3 at a time under ONE
    * overall deadline (fix I1). After the deadline a row keeps its stale count
-   * or answers `count: null, timedOut: true`; `GET /segments/:id/count` fills it in.
+   * or answers `count: null, skipped: true` (final review M4: "not counted yet",
+   * uncached, as is a pool or transaction timeout); only a full-length statement
+   * timeout is cached as null. `GET /segments/:id/count` fills it in.
    */
   async listRows(workspaceId: string, opts: { now?: Date } = {}): Promise<AudienceRow[]> {
     const now = opts.now ?? new Date();
@@ -251,23 +253,19 @@ export class SegmentsService {
           issues: compiled.issues,
         });
       }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        // Out of time for this request: keep a stale count if there is one, never block.
-        return row.memberCount !== null
+      // Not counted in this request: keep a stale count if there is one, else "not counted yet"; never cached.
+      const notCounted = () =>
+        row.memberCount !== null
           ? toAudienceRow(row, { count: row.memberCount, countedAt: row.countedAt, issues: compiled.issues })
-          : toAudienceRow(row, { count: null, timedOut: true, issues: compiled.issues });
-      }
+          : toAudienceRow(row, { count: null, timedOut: false, skipped: true, issues: compiled.issues });
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return notCounted();
       const budget = Math.min(ms, remaining);
       const r = await countWithTimeout(this.timed, compiled.where, budget);
-      // A full-length timeout is cached as null (retried after the TTL); one cut short by the deadline is not.
-      if (r.count !== null || budget === ms) await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
-      return toAudienceRow(row, {
-        count: r.count,
-        countedAt: r.count !== null || budget === ms ? now : null,
-        timedOut: r.timedOut,
-        issues: compiled.issues,
-      });
+      // Only a full-length statement timeout means "too large"; one cut short by the deadline, or a pool wait, does not.
+      if (r.skipped || (r.timedOut && budget < ms)) return notCounted();
+      await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
+      return toAudienceRow(row, { count: r.count, countedAt: now, timedOut: r.timedOut, issues: compiled.issues });
     });
   }
 
@@ -355,7 +353,12 @@ export class SegmentsService {
   async count(workspaceId: string, id: string, opts: { now?: Date } = {}) {
     const row = await this.findRow(workspaceId, id);
     const c = await this.countRow(workspaceId, row, opts.now ?? new Date(), COUNT_ROUTE_FRESH_MS);
-    return { count: c.count, countedAt: c.countedAt ? c.countedAt.toISOString() : null, timedOut: c.timedOut };
+    return {
+      count: c.count,
+      countedAt: c.countedAt ? c.countedAt.toISOString() : null,
+      timedOut: c.timedOut,
+      ...(c.skipped ? { skipped: true as const } : {}),
+    };
   }
 
   private async countRow(
@@ -363,7 +366,7 @@ export class SegmentsService {
     row: SegmentRow,
     now: Date,
     freshMs: number,
-  ): Promise<{ count: number | null; countedAt: Date | null; timedOut: boolean; issues: RuleIssue[] }> {
+  ): Promise<{ count: number | null; countedAt: Date | null; timedOut: boolean; skipped?: boolean; issues: RuleIssue[] }> {
     if (row.origin !== "crm") {
       const count = await this.prisma.segmentMember.count({ where: { segmentId: row.id } });
       return { count, countedAt: now, timedOut: false, issues: [] };
@@ -374,6 +377,12 @@ export class SegmentsService {
       return { count: row.memberCount, countedAt: new Date(row.countedAt), timedOut: row.memberCount === null, issues: compiled.issues };
     }
     const r = await countWithTimeout(this.timed, compiled.where);
+    if (r.skipped) {
+      // A pool or transaction timeout (final review M4) is load, not size: not cached; a stale count beats none.
+      return row.memberCount !== null && row.countedAt
+        ? { count: row.memberCount, countedAt: new Date(row.countedAt), timedOut: false, issues: compiled.issues }
+        : { count: null, countedAt: null, timedOut: false, skipped: true, issues: compiled.issues };
+    }
     await writeCountCache(this.prisma, workspaceId, row.id, r.count, now);
     return { count: r.count, countedAt: now, timedOut: r.timedOut, issues: compiled.issues };
   }
@@ -394,7 +403,8 @@ export class SegmentsService {
         select: { id: true, name: true, phone: true, email: true, lifecycle: true },
       }),
     );
-    if (r.timedOut) return { items: [], nextCursor: null, timedOut: true };
+    // A statement timeout, or (M4) a pool or transaction timeout: nothing to show this time; never a 500.
+    if (r.timedOut || r.busy) return { items: [], nextCursor: null, timedOut: true };
     const rows = r.value as ContactPage["items"];
     const items = rows.slice(0, limit);
     return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null, timedOut: false };
@@ -473,6 +483,8 @@ export class SegmentsService {
       return { count, sample: sample as { id: string; name: string; phone: string | null }[] };
     });
     if (r.timedOut) return { count: null, timedOut: true, sample: [], issues: compiled.issues };
+    // M4: a pool or transaction timeout is "not counted yet", not "too large".
+    if (r.busy) return { count: null, timedOut: false, skipped: true as const, sample: [], issues: compiled.issues };
     return { count: r.value.count, timedOut: false, sample: r.value.sample, issues: compiled.issues };
   }
 

@@ -412,7 +412,8 @@ describe("segment list: one overall count deadline and cached timeouts (fix I1)"
     expect(late.length).toBe(11 - counts);
     for (const r of late) {
       if (r.id === "stale9") expect(r).toMatchObject({ count: 42, timedOut: false });
-      else expect(r).toMatchObject({ count: null, timedOut: true, countedAt: null });
+      // SP-16 M4: a row skipped by the deadline is "not counted yet", not "too large".
+      else expect(r).toMatchObject({ count: null, timedOut: false, skipped: true, countedAt: null });
     }
     // Rows skipped by the deadline are not cached: only the counted ones were written.
     expect(fake.calls.filter((c) => c.op === "$executeRaw")).toHaveLength(counts);

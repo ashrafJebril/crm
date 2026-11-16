@@ -15,6 +15,8 @@ export interface AudienceRow {
   count: number | null;
   countedAt: string | null;
   timedOut: boolean;
+  /** SP-16 M4: not counted in this request (list deadline, or a pool/transaction timeout); present only when true. */
+  skipped?: true;
   issues: RuleIssue[];
   version: number;
   createdAt: Date;
@@ -36,7 +38,7 @@ export interface SegmentRowLike {
 
 export function toAudienceRow(
   row: SegmentRowLike,
-  extra: { count?: number | null; countedAt?: Date | null; timedOut?: boolean; issues?: RuleIssue[] } = {},
+  extra: { count?: number | null; countedAt?: Date | null; timedOut?: boolean; skipped?: boolean; issues?: RuleIssue[] } = {},
 ): AudienceRow {
   const crm = row.origin === "crm";
   const read = crm ? readRules(row) : null;
@@ -52,6 +54,7 @@ export function toAudienceRow(
     count: extra.count ?? null,
     countedAt: extra.countedAt ? extra.countedAt.toISOString() : null,
     timedOut: extra.timedOut ?? false,
+    ...(extra.skipped ? { skipped: true as const } : {}),
     issues: extra.issues ?? [],
     version: row.version ?? 0,
     createdAt: row.createdAt,
