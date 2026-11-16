@@ -166,6 +166,7 @@ export const BOOKING_ERROR_COPY: Record<string, CopyFn> = {
     "اختر مصدر الاستيراد: نص ملصق أو موقع أو ملف.",
   ],
   "catalog_import.already_finished": () => ["This import has already finished.", "انتهت عملية الاستيراد هذه بالفعل."],
+  "catalog_import.run_stalled": () => ["The import stopped responding. Start it again.", "توقف الاستيراد عن الاستجابة. ابدأه من جديد."],
   // Untyped 404s the booking routes send.
   "Appointment not found": () => ["This booking no longer exists.", "هذا الحجز لم يعد موجودًا."],
   "Contact not found": () => ["That contact no longer exists.", "جهة الاتصال هذه لم تعد موجودة."],

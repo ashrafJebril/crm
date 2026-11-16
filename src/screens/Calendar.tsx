@@ -11,7 +11,6 @@ import { makeTx, type Tx } from "@/lib/tx";
 import { useRoute } from "@/router";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
-import { Modal } from "@/components/Modal";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
   IconAlert,
@@ -29,8 +28,7 @@ import {
   IconUsers,
   IconX,
 } from "@/icons";
-import { api } from "@/api/client";
-import { useFetch, useMutation } from "@/api/useFetch";
+import { useFetch } from "@/api/useFetch";
 import type {
   Appointment,
   AppointmentStatus,
@@ -43,7 +41,20 @@ import { ServicesTab } from "./calendar/ServicesTab";
 import { StaffTab } from "./calendar/StaffTab";
 import { useCatalogParams } from "./calendar/useCatalogParams";
 import type { CalendarTab } from "./calendar/catalogParams";
-import { workspaceTz } from "./calendar/bookingTime";
+import { workspaceTz, wallClock, addDays as addDaysISO } from "./calendar/bookingTime";
+import type { Service, StaffResource } from "@/lib/types";
+import { useCalendarParams } from "./calendar/useCalendarParams";
+import { appointmentsQuery, viewDays, type CalendarView } from "./calendar/calendarParams";
+import { BookingsBoard } from "./calendar/BookingsBoard";
+import { AgendaView } from "./calendar/AgendaView";
+import { BookingDialog } from "./calendar/BookingDialog";
+import { RescheduleDialog } from "./calendar/RescheduleDialog";
+import { ServiceFilter, StaffFilter } from "./calendar/ServiceFilter";
+import { BookingSearch } from "./calendar/BookingSearch";
+import { BookingBadges } from "./calendar/BookingBadges";
+import { MOVE_WORDS, allowedFrom, isOpenStatus } from "./calendar/bookingStatus";
+import { bookingErrorText } from "./calendar/bookingErrors";
+import { updateBooking } from "./calendar/bookingApi";
 
 interface TeamApiMember extends TeamMember {
   status?: "online" | "away" | "offline";
@@ -55,7 +66,7 @@ interface TeamApiMember extends TeamMember {
 /* Constants                                                                */
 /* ─────────────────────────────────────────────────────────────────────── */
 
-type ViewMode = "week" | "list" | "day";
+type ViewMode = CalendarView;
 type FilterId = "all" | "confirmed" | "pending" | "today" | "week";
 
 const DAY_START_HOUR = 8;
@@ -74,27 +85,6 @@ const STATUS_TO_BADGE: Record<AppointmentStatus, BadgeKind> = {
 const SOURCE_KIND: Record<Appointment["source"], BadgeKind> = {
   human: "human",
   "self-booking": "info",
-};
-
-const inputStyle: CSSProperties = {
-  width: "100%",
-  background: "var(--bg-2)",
-  border: "1px solid var(--line)",
-  borderRadius: "var(--r)",
-  padding: "8px 12px",
-  color: "var(--ink)",
-  fontSize: 13,
-  marginTop: 6,
-  outline: "none",
-};
-
-const labelStyle: CSSProperties = {
-  fontSize: 11,
-  textTransform: "uppercase",
-  color: "var(--ink-3)",
-  fontFamily: "var(--font-mono)",
-  marginTop: 12,
-  display: "block",
 };
 
 /* ─────────────────────────────────────────────────────────────────────── */
@@ -291,7 +281,8 @@ function ApptCard({ appt, contactById, lang, onOpen, active }: ApptCardProps) {
         height,
         background: v.bg,
         border: `1px solid ${v.border}`,
-        borderInlineStart: `3px solid ${v.bar}`,
+        borderInlineStart: `3px solid ${appt.conflict ? "var(--bad)" : v.bar}`,
+        outline: appt.fit === "outside_hours" || appt.fit === "off_day" ? "1px dashed var(--warn)" : undefined,
         borderRadius: 8,
         padding: "6px 8px",
         textAlign: "start",
@@ -988,205 +979,6 @@ function sourceLabel(s: Appointment["source"], tx: Tx): string {
 /* New-appointment modal                                                    */
 /* ─────────────────────────────────────────────────────────────────────── */
 
-interface NewAppointmentModalProps {
-  contacts: Contact[];
-  onClose: () => void;
-  onCreate: (input: NewAppointmentInput) => Promise<void>;
-  saving: boolean;
-  error: string | null;
-  tx: Tx;
-}
-
-interface NewAppointmentInput {
-  contactId: string;
-  service: string;
-  serviceAr: string;
-  startAt: string; // ISO
-  durationMin: number;
-  status: AppointmentStatus;
-  source: Appointment["source"];
-}
-
-function defaultStartLocal(): string {
-  const d = new Date();
-  d.setMinutes(0, 0, 0);
-  d.setHours(d.getHours() + 1);
-  // datetime-local expects "YYYY-MM-DDTHH:MM"
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-function NewAppointmentModal({
-  contacts,
-  onClose,
-  onCreate,
-  saving,
-  error,
-  tx,
-}: NewAppointmentModalProps) {
-  const [contactId, setContactId] = useState<string>(contacts[0]?.id ?? "");
-  const [service, setService] = useState<string>("");
-  const [serviceAr, setServiceAr] = useState<string>("");
-  const [startAtLocal, setStartAtLocal] = useState<string>(defaultStartLocal);
-  const [durationMin, setDurationMin] = useState<number>(30);
-
-  // If contacts loaded after the modal mounted (or the previous selection was
-  // removed), default to the first contact so the form is submittable.
-  useEffect(() => {
-    if (contacts.length === 0) return;
-    if (!contactId || !contacts.some((c) => c.id === contactId)) {
-      setContactId(contacts[0].id);
-    }
-  }, [contacts, contactId]);
-
-  const canSubmit =
-    contactId.length > 0 &&
-    service.trim().length > 0 &&
-    startAtLocal.length > 0 &&
-    durationMin > 0 &&
-    !saving;
-
-  const handleSubmit = () => {
-    if (!canSubmit) return;
-    const iso = new Date(startAtLocal).toISOString();
-    onCreate({
-      contactId,
-      service: service.trim(),
-      serviceAr: serviceAr.trim() || service.trim(),
-      startAt: iso,
-      durationMin,
-      status: "confirmed",
-      source: "human",
-    })
-      .then(() => onClose())
-      .catch(() => {
-        // error surfaced via prop
-      });
-  };
-
-  return (
-    <Modal onClose={onClose} width={480} label="New appointment">
-        <h3 style={{ margin: 0, fontSize: 16 }}>
-          {tx("New appointment", "موعد جديد")}
-        </h3>
-        <p
-          style={{
-            margin: "4px 0 16px",
-            color: "var(--ink-2)",
-            fontSize: 13,
-          }}
-        >
-          {tx(
-            "Schedule a new booking for a contact.",
-            "احجز موعدًا جديدًا للعميل.",
-          )}
-        </p>
-
-        <label style={{ ...labelStyle, marginTop: 0 }}>
-          {tx("Contact", "العميل")}
-        </label>
-        <select
-          style={{ ...inputStyle, appearance: "none" }}
-          value={contactId}
-          onChange={(e) => setContactId(e.target.value)}
-        >
-          {contacts.length === 0 && (
-            <option value="">{tx("No contacts", "لا توجد جهات")}</option>
-          )}
-          {contacts.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name} — {c.phone}
-            </option>
-          ))}
-        </select>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div>
-            <label style={labelStyle}>{tx("Service (EN)", "الخدمة (EN)")}</label>
-            <input
-              style={inputStyle}
-              value={service}
-              onChange={(e) => setService(e.target.value)}
-              placeholder={tx("Property viewing", "Property viewing")}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>{tx("Service (AR)", "الخدمة (AR)")}</label>
-            <input
-              style={inputStyle}
-              value={serviceAr}
-              onChange={(e) => setServiceAr(e.target.value)}
-              placeholder="معاينة عقار"
-              dir="rtl"
-            />
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-          <div>
-            <label style={labelStyle}>{tx("Start", "البداية")}</label>
-            <input
-              type="datetime-local"
-              style={inputStyle}
-              value={startAtLocal}
-              onChange={(e) => setStartAtLocal(e.target.value)}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>{tx("Duration (min)", "المدة (د)")}</label>
-            <input
-              type="number"
-              min={5}
-              step={5}
-              style={inputStyle}
-              value={durationMin}
-              onChange={(e) =>
-                setDurationMin(Math.max(5, Number(e.target.value) || 0))
-              }
-            />
-          </div>
-        </div>
-
-        {error && (
-          <div
-            style={{
-              marginTop: 12,
-              fontSize: 12,
-              color: "var(--bad)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            justifyContent: "flex-end",
-            marginTop: 20,
-          }}
-        >
-          <button className="btn ghost" onClick={onClose} disabled={saving}>
-            {tx("Cancel", "إلغاء")}
-          </button>
-          <button
-            className="btn primary"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-          >
-            <IconPlus w={14} />
-            {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Create", "إنشاء")}
-          </button>
-        </div>
-    </Modal>
-  );
-}
-
 /* ─────────────────────────────────────────────────────────────────────── */
 /* Side panel                                                               */
 /* ─────────────────────────────────────────────────────────────────────── */
@@ -1202,6 +994,8 @@ interface SidePanelProps {
   onChangeStatus: (status: AppointmentStatus) => Promise<void>;
   statusUpdating: boolean;
   statusError: string | null;
+  canUpdate: boolean;
+  onReschedule: () => void;
 }
 
 function SidePanel({
@@ -1215,6 +1009,8 @@ function SidePanel({
   onChangeStatus,
   statusUpdating,
   statusError,
+  canUpdate,
+  onReschedule,
 }: SidePanelProps) {
   const start = new Date(appt.startAt);
   const end = new Date(start.getTime() + appt.durationMin * 60_000);
@@ -1299,6 +1095,7 @@ function SidePanel({
             <Badge kind={SOURCE_KIND[appt.source]}>
               {sourceLabel(appt.source, tx)}
             </Badge>
+            <BookingBadges appt={appt} tx={tx} />
             {appt.reminderSent && (
               <Badge kind="ok">
                 <IconCheck w={10} />
@@ -1525,38 +1322,43 @@ function SidePanel({
               gap: 8,
             }}
           >
-            <button
-              className="btn"
-              onClick={() => {
-                onChangeStatus("completed").catch(() => {
-                  // surfaced via statusError
-                });
-              }}
-              disabled={statusUpdating || appt.status === "completed"}
-            >
-              <IconCheckCircle w={13} />
-              {tx("Mark complete", "إكمال")}
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                onChangeStatus("cancelled").catch(() => {
-                  // surfaced via statusError
-                });
-              }}
-              disabled={statusUpdating || appt.status === "cancelled"}
-            >
-              <IconX w={13} />
-              {tx("Mark cancelled", "إلغاء")}
-            </button>
+            {canUpdate &&
+              allowedFrom(appt.status).map((to) => (
+                <button
+                  key={to}
+                  className="btn"
+                  onClick={() => {
+                    onChangeStatus(to).catch(() => {
+                      // surfaced via statusError
+                    });
+                  }}
+                  disabled={statusUpdating}
+                >
+                  {to === "completed" ? <IconCheckCircle w={13} /> : to === "cancelled" ? <IconX w={13} /> : null}
+                  {tx(...MOVE_WORDS[to])}
+                </button>
+              ))}
+            {canUpdate && isOpenStatus(appt.status) && (
+              <button className="btn" onClick={onReschedule} disabled={statusUpdating}>
+                <IconClock w={13} />
+                {tx("Reschedule", "إعادة الجدولة")}
+              </button>
+            )}
+            {(!canUpdate || !allowedFrom(appt.status).length) && (
+              <div className="muted" style={{ fontSize: 12, gridColumn: "1 / -1" }}>
+                {canUpdate
+                  ? tx("This booking is closed.", "هذا الحجز مغلق.")
+                  : tx("You can view this booking.", "يمكنك عرض هذا الحجز.")}
+              </div>
+            )}
           </div>
           {statusError && (
             <div
+              role="alert"
               style={{
                 marginTop: 8,
-                fontSize: 11,
+                fontSize: 12,
                 color: "var(--bad)",
-                fontFamily: "var(--font-mono)",
               }}
             >
               {statusError}
@@ -1612,19 +1414,43 @@ function CalendarImpl() {
   const tx = makeTx(t.lang);
   const [, setRoute] = useRoute();
 
-  const [view, setView] = useState<ViewMode>("week");
+  const { can } = usePermissions();
+  const { activeWorkspace } = useAuth();
+  const tz = workspaceTz(activeWorkspace?.timezone);
+  const today = wallClock(new Date(), tz).dateISO;
+  // SP-10: view, date and filters live in the hash (reload and Back restore them).
+  const [cal, setCal] = useCalendarParams(today);
+  const view: ViewMode = cal.view;
+  const setView = (v: ViewMode) => setCal({ view: v });
+  const canView = can("bookings.view");
+  const canCreate = can("bookings.create");
+  const canUpdate = can("bookings.update");
   const [filter, setFilter] = useState<FilterId>("all");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState<boolean>(false);
-  const [weekStart, setWeekStart] = useState<Date>(() =>
-    startOfWeek(new Date()),
-  );
-  const [selectedDay, setSelectedDay] = useState<Date>(() =>
-    startOfDay(new Date()),
-  );
+  const [rescheduling, setRescheduling] = useState<Appointment | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  // The browser-zone grid views keep their own week; it follows the hash date.
+  const selectedDay = useMemo(() => {
+    const [y, m, d] = cal.date.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }, [cal.date]);
+  const weekStart = useMemo(() => startOfWeek(selectedDay), [selectedDay]);
+  const setSelectedDay = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    setCal({ date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` });
+  };
 
   // ─── Data ──────────────────────────────────────────────────────────────
-  const apptsQ = useFetch<Appointment[]>("/appointments");
+  // A bounded range (≤ 92 days) with the service/staff filters, not the whole history.
+  const apptsQ = useFetch<Appointment[]>(canView ? appointmentsQuery(cal, tz, t.lang) : null);
+  const servicesQ = useFetch<{ items: Service[] }>(canView ? "/services" : null);
+  const staffQ = useFetch<{ items: StaffResource[] }>(canView ? "/staff" : null);
+  const services = useMemo(() => servicesQ.data?.items ?? [], [servicesQ.data]);
+  const staffList = useMemo(() => staffQ.data?.items ?? [], [staffQ.data]);
+  const serviceById = useMemo(() => new Map(services.map((x) => [x.id, x])), [services]);
+  const staffById = useMemo(() => new Map(staffList.map((x) => [x.id, x])), [staffList]);
   const contactsQ = useFetch<Contact[]>("/contacts");
   const teamQ = useFetch<TeamApiMember[]>("/team");
 
@@ -1645,31 +1471,22 @@ function CalendarImpl() {
   }, [contacts]);
 
   // ─── Mutations ────────────────────────────────────────────────────────
-  const createAppt = useMutation<NewAppointmentInput, Appointment>((input) =>
-    api.post<Appointment>("/appointments", input),
-  );
-
-  interface StatusUpdate {
-    id: string;
-    status: AppointmentStatus;
-  }
-  const updateStatus = useMutation<StatusUpdate, Appointment>((input) =>
-    api.patch<Appointment>(`/appointments/${input.id}`, {
-      status: input.status,
-    }),
-  );
-
-  const handleCreate = async (input: NewAppointmentInput): Promise<void> => {
-    await createAppt.mutate(input);
-    apptsQ.refetch();
-  };
-
-  const handleStatusChange = async (
-    status: AppointmentStatus,
-  ): Promise<void> => {
-    if (!activeId) return;
-    await updateStatus.mutate({ id: activeId, status });
-    apptsQ.refetch();
+  // Status moves follow the transition table and send the version the user
+  // saw; every refusal is shown as copy, never a raw key (review M2), and
+  // the list reloads so the panel shows the current row.
+  const handleStatusChange = async (status: AppointmentStatus): Promise<void> => {
+    const appt = appointments.find((a) => a.id === activeId);
+    if (!appt) return;
+    setStatusBusy(true);
+    setStatusError(null);
+    try {
+      await updateBooking(appt.id, { status, version: appt.version ?? 0 });
+    } catch (e) {
+      setStatusError(bookingErrorText(e, tx));
+    } finally {
+      setStatusBusy(false);
+      void apptsQ.refetch();
+    }
   };
 
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
@@ -1752,6 +1569,8 @@ function CalendarImpl() {
     { id: "week", label: tx("Week", "أسبوع"), icon: <IconCal w={14} /> },
     { id: "list", label: tx("List", "قائمة"), icon: <IconUsers w={14} /> },
     { id: "day", label: tx("Day", "يوم"), icon: <IconClock w={14} /> },
+    { id: "agenda", label: tx("Agenda", "الأجندة"), icon: <IconCal w={14} /> },
+    { id: "board", label: tx("Board", "اللوحة"), icon: <IconUsers w={14} /> },
   ];
 
   return (
@@ -1792,11 +1611,7 @@ function CalendarImpl() {
             >
               <button
                 className="btn ghost icon sm"
-                onClick={() => {
-                  const next = addDays(weekStart, -7);
-                  setWeekStart(next);
-                  setSelectedDay(next);
-                }}
+                onClick={() => setCal({ date: addDaysISO(cal.date, view === "day" ? -1 : -7) })}
                 aria-label={tx("Previous week", "الأسبوع السابق")}
                 style={{ transform: t.lang === "ar" ? "scaleX(-1)" : undefined }}
               >
@@ -1815,11 +1630,7 @@ function CalendarImpl() {
               </div>
               <button
                 className="btn ghost icon sm"
-                onClick={() => {
-                  const next = addDays(weekStart, 7);
-                  setWeekStart(next);
-                  setSelectedDay(next);
-                }}
+                onClick={() => setCal({ date: addDaysISO(cal.date, view === "day" ? 1 : 7) })}
                 aria-label={tx("Next week", "الأسبوع التالي")}
                 style={{ transform: t.lang === "ar" ? "scaleX(-1)" : undefined }}
               >
@@ -1828,15 +1639,12 @@ function CalendarImpl() {
             </div>
             <button
               className="btn"
-              onClick={() => {
-                const m = startOfWeek(new Date());
-                setWeekStart(m);
-                setSelectedDay(startOfDay(new Date()));
-              }}
+              onClick={() => setCal({ date: today })}
             >
               {tx("Today", "اليوم")}
             </button>
-            <button className="btn primary" onClick={() => setShowNew(true)}>
+            {canView && <BookingSearch tx={tx} lang={t.lang} tz={tz} />}
+            <button className="btn primary" disabled={!canCreate} onClick={() => setShowNew(true)}>
               <IconPlus w={14} />
               {tx("New appointment", "موعد جديد")}
             </button>
@@ -1932,6 +1740,12 @@ function CalendarImpl() {
             ))}
           </div>
           <div style={{ flex: 1 }} />
+          {canView && (
+            <>
+              <ServiceFilter services={services} value={cal.service} onChange={(id) => setCal({ service: id })} tx={tx} lang={t.lang} />
+              <StaffFilter staff={staffList} value={cal.staff} onChange={(id) => setCal({ staff: id })} tx={tx} lang={t.lang} />
+            </>
+          )}
           <div
             style={{
               display: "flex",
@@ -1974,6 +1788,33 @@ function CalendarImpl() {
             activeId={activeId}
           />
         )}
+        {view === "agenda" && (
+          <AgendaView
+            appts={filtered}
+            days={viewDays("agenda", cal.date, t.lang)}
+            contactById={contactById}
+            staffById={staffById}
+            team={team}
+            tz={tz}
+            tx={tx}
+            lang={t.lang}
+            onOpen={setActiveId}
+          />
+        )}
+        {view === "board" && (
+          <BookingsBoard
+            appts={filtered.filter((a) => viewDays("board", cal.date, t.lang).includes(wallClock(new Date(a.startAt), tz).dateISO))}
+            contactById={contactById}
+            serviceById={serviceById}
+            staffById={staffById}
+            tz={tz}
+            tx={tx}
+            lang={t.lang}
+            canUpdate={canUpdate}
+            onOpen={setActiveId}
+            onChanged={() => void apptsQ.refetch()}
+          />
+        )}
         {view === "day" && (
           <DayView
             day={selectedDay}
@@ -2002,19 +1843,42 @@ function CalendarImpl() {
             setRoute("inbox");
           }}
           onChangeStatus={handleStatusChange}
-          statusUpdating={updateStatus.loading}
-          statusError={updateStatus.error}
+          statusUpdating={statusBusy}
+          statusError={statusError}
+          canUpdate={canUpdate}
+          onReschedule={() => setRescheduling(activeAppt)}
         />
       )}
 
-      {showNew && (
-        <NewAppointmentModal
+      {showNew && canCreate && (
+        <BookingDialog
           contacts={contacts}
-          onClose={() => setShowNew(false)}
-          onCreate={handleCreate}
-          saving={createAppt.loading}
-          error={createAppt.error}
+          services={services}
+          staff={staffList}
+          tz={tz}
           tx={tx}
+          lang={t.lang}
+          date={cal.date < today ? today : cal.date}
+          onClose={() => setShowNew(false)}
+          onCreated={() => {
+            setShowNew(false);
+            void apptsQ.refetch();
+          }}
+        />
+      )}
+      {rescheduling && canUpdate && (
+        <RescheduleDialog
+          appt={rescheduling}
+          services={services}
+          staff={staffList}
+          tz={tz}
+          tx={tx}
+          lang={t.lang}
+          onClose={() => setRescheduling(null)}
+          onSaved={() => {
+            setRescheduling(null);
+            void apptsQ.refetch();
+          }}
         />
       )}
 
