@@ -327,6 +327,20 @@ describe("permission map", () => {
     expect(catalog).toEqual(Object.keys(sp10).sort());
   });
 
+  it("permission map covers SP-11 routes (home part)", () => {
+    for (const k of ["GET /home", "POST /home/seen", "POST /home/day1/dismiss"]) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p: "authenticated" });
+    }
+    expect(keys.filter((k) => / \/home(\/|$)/.test(k)).sort()).toEqual(["GET /home", "POST /home/day1/dismiss", "POST /home/seen"]);
+  });
+
+  it("permission map covers SP-11 routes (sales part)", () => {
+    expect({ declared: keys.includes("GET /insights/sales"), p: ROUTE_PERMISSIONS["GET /insights/sales"] }).toEqual({
+      declared: true,
+      p: "reports.view",
+    });
+  });
+
   it("permission map covers SP-11 routes (support part)", () => {
     expect({ declared: keys.includes("GET /insights/support"), p: ROUTE_PERMISSIONS["GET /insights/support"] }).toEqual({
       declared: true,

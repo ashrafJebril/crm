@@ -635,6 +635,36 @@ describe("system-role decision table", () => {
 
     it("impersonation is not blocked", () => {
       expect(blockedForImpersonation(ROUTE_PERMISSIONS[SUPPORT] as string)).toBe(false);
+      expect(blockedForImpersonation(ROUTE_PERMISSIONS[SALES] as string)).toBe(false);
+    });
+
+    // Home part (Task 3): every member reads the home; sections are filtered in the service.
+    it("every member reads the home, marks it seen and dismisses the Day-1 home", () => {
+      for (const route of ["GET /home", "POST /home/seen", "POST /home/day1/dismiss"]) {
+        expect(ROUTE_PERMISSIONS[route]).toBe("authenticated");
+        for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+          expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        }
+      }
+    });
+
+    // Sales part (Task 2).
+    const SALES = "GET /insights/sales";
+
+    it("owner, admin, agent and viewer read the sales insights (reports.view), and hold tickets.view for its sections", () => {
+      expect(ROUTE_PERMISSIONS[SALES]).toBe("reports.view");
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, SALES) }).toEqual({ role, ok: true });
+        expect({ role, tickets: hasPermission(SYSTEM_ROLES[role].permissions, "tickets.view") }).toEqual({ role, tickets: true });
+      }
+    });
+
+    it("a custom role without reports.view gets 403 on sales; reports.view alone gets the route but not ticket sections", () => {
+      const noReports: PermissionsJson = { conversations: ["view"], tickets: ["view"] };
+      expect(hasPermission(noReports, ROUTE_PERMISSIONS[SALES] as string)).toBe(false);
+      const reportsOnly: PermissionsJson = { reports: ["view"] };
+      expect(hasPermission(reportsOnly, ROUTE_PERMISSIONS[SALES] as string)).toBe(true);
+      expect(hasPermission(reportsOnly, "tickets.view")).toBe(false);
     });
   });
 

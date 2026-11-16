@@ -18,6 +18,7 @@ import { TeamModule } from "./team/team.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { InsightsModule } from "./insights/insights.module";
+import { HomeModule } from "./home/home.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { ChannelsCoreModule } from "./channels/channels-core.module";
 import { ChannelsModule } from "./channels/channels.module";
@@ -84,6 +85,8 @@ import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.mo
     DashboardModule,
     // SP-11: support insights (sales and the working home join later).
     InsightsModule,
+    // SP-11: the working home (Task 3).
+    HomeModule,
     // SP-19: global routing core (resolver, transports, inbound sink) before
     // anything that sends or receives, then the /channels hub.
     ChannelsCoreModule,

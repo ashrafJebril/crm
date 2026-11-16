@@ -20,6 +20,7 @@ import { WorkflowsController } from "../workflows/workflows.controller";
 import { MediaController } from "../media/media.controller";
 import { AdSourcesController } from "../ad-attribution/ad-sources.controller";
 import { InsightsController } from "../insights/insights.controller";
+import { HomeController } from "../home/home.controller";
 
 // Some modules read secrets at import time (JwtModule.register in AuthModule).
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret-for-permission-viewer-coverage-spec";
@@ -90,7 +91,9 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["media", MediaController, ["list", "serve", "remove", "update"]],
   ["ad-sources", AdSourcesController, ["conversations"]],
   // SP-11: every support figure is computed under the viewer's scope.
-  ["insights", InsightsController, ["support"]],
+  ["insights", InsightsController, ["support", "sales"]],
+  // SP-11: the home lists conversations under the viewer's scope.
+  ["home", HomeController, ["get"]],
 ];
 
 const SRC = path.resolve(__dirname, "..");

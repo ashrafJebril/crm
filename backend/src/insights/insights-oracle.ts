@@ -5,7 +5,20 @@
  * `insights-expected.ts`, and `support-metrics.db.spec.ts` checks the real SQL
  * against the same expectations. Never imported by runtime code.
  */
-import type { InsightsWorld, WorldConversation, WorldMessage } from "./__fixtures__/insights-world";
+import {
+  contactOf,
+  conversationCreatedAt,
+  ticketContact,
+  ticketStage,
+  worldContacts,
+  type InsightsWorld,
+  type WorldConversation,
+  type WorldMessage,
+  type WorldTicket,
+} from "./__fixtures__/insights-world";
+import { localDayBounds } from "../activities/buckets";
+import { SPEED_BUCKETS, SPEED_BUCKET_KEYS, WAITING_EXCLUDED_STATUSES } from "./insights-constants";
+import { UNASSIGNED_KEY } from "./sales-metrics.sql";
 import { RESOLUTION_LOOKBACK_DAYS, TOP_TOPICS, TOPIC_MIN_CONVERSATIONS } from "./insights-constants";
 import {
   byNumberRows,
@@ -17,9 +30,20 @@ import {
   topicRows,
   UNATTRIBUTED_KEY,
   wholeSeconds,
+  distributionRows,
+  funnelRows,
+  lostReasonRows,
+  repRows,
+  sourceRows,
+  weeklyRows,
+  type FunnelRow,
+  type LostReasonRow,
+  type RepRow,
+  type RepTotals,
+  type SourceRow,
   type TeamTotals,
 } from "./insights-format";
-import type { InsightsRange } from "./insights-range";
+import { localDate, localWeekStart, type InsightsRange } from "./insights-range";
 import { inConversationScope, type ConversationScope } from "./insights-scope";
 import type { ByNumberRow, Peaks, ResolutionMix, SupportHeadline, TeamRow, TopicFrictionRow } from "./insights.dto";
 
@@ -228,4 +252,210 @@ export function supportOracle(world: InsightsWorld, opts: OracleOpts): SupportDa
   );
 
   return { headline, resolutionMix, peaks: peaksFrom(peakRows), byNumber, topicFriction, team };
+}
+
+// ── Sales (SP-11 Task 2) ────────────────────────────────────────────────
+
+export interface SalesOracleOpts {
+  range: InsightsRange;
+  scope: ConversationScope;
+  pipelineId: string;
+  now: Date;
+  /** Default: the world's workspace language. */
+  lang?: string;
+}
+
+export interface SalesData {
+  headline: { leads: number; replied: number; medianSpeedToReplySec: number | null; waiting: number; won: number };
+  distribution: { bucket: string; count: number }[];
+  weekly: { weekStart: string; leads: number; won: number }[];
+  sources: SourceRow[];
+  funnel: FunnelRow[];
+  lostReasons: LostReasonRow[];
+  reps: RepRow[];
+}
+
+export function salesOracle(world: InsightsWorld, opts: SalesOracleOpts): SalesData {
+  const { range, scope, pipelineId, now } = opts;
+  const lang = opts.lang ?? world.workspace.lang;
+  const tz = range.tz;
+  const F = range.fromUtc.getTime();
+  const T = range.toUtcExclusive.getTime();
+  const inRange = (d: Date | null | undefined) => !!d && d.getTime() >= F && d.getTime() < T;
+  const pipeline = world.pipelines.find((p) => p.id === pipelineId);
+  if (!pipeline) throw new Error("unknown pipeline");
+  const stageOf = new Map(world.pipelines.flatMap((p) => p.stages.map((s) => [s.id, s] as const)));
+
+  const tickets = world.tickets.filter((t) => t.pipelineId === pipelineId);
+  const leads = tickets.filter((t) => inRange(t.createdAt));
+  const activities = world.ticketActivities ?? [];
+  const moved = (kind: "won" | "lost") =>
+    activities.filter((a) => a.kind === kind && inRange(a.createdAt) && tickets.some((t) => t.id === a.ticketId));
+  const wonTickets = new Set(moved("won").map((a) => a.ticketId));
+  const lostTickets = new Set(moved("lost").map((a) => a.ticketId));
+
+  // Visible conversations of a contact (earliest first), and their messages.
+  const visible = world.conversations.filter((c) => inConversationScope(scope, c.assigneeId));
+  const convsOf = (contactId: string) =>
+    visible
+      .filter((c) => contactOf(c) === contactId)
+      .sort((a, b) => conversationCreatedAt(a).getTime() - conversationCreatedAt(b).getTime() || (a.id < b.id ? -1 : 1));
+  const msgsOf = (contactId: string, statusOk: (c: WorldConversation) => boolean = () => true) => {
+    const ids = new Set(convsOf(contactId).filter(statusOk).map((c) => c.id));
+    return world.messages.filter((m) => ids.has(m.conversationId));
+  };
+  const contactIdOf = (t: WorldTicket) => ticketContact(world, t);
+  const firstStaff = (t: WorldTicket, sentBy?: string) => {
+    const times = msgsOf(contactIdOf(t))
+      .filter(
+        (m) => m.from === "human" && m.createdAt.getTime() > t.createdAt.getTime() && (sentBy === undefined || m.sentById === sentBy),
+      )
+      .map((m) => m.createdAt.getTime());
+    return times.length ? (Math.min(...times) - t.createdAt.getTime()) / 1000 : null;
+  };
+
+  const replied = leads.filter((t) =>
+    msgsOf(contactIdOf(t)).some((m) => (m.from === "ai" || m.from === "human") && m.createdAt.getTime() > t.createdAt.getTime()),
+  ).length;
+  const speeds = leads.map((t) => firstStaff(t));
+
+  const bucketOf = (sec: number | null): string => {
+    if (sec === null) return "not_replied";
+    const i = SPEED_BUCKETS.findIndex((min) => sec < min * 60);
+    return SPEED_BUCKET_KEYS[i === -1 ? SPEED_BUCKETS.length : i];
+  };
+  const dist = new Map<string, number>();
+  for (const s of speeds) dist.set(bucketOf(s), (dist.get(bucketOf(s)) ?? 0) + 1);
+
+  const excluded = new Set<string>(WAITING_EXCLUDED_STATUSES);
+  const waiting = tickets.filter((t) => {
+    const st = stageOf.get(ticketStage(world, t));
+    if (t.closedAt || st?.isTerminal) return false;
+    const latest = msgsOf(contactIdOf(t), (c) => !excluded.has(c.status ?? "human"))
+      .filter((m) => m.createdAt.getTime() <= now.getTime())
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1))[0];
+    return latest?.from === "them";
+  }).length;
+
+  // Weekly: leads by creation week, distinct won tickets by won-move week.
+  const weekOf = (d: Date) => localWeekStart(localDate(d, tz), lang);
+  const weekly = new Map<string, { leads: number; won: Set<string> }>();
+  const wk = (w: string) => {
+    if (!weekly.has(w)) weekly.set(w, { leads: 0, won: new Set<string>() });
+    return weekly.get(w)!;
+  };
+  for (const t of leads) wk(weekOf(t.createdAt)).leads += 1;
+  for (const a of moved("won")) wk(weekOf(a.createdAt)).won.add(a.ticketId);
+
+  // Sources: ad, then channel, then contact source.
+  const contacts = new Map(worldContacts(world).map((c) => [c.id, c]));
+  const ads = new Map((world.adSources ?? []).map((a) => [a.id, a]));
+  const channel = new Map(world.channels.map((c) => [c.id, c]));
+  const sources = new Map<string, { kind: string; key: string; label: string; leads: number; won: number }>();
+  for (const t of leads) {
+    const convs = convsOf(contactIdOf(t));
+    const ad = convs.find((c) => c.adSourceId)?.adSourceId ?? null;
+    const first = convs[0];
+    let kind: string;
+    let key: string;
+    let label: string;
+    if (ad) {
+      const a = ads.get(ad);
+      kind = "ad";
+      key = ad;
+      label = a?.adName ?? a?.headline ?? a?.sourceId ?? ad;
+    } else if (first) {
+      kind = "channel";
+      key = ((first.channelId ? channel.get(first.channelId)?.kind : undefined) ?? first.channel).toLowerCase();
+      label = key;
+    } else {
+      kind = "contact_source";
+      key = contacts.get(contactIdOf(t))?.source ?? "";
+      label = key;
+    }
+    const id = `${kind}:${key}`;
+    const row = sources.get(id) ?? { kind, key, label, leads: 0, won: 0 };
+    row.leads += 1;
+    if (wonTickets.has(t.id)) row.won += 1;
+    sources.set(id, row);
+  }
+
+  // Funnel: reached = an activity into the stage (creation included) or in it now.
+  const funnel = pipeline.stages.map((st) => ({
+    stageId: st.id,
+    key: st.key,
+    label: st.label,
+    labelAr: st.labelAr,
+    isWon: !!st.isWon,
+    isTerminal: !!st.isTerminal,
+    order: st.order,
+    reached: leads.filter(
+      (t) => ticketStage(world, t) === st.id || activities.some((a) => a.ticketId === t.id && a.toStage === st.key),
+    ).length,
+  }));
+
+  // Lost reasons: catalog, else snapshot, else none.
+  const reasons = new Map((world.lostReasons ?? []).map((r) => [r.id, r]));
+  const lostRows = [...lostTickets].map((id) => {
+    const t = tickets.find((x) => x.id === id)!;
+    const r = t.lostReasonId ? reasons.get(t.lostReasonId) : undefined;
+    const snap = (t.lostReason ?? "").replace(/^ +| +$/g, "");
+    return { reasonId: r?.id ?? null, label: r?.label ?? null, labelAr: r?.labelAr ?? null, snapshot: r ? null : snap || null, n: 1 };
+  });
+
+  // Reps.
+  const members = new Set(world.users.filter((u) => u.role !== null).map((u) => u.id));
+  const keyOf = (id: string | null | undefined) => (id == null ? UNASSIGNED_KEY : members.has(id) ? id : FORMER_KEY);
+  const totals = new Map<string, RepTotals & { samples: number[] }>();
+  const tot = (k: string) => {
+    if (!totals.has(k)) totals.set(k, { leads: 0, won: 0, lost: 0, median: null, done: 0, overdue: 0, dueToday: 0, samples: [] });
+    return totals.get(k)!;
+  };
+  for (const t of leads) {
+    tot(keyOf(t.ownerId)).leads += 1;
+    if (t.ownerId) {
+      const s = firstStaff(t, t.ownerId);
+      if (s !== null) tot(keyOf(t.ownerId)).samples.push(s);
+    }
+  }
+  for (const id of wonTickets) tot(keyOf(tickets.find((t) => t.id === id)!.ownerId)).won += 1;
+  for (const id of lostTickets) tot(keyOf(tickets.find((t) => t.id === id)!.ownerId)).lost += 1;
+  const todayEnd = localDayBounds(now, tz).end.getTime();
+  for (const f of world.followUps ?? []) {
+    const k = tot(keyOf(f.assigneeId));
+    if (f.doneAt) {
+      if (inRange(f.doneAt)) k.done += 1;
+    } else if (f.dueAt) {
+      if (f.dueAt.getTime() < now.getTime()) k.overdue += 1;
+      else if (f.dueAt.getTime() < todayEnd) k.dueToday += 1;
+    }
+  }
+  for (const v of totals.values()) v.median = median(v.samples);
+  const reps = repRows(
+    world.users.filter((u) => u.role !== null).map((u) => ({ userId: u.id, name: u.name })),
+    totals,
+    UNASSIGNED_KEY,
+  );
+
+  const sampled = speeds.filter((s): s is number => s !== null);
+  return {
+    headline: {
+      leads: leads.length,
+      replied,
+      medianSpeedToReplySec: wholeSeconds(median(sampled)),
+      waiting,
+      won: wonTickets.size,
+    },
+    distribution: distributionRows([...dist.entries()].map(([bucket, n]) => ({ bucket, n }))),
+    weekly: weeklyRows(
+      [...weekly.entries()].map(([week, v]) => ({ week, leads: v.leads, won: v.won.size })),
+      range.from,
+      range.to,
+      lang,
+    ),
+    sources: sourceRows([...sources.values()]),
+    funnel: funnelRows(funnel),
+    lostReasons: lostReasonRows(lostRows),
+    reps,
+  };
 }

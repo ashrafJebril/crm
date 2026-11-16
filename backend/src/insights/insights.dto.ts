@@ -108,7 +108,8 @@ export interface SupportInsights {
 /** Task 2's shape, declared here so the contract is in one file. */
 export interface SalesInsights {
   range: InsightsRangeDto;
-  pipeline: { id: string; name: string; nameAr: string; kind: string };
+  /** Without `tickets.view` only `id` is returned (every section is then forbidden). */
+  pipeline: { id: string; name?: string; nameAr?: string; kind?: string };
   headline: Section<{ leads: number; replied: number; medianSpeedToReplySec: number | null; waiting: number; won: number }>;
   distribution: Section<{ bucket: string; count: number }[]>;
   weekly: Section<{ weekStart: string; leads: number; won: number }[]>;

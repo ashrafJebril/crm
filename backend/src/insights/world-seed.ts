@@ -12,7 +12,7 @@
  * users), and those users are neither created nor deleted.
  */
 import type { PrismaClient } from "@prisma/client";
-import type { InsightsWorld } from "./__fixtures__/insights-world";
+import { contactOf, conversationCreatedAt, ticketContact, ticketStage, worldContacts, type InsightsWorld } from "./__fixtures__/insights-world";
 
 export interface SeededWorld {
   workspaceId: string;
@@ -92,23 +92,32 @@ export async function seedInsightsWorld(prisma: PrismaClient, world: InsightsWor
       });
     }
 
-    for (const c of world.conversations) {
-      const contactId = remember(`contact-${c.id}`);
+    for (const c of worldContacts(world)) {
       await prisma.contact.create({
-        data: { id: contactId, workspaceId, name: `Contact ${c.id}`, industry: "—", lifecycle: "customer", source: "whatsapp", lastSeen: "now" },
+        data: { id: remember(c.id), workspaceId, name: `Contact ${c.id}`, industry: "—", lifecycle: "customer", source: c.source, lastSeen: "now" },
       });
+    }
+
+    for (const a of world.adSources ?? []) {
+      await prisma.adSource.create({
+        data: { id: remember(a.id), workspaceId, sourceId: `${tag}-${a.sourceId}`, sourceType: "ad", adName: a.adName, headline: a.headline },
+      });
+    }
+
+    for (const c of world.conversations) {
       await prisma.conversation.create({
         data: {
           id: remember(c.id),
           workspaceId,
-          contactId,
+          contactId: id(contactOf(c)),
           channel: c.channel,
           channelId: c.channelId ? id(c.channelId) : null,
           assigneeId: c.assigneeId ? id(c.assigneeId) : null,
+          adSourceId: c.adSourceId ? id(c.adSourceId) : null,
           lastAt: "now",
           lastFrom: "them",
           preview: "",
-          status: "human",
+          status: c.status ?? "human",
           intent: "",
           confidence: 0,
           escalated: c.escalated ?? false,
@@ -117,6 +126,7 @@ export async function seedInsightsWorld(prisma: PrismaClient, world: InsightsWor
           resolutionIssue: c.resolutionIssue ?? null,
           resolutionSentiment: c.resolutionSentiment ?? null,
           resolvedAt: c.resolvedAt ?? null,
+          createdAt: conversationCreatedAt(c),
           ...(c.topics !== undefined ? { topics: c.topics as never } : {}),
         },
       });
@@ -137,41 +147,89 @@ export async function seedInsightsWorld(prisma: PrismaClient, world: InsightsWor
 
     for (const p of world.pipelines) {
       await prisma.pipeline.create({
-        data: { id: remember(p.id), workspaceId, key: p.key, name: p.name, nameAr: p.name, kind: p.kind },
-      });
-      await prisma.ticketStage.create({
         data: {
-          id: remember(p.stageId),
+          id: remember(p.id),
           workspaceId,
-          pipelineId: id(p.id),
-          key: "open",
-          label: "Open",
-          labelAr: "مفتوحة",
-          color: "info",
-          order: 0,
-          groupKey: `${p.key}_open`,
+          key: p.key,
+          name: p.name,
+          nameAr: p.name,
+          kind: p.kind,
+          isDefault: p.isDefault ?? false,
+          archivedAt: p.archivedAt ?? null,
+          createdAt: p.createdAt,
         },
+      });
+      for (const st of p.stages) {
+        await prisma.ticketStage.create({
+          data: {
+            id: remember(st.id),
+            workspaceId,
+            pipelineId: id(p.id),
+            key: st.key,
+            label: st.label,
+            labelAr: st.labelAr,
+            color: "info",
+            order: st.order,
+            groupKey: `${p.key}_${st.key}`,
+            isTerminal: st.isTerminal ?? false,
+            isWon: st.isWon ?? false,
+          },
+        });
+      }
+    }
+
+    for (const r of world.lostReasons ?? []) {
+      await prisma.lostReason.create({
+        data: { id: remember(r.id), workspaceId, pipelineId: id(r.pipelineId), label: r.label, labelAr: r.labelAr },
       });
     }
 
     let number = 0;
     for (const t of world.tickets) {
-      const pipeline = world.pipelines.find((p) => p.id === t.pipelineId);
-      if (!pipeline) throw new Error(`fixture ticket ${t.id}: unknown pipeline`);
-      const conv = world.conversations.find((c) => c.id === t.conversationId);
       await prisma.ticket.create({
         data: {
           id: remember(t.id),
           workspaceId,
           number: ++number,
           pipelineId: id(t.pipelineId),
-          stageId: id(pipeline.stageId),
-          contactId: id(`contact-${conv?.id ?? world.conversations[0].id}`),
+          stageId: id(ticketStage(world, t)),
+          contactId: id(ticketContact(world, t)),
           conversationId: t.conversationId ? id(t.conversationId) : null,
+          ownerId: t.ownerId ? id(t.ownerId) : null,
           title: `Ticket ${t.id}`,
           createdAt: t.createdAt,
           enteredStageAt: t.createdAt,
+          closedAt: t.closedAt ?? null,
+          lostReasonId: t.lostReasonId ? id(t.lostReasonId) : null,
+          lostReason: t.lostReason ?? null,
         },
+      });
+    }
+
+    if (world.ticketActivities?.length) {
+      await prisma.ticketActivity.createMany({
+        data: world.ticketActivities.map((a) => ({
+          id: remember(a.id),
+          workspaceId,
+          ticketId: id(a.ticketId),
+          kind: a.kind,
+          toStage: a.toStage,
+          createdAt: a.createdAt,
+        })),
+      });
+    }
+
+    if (world.followUps?.length) {
+      await prisma.activity.createMany({
+        data: world.followUps.map((f) => ({
+          id: remember(f.id),
+          workspaceId,
+          kind: "call",
+          title: `Follow-up ${f.id}`,
+          assigneeId: f.assigneeId ? id(f.assigneeId) : null,
+          dueAt: f.dueAt,
+          doneAt: f.doneAt,
+        })),
       });
     }
   } catch (e) {

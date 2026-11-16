@@ -5,9 +5,9 @@
  * the plan's metric definitions; the reasoning is next to each value. Both
  * the TS oracle and the real SQL must produce exactly these.
  */
-import { CH, U } from "./__fixtures__/insights-world";
+import { CH, ST, U } from "./__fixtures__/insights-world";
 import type { ByNumberRow, Peaks, ResolutionMix, SupportHeadline, TeamRow, TopicFrictionRow } from "./insights.dto";
-import { emptyPeaks } from "./insights-format";
+import { emptyPeaks, type FunnelRow, type LostReasonRow, type RepRow, type SourceRow } from "./insights-format";
 
 export interface SupportExpectation {
   headline: SupportHeadline;
@@ -217,4 +217,173 @@ export const SUPPORT_METRIC_TESTS: Record<string, (e: SupportExpectation) => unk
   "by number splits conversations and ai rate per WhatsApp channel": (e) => e.byNumber,
   "topic friction ranks topics with escalation and negative share": (e) => e.topicFriction,
   "team rows attribute replies to the sending member": (e) => e.team,
+};
+
+// ── Sales (SP-11 Task 2) ────────────────────────────────────────────────
+// Sales range 2026-11-08 … 2026-11-28 (Riyadh) = [2026-11-07T21:00Z,
+// 2026-11-28T21:00Z), pipeline pl-leads, now = 2026-11-30T09:00Z (12:00 local).
+// Leads of the range: L1–L11 (L0 was created at 20:30Z on the 7th = 23:30
+// local, before the range; tk5 is older).
+
+export interface SalesExpectation {
+  headline: { leads: number; replied: number; medianSpeedToReplySec: number | null; waiting: number; won: number };
+  distribution: { bucket: string; count: number }[];
+  weekly: { weekStart: string; leads: number; won: number }[];
+  sources: SourceRow[];
+  funnel: FunnelRow[];
+  lostReasons: LostReasonRow[];
+  reps: RepRow[];
+}
+
+const dist = (counts: [lt5: number, m5: number, m15: number, h1: number, h4: number, d1: number, none: number]) =>
+  ["lt_5m", "5_15m", "15_60m", "1_4h", "4_24h", "gt_24h", "not_replied"].map((bucket, i) => ({ bucket, count: counts[i] }));
+
+const rep = (userId: string | null, name: string, over: Partial<RepRow> = {}): RepRow => ({
+  userId,
+  name,
+  former: false,
+  leads: 0,
+  won: 0,
+  lost: 0,
+  medianSpeedToReplySec: null,
+  followUps: { done: 0, overdue: 0, dueToday: 0 },
+  ...over,
+});
+
+const FUNNEL: FunnelRow[] = [
+  // Every lead but L10 (created straight into "contacted"); L4 by its current stage.
+  { stageId: ST.new, key: "new", label: "New", labelAr: "جديد", reached: 10, isWon: false, isTerminal: false },
+  // L1, L3, L5 (reopened into it), L6, L10.
+  { stageId: ST.contacted, key: "contacted", label: "Contacted", labelAr: "تم التواصل", reached: 5, isWon: false, isTerminal: false },
+  // The won stage before the lost one, whatever their order: L1, L5.
+  { stageId: ST.won, key: "won", label: "Won", labelAr: "فوز", reached: 2, isWon: true, isTerminal: true },
+  // L2, L7, L8, L9.
+  { stageId: ST.lost, key: "lost", label: "Lost", labelAr: "خسارة", reached: 4, isWon: false, isTerminal: true },
+];
+
+// Lost in range: L2 and L9 (Price), L7 (reason deleted, snapshot "Too far"),
+// L8 (no reason).
+const LOST_REASONS: LostReasonRow[] = [
+  { reasonId: "lr-price", label: "Price", labelAr: "السعر", count: 2 },
+  { reasonId: null, label: "No reason", labelAr: "بدون سبب", count: 1 },
+  { reasonId: null, label: "Too far", labelAr: "Too far", count: 1 },
+];
+
+// Arabic workspace: weeks start on Sunday. Leads by local creation day:
+// week of 8 Nov: L1, L2, L3, L4, L5, L11 (Sat 14th 09:00 local) = 6; week of
+// 15 Nov: L6, L7, L8, L9, L10 = 5; week of 22 Nov: none (present, zeros).
+// Won by won-move day, distinct per week: 8 Nov: L0, L1, L5 (13th); 15 Nov:
+// L5 again (16th). (The week figures need not sum to `won`: L5 counts in both.)
+const WEEKLY = [
+  { weekStart: "2026-11-08", leads: 6, won: 3 },
+  { weekStart: "2026-11-15", leads: 5, won: 1 },
+  { weekStart: "2026-11-22", leads: 0, won: 0 },
+];
+
+/** The same world read as an English workspace: Monday weeks. */
+export const SALES_WEEKLY_EN = [
+  { weekStart: "2026-11-02", leads: 1, won: 0 }, // L1 (Sun 8th)
+  { weekStart: "2026-11-09", leads: 6, won: 3 }, // L2–L5, L11, L6 (Sun 15th); won L0, L1, L5
+  { weekStart: "2026-11-16", leads: 4, won: 1 }, // L7–L10; L5 won again
+  { weekStart: "2026-11-23", leads: 0, won: 0 },
+];
+
+/**
+ * The owner. replied: all but L4 and L8 (no conversation) = 9 (L3 by the AI
+ * only). First staff reply after creation: L1 180 s (<5m), L2 300 (exactly
+ * 5 min → 5–15m), L9 900 (15 min → 15–60m), L6 1200, L5 3600 (60 min →
+ * 1–4h), L10 14400 (240 min → 4–24h), L11 86400 (1440 min → >24h), L7 93600;
+ * L3, L4, L8 none. Median of the eight = (1200 + 3600) / 2 = 2400.
+ * waiting (now): open leads L3 (customer wrote after the AI), L6 (latest is
+ * the customer on cv26), L11 = 3; L4 has no messages; L10's customer message
+ * is on a closed conversation. won: L0, L1, L5 (won, reopened, won) = 3; the
+ * deals pipeline's won move does not count.
+ */
+export const SALES_OWNER: SalesExpectation = {
+  headline: { leads: 11, replied: 9, medianSpeedToReplySec: 2400, waiting: 3, won: 3 },
+  distribution: dist([1, 1, 2, 1, 1, 2, 3]),
+  weekly: WEEKLY,
+  // L1, L9 by ad1 (adName), L11 by ad2 (headline: no adName); L2, L5, L6,
+  // L7, L10 by their earliest conversation's channel (L5's earliest is cv23,
+  // L10's cv29); L3 Instagram; L4, L8 have no conversation: contact source.
+  sources: [
+    { kind: "channel", key: "whatsapp", label: "whatsapp", leads: 5, won: 1 },
+    { kind: "ad", key: "ad1", id: "ad1", label: "Winter sale", leads: 2, won: 1 },
+    { kind: "ad", key: "ad2", id: "ad2", label: "Eid offer", leads: 1, won: 0 },
+    { kind: "channel", key: "instagram", label: "instagram", leads: 1, won: 0 },
+    { kind: "contact_source", key: "manual", label: "manual", leads: 1, won: 0 },
+    { kind: "contact_source", key: "meta_lead_form", label: "meta_lead_form", leads: 1, won: 0 },
+  ],
+  funnel: FUNNEL,
+  lostReasons: LOST_REASONS,
+  // Badr owns L1, L3, L7, L8, L10, L11 (and L0, won in range); his own replies:
+  // L1 180, L10 14400, L11 86400, L7 93600 → median 50400. Sami owns L2, L6,
+  // L9 (L9 was answered by Badr, not him): 300, 1200 → 750. L5's owner is a
+  // former member (3600); L4 is unowned. Follow-ups (now = 30 Nov 12:00 local):
+  // Badr done fu1 (fu2 was done after the range), overdue fu3 and fu5 (due
+  // earlier today), due today fu4 (18:00), fu6 is tomorrow; Sami done fu7
+  // (fu8 has no due date); Omar done fu11; former overdue fu9; unassigned fu10.
+  reps: [
+    rep(U.agent, "Badr", { leads: 6, won: 2, lost: 2, medianSpeedToReplySec: 50400, followUps: { done: 1, overdue: 2, dueToday: 1 } }),
+    rep(U.assigned, "Sami", { leads: 3, lost: 2, medianSpeedToReplySec: 750, followUps: { done: 1, overdue: 0, dueToday: 0 } }),
+    rep(U.admin, "Amal"),
+    rep(U.viewer, "Huda"),
+    rep(U.owner, "Omar", { followUps: { done: 1, overdue: 0, dueToday: 0 } }),
+    rep(null, "Former member", { former: true, leads: 1, won: 1, medianSpeedToReplySec: 3600, followUps: { done: 0, overdue: 1, dueToday: 0 } }),
+    rep(null, "Unassigned", { leads: 1, followUps: { done: 0, overdue: 1, dueToday: 0 } }),
+  ],
+};
+
+/**
+ * Sami (assigned-only) sees cv21 (L2), cv23 (L5), cv25 (L6) of the sales
+ * conversations. Ticket figures are unchanged; replied L2, L5, L6 = 3; speeds
+ * 300, 3600, 1200 → median 1200; waiting 0 (L6's customer message is on
+ * Badr's hidden cv26, L3 and L11 are hidden); sources fall back to the
+ * contact's source when no conversation is visible; Badr's replies are all on
+ * hidden conversations.
+ */
+export const SALES_ASSIGNED: SalesExpectation = {
+  headline: { leads: 11, replied: 3, medianSpeedToReplySec: 1200, waiting: 0, won: 3 },
+  distribution: dist([0, 1, 1, 1, 0, 0, 8]),
+  weekly: WEEKLY,
+  sources: [
+    { kind: "contact_source", key: "whatsapp", label: "whatsapp", leads: 4, won: 1 }, // L1, L9, L10, L11
+    { kind: "channel", key: "whatsapp", label: "whatsapp", leads: 3, won: 1 }, // L2, L5, L6
+    { kind: "contact_source", key: "import", label: "import", leads: 1, won: 0 },
+    { kind: "contact_source", key: "instagram", label: "instagram", leads: 1, won: 0 },
+    { kind: "contact_source", key: "manual", label: "manual", leads: 1, won: 0 },
+    { kind: "contact_source", key: "meta_lead_form", label: "meta_lead_form", leads: 1, won: 0 },
+  ],
+  funnel: FUNNEL,
+  lostReasons: LOST_REASONS,
+  reps: SALES_OWNER.reps.map((r) => (r.userId === U.agent ? { ...r, medianSpeedToReplySec: null } : r)),
+};
+
+/** A workspace with only the leads pipeline (no members, no tickets). */
+export const SALES_EMPTY: SalesExpectation = {
+  headline: { leads: 0, replied: 0, medianSpeedToReplySec: null, waiting: 0, won: 0 },
+  distribution: dist([0, 0, 0, 0, 0, 0, 0]),
+  weekly: WEEKLY.map((w) => ({ ...w, leads: 0, won: 0 })),
+  sources: [],
+  funnel: FUNNEL.map((f) => ({ ...f, reached: 0 })),
+  lostReasons: [],
+  reps: [],
+};
+
+/** Named sales metric tests → the part of the expectation each one asserts. */
+export const SALES_METRIC_TESTS: Record<string, (e: SalesExpectation) => unknown> = {
+  "leads counts cards created in range in the pipeline": (e) => e.headline.leads,
+  "replied counts leads with a staff or AI message after creation": (e) => e.headline.replied,
+  "speed to reply is the median to the first staff reply": (e) => e.headline.medianSpeedToReplySec,
+  "speed distribution buckets are exhaustive": (e) => ({
+    distribution: e.distribution,
+    total: e.distribution.reduce((a, b) => a + b.count, 0) === e.headline.leads,
+  }),
+  "waiting counts open leads whose latest visible message is the customer's": (e) => e.headline.waiting,
+  "won counts distinct cards with a won move in range": (e) => e.headline.won,
+  "weekly trend buckets by workspace-local week": (e) => e.weekly,
+  "lead sources attribute ad, channel, then contact source": (e) => e.sources,
+  "stage funnel counts cards that reached each stage": (e) => e.funnel,
+  "lost reasons group by catalog reason with snapshot fallback": (e) => e.lostReasons,
+  "reps table totals owners and follow-ups": (e) => e.reps,
 };
