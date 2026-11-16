@@ -1,7 +1,7 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import type { Appointment, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { MAX_DAYS_AHEAD } from "./booking-constants";
+import { MAX_DAYS_AHEAD, SERVICE_DURATION_MAX, SERVICE_DURATION_MIN } from "./booking-constants";
 import { bookingError } from "./booking-errors";
 import { OPEN_STATUSES, isOpenStatus } from "./booking-status";
 import { daysBetween, isDateISO, isoWithOffset, localDayRange, todayISO, workspaceTz } from "./booking-time";
@@ -123,10 +123,22 @@ export class BookingsService {
   /** `GET /bookings/availability`. */
   async availability(
     workspaceId: string,
-    q: { serviceId: string; resourceId?: string; date: string },
+    q: { serviceId: string; resourceId?: string; date: string; excludeAppointmentId?: string; durationMin?: number },
     now: Date = new Date(),
   ): Promise<AvailabilityDto> {
     const tz = await this.workspaceTz(workspaceId);
+    // Reschedule (final review M5): the booking's own duration, 5..1440.
+    if (
+      q.durationMin !== undefined &&
+      (!Number.isInteger(q.durationMin) || q.durationMin < SERVICE_DURATION_MIN || q.durationMin > SERVICE_DURATION_MAX)
+    ) {
+      throw bookingError("bookings.duration_invalid", { min: SERVICE_DURATION_MIN, max: SERVICE_DURATION_MAX });
+    }
+    // Reschedule (final review M2): ignore the booking being moved; same workspace only.
+    if (q.excludeAppointmentId) {
+      const own = await this.prisma.appointment.findFirst({ where: { id: q.excludeAppointmentId, workspaceId }, select: { id: true } });
+      if (!own) throw new NotFoundException("Appointment not found");
+    }
     if (!isDateISO(q.date)) throw bookingError("bookings.date_invalid");
     const ahead = daysBetween(todayISO(now, tz), q.date);
     if (ahead < 0 || ahead > MAX_DAYS_AHEAD) throw bookingError("bookings.date_invalid", { maxDaysAhead: MAX_DAYS_AHEAD });
@@ -137,7 +149,7 @@ export class BookingsService {
       date: q.date,
       tz,
       serviceId: service.id,
-      durationMin: service.durationMin,
+      durationMin: q.durationMin ?? service.durationMin,
       slots: [],
       unconfigured: [],
       truncated: false,
@@ -165,11 +177,11 @@ export class BookingsService {
     if (!resources.length) return base;
 
     const { start, end } = localDayRange(q.date, tz);
-    const busy = await blockingBookings(this.prisma, workspaceId, resources, start, end);
+    const busy = await blockingBookings(this.prisma, workspaceId, resources, start, end, q.excludeAppointmentId);
     const { slots, unconfigured, truncated } = generateSlots({
       dateISO: q.date,
       tz,
-      durationMin: service.durationMin,
+      durationMin: base.durationMin,
       now,
       resources: resources.map((r) => ({
         id: r.id,

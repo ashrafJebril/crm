@@ -29,10 +29,16 @@ interface Props {
   /** Bump to refetch (e.g. after SLOT_TAKEN). */
   refreshKey?: number;
   lang: "en" | "ar";
+  /** Reschedule: the booking being moved (its own time stays offered) and its duration. */
+  excludeAppointmentId?: string;
+  durationMin?: number;
 }
 
-export function SlotPicker({ serviceId, resourceId, date, tz, tx, staffById, value, onChange, refreshKey, lang }: Props) {
-  const q = useFetch<AvailabilityDto>(serviceId && date ? availabilityPath({ serviceId, resourceId, date }) : null, { key: refreshKey });
+export function SlotPicker({ serviceId, resourceId, date, tz, tx, staffById, value, onChange, refreshKey, lang, excludeAppointmentId, durationMin }: Props) {
+  const q = useFetch<AvailabilityDto>(
+    serviceId && date ? availabilityPath({ serviceId, resourceId, date, excludeAppointmentId, durationMin }) : null,
+    { key: refreshKey },
+  );
   if (q.loading && !q.data) return <div className="muted" style={{ fontSize: 12 }}>{tx("Finding free times…", "جارٍ البحث عن أوقات متاحة…")}</div>;
   if (q.error) {
     return <div style={{ color: "var(--bad)", fontSize: 12 }}>{bookingErrorText(new ApiError(q.error, 400), tx)}</div>;
