@@ -28,10 +28,16 @@ import { TicketAttachmentsService } from "../tickets/ticket-attachments.service"
 import { TicketsService } from "../tickets/tickets.service";
 import type { Prisma } from "@prisma/client";
 import { InsightsService } from "../insights/insights.service";
-import { supportOracle } from "../insights/insights-oracle";
+import { salesOracle, supportOracle } from "../insights/insights-oracle";
 import { parseRange } from "../insights/insights-range";
-import { ASSIGNED } from "../insights/insights-expected";
-import { INSIGHTS_WORLD, RANGE as INSIGHTS_RANGE, U as INSIGHTS_U } from "../insights/__fixtures__/insights-world";
+import { ASSIGNED, SALES_ASSIGNED, SALES_OWNER } from "../insights/insights-expected";
+import {
+  INSIGHTS_WORLD,
+  RANGE as INSIGHTS_RANGE,
+  SALES_NOW,
+  SALES_RANGE,
+  U as INSIGHTS_U,
+} from "../insights/__fixtures__/insights-world";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -861,5 +867,74 @@ describe("SP-11 support insights", () => {
       await svc.support(WS, INSIGHTS_RANGE, v);
       for (const sql of queried) expect(sql.strings.join("?")).not.toContain('"assigneeId" = ?');
     }
+  });
+});
+
+/**
+ * SP-11 Review Focus 1 (sales): replied, speed, waiting, the ad/channel of a
+ * source and a rep's speed read only conversations the viewer may see, inside
+ * the SQL; a hidden thread's customer message never makes a lead "waiting".
+ */
+describe("SP-11 sales insights", () => {
+  function build(visibility: "assigned" | "all") {
+    const prisma = makePrisma({ ...ASSIGNED_PERMS, reports: ["view"] }, visibility);
+    const queried: Prisma.Sql[] = [];
+    const tx = {
+      $executeRawUnsafe: jest.fn(async () => 0),
+      $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+        queried.push(sql);
+        return [];
+      }),
+    };
+    prisma.$transaction = jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+    prisma.workspace = { findUnique: jest.fn(async () => ({ timezone: "Asia/Riyadh", lang: "ar" })) };
+    prisma.pipeline = { findFirst: jest.fn(async () => ({ id: "pl-leads", name: "Leads", nameAr: "Leads", kind: "leads" })) };
+    const perm = new PermissionService(prisma);
+    return { svc: new InsightsService(prisma, perm), perm, queried };
+  }
+
+  it("sales waiting ignores hidden threads", async () => {
+    const { svc, perm, queried } = build("assigned");
+    const res = await svc.sales(WS, SALES_RANGE, viewer, SALES_NOW);
+    expect(res.headline.status).toBe("ok");
+    expect(queried.length).toBe(12);
+    for (const sql of queried) {
+      const text = sql.strings.join("?");
+      const tag = /insights:(\w+\.\w+)/.exec(text)?.[1];
+      // Every conversation the statement reads carries the viewer's scope.
+      const reads = (text.match(/"Conversation" c\s/g) ?? []).length;
+      expect({ tag, scoped: (text.match(/AND c\."assigneeId" = \?/g) ?? []).length }).toEqual({ tag, scoped: reads });
+      if (reads > 0) expect(sql.values.filter((v) => v === ME).length).toBeGreaterThanOrEqual(reads);
+    }
+    const waiting = queried.find((s) => s.strings[0].includes("insights:sales.waiting"))!;
+    expect(waiting.strings.join("?")).toContain('AND c."assigneeId" = ?');
+
+    // The figures: L6's customer message is on a conversation hidden from the
+    // assigned-only agent, so the owner sees 3 waiting leads and he sees 0.
+    const range = parseRange(SALES_RANGE.from, SALES_RANGE.to, "Asia/Riyadh", SALES_NOW);
+    const scope = await perm.conversationScope(WS, { userId: INSIGHTS_U.assigned });
+    const theirs = salesOracle(INSIGHTS_WORLD, { range, scope, pipelineId: "pl-leads", now: SALES_NOW });
+    expect(theirs).toEqual(SALES_ASSIGNED);
+    expect(theirs.headline.waiting).toBe(0);
+    expect(salesOracle(INSIGHTS_WORLD, { range, scope: {}, pipelineId: "pl-leads", now: SALES_NOW }).headline.waiting).toBe(
+      SALES_OWNER.headline.waiting,
+    );
+  });
+
+  it("a member who sees every conversation gets no assignee clause in sales", async () => {
+    const { svc, queried } = build("all");
+    await svc.sales(WS, SALES_RANGE, viewer, SALES_NOW);
+    for (const sql of queried) expect(sql.strings.join("?")).not.toContain('"assigneeId" = ?');
+  });
+
+  it("ticket sections are forbidden without tickets.view (real permissions)", async () => {
+    const prisma = makePrisma({ reports: ["view"] }, "all");
+    prisma.workspace = { findUnique: jest.fn(async () => ({ timezone: "Asia/Riyadh", lang: "ar" })) };
+    prisma.pipeline = { findFirst: jest.fn(async () => ({ id: "pl-leads", name: "Leads", nameAr: "Leads", kind: "leads" })) };
+    prisma.$transaction = jest.fn();
+    const res = await new InsightsService(prisma, new PermissionService(prisma)).sales(WS, SALES_RANGE, viewer, SALES_NOW);
+    expect(res.headline).toEqual({ status: "forbidden" });
+    expect(res.reps).toEqual({ status: "forbidden" });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,7 @@ import { parseRange } from "./insights-range";
 
 /** Structural checks on every support builder (the DB spec runs them for real). */
 const range = parseRange("2026-11-01", "2026-11-07", "Asia/Riyadh", new Date("2026-11-10T09:00:00Z"));
-const builders = Object.entries(sql).filter(([name]) => name.endsWith("Sql") && !["utcTimestampSql", "inRangeSql", "teamMembersSql"].includes(name)) as [
+const builders = Object.entries(sql).filter(([name]) => name.endsWith("Sql") && !["utcTimestampSql", "inRangeSql", "teamMembersSql", "medianSecondsSql"].includes(name)) as [
   string,
   (ws: string, r: typeof range, scope: object, opts: { channelId: string | null }) => Prisma.Sql,
 ][];

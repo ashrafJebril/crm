@@ -517,4 +517,6 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /dashboard/summary": "reports.view",
   // SP-11: support insights, computed under the viewer's conversation scope.
   "GET /insights/support": "reports.view",
+  // SP-11: sales insights; every section also needs tickets.view (else forbidden).
+  "GET /insights/sales": "reports.view",
 };

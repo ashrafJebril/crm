@@ -90,7 +90,7 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["media", MediaController, ["list", "serve", "remove", "update"]],
   ["ad-sources", AdSourcesController, ["conversations"]],
   // SP-11: every support figure is computed under the viewer's scope.
-  ["insights", InsightsController, ["support"]],
+  ["insights", InsightsController, ["support", "sales"]],
 ];
 
 const SRC = path.resolve(__dirname, "..");

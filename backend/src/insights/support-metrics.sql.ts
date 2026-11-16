@@ -143,7 +143,7 @@ function exchangesCte(ws: string, r: InsightsRange, scope: ConversationScope, op
 }
 
 /** Median of an interval expression in seconds (percentile_cont). */
-function medianSecondsSql(interval: Prisma.Sql): Prisma.Sql {
+export function medianSecondsSql(interval: Prisma.Sql): Prisma.Sql {
   return Prisma.sql`percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (${interval}))::float8)`;
 }
 

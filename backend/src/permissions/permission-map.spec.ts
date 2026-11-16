@@ -299,6 +299,13 @@ describe("permission map", () => {
     expect(catalog).toEqual(Object.keys(sp10).sort());
   });
 
+  it("permission map covers SP-11 routes (sales part)", () => {
+    expect({ declared: keys.includes("GET /insights/sales"), p: ROUTE_PERMISSIONS["GET /insights/sales"] }).toEqual({
+      declared: true,
+      p: "reports.view",
+    });
+  });
+
   it("permission map covers SP-11 routes (support part)", () => {
     expect({ declared: keys.includes("GET /insights/support"), p: ROUTE_PERMISSIONS["GET /insights/support"] }).toEqual({
       declared: true,

@@ -23,7 +23,9 @@ import {
 } from "./insights-format";
 import { parseRange, type InsightsRange } from "./insights-range";
 import type { ConversationScope } from "./insights-scope";
-import type { ResolutionMix, Section, SupportHeadline, SupportInsights } from "./insights.dto";
+import type { ResolutionMix, SalesInsights, Section, SupportHeadline, SupportInsights } from "./insights.dto";
+import { localDayBounds } from "../activities/buckets";
+import { assembleSalesHeadline, salesSections } from "./sales-sections";
 import {
   aiResolutionSql,
   byNumberSql,
@@ -213,6 +215,88 @@ export class InsightsService {
       team,
     };
   }
+
+  /**
+   * The sales pipeline P: `pipelineId` (this workspace's, any kind), else the
+   * first non-archived `leads` pipeline by creation, else the default
+   * pipeline. A foreign or unknown id, or no pipeline at all, is 404
+   * `insights.pipeline_not_found`.
+   */
+  private async salesPipeline(workspaceId: string, raw: unknown) {
+    const select = { id: true, name: true, nameAr: true, kind: true } as const;
+    if (raw !== undefined && raw !== null && raw !== "") {
+      if (typeof raw !== "string") throw insightsError("insights.pipeline_not_found");
+      const p = await this.prisma.pipeline.findFirst({ where: { id: raw, workspaceId }, select });
+      if (!p) throw insightsError("insights.pipeline_not_found");
+      return p;
+    }
+    const leads = await this.prisma.pipeline.findFirst({
+      where: { workspaceId, kind: "leads", archivedAt: null },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select,
+    });
+    const p = leads ?? (await this.prisma.pipeline.findFirst({ where: { workspaceId, isDefault: true }, select }));
+    if (!p) throw insightsError("insights.pipeline_not_found");
+    return p;
+  }
+
+  /**
+   * `GET /insights/sales`. Every section reads tickets, so a member without
+   * `tickets.view` gets every section `forbidden` (the range and pipeline
+   * are still validated). Conversation-derived parts run under the viewer's
+   * scope inside the SQL.
+   */
+  async sales(workspaceId: string, q: SalesQuery, viewer?: Viewer, now: Date = new Date()): Promise<SalesInsights> {
+    const { tz, lang } = await this.workspaceLocale(workspaceId);
+    const range = parseRange(q.from, q.to, tz, now);
+    const pipeline = await this.salesPipeline(workspaceId, q.pipelineId);
+    const base = { range: { from: range.from, to: range.to, tz: range.tz }, pipeline };
+    if (!(await this.perm.viewerCan(workspaceId, viewer, "tickets.view"))) {
+      const forbidden = { status: "forbidden" } as const;
+      return {
+        ...base,
+        headline: forbidden,
+        distribution: forbidden,
+        weekly: forbidden,
+        sources: forbidden,
+        funnel: forbidden,
+        lostReasons: forbidden,
+        reps: forbidden,
+      };
+    }
+    const scope = await this.perm.conversationScope(workspaceId, viewer);
+    const s = salesSections(workspaceId, range, scope, {
+      pipelineId: pipeline.id,
+      now,
+      todayEnd: localDayBounds(now, range.tz).end,
+      lang,
+    });
+    const h = s.headlineParts;
+    const [leads, replied, speed, waiting, won, distribution, weekly, sources, funnel, lostReasons, reps] = await Promise.all([
+      this.section("sales.headline.leads", h.leads),
+      this.section("sales.headline.replied", h.replied),
+      this.section("sales.headline.speed", h.speed),
+      this.section("sales.headline.waiting", h.waiting),
+      this.section("sales.headline.won", h.won),
+      this.section("sales.distribution", s.distribution),
+      this.section("sales.weekly", s.weekly),
+      this.section("sales.sources", s.sources),
+      this.section("sales.funnel", s.funnel),
+      this.section("sales.lostReasons", s.lostReasons),
+      this.section("sales.reps", s.reps, 2),
+    ]);
+    const headline: SalesInsights["headline"] =
+      leads.status === "ok" && replied.status === "ok" && speed.status === "ok" && waiting.status === "ok" && won.status === "ok"
+        ? { status: "ok", data: assembleSalesHeadline(leads.data, replied.data, speed.data, waiting.data, won.data) }
+        : { status: "unavailable" };
+    return { ...base, headline, distribution, weekly, sources, funnel, lostReasons, reps };
+  }
+}
+
+export interface SalesQuery {
+  from?: unknown;
+  to?: unknown;
+  pipelineId?: unknown;
 }
 
 /** The support sections as functions of a transaction (also used by the DB
