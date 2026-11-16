@@ -26,6 +26,12 @@ import { SegmentsController } from "../segments/segments.controller";
 import { SegmentsService } from "../segments/segments.service";
 import { TicketAttachmentsService } from "../tickets/ticket-attachments.service";
 import { TicketsService } from "../tickets/tickets.service";
+import type { Prisma } from "@prisma/client";
+import { InsightsService } from "../insights/insights.service";
+import { supportOracle } from "../insights/insights-oracle";
+import { parseRange } from "../insights/insights-range";
+import { ASSIGNED } from "../insights/insights-expected";
+import { INSIGHTS_WORLD, RANGE as INSIGHTS_RANGE, U as INSIGHTS_U } from "../insights/__fixtures__/insights-world";
 
 /**
  * Review Focus 1: with conversationVisibility = "assigned", an unassigned
@@ -798,5 +804,62 @@ describe("SP-09 ticket attachments and channel follow conversation visibility", 
     expect(owner.attachmentCount).toBe(2);
     // A non-member fails closed.
     expect(((await tickets.getTicket(W, "tk", { userId: "stranger" })) as any).channel).toBeNull();
+  });
+});
+
+/**
+ * SP-11 Review Focus 1: an assigned-only member reads support insights only
+ * over their own conversations, filtered inside every SQL statement (never
+ * afterwards), so no count can reveal a hidden conversation.
+ */
+describe("SP-11 support insights", () => {
+  function build(viewerVisibility: "assigned" | "all") {
+    const prisma = makePrisma({ ...ASSIGNED_PERMS, reports: ["view"] }, viewerVisibility);
+    const queried: Prisma.Sql[] = [];
+    const tx = {
+      $executeRawUnsafe: jest.fn(async () => 0),
+      $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+        queried.push(sql);
+        return [];
+      }),
+    };
+    prisma.$transaction = jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+    prisma.workspace = { findUnique: jest.fn(async () => ({ timezone: "Asia/Riyadh", lang: "ar" })) };
+    const perm = new PermissionService(prisma);
+    return { svc: new InsightsService(prisma, perm), perm, queried };
+  }
+  const count = (text: string, needle: string) => text.split(needle).length - 1;
+
+  it("support insights respect assigned visibility", async () => {
+    const { svc, perm, queried } = build("assigned");
+    await svc.support(WS, INSIGHTS_RANGE, viewer);
+    expect(queried.length).toBeGreaterThanOrEqual(11);
+    for (const sql of queried) {
+      const text = sql.strings.join("?");
+      const tag = /insights:support\.(\w+)/.exec(text)?.[1];
+      // Every conversation the statement reads carries the viewer's scope…
+      const reads = (text.match(/"Conversation" c\s/g) ?? []).length;
+      expect({ tag, scoped: count(text, 'AND c."assigneeId" = ?') }).toEqual({ tag, scoped: reads });
+      // …and the scope is the viewer, never anyone else.
+      if (reads > 0) expect(sql.values.filter((v) => v === ME).length).toBeGreaterThanOrEqual(reads);
+    }
+
+    // The figures equal the world restricted to the agent's conversations
+    // (expected values written by hand in insights-expected.ts).
+    const scope = await perm.conversationScope(WS, { userId: INSIGHTS_U.assigned });
+    expect(scope).toEqual({ assigneeId: INSIGHTS_U.assigned });
+    const range = parseRange(INSIGHTS_RANGE.from, INSIGHTS_RANGE.to, "Asia/Riyadh", new Date("2026-11-10T09:00:00Z"));
+    expect(supportOracle(INSIGHTS_WORLD, { range, scope, channelId: null })).toEqual(ASSIGNED);
+  });
+
+  it("a member who sees every conversation gets no assignee clause; a bypass session neither", async () => {
+    for (const [visibility, v] of [
+      ["all", viewer],
+      ["assigned", { userId: ME, bypass: true }],
+    ] as const) {
+      const { svc, queried } = build(visibility);
+      await svc.support(WS, INSIGHTS_RANGE, v);
+      for (const sql of queried) expect(sql.strings.join("?")).not.toContain('"assigneeId" = ?');
+    }
   });
 });

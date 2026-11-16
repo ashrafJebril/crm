@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
+import { conversationScopeSql } from "../insights/insights-scope";
 
 /** Only 7 and 30 are supported; anything else falls back to 7. */
 export function resolveDays(q?: string): 7 | 30 {
@@ -56,15 +57,9 @@ interface ActivityRow {
   at: string;         // ISO timestamp
 }
 
-/** Conversation scope as a raw-SQL fragment for alias `a` (assigned-only
- *  members see their own; a closed scope matches nothing). */
-function sqlScope(scope: Prisma.ConversationWhereInput, alias: string): Prisma.Sql {
-  if (Object.keys(scope).length === 0) return Prisma.empty;
-  if (typeof scope.assigneeId === "string") {
-    return Prisma.sql`AND ${Prisma.raw(alias)}."assigneeId" = ${scope.assigneeId}`;
-  }
-  return Prisma.sql`AND FALSE`;
-}
+/** Conversation scope as a raw-SQL fragment (SP-11 moved it to the insights
+ *  plumbing; behaviour unchanged). */
+const sqlScope = conversationScopeSql;
 
 @Controller("dashboard")
 export class DashboardController {

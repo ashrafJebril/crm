@@ -5,6 +5,7 @@ import { EditIgCaptionDto, PublishToIgDto } from "./instagram.dto";
 import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
+import { staffSenderId } from "../conversations/message-sender";
 
 @Controller("integrations/instagram")
 export class InstagramController {
@@ -72,6 +73,7 @@ export class InstagramController {
       conversationId,
       dto.message,
       dto.mediaId,
+      staffSenderId(viewer),
     );
     await this.handoff.humanReplied(workspaceId, conversationId);
     return res;

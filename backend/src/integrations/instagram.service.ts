@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
+import { sentByData } from "../conversations/message-sender";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -569,6 +570,8 @@ export class InstagramService {
     conversationId: string,
     message: string,
     mediaId?: string,
+    /** SP-11: the member sending from the inbox (Message.sentById). */
+    actorId?: string,
   ) {
     const { token } = await this.requireToken(workspaceId);
 
@@ -636,6 +639,7 @@ export class InstagramService {
         body: previewBody,
         t,
         attach: mediaId ?? null,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({

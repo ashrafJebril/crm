@@ -301,6 +301,10 @@ model Message {
   reaction   String?
   reactionAt DateTime?
 
+  /// SP-11: the member who sent a staff message from the inbox (null for older rows, AI, customers and automations).
+  /// No foreign key and no index (SP-11 ruling 4): a removed member's id stays and reads as "Former member".
+  sentById String?
+
   workspaceId  String
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -1284,6 +1288,11 @@ model WorkspaceMember {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   roleRef   Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  /// SP-11: when this member last looked at the working home ("while you were away" starts here).
+  homeSeenAt          DateTime?
+  /// SP-11: the member closed the Day-1 home.
+  homeDay1DismissedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

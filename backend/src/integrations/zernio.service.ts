@@ -36,6 +36,7 @@ import { zernioReplyParts } from "../campaigns/tracking/inbound-reply";
 import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
 import { defaultZernioWhatsappAccountId } from "../channels/default-channel";
 import { applyTemplateProviderStatus } from "../templates/templates.service";
+import { sentByData } from "../conversations/message-sender";
 
 /**
  * Zernio integration — one provider for Facebook, Instagram, WhatsApp, TikTok
@@ -937,6 +938,8 @@ export class ZernioService {
     variables: string[],
     header?: TemplateHeaderInput,
     viewer?: Viewer,
+    /** SP-11: the member sending from the inbox (Message.sentById); workflows pass none. */
+    actorId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -1001,6 +1004,7 @@ export class ZernioService {
         t,
         attach: resolvedHeader?.attach ?? null,
         metaMessageId: id,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({
@@ -1083,6 +1087,8 @@ export class ZernioService {
     publicBaseUrl?: string,
     from: "human" | "ai" = "human",
     externalAttachment?: { url: string; type: "image" },
+    /** SP-11: the member sending from the inbox (Message.sentById); none for AI replies. */
+    actorId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -1156,6 +1162,7 @@ export class ZernioService {
         // an AI-sourced image — the external URL directly.
         attach: mediaId ?? externalAttachment?.url ?? null,
         metaMessageId: id,
+        ...(from === "human" ? sentByData(actorId) : {}),
       },
     });
     await this.prisma.conversation.update({

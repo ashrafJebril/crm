@@ -20,6 +20,7 @@ import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
 import { ZernioWebhookSignatureGuard } from "../common/zernio-webhook-signature.guard";
+import { staffSenderId } from "../conversations/message-sender";
 
 class ZernioSendDto {
   @IsString() accountId!: string;
@@ -183,7 +184,16 @@ export class ZernioController {
     await this.perm?.assertConversationVisible(workspaceId, id, viewer);
     const publicBase =
       process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL ?? "http://localhost:3001";
-    const res = await this.zernio.sendInDbConversation(workspaceId, id, dto.message, dto.mediaId, publicBase);
+    const res = await this.zernio.sendInDbConversation(
+      workspaceId,
+      id,
+      dto.message,
+      dto.mediaId,
+      publicBase,
+      "human",
+      undefined,
+      staffSenderId(viewer),
+    );
     await this.handoff.humanReplied(workspaceId, id);
     return res;
   }
@@ -204,6 +214,7 @@ export class ZernioController {
       dto.variables ?? [],
       dto.header,
       viewer,
+      staffSenderId(viewer),
     );
     await this.handoff.humanReplied(workspaceId, id);
     return res;

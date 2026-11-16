@@ -36,6 +36,7 @@ import { metaReplyParts } from "../campaigns/tracking/inbound-reply";
 import { providerFailure } from "../campaigns/tracking/failure-codes";
 import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
 import { normalizeTemplateQuality } from "../channels/health/health-model";
+import { sentByData } from "../conversations/message-sender";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -731,6 +732,8 @@ export class WhatsAppService {
     conversationId: string,
     body: string,
     mediaId?: string,
+    /** SP-11: the member sending from the inbox (Message.sentById); none for AI replies. */
+    actorId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -775,6 +778,7 @@ export class WhatsAppService {
         metaMessageId: sent.wamid || null,
         deliveryStatus: sent.wamid ? "sent" : null,
         deliveryStatusAt: sent.wamid ? new Date() : null,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({
@@ -818,6 +822,8 @@ export class WhatsAppService {
     variables: string[],
     header?: TemplateHeaderInput,
     viewer?: Viewer,
+    /** SP-11: the member sending from the inbox (Message.sentById); workflows pass none. */
+    actorId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -899,6 +905,7 @@ export class WhatsAppService {
         metaMessageId: wamid || null,
         deliveryStatus: wamid ? "sent" : null,
         deliveryStatusAt: wamid ? new Date() : null,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({
