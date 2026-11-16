@@ -125,8 +125,11 @@ export function AiKnowledgeTab() {
   // Match the backend routes: saving a doc (add or edit) is POST /ai/knowledge/docs
   // (knowledge.create); delete is knowledge.delete; sync/settings are knowledge.update.
   const canEdit = can("knowledge.update");
-  const canCreateDoc = can("knowledge.create");
-  const canDeleteDoc = can("knowledge.delete");
+  // SP-21 (ruling 3): the document list is read-only here. Knowledge is managed
+  // on the Knowledge page (Kewy agent); the kill switch, autonomy and the HJZ
+  // sync switch stay on this tab.
+  const canCreateDoc = false as boolean;
+  const canDeleteDoc = false as boolean;
 
   const listQ = useFetch<{ docs: AiKnowledgeDoc[] }>("/ai/knowledge/docs");
   const statusQ = useFetch<{ configured: boolean }>("/ai/knowledge/status");
@@ -379,7 +382,11 @@ export function AiKnowledgeTab() {
               <button type="button" className="btn primary" onClick={() => setDraft(EMPTY_DRAFT)}>
                 {tx("Add knowledge", "أضف معلومة")}
               </button>
-            ) : null
+            ) : (
+              <a className="btn primary" href="#/agent">
+                {tx("Manage knowledge", "إدارة المعرفة")}
+              </a>
+            )
           }
         >
           {listQ.loading && docs.length === 0 ? (

@@ -740,3 +740,20 @@ input, textarea, select { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .record-sheet { animation: none; }
 }
+
+/* SP-21 knowledge content editor (TipTap). Logical properties only. */
+.kb-editor {
+  min-height: 220px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: start;
+}
+.kb-editor h1 { font-size: 20px; margin: 12px 0 6px; }
+.kb-editor h2 { font-size: 17px; margin: 10px 0 6px; }
+.kb-editor h3 { font-size: 15px; margin: 8px 0 4px; }
+.kb-editor p { margin: 0 0 8px; }
+.kb-editor ul, .kb-editor ol { margin: 0 0 8px; padding-inline-start: 22px; }
+.kb-editor ul { list-style: disc; }
+.kb-editor ol { list-style: decimal; }
+.kb-editor a { color: var(--accent); text-decoration: underline; }

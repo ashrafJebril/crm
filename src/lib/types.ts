@@ -1522,3 +1522,72 @@ export interface AdConversationItem {
   status: string;
   assigneeId: string | null;
 }
+
+// ─── SP-21 knowledge sources ─────────────────────────────────────────────
+
+export type KnowledgeKind = "content" | "faq" | "guideline" | "file" | "typed_doc" | "website";
+export type KnowledgeStatus = "draft" | "queued" | "processing" | "ready" | "failed" | "paused";
+export type PageState = "synced" | "needs_login" | "blocked" | "removed" | "error" | "capped";
+export type TypedKind = "offers" | "inventory" | "packages";
+export type WebsiteSchedule = "daily" | "weekly" | "monthly" | "manual";
+
+/** `GET /knowledge/sources[/:id]`. */
+export interface KnowledgeSource {
+  id: string;
+  kind: KnowledgeKind;
+  status: KnowledgeStatus;
+  /** An error key (knowledgeErrors.ts), never provider text. */
+  error: string | null;
+  title: string;
+  body?: string | null;
+  bodyJson?: unknown;
+  question?: string | null;
+  order: number;
+  typedKind: TypedKind | null;
+  url: string | null;
+  scope: "site" | "path" | null;
+  schedule: WebsiteSchedule | null;
+  lastSyncAt: string | null;
+  nextSyncAt: string | null;
+  /**
+   * Websites: failed runs in a row (3 → failed). Files and typed docs:
+   * transient retries used (0 or 1). Never show website wording for files.
+   */
+  consecutiveFailures: number;
+  lastRun: {
+    startedAt?: string;
+    finishedAt?: string;
+    pagesRead?: number;
+    pagesSame?: number;
+    pagesChanged?: number;
+    pagesNew?: number;
+    failed?: boolean;
+    reason?: string;
+  } | null;
+  itemCount: number;
+  publishState: "none" | "pending" | "published" | "failed" | string;
+  legacy: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  file: { fileName: string; mimeType: string; sizeBytes: number } | null;
+  pageCounts?: Partial<Record<PageState, number>>;
+}
+
+/** `GET /knowledge/sources/:id/pages`. */
+export interface KnowledgePage {
+  id: string;
+  url: string;
+  title: string | null;
+  state: PageState;
+  httpStatus: number | null;
+  lastReadAt: string | null;
+  removedAt: string | null;
+}
+
+/** `GET /knowledge/sources/:id/preview`: "What your assistant learned". */
+export interface KnowledgePreview {
+  sourceId: string;
+  groups: { heading: string | null; items: { chunkId: string; text: string; rowRef: number | null; url: string | null }[] }[];
+  truncated: boolean;
+}
