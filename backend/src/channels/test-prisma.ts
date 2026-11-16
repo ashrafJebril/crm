@@ -405,6 +405,10 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   knowledgePage: () => ({ httpStatus: null, title: null, contentHash: null, missedRuns: 0, lastSeenAt: null, lastReadAt: null, removedAt: null }),
   knowledgeChunk: () => ({ pageId: null, heading: null, rowRef: null, validTo: null }),
+  // SP-24
+  workflow: () => ({ systemKey: null, status: "draft", triggerConfig: {}, webhookSecret: null, lastScheduledAt: null }),
+  workflowRun: () => ({ resumeAt: null, isTest: false, error: null, completedAt: null, startedAt: new Date(), result: {} }),
+  lifecycleDelivery: () => ({ runId: null }),
   appointment: () => ({
     serviceId: null,
     resourceId: null,
@@ -425,12 +429,16 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   staffService: [["StaffService_pkey", ["resourceId", "serviceId"]]],
   // SP-21
   knowledgePage: [["KnowledgePage_sourceId_urlKey_key", ["sourceId", "urlKey"]]],
+  // SP-24: the once-per-occurrence claim.
+  lifecycleDelivery: [["LifecycleDelivery_workflowId_entityId_occurrenceKey_key", ["workflowId", "entityId", "occurrenceKey"]]],
 };
 /** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
 const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
   staffResource: [["StaffResource_workspaceId_userId_key", ["workspaceId", "userId"]]],
   // SP-21: @@unique([workspaceId, legacyRef]) (NULL legacyRefs are distinct).
   knowledgeSource: [["KnowledgeSource_workspaceId_legacyRef_key", ["workspaceId", "legacyRef"]]],
+  // SP-24: @@unique([workspaceId, systemKey]) (user workflows have NULL).
+  workflow: [["Workflow_workspaceId_systemKey_key", ["workspaceId", "systemKey"]]],
 };
 const keyPart = (v: any) => (v instanceof Date ? v.getTime() : v);
 function sp15Clash(model: string, rows: Row[], row: Row): string | null {
@@ -474,6 +482,8 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
     addedBy: ["user", "addedById", "one"],
   },
   message: { conversation: ["conversation", "conversationId", "one"] },
+  // SP-24: the runner's opt-out lookup (`conversations: { some: { id } }`).
+  contact: { conversations: ["conversation", "contactId", "many"] },
   // SP-10: the booking's contact (so a nested select is honoured) and catalog links.
   appointment: {
     contact: ["contact", "contactId", "one"],
@@ -618,6 +628,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
       findUnique: op((a) => {
         const r = rows().find((x) => matches(x, a.where, db, name));
         return r ? project(r, a.select, a.include, db, name) : null;
+      }),
+      findUniqueOrThrow: op((a) => {
+        const r = rows().find((x) => matches(x, a.where, db, name));
+        if (!r) throw p2025();
+        return project(r, a.select, a.include, db, name);
       }),
       count: op((a) => rows().filter((x) => matches(x, a.where, db, name)).length),
       // Supports `by: [field]` with `_count: { _all: true }` (what SP-12 uses).
@@ -848,6 +863,10 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     knowledgeSource: model("knowledgeSource"),
     knowledgePage: model("knowledgePage"),
     knowledgeChunk: model("knowledgeChunk"),
+    // SP-24: system workflows, their runs and the lifecycle claim.
+    workflow: model("workflow"),
+    workflowRun: model("workflowRun"),
+    lifecycleDelivery: model("lifecycleDelivery"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();

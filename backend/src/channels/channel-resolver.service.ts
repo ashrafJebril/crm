@@ -193,6 +193,19 @@ export class ChannelResolver {
   }
 
   /**
+   * SP-24 (ruling 8): `forSend` for a conversation id (workflow template
+   * steps). 409 channels.not_connected when the conversation is unknown.
+   */
+  async forConversationSend(workspaceId: string, conversationId: string): Promise<Channel> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      select: { id: true, workspaceId: true, channel: true, channelId: true },
+    });
+    if (!conv) throw channelError("channels.not_connected");
+    return this.forSend(workspaceId, conv);
+  }
+
+  /**
    * The channel to send a conversation's reply through. Never falls back to
    * another number: 409 channels.disconnected for a disconnected channel,
    * 409 channels.not_connected when none resolves or it is still pending.

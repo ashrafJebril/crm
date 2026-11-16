@@ -89,7 +89,8 @@ describe("AppointmentsService.update — appointment_completed trigger", () => {
   it("does not fire for other status changes", async () => {
     const { appointments, events } = await world();
     await appointments.update(A, "a1", { status: "cancelled" });
-    expect(events.emit).not.toHaveBeenCalled();
+    // SP-24: a cancellation emits appointment_cancelled, never appointment_completed.
+    expect(events.emit.mock.calls.map((c: any[]) => c[1].triggerType)).not.toContain("appointment_completed");
   });
 });
 

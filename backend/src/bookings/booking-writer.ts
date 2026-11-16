@@ -31,6 +31,7 @@ import type { EventEmitter2 } from "@nestjs/event-emitter";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { HjzAppointmentSyncService } from "../hjz-sync/hjz-appointment-sync.service";
 import { WORKFLOW_TRIGGER_EVENT, type WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { appointmentPayload, cancelledKey, confirmedKey } from "../lifecycle/lifecycle-payload";
 import { bookingError } from "./booking-errors";
 import { SERVICE_DURATION_MAX } from "./booking-constants";
 import { lockResource, lockService } from "./booking-locks";
@@ -146,8 +147,40 @@ export class BookingWriter {
       return tx.appointment.create({ data });
     });
     void this.hjzSync?.changed(row.id);
+    // SP-24: created as confirmed → "booking confirmed" (after commit).
+    if (row.status === "confirmed") await this.emitLifecycle(workspaceId, "appointment_confirmed", row);
     const [out] = await this.read.annotate(workspaceId, [row]);
     return out;
+  }
+
+  /**
+   * SP-24 lifecycle triggers, after commit, never throwing: the payload
+   * carries the booking texts in the workspace timezone and the occurrence
+   * key (the dispatch sends at most once per booking and start time).
+   */
+  private async emitLifecycle(
+    workspaceId: string,
+    triggerType: "appointment_confirmed" | "appointment_cancelled",
+    appt: Appointment,
+  ): Promise<void> {
+    if (!this.events) return;
+    try {
+      const [ws, contact] = await Promise.all([
+        this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } }),
+        this.prisma.contact.findFirst({
+          where: { id: appt.contactId, workspaceId },
+          select: { id: true, name: true, firstName: true, phone: true },
+        }),
+      ]);
+      const key = triggerType === "appointment_confirmed" ? confirmedKey(appt.startAt) : cancelledKey(appt.startAt);
+      this.events.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType,
+        payload: appointmentPayload(appt, contact, ws?.timezone, key),
+      } satisfies WorkflowTriggerEvent);
+    } catch {
+      // A lifecycle message must never fail a booking write.
+    }
   }
 
   /**
@@ -274,6 +307,14 @@ export class BookingWriter {
     });
     const { contact, ...plain } = row as Appointment & { contact: { id: string; name: string; phone: string | null } };
     void this.hjzSync?.changed(plain.id);
+    // SP-24: transitions into confirmed / cancelled (an edit that keeps the
+    // status sends nothing).
+    if (existing.status !== "confirmed" && plain.status === "confirmed") {
+      await this.emitLifecycle(workspaceId, "appointment_confirmed", plain as Appointment);
+    }
+    if (existing.status !== "cancelled" && plain.status === "cancelled") {
+      await this.emitLifecycle(workspaceId, "appointment_cancelled", plain as Appointment);
+    }
     // Only the transition into "completed" counts, so editing a finished
     // booking never re-sends a thank-you.
     if (existing.status !== "completed" && plain.status === "completed") {

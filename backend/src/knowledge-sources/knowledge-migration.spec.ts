@@ -120,7 +120,8 @@ describe("SP-21 knowledge migration", () => {
     // Ordered after SP-10 and SP-11 (pending) and every applied migration.
     expect(FOLDER.slice(0, 14) > "20261116140000").toBe(true);
     const folders = readdirSync(MIGRATIONS).filter((f) => /^\d{14}_/.test(f)).sort();
-    expect(folders[folders.length - 1]).toBe(FOLDER);
+    // Ordered after SP-11's folder; later SPs (SP-24 …) may follow it.
+    expect(folders.indexOf(FOLDER)).toBeGreaterThan(folders.indexOf("20261116140000_insights_home"));
 
     // LF only (Prisma checksums the exact bytes; .gitattributes enforces it on commit).
     expect(raw.includes(Buffer.from("\r\n"))).toBe(false);

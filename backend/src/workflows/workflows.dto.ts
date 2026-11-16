@@ -10,6 +10,11 @@ export const TRIGGER_TYPES = [
   "appointment_completed",
   // Sent by connected systems (hjz-v2) through /webhooks/hjz/sales.
   "sale_completed",
+  // SP-24 lifecycle triggers.
+  "appointment_confirmed",
+  "appointment_cancelled",
+  "appointment_reminder_due",
+  "ticket_resolved",
 ] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
 

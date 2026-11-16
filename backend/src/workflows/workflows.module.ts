@@ -2,6 +2,8 @@ import { Module } from "@nestjs/common";
 import { ContactsModule } from "../contacts/contacts.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { TicketsModule } from "../tickets/tickets.module";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { NotifyStaffExecutor } from "./executors/notify-staff.executor";
 import { AskAgentExecutor } from "./executors/ask-agent.executor";
 import { SendWhatsappExecutor } from "./executors/send-whatsapp.executor";
 import { SendWhatsappTemplateExecutor } from "./executors/send-whatsapp-template.executor";
@@ -15,7 +17,7 @@ import { WorkflowsWebhookController } from "./workflows-webhook.controller";
 import { WorkflowWebhookSignatureGuard } from "./workflow-webhook-signature.guard";
 
 @Module({
-  imports: [IntegrationsModule, ContactsModule, TicketsModule],
+  imports: [IntegrationsModule, ContactsModule, TicketsModule, NotificationsModule],
   controllers: [WorkflowsController, WorkflowsWebhookController],
   providers: [
     WorkflowsService,
@@ -27,7 +29,10 @@ import { WorkflowWebhookSignatureGuard } from "./workflow-webhook-signature.guar
     SendWhatsappTemplateExecutor,
     AskAgentExecutor,
     UpdateDataExecutor,
+    // SP-24
+    NotifyStaffExecutor,
   ],
-  exports: [WorkflowDispatchService, WorkflowRunnerService],
+  // SP-24: the lifecycle service writes system workflows through WorkflowsService.
+  exports: [WorkflowDispatchService, WorkflowRunnerService, WorkflowsService],
 })
 export class WorkflowsModule {}
