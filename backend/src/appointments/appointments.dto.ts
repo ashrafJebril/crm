@@ -46,10 +46,13 @@ export class UpdateAppointmentDto {
   @IsOptional() @IsString() note?: string;
   @IsOptional() @IsString() noteAr?: string;
   @IsOptional() @IsBoolean() reminderSent?: boolean;
-  /** SP-10: null unlinks the catalog service (the name snapshot stays). */
-  @IsOptional() @IsString() serviceId?: string | null;
-  /** SP-10: null unlinks the resource. */
-  @IsOptional() @IsString() resourceId?: string | null;
+  /** SP-10: null unlinks the catalog service (the name snapshot stays). Never "". */
+  @IsOptional() @IsString() @IsNotEmpty() serviceId?: string | null;
+  /**
+   * SP-10: null drops an explicit resource; the member's own resource (ruling 4)
+   * still applies and is gated. Never "".
+   */
+  @IsOptional() @IsString() @IsNotEmpty() resourceId?: string | null;
   /** SP-10: the version the client read; a mismatch is 409 bookings.version_conflict {current}. */
   @IsOptional() @IsInt() version?: number;
 }

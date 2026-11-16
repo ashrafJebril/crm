@@ -25,7 +25,10 @@
 --     records the row count). The new tables are created before it.
 --   * lock_timeout: if a long transaction holds "Appointment", the ALTER gives
 --     up after 5 s instead of queueing every later request behind it. The
---     whole migration then rolls back; it is idempotent, so just re-run it.
+--     script then rolls back, but Prisma records the migration as failed
+--     (the next deploy stops with P3009). To retry: run
+--     `npx prisma migrate resolve --rolled-back 20261116130000_bookings_catalog`,
+--     then `npx prisma migrate deploy` again. The script is idempotent.
 -- Apply with `prisma migrate deploy` only, after the user's explicit approval.
 
 -- Give up instead of stalling the lock queue (review M1).

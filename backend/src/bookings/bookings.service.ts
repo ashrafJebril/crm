@@ -10,11 +10,11 @@ import { readSchedule, scheduleFitAt } from "./schedule";
 import { normalizeName } from "./names";
 import { priceOut } from "./catalog-fields";
 
-/** Longest booking we look back for when testing overlap (SERVICE_DURATION_MAX). */
-const LOOKBACK_MS = 1440 * 60_000;
+/** Minimum overlap look-back (SERVICE_DURATION_MAX); widened to the longest open booking found (review I3). */
+const MIN_LOOKBACK_MS = 1440 * 60_000;
 const SEARCH_LIMIT = 10;
-/** Search scans this many bookings around now (most recent first). */
-const SEARCH_SCAN = 2000;
+/** Search scans this many bookings on each side of now (review M3). */
+const SEARCH_SCAN_EACH_SIDE = 1000;
 
 export type Fit = "ok" | "off_day" | "outside_hours" | "unchecked";
 
@@ -26,6 +26,8 @@ export interface AvailabilityDto {
   slots: { startAt: string; resourceId: string }[];
   /** Resource ids with no schedule (they are not gated, but offer no slots). */
   unconfigured: string[];
+  /** True only when the hard cap (MAX_SLOTS, far above a real day) cut the list (review I2). */
+  truncated: boolean;
 }
 
 export interface BookingSearchItem {
@@ -39,6 +41,21 @@ export interface BookingSearchItem {
 }
 
 type Db = Pick<PrismaService, "appointment" | "staffResource"> | Prisma.TransactionClient;
+type Keyed = Pick<Appointment, "id" | "startAt" | "durationMin" | "status" | "resourceId" | "staffId">;
+
+/**
+ * How far back an open booking can start and still reach `from`: at least
+ * 24 h, or the longest open booking matching `where` (rows written by `main`
+ * or before the cap may be longer than 1440 min). Review I3.
+ */
+export async function lookbackMs(db: Db, where: Prisma.AppointmentWhereInput): Promise<number> {
+  const longest = await (db as PrismaService).appointment.findFirst({
+    where: { ...where, status: { in: [...OPEN_STATUSES] } },
+    orderBy: { durationMin: "desc" },
+    select: { durationMin: true },
+  });
+  return Math.max(MIN_LOOKBACK_MS, (longest?.durationMin ?? 0) * 60_000);
+}
 
 export interface ResourceKey {
   id: string;
@@ -67,13 +84,17 @@ export async function blockingBookings(
   if (!resources.length) return [];
   const ids = resources.map((r) => r.id);
   const members = resources.filter((r) => r.userId).map((r) => r.userId as string);
+  const keys: Prisma.AppointmentWhereInput = {
+    workspaceId,
+    ...(excludeId ? { id: { not: excludeId } } : {}),
+    OR: [{ resourceId: { in: ids } }, ...(members.length ? [{ resourceId: null, staffId: { in: members } }] : [])],
+  };
+  const back = await lookbackMs(db, keys);
   const rows = await (db as PrismaService).appointment.findMany({
     where: {
-      workspaceId,
+      ...keys,
       status: { in: [...OPEN_STATUSES] },
-      startAt: { gte: new Date(from.getTime() - LOOKBACK_MS), lt: to },
-      ...(excludeId ? { id: { not: excludeId } } : {}),
-      OR: [{ resourceId: { in: ids } }, ...(members.length ? [{ resourceId: null, staffId: { in: members } }] : [])],
+      startAt: { gte: new Date(from.getTime() - back), lt: to },
     },
     select: { id: true, startAt: true, durationMin: true, status: true, resourceId: true, staffId: true },
     orderBy: { startAt: "asc" },
@@ -112,7 +133,15 @@ export class BookingsService {
 
     const service = await this.prisma.service.findFirst({ where: { id: q.serviceId, workspaceId } });
     if (!service) throw bookingError("bookings.service_not_found");
-    const base: AvailabilityDto = { date: q.date, tz, serviceId: service.id, durationMin: service.durationMin, slots: [], unconfigured: [] };
+    const base: AvailabilityDto = {
+      date: q.date,
+      tz,
+      serviceId: service.id,
+      durationMin: service.durationMin,
+      slots: [],
+      unconfigured: [],
+      truncated: false,
+    };
 
     let resources: { id: string; userId: string | null; schedule: Prisma.JsonValue; active: boolean; archivedAt: Date | null }[];
     if (q.resourceId) {
@@ -137,7 +166,7 @@ export class BookingsService {
 
     const { start, end } = localDayRange(q.date, tz);
     const busy = await blockingBookings(this.prisma, workspaceId, resources, start, end);
-    const { slots, unconfigured } = generateSlots({
+    const { slots, unconfigured, truncated } = generateSlots({
       dateISO: q.date,
       tz,
       durationMin: service.durationMin,
@@ -152,6 +181,7 @@ export class BookingsService {
       ...base,
       slots: slots.map((s) => ({ startAt: isoWithOffset(s.startAt, tz), resourceId: s.resourceId })),
       unconfigured,
+      truncated,
     };
   }
 
@@ -174,19 +204,31 @@ export class BookingsService {
   /**
    * `GET /appointments/search?q`: ≤ 10 bookings whose contact name (Arabic
    * normalized), phone digits or service name (either language) match.
-   * Scans the SEARCH_SCAN bookings nearest the present (newest first).
+   * Scans the bookings nearest the present: up to SEARCH_SCAN_EACH_SIDE
+   * starting from now on and as many before now; results are ordered by
+   * distance from now.
    */
   async search(workspaceId: string, qIn: string | undefined, now: Date = new Date()): Promise<{ items: BookingSearchItem[] }> {
     const q = (qIn ?? "").trim();
     if (q.length < 2) return { items: [] };
     const needle = normalizeName(q);
     const digits = q.replace(/\D/g, "");
-    const rows = await this.prisma.appointment.findMany({
-      where: { workspaceId },
-      orderBy: { startAt: "desc" },
-      take: SEARCH_SCAN,
-      include: { contact: { select: { id: true, name: true, phone: true } } },
-    });
+    const include = { contact: { select: { id: true, name: true, phone: true } } } as const;
+    const [ahead, behind] = await Promise.all([
+      this.prisma.appointment.findMany({
+        where: { workspaceId, startAt: { gte: now } },
+        orderBy: { startAt: "asc" },
+        take: SEARCH_SCAN_EACH_SIDE,
+        include,
+      }),
+      this.prisma.appointment.findMany({
+        where: { workspaceId, startAt: { lt: now } },
+        orderBy: { startAt: "desc" },
+        take: SEARCH_SCAN_EACH_SIDE,
+        include,
+      }),
+    ]);
+    const rows = [...ahead, ...behind];
     const hit = rows.filter((r) => {
       const c = (r as unknown as { contact?: { name?: string | null; phone?: string | null } }).contact;
       if (needle && [c?.name, r.service, r.serviceAr].some((n) => normalizeName(n).includes(needle))) return true;
@@ -232,44 +274,73 @@ export class BookingsService {
       a.resourceId ? byId.get(a.resourceId)?.userId ?? null : a.staffId ?? null;
 
     const open = rows.filter((r) => isOpenStatus(r.status));
-    let candidates: Pick<Appointment, "id" | "startAt" | "durationMin" | "status" | "resourceId" | "staffId">[] = [];
+    let candidates: Keyed[] = [];
     if (open.length) {
       if (opts.complete) {
-        candidates = rows.filter((r) => isOpenStatus(r.status));
+        candidates = open;
       } else {
         const resIds = [...new Set(open.map(resourceOf).filter((x): x is string => !!x))];
         const members = [...new Set(open.map(memberOf).filter((x): x is string => !!x))];
         if (resIds.length || members.length) {
-          const min = Math.min(...open.map((r) => r.startAt.getTime()));
-          const max = Math.max(...open.map((r) => intervalOf(r).end));
-          candidates = await this.prisma.appointment.findMany({
-            where: {
-              workspaceId,
-              status: { in: [...OPEN_STATUSES] },
-              startAt: { gte: new Date(min - LOOKBACK_MS), lt: new Date(max) },
-              OR: [
-                ...(resIds.length ? [{ resourceId: { in: resIds } }] : []),
-                ...(members.length ? [{ staffId: { in: members } }] : []),
-              ],
-            },
+          const keys: Prisma.AppointmentWhereInput = {
+            workspaceId,
+            OR: [
+              ...(resIds.length ? [{ resourceId: { in: resIds } }] : []),
+              ...(members.length ? [{ staffId: { in: members } }] : []),
+            ],
+          };
+          const back = await lookbackMs(this.prisma, keys);
+          let min = Infinity;
+          let max = -Infinity;
+          for (const r of open) {
+            min = Math.min(min, r.startAt.getTime());
+            max = Math.max(max, intervalOf(r).end);
+          }
+          const found = await this.prisma.appointment.findMany({
+            where: { ...keys, status: { in: [...OPEN_STATUSES] }, startAt: { gte: new Date(min - back), lt: new Date(max) } },
             select: { id: true, startAt: true, durationMin: true, status: true, resourceId: true, staffId: true },
           });
+          const seen = new Set(found.map((c) => c.id));
+          candidates = [...found, ...open.filter((r) => !seen.has(r.id))];
         }
       }
     }
-    const shares = (a: Pick<Appointment, "resourceId" | "staffId">, b: Pick<Appointment, "resourceId" | "staffId">) => {
-      const ra = resourceOf(a);
-      const ma = memberOf(a);
-      return (!!ra && ra === resourceOf(b)) || (!!ma && ma === memberOf(b));
+
+    // Review I1: bucket the open candidates by resource and by member, sort
+    // each bucket by start, and sweep, so the whole-history list is
+    // O(n log n). A row conflicts when it overlaps another row of a bucket it
+    // is in: in start order, that is "starts before the latest end so far"
+    // or "ends after the next start".
+    const conflicted = new Set<string>();
+    const buckets = new Map<string, { id: string; start: number; end: number }[]>();
+    const add = (key: string, c: Keyed) => {
+      const list = buckets.get(key) ?? [];
+      list.push({ id: c.id, ...intervalOf(c) });
+      buckets.set(key, list);
     };
+    for (const c of candidates) {
+      const r = resourceOf(c);
+      const m = memberOf(c);
+      if (r) add(`r:${r}`, c);
+      if (m) add(`m:${m}`, c);
+    }
+    for (const list of buckets.values()) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => a.start - b.start || a.end - b.end);
+      let maxEnd = -Infinity;
+      for (let i = 0; i < list.length; i++) {
+        const cur = list[i];
+        const next = list[i + 1];
+        if (cur.start < maxEnd || (next && next.start < cur.end)) conflicted.add(cur.id);
+        maxEnd = Math.max(maxEnd, cur.end);
+      }
+    }
 
     return rows.map((r) => {
       let fit: Fit = "unchecked";
       const res = r.resourceId ? byId.get(r.resourceId) : undefined;
       if (res) fit = scheduleFitAt(readSchedule(res.schedule), r.startAt, r.durationMin, tz).kind;
-      const conflict =
-        isOpenStatus(r.status) &&
-        candidates.some((c) => c.id !== r.id && shares(r, c) && overlaps(intervalOf(r), intervalOf(c)));
+      const conflict = isOpenStatus(r.status) && conflicted.has(r.id);
       return { ...r, conflict, fit };
     });
   }

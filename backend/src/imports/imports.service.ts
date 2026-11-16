@@ -16,6 +16,8 @@ import {
 } from "./import-rows";
 
 const SAMPLE_ROWS = 20;
+/** SP-10 ruling 1: the import history lists only these kinds (catalog imports live in CatalogImport). */
+export const LISTED_IMPORT_KINDS = ["contacts", "audience"] as const;
 const MIME_BY_EXT: Record<string, string> = {
   csv: "text/csv",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -204,7 +206,8 @@ export class ImportsService {
   async list(workspaceId: string, limit = 10) {
     const take = Math.min(Math.max(Number.isFinite(limit) ? limit : 10, 1), 50);
     const rows = await this.prisma.importJob.findMany({
-      where: { workspaceId },
+      // SP-10 ruling 1: the history lists only this module's kinds.
+      where: { workspaceId, kind: { in: [...LISTED_IMPORT_KINDS] } },
       orderBy: { createdAt: "desc" },
       take,
     });

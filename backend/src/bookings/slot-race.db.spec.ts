@@ -15,10 +15,26 @@ run("slot-race.db.spec.ts (Postgres)", () => {
   const tag = `slotrace_${Date.now()}`;
   let one: PrismaClient;
   let two: PrismaClient;
-  /** Exposes a PrismaClient as the delegates AppointmentsService reads. */
+  /** When each writer's transaction ran (review I4: prove the two overlapped). */
+  const spans: { enter: number; exit: number }[] = [];
+  /** Exposes a PrismaClient as the delegates AppointmentsService reads, timing its transactions. */
   const asService = (c: PrismaClient): any =>
     new Proxy(c, {
-      get: (t: any, k) => (k === "raw" ? t : typeof t[k] === "function" ? t[k].bind(t) : t[k]),
+      get: (t: any, k) => {
+        if (k === "raw") return t;
+        if (k === "$transaction") {
+          return async (fn: any) => {
+            const span = { enter: Date.now(), exit: 0 };
+            spans.push(span);
+            try {
+              return await t.$transaction(fn);
+            } finally {
+              span.exit = Date.now();
+            }
+          };
+        }
+        return typeof t[k] === "function" ? t[k].bind(t) : t[k];
+      },
     });
 
   beforeAll(async () => {
@@ -26,7 +42,8 @@ run("slot-race.db.spec.ts (Postgres)", () => {
     two = new PrismaClient({ datasources: { db: { url: URL } } });
     await one.workspace.create({ data: { id: tag, name: tag, slug: tag, timezone: "Asia/Riyadh" } });
     await one.contact.create({
-      data: { id: `${tag}_c`, workspaceId: tag, name: "Race", industry: "test", lifecycle: "lead", source: "test" } as any,
+      // Every required Contact field (lastSeen has no default; review I4).
+      data: { id: `${tag}_c`, workspaceId: tag, name: "Race", industry: "test", lifecycle: "lead", source: "test", lastSeen: "now" },
     });
     await one.service.create({ data: { id: `${tag}_s`, workspaceId: tag, name: "Cut", nameAr: "قص", durationMin: 60 } });
     await one.staffResource.create({
@@ -62,5 +79,9 @@ run("slot-race.db.spec.ts (Postgres)", () => {
     const lost = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
     expect(lost.reason.getResponse()).toMatchObject({ statusCode: 409, message: "SLOT_TAKEN" });
     expect(await one.appointment.count({ where: { workspaceId: tag, resourceId: `${tag}_r` } })).toBe(1);
+    // Both writers were inside a transaction at the same time (not a serial run).
+    expect(spans).toHaveLength(2);
+    expect(spans[0].enter).toBeLessThan(spans[1].exit);
+    expect(spans[1].enter).toBeLessThan(spans[0].exit);
   });
 });

@@ -308,6 +308,14 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // SP-10: booking search typeahead (declared before :id) and availability.
   "GET /appointments/search": "bookings.view",
   "GET /bookings/availability": "bookings.view",
+  // SP-10: catalog import (ruling 12: bookings.manage; the template download is a read).
+  "POST /catalog-imports": "bookings.manage",
+  "GET /catalog-imports": "bookings.manage",
+  "GET /catalog-imports/templates/:kind": "bookings.view",
+  "GET /catalog-imports/:id": "bookings.manage",
+  "PATCH /catalog-imports/:id/items": "bookings.manage",
+  "POST /catalog-imports/:id/run": "bookings.manage",
+  "POST /catalog-imports/:id/cancel": "bookings.manage",
   "GET /appointments/:id": "bookings.view",
   "POST /appointments": "bookings.create",
   "PATCH /appointments/:id": "bookings.update",

@@ -253,6 +253,26 @@ describe("permission map", () => {
     expect(at("GET /appointments/search")).toBeLessThan(at("GET /appointments/:id"));
   });
 
+  it("permission map covers SP-10 routes (import part)", () => {
+    const sp10: Record<string, string> = {
+      "POST /catalog-imports": "bookings.manage",
+      "GET /catalog-imports": "bookings.manage",
+      "GET /catalog-imports/templates/:kind": "bookings.view",
+      "GET /catalog-imports/:id": "bookings.manage",
+      "PATCH /catalog-imports/:id/items": "bookings.manage",
+      "POST /catalog-imports/:id/run": "bookings.manage",
+      "POST /catalog-imports/:id/cancel": "bookings.manage",
+    };
+    for (const [k, p] of Object.entries(sp10)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    expect(keys.filter((k) => k.includes("/catalog-imports")).sort()).toEqual(Object.keys(sp10).sort());
+    // Route order: templates/:kind before :id.
+    const imp = routes.filter((r) => r.key.startsWith("GET /catalog-imports/"));
+    const at = (k: string) => imp.findIndex((r) => r.key === k);
+    expect(at("GET /catalog-imports/templates/:kind")).toBeLessThan(at("GET /catalog-imports/:id"));
+  });
+
   it("permission map covers SP-10 routes (catalog part)", () => {
     const sp10: Record<string, string> = {
       "GET /services": "bookings.view",
