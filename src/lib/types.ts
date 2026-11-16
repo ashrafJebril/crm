@@ -1598,6 +1598,8 @@ export interface SupportInsights {
   byNumber: Section<ByNumberRow[]>;
   topicFriction: Section<TopicFrictionRow[]>;
   team: Section<TeamRow[]>;
+  /** Workspace-local day of the first staff reply with a sender; null = none yet (or unavailable). */
+  attributionSince: string | null;
 }
 
 export type SpeedBucket = "lt_5m" | "5_15m" | "15_60m" | "1_4h" | "4_24h" | "gt_24h" | "not_replied";

@@ -4,7 +4,7 @@ import { parseRange } from "./insights-range";
 
 /** Structural checks on every support builder (the DB spec runs them for real). */
 const range = parseRange("2026-11-01", "2026-11-07", "Asia/Riyadh", new Date("2026-11-10T09:00:00Z"));
-const builders = Object.entries(sql).filter(([name]) => name.endsWith("Sql") && !["utcTimestampSql", "inRangeSql", "teamMembersSql", "medianSecondsSql"].includes(name)) as [
+const builders = Object.entries(sql).filter(([name]) => name.endsWith("Sql") && !["utcTimestampSql", "inRangeSql", "teamMembersSql", "medianSecondsSql", "attributionSinceSql"].includes(name)) as [
   string,
   (ws: string, r: typeof range, scope: object, opts: { channelId: string | null }) => Prisma.Sql,
 ][];
@@ -58,5 +58,15 @@ describe("support metric SQL builders", () => {
     expect(text).toContain(`FILTER (WHERE x."humanAt" IS NOT NULL)`);
     expect(text).toContain(`n."from" = 'human'`);
     expect(text).toContain(`FILTER (WHERE x."replyFrom" IS NULL)`);
+  });
+
+  it("the attribution date is one workspace-bound aggregate as a local day", () => {
+    const s = sql.attributionSinceSql("ws1", "Asia/Riyadh");
+    const text = s.strings.join("?");
+    expect(s.strings[0]).toMatch(/^\/\* insights:support\.attributionSince \*\//);
+    expect(text).toContain(`MIN(m."createdAt")`);
+    expect(text).toContain(`m."sentById" IS NOT NULL`);
+    expect(text).toContain("'YYYY-MM-DD'");
+    expect(s.values).toEqual(expect.arrayContaining(["ws1", "Asia/Riyadh"]));
   });
 });

@@ -4,10 +4,8 @@ import { makeTx } from "@/lib/tx";
 import backendErrors from "../../../backend/src/insights/insights-errors.ts?raw";
 import backendConstants from "../../../backend/src/insights/insights-constants.ts?raw";
 import backendFormat from "../../../backend/src/insights/insights-format.ts?raw";
-import insightsMigration from "../../../backend/prisma/migrations/20261116140000_insights_home/migration.sql?raw";
 import { decodeJson, getHashParam } from "@/lib/hashState";
 import {
-  ATTRIBUTION_SINCE,
   DASH,
   NO_DATA,
   adHref,
@@ -22,6 +20,8 @@ import {
   memberLabel,
   numberLabel,
   peaksScale,
+  salesAllForbidden,
+  SALES_NO_ACCESS,
   pipelineName,
   sectionView,
   sourceLabel,
@@ -176,29 +176,40 @@ describe("server labels are translated", () => {
   });
 });
 
-describe("peaks follow the language's week start (row 0 = Sunday)", () => {
-  it("Arabic starts on Sunday, English on Monday; intensities 0..1", () => {
+describe("peaks follow the workspace's week start (row 0 = Sunday)", () => {
+  it("an Arabic workspace starts on Sunday, others on Monday; intensities 0..1", () => {
     const matrix = Array.from({ length: 7 }, (_, d) => Array.from({ length: 24 }, (_, h) => (d === 0 && h === 10 ? 4 : d === 1 && h === 9 ? 2 : 0)));
-    const ar = peaksScale(matrix, "ar");
+    const ar = peaksScale(matrix, "ar", "ar");
     expect(ar.rows.map((r) => r.dow)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(ar.rows[0].label).toBe("الأحد");
-    const en = peaksScale(matrix, "en");
+    const en = peaksScale(matrix, "en", "en");
     expect(en.rows.map((r) => r.dow)).toEqual([1, 2, 3, 4, 5, 6, 0]);
     expect(en.rows[6].cells[10]).toEqual({ hour: 10, count: 4, intensity: 1 });
     expect(en.rows[0].cells[9].intensity).toBe(0.5);
     expect(en.max).toBe(4);
     expect(en.total).toBe(6);
-    expect(peaksScale(Array.from({ length: 7 }, () => new Array(24).fill(0)), "en").rows[0].cells[0].intensity).toBe(0);
+    expect(peaksScale(Array.from({ length: 7 }, () => new Array(24).fill(0)), "en", "en").rows[0].cells[0].intensity).toBe(0);
+  });
+
+  it("the week start follows the workspace language, not the UI language (R10)", () => {
+    const matrix = Array.from({ length: 7 }, () => new Array(24).fill(0));
+    // An English UI in an Arabic workspace: Sunday first, English day names.
+    const enInAr = peaksScale(matrix, "en", "ar");
+    expect(enInAr.rows.map((r) => r.dow)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(enInAr.rows[0].label).toBe("Sun");
+    // An Arabic UI in an English workspace: Monday first, Arabic day names.
+    const arInEn = peaksScale(matrix, "ar", "en");
+    expect(arInEn.rows.map((r) => r.dow)).toEqual([1, 2, 3, 4, 5, 6, 0]);
+    expect(arInEn.rows[0].label).toBe("الاثنين");
   });
 });
 
 describe("team attribution and links", () => {
-  it("attribution starts with the sentById migration; days use Latin digits", () => {
-    expect(insightsMigration).toContain('"sentById"');
-    expect(formatDay(ATTRIBUTION_SINCE, "en")).toBe("16 Nov 2026");
-    expect(formatDay(ATTRIBUTION_SINCE, "ar")).toMatch(ARABIC);
-    expect(formatDay(ATTRIBUTION_SINCE, "ar")).toContain("16");
-    expect(formatDay(ATTRIBUTION_SINCE, "ar")).not.toMatch(ARABIC_DIGITS);
+  it("the attribution day (from the server) formats with Latin digits", () => {
+    expect(formatDay("2026-10-20", "en")).toBe("20 Oct 2026");
+    expect(formatDay("2026-10-20", "ar")).toMatch(ARABIC);
+    expect(formatDay("2026-10-20", "ar")).toContain("20");
+    expect(formatDay("2026-10-20", "ar")).not.toMatch(ARABIC_DIGITS);
   });
 
   it("follow-ups link opens the member's team follow-ups; ad link opens the ad", () => {
@@ -207,5 +218,30 @@ describe("team attribution and links", () => {
     expect(decodeJson(getHashParam(href, "fu"))).toEqual({ scope: "team", assigneeId: "u1", kind: "", pipelineId: "" });
     expect(adHref("ad 1")).toBe("#/ads?ad=ad+1");
     expect(getHashParam(adHref("ad 1"), "ad")).toBe("ad 1");
+  });
+});
+
+describe("sales tab without ticket access shows a notice when every section is forbidden", () => {
+  const forbidden = { status: "forbidden" } as const;
+  const all = {
+    headline: forbidden,
+    distribution: forbidden,
+    weekly: forbidden,
+    sources: forbidden,
+    funnel: forbidden,
+    lostReasons: forbidden,
+    reps: forbidden,
+  };
+
+  it("all forbidden → notice; any other state → the sections render", () => {
+    expect(salesAllForbidden(all)).toBe(true);
+    expect(salesAllForbidden({ ...all, reps: { status: "unavailable" } })).toBe(false);
+    expect(salesAllForbidden({ ...all, weekly: { status: "ok", data: [] } })).toBe(false);
+  });
+
+  it("the notice is bilingual", () => {
+    expect(SALES_NO_ACCESS).toEqual(["You don't have access to sales data", "ليست لديك صلاحية الوصول إلى بيانات المبيعات"]);
+    expect(makeTx("ar")(...SALES_NO_ACCESS)).toMatch(ARABIC);
+    expect(makeTx("en")(...SALES_NO_ACCESS)).not.toMatch(ARABIC);
   });
 });

@@ -60,6 +60,8 @@ export interface SupportData {
   byNumber: ByNumberRow[];
   topicFriction: TopicFrictionRow[];
   team: TeamRow[];
+  /** Local day of the workspace's first staff reply with a sender, or null. */
+  attributionSince: string | null;
 }
 
 type Bucket = "closed" | "escalated" | "ai" | "human";
@@ -251,7 +253,12 @@ export function supportOracle(world: InsightsWorld, opts: OracleOpts): SupportDa
     totals,
   );
 
-  return { headline, resolutionMix, peaks: peaksFrom(peakRows), byNumber, topicFriction, team };
+  // Workspace-wide (not scoped, not filtered by number or range).
+  let first: Date | null = null;
+  for (const m of world.messages) if (m.sentById && (!first || m.createdAt.getTime() < first.getTime())) first = m.createdAt;
+  const attributionSince = first ? localDate(first, range.tz) : null;
+
+  return { headline, resolutionMix, peaks: peaksFrom(peakRows), byNumber, topicFriction, team, attributionSince };
 }
 
 // ── Sales (SP-11 Task 2) ────────────────────────────────────────────────

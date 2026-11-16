@@ -59,6 +59,7 @@ const OWNER_ROWS: Record<string, unknown[]> = {
     { key: FORMER_KEY, assigned: 1, replies: 1, resolved: 0, median: 1200 },
     { key: UNATTRIBUTED_KEY, assigned: 0, replies: 1, resolved: 0, median: 120 },
   ],
+  attributionSince: [{ since: "2026-10-20" }],
 };
 
 function build(opts: { rows?: Record<string, unknown[]>; fail?: Record<string, unknown>; channels?: any[] } = {}) {
@@ -112,15 +113,29 @@ describe("InsightsService.support", () => {
     expect(res.byNumber).toEqual({ status: "ok", data: OWNER.byNumber });
     expect(res.topicFriction).toEqual({ status: "ok", data: OWNER.topicFriction });
     expect(res.team).toEqual({ status: "ok", data: OWNER.team });
+    expect(res.attributionSince).toBe(OWNER.attributionSince);
+  });
+
+  it("attribution date: null when no reply has a sender or when its lookup fails", async () => {
+    const none = build({ rows: { ...OWNER_ROWS, attributionSince: [{ since: null }] } });
+    expect((await none.svc.support("ws1", Q, { userId: U.owner }, NOW)).attributionSince).toBeNull();
+    const failed = build({ fail: { attributionSince: new Error("boom") } });
+    const res = await failed.svc.support("ws1", Q, { userId: U.owner }, NOW);
+    expect(res.attributionSince).toBeNull();
+    expect(res.team).toEqual({ status: "ok", data: OWNER.team });
+    // One aggregate in its own one-statement transaction, bound to the workspace.
+    const sql = failed.queried.find((q) => tagOf(q) === "attributionSince")!;
+    expect(sql.strings.join("?")).toContain(`"sentById" IS NOT NULL`);
+    expect(sql.values).toContain("ws1");
   });
 
   it("every section runs in its own transaction with statement_timeout and jit off", async () => {
     const { svc, prisma, executed } = build();
     await svc.support("ws1", Q, { userId: U.owner }, NOW);
-    // Six headline statements, four sections, Team.
-    expect(prisma.$transaction).toHaveBeenCalledTimes(11);
-    expect(executed.filter((q) => q === "SET LOCAL statement_timeout = '8s'")).toHaveLength(11);
-    expect(executed.filter((q) => q === "SET LOCAL jit = off")).toHaveLength(11);
+    // Six headline statements, four sections, Team, the attribution date.
+    expect(prisma.$transaction).toHaveBeenCalledTimes(12);
+    expect(executed.filter((q) => q === "SET LOCAL statement_timeout = '8s'")).toHaveLength(12);
+    expect(executed.filter((q) => q === "SET LOCAL jit = off")).toHaveLength(12);
   });
 
   it("each transaction's budget covers statement_timeout for every statement it runs", async () => {
@@ -140,7 +155,7 @@ describe("InsightsService.support", () => {
     });
     await svc.support("ws1", Q, { userId: U.owner }, NOW);
     const calls = prisma.$transaction.mock.calls as unknown as [unknown, { timeout: number; maxWait: number }][];
-    expect(calls).toHaveLength(11);
+    expect(calls).toHaveLength(12);
     calls.forEach((call, i) => {
       expect({ i, ok: call[1].timeout > SECTION_STATEMENT_TIMEOUT_MS * perCall[i] }).toEqual({ i, ok: true });
     });
@@ -172,7 +187,7 @@ describe("InsightsService.support", () => {
       svc.support("ws1", Q, { userId: U.owner }, NOW),
       svc.support("ws1", Q, { userId: U.owner }, NOW),
     ]);
-    expect(started).toBe(22);
+    expect(started).toBe(24);
     expect(peak).toBe(2);
     expect(a.headline).toEqual({ status: "ok", data: OWNER.headline });
     expect(b.team).toEqual({ status: "ok", data: OWNER.team });
@@ -216,7 +231,7 @@ describe("InsightsService.support", () => {
     await expect(sectionLimiter(async () => "ran")).resolves.toBe("ran");
     const { svc, prisma } = build();
     const res = await svc.support("ws1", Q, { userId: U.owner }, NOW, new AbortController().signal);
-    expect(prisma.$transaction).toHaveBeenCalledTimes(11);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(12);
     expect(res.headline).toEqual({ status: "ok", data: OWNER.headline });
     expect(new SectionQueueTimeout(5).message).toBe("waited 5 ms for a section slot");
   });
@@ -285,7 +300,7 @@ describe("InsightsService.support", () => {
     const ok = build();
     const res = await ok.svc.support("ws1", { ...Q, channelId: CH.a }, undefined, NOW);
     expect(res.channelId).toBe(CH.a);
-    for (const sql of ok.queried.filter((s) => tagOf(s) !== "teamMembers")) {
+    for (const sql of ok.queried.filter((s) => !["teamMembers", "attributionSince"].includes(tagOf(s)))) {
       expect({ tag: tagOf(sql), narrowed: sql.strings.join("?").includes('c."channelId" = ?') && sql.values.includes(CH.a) }).toEqual({
         tag: tagOf(sql),
         narrowed: true,

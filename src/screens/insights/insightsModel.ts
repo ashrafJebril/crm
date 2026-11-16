@@ -6,7 +6,7 @@
  */
 import { encodeJson, setHashParam } from "@/lib/hashState";
 import type { Lang } from "@/lib/types";
-import type { ByNumberRow, SalesPipelineRef, Section, SpeedBucket, TeamRow } from "./insightsTypes";
+import type { ByNumberRow, SalesInsights, SalesPipelineRef, Section, SpeedBucket, TeamRow } from "./insightsTypes";
 
 export const DASH = "—";
 export const NO_DATA: [en: string, ar: string] = ["No data yet", "لا توجد بيانات بعد"];
@@ -65,8 +65,12 @@ export const UNAVAILABLE_COPY: [en: string, ar: string] = [
 
 // ── peaks (7 × 24, row 0 = Sunday) ──────────────────────────────────────
 
-/** First day of the week (0 = Sunday): Sunday in Arabic, Monday in English (backend weekStartsOn). */
-export const weekStartsOn = (lang: Lang): 0 | 1 => (lang === "ar" ? 0 : 1);
+/**
+ * First day of the week (0 = Sunday) from the WORKSPACE language (ruling R10,
+ * the backend's weekStartsOn): Sunday for Arabic workspaces, Monday otherwise.
+ * The same start as the weekly sales buckets, whatever the viewer's UI language.
+ */
+export const weekStartsOn = (workspaceLang: string | null | undefined): 0 | 1 => (workspaceLang === "ar" ? 0 : 1);
 
 const DOW: [en: string, ar: string][] = [
   ["Sun", "الأحد"],
@@ -85,9 +89,16 @@ export interface PeaksRow {
   cells: { hour: number; count: number; intensity: number }[];
 }
 
-/** The matrix in the language's week order with 0..1 intensities (0 when every cell is 0). */
-export function peaksScale(matrix: number[][], lang: Lang): { rows: PeaksRow[]; max: number; total: number } {
-  const start = weekStartsOn(lang);
+/**
+ * The matrix in the workspace's week order (`workspaceLang`), day names in the
+ * viewer's `lang`, with 0..1 intensities (0 when every cell is 0).
+ */
+export function peaksScale(
+  matrix: number[][],
+  lang: Lang,
+  workspaceLang: string | null | undefined,
+): { rows: PeaksRow[]; max: number; total: number } {
+  const start = weekStartsOn(workspaceLang);
   let max = 0;
   let total = 0;
   for (const row of matrix) for (const v of row) {
@@ -190,6 +201,16 @@ export function lostReasonLabel(row: { reasonId: string | null; label: string; l
 /** Stage label of the funnel. */
 export const stageLabel = (row: { label: string; labelAr: string }, lang: Lang) => (lang === "ar" ? row.labelAr || row.label : row.label || row.labelAr);
 
+/**
+ * Every sales section is forbidden (reports.view without tickets.view): the
+ * tab shows a "no access" notice instead of an empty page.
+ */
+export function salesAllForbidden(d: Pick<SalesInsights, "headline" | "distribution" | "weekly" | "sources" | "funnel" | "lostReasons" | "reps">): boolean {
+  return [d.headline, d.distribution, d.weekly, d.sources, d.funnel, d.lostReasons, d.reps].every((s) => s?.status === "forbidden");
+}
+
+export const SALES_NO_ACCESS: [en: string, ar: string] = ["You don't have access to sales data", "ليست لديك صلاحية الوصول إلى بيانات المبيعات"];
+
 /** The pipeline's name, or a neutral word when the viewer only got `{id}` (no tickets.view). */
 export function pipelineName(p: SalesPipelineRef | null | undefined, lang: Lang): string {
   if (!p) return DASH;
@@ -201,12 +222,6 @@ export function pipelineName(p: SalesPipelineRef | null | undefined, lang: Lang)
 export const share = (part: number, whole: number) => (whole > 0 ? part / whole : 0);
 
 // ── dates and links ─────────────────────────────────────────────────────
-
-/**
- * The day staff replies started carrying their sender (`Message.sentById`,
- * migration 20261116140000_insights_home). Older replies count as "Unattributed".
- */
-export const ATTRIBUTION_SINCE = "2026-11-16";
 
 /** A `YYYY-MM-DD` day as "16 Nov 2026" / "16 نوفمبر 2026" (Gregorian, Latin digits). */
 export function formatDay(day: string, lang: Lang): string {

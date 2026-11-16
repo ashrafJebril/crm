@@ -16,6 +16,8 @@ import {
   lostReasonLabel,
   memberLabel,
   pipelineName,
+  SALES_NO_ACCESS,
+  salesAllForbidden,
   share,
   sourceLabel,
   speedBucketLabel,
@@ -82,7 +84,13 @@ export function SalesInsights({
       )}
       {!d && !q.error && <div className="muted" style={{ fontSize: 12.5 }}>{tx("Loading…", "جارٍ التحميل…")}</div>}
 
-      {d && (
+      {d && salesAllForbidden(d) && (
+        <div role="status" className="card" style={{ padding: 18, fontSize: 13, color: "var(--ink-3)" }}>
+          {tx(SALES_NO_ACCESS[0], SALES_NO_ACCESS[1])}
+        </div>
+      )}
+
+      {d && !salesAllForbidden(d) && (
         <>
           <SectionTiles section={d.headline} tx={tx}>
             {(h) => (
@@ -152,7 +160,8 @@ export function SalesInsights({
                     </span>
                   </div>
                   {rows.length > 1 && (
-                    <div aria-hidden style={{ overflowX: "auto" }}>
+                    // `flip-rtl` (the app's RTL mirror): time runs from the start edge, like the labels below.
+                    <div aria-hidden className="flip-rtl" style={{ overflowX: "auto" }}>
                       <AreaChart a={rows.map((r) => r.leads)} b={rows.map((r) => r.won)} w={420} h={140} />
                     </div>
                   )}

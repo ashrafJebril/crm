@@ -334,7 +334,7 @@ function AnalyticsImpl() {
       {tab !== "overview" && (
         <div style={{ padding: "0 24px 24px" }}>
           {tab === "support" ? (
-            <SupportInsights params={params} setParams={setParams} today={today} lang={t.lang} tx={tx} canChannels={can("channels.view")} />
+            <SupportInsights params={params} setParams={setParams} today={today} lang={t.lang} tx={tx} canChannels={can("channels.view")} workspaceLang={activeWorkspace?.lang} />
           ) : (
             <SalesInsights
               params={params}
@@ -343,7 +343,7 @@ function AnalyticsImpl() {
               lang={t.lang}
               tx={tx}
               canReports={canInsights}
-              canPipelines={can("pipelines.view") || can("tickets.view")}
+              canPipelines={can("pipelines.view")}
               canFollowUps={can("contacts.view") || can("tickets.view")}
             />
           )}

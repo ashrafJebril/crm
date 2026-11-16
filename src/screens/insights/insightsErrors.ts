@@ -4,7 +4,7 @@ import type { Tx } from "@/lib/tx";
 
 /**
  * SP-11 copy for the backend's insights error keys
- * (backend/src/insights/insights-errors.ts); pinned by insightsErrors.test.ts.
+ * (backend/src/insights/insights-errors.ts); pinned by insightsModel.test.ts.
  */
 export const INSIGHTS_ERROR_COPY: Record<string, [en: string, ar: string]> = {
   "insights.range_invalid": [

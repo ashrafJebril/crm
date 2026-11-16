@@ -34,6 +34,7 @@ function asExpectation(res: SupportInsights, world: SeededWorld): SupportExpecta
     byNumber: ok(res.byNumber).map((r) => ({ ...r, channelId: world.toLogical(r.channelId) })),
     topicFriction: ok(res.topicFriction),
     team: ok(res.team).map((r) => ({ ...r, userId: world.toLogical(r.userId) })),
+    attributionSince: res.attributionSince,
   };
 }
 

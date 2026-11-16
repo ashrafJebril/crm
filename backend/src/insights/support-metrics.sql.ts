@@ -343,6 +343,18 @@ export function teamSql(ws: string, r: InsightsRange, scope: ConversationScope, 
 }
 
 /** The workspace's current members and their names (team rows). */
+/**
+ * The first staff reply with a sender in the workspace, as a local day:
+ * replies before it count as "Unattributed" (no backfill, ruling 4).
+ * Workspace-wide (not scoped: it is a date, not a figure). One aggregate.
+ */
+export function attributionSinceSql(ws: string, tz: string): Prisma.Sql {
+  return Prisma.sql`/* insights:support.attributionSince */
+    SELECT to_char(${localTimeSql(Prisma.sql`MIN(m."createdAt")`, tz)}, 'YYYY-MM-DD') AS "since"
+    FROM "Message" m
+    WHERE m."workspaceId" = ${ws} AND m."sentById" IS NOT NULL`;
+}
+
 export function teamMembersSql(ws: string): Prisma.Sql {
   return Prisma.sql`/* insights:support.teamMembers */
     SELECT wm."userId", u."name" FROM "WorkspaceMember" wm JOIN "User" u ON u."id" = wm."userId"

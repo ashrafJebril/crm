@@ -103,6 +103,13 @@ export interface SupportInsights {
   byNumber: Section<ByNumberRow[]>;
   topicFriction: Section<TopicFrictionRow[]>;
   team: Section<TeamRow[]>;
+  /**
+   * The workspace-local day (`YYYY-MM-DD`) of the first staff reply that
+   * carries its sender (`Message.sentById`); earlier replies are
+   * "Unattributed". null when no reply has a sender yet, or when the
+   * lookup was unavailable.
+   */
+  attributionSince: string | null;
 }
 
 /** Task 2's shape, declared here so the contract is in one file. */

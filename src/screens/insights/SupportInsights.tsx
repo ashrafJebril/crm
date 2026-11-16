@@ -25,6 +25,7 @@ export function SupportInsights({
   lang,
   tx,
   canChannels,
+  workspaceLang,
 }: {
   params: InsightsParams;
   setParams: (patch: Partial<InsightsParams>) => void;
@@ -32,6 +33,8 @@ export function SupportInsights({
   lang: Lang;
   tx: Tx;
   canChannels: boolean;
+  /** The workspace language: sets the peaks' week start (R10). */
+  workspaceLang: string | null | undefined;
 }) {
   const q = useFetch<SupportDto>(insightsPath("support", params, today));
   const channelsQ = useFetch<ChannelDto[]>(canChannels ? "/channels" : null);
@@ -81,7 +84,7 @@ export function SupportInsights({
       )}
       {!d && !q.error && <div className="muted" style={{ fontSize: 12.5 }}>{tx("Loading…", "جارٍ التحميل…")}</div>}
 
-      {d && params.team && <TeamTable section={d.team} lang={lang} tx={tx} />}
+      {d && params.team && <TeamTable section={d.team} attributionSince={d.attributionSince ?? null} lang={lang} tx={tx} />}
 
       {d && !params.team && (
         <>
@@ -96,7 +99,7 @@ export function SupportInsights({
                   tip={tx("Latest outcome of each conversation", "آخر نتيجة لكل محادثة")}
                 />
                 <InsightStat
-                  label={tx("Median first response", "متوسط أول رد (الوسيط)")}
+                  label={tx("Median first response", "الوسيط لأول رد")}
                   value={formatDuration(h.medianFirstResponseSec, lang)}
                   sub={h.unanswered ? tx(`${formatCount(h.unanswered)} not answered yet`, `${formatCount(h.unanswered)} بلا رد بعد`) : undefined}
                   tip={tx("First reply by a person; replies only the AI sent are left out", "أول رد من شخص؛ لا تُحتسب الردود التي أرسلها الذكاء الاصطناعي وحده")}
@@ -139,7 +142,7 @@ export function SupportInsights({
                           <span style={{ flex: 1 }}>{numberLabel(r, lang)}</span>
                           <span className="mono">{formatCount(r.conversations)}</span>
                           <span className="mono muted" title={tx("AI resolution rate", "نسبة الحل بالذكاء الاصطناعي")}>
-                            {tx("AI", "ذكاء")} {formatRate(r.aiResolutionRate)}
+                            {tx("AI", "الذكاء الاصطناعي")} {formatRate(r.aiResolutionRate)}
                           </span>
                         </div>
                         <ShareBar fraction={share(r.conversations, max)} />
@@ -158,7 +161,7 @@ export function SupportInsights({
             tx={tx}
             empty={(p) => p.byHour.every((v) => v === 0)}
           >
-            {(p) => <PeaksGrid peaks={p} lang={lang} tx={tx} />}
+            {(p) => <PeaksGrid peaks={p} lang={lang} workspaceLang={workspaceLang} tx={tx} />}
           </SectionCard>
 
           <SectionCard
@@ -219,9 +222,9 @@ function MixChart({ mix, tx }: { mix: ResolutionMix; tx: Tx }) {
   );
 }
 
-/** 7 × 24 heat grid in the language's week order, with a screen-reader table. */
-function PeaksGrid({ peaks, lang, tx }: { peaks: Peaks; lang: Lang; tx: Tx }) {
-  const scaled = useMemo(() => peaksScale(peaks.matrix, lang), [peaks.matrix, lang]);
+/** 7 × 24 heat grid in the workspace's week order, with a screen-reader table. */
+function PeaksGrid({ peaks, lang, workspaceLang, tx }: { peaks: Peaks; lang: Lang; workspaceLang: string | null | undefined; tx: Tx }) {
+  const scaled = useMemo(() => peaksScale(peaks.matrix, lang, workspaceLang), [peaks.matrix, lang, workspaceLang]);
   const cell = 18;
   return (
     <div style={{ overflowX: "auto" }}>
