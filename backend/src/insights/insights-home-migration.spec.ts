@@ -8,7 +8,7 @@ const FOLDER = "20261116140000_insights_home";
  *  applied; SP-10's is written and reviewed (unapplied when this was written). */
 const PINNED: Record<string, string> = {
   "20261116120000_support_tickets": "555000f79d7d764bf69429a0bd56b52b4893802e56a5e4cc01da949ef7b6e22c",
-  "20261116130000_bookings_catalog": "f6f8ccf2335b947ea0b06ea71e86bea709f535213b47ecc5596a8aba6938845e",
+  "20261116130000_bookings_catalog": "913dad261ab4f163019f2d3c3c1b8a8bdf98ca08e233bcad489aa373aef08875",
 };
 
 /**
