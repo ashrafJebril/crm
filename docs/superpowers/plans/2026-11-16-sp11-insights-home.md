@@ -232,23 +232,23 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 16. **Size.** The roadmap says L. Five build tasks (three backend, two frontend) plus verification; the metric count makes it a large L. Dropping the Team tab (ruling 4) and the Day-1 home keeps it a firm L. **(needs controller ruling)**
 
 ### Controller rulings
-*Pending.*
-- **R1** (ask box hidden; SP-18 adds it). Recommend: accept.
-- **R2** (`homeSeenAt`, `homeDay1DismissedAt` on `WorkspaceMember`). Recommend: accept.
-- **R3** (latest-verdict semantics; 7-day lookback for AI-only). Recommend: accept; outcome history as a follow-up.
-- **R4** (`Message.sentById`, no FK, no index, no backfill). Recommend: accept.
-- **R5** (staff-only medians; `replied` counts AI). Recommend: accept.
-- **R6** (campaign replies count as exchanges). Recommend: accept.
-- **R7** (all reps visible to `reports.view`). Recommend: accept.
-- **R8** (hub by permission only; `enabledModules` untouched). Recommend: accept.
-- **R9** (live SQL, no cache, no deltas; index only as a measured follow-up). Recommend: accept.
-- **R10** (week start Sunday for Arabic, Monday for English). Recommend: accept.
-- **R11** (build after SP-09/SP-10; schema-checked fallbacks otherwise). Recommend: accept.
-- **R12** (shared world, TS oracle always, DB specs on a disposable/throwaway database). Recommend: accept.
-- **R13** (home on the `dashboard` route; Analytics tabs). Recommend: accept.
-- **R14** (base on the SP-10 ship commit; Task 1 owns the schema). Recommend: accept.
-- **R15** (production verification; migration and seed each need explicit approval). Recommend: accept.
-- **R16** (size L, 5 build tasks + verification). Recommend: accept.
+*Decided 2026-11-16: every recommendation below is accepted, except that R11/R14 are amended: Task 1 (schema, sender recording, shared helpers, support insights) starts now from 3f2f41d, because it does not depend on SP-10. Tasks 2–5 wait for SP-10 to be merged. Migration 20261116140000_insights_home and the timing seed each need explicit user approval.*
+- **R1** (ask box hidden; SP-18 adds it). Accepted.
+- **R2** (`homeSeenAt`, `homeDay1DismissedAt` on `WorkspaceMember`). Accepted.
+- **R3** (latest-verdict semantics; 7-day lookback for AI-only). Accepted; outcome history as a follow-up.
+- **R4** (`Message.sentById`, no FK, no index, no backfill). Accepted.
+- **R5** (staff-only medians; `replied` counts AI). Accepted.
+- **R6** (campaign replies count as exchanges). Accepted.
+- **R7** (all reps visible to `reports.view`). Accepted.
+- **R8** (hub by permission only; `enabledModules` untouched). Accepted.
+- **R9** (live SQL, no cache, no deltas; index only as a measured follow-up). Accepted.
+- **R10** (week start Sunday for Arabic, Monday for English). Accepted.
+- **R11** (build after SP-09/SP-10; schema-checked fallbacks otherwise). Accepted.
+- **R12** (shared world, TS oracle always, DB specs on a disposable/throwaway database). Accepted.
+- **R13** (home on the `dashboard` route; Analytics tabs). Accepted.
+- **R14** (base on the SP-10 ship commit; Task 1 owns the schema). Accepted.
+- **R15** (production verification; migration and seed each need explicit approval). Accepted.
+- **R16** (size L, 5 build tasks + verification). Accepted.
 
 ---
 
