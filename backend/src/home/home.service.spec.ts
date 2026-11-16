@@ -25,7 +25,7 @@ const ALL = [
   "channels.create",
   "knowledge.create",
   "members.create",
-  "pipelines.update",
+  "pipelines.manage",
 ];
 
 const SCHEMA_ROWS = [

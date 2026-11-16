@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type MouseEvent, type ReactNode } from "react";
 import { api } from "@/api/client";
 import { Badge } from "@/components/Badge";
 import { Skeleton } from "@/components/Skeleton";
@@ -14,6 +14,8 @@ import type {
   WaitingConversationRow,
 } from "@/lib/homeTypes";
 import { recordHref } from "@/lib/recordLink";
+import { openRecord } from "@/lib/openRecord";
+import { scheduleSeen } from "./seenTimer";
 import type { Tx } from "@/lib/tx";
 import type { Lang } from "@/lib/types";
 import { followUpHref, homeView, sectionView, waitingSinceWords } from "./homeModel";
@@ -38,7 +40,21 @@ function Empty({ children }: { children: ReactNode }) {
   return <div style={{ fontSize: 12, color: "var(--ink-3)", padding: "8px 0" }}>{children}</div>;
 }
 
-function RowLink({ href, title, meta, badge }: { href: string | null; title: ReactNode; meta?: ReactNode; badge?: ReactNode }) {
+/** A record row. `href` serves middle-click/copy; a plain click opens the
+ *  record against the hash as it is at click time (not at render). */
+function RowLink({
+  href,
+  open,
+  title,
+  meta,
+  badge,
+}: {
+  href: string | null;
+  open?: { kind: string; id: string } | null;
+  title: ReactNode;
+  meta?: ReactNode;
+  badge?: ReactNode;
+}) {
   const body = (
     <>
       <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
@@ -47,8 +63,13 @@ function RowLink({ href, title, meta, badge }: { href: string | null; title: Rea
     </>
   );
   const style = { display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBlockEnd: "1px solid var(--line)", color: "inherit", textDecoration: "none" } as const;
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!open || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    openRecord(open.kind, open.id);
+  };
   return href ? (
-    <a href={href} style={style}>
+    <a href={href} style={style} onClick={onClick}>
       {body}
     </a>
   ) : (
@@ -93,15 +114,19 @@ interface Props {
 /** SP-11 working home: needs a person, today / tomorrow, while you were away. */
 export function WorkingHome({ home, loading, tx, lang }: Props) {
   // Mark the home seen once it has been on screen for 3 s.
+  // A tab hidden at the 3 s mark re-arms when it becomes visible; at most once.
   const sent = useRef(false);
   useEffect(() => {
     if (!home || sent.current) return;
-    const id = window.setTimeout(() => {
-      if (document.visibilityState === "hidden") return;
-      sent.current = true;
-      void api.post("/home/seen").catch(() => undefined);
-    }, HOME_SEEN_AFTER_MS);
-    return () => window.clearTimeout(id);
+    return scheduleSeen(
+      document,
+      HOME_SEEN_AFTER_MS,
+      () => sent.current,
+      () => {
+        sent.current = true;
+        void api.post("/home/seen").catch(() => undefined);
+      },
+    );
   }, [home]);
 
   if (loading && !home) {
@@ -123,18 +148,24 @@ export function WorkingHome({ home, loading, tx, lang }: Props) {
     <RowLink
       key={r.id}
       href={recordHref("conversation", r.id, here())}
+      open={{ kind: "conversation", id: r.id }}
       title={<bdi>{r.contactName || tx("Unknown contact", "جهة اتصال غير معروفة")}</bdi>}
       badge={r.escalated ? <Badge kind="bad">{tx("Escalated", "مصعّدة")}</Badge> : r.assigneeId === null ? <Badge>{tx("Unassigned", "غير مُسندة")}</Badge> : undefined}
       meta={<bdi>{waitingSinceWords(r.waitingSince, now, lang)}</bdi>}
     />
   );
   const followRow = (r: HomeFollowUpRow, withDay: boolean) => (
-    <RowLink key={r.id} href={followUpHref(r, here())} title={<bdi>{r.title}</bdi>} meta={<bdi>{withDay ? dayTime(r.dueAt, tz, lang) : time(r.dueAt, tz, lang)}</bdi>} />
+    <RowLink
+      key={r.id}
+      href={followUpHref(r, here())}
+      open={r.ticketId ? { kind: "ticket", id: r.ticketId } : r.contactId ? { kind: "contact", id: r.contactId } : null}
+      title={<bdi>{r.title}</bdi>} meta={<bdi>{withDay ? dayTime(r.dueAt, tz, lang) : time(r.dueAt, tz, lang)}</bdi>} />
   );
   const ticketRow = (r: HomeTicketRow, sla: boolean) => (
     <RowLink
       key={r.id}
       href={recordHref("ticket", r.id, here())}
+      open={{ kind: "ticket", id: r.id }}
       title={
         <>
           <bdi>#{r.number}</bdi> <bdi>{r.title}</bdi>
@@ -148,6 +179,7 @@ export function WorkingHome({ home, loading, tx, lang }: Props) {
     <RowLink
       key={r.id}
       href={recordHref("booking", r.id, here())}
+      open={{ kind: "booking", id: r.id }}
       title={
         <>
           <bdi>{lang === "ar" ? r.serviceAr || r.service : r.service}</bdi>
@@ -272,6 +304,7 @@ function AwayPanel({ away, tx, lang, tz }: { away: HomeSection<AwaySummary>; tx:
         <RowLink
           key={c.id}
           href={recordHref("conversation", c.id, here())}
+          open={{ kind: "conversation", id: c.id }}
           title={<bdi>{c.contactName || tx("Unknown contact", "جهة اتصال غير معروفة")}</bdi>}
           meta={<bdi>{dayTime(c.resolvedAt, tz, lang)}</bdi>}
         />

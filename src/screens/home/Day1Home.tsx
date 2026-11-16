@@ -23,13 +23,16 @@ interface Props {
 /** SP-11 Day-1 home: setup steps computed from data, until set up or dismissed. */
 export function Day1Home({ steps, tx, onDismissed }: Props) {
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const p = day1Progress(steps);
   const dismiss = async () => {
     setBusy(true);
+    setFailed(false);
     try {
       await api.post("/home/day1/dismiss");
       onDismissed();
     } catch {
+      setFailed(true);
       setBusy(false);
     }
   };
@@ -49,6 +52,11 @@ export function Day1Home({ steps, tx, onDismissed }: Props) {
           {tx("Dismiss", "إخفاء")}
         </button>
       </div>
+      {failed && (
+        <div role="alert" style={{ fontSize: 12, color: "var(--bad)", marginBlockEnd: 8 }}>
+          {tx("Couldn't hide the setup steps. Try again.", "تعذّر إخفاء خطوات الإعداد. حاول مرة أخرى.")}
+        </div>
+      )}
       <div
         role="progressbar"
         aria-valuemin={0}

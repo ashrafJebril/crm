@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useRoute } from "@/router";
@@ -171,6 +171,9 @@ function StatTile({ label, value, unit, delta, sub, spark, invert, loading }: St
   );
 }
 
+/** How often the greeting is recomputed (morning → afternoon → evening). */
+const GREETING_REFRESH_MS = 60_000;
+
 function DashboardImpl() {
   const { t } = useTweaks();
   const [, setRoute] = useRoute();
@@ -180,6 +183,12 @@ function DashboardImpl() {
   const homeQ = useFetch<HomeDto>("/home");
   const home = homeQ.data;
   const workspaceTz = home?.tz ?? activeWorkspace?.timezone ?? null;
+  // Re-render the greeting every minute so it follows the part of the day.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), GREETING_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, []);
   const {
     data: summary,
     loading: summaryLoading,
@@ -248,7 +257,7 @@ function DashboardImpl() {
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
       <PageHeader
-        title={greeting(new Date(), workspaceTz, firstNameOf(user?.name), t.lang)}
+        title={greeting(now, workspaceTz, firstNameOf(user?.name), t.lang)}
         subtitle={homeSubtitle(activeWorkspace?.name, t.lang)}
         actions={
           <>
