@@ -1598,7 +1598,7 @@ export interface SupportInsights {
   byNumber: Section<ByNumberRow[]>;
   topicFriction: Section<TopicFrictionRow[]>;
   team: Section<TeamRow[]>;
-  /** Workspace-local day of the first staff reply with a sender; null = none yet (or unavailable). */
+  /** Workspace-local day of the start of sender recording (SP-11 migration applied, or workspace creation if later); null = none yet (or unavailable). */
   attributionSince: string | null;
 }
 
