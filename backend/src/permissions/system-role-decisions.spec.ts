@@ -510,8 +510,33 @@ describe("system-role decision table", () => {
       }
     });
 
+    // Import part (Task 3).
+    const IMPORTS = [
+      "POST /catalog-imports",
+      "GET /catalog-imports",
+      "GET /catalog-imports/:id",
+      "PATCH /catalog-imports/:id/items",
+      "POST /catalog-imports/:id/run",
+      "POST /catalog-imports/:id/cancel",
+    ];
+    const TEMPLATE = "GET /catalog-imports/templates/:kind";
+
+    it("owner and admin run imports; agent and viewer get 403 on every import route; all four download templates", () => {
+      for (const route of IMPORTS) {
+        expect(["owner", "admin", "agent", "viewer"].map((r) => [r, allowed(r as SystemRoleKey, route)])).toEqual([
+          ["owner", true],
+          ["admin", true],
+          ["agent", false],
+          ["viewer", false],
+        ]);
+      }
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, TEMPLATE) }).toEqual({ role, ok: true });
+      }
+    });
+
     it("impersonation is not blocked", () => {
-      for (const route of [...READ, ...CATALOG_WRITES]) {
+      for (const route of [...READ, ...CATALOG_WRITES, ...IMPORTS, TEMPLATE]) {
         expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
       }
     });

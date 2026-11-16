@@ -47,6 +47,7 @@ import { RolesModule } from "./roles/roles.module";
 import { ServicesModule } from "./services/services.module";
 import { StaffModule } from "./staff/staff.module";
 import { BookingsModule } from "./bookings/bookings.module";
+import { CatalogImportModule } from "./catalog-import/catalog-import.module";
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { BookingsModule } from "./bookings/bookings.module";
     ServicesModule,
     StaffModule,
     BookingsModule,
+    CatalogImportModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,
