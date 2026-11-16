@@ -6,7 +6,7 @@ import { PassThrough } from "node:stream";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { MediaService } from "../media/media.service";
 import { PermissionService } from "../permissions/permission.service";
-import { TicketAttachmentsService, mediaIdsInAttach } from "./ticket-attachments.service";
+import { TICKET_ATTACHMENT_TX_OPTIONS, TicketAttachmentsService, mediaIdsInAttach } from "./ticket-attachments.service";
 import { TICKET_ATTACHMENTS_MAX } from "./ticket-fields";
 
 const A = "wsA";
@@ -498,6 +498,15 @@ describe("attachment cap under concurrent links (M2)", () => {
       .filter((c: any[]) => c[0].join("?").includes("pg_advisory_xact_lock"))
       .map((c: any[]) => c[1]);
     expect(locks).toEqual(expect.arrayContaining(["media:md-cust", "ticket-att:tA"]));
+  });
+
+  it("the link transaction allows waiting on the ticket lock beyond Prisma's 5 s default (live F1)", async () => {
+    const { svc, prisma } = world();
+    const spy = jest.spyOn(prisma, "$transaction");
+    await svc.attach(A, "tA", "md-cust", owner);
+    const call = spy.mock.calls.find((c: any[]) => typeof c[0] === "function");
+    expect(call?.[1]).toEqual(TICKET_ATTACHMENT_TX_OPTIONS);
+    expect(TICKET_ATTACHMENT_TX_OPTIONS.timeout).toBeGreaterThanOrEqual(30_000);
   });
 });
 

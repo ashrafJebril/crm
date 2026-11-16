@@ -88,6 +88,13 @@ function toDto(r: AttachmentRow): TicketAttachmentDto {
 }
 
 /**
+ * Concurrent links for one ticket queue on the per-ticket advisory lock; the
+ * default 5 s interactive transaction timeout made waiters fail with P2028
+ * (live verification F1). Same budget as the workspace seed transaction.
+ */
+export const TICKET_ATTACHMENT_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/**
  * SP-09 ticket attachments (Architecture → Attachments). A file is a Media row
  * (library, storage, sniffing); TicketAttachment links it to one ticket.
  *
@@ -322,7 +329,7 @@ export class TicketAttachmentsService {
         if ((e as { code?: string })?.code === "P2002") throw ticketError("tickets.attachment_exists");
         throw e;
       }
-    });
+    }, TICKET_ATTACHMENT_TX_OPTIONS);
     const row = await this.prisma.ticketAttachment.findFirst({ where: { id, workspaceId }, include: ROW_INCLUDE });
     if (!row) throw ticketError("tickets.attachment_not_found");
     return toDto(row);
