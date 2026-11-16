@@ -312,22 +312,22 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 15. **Size.** The roadmap says L. Three build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller records each decision below before Task 1 starts. Migration `20261117120000_knowledge_upgrade` and the migrate-in script each need explicit user approval before they run.*
-- **R1** (SDK + shared `ClaudeService`; `claude-opus-5-5`, effort low). Pending.
-- **R2** (l reads via `search_knowledge`; kewy-ai gets copies; Postgres FTS). Pending.
-- **R3** (rerunnable migrate-in of editable kewy-ai docs and l document listings). Pending.
-- **R4** (own crawler, sweeps with a DB lease). Pending.
-- **R5** (typed sheets: column refusal, row errors, opt-in keep valid rows). Pending.
-- **R6** (no ODS; DOCX/TXT deferred). Pending.
-- **R7** (fixed caps). Pending.
-- **R8** (crawler UA and politeness). Pending.
-- **R9** (files as Media rows hidden from the library; `media.in_use`). Pending.
-- **R10** (TipTap JSON + derived text). Pending.
-- **R11** (guidelines as a bounded prompt block). Pending.
-- **R12** (follow-ups list). Pending.
-- **R13** (base on the SP-11 ship commit; task ownership; migration order). Pending.
-- **R14** (verification on production with stubs; migration and migrate-in each need approval). Pending.
-- **R15** (size L; 3 build tasks + verification). Pending.
+*Decided 2026-11-16: every recommendation is accepted. R1: add `@anthropic-ai/sdk` (this plan owns package.json and the lockfile while it runs). R13 is amended: Task 1 starts now from ccba6ba because it does not depend on SP-11, and migrations are applied in timestamp order, which the controller manages. Migration 20261117120000_knowledge_upgrade and the migrate-in script each need explicit user approval. Migration `20261117120000_knowledge_upgrade` and the migrate-in script each need explicit user approval before they run.*
+- **R1** (SDK + shared `ClaudeService`; `claude-opus-5-5`, effort low). Accepted.
+- **R2** (l reads via `search_knowledge`; kewy-ai gets copies; Postgres FTS). Accepted.
+- **R3** (rerunnable migrate-in of editable kewy-ai docs and l document listings). Accepted.
+- **R4** (own crawler, sweeps with a DB lease). Accepted.
+- **R5** (typed sheets: column refusal, row errors, opt-in keep valid rows). Accepted.
+- **R6** (no ODS; DOCX/TXT deferred). Accepted.
+- **R7** (fixed caps). Accepted.
+- **R8** (crawler UA and politeness). Accepted.
+- **R9** (files as Media rows hidden from the library; `media.in_use`). Accepted.
+- **R10** (TipTap JSON + derived text). Accepted.
+- **R11** (guidelines as a bounded prompt block). Accepted.
+- **R12** (follow-ups list). Accepted.
+- **R13** (base on the SP-11 ship commit; task ownership; migration order). Accepted.
+- **R14** (verification on production with stubs; migration and migrate-in each need approval). Accepted.
+- **R15** (size L; 3 build tasks + verification). Accepted.
 
 ---
 
