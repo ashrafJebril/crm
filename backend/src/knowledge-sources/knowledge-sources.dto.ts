@@ -115,6 +115,11 @@ export interface KnowledgeSourceDto {
   schedule: Schedule | null;
   lastSyncAt: Date | null;
   nextSyncAt: Date | null;
+  /**
+   * Websites: failed sync runs in a row (3 → `failed`). File and typed-doc
+   * sources: transient provider retries used (0 or 1). The UI must not show
+   * the website wording ("failed N times in a row") for files.
+   */
   consecutiveFailures: number;
   lastRun: unknown;
   itemCount: number;

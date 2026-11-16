@@ -114,7 +114,8 @@ describe("ClaudeService", () => {
     await expect(svc.transcribe({ kind: "pdf", base64: "JVBERi0=", mediaType: "application/pdf" })).resolves.toBe("Menu\nprice: 10");
     // Long output: streamed (the skill's rule for large max_tokens), collected with finalMessage().
     expect(ok.stream).toHaveBeenCalledTimes(1);
-    expect(ok.stream.mock.calls[0][1]).toEqual({ timeout: TRANSCRIBE_TIMEOUT_MS });
+    expect(ok.stream.mock.calls[0][1]).toMatchObject({ timeout: TRANSCRIBE_TIMEOUT_MS });
+    expect(ok.stream.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal); // wall-clock cap on the whole stream
     expect(ok.create).toHaveBeenCalledTimes(1); // the fake's stream answers through create
     const req = ok.calls[0];
     expect(req.model).toBe("claude-opus-5-5");

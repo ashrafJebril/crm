@@ -11,6 +11,14 @@
  * still `processing` after its lease ran out is failed by the sweep with
  * `knowledge.processing_stalled` (no heartbeat for 20 min).
  *
+ * Absolute cap: a run may last at most MAX_RUN_MS (45 min) from its claim,
+ * heartbeat or not. The claim time is kept in `syncStartedAt` (for file
+ * sources it means "processing started at"; websites use it for their own
+ * lease in Task 2). The heartbeat never extends the lease past the cap, the
+ * sweep fails any run claimed longer ago than the cap, and the run itself
+ * stops waiting at the cap (its slot is freed; anything the abandoned work
+ * writes later is fenced out). The Claude stream has its own 30-min abort.
+ *
  * Concurrency: at most KNOWLEDGE_MAX_CONCURRENT_RUNS runs per process (each
  * holds a file of up to 20 MB plus its base64 copy in memory). Kicks beyond
  * that wait in an in-process queue; sources stay `queued` in the database, so
@@ -49,8 +57,11 @@ export const HEARTBEAT_MS = 5 * 60 * 1000;
 export const RETRY_BACKOFF_MS = 5 * 60 * 1000;
 /** Transient retries before the failure is final. */
 export const MAX_TRANSIENT_RETRIES = 1;
+/** Absolute cap on one run, from its claim, whatever its heartbeat. */
+export const MAX_RUN_MS = 45 * 60 * 1000;
 
 class LeaseLost extends Error {}
+class RunCapped extends Error {}
 
 const FILE_KINDS = ["file", "typed_doc"];
 
@@ -71,6 +82,8 @@ export function chunkRowsFor(workspaceId: string, sourceId: string, chunks: Chun
 /** The lease a run holds; the heartbeat moves `at` forward. */
 interface Lease {
   at: Date;
+  /** The claim time (stored in `syncStartedAt`). */
+  claimedAt: Date;
   /** The heartbeat write in flight, awaited before any fenced write. */
   beat: Promise<void>;
 }
@@ -85,6 +98,7 @@ export class KnowledgeProcessor {
   /** Overridable in specs. */
   protected heartbeatMs = HEARTBEAT_MS;
   protected maxConcurrent = KNOWLEDGE_MAX_CONCURRENT_RUNS;
+  protected maxRunMs = MAX_RUN_MS;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -143,11 +157,18 @@ export class KnowledgeProcessor {
     }
   }
 
-  /** Sources whose processing lease ran out are failed (`knowledge.processing_stalled`). */
+  /**
+   * Fail (`knowledge.processing_stalled`) the runs whose lease ran out, and
+   * the runs claimed more than the absolute cap ago even if they still beat.
+   */
   async failStalled(now = new Date()): Promise<number> {
     const r = await this.prisma.knowledgeSource.updateMany({
-      where: { status: "processing", kind: { in: FILE_KINDS }, leaseUntil: { lt: now } },
-      data: { status: "failed", error: "knowledge.processing_stalled", leaseUntil: null },
+      where: {
+        status: "processing",
+        kind: { in: FILE_KINDS },
+        OR: [{ leaseUntil: { lt: now } }, { syncStartedAt: { lt: new Date(now.getTime() - this.maxRunMs) } }],
+      },
+      data: { status: "failed", error: "knowledge.processing_stalled", leaseUntil: null, syncStartedAt: null },
     });
     return r.count;
   }
@@ -160,8 +181,9 @@ export class KnowledgeProcessor {
     if (this.inFlight.has(sourceId) || this.inFlight.size >= this.maxConcurrent) return false;
     this.inFlight.add(sourceId);
     let timer: NodeJS.Timeout | undefined;
+    let cap: NodeJS.Timeout | undefined;
     try {
-      const lease: Lease = { at: new Date(now.getTime() + PROCESSING_STALL_MS), beat: Promise.resolve() };
+      const lease: Lease = { at: new Date(now.getTime() + PROCESSING_STALL_MS), claimedAt: now, beat: Promise.resolve() };
       const claim = await this.prisma.knowledgeSource.updateMany({
         where: {
           id: sourceId,
@@ -169,32 +191,50 @@ export class KnowledgeProcessor {
           kind: { in: FILE_KINDS },
           OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
         },
-        data: { status: "processing", leaseUntil: lease.at, error: null },
+        data: { status: "processing", leaseUntil: lease.at, syncStartedAt: now, error: null },
       });
       if (claim.count !== 1) return false;
       timer = setInterval(() => {
         lease.beat = lease.beat.then(() => this.heartbeat(sourceId, lease)).catch(() => undefined);
       }, this.heartbeatMs);
       timer.unref?.();
+      // Stop waiting at the absolute cap: the slot is freed even if the work hangs.
+      const capped = new Promise<never>((_, reject) => {
+        cap = setTimeout(() => reject(new RunCapped()), Math.max(0, now.getTime() + this.maxRunMs - Date.now()));
+        cap.unref?.();
+      });
+      const work = this.process(sourceId, lease);
+      work.catch(() => undefined); // an abandoned run's late rejection is not unhandled
       try {
-        await this.process(sourceId, lease);
+        await Promise.race([work, capped]);
       } catch (e) {
         if (e instanceof LeaseLost) return true;
         clearInterval(timer);
         await lease.beat;
+        if (e instanceof RunCapped) {
+          this.log.warn(`knowledge source ${sourceId}: run over the absolute cap`);
+          await this.prisma.knowledgeSource.updateMany({
+            where: { id: sourceId, status: "processing", leaseUntil: lease.at },
+            data: { status: "failed", error: "knowledge.processing_stalled", leaseUntil: null, syncStartedAt: null },
+          });
+          return true;
+        }
         await this.fail(sourceId, lease, e);
       }
       return true;
     } finally {
       if (timer) clearInterval(timer);
+      if (cap) clearTimeout(cap);
       this.inFlight.delete(sourceId);
     }
   }
 
-  /** Move the lease forward if we still hold it. */
+  /** Move the lease forward if we still hold it, never past the absolute cap. */
   private async heartbeat(sourceId: string, lease: Lease): Promise<void> {
-    // Strictly later than the current lease, so every lease value is unique.
-    const next = new Date(Math.max(Date.now() + PROCESSING_STALL_MS, lease.at.getTime() + 1));
+    const capAt = lease.claimedAt.getTime() + this.maxRunMs;
+    // Strictly later than the current lease (every lease value is unique), at most the cap.
+    const next = new Date(Math.min(Math.max(Date.now() + PROCESSING_STALL_MS, lease.at.getTime() + 1), capAt));
+    if (next.getTime() <= lease.at.getTime()) return;
     const r = await this.prisma.knowledgeSource.updateMany({
       where: { id: sourceId, status: "processing", leaseUntil: lease.at },
       data: { leaseUntil: next },
@@ -208,7 +248,7 @@ export class KnowledgeProcessor {
     if (e instanceof KnowledgeFailure && e.transient) {
       const retry = await this.prisma.knowledgeSource.updateMany({
         where: { id: sourceId, status: "processing", leaseUntil: lease.at, consecutiveFailures: { lt: MAX_TRANSIENT_RETRIES } },
-        data: { status: "queued", error: null, leaseUntil: new Date(Date.now() + RETRY_BACKOFF_MS), consecutiveFailures: { increment: 1 } },
+        data: { status: "queued", error: null, leaseUntil: new Date(Date.now() + RETRY_BACKOFF_MS), syncStartedAt: null, consecutiveFailures: { increment: 1 } },
       });
       if (retry.count === 1) {
         this.log.warn(`knowledge source ${sourceId}: transient failure, retry queued`);
@@ -219,7 +259,7 @@ export class KnowledgeProcessor {
     this.log.warn(`knowledge source ${sourceId}: failed (${key})`);
     await this.prisma.knowledgeSource.updateMany({
       where: { id: sourceId, status: "processing", leaseUntil: lease.at },
-      data: { status: "failed", error: key, leaseUntil: null },
+      data: { status: "failed", error: key, leaseUntil: null, syncStartedAt: null },
     });
   }
 
@@ -257,7 +297,7 @@ export class KnowledgeProcessor {
     await this.prisma.$transaction(async (tx) => {
       const done = await tx.knowledgeSource.updateMany({
         where: { id: src.id, status: "processing", leaseUntil: lease.at },
-        data: { status: "ready", error: null, itemCount: chunks.length, contentHash, leaseUntil: null, consecutiveFailures: 0 },
+        data: { status: "ready", error: null, itemCount: chunks.length, contentHash, leaseUntil: null, syncStartedAt: null, consecutiveFailures: 0 },
       });
       if (done.count !== 1) throw new LeaseLost();
       await tx.knowledgeChunk.deleteMany({ where: { workspaceId: src.workspaceId, sourceId: src.id } });

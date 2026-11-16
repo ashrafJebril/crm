@@ -125,6 +125,8 @@ export class ClaudeService {
   private readonly log = new Logger(ClaudeService.name);
   private readonly factory: ClaudeClientFactory;
   private cached: { key: string; client: ClaudeClient } | null = null;
+  /** Wall-clock cap of one transcription (overridable in specs). */
+  protected transcribeTimeoutMs = TRANSCRIBE_TIMEOUT_MS;
 
   constructor(@Optional() @Inject(CLAUDE_CLIENT_FACTORY) factory?: ClaudeClientFactory) {
     this.factory = factory ?? defaultFactory;
@@ -197,11 +199,17 @@ export class ClaudeService {
   /**
    * One streamed beta Messages call for long outputs, collected with the SDK's
    * `finalMessage()`. Same error mapping as `create`.
+   *
+   * `timeoutMs` is a wall-clock cap on the WHOLE call: the SDK's `timeout`
+   * only covers the request up to the response headers, so a body that stalls
+   * mid-stream would never end. An AbortSignal fires at `timeoutMs` and the
+   * SDK rejects with APIUserAbortError, mapped to a transient `ai_failed`.
    */
   async stream(params: BetaStreamParams, label = "claude stream", opts: { timeoutMs?: number } = {}): Promise<Anthropic.Beta.BetaMessage> {
     const client = this.client();
+    const options = opts.timeoutMs ? { timeout: opts.timeoutMs, signal: AbortSignal.timeout(opts.timeoutMs) } : undefined;
     try {
-      return await client.beta.messages.stream(params, opts.timeoutMs ? { timeout: opts.timeoutMs } : undefined).finalMessage();
+      return await client.beta.messages.stream(params, options).finalMessage();
     } catch (e) {
       const f = mapClaudeError(e);
       this.log.warn(`${label} failed: ${f.detail || f.key}`);
@@ -231,7 +239,7 @@ export class ClaudeService {
         messages: [{ role: "user", content: [file, { type: "text", text: TRANSCRIBE_INSTRUCTION }] }],
       },
       "transcription",
-      { timeoutMs: TRANSCRIBE_TIMEOUT_MS },
+      { timeoutMs: this.transcribeTimeoutMs },
     );
     if (msg.stop_reason !== "end_turn") {
       this.log.warn(`transcription not accepted: stop_reason ${String(msg.stop_reason)}`);

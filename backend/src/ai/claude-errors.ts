@@ -38,6 +38,8 @@ export function mapClaudeError(e: unknown): ClaudeFailure {
   if (e instanceof Anthropic.RateLimitError) return new ClaudeFailure("ai_failed", "RateLimitError 429", true);
   if (e instanceof Anthropic.APIConnectionTimeoutError) return new ClaudeFailure("ai_failed", "APIConnectionTimeoutError", true);
   if (e instanceof Anthropic.APIConnectionError) return new ClaudeFailure("ai_failed", "APIConnectionError", true);
+  // Our own wall-clock abort (a stream whose body stalled): worth one later retry.
+  if (e instanceof Anthropic.APIUserAbortError) return new ClaudeFailure("ai_failed", "APIUserAbortError (timeout)", true);
   // Every 5xx, 529 overloaded included.
   if (e instanceof Anthropic.InternalServerError) return new ClaudeFailure("ai_failed", `InternalServerError ${e.status ?? ""}`.trim(), true);
   if (e instanceof Anthropic.APIError) return new ClaudeFailure("ai_failed", `${e.constructor?.name ?? "APIError"} ${e.status ?? ""}`.trim());
