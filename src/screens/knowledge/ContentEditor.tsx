@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { ErrorRow } from "@/screens/settings/form";
@@ -8,19 +7,7 @@ import type { Tx } from "@/lib/tx";
 import type { KnowledgeSource } from "@/lib/types";
 import { putContent, sourcesPath, type SourceList } from "./knowledgeApi";
 import { errorKey, knowledgeErrorText } from "./knowledgeErrors";
-
-/** Only https and mailto links (the backend refuses anything else). */
-export function safeLink(raw: string): string | null {
-  const v = raw.trim();
-  if (!v) return null;
-  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : `https://${v}`;
-  try {
-    const u = new URL(withScheme);
-    return u.protocol === "https:" || u.protocol === "mailto:" ? u.toString() : null;
-  } catch {
-    return null;
-  }
-}
+import { badLinks, knowledgeExtensions, safeLink, sanitizeDoc, upgradePastedLinks } from "./contentDoc";
 
 /**
  * SP-21 "About your business" (R10): TipTap with the allow-listed nodes only
@@ -39,21 +26,15 @@ export function ContentEditor({ tx, canEdit, onDirtyChange }: { tx: Tx; canEdit:
   const loadedVersion = useRef<number | null>(null);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-        blockquote: false,
-        code: false,
-        codeBlock: false,
-        horizontalRule: false,
-        strike: false,
-        underline: false,
-        link: { openOnClick: false, autolink: true, protocols: ["mailto"], defaultProtocol: "https" },
-      }),
-    ],
+    // The backend's allow-list exactly (contentDoc.ts; cross-checked in contentDoc.test.ts).
+    extensions: knowledgeExtensions(),
     content: "",
     editable: canEdit,
-    editorProps: { attributes: { dir: "auto", class: "kb-editor", "aria-label": tx("Business content", "محتوى النشاط") } },
+    editorProps: {
+      attributes: { dir: "auto", class: "kb-editor", "aria-label": tx("Business content", "محتوى النشاط") },
+      // Pasted http links become https (only https and mailto links are kept).
+      transformPastedHTML: upgradePastedLinks,
+    },
     onUpdate: () => {
       setDirty(true);
       setSaved(false);
@@ -101,14 +82,19 @@ export function ContentEditor({ tx, canEdit, onDirtyChange }: { tx: Tx; canEdit:
     setSaving(true);
     setError(null);
     try {
-      const next = await putContent(editor.getJSON(), source?.version ?? 0);
+      const next = await putContent(sanitizeDoc(editor.getJSON()), source?.version ?? 0);
       loadedVersion.current = next.version;
       q.setData({ items: [next] });
       setDirty(false);
       setSaved(true);
     } catch (e) {
       if (errorKey(e) === "knowledge.version_conflict") setConflict(true);
-      setError(knowledgeErrorText(e, tx));
+      const links = errorKey(e) === "knowledge.content_invalid" ? badLinks(editor.getJSON()) : [];
+      setError(
+        links.length
+          ? `${knowledgeErrorText(e, tx)} ${tx("Check this link:", "تحقق من هذا الرابط:")} ${links.join(", ")}`
+          : knowledgeErrorText(e, tx),
+      );
     } finally {
       setSaving(false);
     }

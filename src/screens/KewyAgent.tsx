@@ -65,11 +65,13 @@ function KewyAgentImpl() {
         )}
       />
 
-      <div className="tabs" style={{ padding: "0 24px" }}>
+      <div className="tabs" role="tablist" aria-label={tx("Kewy AI agent", "وكيل كيوي الذكاء")} style={{ padding: "0 24px" }}>
         {tabs.map((tb) => (
           <button
             key={tb.id}
             type="button"
+            role="tab"
+            aria-selected={tab === tb.id}
             className={`tab ${tab === tb.id ? "active" : ""}`.trim()}
             onClick={() => setTab(tb.id)}
           >
