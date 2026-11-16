@@ -229,22 +229,22 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 15. **Size.** The roadmap says L. Three build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller records each decision below before Task 1 starts. Migration `20261117130000_agent_config` needs explicit user approval before it is applied.*
-- **R1** (local `AgentSettings`; persona published to l; kewy-ai persona read-only). Pending.
-- **R2** (CRM-side preview agent on Claude; real-l checks stay pending). Pending.
-- **R3** (local stop checked first; existing toggle writes both). Pending.
-- **R4** (gate covers the three CRM-initiated AI paths). Pending.
-- **R5** (guided onboarding flow, one learn call, one confirm card). Pending.
-- **R6** (services via the SP-10 import wizard). Pending.
-- **R7** (excluded tags by id). Pending.
-- **R8** (seven tones). Pending.
-- **R9** (sandbox: `agent.update`, rate and turn caps). Pending.
-- **R10** (onboarding only for new signups or on request). Pending.
-- **R11** (signup reuses register; add a limiter if none). Pending.
-- **R12** (per-workspace re-sync, no bulk backfill). Pending.
-- **R13** (base on the SP-21 ship commit; ownership; migration order). Pending.
-- **R14** (verification on production with stubs; migration approval). Pending.
-- **R15** (size L). Pending.
+*Decided 2026-11-16 by the controller: R1–R15 accepted as proposed in Architecture Rulings and Risks. Base commit is the SP-21 ship merge on feat/tkana-parity (recorded in the ledger). Migration `20261117130000_agent_config` needs explicit user approval before it is applied.*
+- **R1** (local `AgentSettings`; persona published to l; kewy-ai persona read-only). Accepted.
+- **R2** (CRM-side preview agent on Claude; real-l checks stay pending). Accepted.
+- **R3** (local stop checked first; existing toggle writes both). Accepted.
+- **R4** (gate covers the three CRM-initiated AI paths). Accepted.
+- **R5** (guided onboarding flow, one learn call, one confirm card). Accepted.
+- **R6** (services via the SP-10 import wizard). Accepted.
+- **R7** (excluded tags by id). Accepted.
+- **R8** (seven tones). Accepted.
+- **R9** (sandbox: `agent.update`, rate and turn caps). Accepted.
+- **R10** (onboarding only for new signups or on request). Accepted.
+- **R11** (signup reuses register; add a limiter if none). Accepted.
+- **R12** (per-workspace re-sync, no bulk backfill). Accepted.
+- **R13** (base on the SP-21 ship commit; ownership; migration order). Accepted.
+- **R14** (verification on production with stubs; migration approval). Accepted.
+- **R15** (size L). Accepted.
 
 ---
 
