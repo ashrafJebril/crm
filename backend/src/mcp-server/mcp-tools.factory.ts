@@ -3,6 +3,7 @@ import { createTool, type Tool } from "@mastra/core/tools";
 import { z } from "zod";
 import { AppointmentsService } from "../appointments/appointments.service";
 import { BookingsService } from "../bookings/bookings.service";
+import { SERVICE_DURATION_MAX } from "../bookings/booking-constants";
 import { ContactsService } from "../contacts/contacts.service";
 import { AGENT_PHOTO_LIMIT_DEFAULT, AGENT_PHOTO_LIMIT_MAX, MediaService } from "../media/media.service";
 
@@ -76,12 +77,12 @@ export class McpToolsFactory {
           "Without serviceId, service, serviceAr and durationMin are required.",
         inputSchema: z.object({
           contactId: z.string(),
-          serviceId: z.string().optional(),
-          resourceId: z.string().optional(),
+          serviceId: z.string().min(1).optional(),
+          resourceId: z.string().min(1).optional(),
           service: z.string().optional(),
           serviceAr: z.string().optional(),
           startAt: z.string().datetime({ offset: true }),
-          durationMin: z.number().int().min(1).optional(),
+          durationMin: z.number().int().min(1).max(SERVICE_DURATION_MAX).optional(),
           status: z.enum(APPOINTMENT_STATUSES),
           source: z.enum(APPOINTMENT_SOURCES),
           staffId: z.string().optional(),
@@ -96,12 +97,12 @@ export class McpToolsFactory {
         description: "Update fields on an existing appointment.",
         inputSchema: z.object({
           id: z.string(),
-          serviceId: z.string().optional(),
-          resourceId: z.string().optional(),
+          serviceId: z.string().min(1).optional(),
+          resourceId: z.string().min(1).optional(),
           service: z.string().optional(),
           serviceAr: z.string().optional(),
           startAt: z.string().datetime({ offset: true }).optional(),
-          durationMin: z.number().int().min(1).optional(),
+          durationMin: z.number().int().min(1).max(SERVICE_DURATION_MAX).optional(),
           status: z.enum(APPOINTMENT_STATUSES).optional(),
           source: z.enum(APPOINTMENT_SOURCES).optional(),
           staffId: z.string().optional(),

@@ -12,7 +12,11 @@ import { SLOT_STEP_MIN } from "./booking-constants";
 import { instantOf, localSpan, weekdayOf } from "./booking-time";
 import { isConfigured, readSchedule, scheduleFit, windowsOf } from "./schedule";
 
-export const MAX_SLOTS = 200;
+/**
+ * A hard cap far above any real day (96 starts a day per resource); hitting it
+ * sets `truncated` instead of silently dropping slots (review I2).
+ */
+export const MAX_SLOTS = 10_000;
 
 export interface Interval {
   start: number; // epoch ms
@@ -40,7 +44,7 @@ export function generateSlots(input: {
   durationMin: number;
   now: Date;
   resources: SlotResource[];
-}): { slots: Slot[]; unconfigured: string[] } {
+}): { slots: Slot[]; unconfigured: string[]; truncated: boolean } {
   const { dateISO, tz, durationMin, now } = input;
   const day = weekdayOf(dateISO);
   const slots: Slot[] = [];
@@ -75,5 +79,5 @@ export function generateSlots(input: {
     seen.add(k);
     return true;
   });
-  return { slots: out.slice(0, MAX_SLOTS), unconfigured };
+  return { slots: out.slice(0, MAX_SLOTS), unconfigured, truncated: out.length > MAX_SLOTS };
 }

@@ -167,6 +167,9 @@ describe("SP-10 bookings catalog migration", () => {
     expect(sql).toMatch(/ACCESS EXCLUSIVE/);
     expect(sql).toMatch(/READS AND WRITES on "Appointment"/);
     expect(sql).not.toMatch(/block booking writes for/);
+    // Task 2 review M1: a timed-out apply is a failed Prisma record; resolve it before re-running.
+    expect(sql).toContain("npx prisma migrate resolve --rolled-back 20261116130000_bookings_catalog");
+    expect(sql).not.toMatch(/just re-run it/);
   });
 
   it.each(Object.entries(PINNED))("the applied %s file is unchanged (sha256)", (folder, sha) => {

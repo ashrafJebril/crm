@@ -21,7 +21,9 @@ export interface WallClock {
 
 /** The workspace's zone (`Workspace.timezone`), `Asia/Riyadh` when missing or invalid. */
 export function workspaceTz(tz: string | null | undefined): string {
-  return tz ? validTz(tz) : DEFAULT_TZ;
+  if (!tz) return DEFAULT_TZ;
+  if (FORMATTERS.has(tz)) return tz; // already known to be valid
+  return validTz(tz);
 }
 
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -64,19 +66,30 @@ export function daysBetween(a: string, b: string): number {
   return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000);
 }
 
+/** Formatter per zone (constructing one is the expensive part; review I1). */
+const FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function formatter(tz: string): Intl.DateTimeFormat {
+  let f = FORMATTERS.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+    FORMATTERS.set(tz, f);
+  }
+  return f;
+}
+
 function parts(d: Date, tz: string): Record<string, number> {
-  const f = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    second: "numeric",
-  });
   const o: Record<string, number> = {};
-  for (const p of f.formatToParts(d)) if (p.type !== "literal") o[p.type] = Number(p.value);
+  for (const p of formatter(tz).formatToParts(d)) if (p.type !== "literal") o[p.type] = Number(p.value);
   return o;
 }
 

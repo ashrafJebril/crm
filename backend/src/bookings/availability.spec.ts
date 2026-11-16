@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { generateSlots } from "./availability";
+import { MAX_SLOTS, generateSlots } from "./availability";
 import { A, B, booking, bookingWorld, failure } from "./booking-test-world";
 
 const TUE = "2026-11-17"; // a Tuesday
@@ -36,6 +36,7 @@ describe("availability uses the workspace day", () => {
         { startAt: "2026-11-17T11:00:00+03:00", resourceId: w.resource.id },
       ],
       unconfigured: [],
+      truncated: false,
     });
   });
 
@@ -141,13 +142,18 @@ describe("availability uses the workspace day", () => {
     expect(iso[0]).toBe("2026-03-08T06:00:00.000Z");
   });
 
-  it("caps at 200 slots", () => {
-    const resources = Array.from({ length: 10 }, (_, i) => ({
-      id: `r${String(i).padStart(2, "0")}`,
-      schedule: { tue: [{ from: "00:00", to: "24:00" }] },
-      busy: [],
-    }));
-    const { slots } = generateSlots({ dateISO: TUE, tz: "Asia/Riyadh", durationMin: 15, now: NOW, resources });
-    expect(slots).toHaveLength(200);
+  it("returns every slot of a real day; only a hard cap far above that truncates, and says so (review I2)", () => {
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `r${String(i).padStart(3, "0")}`,
+        schedule: { tue: [{ from: "00:00", to: "24:00" }] },
+        busy: [],
+      }));
+    const ten = generateSlots({ dateISO: TUE, tz: "Asia/Riyadh", durationMin: 15, now: NOW, resources: many(10) });
+    expect(ten.slots).toHaveLength(960);
+    expect(ten.truncated).toBe(false);
+    const huge = generateSlots({ dateISO: TUE, tz: "Asia/Riyadh", durationMin: 15, now: NOW, resources: many(120) });
+    expect(huge.slots).toHaveLength(MAX_SLOTS);
+    expect(huge.truncated).toBe(true);
   });
 });

@@ -32,6 +32,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { HjzAppointmentSyncService } from "../hjz-sync/hjz-appointment-sync.service";
 import { WORKFLOW_TRIGGER_EVENT, type WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { bookingError } from "./booking-errors";
+import { SERVICE_DURATION_MAX } from "./booking-constants";
 import { lockResource, lockService } from "./booking-locks";
 import { assertTransition, isOpenStatus } from "./booking-status";
 import { blockingBookings, BookingsService } from "./bookings.service";
@@ -60,6 +61,39 @@ export interface WriteOpts {
   bypassFit?: boolean;
 }
 
+/** A decision was made on data that changed before the conditional write: decide again. */
+class StaleRead extends Error {}
+const UPDATE_ATTEMPTS = 3;
+
+const sameTime = (a: Date | null, b: Date | null) => (a?.getTime() ?? null) === (b?.getTime() ?? null);
+
+/** The fields an update's decisions depend on. */
+function sameDecisionFields(a: Appointment, b: Appointment): boolean {
+  return (
+    a.status === b.status &&
+    sameTime(a.startAt, b.startAt) &&
+    a.durationMin === b.durationMin &&
+    a.resourceId === b.resourceId &&
+    a.staffId === b.staffId &&
+    a.serviceId === b.serviceId &&
+    a.version === b.version
+  );
+}
+
+/**
+ * Every caller (REST, MCP, internal): ids are never empty strings (review C1,
+ * never a FK 500) and durations stay within 1..SERVICE_DURATION_MAX, which the
+ * overlap look-back relies on (review I3).
+ */
+function assertInputShape(input: { serviceId?: string | null; resourceId?: string | null; durationMin?: number }) {
+  if (input.serviceId === "") throw bookingError("bookings.service_not_found");
+  if (input.resourceId === "") throw bookingError("bookings.resource_not_found");
+  const d = input.durationMin;
+  if (d !== undefined && (typeof d !== "number" || !Number.isInteger(d) || d < 1 || d > SERVICE_DURATION_MAX)) {
+    throw bookingError("bookings.duration_invalid", { min: 1, max: SERVICE_DURATION_MAX });
+  }
+}
+
 // The interactive-transaction client of the tenancy-extended PrismaService.
 type Tx = Pick<PrismaService, "appointment" | "service" | "staffResource" | "$executeRaw">;
 
@@ -75,6 +109,7 @@ export class BookingWriter {
   }
 
   async create(workspaceId: string, input: BookingCreateInput, opts: WriteOpts = {}) {
+    assertInputShape(input);
     const contact = await this.prisma.contact.findFirst({ where: { id: input.contactId, workspaceId }, select: { id: true } });
     if (!contact) throw new NotFoundException("Contact not found");
 
@@ -115,9 +150,32 @@ export class BookingWriter {
     return out;
   }
 
+  /**
+   * Review C2: every decision (transition, closed, R4, gate, version) is made
+   * on a read, re-checked under the locks inside the transaction, and the
+   * write is conditional on the fields it was decided on. If anything moved
+   * meanwhile (another writer, `main`, a stale read), the update is decided
+   * again from a fresh read, up to UPDATE_ATTEMPTS times.
+   */
   async update(workspaceId: string, id: string, input: BookingUpdateInput, opts: WriteOpts = {}) {
-    const existing = await this.prisma.appointment.findFirst({ where: { id, workspaceId } });
-    if (!existing) throw new NotFoundException("Appointment not found");
+    assertInputShape(input);
+    for (let attempt = 0; attempt < UPDATE_ATTEMPTS; attempt++) {
+      const existing = await this.prisma.appointment.findFirst({ where: { id, workspaceId } });
+      if (!existing) throw new NotFoundException("Appointment not found");
+      try {
+        return await this.updateFrom(workspaceId, existing, input, opts);
+      } catch (e) {
+        if (e instanceof StaleRead) continue;
+        throw e;
+      }
+    }
+    const current = await this.prisma.appointment.findFirst({ where: { id, workspaceId } });
+    if (!current) throw new NotFoundException("Appointment not found");
+    throw await this.conflict(workspaceId, current);
+  }
+
+  private async updateFrom(workspaceId: string, existing: Appointment, input: BookingUpdateInput, opts: WriteOpts) {
+    const id = existing.id;
     if (input.version !== undefined && input.version !== existing.version) throw await this.conflict(workspaceId, existing);
 
     const status = input.status ?? existing.status;
@@ -125,26 +183,30 @@ export class BookingWriter {
 
     // Service: a new catalog service re-snapshots names and duration unless given.
     let service: Service | null = null;
-    const serviceChanged = input.serviceId !== undefined && input.serviceId !== existing.serviceId;
+    const serviceChanged = input.serviceId !== undefined && (input.serviceId ?? null) !== existing.serviceId;
     if (serviceChanged && input.serviceId) service = await this.findService(workspaceId, input.serviceId);
 
     const startAt = input.startAt !== undefined ? new Date(input.startAt) : existing.startAt;
     const durationMin = input.durationMin ?? (service ? service.durationMin : existing.durationMin);
     const timeChanged = startAt.getTime() !== existing.startAt.getTime() || durationMin !== existing.durationMin;
     const staffChanged = input.staffId !== undefined && (input.staffId ?? null) !== existing.staffId;
-    const resourceChanged = (input.resourceId !== undefined && (input.resourceId ?? null) !== existing.resourceId) || staffChanged;
-    if ((timeChanged || resourceChanged) && !isOpenStatus(existing.status)) throw bookingError("bookings.closed", { status: existing.status });
+    const finalStaff = staffChanged ? input.staffId ?? null : existing.staffId;
 
-    // Resource: explicit id; else (ruling 4) the member's resource when the
-    // staff changes or the booking moves; else the row's own.
+    // Resource: an explicit id; else (ruling 4) the member's resource whenever
+    // the row would end up without one (explicit unlink, staff change, or a
+    // move of a legacy row) — so no write leaves an ungated row that still
+    // blocks the member's resource (review C1); else the row's own.
     let resource: StaffResource | null = null;
-    if (input.resourceId !== undefined) {
-      resource = input.resourceId ? await this.resolveResource(workspaceId, input.resourceId, null) : null;
-    } else if (staffChanged || (timeChanged && !existing.resourceId)) {
-      resource = await this.resolveResource(workspaceId, null, staffChanged ? input.staffId : existing.staffId);
+    if (input.resourceId) {
+      resource = await this.resolveResource(workspaceId, input.resourceId, null);
+    } else if (input.resourceId === null || staffChanged || (timeChanged && !existing.resourceId)) {
+      resource = await this.resolveResource(workspaceId, null, finalStaff);
     } else if (existing.resourceId) {
       resource = await this.prisma.staffResource.findFirst({ where: { id: existing.resourceId, workspaceId } });
     }
+    const resourceChanged = (resource?.id ?? null) !== existing.resourceId || staffChanged;
+    if ((timeChanged || resourceChanged) && !isOpenStatus(existing.status)) throw bookingError("bookings.closed", { status: existing.status });
+
     const targetServiceId = serviceChanged ? (input.serviceId ?? null) : existing.serviceId;
     if (resource && input.resourceId && targetServiceId && (resourceChanged || serviceChanged)) {
       await this.assertOffers(workspaceId, resource.id, targetServiceId);
@@ -166,28 +228,44 @@ export class BookingWriter {
     const moved = timeChanged || resourceChanged;
     if (moved || input.resourceId !== undefined) {
       data.resourceId = resource?.id ?? null;
-      data.staffId = resource?.userId ?? (staffChanged ? input.staffId ?? null : existing.staffId);
+      data.staffId = resource?.userId ?? finalStaff;
     } else if (staffChanged) {
-      data.staffId = input.staffId ?? null;
+      data.staffId = finalStaff;
     }
 
     const gate = !!resource && moved && !opts.bypassFit && isOpenStatus(status);
     if (gate) await this.assertFit(workspaceId, resource as StaffResource, startAt, durationMin);
 
     const lockSvc = serviceChanged && input.serviceId ? input.serviceId : null;
-    const lockRes = gate || (resource && resourceChanged) ? (resource as StaffResource).id : null;
+    const lockRes = resource && (gate || resourceChanged) ? resource.id : null;
     const row = await this.inTx(lockSvc, lockRes, async (tx) => {
+      // Under the locks: the row must still be what we decided on.
+      const fresh = await tx.appointment.findFirst({ where: { id, workspaceId } });
+      if (!fresh) throw new NotFoundException("Appointment not found");
+      if (!sameDecisionFields(fresh, existing)) throw new StaleRead();
       if (lockSvc) await this.recheckService(tx, workspaceId, lockSvc);
       if (lockRes) await this.recheckResource(tx, workspaceId, lockRes);
       if (gate) await this.assertFree(tx, workspaceId, resource as StaffResource, startAt, durationMin, id);
+      // Conditional on every field the decision used (main's writes do not bump version).
       const { count } = await tx.appointment.updateMany({
-        where: { id, workspaceId, ...(input.version !== undefined ? { version: input.version } : {}) },
+        where: {
+          id,
+          workspaceId,
+          status: existing.status,
+          startAt: existing.startAt,
+          durationMin: existing.durationMin,
+          resourceId: existing.resourceId,
+          staffId: existing.staffId,
+          serviceId: existing.serviceId,
+          version: existing.version,
+        },
         data,
       });
       if (count === 0) {
         const current = await tx.appointment.findFirst({ where: { id, workspaceId } });
         if (!current) throw new NotFoundException("Appointment not found");
-        throw await this.conflict(workspaceId, current);
+        if (input.version !== undefined && current.version !== input.version) throw await this.conflict(workspaceId, current);
+        throw new StaleRead();
       }
       return tx.appointment.findFirst({
         where: { id, workspaceId },
