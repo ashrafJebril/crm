@@ -56,6 +56,7 @@ import {
   WEBSITE_PAGE_CAP,
   WEBSITE_PAGE_MAX_BYTES,
   WEBSITE_RUN_BUDGET_MS,
+  WEBSITE_STALE_MS,
   type PageState,
 } from "../knowledge-constants";
 import type { KnowledgeSourceError } from "../knowledge-errors";
@@ -69,7 +70,7 @@ export const WEBSITE_FETCH_DEPS = Symbol("WEBSITE_FETCH_DEPS");
 export const CRAWL_SLEEP = Symbol("CRAWL_SLEEP");
 
 /** A run that holds its lease longer than this is stale; another may take it over. */
-export const WEBSITE_STALE_MS = 30 * 60 * 1000;
+export { WEBSITE_STALE_MS };
 export const MIN_REQUEST_GAP_MS = 1000;
 export const MAX_CRAWL_DELAY_MS = 10_000;
 /** In-scope URLs collected from sitemaps per run; the rest are never queued. */

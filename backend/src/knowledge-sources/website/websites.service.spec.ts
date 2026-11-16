@@ -2,7 +2,8 @@
 import { WebsitesService } from "./websites.service";
 import { fakeNet, html, PUBLIC_IP, website, A, B } from "./crawl-test-world";
 import { knowledgeWorld, failure } from "../knowledge-test-world";
-import { REFRESH_COOLDOWN_MS, WEBSITE_MAX_SOURCES } from "../knowledge-constants";
+import { REFRESH_COOLDOWN_MS, WEBSITE_MAX_SOURCES, WEBSITE_STALE_MS } from "../knowledge-constants";
+import { isSyncing } from "../knowledge-sources.service";
 
 function setup(net = fakeNet({ dns: {}, pages: {} })) {
   const w = knowledgeWorld();
@@ -115,5 +116,32 @@ describe("WebsitesService", () => {
     expect(resumed.nextSyncAt).toBeInstanceOf(Date);
     const manual = await websites.patch(A, src.id, { schedule: "manual", version: 2 });
     expect(manual.nextSyncAt).toBeNull();
+  });
+});
+
+describe("knowledge source DTO: syncing", () => {
+  it("a live crawl reads true; an idle source and a stale lease read false", async () => {
+    const w = knowledgeWorld();
+    const live = website(w.db, { status: "ready", syncStartedAt: new Date(Date.now() - 60_000) });
+    const idle = website(w.db, { status: "ready", syncStartedAt: null });
+    const stale = website(w.db, { status: "ready", syncStartedAt: new Date(Date.now() - WEBSITE_STALE_MS - 60_000) });
+    expect((await w.svc.get(A, live.id)).syncing).toBe(true);
+    expect((await w.svc.get(A, idle.id)).syncing).toBe(false);
+    expect((await w.svc.get(A, stale.id)).syncing).toBe(false);
+    const listed = Object.fromEntries((await w.svc.list(A)).items.map((i) => [i.id, i.syncing]));
+    expect(listed).toEqual({ [live.id]: true, [idle.id]: false, [stale.id]: false });
+    // The same rule as the crawler: exactly at the limit it is still live, past it a new run may claim it.
+    const at = new Date(Date.now() - WEBSITE_STALE_MS);
+    expect(isSyncing({ kind: "website", syncStartedAt: at }, new Date(at.getTime() + WEBSITE_STALE_MS))).toBe(true);
+    expect(isSyncing({ kind: "website", syncStartedAt: at }, new Date(at.getTime() + WEBSITE_STALE_MS + 1))).toBe(false);
+  });
+
+  it("file sources keep their status semantics and never read as syncing", async () => {
+    const w = knowledgeWorld();
+    const base = { workspaceId: A, kind: "file", error: null, title: "Menu.pdf", order: 0, consecutiveFailures: 0, itemCount: 0, publishState: "none", legacyRef: null, version: 0, mediaId: null, createdAt: new Date(), updatedAt: new Date() };
+    w.db.knowledgeSource.push({ ...base, id: "f_proc", status: "processing", syncStartedAt: new Date(), leaseUntil: new Date(Date.now() + 60_000) });
+    w.db.knowledgeSource.push({ ...base, id: "f_queued", status: "queued", syncStartedAt: null });
+    expect(await w.svc.get(A, "f_proc")).toMatchObject({ status: "processing", syncing: false });
+    expect(await w.svc.get(A, "f_queued")).toMatchObject({ status: "queued", syncing: false });
   });
 });

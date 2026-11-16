@@ -121,6 +121,12 @@ export interface KnowledgeSourceDto {
    * the website wording ("failed N times in a row") for files.
    */
   consecutiveFailures: number;
+  /**
+   * Websites: a crawl run holds a live lease (`syncStartedAt` set and younger
+   * than WEBSITE_STALE_MS, the crawler's own staleness rule). Always false for
+   * other kinds, whose progress is `status` (`queued` / `processing`).
+   */
+  syncing: boolean;
   lastRun: unknown;
   itemCount: number;
   publishState: string;

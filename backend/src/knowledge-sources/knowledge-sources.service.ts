@@ -27,6 +27,7 @@ import {
   PAGE_STATES,
   PREVIEW_MAX_ITEMS,
   TOMBSTONE_KIND,
+  WEBSITE_STALE_MS,
   type KbFileType,
   type KnowledgeKind,
   type KnowledgeStatus,
@@ -106,6 +107,11 @@ export function classifyUpload(f: { originalname: string; mimetype: string; buff
   }
 }
 
+/** A website crawl holds a live lease (the crawler's staleness rule: a lease older than WEBSITE_STALE_MS is stale). */
+export function isSyncing(row: { kind: string; syncStartedAt?: Date | null }, now = new Date()): boolean {
+  return row.kind === "website" && row.syncStartedAt instanceof Date && now.getTime() - row.syncStartedAt.getTime() <= WEBSITE_STALE_MS;
+}
+
 @Injectable()
 export class KnowledgeSourcesService {
   private readonly log = new Logger(KnowledgeSourcesService.name);
@@ -120,7 +126,7 @@ export class KnowledgeSourcesService {
 
   // ─── Reads ──────────────────────────────────────────────────────────────
 
-  toDto(row: SourceWithMedia, pageCounts?: Partial<Record<PageState, number>>): KnowledgeSourceDto {
+  toDto(row: SourceWithMedia, pageCounts?: Partial<Record<PageState, number>>, now = new Date()): KnowledgeSourceDto {
     const dto: KnowledgeSourceDto = {
       id: row.id,
       kind: row.kind as KnowledgeKind,
@@ -135,6 +141,7 @@ export class KnowledgeSourcesService {
       lastSyncAt: row.lastSyncAt ?? null,
       nextSyncAt: row.nextSyncAt ?? null,
       consecutiveFailures: row.consecutiveFailures,
+      syncing: isSyncing(row, now),
       lastRun: row.lastRun ?? null,
       itemCount: row.itemCount,
       publishState: row.publishState,
