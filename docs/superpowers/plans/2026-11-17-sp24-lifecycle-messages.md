@@ -306,22 +306,22 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 15. **Size.** The roadmap says M. Two build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision (R1–R15) and the base commit before Task 1 starts. Migration `20261117150000_lifecycle_messages` needs explicit user approval before it runs.*
-- **R1** (system workflows + `notify_staff`): pending.
-- **R2** (explicit Set up, off by default, no auto-provisioning): pending.
-- **R3** (5-minute scan, 15-minute lookback, claim table, `reminderSent` set after send): pending.
-- **R4** (language from the last inbound script, else workspace): pending.
-- **R5** (opt-out blocks lifecycle templates too): pending.
-- **R6** (in-app staff notifications, new type `lifecycle`): pending.
-- **R7** (one attempt per occurrence; skips visible): pending.
-- **R8** (`forSend` in the template executor for every workflow): pending.
-- **R9** (HJZ-synced bookings included, with a note): pending.
-- **R10** (`ticket_resolved` only where `ticket_stage_changed` is emitted): pending.
-- **R11** (templates on the default number, R8 unchanged): pending.
-- **R12** (rollback runbook): pending.
-- **R13** (base SHA, schema ownership, migration order): pending.
-- **R14** (verification on the production DB with stubs; explicit migration approval): pending.
-- **R15** (size M; 2 build tasks + verification): pending.
+*Decided 2026-11-16 by the controller: R1–R15 accepted as proposed in Architecture Rulings and Risks. Base commit 2e59053 (feat/tkana-parity: SP-09, SP-10, SP-11 and SP-21 Task 1 merged). SP-24 owns its own migration folder; it is independent of SP-20 20261117130000 and SP-21 20261117120000, and each is applied only with user approval. Migration `20261117150000_lifecycle_messages` needs explicit user approval before it runs.*
+- **R1** (system workflows + `notify_staff`): accepted.
+- **R2** (explicit Set up, off by default, no auto-provisioning): accepted.
+- **R3** (5-minute scan, 15-minute lookback, claim table, `reminderSent` set after send): accepted.
+- **R4** (language from the last inbound script, else workspace): accepted.
+- **R5** (opt-out blocks lifecycle templates too): accepted.
+- **R6** (in-app staff notifications, new type `lifecycle`): accepted.
+- **R7** (one attempt per occurrence; skips visible): accepted.
+- **R8** (`forSend` in the template executor for every workflow): accepted.
+- **R9** (HJZ-synced bookings included, with a note): accepted.
+- **R10** (`ticket_resolved` only where `ticket_stage_changed` is emitted): accepted.
+- **R11** (templates on the default number, R8 unchanged): accepted.
+- **R12** (rollback runbook): accepted.
+- **R13** (base SHA, schema ownership, migration order): accepted.
+- **R14** (verification on the production DB with stubs; explicit migration approval): accepted.
+- **R15** (size M; 2 build tasks + verification): accepted.
 
 ---
 
