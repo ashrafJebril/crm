@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { availabilityPath, reschedulePatch } from "./bookingApi";
+import { availabilityPath, rescheduleBody, reschedulePatch } from "./bookingApi";
 
 describe("reschedule sends only what changed (review R-M1)", () => {
   const appt = { startAt: "2026-11-17T06:00:00.000Z", durationMin: 60, resourceId: "r1", version: 4 };
@@ -18,6 +18,31 @@ describe("reschedule sends only what changed (review R-M1)", () => {
     expect(availabilityPath({ serviceId: "s1", date: "2026-11-17" })).toBe("/bookings/availability?serviceId=s1&date=2026-11-17");
     expect(availabilityPath({ serviceId: "s1", resourceId: "r 2", date: "2026-11-17" })).toBe(
       "/bookings/availability?serviceId=s1&date=2026-11-17&resourceId=r+2",
+    );
+  });
+});
+
+describe("reschedule body (final review M3) and availability for reschedule (M2, M5)", () => {
+  const mcpRow = { startAt: "2026-11-17T06:00:00.000Z", durationMin: 45, resourceId: null, version: 2 };
+
+  it("a picked slot always sends its resourceId (\"Any available\" on a row without a resource)", () => {
+    expect(rescheduleBody(mcpRow, { startAt: "2026-11-17T10:00:00+03:00", slotResourceId: "r7" })).toEqual({
+      version: 2,
+      startAt: "2026-11-17T10:00:00+03:00",
+      resourceId: "r7",
+    });
+  });
+
+  it("a manual time with the staff field untouched omits resourceId; a touched field sends it (or null)", () => {
+    expect(rescheduleBody(mcpRow, { startAt: "2026-11-18T06:00:00.000Z" })).toEqual({ version: 2, startAt: "2026-11-18T06:00:00.000Z" });
+    const linked = { ...mcpRow, resourceId: "r1" };
+    expect(rescheduleBody(linked, { startAt: linked.startAt, staff: { touched: true, value: null } })).toEqual({ version: 2, resourceId: null });
+    expect(rescheduleBody(linked, { startAt: linked.startAt, staff: { touched: false, value: "r9" } })).toEqual({ version: 2 });
+  });
+
+  it("availability for a reschedule excludes the booking and uses its own duration", () => {
+    expect(availabilityPath({ serviceId: "s1", date: "2026-11-17", excludeAppointmentId: "a1", durationMin: 45 })).toBe(
+      "/bookings/availability?serviceId=s1&date=2026-11-17&excludeAppointmentId=a1&durationMin=45",
     );
   });
 });

@@ -10,7 +10,7 @@ import { Modal } from "@/components/Modal";
 import { ApiError } from "@/api/client";
 import type { Tx } from "@/lib/tx";
 import type { Appointment, Lang, Service, StaffResource } from "@/lib/types";
-import { reschedulePatch, updateBooking } from "./bookingApi";
+import { rescheduleBody, updateBooking } from "./bookingApi";
 import { bookingErrorText, conflictCurrent, errorKey } from "./bookingErrors";
 import { hhmm, instantOf, parseHHMM, timeInTz, wallClock } from "./bookingTime";
 import { ErrorBox, FIELD, LABEL } from "./catalogUi";
@@ -53,9 +53,11 @@ export function RescheduleDialog({ appt: initial, services, staff, tz, tx, lang,
     setBusy(true);
     setError(null);
     const startAt = manual ? instantOf(date, parseHHMM(time) as number, tz).toISOString() : (slot as PickedSlot).startAt;
-    // Only an explicit staff change sends resourceId (omit = unchanged, null = drop it).
-    const picked = manual ? resourceId || null : (slot as PickedSlot).resourceId;
-    const body = reschedulePatch(appt, { startAt, ...(staffTouched ? { resourceId: picked } : {}) });
+    // A picked slot carries its staff (M3); a manual time sends the staff
+    // field only when the user changed it (R-M1: omit = unchanged, null = drop).
+    const body = manual
+      ? rescheduleBody(appt, { startAt, staff: { touched: staffTouched, value: resourceId || null } })
+      : rescheduleBody(appt, { startAt, slotResourceId: (slot as PickedSlot).resourceId });
     try {
       onSaved(await updateBooking(appt.id, body));
     } catch (e) {
@@ -151,6 +153,8 @@ export function RescheduleDialog({ appt: initial, services, staff, tz, tx, lang,
             value={slot}
             onChange={setSlot}
             refreshKey={refresh}
+            excludeAppointmentId={appt.id}
+            durationMin={appt.durationMin}
           />
         )}
         {manual && (

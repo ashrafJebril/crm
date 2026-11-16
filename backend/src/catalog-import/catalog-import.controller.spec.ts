@@ -130,11 +130,8 @@ describe("htmlToText is linear (review I1)", () => {
     ["<object>"],
     ["<noscript>x"],
     ["<head><p>"],
-  ])("2 MB of %j (no closers) finishes quickly", (unit) => {
-    const html = unit.repeat(Math.ceil((2 * 1024 * 1024) / unit.length));
-    const t0 = Date.now();
-    htmlToText(html, 200_000);
-    expect(Date.now() - t0).toBeLessThan(500);
+  ])("2 MB of %j (no closers) stays linear", (unit) => {
+    expectLinear(unit);
   });
 
   it.each([
@@ -145,10 +142,28 @@ describe("htmlToText is linear (review I1)", () => {
     ["<p"],
     ["<"],
     ["<head"],
-  ])("2 MB of %j finishes quickly", (unit) => {
-    const html = unit.repeat(Math.ceil((2 * 1024 * 1024) / unit.length));
-    const t0 = Date.now();
-    htmlToText(html, 200_000);
-    expect(Date.now() - t0).toBeLessThan(500);
+  ])("2 MB of %j stays linear", (unit) => {
+    expectLinear(unit);
   });
 });
+
+/**
+ * Final review M1: a wall-clock limit flaked under parallel jest. Instead,
+ * doubling the input must roughly double the time (well under 4x: a
+ * quadratic path quadruples), plus a generous absolute cap (the old
+ * quadratic stripping took minutes on 2 MB). A floor keeps millisecond
+ * noise from failing the ratio.
+ */
+function timeStrip(unit: string, bytes: number): number {
+  const html = unit.repeat(Math.ceil(bytes / unit.length));
+  const t0 = process.hrtime.bigint();
+  htmlToText(html, 200_000);
+  return Number(process.hrtime.bigint() - t0) / 1e6;
+}
+function expectLinear(unit: string) {
+  timeStrip(unit, 64 * 1024); // warm up
+  const one = Math.min(timeStrip(unit, 1024 * 1024), timeStrip(unit, 1024 * 1024));
+  const two = Math.min(timeStrip(unit, 2 * 1024 * 1024), timeStrip(unit, 2 * 1024 * 1024));
+  expect(two).toBeLessThan(5000);
+  expect({ unit, ratioOk: two <= Math.max(4 * one, 50) }).toEqual({ unit, ratioOk: true });
+}

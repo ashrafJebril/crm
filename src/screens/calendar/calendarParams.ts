@@ -96,8 +96,20 @@ export function rangeFor(view: CalendarView, date: string, tz: string, lang: Lan
 /** The list query string for a view and its filters. */
 export function appointmentsQuery(p: CalendarParams, tz: string, lang: Lang): string {
   const { from, to } = rangeFor(p.view, p.date, tz, lang);
-  const q = new URLSearchParams({ from, to, limit: "500" });
+  const q = new URLSearchParams({ from, to, limit: String(LIST_LIMIT) });
   if (p.service) q.set("serviceId", p.service);
   if (p.staff) q.set("resourceId", p.staff);
   return `/appointments?${q.toString()}`;
 }
+
+/** Rows per calendar fetch (final review M6). */
+export const LIST_LIMIT = 500;
+
+/** The fetch returned a full page, so later bookings may be missing: the UI says so. */
+export const hitListLimit = (rows: number) => rows >= LIST_LIMIT;
+
+/** The notice shown when the limit is hit (Latin digits in both languages). */
+export const LIMIT_NOTICE: [en: string, ar: string] = [
+  `Showing the first ${LIST_LIMIT} bookings — narrow the dates or filters`,
+  `يتم عرض أول ${LIST_LIMIT} حجز — ضيّق التواريخ أو عوامل التصفية`,
+];
