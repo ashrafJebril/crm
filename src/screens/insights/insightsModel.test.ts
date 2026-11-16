@@ -142,6 +142,9 @@ describe("insights error copy covers every SP-11 key in both languages", () => {
     }
     expect(insightsErrorText(new ApiError("Forbidden", 403), makeTx("en"))).toMatch(/permission/);
     expect(insightsErrorText("boom", makeTx("en"))).toBe("The report couldn't load. Try again.");
+    // Nothing resets the number on its own: the copy asks for another one.
+    expect(insightsErrorText("insights.channel_not_found", makeTx("en"))).toBe("That number isn't available. Choose another number.");
+    expect(insightsErrorText("insights.channel_not_found", makeTx("ar"))).toBe("هذا الرقم غير متاح. اختر رقمًا آخر.");
   });
 });
 

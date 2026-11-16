@@ -85,5 +85,6 @@ export interface HomeDto {
   today: HomeDay;
   tomorrow: HomeDay;
   away: HomeSection<AwaySummary>;
-  day1: { show: boolean; steps: Day1Step[] };
+  /** `canDismiss` false: a super-admin / impersonation session (no member row). */
+  day1: { show: boolean; steps: Day1Step[]; canDismiss?: boolean };
 }

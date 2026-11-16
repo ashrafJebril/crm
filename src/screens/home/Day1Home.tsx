@@ -18,10 +18,12 @@ interface Props {
   tx: Tx;
   /** Called after the member dismissed the Day-1 home. */
   onDismissed: () => void;
+  /** False for super-admin / impersonation sessions: no Dismiss button. */
+  canDismiss?: boolean;
 }
 
 /** SP-11 Day-1 home: setup steps computed from data, until set up or dismissed. */
-export function Day1Home({ steps, tx, onDismissed }: Props) {
+export function Day1Home({ steps, tx, onDismissed, canDismiss = true }: Props) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const p = day1Progress(steps);
@@ -48,9 +50,11 @@ export function Day1Home({ steps, tx, onDismissed }: Props) {
             {tx("steps done", "خطوات مكتملة")}
           </div>
         </div>
-        <button type="button" className="btn" onClick={() => void dismiss()} disabled={busy}>
-          {tx("Dismiss", "إخفاء")}
-        </button>
+        {canDismiss && (
+          <button type="button" className="btn" onClick={() => void dismiss()} disabled={busy}>
+            {tx("Dismiss", "إخفاء")}
+          </button>
+        )}
       </div>
       {failed && (
         <div role="alert" style={{ fontSize: 12, color: "var(--bad)", marginBlockEnd: 8 }}>

@@ -193,7 +193,8 @@ export class HomeService {
     const since = member?.homeSeenAt ?? new Date(now.getTime() - AWAY_DEFAULT_MS);
 
     const sec = <T>(label: string, fn: (tx: SectionTx) => Promise<T>): Promise<Section<T>> =>
-      runSection(this.db, label, fn, this.logger, { signal });
+      // The home's lane goes ahead of queued Analytics sections (incl. home.openable).
+      runSection(this.db, label, fn, this.logger, { signal, lane: "home", workspaceId: ws });
     const q = (tx: SectionTx, sql: Prisma.Sql) => tx.$queryRaw<Row[]>(sql);
     const skip = <T>(s: Section<T>) => Promise.resolve(s);
 
@@ -282,10 +283,13 @@ export class HomeService {
     }
 
     const done = (day1S.status === "ok" ? (day1S.data[0] ?? {}) : {}) as Partial<Record<Day1StepKey, boolean>>;
-    const day1 =
-      day1S.status === "ok"
+    const day1 = {
+      ...(day1S.status === "ok"
         ? day1View(done, can, { dismissedAt: member?.homeDay1DismissedAt ?? null, hasServices: schema.sp10 })
-        : { show: false, steps: [] };
+        : { show: false, steps: [] }),
+      // A bypass session has no member row to record the dismissal on.
+      canDismiss: !viewer.bypass,
+    };
 
     return {
       now: now.toISOString(),

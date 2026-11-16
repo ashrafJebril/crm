@@ -2,9 +2,9 @@ import type { Prisma } from "@prisma/client";
 import { CH, U } from "./__fixtures__/insights-world";
 import { ATTRIBUTION_SINCE, OWNER } from "./insights-expected";
 import { FORMER_KEY, UNATTRIBUTED_KEY } from "./insights-format";
-import { createLimiter, InsightsService, runSection, SectionQueueTimeout, sectionLimiter, type SectionTx } from "./insights.service";
+import { createLimiter, InsightsService, runSection, SectionQueueTimeout, sectionLimiter, type Limiter, type LimitOptions, type SectionTx } from "./insights.service";
 import { INSIGHTS_HOME_MIGRATION, SECTION_QUEUE_TIMEOUT_MS } from "./insights-constants";
-import { MAX_CONCURRENT_SECTIONS, SECTION_STATEMENT_TIMEOUT_MS, sectionTransactionTimeoutMs } from "./insights-constants";
+import { MAX_CONCURRENT_SECTIONS, maxConcurrentSections, SECTION_STATEMENT_TIMEOUT_MS, sectionTransactionTimeoutMs } from "./insights-constants";
 
 /** The `/* insights:support.<name> *\/` tag a statement starts with. */
 const tagOf = (sql: Prisma.Sql) => /insights:support\.(\w+)/.exec(sql.strings[0])?.[1] ?? "?";
@@ -341,5 +341,127 @@ describe("InsightsService.support", () => {
     expect(res.team).toEqual({ status: "ok", data: [] });
     if (res.peaks.status !== "ok") throw new Error("peaks");
     expect(res.peaks.data.matrix.flat().every((n) => n === 0)).toBe(true);
+  });
+});
+
+describe("section limiter: lanes, fairness and the configurable limit", () => {
+  /** A task that records its start and waits for its own release. */
+  function gate() {
+    const order: string[] = [];
+    const releases = new Map<string, () => void>();
+    const task = (name: string) => () =>
+      new Promise<string>((resolve) => {
+        order.push(name);
+        releases.set(name, () => resolve(name));
+      });
+    const release = async (name: string) => {
+      releases.get(name)!();
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    return { order, task, release };
+  }
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it("home is served before queued analytics work", async () => {
+    const limit = createLimiter(1);
+    const g = gate();
+    const running = limit(g.task("report-1"), { key: "wsA" });
+    const queued = [
+      limit(g.task("report-2"), { key: "wsA" }),
+      limit(g.task("report-3"), { key: "wsA" }),
+      // The home's re-check (home.openable) arrives last but goes first.
+      limit(g.task("home-openable"), { key: "wsA", lane: "home" }),
+    ];
+    await tick();
+    await g.release("report-1");
+    expect(g.order).toEqual(["report-1", "home-openable"]);
+    await g.release("home-openable");
+    await g.release("report-2");
+    await g.release("report-3");
+    await Promise.all([running, ...queued]);
+    // FIFO within the report lane.
+    expect(g.order).toEqual(["report-1", "home-openable", "report-2", "report-3"]);
+  });
+
+  it("one workspace never holds both slots while another workspace waits", async () => {
+    const limit = createLimiter(2);
+    const g = gate();
+    const all = [
+      limit(g.task("A-team-1"), { key: "wsA" }),
+      limit(g.task("A-team-2"), { key: "wsA" }),
+      limit(g.task("A-team-3"), { key: "wsA" }),
+      limit(g.task("B-home"), { key: "wsB", lane: "home" }),
+    ];
+    await tick();
+    // Nobody else waited when A took both slots.
+    expect(g.order).toEqual(["A-team-1", "A-team-2"]);
+    await g.release("A-team-1");
+    // B (nothing in flight) goes before A's third section.
+    expect(g.order).toEqual(["A-team-1", "A-team-2", "B-home"]);
+    await g.release("A-team-2");
+    expect(g.order).toEqual(["A-team-1", "A-team-2", "B-home", "A-team-3"]);
+    await g.release("B-home");
+    await g.release("A-team-3");
+    await Promise.all(all);
+  });
+
+  it("fairness beats the lane: a busy workspace's home waits behind another workspace's report", async () => {
+    const limit = createLimiter(2);
+    const g = gate();
+    const all = [
+      limit(g.task("A-1"), { key: "wsA" }),
+      limit(g.task("B-1"), { key: "wsB" }),
+      limit(g.task("A-home"), { key: "wsA", lane: "home" }),
+      limit(g.task("C-report"), { key: "wsC" }),
+    ];
+    await tick();
+    await g.release("B-1");
+    expect(g.order).toEqual(["A-1", "B-1", "C-report"]);
+    await g.release("A-1");
+    expect(g.order).toEqual(["A-1", "B-1", "C-report", "A-home"]);
+    await g.release("C-report");
+    await g.release("A-home");
+    await Promise.all(all);
+  });
+
+  it("deadline and abort still apply in every lane", async () => {
+    const limit = createLimiter(1, { queueTimeoutMs: 20 });
+    const g = gate();
+    const running = limit(g.task("hold"), { key: "wsA" });
+    await expect(limit(g.task("home"), { key: "wsB", lane: "home" })).rejects.toBeInstanceOf(SectionQueueTimeout);
+    const ac = new AbortController();
+    const aborted = limit(g.task("home2"), { key: "wsB", lane: "home", signal: ac.signal });
+    ac.abort();
+    await expect(aborted).rejects.toThrow("request aborted before the section started");
+    await g.release("hold");
+    await running;
+    expect(g.order).toEqual(["hold"]);
+  });
+
+  it("the limit reads INSIGHTS_MAX_CONCURRENT_SECTIONS, default 2, clamped to 1–4", () => {
+    expect(maxConcurrentSections({})).toBe(2);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "" })).toBe(2);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "abc" })).toBe(2);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "3" })).toBe(3);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: " 4 " })).toBe(4);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "0" })).toBe(1);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "-5" })).toBe(1);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "12" })).toBe(4);
+    expect(maxConcurrentSections({ INSIGHTS_MAX_CONCURRENT_SECTIONS: "2.9" })).toBe(2);
+  });
+
+  it("runSection queues with its lane and workspace", async () => {
+    const seen: LimitOptions[] = [];
+    const spy: Limiter = (task, o) => {
+      seen.push(o ?? {});
+      return task();
+    };
+    const db = { $transaction: async (fn: (t: SectionTx) => Promise<unknown>) => fn({ $executeRawUnsafe: async () => 0, $queryRaw: (async () => []) as never }) };
+    expect(await runSection(db as never, "x", async () => 1, undefined, { limiter: spy, lane: "home", workspaceId: "ws9" })).toEqual({ status: "ok", data: 1 });
+    expect(await runSection(db as never, "y", async () => 2, undefined, { limiter: spy, workspaceId: "ws9" })).toEqual({ status: "ok", data: 2 });
+    expect(seen[0]).toMatchObject({ lane: "home", key: "ws9" });
+    // Analytics: the report lane is the limiter's default.
+    expect(seen[1]).toMatchObject({ key: "ws9" });
+    expect(seen[1].lane ?? "report").toBe("report");
   });
 });
