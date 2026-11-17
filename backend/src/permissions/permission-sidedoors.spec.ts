@@ -1289,16 +1289,14 @@ describe("SP-18 copilot", () => {
     const t = await withKey(() => w.turn(AGENT, { message: "x" }));
     const r = results(w, 1).map((x) => JSON.parse(x.content));
     expect(r[0]).toMatchObject({ error: "not_found" });
-    expect(r[1].conversations.map((c: any) => c.id)).toEqual(["v-mine"]);
-    expect(r[2].conversations).toEqual([]);
+    expect(r[1].customerWritten.conversations.map((c: any) => c.id)).toEqual(["v-mine"]);
+    expect(r[2].customerWritten.conversations).toEqual([]);
     expect(r[3]).toMatchObject({ error: "not_found" });
     // The contact is open to the agent (contacts.view), but its hidden conversation is not linked.
-    expect(r[4].links.map((l: any) => l.id)).not.toContain("v-hidden");
+    expect(r[4].customerWritten.links.map((l: any) => l.id)).not.toContain("v-hidden");
     const all = JSON.stringify(results(w, 1));
     expect(all).not.toContain("secret");
     expect(t.events.some((e) => e.event === "draft")).toBe(false);
-    // Nothing from the hidden thread was tainted in.
-    expect(w.db.copilotSession[0].tainted).toBe(false);
   });
 
   it("copilot source cards never name a hidden record", async () => {

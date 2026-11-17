@@ -2,6 +2,8 @@
 import { ADMIN, AGENT, FOREIGN, NOW, OWNER, WS, WS2, copilotWorld, httpError, viewer, withKey } from "./copilot-test-world";
 import { EARLIER_NOTE } from "./copilot-sessions.service";
 import { HISTORY_PAGE, TRANSCRIPT_TURNS_SENT } from "./copilot-constants";
+import { NO_ANSWER } from "./copilot-model";
+import { text, toolUse } from "./fake-claude-stream";
 
 describe("CopilotSessionsService", () => {
   it("history scoped to the member", async () => {
@@ -103,6 +105,60 @@ describe("CopilotSessionsService", () => {
     expect(long).toHaveLength(2 + TRANSCRIPT_TURNS_SENT * 2);
     expect((long[2].content as any[])[0].text).toBe("q2");
     expect(long.some((m) => Array.isArray(m.content) && (m.content as any[]).some((b) => b.type === "thinking"))).toBe(false);
+  });
+
+  /** The API's ordering rules for a replay: user first; a system message follows a user message and is last or followed by an assistant. */
+  function assertValidReplay(msgs: any[]) {
+    expect(msgs[0].role).toBe("user");
+    for (let i = 0; i < msgs.length; i++) {
+      if (msgs[i].role !== "system") continue;
+      expect({ i, prev: msgs[i - 1]?.role }).toEqual({ i, prev: "user" });
+      if (i < msgs.length - 1) expect({ i, next: msgs[i + 1].role }).toEqual({ i, next: "assistant" });
+    }
+    const uses = msgs.flatMap((m) => (m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b: any) => b.type === "tool_use").map((b: any) => b.id) : []));
+    const results = msgs.flatMap((m) => (m.role === "user" && Array.isArray(m.content) ? m.content.filter((b: any) => b.type === "tool_result").map((b: any) => b.tool_use_id) : []));
+    expect(results.sort()).toEqual(uses.sort());
+  }
+
+  it("a session whose previous turn crashed mid-way still works on the next turn (lease taken over)", async () => {
+    const w = copilotWorld({ script: [{ content: [text("second answer")] }] });
+    // The first turn is prepared (user row + context stored, lease held), then the process dies: run() never happens.
+    const crashed = await withKey(() => w.turns.prepare(WS, viewer(AGENT), { message: "first", approvalMode: "manual", lang: "en" } as any, NOW));
+    expect(w.db.copilotSession[0].runningUntil).not.toBeNull();
+    // Later than the lease: the next turn takes it over and closes the abandoned turn with a note.
+    const later = new Date(NOW.getTime() + 60 * 60 * 1000);
+    const next = await withKey(() => w.turns.prepare(WS, viewer(AGENT), { sessionId: crashed.sessionId, message: "second", approvalMode: "manual", lang: "en" } as any, later));
+    const events: any[] = [];
+    await withKey(() => next.run((e, d) => events.push({ e, d })));
+    expect(events[events.length - 1].e).toBe("done");
+    const sent = w.fake.calls[0].messages;
+    assertValidReplay(sent);
+    expect(sent.map((m: any) => m.role)).toEqual(["user", "system", "assistant", "user", "system"]);
+    expect(sent[2].content).toEqual([{ type: "text", text: NO_ANSWER }]);
+    const d = await w.sessions.detail(WS, AGENT, crashed.sessionId, later);
+    expect(d.messages.map((m) => [m.role, m.text])).toEqual([
+      ["user", "first"],
+      ["note", "copilot.timeout"],
+      ["user", "second"],
+      ["assistant", "second answer"],
+    ]);
+  });
+
+  it("an unfinished turn without a closing row is closed in the replay", async () => {
+    const w = copilotWorld({ script: [{ content: [toolUse("t1", "get_contact", { id: "c-layla" })], stop_reason: "tool_use" }, { content: [text("ok")] }] });
+    const s = await w.sessions.create(WS, AGENT);
+    // Rows as a crash leaves them: a user turn with no answer, then one whose assistant asked for a tool that never ran.
+    await w.sessions.append(WS, s.id, { role: "user", text: "q1", content: [{ role: "user", content: [{ type: "text", text: "q1" }] }, { role: "system", content: "ctx" }] as any });
+    await w.sessions.append(WS, s.id, { role: "user", text: "q2", content: [{ role: "user", content: [{ type: "text", text: "q2" }] }] as any });
+    await w.sessions.append(WS, s.id, { role: "assistant", text: "", content: [{ role: "assistant", content: [toolUse("x1", "get_contact", { id: "c-layla" })] }] as any });
+    await w.sessions.append(WS, s.id, { role: "user", text: "q3", content: [{ role: "user", content: [{ type: "text", text: "q3" }] }] as any });
+    const replay = await w.sessions.transcript(WS, s.id);
+    assertValidReplay(replay);
+    expect(replay.map((m: any) => m.role)).toEqual(["user", "system", "assistant", "user", "assistant", "user", "assistant", "user"]);
+    // And a real turn on top of it goes through.
+    const t = await withKey(() => w.turn(AGENT, { sessionId: s.id, message: "q4" }));
+    expect(t.last.event).toBe("done");
+    for (const c of w.fake.calls) assertValidReplay(c.messages);
   });
 
   it("the turn lease: 409 while running, free again after release or expiry", async () => {

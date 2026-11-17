@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ListTicketsQuery } from "../../tickets/tickets.dto";
 import type { CopilotTool, ToolContext } from "./registry";
-import { notFound, openRecord, visibleIds, type ReadToolDeps } from "./deps";
+import { customerList, notFound, openRecord, recordData, visibleIds, type ReadToolDeps } from "./deps";
 
 /** SP-18 tickets: the member's ticket list (TicketsService) filtered to what they can open, and one ticket (RecordsService). */
 export function ticketTools(deps: ReadToolDeps): CopilotTool[] {
@@ -25,8 +25,10 @@ export function ticketTools(deps: ReadToolDeps): CopilotTool[] {
         const res = (await deps.tickets.listTickets(ctx.workspaceId, q, ctx.viewer)) as unknown;
         const rows = (Array.isArray(res) ? res : ((res as { items?: unknown[] }).items ?? [])) as Array<Record<string, unknown>>;
         const ok = await visibleIds(deps, ctx, "ticket", rows.map((r) => String(r.id)));
-        return {
-          tickets: rows
+        return customerList(
+          ctx,
+          "tickets",
+          rows
             .filter((r) => ok.has(String(r.id)))
             .slice(0, input.limit ?? 20)
             .map((r) => ({
@@ -39,7 +41,7 @@ export function ticketTools(deps: ReadToolDeps): CopilotTool[] {
               slaDueAt: r.slaDueAt ?? null,
               updatedAt: r.updatedAt ?? null,
             })),
-        };
+        );
       },
     },
     {
@@ -50,7 +52,8 @@ export function ticketTools(deps: ReadToolDeps): CopilotTool[] {
       permissions: ["tickets.view"],
       label: ["Reading a ticket", "قراءة تذكرة"],
       async execute(ctx: ToolContext, input: { id: string }) {
-        return (await openRecord(deps, ctx, "ticket", input.id)) ?? notFound("ticket");
+        const r = await openRecord(deps, ctx, "ticket", input.id);
+        return r ? recordData(ctx, r) : notFound("ticket");
       },
     },
   ];

@@ -12,6 +12,11 @@
  * working. Beyond TRANSCRIPT_TURNS_SENT turns only the last ones are sent,
  * after a one-line note, and then thinking blocks are stripped from the
  * replay (none is replayed out of the prefix it was bound to; ruling 8).
+ *
+ * A turn that never finished (the process died between the user row and the
+ * closing assistant/note row) is closed in the replay, so one crash cannot
+ * make every later turn of the session invalid; taking over an expired lease
+ * also stores a closing note for the turn it abandons.
  */
 import { Injectable } from "@nestjs/common";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -20,7 +25,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { HISTORY_PAGE, TRANSCRIPT_TURNS_SENT, TURN_BUDGET_MS } from "./copilot-constants";
 import { copilotError } from "./copilot-errors";
 import type { CopilotSessionDetailDto, CopilotSessionDto, CopilotSessionPage, PendingCardDto } from "./copilot.dto";
-import { withoutThinking } from "./copilot-model";
+import { closeTranscript, NO_ANSWER, withoutThinking } from "./copilot-model";
 
 /** The lease covers the whole turn plus a margin; an expired lease is free again. */
 export const TURN_LEASE_MS = TURN_BUDGET_MS + 60_000;
@@ -138,15 +143,42 @@ export class CopilotSessionsService {
     return this.prisma.copilotSession.create({ data: { workspaceId, userId } });
   }
 
-  /** Take the turn lease: 409 `copilot.turn_running` while another turn holds it. */
+  /**
+   * Take the turn lease: 409 `copilot.turn_running` while another turn holds
+   * it. Taking over an EXPIRED lease (the turn's process died) closes that
+   * turn with a note, so its unanswered user message gets an answer.
+   */
   async acquireTurn(workspaceId: string, userId: string, id: string, now = new Date()): Promise<void> {
-    const r = await this.prisma.copilotSession.updateMany({
-      where: { id, workspaceId, userId, deletedAt: null, OR: [{ runningUntil: null }, { runningUntil: { lt: now } }] },
+    const free = await this.prisma.copilotSession.updateMany({
+      where: { id, workspaceId, userId, deletedAt: null, runningUntil: null },
       data: { runningUntil: new Date(now.getTime() + TURN_LEASE_MS) },
     });
-    if (r.count === 1) return;
+    if (free.count === 1) return;
+    const expired = await this.prisma.copilotSession.updateMany({
+      where: { id, workspaceId, userId, deletedAt: null, runningUntil: { lt: now } },
+      data: { runningUntil: new Date(now.getTime() + TURN_LEASE_MS) },
+    });
+    if (expired.count === 1) {
+      await this.closeAbandoned(workspaceId, id);
+      return;
+    }
     await this.own(workspaceId, userId, id); // 404 when not the member's
     throw copilotError("copilot.turn_running");
+  }
+
+  /** The abandoned turn's closing note, when its last row is still the user's. */
+  private async closeAbandoned(workspaceId: string, sessionId: string): Promise<void> {
+    const last = await this.prisma.copilotMessage.findFirst({
+      where: { sessionId, workspaceId },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { role: true },
+    });
+    if (last?.role !== "user") return;
+    await this.append(workspaceId, sessionId, {
+      role: "note",
+      text: "copilot.timeout",
+      content: [{ role: "assistant", content: [{ type: "text", text: NO_ANSWER }] }],
+    });
   }
 
   async releaseTurn(workspaceId: string, id: string): Promise<void> {
@@ -219,6 +251,8 @@ export class CopilotSessionsService {
       if (r.role === "user" || turns.length === 0) turns.push([]);
       turns[turns.length - 1].push(...msgs);
     }
+    // Every turn but the last (the one being answered) must end with an assistant message.
+    for (let i = 0; i < turns.length - 1; i++) turns[i] = closeTranscript(turns[i]);
     if (turns.length <= TRANSCRIPT_TURNS_SENT) return turns.flat();
     const kept = turns.slice(-TRANSCRIPT_TURNS_SENT).flat();
     return [{ role: "user", content: [{ type: "text", text: EARLIER_NOTE }] }, { role: "assistant", content: [{ type: "text", text: "Understood." }] }, ...withoutThinking(kept)];
