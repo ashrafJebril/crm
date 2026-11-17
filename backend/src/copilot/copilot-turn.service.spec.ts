@@ -107,6 +107,8 @@ describe("CopilotTurnService", () => {
       expect(c).not.toHaveProperty("top_p");
       expect(c).not.toHaveProperty("thinking");
       expect(c.tool_choice).toEqual({ type: "auto" });
+      // A moving breakpoint on the last block: the up-to-6 loop calls of a turn reuse the cached history.
+      expect(c.cache_control).toEqual({ type: "ephemeral" });
       expect(c.betas).toContain("server-side-fallback-2026-07-01");
       expect(c.fallbacks).toBe("default");
       expect(c.system).toEqual([expect.objectContaining({ type: "text", cache_control: { type: "ephemeral" } })]);
@@ -330,6 +332,13 @@ describe("CopilotTurnService", () => {
     expect(w.fake.calls).toHaveLength(0);
     // A visible one reaches the context with its title from the server.
     await withKey(() => w.turn(AGENT, dto({ pageContext: { page: "conversation", recordKind: "conversation", recordId: "v-mine" } })));
-    expect(w.fake.calls[0].messages[1].content).toContain('open record: conversation v-mine "Layla"');
+    const sys = w.fake.calls[0].messages[1];
+    expect(sys.role).toBe("system");
+    expect(sys.content).toContain("open record: conversation v-mine.");
+    expect(sys.content).not.toContain("Layla");
+    // The title is data in the member's message (customer-written: the session is tainted).
+    expect(w.fake.calls[0].messages[0].content[1].text).toContain("<referenced_records>");
+    expect(w.fake.calls[0].messages[0].content[1].text).toContain("Layla");
+    expect(w.db.copilotSession[0].tainted).toBe(true);
   });
 });

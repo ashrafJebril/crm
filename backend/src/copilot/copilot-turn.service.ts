@@ -50,8 +50,8 @@ import {
 } from "./copilot-constants";
 import { copilotError, type StreamErrorCode } from "./copilot-errors";
 import type { CopilotStreamDto } from "./copilot.dto";
-import { buildChatRequest, contextMessage, copilotModel } from "./copilot-model";
-import { COPILOT_SYSTEM, turnContext } from "./copilot-prompt";
+import { buildChatRequest, closeTranscript, contextMessage, copilotModel } from "./copilot-model";
+import { COPILOT_SYSTEM, recordsBlock, turnContext } from "./copilot-prompt";
 import { CopilotRefsService } from "./copilot-refs.service";
 import { CopilotSessionsService } from "./copilot-sessions.service";
 import { SourceCollector } from "./copilot-sources";
@@ -74,24 +74,7 @@ const envInt = (name: string, d: number) => {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : d;
 };
 
-const STOPPED_NOTE = "The turn stopped before this tool ran.";
-const NO_ANSWER = "(The turn stopped before an answer.)";
-
-/** Close a turn's transcript so it can be replayed: answer open tool calls, end with an assistant message. */
-export function closeTranscript(msgs: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
-  const out = [...msgs];
-  const last = out[out.length - 1];
-  if (last?.role === "assistant" && Array.isArray(last.content)) {
-    const open = last.content.filter((b) => b.type === "tool_use") as Anthropic.Beta.BetaToolUseBlockParam[];
-    if (open.length) {
-      out.push({ role: "user", content: open.map((u) => ({ type: "tool_result" as const, tool_use_id: u.id, is_error: true, content: STOPPED_NOTE })) });
-    } else {
-      return out;
-    }
-  }
-  out.push({ role: "assistant", content: [{ type: "text", text: NO_ANSWER }] });
-  return out;
-}
+export { closeTranscript } from "./copilot-model";
 
 @Injectable()
 export class CopilotTurnService {
@@ -145,13 +128,13 @@ export class CopilotTurnService {
     // References: the whole message is refused before any model call (403 {index}).
     const references = await this.refs.resolve(workspaceId, viewer, dto.references);
     // Page context: a record is re-read as the member; never trusted from the client.
-    let pageRecord: { kind: string; id: string; title: string } | null = null;
+    let pageRecord: { kind: string; id: string; title: string; fields: unknown } | null = null;
     if (dto.pageContext?.recordKind || dto.pageContext?.recordId) {
       const pc = dto.pageContext;
       if (!pc.recordKind || !pc.recordId) throw copilotError("copilot.page_context_invalid");
       try {
         const r = await this.records.get(workspaceId, viewer, pc.recordKind, pc.recordId);
-        pageRecord = { kind: r.kind, id: r.id, title: r.title };
+        pageRecord = { kind: r.kind, id: r.id, title: r.title, fields: r.fields };
       } catch {
         throw copilotError("copilot.page_context_invalid");
       }
@@ -171,6 +154,13 @@ export class CopilotTurnService {
         this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } }),
       ]);
       const model = copilotModel(this.claude);
+      // Record data goes in the member's message as data (never the system channel); customer-writable kinds taint.
+      const records = recordsBlock(references, pageRecord);
+      let tainted = session.tainted;
+      if (records?.tainting && !tainted) {
+        tainted = true;
+        await this.sessions.markTainted(workspaceId, session.id);
+      }
       const context = turnContext({
         lang: dto.lang,
         member: { name: user?.name ?? "Member", roleName: eff ? (dto.lang === "ar" ? eff.nameAr || eff.name : eff.name) : null },
@@ -181,17 +171,18 @@ export class CopilotTurnService {
         page: dto.pageContext
           ? {
               page: dto.pageContext.page,
-              record: pageRecord,
+              record: pageRecord ? { kind: pageRecord.kind, id: pageRecord.id } : null,
               range: { from: dto.pageContext.from, to: dto.pageContext.to },
               channelId: dto.pageContext.channelId,
               pipelineId: dto.pageContext.pipelineId,
             }
           : null,
-        references,
-        tainted: session.tainted,
+        referenceCount: references.length,
+        tainted,
       });
       const ctxMsg = contextMessage(model, context);
       const userBlocks: Anthropic.Beta.BetaContentBlockParam[] = [{ type: "text", text: message }];
+      if (records) userBlocks.push({ type: "text", text: records.text });
       if (ctxMsg.userBlock) userBlocks.push(ctxMsg.userBlock);
       const userContent: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: userBlocks }];
       if (ctxMsg.system) userContent.push(ctxMsg.system);
@@ -206,7 +197,7 @@ export class CopilotTurnService {
       return {
         sessionId: session.id,
         title: session.title,
-        run: (emit) => this.run({ workspaceId, viewer, sessionId: session.id, lang: dto.lang, model, message, isFirst, tainted: session.tainted }, emit),
+        run: (emit) => this.run({ workspaceId, viewer, sessionId: session.id, lang: dto.lang, model, message, isFirst, tainted }, emit),
       };
     } catch (e) {
       await this.sessions.releaseTurn(workspaceId, session.id).catch(() => undefined);

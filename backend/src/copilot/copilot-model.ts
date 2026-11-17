@@ -7,7 +7,9 @@
  *    `temperature`, no prefill, `tool_choice` auto (forced choice is a 400);
  *  - tools from the registry: strict, `additionalProperties: false`,
  *    `eager_input_streaming: true`, sorted, the last with `cache_control`;
- *  - the stable system prompt as a cached block;
+ *  - the stable system prompt as a cached block, and a top-level
+ *    `cache_control` (automatic caching of the last block), so every loop
+ *    call of a turn and the next turn read the history from the cache;
  *  - the server-side refusal fallback (`fallbacks: "default"`, beta
  *    `server-side-fallback-2026-07-01`) through `ClaudeService.baseRequest`.
  */
@@ -43,6 +45,8 @@ export function buildChatRequest(
     system: [{ type: "text" as const, text: input.system, cache_control: { type: "ephemeral" as const } }],
     tools: input.tools,
     tool_choice: { type: "auto" as const },
+    // The moving breakpoint: the last block of the conversation (≤ 4 breakpoints: tools, system, this).
+    cache_control: { type: "ephemeral" as const },
     // A snapshot: the turn keeps appending to its own array.
     messages: [...input.messages],
   };
@@ -53,6 +57,26 @@ export function contextMessage(model: string, context: string): { system?: Anthr
   return SYSTEM_MESSAGE_MODELS.has(model)
     ? { system: { role: "system", content: context } }
     : { userBlock: { type: "text", text: `[Operator context]\n${context}` } };
+}
+
+const STOPPED_NOTE = "The turn stopped before this tool ran.";
+export const NO_ANSWER = "(The turn stopped before an answer.)";
+
+/**
+ * Close a turn's transcript so it can be replayed: answer open tool calls
+ * (is_error results) and end with an assistant message. A turn that already
+ * ends with an assistant message without open tool calls is unchanged.
+ */
+export function closeTranscript(msgs: Anthropic.Beta.BetaMessageParam[]): Anthropic.Beta.BetaMessageParam[] {
+  const out = [...msgs];
+  const last = out[out.length - 1];
+  if (last?.role === "assistant") {
+    const open = Array.isArray(last.content) ? (last.content.filter((b) => b.type === "tool_use") as Anthropic.Beta.BetaToolUseBlockParam[]) : [];
+    if (!open.length) return out;
+    out.push({ role: "user", content: open.map((u) => ({ type: "tool_result" as const, tool_use_id: u.id, is_error: true, content: STOPPED_NOTE })) });
+  }
+  out.push({ role: "assistant", content: [{ type: "text", text: NO_ANSWER }] });
+  return out;
 }
 
 /** Strip thinking blocks (used only when older turns are dropped from the replay, so no block is replayed out of its prefix). */

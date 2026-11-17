@@ -12,6 +12,29 @@ import type { BookingsService } from "../../bookings/bookings.service";
 import type { KnowledgeSearchService } from "../../knowledge-sources/knowledge-search.service";
 import type { InsightsService } from "../../insights/insights.service";
 import type { ToolContext } from "./registry";
+import { wrapCustomerText, type CustomerWrapped } from "../customer-text";
+
+/** Record kinds whose title, subtitle, fields or links carry text a customer can write (names, ticket titles, messages). */
+const CUSTOMER_TEXT_RECORDS: ReadonlySet<string> = new Set(["contact", "conversation", "ticket", "booking"]);
+
+/**
+ * A record for the model. Contacts, conversations, tickets and bookings show
+ * customer-written text (a contact's name, a ticket made from a message), so
+ * everything but the kind and id goes under `customerWritten` and taints the
+ * session. A campaign (staff-written) is returned as it is.
+ */
+export function recordData(ctx: ToolContext, r: RecordSummary): RecordSummary | ({ kind: string; id: string } & CustomerWrapped<Omit<RecordSummary, "kind" | "id">>) {
+  if (!CUSTOMER_TEXT_RECORDS.has(r.kind)) return r;
+  ctx.taint();
+  const { kind, id, ...rest } = r;
+  return { kind, id, ...wrapCustomerText(rest) };
+}
+
+/** A list whose items carry customer-written text (names, titles): wrapped, and the session tainted when non-empty. */
+export function customerList<T>(ctx: ToolContext, key: string, items: T[]): CustomerWrapped<Record<string, T[]>> {
+  if (items.length) ctx.taint();
+  return wrapCustomerText({ [key]: items });
+}
 
 export interface ReadToolDeps {
   prisma: PrismaService;

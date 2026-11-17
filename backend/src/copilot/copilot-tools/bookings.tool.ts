@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CopilotTool, ToolContext } from "./registry";
-import { notFound, openRecord, type ReadToolDeps } from "./deps";
+import { customerList, notFound, openRecord, recordData, type ReadToolDeps } from "./deps";
 
 /**
  * SP-18 bookings: search (BookingsService's search, the same one the `@`
@@ -26,7 +26,7 @@ export function bookingTools(deps: ReadToolDeps): CopilotTool[] {
         const limit = input.limit ?? 20;
         if (input.query && input.query.length >= 2) {
           const res = await deps.bookings.search(ctx.workspaceId, input.query, ctx.now);
-          return { bookings: res.items.slice(0, limit) };
+          return customerList(ctx, "bookings", res.items.slice(0, limit));
         }
         const where: Record<string, unknown> = { workspaceId: ctx.workspaceId };
         const range: Record<string, Date> = {};
@@ -41,8 +41,10 @@ export function bookingTools(deps: ReadToolDeps): CopilotTool[] {
           take: limit,
           select: { id: true, service: true, serviceAr: true, startAt: true, durationMin: true, status: true, contact: { select: { id: true, name: true } } },
         });
-        return {
-          bookings: rows.map((r) => ({
+        return customerList(
+          ctx,
+          "bookings",
+          rows.map((r) => ({
             id: r.id,
             service: r.service,
             serviceAr: r.serviceAr,
@@ -51,7 +53,7 @@ export function bookingTools(deps: ReadToolDeps): CopilotTool[] {
             status: r.status,
             customer: r.contact ? { id: r.contact.id, name: r.contact.name } : null,
           })),
-        };
+        );
       },
     },
     {
@@ -62,7 +64,8 @@ export function bookingTools(deps: ReadToolDeps): CopilotTool[] {
       permissions: ["bookings.view"],
       label: ["Reading a booking", "قراءة حجز"],
       async execute(ctx: ToolContext, input: { id: string }) {
-        return (await openRecord(deps, ctx, "booking", input.id)) ?? notFound("booking");
+        const r = await openRecord(deps, ctx, "booking", input.id);
+        return r ? recordData(ctx, r) : notFound("booking");
       },
     },
   ];

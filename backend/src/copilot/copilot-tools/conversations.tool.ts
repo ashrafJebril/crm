@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { CopilotTool, ToolContext } from "./registry";
-import { notFound, openRecord, type ReadToolDeps } from "./deps";
+import { customerList, notFound, openRecord, recordData, type ReadToolDeps } from "./deps";
 import { splitThread } from "../customer-text";
 
 /**
@@ -38,8 +38,10 @@ export function conversationTools(deps: ReadToolDeps): CopilotTool[] {
           take: input.limit ?? 10,
           select: { id: true, channel: true, status: true, unread: true, updatedAt: true, assigneeId: true, contact: { select: { id: true, name: true } } },
         });
-        return {
-          conversations: rows.map((r) => ({
+        return customerList(
+          ctx,
+          "conversations",
+          rows.map((r) => ({
             id: r.id,
             channel: r.channel,
             status: r.status,
@@ -49,7 +51,7 @@ export function conversationTools(deps: ReadToolDeps): CopilotTool[] {
             customer: r.contact ? { id: r.contact.id, name: r.contact.name } : null,
             updatedAt: r.updatedAt.toISOString(),
           })),
-        };
+        );
       },
     },
     {
@@ -74,7 +76,13 @@ export function conversationTools(deps: ReadToolDeps): CopilotTool[] {
           rows.reverse().map((m) => ({ from: m.from, body: String(m.body ?? "").slice(0, 2000), at: m.createdAt.toISOString() })),
         );
         if (thread.tainted) ctx.taint();
-        return { conversation: record, staffAndAiMessages: thread.staffAndAi, ...(thread.customer ?? {}) };
+        // The record (the customer's name) and the customer's messages are both customer-written.
+        ctx.taint();
+        return {
+          conversation: recordData(ctx, record),
+          staffAndAiMessages: thread.staffAndAi,
+          ...(thread.customer ?? {}),
+        };
       },
     },
   ];

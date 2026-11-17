@@ -54,19 +54,22 @@ describe("copilot read tools", () => {
     const c = ctxFor(AGENT);
     const out: any = await w.registry.get("search_contacts")!.execute(c.ctx, { query: "lay", limit: 5 } as never);
     expect(w.search.search).toHaveBeenCalledWith(WS, "lay", 5, { userId: AGENT, bypass: false });
-    expect(out.contacts.map((x: any) => x.id)).toEqual(["c-layla"]);
+    expect(c.tainted()).toBe(true);
+    expect(out.customerWritten.contacts.map((x: any) => x.id)).toEqual(["c-layla"]);
   });
 
   it("get_contact / get_booking / get_ticket read through RecordsService and add a source card", async () => {
     const w = copilotWorld();
     const c = ctxFor(OWNER);
-    expect(await w.registry.get("get_contact")!.execute(c.ctx, { id: "c-layla" } as never)).toMatchObject({ kind: "contact", id: "c-layla", title: "Layla" });
-    expect(await w.registry.get("get_booking")!.execute(c.ctx, { id: "b1" } as never)).toMatchObject({ kind: "booking", id: "b1", title: "Cut" });
+    expect(await w.registry.get("get_contact")!.execute(c.ctx, { id: "c-layla" } as never)).toMatchObject({ kind: "contact", id: "c-layla", notice: expect.any(String), customerWritten: { title: "Layla" } });
+    expect(await w.registry.get("get_booking")!.execute(c.ctx, { id: "b1" } as never)).toMatchObject({ kind: "booking", id: "b1", customerWritten: { title: "Cut", subtitle: "Layla" } });
     expect(await w.registry.get("get_ticket")!.execute(c.ctx, { id: "t-hidden" } as never)).toMatchObject({ kind: "ticket", id: "t-hidden" });
     // Another workspace's record or a missing id: not found, and no card.
     expect(await w.registry.get("get_contact")!.execute(c.ctx, { id: "c-foreign" } as never)).toMatchObject({ error: "not_found" });
     expect(await w.registry.get("get_ticket")!.execute(c.ctx, { id: "nope" } as never)).toMatchObject({ error: "not_found" });
     expect(c.sources.list().map((s: any) => s.id)).toEqual(["c-layla", "b1", "t-hidden"]);
+    // Customer-written names and titles taint the session.
+    expect(c.tainted()).toBe(true);
   });
 
   it("search_tickets keeps only tickets the member can open", async () => {
@@ -75,7 +78,7 @@ describe("copilot read tools", () => {
     const out: any = await w.registry.get("search_tickets")!.execute(c.ctx, { query: "refund" } as never);
     expect(w.tickets.listTickets).toHaveBeenCalledWith(WS, expect.objectContaining({ q: "refund" }), { userId: VIEWER, bypass: false });
     // The stub returned the foreign workspace's ticket too: dropped.
-    expect(out.tickets.map((t: any) => t.id)).toEqual(["t-hidden"]);
+    expect(out.customerWritten.tickets.map((t: any) => t.id)).toEqual(["t-hidden"]);
   });
 
   it("search_bookings: a query uses BookingsService.search; otherwise a date range in the workspace", async () => {
@@ -84,9 +87,9 @@ describe("copilot read tools", () => {
     await w.registry.get("search_bookings")!.execute(c.ctx, { query: "Layla" } as never);
     expect(w.bookings.search).toHaveBeenCalledWith(WS, "Layla", NOW);
     const out: any = await w.registry.get("search_bookings")!.execute(c.ctx, {} as never);
-    expect(out.bookings.map((b: any) => [b.id, b.customer?.name])).toEqual([["b1", "Layla"]]);
+    expect(out.customerWritten.bookings.map((b: any) => [b.id, b.customer?.name])).toEqual([["b1", "Layla"]]);
     const foreign: any = await w.registry.get("search_bookings")!.execute(ctxFor(VIEWER, WS2).ctx, {} as never);
-    expect(foreign.bookings).toEqual([]);
+    expect(foreign.customerWritten.bookings).toEqual([]);
   });
 
   it("campaigns: list and one campaign, within the workspace", async () => {
@@ -102,21 +105,23 @@ describe("copilot read tools", () => {
     const list: any = await w.registry.get("list_campaigns")!.execute(c.ctx, {} as never);
     expect(list.campaigns.map((k: any) => k.id)).toEqual(["k1"]);
     expect(await w.registry.get("get_campaign")!.execute(c.ctx, { id: "k1" } as never)).toMatchObject({ kind: "campaign", title: "Eid offer" });
+    // Campaigns are staff-written: no taint.
+    expect(c.tainted()).toBe(false);
     expect(await w.registry.get("get_campaign")!.execute(c.ctx, { id: "k2" } as never)).toMatchObject({ error: "not_found" });
   });
 
   it("search_conversations is the member's conversation scope", async () => {
     const w = copilotWorld();
     const agent: any = await w.registry.get("search_conversations")!.execute(ctxFor(AGENT).ctx, {} as never);
-    expect(agent.conversations.map((v: any) => v.id)).toEqual(["v-mine"]);
+    expect(agent.customerWritten.conversations.map((v: any) => v.id)).toEqual(["v-mine"]);
     const owner: any = await w.registry.get("search_conversations")!.execute(ctxFor(OWNER).ctx, {} as never);
-    expect(owner.conversations.map((v: any) => v.id)).toEqual(["v-hidden", "v-mine"]);
+    expect(owner.customerWritten.conversations.map((v: any) => v.id)).toEqual(["v-hidden", "v-mine"]);
     const byName: any = await w.registry.get("search_conversations")!.execute(ctxFor(OWNER).ctx, { query: "omar" } as never);
-    expect(byName.conversations.map((v: any) => v.id)).toEqual(["v-hidden"]);
+    expect(byName.customerWritten.conversations.map((v: any) => v.id)).toEqual(["v-hidden"]);
     const unassigned: any = await w.registry.get("search_conversations")!.execute(ctxFor(OWNER).ctx, { assignee: "unassigned" } as never);
-    expect(unassigned.conversations.map((v: any) => v.id)).toEqual(["v-hidden"]);
+    expect(unassigned.customerWritten.conversations.map((v: any) => v.id)).toEqual(["v-hidden"]);
     // The agent asking for unassigned ones still gets only their scope.
     const sneaky: any = await w.registry.get("search_conversations")!.execute(ctxFor(AGENT).ctx, { assignee: "unassigned", query: "omar" } as never);
-    expect(sneaky.conversations).toEqual([]);
+    expect(sneaky.customerWritten.conversations).toEqual([]);
   });
 });
