@@ -14,6 +14,16 @@ export const MAX_PROPOSED_STAFF = 50;
 export const MAX_CATALOG_SOURCE_CHARS = 200_000;
 export const MAX_CATALOG_FILE_ROWS = 2_000;
 
+/**
+ * The booking writer's interactive transaction (SP-10 live fix F1). Writers
+ * on one resource queue on its advisory lock inside the transaction, so
+ * Prisma's default 5 s timeout expired for the ~6th of 10 parallel requests
+ * (P2028 → 500). 20 s covers 10 queued writers at production round trips;
+ * maxWait bounds waiting for a pooled connection to start one.
+ */
+export const BOOKING_TX_TIMEOUT_MS = 20_000;
+export const BOOKING_TX_MAX_WAIT_MS = 10_000;
+
 /** The StageColor keys (pipelines/stage-draft.ts STAGE_COLORS). */
 export { STAGE_COLORS as BOOKING_COLORS } from "../pipelines/stage-draft";
 

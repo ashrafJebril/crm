@@ -32,7 +32,7 @@ import type { PrismaService } from "../prisma/prisma.service";
 import type { HjzAppointmentSyncService } from "../hjz-sync/hjz-appointment-sync.service";
 import { WORKFLOW_TRIGGER_EVENT, type WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { bookingError } from "./booking-errors";
-import { SERVICE_DURATION_MAX } from "./booking-constants";
+import { BOOKING_TX_MAX_WAIT_MS, BOOKING_TX_TIMEOUT_MS, SERVICE_DURATION_MAX } from "./booking-constants";
 import { lockResource, lockService } from "./booking-locks";
 import { assertTransition, isOpenStatus } from "./booking-status";
 import { blockingBookings, BookingsService } from "./bookings.service";
@@ -300,12 +300,21 @@ export class BookingWriter {
   // ── steps ────────────────────────────────────────────────────────────
 
   private async inTx<T>(serviceId: string | null, resourceId: string | null, fn: (tx: Tx) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      // Lock order: service, then resource (booking-locks.ts).
-      if (serviceId) await lockService(tx, serviceId);
-      if (resourceId) await lockResource(tx, resourceId);
-      return fn(tx);
-    });
+    try {
+      return await this.prisma.$transaction(
+        async (tx) => {
+          // Lock order: service, then resource (booking-locks.ts).
+          if (serviceId) await lockService(tx, serviceId);
+          if (resourceId) await lockResource(tx, resourceId);
+          return fn(tx);
+        },
+        { timeout: BOOKING_TX_TIMEOUT_MS, maxWait: BOOKING_TX_MAX_WAIT_MS },
+      );
+    } catch (e) {
+      // Queued too long on the lock (or for a connection): rolled back, never a 500.
+      if (isTransactionTimeout(e)) throw bookingError("bookings.busy");
+      throw e;
+    }
   }
 
   private async findService(workspaceId: string, id: string): Promise<Service> {
@@ -365,4 +374,17 @@ export class BookingWriter {
     const [current] = await this.read.annotate(workspaceId, [row]);
     return bookingError("bookings.version_conflict", { current });
   }
+}
+
+/**
+ * Prisma's interactive-transaction timeouts: P2028 ("Transaction API error":
+ * the transaction expired, was already closed by its timeout, or could not
+ * start within maxWait). Anything else is not ours to rename.
+ */
+export function isTransactionTimeout(e: unknown): boolean {
+  const err = e as { code?: unknown; message?: unknown } | null;
+  if (!err || typeof err !== "object") return false;
+  if (err.code === "P2028") return true;
+  const msg = typeof err.message === "string" ? err.message : "";
+  return /timeout for this transaction|Transaction already closed|Unable to start a transaction in the given time/i.test(msg);
 }
