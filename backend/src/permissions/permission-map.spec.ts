@@ -410,6 +410,17 @@ describe("permission map", () => {
     for (const k of keys.filter((x) => / \/insights(\/|$)/.test(x))) expect({ k, p: ROUTE_PERMISSIONS[k] }).toEqual({ k, p: "reports.view" });
   });
 
+  it("permission map covers SP-27 routes", () => {
+    const sp27: Record<string, string> = {
+      "GET /api-keys": "api_keys.view",
+      "POST /api-keys": "api_keys.create",
+      "DELETE /api-keys/:id": "api_keys.delete",
+    };
+    for (const [k, p] of Object.entries(sp27)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+  });
+
   it("permission map covers SP-26 routes", () => {
     const sp26: Record<string, string> = {
       "GET /workspaces/:id/invitations": "members.view",

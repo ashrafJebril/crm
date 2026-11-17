@@ -496,6 +496,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /integrations/mcp/token/status": "api_keys.view",
   "POST /integrations/mcp/token": "api_keys.create",
   "DELETE /integrations/mcp/token": "api_keys.delete",
+  // SP-27: organization API keys. A key itself can never reach these (its
+  // scopes never include api_keys); minting is blocked for impersonators.
+  "GET /api-keys": "api_keys.view",
+  "POST /api-keys": "api_keys.create",
+  "DELETE /api-keys/:id": "api_keys.delete",
 
   // ── Channels ──────────────────────────────────────────────────────────
   "GET /integrations/facebook/oauth/start": "channels.create",

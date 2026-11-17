@@ -9,6 +9,7 @@ import { ExecutionContext, ForbiddenException } from "@nestjs/common";
 import { WorkspacesController } from "../workspaces/workspaces.controller";
 import { InvitationsController } from "../members/invitations.controller";
 import { AuditController } from "../audit/audit.controller";
+import { ApiKeysController } from "../api-keys/api-keys.controller";
 import type { PermissionsJson } from "./catalog";
 
 /** Review Focus 3: the system roles reproduce today's decisions. */
@@ -827,6 +828,41 @@ describe("system-role decision table", () => {
       for (const route of [LIST, ...WRITES, AUDIT]) {
         expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
       }
+    });
+  });
+
+  // SP-27: organization API keys (webhooks are added by Task 2).
+  describe("SP-27 developer routes", () => {
+    const KEYS = ["GET /api-keys", "POST /api-keys", "DELETE /api-keys/:id"];
+
+    it("owner and admin manage API keys", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of KEYS) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("agent and viewer (api_keys hidden) get 403 on every key route", () => {
+      for (const role of ["agent", "viewer"] as const) {
+        for (const route of KEYS) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("impersonator cannot mint an API key, but may list and revoke", async () => {
+      expect(blockedRouteForImpersonation("POST /api-keys")).toBe(true);
+      const perms = { effective: jest.fn(), can: jest.fn() };
+      const guard = new PermissionGuard(new Reflector(), perms as never);
+      const run = (handler: Function) =>
+        guard.canActivate({
+          getType: () => "http",
+          switchToHttp: () => ({ getRequest: () => ({ user: { sub: "support", workspaceId: "ws1", impersonating: true } }) }),
+          getHandler: () => handler,
+          getClass: () => ApiKeysController,
+        } as unknown as ExecutionContext);
+      const err = await run(ApiKeysController.prototype.create).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ message: "Not allowed during impersonation" });
+      await expect(run(ApiKeysController.prototype.list)).resolves.toBe(true);
+      await expect(run(ApiKeysController.prototype.revoke)).resolves.toBe(true);
     });
   });
 

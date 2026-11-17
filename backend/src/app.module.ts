@@ -58,6 +58,7 @@ import { EmailModule } from "./email/email.module";
 import { AuditModule } from "./audit/audit.module";
 import { AccountSecurityModule } from "./auth/account-security.module";
 import { MembersModule } from "./members/members.module";
+import { ApiKeysModule } from "./api-keys/api-keys.module";
 
 @Module({
   imports: [
@@ -71,6 +72,8 @@ import { MembersModule } from "./members/members.module";
     AuditModule,
     // SP-26 Task 2: session versions, password reset, TOTP (global).
     AccountSecurityModule,
+    // SP-27: global; AuthGuard authenticates crm_ bearers through it.
+    ApiKeysModule,
     MembersModule,
     AuthModule,
     // PermissionGuard is an APP_GUARD registered in AuthModule (after AuthGuard).

@@ -40,6 +40,16 @@ describe("RealtimeGateway payment lock", () => {
     expect(userRoom("w1", "u1")).toBe("user:w1:u1");
   });
 
+  it("SP-27: an API key gets no live feed (auth token or header)", async () => {
+    const key = `crm_${"a".repeat(12)}_${"b".repeat(43)}`;
+    client.handshake = { auth: { token: key }, headers: {} };
+    await gw.handleConnection(client as never);
+    client.handshake = { auth: {}, headers: { authorization: `Bearer ${key}` } };
+    await gw.handleConnection(client as never);
+    expect(client.join).not.toHaveBeenCalled();
+    expect(client.disconnect).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses a locked workspace", async () => {
     isLocked.mockResolvedValue(true);
     await gw.handleConnection(client as never);

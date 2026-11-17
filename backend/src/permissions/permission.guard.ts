@@ -7,6 +7,7 @@ import { REQUIRE_PERMISSION_KEY } from "./require-permission.decorator";
 import { ROUTE_PERMISSIONS, membershipExempt, routeKeysFor, type RouteRule } from "./permission-map";
 import type { Permission } from "./catalog";
 import { blockedForImpersonation, blockedRouteForImpersonation } from "./impersonation";
+import { apiKeyError } from "../api-keys/api-key-errors";
 
 export type PermissionRequest = Request & { user?: JwtPayload; permissions?: EffectiveRole };
 
@@ -75,6 +76,7 @@ export class PermissionGuard implements CanActivate {
 
     const { rule, key } = this.resolve(ctx);
     if (rule === "public") return true;
+    if (user.apiKeyId) return this.checkApiKey(req, { ...user, workspaceId: user.workspaceId }, rule, key);
     if (rule === "authenticated" && key !== undefined && membershipExempt(key)) return true;
     if (user.isSuperAdmin === true) return true;
     if (user.impersonating === true) {
@@ -90,6 +92,33 @@ export class PermissionGuard implements CanActivate {
     req.permissions = eff;
 
     if (rule === "authenticated") return true;
+    if (rule === undefined) {
+      throw new ForbiddenException({ statusCode: 403, message: "Route has no permission mapping" });
+    }
+    if (!this.perms.can(eff, rule)) throw missingPermission(rule);
+    return true;
+  }
+
+  /**
+   * SP-27: an API key acts as its creator, limited to its scopes. It never
+   * reaches own-account or membership-exempt routes (auth, admin, workspace
+   * list/create) nor "authenticated"-only routes: 403
+   * `api_keys.route_not_allowed`. Otherwise the creator's CURRENT role (as
+   * for a session) intersected with the key's scopes must grant the rule.
+   */
+  private async checkApiKey(
+    req: PermissionRequest,
+    user: JwtPayload & { workspaceId: string },
+    rule: RouteRule | undefined,
+    key: string | undefined,
+  ): Promise<boolean> {
+    if (rule === "authenticated" || (key !== undefined && membershipExempt(key))) {
+      throw apiKeyError("api_keys.route_not_allowed");
+    }
+    const creator = await this.perms.effective(user.workspaceId, user.sub);
+    if (!creator) throw new ForbiddenException({ statusCode: 403, message: "Not a member" });
+    const eff = this.perms.intersect(creator, user.apiKeyPermissions ?? {});
+    req.permissions = eff;
     if (rule === undefined) {
       throw new ForbiddenException({ statusCode: 403, message: "Route has no permission mapping" });
     }

@@ -22,6 +22,19 @@ export function hasPermission(perms: PermissionsJson, permission: Permission | s
   return Array.isArray(acts) && acts.includes(act);
 }
 
+/** SP-27: the permissions held in BOTH matrices (an API key's scopes ∩ its
+ *  creator's role). */
+export function intersectPermissions(a: PermissionsJson, b: PermissionsJson): PermissionsJson {
+  const out: Record<string, string[]> = {};
+  for (const [res, acts] of Object.entries(a as Record<string, string[] | undefined>)) {
+    const other = (b as Record<string, string[] | undefined>)[res];
+    if (!Array.isArray(acts) || !Array.isArray(other)) continue;
+    const both = acts.filter((x) => other.includes(x));
+    if (both.length) out[res] = both;
+  }
+  return out as PermissionsJson;
+}
+
 /** Who is performing a role/member change. Super-admins bypass; impersonation
  *  sessions bypass except money permissions (see impersonation.ts). */
 export interface Actor {
@@ -138,6 +151,18 @@ export class PermissionService {
         { roleId: null, key: null, name: member.role ?? "", nameAr: member.role ?? "", permissions: {}, conversationVisibility: "all" };
   }
 
+  /** SP-27: `eff` limited to `limit` (an API key's scopes); same visibility. */
+  intersect(eff: EffectiveRole, limit: PermissionsJson): EffectiveRole {
+    return { ...eff, permissions: intersectPermissions(eff.permissions, limit) };
+  }
+
+  /** The viewer's effective role: the member's, limited to the API key's
+   *  scopes when the request came through a key (SP-27). */
+  async effectiveFor(workspaceId: string, viewer: Viewer): Promise<EffectiveRole | null> {
+    const eff = await this.effective(workspaceId, viewer.userId);
+    return eff && viewer.limit ? this.intersect(eff, viewer.limit) : eff;
+  }
+
   can(eff: EffectiveRole | null | undefined, permission: Permission | string): boolean {
     return !!eff && hasPermission(eff.permissions, permission);
   }
@@ -206,7 +231,7 @@ export class PermissionService {
   /** Does `viewer` hold `permission`? No viewer or a bypass session: yes. */
   async viewerCan(workspaceId: string, viewer: Viewer | null | undefined, permission: Permission | string): Promise<boolean> {
     if (!viewer || viewer.bypass) return true;
-    return this.can(await this.effective(workspaceId, viewer.userId), permission);
+    return this.can(await this.effectiveFor(workspaceId, viewer), permission);
   }
 
   /** Drops cached roles for one member, or for the whole workspace. */

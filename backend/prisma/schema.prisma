@@ -75,6 +75,10 @@ model User {
   /// SP-26: carried as `sv` in the JWT; bumped to end every session.
   sessionVersion     Int       @default(0)
 
+  /// SP-27: API keys and webhook endpoints this user created.
+  apiKeysCreated          ApiKey[]          @relation("ApiKeyCreatedBy")
+  webhookEndpointsCreated WebhookEndpoint[] @relation("WebhookEndpointCreatedBy")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1326,6 +1330,10 @@ model Workspace {
   invitations       Invitation[]       @relation("WorkspaceInvitations")
   auditLogs         AuditLog[]         @relation("WorkspaceAuditLogs")
 
+  /// SP-27: organization API keys and outgoing webhooks.
+  apiKeys           ApiKey[]           @relation("WorkspaceApiKeys")
+  webhookEndpoints  WebhookEndpoint[]  @relation("WorkspaceWebhookEndpoints")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1982,4 +1990,75 @@ model AgentSandboxThread {
 
   @@unique([workspaceId, userId])
   @@index([expiresAt])
+}
+
+// ─── SP-27 API keys and outgoing webhooks ───────────────────────────────────
+
+/// An organization API key. It acts as its creator, with the creator's
+/// current permissions intersected with `scopes`, and dies with the creator.
+/// Only the sha256 of the full key is stored.
+model ApiKey {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceApiKeys", fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  prefix      String    @unique // "crm_<12 hex>"
+  hash        String    @unique // sha256 hex of the full key
+  scopes      Json      // {"contacts": ["read","write"], …}
+  createdById String
+  createdBy   User      @relation("ApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+/// An outgoing webhook endpoint. The URL is immutable; the signing secret is
+/// encrypted (token-crypto) and shown once.
+model WebhookEndpoint {
+  id                      String            @id @default(cuid())
+  workspaceId             String
+  workspace               Workspace         @relation("WorkspaceWebhookEndpoints", fields: [workspaceId], references: [id], onDelete: Cascade)
+  url                     String
+  description             String?
+  events                  String[]
+  secretEnc               String            // enc:v1:… (token-crypto)
+  previousSecretEnc       String?
+  previousSecretExpiresAt DateTime?
+  active                  Boolean           @default(true)
+  disabledReason          String?           // "manual" | "failing" | "unsafe_url"
+  failingSince            DateTime?
+  createdById             String?
+  createdBy               User?             @relation("WebhookEndpointCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  deliveries              WebhookDelivery[]
+
+  @@index([workspaceId])
+}
+
+/// One event for one endpoint, retried with backoff (6 attempts).
+model WebhookDelivery {
+  id            String          @id @default(cuid())
+  workspaceId   String
+  endpointId    String
+  endpoint      WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventId       String
+  event         String
+  payload       Json
+  status        String          @default("pending") // "pending" | "delivered" | "failed"
+  attempts      Int             @default(0)
+  nextAttemptAt DateTime        @default(now())
+  leaseUntil    DateTime?
+  responseCode  Int?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime        @default(now())
+
+  @@unique([endpointId, eventId])
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+  @@index([workspaceId, createdAt])
 }

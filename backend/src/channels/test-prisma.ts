@@ -462,6 +462,26 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   auditLog: () => ({ actorId: null, actorKind: "user", targetId: null, meta: null }),
   passwordReset: () => ({ usedAt: null, requestedIp: null }),
+  // SP-27: API keys and webhooks.
+  apiKey: () => ({ expiresAt: null, lastUsedAt: null, revokedAt: null }),
+  webhookEndpoint: () => ({
+    description: null,
+    previousSecretEnc: null,
+    previousSecretExpiresAt: null,
+    active: true,
+    disabledReason: null,
+    failingSince: null,
+    createdById: null,
+  }),
+  webhookDelivery: () => ({
+    status: "pending",
+    attempts: 0,
+    nextAttemptAt: new Date(),
+    leaseUntil: null,
+    responseCode: null,
+    lastError: null,
+    deliveredAt: null,
+  }),
 };
 
 /** SP-15 unique constraints, as Postgres enforces them (P2002). */
@@ -487,6 +507,12 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   passwordReset: [["PasswordReset_tokenHash_key", ["tokenHash"]]],
   workspaceMember: [["WorkspaceMember_userId_workspaceId_key", ["userId", "workspaceId"]]],
   user: [["User_email_key", ["email"]]],
+  // SP-27
+  apiKey: [
+    ["ApiKey_prefix_key", ["prefix"]],
+    ["ApiKey_hash_key", ["hash"]],
+  ],
+  webhookDelivery: [["WebhookDelivery_endpointId_eventId_key", ["endpointId", "eventId"]]],
 };
 /** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
 const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
@@ -558,6 +584,10 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
   workspaceMember: { user: ["user", "userId", "one"], workspace: ["workspace", "workspaceId", "one"] },
   // SP-26 Task 2: the login include (user.memberships → workspace).
   user: { memberships: ["workspaceMember", "userId", "many"] },
+  // SP-27
+  apiKey: { createdBy: ["user", "createdById", "one"] },
+  webhookEndpoint: { createdBy: ["user", "createdById", "one"], deliveries: ["webhookDelivery", "endpointId", "many"] },
+  webhookDelivery: { endpoint: ["webhookEndpoint", "endpointId", "one"] },
   invitation: {
     role: ["role", "roleId", "one"],
     invitedBy: ["user", "invitedById", "one"],
@@ -947,6 +977,10 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     invitation: model("invitation"),
     auditLog: model("auditLog"),
     passwordReset: model("passwordReset"),
+    // SP-27: API keys and webhooks.
+    apiKey: model("apiKey"),
+    webhookEndpoint: model("webhookEndpoint"),
+    webhookDelivery: model("webhookDelivery"),
     activity: model("activity"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);

@@ -34,6 +34,9 @@ export const CurrentViewer = createParamDecorator(
     const req = ctx.switchToHttp().getRequest<Request & { user?: JwtPayload }>();
     const u = req.user;
     if (!u?.sub) throw new UnauthorizedException("No user");
-    return { userId: u.sub, bypass: !!(u.isSuperAdmin || u.impersonating) };
+    const viewer: Viewer = { userId: u.sub, bypass: !!(u.isSuperAdmin || u.impersonating) };
+    // SP-27: a key request never bypasses and is limited to the key's scopes.
+    if (u.apiKeyId) return { userId: u.sub, bypass: false, limit: u.apiKeyPermissions ?? {} };
+    return viewer;
   },
 );
