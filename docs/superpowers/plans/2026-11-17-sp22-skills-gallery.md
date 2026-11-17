@@ -354,22 +354,22 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 15. **Size.** The roadmap says L (platform-dependent). Three build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision (R1–R15) and the base commit before Task 1 starts. Migration `20261117160000_skills_gallery` needs explicit user approval before it runs.*
-- **R1** (D6: compose CRM-side, no platform dependency): pending.
-- **R2** (`ConnectorPresence` port; SP-22 before SP-23): pending.
-- **R3** (implicit default skills, no backfill): pending.
-- **R4** (exact-text migration of legacy prompt sections): pending.
-- **R5** (bounded agent write tools, logged): pending.
-- **R6** (advisory lock around prompt apply): pending.
-- **R7** (config fenced as data; limits enforced in tools): pending.
-- **R8** (one agent; no picker): pending.
-- **R9** (Telegram/web-chat auto-reply owned here vs SP-20; settle across both plans): pending.
-- **R10** (opt-out does not block replies to inbound; excluded tags do): pending.
-- **R11** (l conversation keyed by CRM conversation id): pending.
-- **R12** (usage log without arguments, 90-day prune): pending.
-- **R13** (base SHA, schema ownership, prompt-section folding, migration order): pending.
-- **R14** (verification on the production DB with l/Telegram/Zernio stubs; explicit migration approval): pending.
-- **R15** (size L; 3 build tasks + verification): pending.
+*Decided 2026-11-17 by the controller: R1–R15 accepted as proposed, with these settlements. R6: every prompt write goes through SP-20’s `LAgentSetupService.editPrompt` (per-workspace chain + `pg_advisory_xact_lock`), no second lock. R9: SP-22 owns Telegram and web-chat auto-reply, and every such reply calls SP-20’s `AgentReplyGate` (stop first). R13: base is the current feat/tkana-parity head with SP-20 and SP-26 Task 1 merged (SHA in the ledger). Migration `20261117160000_skills_gallery` needs explicit user approval before it runs.*
+- **R1** (D6: compose CRM-side, no platform dependency): accepted.
+- **R2** (`ConnectorPresence` port; SP-22 before SP-23): accepted.
+- **R3** (implicit default skills, no backfill): accepted.
+- **R4** (exact-text migration of legacy prompt sections): accepted.
+- **R5** (bounded agent write tools, logged): accepted.
+- **R6** (advisory lock around prompt apply): accepted.
+- **R7** (config fenced as data; limits enforced in tools): accepted.
+- **R8** (one agent; no picker): accepted.
+- **R9** (Telegram/web-chat auto-reply owned here vs SP-20; settle across both plans): accepted.
+- **R10** (opt-out does not block replies to inbound; excluded tags do): accepted.
+- **R11** (l conversation keyed by CRM conversation id): accepted.
+- **R12** (usage log without arguments, 90-day prune): accepted.
+- **R13** (base SHA, schema ownership, prompt-section folding, migration order): accepted.
+- **R14** (verification on the production DB with l/Telegram/Zernio stubs; explicit migration approval): accepted.
+- **R15** (size L; 3 build tasks + verification): accepted.
 
 ---
 
