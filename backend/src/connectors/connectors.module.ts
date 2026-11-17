@@ -1,5 +1,12 @@
 import { Module } from "@nestjs/common";
 import { IntegrationsModule } from "../integrations/integrations.module";
+import { NotificationsModule } from "../notifications/notifications.module";
+import { ConnectorAttentionService } from "./connector-attention.service";
+import { ConnectorOAuthHttp } from "./connector-oauth-http";
+import { ConnectorOAuthService } from "./connector-oauth.service";
+import { ConnectorRefreshScheduler } from "./connector-refresh.scheduler";
+import { ConnectorStatusService } from "./connector-status.service";
+import { ConnectorTokenService } from "./connector-token.service";
 import { SkillsModule } from "../skills/skills.module";
 import { ConnectorAgentService } from "./connector-agent.service";
 import { ConnectorCallPruneScheduler } from "./connector-call-prune.scheduler";
@@ -18,7 +25,7 @@ import { ConnectorsService } from "./connectors.service";
  * leaf ConnectorPresenceModule, so there is no cycle.
  */
 @Module({
-  imports: [IntegrationsModule, SkillsModule],
+  imports: [IntegrationsModule, SkillsModule, NotificationsModule],
   controllers: [ConnectorsController, ConnectorProxyController],
   providers: [
     ConnectorsService,
@@ -29,7 +36,14 @@ import { ConnectorsService } from "./connectors.service";
     ConnectorProxyGuard,
     ConnectorProxyRpc,
     { provide: CONNECTOR_UPSTREAM, useClass: HttpConnectorUpstream },
+    // Task 2: OAuth, tokens, needs-attention.
+    ConnectorStatusService,
+    ConnectorAttentionService,
+    ConnectorOAuthHttp,
+    ConnectorTokenService,
+    ConnectorOAuthService,
+    ConnectorRefreshScheduler,
   ],
-  exports: [ConnectorsService, CONNECTOR_UPSTREAM],
+  exports: [ConnectorsService, ConnectorStatusService, ConnectorTokenService, CONNECTOR_UPSTREAM],
 })
 export class ConnectorsModule {}

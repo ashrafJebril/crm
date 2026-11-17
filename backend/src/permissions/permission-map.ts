@@ -515,6 +515,10 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // public behind its own bearer guard (ConnectorProxyGuard).
   "GET /connectors": "connectors.view",
   "GET /connectors/:id": "connectors.view",
+  // Task 2: OAuth. The callback is public: the signed single-use state and a
+  // connectors.create re-check guard it.
+  "GET /connectors/oauth/start": "connectors.create",
+  "GET /connectors/oauth/callback": "public",
   "POST /connectors/custom": "connectors.manage",
   "PATCH /connectors/:id/tools": "connectors.update",
   "POST /connectors/:id/rescan": "connectors.update",

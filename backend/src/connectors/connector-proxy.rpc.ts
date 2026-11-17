@@ -1,4 +1,6 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { ConnectorAttentionService } from "./connector-attention.service";
+import { ConnectorTokenService } from "./connector-token.service";
 import { validateArgs } from "./connector-args";
 import { ConnectorCallRecorder } from "./connector-call.recorder";
 import { ConnectorCredentials } from "./connector-credentials";
@@ -69,6 +71,9 @@ export class ConnectorProxyRpc {
     private readonly recorder: ConnectorCallRecorder,
     private readonly credentials: ConnectorCredentials,
     @Inject(CONNECTOR_UPSTREAM) private readonly upstream: ConnectorUpstream,
+    // SP-23 Task 2: fresh OAuth tokens and the needs-reconnect escalation.
+    @Optional() private readonly tokens?: ConnectorTokenService,
+    @Optional() private readonly attention?: ConnectorAttentionService,
   ) {}
 
   /** null = a notification (answer 202 with no body). */
@@ -143,14 +148,29 @@ export class ConnectorProxyRpc {
     const args = params.arguments === undefined ? {} : params.arguments;
     const check = validateArgs(args, tool.inputSchema);
     if (!check.ok) return refuse(check.errors[0]?.code === "too_large" ? "args_too_large" : "invalid_arguments", -32602, "invalid arguments", { errors: check.errors });
-    // 3. Credentials (Task 2 refreshes OAuth tokens here).
-    const target = await this.credentials.target(conn);
+    // 3. Credentials: an OAuth token is refreshed first when it expires within 2 minutes.
+    const target = this.tokens ? await this.tokens.target(conn as never) : await this.credentials.target(conn);
     if (!target) return refuse("needs_reconnect", -32001, "connector needs reconnecting");
     // 4. Upstream.
     const record = (outcome: "ok" | "error", errorCode: string | null) =>
       this.recorder.record({ workspaceId: conn.workspaceId, connectorId: conn.id, tool: name, kind: tool.kind, outcome, errorCode, durationMs: Date.now() - started });
     try {
-      const res = await this.upstream.callTool(target, name, args as Record<string, unknown>);
+      let res;
+      try {
+        res = await this.upstream.callTool(target, name, args as Record<string, unknown>);
+      } catch (e) {
+        // An upstream 401 on an OAuth connector: one forced refresh and one
+        // retry; a second 401 means the grant is unusable.
+        if (!(e instanceof UpstreamAuthError) || conn.authKind !== "oauth" || !this.tokens) throw e;
+        const token = await this.tokens.refresh(conn as never, { force: true });
+        if (!token) throw e;
+        try {
+          res = await this.upstream.callTool({ ...target, headers: { ...target.headers, authorization: `Bearer ${token}` } }, name, args as Record<string, unknown>);
+        } catch (again) {
+          if (again instanceof UpstreamAuthError) await this.attention?.markNeedsReconnect(conn, "upstream_unauthorized");
+          throw again;
+        }
+      }
       await record(res.isError ? "error" : "ok", res.isError ? "tool_error" : res.truncated ? "truncated" : null);
       return {
         jsonrpc: "2.0",

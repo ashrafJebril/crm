@@ -26,6 +26,8 @@ import {
 import { CONNECTOR_UPSTREAM, UpstreamAuthError, type ConnectorUpstream } from "./connector-upstream";
 import { ConnectorAgentService } from "./connector-agent.service";
 import { ConnectorCredentials, openJson, sealJson } from "./connector-credentials";
+import { ConnectorTokenService } from "./connector-token.service";
+import { ConnectorStatusService } from "./connector-status.service";
 import { parseConnectorUrl, redactedUrl, SafeFetchError } from "./safe-fetch";
 
 export type ConnectorStatus = "pending" | "active" | "needs_reconnect" | "disconnected";
@@ -113,6 +115,9 @@ export class ConnectorsService {
     private readonly credentials: ConnectorCredentials,
     @Inject(CONNECTOR_UPSTREAM) private readonly upstream: ConnectorUpstream,
     @Optional() private readonly skills?: SkillsService,
+    // SP-23 Task 2: OAuth token refresh/revoke and the shared status setter.
+    @Optional() private readonly tokens?: ConnectorTokenService,
+    @Optional() private readonly statuses?: ConnectorStatusService,
   ) {}
 
   // ── reads ────────────────────────────────────────────────────────────
@@ -248,6 +253,7 @@ export class ConnectorsService {
    * this call changed it. Skills hear about every change.
    */
   async setStatus(conn: { id: string; workspaceId: string; provider: string }, status: ConnectorStatus, reason: string | null, from?: ConnectorStatus[]): Promise<boolean> {
+    if (this.statuses) return this.statuses.set(conn, status, reason, from);
     const res = await this.prisma.connector.updateMany({
       where: { id: conn.id, workspaceId: conn.workspaceId, ...(from ? { status: { in: from } } : { status: { not: status } }) },
       data: { status, statusReason: reason },
@@ -409,7 +415,7 @@ export class ConnectorsService {
     const row = await this.load(workspaceId, id, { allowDisconnected: true });
     if (row.status === "disconnected") throw connectorError("connectors.disconnected");
     if (row.status !== "active") throw connectorError("connectors.needs_reconnect");
-    const target = await this.credentials.target(row);
+    const target = this.tokens ? await this.tokens.target(row) : await this.credentials.target(row);
     if (!target) throw connectorError("connectors.needs_reconnect");
     let upstreamTools;
     try {
@@ -442,6 +448,8 @@ export class ConnectorsService {
   async disconnect(workspaceId: string, id: string): Promise<{ ok: true }> {
     const row = await this.load(workspaceId, id);
     await this.agent.remove(row);
+    // Ruling 7: revoke at the vendor when it advertises an endpoint (best effort).
+    if (this.tokens) await this.tokens.revoke(row).catch(() => undefined);
     await this.prisma.connector.updateMany({
       where: { id, workspaceId },
       data: {

@@ -1,4 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Res } from "@nestjs/common";
+import type { Response } from "express";
+import { Public } from "../auth/public.decorator";
+import { ConnectorOAuthService } from "./connector-oauth.service";
+import { frontendConnectorsUrl, frontendOrigin } from "./connector-oauth-config";
+import { callbackPage } from "./oauth-callback-page";
 import { CurrentUserId, CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
@@ -14,11 +19,37 @@ export class ConnectorsController {
   constructor(
     private readonly connectors: ConnectorsService,
     private readonly perms: PermissionService,
+    private readonly oauth: ConnectorOAuthService,
   ) {}
 
   @Get()
   list(@CurrentWorkspace() ws: string) {
     return this.connectors.list(ws);
+  }
+
+  /** SP-23 Task 2: the OAuth popup URL (connectors.create). */
+  @Get("oauth/start")
+  oauthStart(@CurrentWorkspace() ws: string, @CurrentUserId() userId: string, @Query("provider") provider: string | undefined) {
+    return this.oauth.start(ws, userId, String(provider ?? ""));
+  }
+
+  /** Public: the signed single-use state and a connectors.create re-check guard it. Always the hand-off page. */
+  @Public()
+  @Get("oauth/callback")
+  async oauthCallback(
+    @Query("code") code: string | undefined,
+    @Query("state") state: string | undefined,
+    @Query("error") error: string | undefined,
+    @Res() res: Response,
+  ) {
+    const outcome = await this.oauth.callback({ code, state, error });
+    const fallback = frontendConnectorsUrl({
+      ...(outcome.connectorId ? { connector: outcome.connectorId } : {}),
+      connected: outcome.connected ? "1" : "0",
+      ...(outcome.reason ? { reason: outcome.reason } : {}),
+    });
+    const page = callbackPage(outcome, frontendOrigin(), fallback);
+    res.status(200).set(page.headers).send(page.html);
   }
 
   @Post("custom")

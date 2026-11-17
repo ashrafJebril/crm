@@ -1419,13 +1419,13 @@ describe("SP-23 connectors: side doors", () => {
     const w = connectorsWorld();
     const c = seedConnector(w, { tools: [tool("cancel_event", "write", "off")] });
     const perms = (manage: boolean) => ({ viewerCan: jest.fn(async (_ws: string, _v: unknown, p: string) => p !== "connectors.manage" || manage) });
-    const updater = new ConnectorsController(w.service, perms(false) as never);
+    const updater = new ConnectorsController(w.service, perms(false) as never, {} as never);
     const err = await updater
       .patchTools(CWS, { userId: "u" }, c.id, { version: 0, tools: [{ name: "cancel_event", access: "write" }] })
       .catch((e: any) => e);
     expect(err.getStatus()).toBe(403);
     expect(err.getResponse()).toMatchObject({ message: "connectors.write_access_requires_manage" });
-    const admin = new ConnectorsController(w.service, perms(true) as never);
+    const admin = new ConnectorsController(w.service, perms(true) as never, {} as never);
     const ok = await admin.patchTools(CWS, { userId: "u" }, c.id, { version: 0, tools: [{ name: "cancel_event", access: "write" }] });
     expect(ok.tools[0]).toMatchObject({ access: "write", exposed: true });
   });

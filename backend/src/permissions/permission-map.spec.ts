@@ -391,6 +391,8 @@ describe("permission map", () => {
     const sp23: Record<string, string> = {
       "GET /connectors": "connectors.view",
       "GET /connectors/:id": "connectors.view",
+      "GET /connectors/oauth/start": "connectors.create",
+      "GET /connectors/oauth/callback": "public",
       "POST /connectors/custom": "connectors.manage",
       "PATCH /connectors/:id/tools": "connectors.update",
       "POST /connectors/:id/rescan": "connectors.update",

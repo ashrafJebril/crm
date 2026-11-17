@@ -874,10 +874,11 @@ describe("system-role decision table", () => {
     });
   });
 
-  // SP-23: the connectors gallery (Task 1 routes; OAuth comes with Task 2).
+  // SP-23: the connectors gallery (Task 1 routes and Task 2 OAuth).
   describe("SP-23 connector routes", () => {
     const VIEW = ["GET /connectors", "GET /connectors/:id", "GET /connectors/:id/activity"];
     const WRITE = [
+      "GET /connectors/oauth/start",
       "POST /connectors/custom",
       "PATCH /connectors/:id/tools",
       "POST /connectors/:id/rescan",
@@ -901,8 +902,9 @@ describe("system-role decision table", () => {
       for (const route of WRITE) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
     });
 
-    it("the proxy is public behind its own bearer guard", () => {
+    it("the proxy is public behind its own bearer guard; the OAuth callback behind its signed state", () => {
       expect(ROUTE_PERMISSIONS["POST /mcp/connectors/:connectorId"]).toBe("public");
+      expect(ROUTE_PERMISSIONS["GET /connectors/oauth/callback"]).toBe("public");
     });
   });
 

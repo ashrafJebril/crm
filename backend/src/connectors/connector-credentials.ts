@@ -28,6 +28,12 @@ export function openJson<T>(stored: string | null): T | null {
   }
 }
 
+/** A curated provider URL from code/env (trusted: a loopback stub is allowed outside production). */
+export function trustedServer(conn: { provider: string; serverUrl: string }): boolean {
+  const entry = catalogEntry(conn.provider);
+  return conn.provider !== "custom" && !!entry && curatedUrl(entry) === conn.serverUrl;
+}
+
 /**
  * The upstream request target for a connector: the URL (curated URLs are
  * trusted; a custom URL never is) and the credentials. Task 2's token
@@ -46,8 +52,6 @@ export class ConnectorCredentials {
       const h = openJson<Record<string, string>>(conn.headersEnc) ?? {};
       for (const [k, v] of Object.entries(h)) if (typeof v === "string") headers[k] = v;
     }
-    const entry = catalogEntry(conn.provider);
-    const trusted = conn.provider !== "custom" && !!entry && curatedUrl(entry) === conn.serverUrl;
-    return { url: conn.serverUrl, headers, trusted };
+    return { url: conn.serverUrl, headers, trusted: trustedServer(conn) };
   }
 }
