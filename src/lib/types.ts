@@ -186,6 +186,7 @@ export interface TicketDetail extends Ticket {
 export interface TicketsDashboardSummary {
   openValue: number;
   currency: string;
+  /** Whole percent, 0–100 (not a fraction). */
   winRate: number;
   wonCount: number;
   lostCount: number;

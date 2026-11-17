@@ -26,6 +26,7 @@ import type { HomeDto } from "@/lib/homeTypes";
 import { firstNameOf, greeting, homeSubtitle } from "./dashboard/greeting";
 import { canDismissDay1, showDay1 } from "./home/homeModel";
 import { WorkingHome } from "./home/WorkingHome";
+import { winRatePercent } from "./dashboard/winRate";
 import { Day1Home } from "./home/Day1Home";
 import type {
   Campaign,
@@ -517,9 +518,8 @@ function DashboardImpl() {
                 const total = won + lost;
                 const wonPct = total > 0 ? (won / total) * 100 : 0;
                 const lostPct = total > 0 ? (lost / total) * 100 : 0;
-                const winRate = ticketsSummary
-                  ? Math.round(ticketsSummary.winRate * 100)
-                  : 0;
+                // Already a percent from the server (was shown as 5000%).
+                const winRate = winRatePercent(ticketsSummary);
                 const avgClose = ticketsSummary
                   ? Math.round(ticketsSummary.avgCloseHours)
                   : 0;
