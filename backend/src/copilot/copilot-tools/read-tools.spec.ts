@@ -16,6 +16,7 @@ function ctxFor(userId: string, ws = WS) {
     now: NOW,
     sources,
     taint: () => (tainted = true),
+    isTainted: () => tainted,
     emit: (e, d) => emitted.push([e, d]),
   };
   return { ctx, sources, emitted, tainted: () => tainted };
@@ -24,7 +25,9 @@ function ctxFor(userId: string, ws = WS) {
 describe("copilot read tools", () => {
   it("registry: the read tool set, sorted", () => {
     const w = copilotWorld();
-    expect(w.registry.names()).toEqual([
+    const kinds = (k: string) => w.registry.names().filter((n) => w.registry.get(n)!.kind === k);
+    expect(kinds("write")).toEqual(["create_activity", "move_ticket_stage", "save_attachment_to_knowledge"]);
+    expect(kinds("read")).toEqual([
       "draft_reply",
       "get_booking",
       "get_campaign",
@@ -42,8 +45,8 @@ describe("copilot read tools", () => {
     const w2 = copilotWorld({ knowledge: false, insights: false });
     expect(w2.registry.names()).not.toContain("search_knowledge");
     expect(w2.registry.names()).not.toContain("summarize_insights");
-    // Every tool is a read tool with at least one permission.
-    for (const n of w.registry.names()) {
+    // Every read tool has at least one permission.
+    for (const n of kinds("read")) {
       const t = w.registry.get(n)!;
       expect({ n, kind: t.kind, perms: t.permissions.length > 0 }).toEqual({ n, kind: "read", perms: true });
     }

@@ -37,6 +37,11 @@ export class CopilotStreamDto {
   @IsIn(["en", "ar"]) lang!: "en" | "ar";
 }
 
+/** `POST /copilot/actions/:id/decline` (the note length has its own key, checked in the service). */
+export class DeclineActionDto {
+  @IsOptional() @IsString() note?: string;
+}
+
 export interface PendingCardDto {
   id: string;
   tool: string;

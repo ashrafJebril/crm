@@ -1,9 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UploadedFile, UseInterceptors } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
 import type { Viewer } from "../permissions/visibility";
 import { HEARTBEAT_MS, type StreamEventName } from "./copilot-constants";
-import { CopilotStreamDto } from "./copilot.dto";
+import { CopilotStreamDto, DeclineActionDto } from "./copilot.dto";
+import { CopilotActionsService } from "./copilot-actions.service";
+import { CopilotAttachmentsService } from "./copilot-attachments.service";
+import { CopilotUploadInterceptor } from "./copilot-upload.interceptor";
 import { CopilotSessionsService } from "./copilot-sessions.service";
 import { CopilotTurnService } from "./copilot-turn.service";
 
@@ -27,6 +30,8 @@ export class CopilotController {
   constructor(
     private readonly turns: CopilotTurnService,
     private readonly sessions: CopilotSessionsService,
+    private readonly actions: CopilotActionsService,
+    private readonly attachments: CopilotAttachmentsService,
   ) {}
 
   @Get("status")
@@ -47,6 +52,30 @@ export class CopilotController {
   @Delete("sessions/:id")
   remove(@CurrentWorkspace() ws: string, @CurrentViewer() viewer: Viewer, @Param("id") id: string) {
     return this.sessions.remove(ws, viewer.userId, id);
+  }
+
+  /** Task 2: approve a card (the proposing member only; re-checked as the member now). */
+  @Post("actions/:id/approve")
+  approve(@CurrentWorkspace() ws: string, @CurrentViewer() viewer: Viewer, @Param("id") id: string) {
+    return this.actions.approve(ws, viewer, id);
+  }
+
+  @Post("actions/:id/decline")
+  decline(@CurrentWorkspace() ws: string, @CurrentViewer() viewer: Viewer, @Param("id") id: string, @Body() body: DeclineActionDto) {
+    return this.actions.decline(ws, viewer, id, body?.note);
+  }
+
+  /** Task 2: one file per request (multipart field `file`); hidden from the media library. */
+  @Post("attachments")
+  @UseInterceptors(CopilotUploadInterceptor)
+  upload(@CurrentWorkspace() ws: string, @CurrentViewer() viewer: Viewer, @UploadedFile() file?: Express.Multer.File) {
+    return this.attachments.upload(ws, viewer.userId, file);
+  }
+
+  /** An unsent attachment of the member's (404 otherwise). */
+  @Delete("attachments/:id")
+  removeAttachment(@CurrentWorkspace() ws: string, @CurrentViewer() viewer: Viewer, @Param("id") id: string) {
+    return this.attachments.remove(ws, viewer.userId, id);
   }
 
   @Post("stream")

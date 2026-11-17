@@ -19,12 +19,14 @@ describe("CopilotModule", () => {
   });
 
   it("the registry: knowledge and insights are optional (tools absent without them)", () => {
-    expect(registry.inject.slice(-2).map((i: any) => i.optional)).toEqual([true, true]);
+    expect(registry.inject.slice(-3).map((i: any) => i.optional)).toEqual([true, true, true]);
     const stub = {} as any;
-    const without = registry.useFactory(stub, stub, stub, stub, stub, stub, undefined, undefined);
+    const without = registry.useFactory(stub, stub, stub, stub, stub, stub, stub, stub, undefined, undefined, undefined);
     expect(without.names()).not.toContain("search_knowledge");
     expect(without.names()).not.toContain("summarize_insights");
-    const withBoth = registry.useFactory(stub, stub, stub, stub, stub, stub, { search: jest.fn() }, { support: jest.fn() });
-    expect(withBoth.names()).toEqual(expect.arrayContaining(["search_knowledge", "summarize_insights"]));
+    expect(without.names()).not.toContain("save_attachment_to_knowledge");
+    expect(without.names()).toEqual(expect.arrayContaining(["create_activity", "move_ticket_stage"]));
+    const withBoth = registry.useFactory(stub, stub, stub, stub, stub, stub, stub, stub, { search: jest.fn() }, { support: jest.fn() }, { uploadFiles: jest.fn() });
+    expect(withBoth.names()).toEqual(expect.arrayContaining(["search_knowledge", "summarize_insights", "save_attachment_to_knowledge"]));
   });
 });

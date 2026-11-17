@@ -56,6 +56,10 @@ export const KNOWLEDGE_FILE_MIMES = new Set([
 ]);
 export const KNOWLEDGE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 
+/** SP-18: copilot attachments (hidden Media rows like knowledge files, ruling 7): the knowledge types plus plain text. */
+export const COPILOT_FILE_MIMES = new Set([...KNOWLEDGE_FILE_MIMES, "text/plain"]);
+export const COPILOT_FILE_MAX_BYTES = 20 * 1024 * 1024;
+
 /** Every type the library accepts on upload, in the order the error lists them. */
 export const LIBRARY_MIME_TYPES = [...ALLOWED_IMAGE, ...ALLOWED_VIDEO, ...ALLOWED_PDF];
 
@@ -227,6 +231,8 @@ export class MediaService {
       workspaceId,
       mimeType: { in: opts.kind ? MIME_BY_KIND[opts.kind] : [...ALLOWED_IMAGE, ...ALLOWED_VIDEO] },
       knowledgeSources: { none: {} },
+      // SP-18: copilot attachments are not library assets either.
+      copilotAttachments: { none: {} },
       ...(opts.approved !== undefined ? { approvedForAgent: opts.approved } : {}),
       ...mediaSearchWhere(opts.q),
     };
@@ -626,6 +632,24 @@ export class MediaService {
     return { storedPath: key, storageKind: this.storage.kind };
   }
 
+  /**
+   * SP-18 (ruling 7): store the bytes of a copilot attachment (the caller has
+   * checked type, signature and size). Only the object is written; the caller
+   * creates the Media row with its CopilotAttachment in one transaction, so
+   * the file never shows in the library.
+   */
+  async putCopilotFile(input: { workspaceId: string; buffer: Buffer; mimeType: string; fileName: string }) {
+    if (!COPILOT_FILE_MIMES.has(input.mimeType)) throw mediaError("media.unsupported_type", { allowed: [...COPILOT_FILE_MIMES] });
+    if (input.buffer.length > COPILOT_FILE_MAX_BYTES) throw mediaError("media.too_large", { limit: COPILOT_FILE_MAX_BYTES });
+    const { key } = await this.storage.put({
+      workspaceId: input.workspaceId,
+      buffer: input.buffer,
+      mimeType: input.mimeType,
+      originalFilename: input.fileName,
+    });
+    return { storedPath: key, storageKind: this.storage.kind };
+  }
+
   /** Best-effort delete of a stored object whose Media row was never created (or is gone). */
   async discardStored(stored: { storageKind: string; storedPath: string }): Promise<void> {
     try {
@@ -752,8 +776,15 @@ export class MediaService {
         select: { id: true, title: true },
         orderBy: { createdAt: "asc" },
       });
-      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0) {
-        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge });
+      // SP-18: a copilot attachment's file (the copilot deletes it with the attachment).
+      const copilot = await tx.copilotAttachment.findMany({
+        where: { workspaceId, mediaId: row.id },
+        select: { id: true, fileName: true },
+        orderBy: { createdAt: "asc" },
+      });
+      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0 || copilot.length > 0) {
+        // `copilot` only when present: the existing body keeps its shape.
+        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge, ...(copilot.length ? { copilot } : {}) });
       }
       await tx.media.delete({ where: { id: row.id } });
     });

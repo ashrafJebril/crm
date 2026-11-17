@@ -526,7 +526,7 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
     pages: ["knowledgePage", "sourceId", "many"],
   },
   knowledgeChunk: { source: ["knowledgeSource", "sourceId", "one"], page: ["knowledgePage", "pageId", "one"] },
-  media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"] },
+  media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"], copilotAttachments: ["copilotAttachment", "mediaId", "many"] },
 };
 /** SP-09: to-one relations `matches` follows as filters. */
 const RELATION_FILTERS: Record<string, string[]> = {

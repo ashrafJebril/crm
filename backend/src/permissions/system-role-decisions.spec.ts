@@ -711,10 +711,21 @@ describe("system-role decision table", () => {
     });
   });
 
-  // SP-18: the copilot (read part). The routes are open to every member; what
-  // the copilot can read is each tool's own permission, checked as the member.
+  // SP-18: the copilot. The routes are open to every member; what the copilot
+  // can read or change is each tool's own permission, checked as the member
+  // (and re-checked when a card is approved).
   describe("SP-18 copilot", () => {
-    const ROUTES = ["POST /copilot/stream", "GET /copilot/status", "GET /copilot/sessions", "GET /copilot/sessions/:id", "DELETE /copilot/sessions/:id"];
+    const ROUTES = [
+      "POST /copilot/stream",
+      "GET /copilot/status",
+      "GET /copilot/sessions",
+      "GET /copilot/sessions/:id",
+      "DELETE /copilot/sessions/:id",
+      "POST /copilot/actions/:id/approve",
+      "POST /copilot/actions/:id/decline",
+      "POST /copilot/attachments",
+      "DELETE /copilot/attachments/:id",
+    ];
     // Read tools → the permissions each needs (copilot-tools/*.tool.ts).
     const TOOLS: Record<string, string[]> = {
       search_contacts: ["contacts.view"],
@@ -742,8 +753,53 @@ describe("system-role decision table", () => {
     it("the read tools match each tool's permissions in the registry", async () => {
       const { copilotWorld } = await import("../copilot/copilot-test-world");
       const reg = copilotWorld().registry;
-      expect(reg.names()).toEqual(Object.keys(TOOLS).sort());
-      for (const n of reg.names()) expect({ n, p: reg.get(n)!.permissions }).toEqual({ n, p: TOOLS[n] });
+      const reads = reg.names().filter((n) => reg.get(n)!.kind === "read");
+      expect(reads).toEqual(Object.keys(TOOLS).sort());
+      for (const n of reads) expect({ n, p: reg.get(n)!.permissions }).toEqual({ n, p: TOOLS[n] });
+    });
+
+    // Write tools: the permission each card needs (create_activity follows its target, as ActivitiesService does).
+    const WRITES: Record<string, string> = {
+      "create_activity (customer)": "contacts.update",
+      "create_activity (ticket)": "tickets.update",
+      move_ticket_stage: "tickets.update",
+      save_attachment_to_knowledge: "knowledge.create",
+    };
+
+    it("owner, admin and agent may propose and approve every write; a viewer none", () => {
+      for (const role of ["owner", "admin", "agent"] as const) {
+        for (const [w, p] of Object.entries(WRITES)) expect({ role, w, ok: hasPermission(SYSTEM_ROLES[role].permissions, p) }).toEqual({ role, w, ok: w !== "save_attachment_to_knowledge" || role !== "agent" });
+      }
+      for (const [w, p] of Object.entries(WRITES)) expect({ w, ok: hasPermission(SYSTEM_ROLES.viewer.permissions, p) }).toEqual({ w, ok: false });
+    });
+
+    it("with the system roles: a viewer's write gets a tool refusal (no card); an agent proposes and approves create_activity; move approval needs tickets.update", async () => {
+      const { copilotWorld, withKey, viewer, WRITER, VIEWER, WS } = await import("../copilot/copilot-test-world");
+      const { text, toolUse } = await import("../copilot/fake-claude-stream");
+      const asRole = (w: any, user: string, role: SystemRoleKey) => w.setRole(user, SYSTEM_ROLES[role].permissions as any, SYSTEM_ROLES[role].conversationVisibility);
+      const act = toolUse("a1", "create_activity", { kind: "call", title: "Call back", contactId: "c-layla" });
+      const mv = toolUse("m1", "move_ticket_stage", { ticketId: "t-hidden", stageId: "s2" });
+
+      const v = copilotWorld({ script: [{ content: [act, mv], stop_reason: "tool_use" }, { content: [text("no")] }] });
+      asRole(v, VIEWER, "viewer");
+      const vt = await withKey(() => v.turn(VIEWER, {}));
+      expect(v.db.copilotPendingAction).toHaveLength(0);
+      expect(vt.events.some((e: any) => e.event === "confirm")).toBe(false);
+      const res = v.fake.calls[1].messages[v.fake.calls[1].messages.length - 1].content.map((r: any) => JSON.parse(r.content));
+      expect(res.map((r: any) => [r.error, r.permission])).toEqual([
+        ["no_access", "contacts.update"],
+        ["no_access", "tickets.update"],
+      ]);
+
+      const a = copilotWorld({ script: [{ content: [act, mv], stop_reason: "tool_use" }, { content: [text("ok")] }] });
+      asRole(a, WRITER, "agent");
+      await withKey(() => a.turn(WRITER, {}));
+      const byTool = (t: string) => a.db.copilotPendingAction.find((x: any) => x.tool === t);
+      expect((await a.controller.approve(WS, viewer(WRITER), byTool("create_activity").id)).action.status).toBe("EXECUTED");
+      // Without tickets.update at approval time the move is refused.
+      a.setRole(WRITER, { ...(SYSTEM_ROLES.agent.permissions as any), tickets: ["view"] });
+      await expect(a.controller.approve(WS, viewer(WRITER), byTool("move_ticket_stage").id)).rejects.toMatchObject({ response: { message: "copilot.permission_revoked" } });
+      expect(a.moveTicket).not.toHaveBeenCalled();
     });
 
     it("owner, admin and agent use every read tool; a viewer reads everything but cannot draft a reply", () => {

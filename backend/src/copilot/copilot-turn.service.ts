@@ -57,8 +57,13 @@ import { CopilotSessionsService } from "./copilot-sessions.service";
 import { SourceCollector } from "./copilot-sources";
 import { fallbackTitle, makeTitle } from "./copilot-title";
 import { CopilotToolRegistry, noAccess, type ToolContext } from "./copilot-tools/registry";
+import { CopilotActionsService } from "./copilot-actions.service";
+import { CopilotAttachmentsService } from "./copilot-attachments.service";
+import { normalizeMode } from "./approval-policy";
+import type { ApprovalMode } from "./copilot-constants";
 
-export const COPILOT_REGISTRY = Symbol("COPILOT_REGISTRY");
+import { COPILOT_REGISTRY } from "./copilot-registry.token";
+export { COPILOT_REGISTRY };
 
 export type Emit = (event: StreamEventName, data: unknown) => void;
 
@@ -92,6 +97,8 @@ export class CopilotTurnService {
     private readonly perm: PermissionService,
     private readonly records: RecordsService,
     @Inject(COPILOT_REGISTRY) private readonly registry: CopilotToolRegistry,
+    private readonly actions: CopilotActionsService,
+    private readonly attachments: CopilotAttachmentsService,
   ) {}
 
   status(): { available: boolean; reasons: string[] } {
@@ -140,6 +147,14 @@ export class CopilotTurnService {
       }
     }
 
+    // Attachments: the member's own, unsent (404 otherwise), before any work.
+    const attachIds = [...new Set(dto.attachmentIds ?? [])];
+    for (const id of attachIds) {
+      const a = await this.attachments.own(workspaceId, viewer.userId, id);
+      if (a.sentAt) throw copilotError("copilot.not_found");
+    }
+    const mode = normalizeMode(dto.approvalMode);
+
     const hit = this.limiter.hit(`${workspaceId}:${viewer.userId}`);
     if (!hit.ok) throw copilotError("copilot.rate", { retryAfterSeconds: hit.retryAfterSec });
     await this.dailyCheck(workspaceId, now);
@@ -154,10 +169,19 @@ export class CopilotTurnService {
         this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } }),
       ]);
       const model = copilotModel(this.claude);
+      // The member's decisions on this session's cards since their last message (ids and statuses only).
+      const lastUser = await this.prisma.copilotMessage.findFirst({
+        where: { sessionId: session.id, workspaceId, role: "user" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { createdAt: true },
+      });
+      const decisions = lastUser ? await this.actions.decisionsSince(workspaceId, session.id, lastUser.createdAt) : [];
+      // Attachments are bound to this message; their text is data and taints the session (ruling 5).
+      const attached = attachIds.length ? await this.attachments.claim(workspaceId, viewer.userId, session.id, attachIds, now) : [];
       // Record data goes in the member's message as data (never the system channel); customer-writable kinds taint.
       const records = recordsBlock(references, pageRecord);
       let tainted = session.tainted;
-      if (records?.tainting && !tainted) {
+      if ((records?.tainting || attached.length > 0) && !tainted) {
         tainted = true;
         await this.sessions.markTainted(workspaceId, session.id);
       }
@@ -165,7 +189,8 @@ export class CopilotTurnService {
         lang: dto.lang,
         member: { name: user?.name ?? "Member", roleName: eff ? (dto.lang === "ar" ? eff.nameAr || eff.name : eff.name) : null },
         missingPermissions: missing,
-        approvalMode: dto.approvalMode,
+        approvalMode: mode,
+        decisions: decisions.map((d) => ({ id: d.id, tool: d.tool, status: d.status, refusal: d.refusal })),
         now,
         tz: ws?.timezone ?? "Asia/Riyadh",
         page: dto.pageContext
@@ -181,7 +206,15 @@ export class CopilotTurnService {
         tainted,
       });
       const ctxMsg = contextMessage(model, context);
-      const userBlocks: Anthropic.Beta.BetaContentBlockParam[] = [{ type: "text", text: message }];
+      const attachBlocks = this.attachments.blocks(attached);
+      const imageBlocks = attachBlocks.filter((b) => b.type === "image");
+      const docBlocks = attachBlocks.filter((b) => b.type !== "image");
+      // Images first, then the member's words, then documents and records as data.
+      const userBlocks: Anthropic.Beta.BetaContentBlockParam[] = [...imageBlocks, { type: "text", text: message }, ...docBlocks];
+      const notes = decisions.filter((d) => d.feedback);
+      if (notes.length) {
+        userBlocks.push({ type: "text", text: notes.map((d) => `(My note on the card I declined, ${d.id}: ${d.feedback})`).join("\n") });
+      }
       if (records) userBlocks.push({ type: "text", text: records.text });
       if (ctxMsg.userBlock) userBlocks.push(ctxMsg.userBlock);
       const userContent: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: userBlocks }];
@@ -191,13 +224,14 @@ export class CopilotTurnService {
         text: message,
         content: userContent,
         references: references.map((r) => ({ kind: r.kind, id: r.id, title: r.title })),
+        attachments: attached.length ? attached.map((a) => this.attachments.dto(a)).map((a) => ({ id: a.id, fileName: a.fileName, kind: a.kind })) : undefined,
         pageContext: dto.pageContext ? { ...dto.pageContext } : undefined,
       });
       const isFirst = !session.title;
       return {
         sessionId: session.id,
         title: session.title,
-        run: (emit) => this.run({ workspaceId, viewer, sessionId: session.id, lang: dto.lang, model, message, isFirst, tainted }, emit),
+        run: (emit) => this.run({ workspaceId, viewer, sessionId: session.id, lang: dto.lang, model, message, isFirst, tainted, mode }, emit),
       };
     } catch (e) {
       await this.sessions.releaseTurn(workspaceId, session.id).catch(() => undefined);
@@ -206,7 +240,7 @@ export class CopilotTurnService {
   }
 
   private async run(
-    t: { workspaceId: string; viewer: Viewer; sessionId: string; lang: "en" | "ar"; model: string; message: string; isFirst: boolean; tainted: boolean },
+    t: { workspaceId: string; viewer: Viewer; sessionId: string; lang: "en" | "ar"; model: string; message: string; isFirst: boolean; tainted: boolean; mode: ApprovalMode },
     emitRaw: Emit,
   ): Promise<void> {
     let ended = false;
@@ -235,6 +269,7 @@ export class CopilotTurnService {
         tainted = true;
         void this.sessions.markTainted(t.workspaceId, t.sessionId).catch(() => undefined);
       },
+      isTainted: () => tainted,
       emit: (event, data) => emit(event as StreamEventName, data),
     };
     const usage = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, model: t.model };
@@ -242,7 +277,8 @@ export class CopilotTurnService {
     let finalText = "";
     let errorCode: StreamErrorCode | null = null;
     try {
-      const history = await this.sessions.transcript(t.workspaceId, t.sessionId);
+      // Stored image markers become base64 image blocks (this session's own attachments only).
+      const history = await this.attachments.hydrate(t.workspaceId, t.sessionId, await this.sessions.transcript(t.workspaceId, t.sessionId));
       const tools = this.registry.definitions();
       let toolCalls = 0;
       let reissued = false;
@@ -295,7 +331,7 @@ export class CopilotTurnService {
             break;
           }
           toolCalls += uses.length;
-          const results = await Promise.all(uses.map((u) => this.runTool(ctx, u, emit)));
+          const results = await Promise.all(uses.map((u) => this.runTool(ctx, u, emit, t.mode)));
           turnMsgs.push({ role: "user", content: results });
           continue;
         }
@@ -339,8 +375,40 @@ export class CopilotTurnService {
     }
   }
 
+  /**
+   * A write tool call: the tool validates as the member and builds the card;
+   * the member must hold the card's permission (else no card); the actions
+   * service stores it and applies it only when the approval policy allows.
+   * The stream carries `confirm` for a card, `receipt` for an applied write.
+   */
+  private async proposeWrite(
+    ctx: ToolContext,
+    tool: NonNullable<ReturnType<CopilotToolRegistry["get"]>>,
+    toolUseId: string,
+    input: unknown,
+    emit: Emit,
+    mode: ApprovalMode,
+  ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
+    const res = (content: unknown): Anthropic.Beta.BetaToolResultBlockParam => ({ type: "tool_result", tool_use_id: toolUseId, content: JSON.stringify(content) });
+    if (!tool.propose) return { type: "tool_result", tool_use_id: toolUseId, is_error: true, content: "This change cannot be made from here." };
+    const proposal = await tool.propose(ctx, input as never);
+    if ("error" in proposal) return res(proposal);
+    if (!(await this.perm.viewerCan(ctx.workspaceId, ctx.viewer, proposal.permission))) return res(noAccess(proposal.permission));
+    const { action } = await this.actions.propose({ workspaceId: ctx.workspaceId, viewer: ctx.viewer, sessionId: ctx.sessionId, mode, tainted: ctx.isTainted() }, tool, proposal);
+    if (action.status === "PENDING") {
+      emit("confirm", { action });
+      return res({ actionId: action.id, status: "PENDING", note: "Shown to the member as a card. Nothing has changed yet: the member approves or declines it. Do not say it was done." });
+    }
+    if (action.status === "EXECUTED") {
+      emit("receipt", { action });
+      return res({ actionId: action.id, status: "EXECUTED", note: "Applied under the member's approval mode." });
+    }
+    emit("confirm", { action });
+    return res({ actionId: action.id, status: action.status, refusal: action.refusal, note: "This change was not made." });
+  }
+
   /** One tool call → one tool_result (never throws). */
-  private async runTool(ctx: ToolContext, use: Anthropic.Beta.BetaToolUseBlock, emit: Emit): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
+  private async runTool(ctx: ToolContext, use: Anthropic.Beta.BetaToolUseBlock, emit: Emit, mode: ApprovalMode = "manual"): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
     const err = (text: string): Anthropic.Beta.BetaToolResultBlockParam => ({ type: "tool_result", tool_use_id: use.id, is_error: true, content: text });
     const tool = this.registry.get(use.name);
     if (!tool) return err(`Unknown tool: ${use.name}`);
@@ -367,8 +435,8 @@ export class CopilotTurnService {
         return { type: "tool_result", tool_use_id: use.id, content: JSON.stringify(noAccess(p)) };
       }
     }
-    if (tool.kind !== "read") return err("This change cannot be made from here yet.");
     try {
+      if (tool.kind === "write") return await this.proposeWrite(ctx, tool, use.id, parsed.data, emit, mode);
       const out = await tool.execute(ctx, parsed.data as never);
       const text = JSON.stringify(out ?? null) ?? "null";
       return { type: "tool_result", tool_use_id: use.id, content: text.length > TOOL_RESULT_MAX ? `${text.slice(0, TOOL_RESULT_MAX)}…` : text };

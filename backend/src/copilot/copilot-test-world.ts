@@ -4,7 +4,10 @@
  * RecordsService (canOpenRecord, conversation visibility), the real sessions,
  * refs and turn services, and a scripted fake Claude stream. The outside
  * services the tools call (search, tickets list, bookings search, knowledge,
- * insights) are recording stubs. Nothing reaches a network or a database.
+ * insights) are recording stubs, and so are the services the write tools
+ * write through (ActivitiesService.create, TicketsService.moveTicket,
+ * KnowledgeSourcesService.uploadFiles) and the media store. Roles are
+ * per world (`w.roles`, `w.removeMember`). Nothing reaches a network or a database.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { makeFakePrisma } from "../channels/test-prisma";
@@ -16,7 +19,10 @@ import { CopilotSessionsService } from "./copilot-sessions.service";
 import { CopilotRefsService } from "./copilot-refs.service";
 import { CopilotTurnService } from "./copilot-turn.service";
 import { CopilotController } from "./copilot.controller";
-import { buildReadRegistry } from "./copilot-tools/read-tools";
+import { ConflictException, NotFoundException } from "@nestjs/common";
+import { buildRegistry } from "./copilot-tools/read-tools";
+import { CopilotActionsService } from "./copilot-actions.service";
+import { CopilotAttachmentsService } from "./copilot-attachments.service";
 import { fakeClaudeStream, type ScriptStep } from "./fake-claude-stream";
 import type { CopilotStreamDto } from "./copilot.dto";
 
@@ -28,6 +34,8 @@ export const ADMIN = "u-admin";
 export const AGENT = "u-agent";
 export const VIEWER = "u-viewer";
 export const FOREIGN = "u-ws2";
+/** Task 2: an agent who writes: contacts and tickets view/update, conversations, bookings view, knowledge view/create. */
+export const WRITER = "u-writer";
 
 const ALL = ["view", "create", "update", "delete", "manage"];
 const EVERYTHING: Record<string, string[]> = Object.fromEntries(
@@ -48,8 +56,13 @@ export const ROLES: Record<string, { name: string; permissions: Record<string, s
     conversationVisibility: "all",
   },
   [FOREIGN]: { name: "Owner", permissions: EVERYTHING, conversationVisibility: "all" },
+  [WRITER]: {
+    name: "Agent",
+    permissions: { contacts: ["view", "update"], conversations: ["view", "create"], tickets: ["view", "update"], bookings: ["view"], knowledge: ["view", "create"] },
+    conversationVisibility: "all",
+  },
 };
-const MEMBER_WS: Record<string, string> = { [OWNER]: WS, [ADMIN]: WS, [AGENT]: WS, [VIEWER]: WS, [FOREIGN]: WS2 };
+const MEMBER_WS: Record<string, string> = { [OWNER]: WS, [ADMIN]: WS, [AGENT]: WS, [VIEWER]: WS, [FOREIGN]: WS2, [WRITER]: WS };
 
 export const NOW = new Date("2026-11-17T10:00:00.000Z");
 const at = (min: number) => new Date(NOW.getTime() - min * 60_000);
@@ -70,6 +83,7 @@ export function seed() {
       { id: AGENT, name: "Agent Amal" },
       { id: VIEWER, name: "Viewer Vic" },
       { id: FOREIGN, name: "Foreign Fay" },
+      { id: WRITER, name: "Writer Wafa" },
     ],
     contact: [
       { id: "c-layla", workspaceId: WS, name: "Layla", phone: "+966500000001", email: null, lifecycle: "Customer", tags: "[]", ownerId: null, createdAt: at(900), updatedAt: at(900) },
@@ -87,7 +101,12 @@ export function seed() {
       { id: "m3", workspaceId: WS, conversationId: "v-hidden", from: "them", body: "secret", t: "10:02", createdAt: at(20) },
     ],
     pipeline: [{ id: "p1", workspaceId: WS, key: "support", name: "Support", nameAr: "الدعم" }],
-    ticketStage: [{ id: "s1", workspaceId: WS, pipelineId: "p1", key: "new", label: "New", labelAr: "جديد", isTerminal: false, order: 0 }],
+    ticketStage: [
+      { id: "s1", workspaceId: WS, pipelineId: "p1", key: "new", label: "New", labelAr: "جديد", isTerminal: false, isWon: false, order: 0 },
+      { id: "s2", workspaceId: WS, pipelineId: "p1", key: "working", label: "Working", labelAr: "قيد العمل", isTerminal: false, isWon: false, order: 1 },
+      { id: "s-won", workspaceId: WS, pipelineId: "p1", key: "won", label: "Resolved", labelAr: "تم", isTerminal: true, isWon: true, order: 2 },
+      { id: "s-lost", workspaceId: WS, pipelineId: "p1", key: "lost", label: "Closed", labelAr: "مغلق", isTerminal: true, isWon: false, order: 3 },
+    ],
     ticket: [
       // The unassigned conversation's ticket (hidden from the assigned-only agent).
       { id: "t-hidden", workspaceId: WS, number: 7, title: "Refund for Omar", pipelineId: "p1", stageId: "s1", contactId: "c-omar", conversationId: "v-hidden", ownerId: null, priority: "normal", category: null, slaDueAt: null, closedAt: null, value: null, createdAt: at(100), updatedAt: at(100) },
@@ -100,6 +119,9 @@ export function seed() {
     copilotSession: [],
     copilotMessage: [],
     copilotPendingAction: [],
+    copilotAttachment: [],
+    copilotActionAudit: [],
+    media: [],
   };
 }
 
@@ -117,11 +139,14 @@ export function copilotWorld(opts: WorldOpts = {}) {
   const s = seed();
   opts.seed?.(s);
   const prisma = makeFakePrisma(s as any);
+  // Roles per world (a spec may change them: then `perm.invalidate`, as the role editor does).
+  const roles: typeof ROLES = JSON.parse(JSON.stringify(ROLES));
+  const memberWs: Record<string, string | undefined> = { ...MEMBER_WS };
   // Roles: the member row with its custom role (PermissionService resolves it as in production).
   prisma.workspaceMember.findUnique = jest.fn(async (a: any) => {
     const { userId, workspaceId } = a.where.userId_workspaceId;
-    const role = ROLES[userId];
-    if (!role || MEMBER_WS[userId] !== workspaceId) return null;
+    const role = roles[userId];
+    if (!role || memberWs[userId] !== workspaceId) return null;
     return {
       userId, workspaceId, role: "custom",
       roleRef: { id: `role-${userId}`, isSystem: false, key: null, name: role.name, nameAr: role.name, permissions: role.permissions, conversationVisibility: role.conversationVisibility },
@@ -153,13 +178,62 @@ export function copilotWorld(opts: WorldOpts = {}) {
   // Any send path a draft could reach: must stay at zero calls.
   const sends = { sendMessage: jest.fn(), send: jest.fn(), sendTemplate: jest.fn() };
 
+  // Write paths (Task 2): recording stubs of the services the write tools go through.
+  let actN = 0;
+  const activities = { create: jest.fn(async (_ws: string, dto: any) => ({ id: `act-${++actN}`, ...dto })) };
+  const moveTicket = jest.fn(async (ws: string, id: string, dto: any, _viewer: unknown, o?: { expectStageId?: string }) => {
+    const t = (prisma.db.ticket as any[]).find((x) => x.id === id && x.workspaceId === ws);
+    if (!t) throw new NotFoundException("Ticket not found");
+    if (o?.expectStageId && t.stageId !== o.expectStageId) throw new ConflictException("tickets.undo_not_latest");
+    t.stageId = dto.stageId;
+    return t;
+  });
+  Object.assign(tickets, { moveTicket });
+  const knowledgeSources = { uploadFiles: jest.fn(async () => ({ items: [{ id: "ks-saved" }] })) };
+  const stored = new Map<string, Buffer>();
+  let keyN = 0;
+  const media = {
+    putCopilotFile: jest.fn(async (i: { buffer: Buffer }) => {
+      const key = `copilot/${++keyN}`;
+      stored.set(key, i.buffer);
+      return { storedPath: key, storageKind: "local" };
+    }),
+    discardStored: jest.fn(async (x: { storedPath: string }) => void stored.delete(x.storedPath)),
+    readBuffer: jest.fn(async (ws: string, id: string) => {
+      const m = (prisma.db.media as any[]).find((x) => x.id === id && x.workspaceId === ws);
+      if (!m || !stored.has(m.storedPath)) throw new NotFoundException("Media not found");
+      return stored.get(m.storedPath)!;
+    }),
+  };
+  /** pdf-parse stand-in: a "%PDF-" file's text is what follows its first line. */
+  const pdfText = jest.fn(async (b: Buffer) => ({ text: b.toString("utf8").split("\n").slice(1).join("\n"), numpages: 1 }));
+  const attachments = new CopilotAttachmentsService(prisma, media as any, pdfText);
+
   const fake = fakeClaudeStream(opts.script ?? [{ content: [{ type: "text", text: "Hello!" }] }], { title: opts.title });
   const claude = new ClaudeService(fake.factory);
-  const registry = buildReadRegistry({ prisma, perm, records, search, tickets, bookings, knowledge, insights } as any);
+  const registry = buildRegistry(
+    { prisma, perm, records, search, tickets, bookings, knowledge, insights } as any,
+    { prisma, records, activities, tickets: tickets as any, knowledgeSources: opts.knowledge === false ? undefined : (knowledgeSources as any), attachments },
+  );
   const sessions = new CopilotSessionsService(prisma);
   const refs = new CopilotRefsService(records);
-  const turns = new CopilotTurnService(prisma, claude, sessions, refs, perm, records, registry);
-  const controller = new CopilotController(turns, sessions);
+  const actions = new CopilotActionsService(prisma, perm, sessions, registry);
+  const turns = new CopilotTurnService(prisma, claude, sessions, refs, perm, records, registry, actions, attachments);
+  const controller = new CopilotController(turns, sessions, actions, attachments);
+  /** Change a member's role (as the role editor would) and drop the cached role. */
+  const setRole = (userId: string, permissions: Record<string, string[]>, conversationVisibility: "all" | "assigned" = "all") => {
+    roles[userId] = { ...roles[userId], permissions, conversationVisibility };
+    perm.invalidate(memberWs[userId] ?? WS, userId);
+  };
+  const removeMember = (userId: string) => {
+    const ws = memberWs[userId] ?? WS;
+    memberWs[userId] = undefined;
+    perm.invalidate(ws, userId);
+  };
+  const restoreMember = (userId: string, ws = WS) => {
+    memberWs[userId] = ws;
+    perm.invalidate(ws, userId);
+  };
 
   /** prepare + run, collecting the stream events. */
   async function turn(userId: string, dto: Partial<CopilotStreamDto>, ws = MEMBER_WS[userId] ?? WS) {
@@ -169,7 +243,10 @@ export function copilotWorld(opts: WorldOpts = {}) {
     return { sessionId: prepared.sessionId, events, last: events[events.length - 1] };
   }
 
-  return { prisma, db: prisma.db as Record<string, any[]>, perm, records, search, tickets, bookings, knowledge, insights, sends, fake, claude, registry, sessions, refs, turns, controller, turn };
+  return {
+    prisma, db: prisma.db as Record<string, any[]>, perm, records, search, tickets, bookings, knowledge, insights, sends, fake, claude, registry, sessions, refs, turns, controller, turn,
+    activities, moveTicket, knowledgeSources, media, pdfText, attachments, actions, roles, setRole, removeMember, restoreMember,
+  };
 }
 
 /** Run with a (fake) key so ClaudeService is available; restores the env. */

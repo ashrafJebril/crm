@@ -129,7 +129,8 @@ export class CopilotSessionsService {
         sources: m.sources ?? null,
         createdAt: m.createdAt.toISOString(),
       })),
-      actions: actions.map(cardDto),
+      // A card past its TTL reads as EXPIRED (it is marked so when acted on).
+      actions: actions.map((a) => cardDto(a.status === "PENDING" && a.expiresAt.getTime() <= now.getTime() ? { ...a, status: "EXPIRED" } : a)),
     };
   }
 

@@ -395,11 +395,16 @@ describe("permission map", () => {
       "GET /copilot/sessions": "authenticated",
       "GET /copilot/sessions/:id": "authenticated",
       "DELETE /copilot/sessions/:id": "authenticated",
+      // Task 2: cards and attachments (each card re-checks its tool's permission at approval).
+      "POST /copilot/actions/:id/approve": "authenticated",
+      "POST /copilot/actions/:id/decline": "authenticated",
+      "POST /copilot/attachments": "authenticated",
+      "DELETE /copilot/attachments/:id": "authenticated",
     };
     for (const [k, p] of Object.entries(sp18)) {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
     }
-    // Task 1's exact set (Task 2 adds the action, attachment and feedback routes).
+    // The exact set of /copilot routes.
     expect(keys.filter((k) => / \/copilot(\/|$)/.test(k)).sort()).toEqual(Object.keys(sp18).sort());
   });
 

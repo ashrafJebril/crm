@@ -477,6 +477,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /copilot/sessions": "authenticated",
   "GET /copilot/sessions/:id": "authenticated",
   "DELETE /copilot/sessions/:id": "authenticated",
+  // Task 2: cards (the proposing member only; the tool's permission is re-checked at approval) and attachments.
+  "POST /copilot/actions/:id/approve": "authenticated",
+  "POST /copilot/actions/:id/decline": "authenticated",
+  "POST /copilot/attachments": "authenticated",
+  "DELETE /copilot/attachments/:id": "authenticated",
 
   // ── Connectors (MCP servers bound to the agent) ───────────────────────
   "GET /integrations/l/mcp-servers": "connectors.view",

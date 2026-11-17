@@ -12,6 +12,8 @@ import { campaignTools } from "./campaigns.tool";
 import { knowledgeTools } from "./knowledge.tool";
 import { insightsTools } from "./insights.tool";
 import { draftReplyTools } from "./draft-reply.tool";
+import type { WriteToolDeps } from "./write-deps";
+import { writeTools } from "./write-tools";
 
 export function readTools(deps: ReadToolDeps) {
   return [
@@ -28,4 +30,9 @@ export function readTools(deps: ReadToolDeps) {
 
 export function buildReadRegistry(deps: ReadToolDeps): CopilotToolRegistry {
   return new CopilotToolRegistry(readTools(deps));
+}
+
+/** The full registry: the read tools and, with their deps, the write tools (Task 2). */
+export function buildRegistry(read: ReadToolDeps, write?: WriteToolDeps): CopilotToolRegistry {
+  return new CopilotToolRegistry([...readTools(read), ...(write ? writeTools(write) : [])]);
 }
