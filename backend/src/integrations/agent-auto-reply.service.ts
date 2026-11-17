@@ -126,8 +126,9 @@ export class AgentAutoReplyService implements OnModuleInit {
     if (answer.imageUrl) {
       try {
         const { decision } = await agentImageDecision(this.prisma, workspaceId, answer.imageUrl);
-        // These transports send plain text: an approved photo goes as its link.
-        if (decision !== "drop") text = `${text}\n\n${answer.imageUrl}`;
+        // Only an approved photo of this workspace (SP-17); anything else is
+        // dropped. These transports send plain text: the photo goes as its link.
+        if (decision === "send") text = `${text}\n\n${answer.imageUrl}`;
       } catch {
         // Fail closed on the image, never on the answer.
       }

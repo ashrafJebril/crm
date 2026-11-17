@@ -9,6 +9,11 @@ import { stampLastInbound } from "./channel-resolver.service";
 import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
 import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
 
+/** SP-22: the auto-reply hook (fire-and-forget, never throws). */
+export type AutoReplyHandler = (workspaceId: string, conversationId: string, text: string) => void;
+/** Channel kinds answered by the auto-reply here (Zernio and Meta keep their own paths). */
+const AUTO_REPLY_KINDS = new Set(["telegram", "webchat"]);
+
 export interface InboundRecord {
   workspaceId: string;
   channel: Channel;
@@ -33,11 +38,19 @@ export interface InboundRecord {
  * Meta paths are NOT moved onto it in SP-19 (regression risk); they only got
  * the channel-aware lookup.
  *
- * AI auto-reply is not wired here (R7: deferred to SP-20/22).
+ * SP-22 (ruling 9): after the message is stored, Telegram and web-chat
+ * inbound is handed to the registered auto-reply (AgentAutoReplyService
+ * registers itself, so this global module needs no IntegrationsModule).
  */
 @Injectable()
 export class InboundSinkService {
   private readonly attributor: CampaignReplyAttributor;
+  private autoReply: AutoReplyHandler | null = null;
+
+  /** SP-22: AgentAutoReplyService registers here on module init. */
+  registerAutoReply(handler: AutoReplyHandler): void {
+    this.autoReply = handler;
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -155,6 +168,16 @@ export class InboundSinkService {
         message: { body: input.text },
       },
     } satisfies WorkflowTriggerEvent);
+
+    // SP-22: the message is stored first; the auto-reply then decides
+    // (fire-and-forget) whether the agent answers.
+    if (this.autoReply && AUTO_REPLY_KINDS.has(kind) && input.text) {
+      try {
+        this.autoReply(workspaceId, conv.id, input.text);
+      } catch {
+        /* never fail the inbound path */
+      }
+    }
 
     return { conversationId: conv.id, messageId: message.id, duplicate: false };
   }

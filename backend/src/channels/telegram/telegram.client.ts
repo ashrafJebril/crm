@@ -1,7 +1,29 @@
 import { Injectable } from "@nestjs/common";
 import { redactUrl } from "../../common/redact-url";
 
-const API_BASE = "https://api.telegram.org";
+export const TELEGRAM_DEFAULT_API = "https://api.telegram.org";
+
+/**
+ * SP-22: the Bot API base, from TELEGRAM_API_BASE_URL (Task 4 stubs Telegram
+ * with it). Default unchanged. Only an https URL, or a loopback http URL
+ * (127.0.0.1 / localhost), is accepted; anything else falls back to the
+ * real API, so a misconfiguration can never send the bot token in clear
+ * text to another host.
+ */
+export function telegramApiBase(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.TELEGRAM_API_BASE_URL?.trim();
+  if (!raw) return TELEGRAM_DEFAULT_API;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return TELEGRAM_DEFAULT_API;
+  }
+  const loopback = url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
+  if (url.protocol !== "https:" && !loopback) return TELEGRAM_DEFAULT_API;
+  if (url.username || url.password || url.search || url.hash) return TELEGRAM_DEFAULT_API;
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+}
 const TIMEOUT_MS = 15_000;
 /** `<bot id>:<secret>`. Checked before the token is put in a URL path. */
 export const BOT_TOKEN_RE = /^\d{1,20}:[A-Za-z0-9_-]{20,100}$/;
@@ -79,7 +101,7 @@ export class TelegramClient {
     const path = filePath.split("/").map(encodeURIComponent).join("/");
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/file/bot${token}/${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+      res = await fetch(`${telegramApiBase()}/file/bot${token}/${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
     } catch (e) {
       throw new TelegramApiError(`Telegram file download failed: ${scrubToken(String((e as Error)?.message ?? e), token)}`);
     }
@@ -97,7 +119,7 @@ export class TelegramClient {
     this.assertToken(token);
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/bot${token}/${method}`, {
+      res = await fetch(`${telegramApiBase()}/bot${token}/${method}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: params ? JSON.stringify(params) : undefined,
