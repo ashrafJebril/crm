@@ -1,6 +1,12 @@
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { AuthService } from "./auth.service";
+
+/** SP-26: login may return a 2FA challenge; these specs only cover sessions. */
+type Session = Extract<Awaited<ReturnType<AuthService["login"]>>, { token: string }>;
+type SessionAuth = Omit<AuthService, "login"> & { login: (...a: Parameters<AuthService["login"]>) => Promise<Session> };
+/** SP-26 constructor deps: 2FA challenges and session versions. */
+const sp26Deps = [{ challengeFor: jest.fn() } as never, { invalidate: jest.fn() } as never] as const;
 import { WorkspacesService } from "../workspaces/workspaces.service";
 import { seedWorkspaceDefaults } from "../workspaces/workspace-defaults";
 
@@ -27,8 +33,8 @@ function setup(opts: { pendingInvite?: boolean; removed?: boolean }) {
   };
   const workspaces = { create: jest.fn().mockResolvedValue({ id: "ws-new", name: "Noor's workspace", slug: "n", timezone: "Asia/Riyadh", lang: "ar", plan: "free" }) };
   const jwt = new JwtService({ secret: "test" });
-  const svc = new AuthService(prisma as never, jwt, workspaces as never, {} as never, { backfill: jest.fn() } as never);
-  return { svc, prisma, workspaces, jwt };
+  const svc = new AuthService(prisma as never, jwt, workspaces as never, {} as never, { backfill: jest.fn() } as never, ...sp26Deps);
+  return { svc: svc as unknown as SessionAuth, prisma, workspaces, jwt };
 }
 
 afterEach(() => {
@@ -92,7 +98,7 @@ describe("login with no workspace (SP-26 ruling 6)", () => {
     };
     const kewySync = { userCreated: jest.fn().mockResolvedValue(undefined) };
     const ws = new WorkspacesService(handle, kewySync as never, {} as never, { record: jest.fn() } as never, {} as never);
-    const auth = new AuthService(handle, { signAsync: jest.fn().mockResolvedValue("tok") } as never, ws, {} as never, kewySync as never);
+    const auth = new AuthService(handle, { signAsync: jest.fn().mockResolvedValue("tok") } as never, ws, {} as never, kewySync as never, ...sp26Deps);
     const res = await auth.register({ email: "new@example.com", password: "secret123", name: "New Person" } as never);
     expect(res.activeWorkspaceId).toBe("w1");
     expect(handle.workspace.create).toHaveBeenCalledTimes(1);
@@ -110,7 +116,7 @@ describe("issueFor and by-slug (SP-26)", () => {
     };
     const workspaces = { listForUser: jest.fn().mockResolvedValue([{ id: "ws2", name: "Two" }]) };
     const jwt = new JwtService({ secret: "test" });
-    return { svc: new AuthService(prisma as never, jwt, workspaces as never, {} as never, {} as never), prisma, jwt };
+    return { svc: new AuthService(prisma as never, jwt, workspaces as never, {} as never, {} as never, ...sp26Deps), prisma, jwt };
   }
 
   it("issueFor signs a session with the invited workspace active and no secrets", async () => {

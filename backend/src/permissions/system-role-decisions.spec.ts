@@ -756,6 +756,25 @@ describe("system-role decision table", () => {
       "DELETE /workspaces/:id/members/:userId",
     ];
     const AUDIT = "GET /workspaces/:id/audit";
+    // Task 2: members.manage, like the audit log.
+    const TWO_FA_RESET = "POST /workspaces/:id/members/:userId/2fa/reset";
+    const ACCOUNT = ["POST /auth/2fa/setup", "POST /auth/2fa/enable", "POST /auth/2fa/disable"];
+    const PUBLIC = ["POST /auth/password/forgot", "POST /auth/password/reset", "POST /auth/2fa/verify"];
+
+    it("owner and admin reset a member's 2FA; agent and viewer get 403", () => {
+      expect(allowed("owner", TWO_FA_RESET)).toBe(true);
+      expect(allowed("admin", TWO_FA_RESET)).toBe(true);
+      expect(allowed("agent", TWO_FA_RESET)).toBe(false);
+      expect(allowed("viewer", TWO_FA_RESET)).toBe(false);
+    });
+
+    it("every signed-in user manages their own 2FA; reset and verify are public", () => {
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        for (const route of ACCOUNT) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+      for (const route of ACCOUNT) expect(ROUTE_PERMISSIONS[route]).toBe("authenticated");
+      for (const route of PUBLIC) expect(ROUTE_PERMISSIONS[route]).toBe("public");
+    });
     const OWN = ["GET /auth/invitations", "POST /auth/invitations/accept", "GET /auth/workspaces/by-slug/:slug"];
 
     it("owner can do everything", () => {
@@ -796,6 +815,8 @@ describe("system-role decision table", () => {
       const err = await run(WorkspacesController, WorkspacesController.prototype.removeMember).catch((e) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
       expect(err.getResponse()).toMatchObject({ message: "Not allowed during impersonation" });
+      const reset = await run(WorkspacesController, WorkspacesController.prototype.resetTwoFactor).catch((e) => e);
+      expect(reset).toBeInstanceOf(ForbiddenException);
       // Reads and the other member routes stay open to a support session.
       await expect(run(WorkspacesController, WorkspacesController.prototype.openWork)).resolves.toBe(true);
       await expect(run(WorkspacesController, WorkspacesController.prototype.listMembers)).resolves.toBe(true);

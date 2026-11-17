@@ -6,6 +6,8 @@ import { KewyIdentityModule } from "../kewy-identity/kewy-identity.module";
 import { BillingModule } from "../billing/billing.module";
 import { EmailModule } from "../email/email.module";
 import { AuditModule } from "../audit/audit.module";
+import { AccountSecurityModule } from "../auth/account-security.module";
+import { TwoFactorService } from "../auth/two-factor.service";
 import { EMAIL_SENDER } from "../email/email-sender";
 import { MembersModule } from "./members.module";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
@@ -24,7 +26,7 @@ describe("SP-26 module wiring (no database)", () => {
     process.env.JWT_SECRET ||= SECRET;
     const { AuthModule } = await import("../auth/auth.module");
     const mod = await Test.createTestingModule({
-      imports: [PrismaModule, KewyIdentityModule, BillingModule, PermissionsModule, EmailModule, AuditModule, MembersModule, WorkspacesModule, AuthModule],
+      imports: [PrismaModule, KewyIdentityModule, BillingModule, PermissionsModule, EmailModule, AuditModule, AccountSecurityModule, MembersModule, WorkspacesModule, AuthModule],
     })
       .overrideProvider(PrismaService)
       .useValue({})
@@ -33,6 +35,7 @@ describe("SP-26 module wiring (no database)", () => {
     expect(mod.get(HandoverService)).toBeInstanceOf(HandoverService);
     const ws = mod.get(WorkspacesController);
     expect((ws as unknown as { handover?: unknown }).handover).toBeInstanceOf(HandoverService);
+    expect((ws as unknown as { twoFactor?: unknown }).twoFactor).toBeInstanceOf(TwoFactorService);
     expect(mod.get(AuthController)).toBeDefined();
     expect(mod.get(PublicInvitationsController)).toBeDefined();
     expect(mod.get<{ enabled: boolean }>(EMAIL_SENDER).enabled).toBe(false);

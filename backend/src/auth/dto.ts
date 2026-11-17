@@ -1,4 +1,5 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from "class-validator";
+import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { PASSWORD_MIN } from "../members/members-constants";
 
 export class LoginDto {
   @IsEmail()
@@ -51,6 +52,62 @@ export class UpdateProfileDto {
   @IsString()
   @IsOptional()
   color?: string;
+}
+
+/** SP-26: POST /auth/password/forgot. */
+export class ForgotPasswordDto {
+  @IsEmail()
+  @MaxLength(254)
+  email!: string;
+
+  @IsOptional()
+  @IsIn(["ar", "en"])
+  lang?: "ar" | "en";
+}
+
+/** SP-26: POST /auth/password/reset. */
+export class ResetPasswordDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{43}$/)
+  token!: string;
+
+  @IsString()
+  @MinLength(PASSWORD_MIN)
+  @MaxLength(200)
+  password!: string;
+}
+
+/** SP-26: POST /auth/2fa/enable. */
+export class TwoFaEnableDto {
+  @Matches(/^\d{6}$/)
+  code!: string;
+}
+
+/** SP-26: POST /auth/2fa/verify: exactly one of `code` or `recoveryCode`
+ *  (the service refuses both or neither). */
+export class TwoFaVerifyDto {
+  @IsString()
+  @MaxLength(2048)
+  challenge!: string;
+
+  @IsOptional()
+  @Matches(/^\d{6}$/)
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  recoveryCode?: string;
+}
+
+/** SP-26: POST /auth/2fa/disable. */
+export class TwoFaDisableDto {
+  @IsString()
+  @MaxLength(200)
+  password!: string;
+
+  @Matches(/^\d{6}$/)
+  code!: string;
 }
 
 export class ChangePasswordDto {

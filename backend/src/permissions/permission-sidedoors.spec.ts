@@ -1269,7 +1269,7 @@ describe("SP-26 members side doors", () => {
 
   it("by-slug lookup does not reveal a workspace the user is not in", async () => {
     const w = makeWorld();
-    const auth = new AuthService(w.prisma, {} as never, {} as never, {} as never, {} as never);
+    const auth = new AuthService(w.prisma, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
     await expect(auth.workspaceBySlug(SP26_U.agent, "no-such-slug")).rejects.toBeInstanceOf(NotFoundException);
     const foreign = await auth.workspaceBySlug(SP26_U.agent, "other-co");
     expect(foreign).toEqual({ member: false });
@@ -1280,7 +1280,7 @@ describe("SP-26 members side doors", () => {
   it("the invitee routes need the emailed token and list no ids (C1)", async () => {
     const w = makeWorld();
     const auth = { issueFor: jest.fn().mockResolvedValue({ token: "jwt" }) };
-    const ctl = new AuthController(auth as never, w.invitations);
+    const ctl = new AuthController(auth as never, w.invitations, {} as never, {} as never);
     const inv = await w.invitations.create(SP26_WS, { email: "other@else.test", roleId: "ws1_r_admin" }, { userId: SP26_U.owner });
     const listed = await ctl.myInvitations(reqAs(SP26_U.other, SP26_WS2));
     expect(listed).toEqual({ pending: 1 });

@@ -1,5 +1,7 @@
 import { inviteEmail } from "./invite";
 import { escapeHtml, layout } from "./layout";
+import { resetEmail } from "./reset";
+import { twoFactorResetEmail } from "./two-factor-reset";
 
 describe("email templates (SP-26)", () => {
   it("layout sets lang and dir on <html> and uses logical CSS only", () => {
@@ -49,5 +51,26 @@ describe("email templates (SP-26)", () => {
     expect(en.html).toMatch(/dir="ltr"/);
     expect(en.text).toContain("You have been invited");
     expect(en.html).not.toMatch(/دعوة/);
+  });
+
+  it("reset email is one language and carries the link and expiry", () => {
+    const en = resetEmail({ to: "a@x.test", lang: "en", name: "Ann <b>", link: "https://app.test/reset?token=t&y=1", minutes: 30 });
+    expect(en).toMatchObject({ subject: "Reset your password", kind: "password_reset" });
+    expect(en.html).toMatch(/dir="ltr"/);
+    expect(en.html).toContain("Ann &lt;b&gt;");
+    expect(en.html).toContain("token=t&amp;y=1");
+    expect(en.text).toContain("30 minutes");
+    const ar = resetEmail({ to: "a@x.test", lang: "ar", name: null, link: "https://app.test/reset?token=t", minutes: 30 });
+    expect(ar.html).toMatch(/dir="rtl"/);
+    expect(ar.subject).toBe("إعادة تعيين كلمة المرور");
+    expect(ar.html).not.toMatch(/Reset your password/);
+  });
+
+  it("two-factor reset email carries no link or code", () => {
+    const m = twoFactorResetEmail({ to: "a@x.test", lang: "en", name: "Ann", workspaceName: "Acme" });
+    expect(m.kind).toBe("two_factor_reset");
+    expect(m.html).not.toMatch(/href=|token=/);
+    expect(m.text).toContain("Acme");
+    expect(twoFactorResetEmail({ to: "a@x.test", lang: "ar", name: null, workspaceName: "Acme" }).html).toMatch(/dir="rtl"/);
   });
 });

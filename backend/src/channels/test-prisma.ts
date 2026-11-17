@@ -556,6 +556,8 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
   media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"] },
   // SP-26
   workspaceMember: { user: ["user", "userId", "one"], workspace: ["workspace", "workspaceId", "one"] },
+  // SP-26 Task 2: the login include (user.memberships → workspace).
+  user: { memberships: ["workspaceMember", "userId", "many"] },
   invitation: {
     role: ["role", "roleId", "one"],
     invitedBy: ["user", "invitedById", "one"],

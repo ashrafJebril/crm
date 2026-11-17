@@ -164,3 +164,30 @@ describe("KewySsoService.exchange", () => {
     expect(err.getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
   });
 });
+
+describe("Kewy SSO and two-step verification (SP-26 ruling 9)", () => {
+  beforeEach(() => {
+    process.env.KEWY_SSO_PUBLIC_KEY = publicKey;
+    process.env.KEWY_ISSUER = ISSUER;
+  });
+  afterEach(() => {
+    delete process.env.KEWY_SSO_PUBLIC_KEY;
+    delete process.env.KEWY_ISSUER;
+  });
+
+  it("sso login does not ask for totp, and the session carries sv", async () => {
+    const prisma = makePrisma({
+      user: {
+        upsert: jest.fn().mockResolvedValue({
+          id: "u1", email: "owner@example.com", name: "Noor Owner", role: "Agent", initials: "NO", color: "150",
+          twoFA: true, totpSecretEnc: "enc:v1:x", sessionVersion: 3,
+        }),
+      },
+    });
+    const res = await makeService(prisma).exchange({ token: sign(claims({ jti: "jti-2fa" })) });
+    expect(res).not.toHaveProperty("twoFactorRequired");
+    const decoded = new JwtService({}).decode(res.token) as Record<string, unknown>;
+    expect(decoded).toMatchObject({ sub: "u1", sv: 3 });
+    expect(decoded).not.toHaveProperty("purpose");
+  });
+});
