@@ -42,6 +42,7 @@ import { SavedRepliesModule } from "./saved-replies/saved-replies.module";
 import { WorkflowsModule } from "./workflows/workflows.module";
 import { McpServerModule } from "./mcp-server/mcp-server.module";
 import { SkillsModule } from "./skills/skills.module";
+import { ConnectorsModule } from "./connectors/connectors.module";
 import { AdsModule } from "./ads/ads.module";
 import { MetaAdsModule } from "./meta-ads/meta-ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
@@ -116,6 +117,8 @@ import { MembersModule } from "./members/members.module";
     McpServerModule,
     // SP-22: the skills gallery (also imported by McpServerModule and AgentModule).
     SkillsModule,
+    // SP-23: connectors gallery + the tool-switching MCP proxy (after SkillsModule).
+    ConnectorsModule,
     TicketsModule,
     PipelinesModule,
     ResolutionModule,

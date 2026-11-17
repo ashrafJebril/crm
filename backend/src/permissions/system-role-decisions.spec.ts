@@ -874,6 +874,38 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-23: the connectors gallery (Task 1 routes; OAuth comes with Task 2).
+  describe("SP-23 connector routes", () => {
+    const VIEW = ["GET /connectors", "GET /connectors/:id", "GET /connectors/:id/activity"];
+    const WRITE = [
+      "POST /connectors/custom",
+      "PATCH /connectors/:id/tools",
+      "POST /connectors/:id/rescan",
+      "PUT /connectors/:id/agent",
+      "DELETE /connectors/:id",
+    ];
+
+    it("owner and admin can do everything; admin holds connectors.manage", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...VIEW, ...WRITE]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+      expect(hasPermission(SYSTEM_ROLES.admin.permissions, "connectors.manage")).toBe(true);
+    });
+
+    it("agent has no connectors permission: 403 on every route", () => {
+      for (const route of [...VIEW, ...WRITE]) expect({ route, ok: allowed("agent", route) }).toEqual({ route, ok: false });
+    });
+
+    it("viewer can list, read details and activity, and gets 403 on everything else", () => {
+      for (const route of VIEW) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: true });
+      for (const route of WRITE) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
+    });
+
+    it("the proxy is public behind its own bearer guard", () => {
+      expect(ROUTE_PERMISSIONS["POST /mcp/connectors/:connectorId"]).toBe("public");
+    });
+  });
+
   // SP-26: invitations, handover, removal and the audit log.
   describe("SP-26 member routes", () => {
     const LIST = "GET /workspaces/:id/invitations";

@@ -108,6 +108,12 @@ export class PrismaService implements OnModuleDestroy {
   // SP-22: the skills ledger and the agent's tool-call log (tenant-scoped).
   get skillInstall() { return this.client.skillInstall; }
   get agentToolCall() { return this.client.agentToolCall; }
+  // SP-23: connectors (tenant-scoped; the proxy and the schedulers run
+  // without a context and name workspaceId or a unique key explicitly).
+  get connector() { return this.client.connector; }
+  get connectorCall() { return this.client.connectorCall; }
+  get connectorSyncLink() { return this.client.connectorSyncLink; }
+  get connectorSyncRun() { return this.client.connectorSyncRun; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

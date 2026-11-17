@@ -60,6 +60,11 @@ const SCOPED_MODELS = new Set([
   // SP-22
   "SkillInstall",
   "AgentToolCall",
+  // SP-23
+  "Connector",
+  "ConnectorCall",
+  "ConnectorSyncLink",
+  "ConnectorSyncRun",
   // SP-20
   "AgentSettings",
   "AgentSandboxThread",
