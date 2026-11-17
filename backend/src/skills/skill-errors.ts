@@ -11,6 +11,8 @@ const STATUS = {
   "skills.version_conflict": 409,
   "skills.config_required": 409,
   "skills.up_to_date": 409,
+  // Review I3: the skill's pre-SP-22 section was edited on l; remove it there first.
+  "skills.legacy_edited": 409,
 } as const;
 
 /** Error keys the new MCP tools report (as the tool error text). */

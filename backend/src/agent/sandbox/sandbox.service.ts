@@ -234,7 +234,8 @@ export class SandboxService {
     ]);
     return composeSandboxSystem({
       live,
-      sections: crmPromptSections(),
+      // Review M1: the same blocks as the tools offered (the enabled skills).
+      sections: crmPromptSections(this.skills ? await this.skills.enabledFor(workspaceId) : undefined),
       persona: settings ? personaBlockText(settings) : "",
       guidelines: guidelines?.body ?? "",
       guidelinesBlock: GUIDELINES_BLOCK,

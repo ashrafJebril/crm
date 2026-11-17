@@ -1,7 +1,7 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { AgentPromptService } from "./agent-prompt.service";
+import { AgentPromptService, LEGACY_EDITED_ERROR } from "./agent-prompt.service";
 import { CONNECTOR_PRESENCE, NeverConnected, type ConnectorPresence } from "./connector-presence";
 import {
   SKILL_CATALOG,
@@ -38,9 +38,14 @@ export interface SkillDto {
   agents: { slug: string; name: { en: string; ar: string } }[];
   usage: { calls7d: number; calls30d: number; lastUsedAt: string | null };
   lastError: string | null;
+  /** Why the skill needs attention: its old prompt section was edited on l
+   *  (remove it there; disabling is refused meanwhile), or the last apply failed. */
+  attentionReason: "legacy_edited" | "apply_failed" | null;
   /** The ledger row's optimistic-concurrency version (0 when there is no row). */
   rowVersion: number;
 }
+
+const legacyEdited = (s: SkillState) => s.status === "needs_attention" && s.lastError === LEGACY_EDITED_ERROR;
 
 const DAY = 86_400_000;
 const KEWY_AGENT = { en: "Kewy agent", ar: "وكيل كيوي" };
@@ -160,6 +165,7 @@ export class SkillsService {
       agents: isActive(s.status) ? [{ slug: slug ?? "", name: agent }] : [],
       usage: usage.get(e.key) ?? { calls7d: 0, calls30d: 0, lastUsedAt: null },
       lastError: s.lastError,
+      attentionReason: s.status !== "needs_attention" ? null : legacyEdited(s) ? "legacy_edited" : "apply_failed",
       rowVersion: s.version,
     };
   }
@@ -228,6 +234,9 @@ export class SkillsService {
       if (missing.length) throw skillError("skills.config_required", { fields: missing });
       status = "enabled";
     } else if (input.enabled === false) {
+      // Review I3: its old instructions are still in the prompt; turning the
+      // tools off now would leave the agent describing tools it lacks.
+      if (legacyEdited(s)) throw skillError("skills.legacy_edited", { key: e.key });
       status = "disabled";
     }
     const data = {
@@ -274,6 +283,7 @@ export class SkillsService {
     const e = this.entry(key);
     const s = await this.state(workspaceId, e.key);
     if (!s.installed) throw skillError("skills.not_installed");
+    if (legacyEdited(s)) throw skillError("skills.legacy_edited", { key: e.key });
     if (e.defaultInstalled) {
       if (s.row) {
         await this.prisma.skillInstall.updateMany({ where: { workspaceId, skillKey: e.key }, data: { status: "disabled", lastError: null, version: { increment: 1 } } });

@@ -87,7 +87,31 @@ export function defaultEnabled(catalog: SkillCatalog = SKILL_CATALOG): EnabledSk
   return enabledFromStates(resolveSkillStates([], catalog));
 }
 
-const BLOCK_RE = /(\n\n)?<!-- kewy-skill:([a-z_]+):v\d+ -->\n[\s\S]*?\n<!-- \/kewy-skill:\2 -->/g;
+const START_RE = /<!-- kewy-skill:([a-z_]+):v\d+ -->\n/g;
+
+/**
+ * Our complete blocks (with the "\n\n" before each), and the keys whose start
+ * marker has no end before the next start (dangling: left as text, never
+ * matched across another block, so owner text is never swallowed).
+ */
+export function findSkillBlocks(s: string): { spans: Array<[number, number]>; dangling: string[] } {
+  const starts = [...s.matchAll(START_RE)].map((m) => ({ index: m.index ?? 0, key: m[1] as string, len: m[0].length }));
+  const spans: Array<[number, number]> = [];
+  const dangling: string[] = [];
+  for (let i = 0; i < starts.length; i++) {
+    const st = starts[i];
+    const endMarker = `\n<!-- /kewy-skill:${st.key} -->`;
+    const end = s.indexOf(endMarker, st.index + st.len - 1);
+    const next = i + 1 < starts.length ? starts[i + 1].index : -1;
+    if (end < 0 || (next >= 0 && end > next)) {
+      dangling.push(st.key);
+      continue;
+    }
+    const from = st.index >= 2 && s.slice(st.index - 2, st.index) === "\n\n" ? st.index - 2 : st.index;
+    spans.push([from, end + endMarker.length]);
+  }
+  return { spans, dangling };
+}
 /** Never in a prompt (config text has control characters stripped). */
 const PLACEHOLDER = "\u0000kewy-skills\u0000";
 
@@ -114,16 +138,17 @@ export function composeSkillPrompt(
   current: string,
   enabled: EnabledSkills,
   catalog: SkillCatalog = SKILL_CATALOG,
-): { prompt: string; legacyEdited: SkillKey[] } {
+): { prompt: string; legacyEdited: SkillKey[]; dangling: string[] } {
   // Our blocks stay where the first one was: content written after them (the
   // owner's, SP-20's persona, SP-21's knowledge) keeps its order, so a second
   // apply changes nothing.
-  let first = true;
-  let s = current.replace(BLOCK_RE, (_m: string, sep: string | undefined) => {
-    if (!first) return "";
-    first = false;
-    return `${sep ?? ""}${PLACEHOLDER}`;
-  });
+  const { spans, dangling } = findSkillBlocks(current);
+  let s = current;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const [from, to] = spans[i];
+    const sep = current.slice(from, from + 2) === "\n\n" && current.slice(from + 2, from + 6) === "<!--" ? "\n\n" : "";
+    s = s.slice(0, from) + (i === 0 ? `${sep}${PLACEHOLDER}` : "") + s.slice(to);
+  }
   // A skill with any edited legacy section keeps all of its legacy text (and
   // gets no block): removing only its exact parts would lose instructions.
   const legacyEdited = new Set<SkillKey>();
@@ -145,14 +170,14 @@ export function composeSkillPrompt(
   const joined = blocks.join("\n\n");
   const edited = [...legacyEdited];
   if (s.includes(PLACEHOLDER)) {
-    if (joined) return { prompt: s.replace(PLACEHOLDER, joined), legacyEdited: edited };
-    if (s.includes(`\n\n${PLACEHOLDER}`)) return { prompt: s.replace(`\n\n${PLACEHOLDER}`, ""), legacyEdited: edited };
+    if (joined) return { prompt: s.replace(PLACEHOLDER, joined), legacyEdited: edited, dangling };
+    if (s.includes(`\n\n${PLACEHOLDER}`)) return { prompt: s.replace(`\n\n${PLACEHOLDER}`, ""), legacyEdited: edited, dangling };
     let out = s.replace(PLACEHOLDER, "");
     if (out.startsWith("\n\n")) out = out.slice(2); // the blocks were first: drop the separator after them
-    return { prompt: out, legacyEdited: edited };
+    return { prompt: out, legacyEdited: edited, dangling };
   }
   const prompt = !joined ? s : s === "" ? joined : `${s}\n\n${joined}`;
-  return { prompt, legacyEdited: edited };
+  return { prompt, legacyEdited: edited, dangling };
 }
 
 /** The rows of one workspace through any Prisma-like delegate. */
