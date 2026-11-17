@@ -416,7 +416,7 @@ describe("permission map", () => {
       "POST /workspaces/:id/invitations": "members.create",
       "POST /workspaces/:id/invitations/:invId/resend": "members.create",
       "DELETE /workspaces/:id/invitations/:invId": "members.delete",
-      "GET /invitations/preview": "public",
+      "POST /invitations/preview": "public",
       "POST /invitations/accept": "public",
       "GET /auth/invitations": "authenticated",
       "POST /auth/invitations/accept": "authenticated",
@@ -425,6 +425,15 @@ describe("permission map", () => {
       "DELETE /workspaces/:id/members/:userId": "members.delete",
       "GET /workspaces/:id/audit": "members.manage",
       "GET /auth/workspaces/by-slug/:slug": "authenticated",
+      // Task 2: reset, two-step verification and the owner 2FA reset.
+      "POST /auth/password/forgot": "public",
+      "POST /auth/password/reset": "public",
+      "POST /auth/2fa/verify": "public",
+      "POST /auth/2fa/setup": "authenticated",
+      "POST /auth/2fa/enable": "authenticated",
+      "POST /auth/2fa/disable": "authenticated",
+      "POST /auth/2fa/recovery-codes": "authenticated",
+      "POST /workspaces/:id/members/:userId/2fa/reset": "members.manage",
     };
     for (const [k, p] of Object.entries(sp26)) {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
@@ -438,6 +447,11 @@ describe("permission map", () => {
     const at = (k: string) => ws.findIndex((r) => r.key === k);
     expect(at("GET /workspaces/:id/members/:userId/open-work")).toBeLessThan(at("PATCH /workspaces/:id/members/:userId"));
     expect(at("POST /workspaces/:id/members/:userId/handover")).toBeLessThan(at("DELETE /workspaces/:id/members/:userId"));
+    expect(at("POST /workspaces/:id/members/:userId/2fa/reset")).toBeLessThan(at("PATCH /workspaces/:id/members/:userId"));
+    // Every declared password/2FA route is in the table.
+    expect(keys.filter((k) => /\/auth\/(password|2fa)\//.test(k)).sort()).toEqual(
+      Object.keys(sp26).filter((k) => /\/auth\/(password|2fa)\//.test(k)).sort(),
+    );
   });
 
     it("@RequirePermission overrides agree with the map", () => {

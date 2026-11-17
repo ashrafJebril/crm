@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Invitation, Prisma } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
@@ -11,6 +11,7 @@ import { emailLang } from "../email/templates/layout";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import { workspaceContext } from "../common/workspace-context";
 import { memberError } from "./member-errors";
+import { authError } from "../auth/auth-errors";
 import { INVITE_MAX_LIFETIME_MS, INVITE_RESEND_GAP_MS, INVITE_RESEND_MAX, INVITE_TTL_MS, PASSWORD_MIN } from "./members-constants";
 import { appPublicUrl, hashToken, isTokenShape, newToken } from "./token-hash";
 
@@ -290,7 +291,8 @@ export class InvitationsService {
 
   /** Email the link, or (email off) return it once to the inviter. */
   private async deliver(inv: InvitationRow, token: string): Promise<InvitationWriteResult> {
-    const link = `${appPublicUrl()}/invite?token=${encodeURIComponent(token)}`;
+    // A hash link: the token never reaches a server (no access log, no referrer).
+    const link = `${appPublicUrl()}/#/accept-invite?token=${encodeURIComponent(token)}`;
     const invitation = this.toDto(inv);
     if (!this.email.enabled) return { invitation, link, emailSent: false };
     try {
@@ -327,7 +329,7 @@ export class InvitationsService {
     return inv;
   }
 
-  /** GET /invitations/preview?token= (public). */
+  /** POST /invitations/preview {token} (public). */
   async preview(token: unknown) {
     const inv = await this.pendingByToken(token);
     const [ws, role, inviter, account] = await Promise.all([
@@ -370,7 +372,7 @@ export class InvitationsService {
       const account = await this.prisma.user.findUnique({ where: { email: inv.email }, select: { id: true } });
       if (account) throw memberError("invitations.sign_in_required");
       if (typeof input.password !== "string" || input.password.length < PASSWORD_MIN) {
-        throw new BadRequestException({ statusCode: 400, message: "auth.password_too_short" });
+        throw authError("auth.password_too_short");
       }
       const name = (input.name?.trim() || inv.email.split("@")[0]).slice(0, 80);
       const hashed = await bcrypt.hash(input.password, 10);

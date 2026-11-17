@@ -9,6 +9,12 @@ import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { AuthService } from "./auth.service";
 
+/** SP-26: login may return a 2FA challenge; these specs only cover sessions. */
+type Session = Extract<Awaited<ReturnType<AuthService["login"]>>, { token: string }>;
+type SessionAuth = Omit<AuthService, "login"> & { login: (...a: Parameters<AuthService["login"]>) => Promise<Session> };
+/** SP-26 constructor deps: 2FA challenges and session versions. */
+const sp26Deps = [{ challengeFor: jest.fn() } as never, { invalidate: jest.fn(), bumped: jest.fn() } as never] as const;
+
 const PASSWORD = "secret123";
 const HASH = bcrypt.hashSync(PASSWORD, 4);
 
@@ -85,6 +91,8 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
   };
   const workspaces = {
     create: jest.fn().mockResolvedValue({ ...workspace, id: "ws-new" }),
+    // SP-26: change-password re-issues a token.
+    listForUser: jest.fn().mockResolvedValue([]),
   };
   const kewy = { authenticate: jest.fn() };
   const kewySync = {
@@ -97,8 +105,9 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
     workspaces as never,
     kewy as never,
     kewySync as never,
+    ...sp26Deps,
   );
-  return { svc, prisma, kewy, kewySync, workspaces };
+  return { svc: svc as unknown as SessionAuth, prisma, kewy, kewySync, workspaces };
 }
 
 const dto = { email: " Noor@Example.com ", password: PASSWORD };
@@ -279,12 +288,16 @@ describe("AuthService.changePassword dual-write", () => {
     const { svc, prisma, kewySync } = setup("kewy");
     const order: string[] = [];
     kewySync.passwordChanged.mockImplementation(async () => void order.push("kewy"));
-    prisma.user.update.mockImplementation(async () => void order.push("local"));
+    prisma.user.update.mockImplementation(async () => {
+      order.push("local");
+      return localUser();
+    });
     await svc.changePassword("u1", { currentPassword: PASSWORD, newPassword: "new-secret" });
     expect(order).toEqual(["kewy", "local"]);
     const newHash = kewySync.passwordChanged.mock.calls[0][1];
     expect(bcrypt.compareSync("new-secret", newHash)).toBe(true);
-    expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { password: newHash } });
+    // SP-26: the same write also ends every other session.
+    expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { password: newHash, sessionVersion: { increment: 1 } } });
   });
 
   it("keeps the local password when the strict Kewy write fails", async () => {

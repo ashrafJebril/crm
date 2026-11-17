@@ -30,6 +30,8 @@ import {
   UpdateProfileDto,
 } from "./dto";
 import type { JwtPayload } from "./auth.guard";
+import { TwoFactorService } from "./two-factor.service";
+import { SessionVersionService } from "./session-version.service";
 
 // The user AND their (non-suspended) memberships, in one query.
 const LOGIN_INCLUDE = {
@@ -50,6 +52,8 @@ export class AuthService {
     private readonly workspaces: WorkspacesService,
     private readonly kewy: KewyIdentityClient,
     private readonly kewySync: KewyIdentitySync,
+    private readonly twoFactor: TwoFactorService,
+    private readonly sessions: SessionVersionService,
   ) {}
 
   /**
@@ -175,6 +179,24 @@ export class AuthService {
     }
   }
 
+  /** SP-26: a fresh session after this user's sessionVersion changed
+   *  (2FA disable), keeping the current workspace when still a member. */
+  async reissue(userId: string, workspaceId?: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const memberships = await this.workspaces.listForUser(userId);
+    const active = workspaceId && memberships.some((m) => m.id === workspaceId) ? workspaceId : null;
+    return this.issue(user, active, memberships);
+  }
+
+  /** SP-26: after POST /auth/2fa/verify, the normal login payload. */
+  async loginAfterTwoFactor(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, include: LOGIN_INCLUDE });
+    if (!user) throw new UnauthorizedException("Invalid credentials");
+    const res = await this.finishLogin(user, { secondFactorDone: true });
+    if ("twoFactorRequired" in res) throw new UnauthorizedException("Invalid credentials"); // unreachable
+    return res;
+  }
+
   private async finishLogin(user: {
     id: string;
     email: string;
@@ -183,6 +205,8 @@ export class AuthService {
     initials: string;
     color: string;
     isSuperAdmin: boolean;
+    twoFA?: boolean;
+    sessionVersion?: number | null;
     memberships: {
       role: string;
       workspace: {
@@ -195,7 +219,12 @@ export class AuthService {
         paymentDueSince?: Date | null;
       };
     }[];
-  }) {
+  }, opts: { secondFactorDone?: boolean } = {}) {
+    // SP-26: a password login with 2FA on returns a challenge, not a session.
+    // (SSO bridges never come through here: ruling 9.)
+    if (user.twoFA === true && !opts.secondFactorDone) {
+      return { twoFactorRequired: true as const, challenge: await this.twoFactor.challengeFor(user) };
+    }
     const memberships = user.memberships.map((m) => ({
       id: m.workspace.id,
       name: m.workspace.name,
@@ -353,7 +382,9 @@ export class AuthService {
     return this.shape(updated);
   }
 
-  async changePassword(userId: string, dto: ChangePasswordDto) {
+  /** SP-26: also ends every other session (sessionVersion) and returns a
+   *  fresh token for this one. */
+  async changePassword(userId: string, dto: ChangePasswordDto, workspaceId?: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException("User no longer exists");
     // SSO-provisioned users have no local password — they can't change one via
@@ -370,8 +401,15 @@ export class AuthService {
     const hash = await bcrypt.hash(dto.newPassword, 10);
     // Kewy first: a strict failure leaves the local password unchanged.
     await this.kewySync.passwordChanged(user, hash);
-    await this.prisma.user.update({ where: { id: userId }, data: { password: hash } });
-    return { ok: true };
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hash, ...SessionVersionService.bump() },
+    });
+    this.sessions.bumped(userId);
+    const memberships = await this.workspaces.listForUser(userId);
+    const active = workspaceId && memberships.some((m) => m.id === workspaceId) ? workspaceId : null;
+    const { token } = await this.issue(updated, active, memberships);
+    return { ok: true, token };
   }
 
   /** True when Kewy accepts `password` for exactly this crm user. */
@@ -400,6 +438,7 @@ export class AuthService {
       initials: string;
       color: string;
       isSuperAdmin: boolean;
+      sessionVersion?: number | null;
     },
     workspaceId: string | null,
     workspaces: Awaited<ReturnType<WorkspacesService["listForUser"]>>,
@@ -408,6 +447,8 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // SP-26 ruling 4: AuthGuard compares this with User.sessionVersion.
+      sv: user.sessionVersion ?? 0,
       ...(workspaceId ? { workspaceId } : {}),
       ...(user.isSuperAdmin ? { isSuperAdmin: true } : {}),
     };
@@ -428,6 +469,7 @@ export class AuthService {
     initials: string;
     color: string;
     isSuperAdmin: boolean;
+    twoFA?: boolean;
   }) {
     return {
       id: u.id,
@@ -437,6 +479,8 @@ export class AuthService {
       initials: u.initials,
       color: u.color,
       isSuperAdmin: u.isSuperAdmin,
+      // SP-26: whether TOTP is on; never the secret or recovery codes.
+      twoFA: u.twoFA === true,
     };
   }
 }

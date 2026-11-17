@@ -96,6 +96,19 @@ export class AuditService {
     });
   }
 
+  /** A user-level security event, copied into every workspace the user
+   *  belongs to (ruling 8), through the writer's transaction. */
+  async recordForUser(
+    db: AuditDb & { workspaceMember: Pick<PrismaService["workspaceMember"], "findMany"> },
+    userId: string,
+    e: Omit<AuditEntry, "workspaceId">,
+  ): Promise<void> {
+    const memberships = await db.workspaceMember.findMany({ where: { userId }, select: { workspaceId: true } });
+    for (const workspaceId of new Set(memberships.map((m) => m.workspaceId))) {
+      await this.record(db, { ...e, workspaceId });
+    }
+  }
+
   /** One page of the workspace's log, newest first: (createdAt desc, id desc). */
   async list(workspaceId: string, q: AuditQuery): Promise<{ items: AuditEntryDto[]; nextCursor: string | null }> {
     const from = parseDate(q.from, "from");

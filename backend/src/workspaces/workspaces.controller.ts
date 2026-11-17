@@ -23,6 +23,7 @@ import {
 import type { JwtPayload } from "../auth/auth.guard";
 import { actorOf } from "../permissions/permission.service";
 import { HandoverService } from "../members/handover.service";
+import { TwoFactorService } from "../auth/two-factor.service";
 import { HandoverDto, RemoveMemberDto } from "../members/members.dto";
 
 type AuthedReq = Request & { user: JwtPayload };
@@ -38,6 +39,8 @@ export class WorkspacesController {
     // Optional only so specs that build this controller by hand for the
     // pre-SP-26 routes keep their one-argument constructor.
     private readonly handover?: HandoverService,
+    // SP-26 Task 2: optional for the same reason as `handover`.
+    private readonly twoFactor?: TwoFactorService,
   ) {}
 
   private get handovers(): HandoverService {
@@ -133,6 +136,15 @@ export class WorkspacesController {
   ) {
     await this.authorize(id, req);
     return this.handovers.handOverOnly(id, userId, dto.handoverTo, actorOf(req.user));
+  }
+
+  /** SP-26: an owner/admin turns a member's 2FA off (members.manage;
+   *  blocked for impersonators in PermissionGuard and the service). */
+  @Post(":id/members/:userId/2fa/reset")
+  async resetTwoFactor(@Param("id") id: string, @Param("userId") userId: string, @Req() req: AuthedReq) {
+    await this.authorize(id, req);
+    if (!this.twoFactor) throw new Error("TwoFactorService is not available");
+    return this.twoFactor.resetByOwner(id, userId, actorOf(req.user));
   }
 
   @Patch(":id/members/:userId")

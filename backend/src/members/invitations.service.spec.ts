@@ -320,7 +320,8 @@ describe("InvitationsService (SP-26)", () => {
       const res = await svc.create(WS, { email: "copy@example.test", roleId: R.viewer }, owner);
       expect(res.emailSent).toBe(false);
       const token = tokenOf(res.link);
-      expect(res.link).toMatch(/\/invite\?token=/);
+      // A hash link: the token never reaches a server's access log or a Referer.
+      expect(res.link).toMatch(/\/#\/accept-invite\?token=[A-Za-z0-9_-]{43}$/);
       expect(off.sent).toHaveLength(0);
       // Once: nothing else ever returns it.
       const listed = await svc.list(WS, "all");

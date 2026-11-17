@@ -56,6 +56,7 @@ import { AgentModule } from "./agent/agent.module";
 
 import { EmailModule } from "./email/email.module";
 import { AuditModule } from "./audit/audit.module";
+import { AccountSecurityModule } from "./auth/account-security.module";
 import { MembersModule } from "./members/members.module";
 
 @Module({
@@ -68,6 +69,8 @@ import { MembersModule } from "./members/members.module";
     // SP-26: global email port and audit log, then members (invitations, handover).
     EmailModule,
     AuditModule,
+    // SP-26 Task 2: session versions, password reset, TOTP (global).
+    AccountSecurityModule,
     MembersModule,
     AuthModule,
     // PermissionGuard is an APP_GUARD registered in AuthModule (after AuthGuard).
