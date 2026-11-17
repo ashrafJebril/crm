@@ -1,4 +1,3 @@
-import { API_BASE } from "@/api/client";
 import type { ConnectorCard, ConnectorRescanResult, ConnectorStatus, ConnectorSummary, ConnectorTool, ConnectorToolAccess } from "@/lib/types";
 import type { Tx } from "@/lib/tx";
 
@@ -148,6 +147,14 @@ export function rescanNotice(r: Pick<ConnectorRescanResult, "added" | "removed" 
 }
 
 // ── OAuth popup ────────────────────────────────────────────────────────
+//
+// Review M2 (reverse tab-nabbing): the popup is opened with `noopener`, so
+// no page in it (the vendor's included) can reach this tab. The backend
+// callback page then has no opener and redirects the popup to the frontend
+// (`#/agent?tab=connectors&connected=…`); the app loading there, same origin
+// as this tab, relays the result on a BroadcastChannel with the nonce this
+// tab stored before opening, and closes itself. This tab accepts only that
+// channel's messages with the exact shape and its own pending nonce.
 
 export interface OAuthResult {
   connected: boolean;
@@ -155,31 +162,88 @@ export interface OAuthResult {
   reason: string | null;
 }
 
-/** The backend's origin (the OAuth callback page is served from it). */
-export function backendOrigin(base: string = API_BASE): string {
-  try {
-    return new URL(base, typeof window === "undefined" ? "http://localhost" : window.location.href).origin;
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Accepts the callback page's message only from the backend origin and only
- * with the exact expected shape; anything else (another origin, another
- * window's message, a malformed object) is ignored.
- */
-export function acceptOAuthMessage(event: { origin: string; data: unknown }, expectedOrigin: string): OAuthResult | null {
-  if (!expectedOrigin || event.origin !== expectedOrigin) return null;
-  const d = event.data as Record<string, unknown> | null;
-  if (!d || typeof d !== "object" || d.type !== "kewy-connector-oauth" || typeof d.connected !== "boolean") return null;
-  const connectorId = typeof d.connectorId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(d.connectorId) ? d.connectorId : null;
-  const reason = typeof d.reason === "string" && OAUTH_REASONS.includes(d.reason as never) ? d.reason : d.connected ? null : "exchange_failed";
-  return { connected: d.connected, connectorId, reason: d.connected ? null : reason };
-}
+export const OAUTH_CHANNEL = "kewy-connector-oauth";
+export const OAUTH_PENDING_KEY = "kewy.connector.oauth.pending";
+const PENDING_MAX_MS = 15 * 60_000;
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Mirrors backend CONNECTOR_OAUTH_REASONS. */
 export const OAUTH_REASONS = ["invalid_state", "cancelled", "forbidden", "exchange_failed"] as const;
+
+export interface PendingOAuth {
+  nonce: string;
+  /** popup: the result arrives over the channel; redirect: this tab returns itself. */
+  mode: "popup" | "redirect";
+  at: number;
+}
+
+export function newOAuthNonce(): string {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+type KV = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+const store = (): KV | null => {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+export function savePending(p: PendingOAuth, kv: KV | null = store()): void {
+  try {
+    kv?.setItem(OAUTH_PENDING_KEY, JSON.stringify(p));
+  } catch {
+    // Storage blocked: the full-page result still works, the popup relay does not.
+  }
+}
+
+export function readPending(now: number = Date.now(), kv: KV | null = store()): PendingOAuth | null {
+  try {
+    const v = JSON.parse(kv?.getItem(OAUTH_PENDING_KEY) ?? "null") as Partial<PendingOAuth> | null;
+    if (!v || typeof v.nonce !== "string" || !/^[0-9a-f]{32}$/.test(v.nonce)) return null;
+    if (v.mode !== "popup" && v.mode !== "redirect") return null;
+    if (typeof v.at !== "number" || now - v.at > PENDING_MAX_MS || v.at > now + 60_000) return null;
+    return { nonce: v.nonce, mode: v.mode, at: v.at };
+  } catch {
+    return null;
+  }
+}
+
+export function clearPending(kv: KV | null = store()): void {
+  try {
+    kv?.removeItem(OAUTH_PENDING_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+function cleanResult(connected: boolean, connectorId: unknown, reason: unknown): OAuthResult {
+  return {
+    connected,
+    connectorId: typeof connectorId === "string" && ID_RE.test(connectorId) ? connectorId : null,
+    reason: connected ? null : typeof reason === "string" && OAUTH_REASONS.includes(reason as never) ? reason : "exchange_failed",
+  };
+}
+
+/** What the relay page broadcasts. */
+export function oauthBroadcast(r: OAuthResult, nonce: string) {
+  return { type: "kewy-connector-oauth", connected: r.connected, connectorId: r.connectorId, reason: r.reason, nonce };
+}
+
+/**
+ * Accepts a channel message only with the exact shape and this tab's
+ * pending nonce (a stale, foreign or replayed message is ignored).
+ */
+export function acceptOAuthBroadcast(data: unknown, expectedNonce: string | null): OAuthResult | null {
+  if (!expectedNonce) return null;
+  const d = data as Record<string, unknown> | null;
+  if (!d || typeof d !== "object" || Array.isArray(d) || d.type !== "kewy-connector-oauth" || typeof d.connected !== "boolean") return null;
+  if (d.nonce !== expectedNonce) return null;
+  return cleanResult(d.connected, d.connectorId, d.reason);
+}
 
 export function oauthReasonText(reason: string | null, tx: Tx): string {
   switch (reason) {
@@ -196,17 +260,38 @@ export function oauthReasonText(reason: string | null, tx: Tx): string {
   }
 }
 
-/** Reads `connected=0|1&reason=&connector=` from the hash (the full-page fallback). */
+/**
+ * Reads `connected=0|1&reason=&connector=` from the hash (the redirect
+ * return). The connector id uses the same strict pattern as the channel
+ * (review M1); a "connected" claim is only a hint until the refetched list
+ * confirms it (`confirmedConnected`).
+ */
 export function oauthResultFromHash(hash: string): OAuthResult | null {
   const q = new URLSearchParams(hash.split("?")[1] ?? "");
   const c = q.get("connected");
   if (c !== "0" && c !== "1") return null;
-  const reason = q.get("reason");
-  return {
-    connected: c === "1",
-    connectorId: q.get("connector"),
-    reason: c === "1" ? null : reason && OAUTH_REASONS.includes(reason as never) ? reason : "exchange_failed",
-  };
+  return cleanResult(c === "1", q.get("connector"), q.get("reason"));
+}
+
+/** Review M1: "Connected" only when the server's list shows that connector active. */
+export function confirmedConnected(r: OAuthResult, cards: { connectors: { id: string; status: string }[] }[]): boolean {
+  if (!r.connected || !r.connectorId) return false;
+  return cards.some((c) => c.connectors.some((x) => x.id === r.connectorId && x.status === "active"));
+}
+
+/**
+ * Review M3: the authorize URL must be https; a loopback http URL (local
+ * vendor stubs) only in a dev build.
+ */
+export function allowAuthorizeUrl(raw: string, dev: boolean): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol === "https:") return !u.username && !u.password;
+  return dev && u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1");
 }
 
 /** Latin digits in both languages. */

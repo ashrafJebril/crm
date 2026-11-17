@@ -24,6 +24,8 @@ describe("SP-23 OAuth review fixes", () => {
     const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(page.html)![1];
     expect(script).not.toContain("<");
     expect(script).toContain("\\u003c/script>");
+    // M2: an opener (if any) is detached before the single post.
+    expect(script).toMatch(/op=window\.opener;window\.opener=null.*op\.postMessage\(m,o\)/);
     // Exactly one script element: nothing broke out of it.
     expect((page.html.match(/<script/g) ?? []).length).toBe(1);
   });

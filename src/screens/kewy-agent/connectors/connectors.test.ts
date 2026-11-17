@@ -8,8 +8,16 @@ import { notificationHref } from "@/lib/recordLink";
 import type { ConnectorTool } from "@/lib/types";
 import {
   CONNECTOR_PROVIDER_KEYS,
+  OAUTH_PENDING_KEY,
   OAUTH_REASONS,
-  acceptOAuthMessage,
+  acceptOAuthBroadcast,
+  allowAuthorizeUrl,
+  clearPending,
+  confirmedConnected,
+  newOAuthNonce,
+  oauthBroadcast,
+  readPending,
+  savePending,
   attentionLines,
   cardKind,
   cardKindText,
@@ -115,22 +123,60 @@ describe("gallery states", () => {
 });
 
 describe("oauth popup", () => {
-  const ok = { type: "kewy-connector-oauth", connected: true, connectorId: "conn_1", reason: null };
-  it("oauth popup accepts messages only from the backend origin", () => {
-    const backend = "https://api.example.com";
-    expect(acceptOAuthMessage({ origin: backend, data: ok }, backend)).toEqual({ connected: true, connectorId: "conn_1", reason: null });
-    for (const origin of ["https://evil.example.com", "https://api.example.com.evil.com", "null", "", "http://api.example.com"]) {
-      expect({ origin, r: acceptOAuthMessage({ origin, data: ok }, backend) }).toEqual({ origin, r: null });
-    }
-    for (const data of [null, "connected", { ...ok, type: "other" }, { ...ok, connected: "yes" }, [ok]]) {
-      expect(acceptOAuthMessage({ origin: backend, data }, backend)).toBeNull();
+  const nonce = "0123456789abcdef0123456789abcdef";
+  const ok = { type: "kewy-connector-oauth", connected: true, connectorId: "conn_1", reason: null, nonce };
+
+  it("oauth result is accepted only with the exact shape and this tab's nonce (noopener + channel relay)", () => {
+    expect(acceptOAuthBroadcast(ok, nonce)).toEqual({ connected: true, connectorId: "conn_1", reason: null });
+    // Another tab's (or a stale) nonce, no pending nonce, a wrong shape: ignored.
+    expect(acceptOAuthBroadcast(ok, "ffffffffffffffffffffffffffffffff")).toBeNull();
+    expect(acceptOAuthBroadcast(ok, null)).toBeNull();
+    for (const data of [null, "connected", { ...ok, type: "other" }, { ...ok, connected: "yes" }, [ok], { ...ok, nonce: undefined }]) {
+      expect(acceptOAuthBroadcast(data, nonce)).toBeNull();
     }
     // An unknown reason is reported as exchange_failed; a bad id is dropped.
-    expect(acceptOAuthMessage({ origin: backend, data: { ...ok, connected: false, reason: "<img>", connectorId: "x\"y" } }, backend)).toEqual({ connected: false, connectorId: null, reason: "exchange_failed" });
-    expect(acceptOAuthMessage({ origin: backend, data: ok }, "")).toBeNull();
+    expect(acceptOAuthBroadcast({ ...ok, connected: false, reason: "<img>", connectorId: 'x"y' }, nonce)).toEqual({ connected: false, connectorId: null, reason: "exchange_failed" });
+    // The relay page builds exactly what the listener accepts.
+    expect(acceptOAuthBroadcast(oauthBroadcast({ connected: false, connectorId: "c2", reason: "cancelled" }, nonce), nonce)).toEqual({ connected: false, connectorId: "c2", reason: "cancelled" });
   });
 
-  it("every OAuth outcome has copy, and the full-page fallback reads the hash", () => {
+  it("the pending nonce is stored, expires and is cleared", () => {
+    const mem = new Map<string, string>();
+    const kv = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) };
+    const n = newOAuthNonce();
+    expect(n).toMatch(/^[0-9a-f]{32}$/);
+    savePending({ nonce: n, mode: "popup", at: 1_000_000 }, kv);
+    expect(readPending(1_000_000 + 60_000, kv)).toEqual({ nonce: n, mode: "popup", at: 1_000_000 });
+    expect(readPending(1_000_000 + 16 * 60_000, kv)).toBeNull();
+    mem.set(OAUTH_PENDING_KEY, JSON.stringify({ nonce: "short", mode: "popup", at: 1 }));
+    expect(readPending(2, kv)).toBeNull();
+    clearPending(kv);
+    expect(mem.has(OAUTH_PENDING_KEY)).toBe(false);
+  });
+
+  it("the redirect return: strict connector id, and Connected only when the list confirms it (M1)", () => {
+    expect(oauthResultFromHash("#/agent?tab=connectors&connector=c1&connected=0&reason=forbidden")).toEqual({ connected: false, connectorId: "c1", reason: "forbidden" });
+    expect(oauthResultFromHash("#/agent?tab=connectors&connected=1&connector=c%22%3E1")).toEqual({ connected: true, connectorId: null, reason: null });
+    expect(oauthResultFromHash("#/agent?tab=connectors&connected=0&reason=<x>")).toMatchObject({ reason: "exchange_failed" });
+    expect(oauthResultFromHash("#/agent?tab=connectors")).toBeNull();
+    const cards = [{ connectors: [{ id: "c1", status: "active" }, { id: "c2", status: "pending" }] }];
+    expect(confirmedConnected({ connected: true, connectorId: "c1", reason: null }, cards)).toBe(true);
+    expect(confirmedConnected({ connected: true, connectorId: "c2", reason: null }, cards)).toBe(false);
+    expect(confirmedConnected({ connected: true, connectorId: null, reason: null }, cards)).toBe(false);
+    expect(confirmedConnected({ connected: true, connectorId: "nope", reason: null }, cards)).toBe(false);
+  });
+
+  it("authorize URLs: https only; loopback http only in a dev build (M3)", () => {
+    expect(allowAuthorizeUrl("https://auth.calendly.com/oauth/authorize?x=1", false)).toBe(true);
+    for (const url of ["http://localhost:5555/authorize", "http://127.0.0.1:5555/authorize"]) {
+      expect({ url, prod: allowAuthorizeUrl(url, false), dev: allowAuthorizeUrl(url, true) }).toEqual({ url, prod: false, dev: true });
+    }
+    for (const url of ["javascript:alert(1)", "http://auth.example.com/authorize", "data:text/html,x", "https://u:p@auth.example.com/", "not a url", "http://10.0.0.1/"]) {
+      expect({ url, ok: allowAuthorizeUrl(url, true) }).toEqual({ url, ok: false });
+    }
+  });
+
+  it("every OAuth outcome has copy", () => {
     expect([...OAUTH_REASONS].sort()).toEqual(
       [...(/CONNECTOR_OAUTH_REASONS = \[([^\]]+)\]/.exec(read("connector-errors.ts"))?.[1] ?? "").matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort(),
     );
@@ -138,9 +184,6 @@ describe("oauth popup", () => {
       expect(oauthReasonText(r, en)).not.toBe("Connected.");
       expect(oauthReasonText(r, ar)).toMatch(ARABIC);
     }
-    expect(oauthResultFromHash("#/agent?tab=connectors&connector=c1&connected=0&reason=forbidden")).toEqual({ connected: false, connectorId: "c1", reason: "forbidden" });
-    expect(oauthResultFromHash("#/agent?tab=connectors&connected=1")).toMatchObject({ connected: true, reason: null });
-    expect(oauthResultFromHash("#/agent?tab=connectors")).toBeNull();
   });
 });
 

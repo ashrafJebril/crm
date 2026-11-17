@@ -9,15 +9,22 @@ import type { ConnectorCard, ConnectorDetail as Detail, ConnectorSummary } from 
 import type { Tx } from "@/lib/tx";
 import {
   CONNECTORS_TAB_HREF,
+  OAUTH_CHANNEL,
   PROVIDER_MARK,
-  acceptOAuthMessage,
+  acceptOAuthBroadcast,
+  allowAuthorizeUrl,
   attentionLines,
-  backendOrigin,
   cardKind,
   cardKindText,
+  clearPending,
+  confirmedConnected,
+  newOAuthNonce,
   num,
+  oauthBroadcast,
   oauthReasonText,
   oauthResultFromHash,
+  readPending,
+  savePending,
   statusText,
   type OAuthResult,
 } from "./connectorModel";
@@ -42,8 +49,9 @@ function clearHashParams(keys: string[]) {
 /**
  * SP-23 Connectors tab (connectors.view): the gallery of curated providers
  * and custom connectors, the needs-reconnect banner, OAuth connect in a
- * popup (messages accepted only from the backend origin; a blocked popup
- * offers a full-page redirect), "Add custom connector" (connectors.manage),
+ * `noopener` popup whose result comes back over a same-origin
+ * BroadcastChannel with this tab's nonce (review M2; a full-page redirect is
+ * always offered), "Add custom connector" (connectors.manage),
  * the detail sheet (`#/agent?tab=connectors&connector=<id>`), and the legacy
  * direct MCP servers under Advanced (ruling 9).
  */
@@ -52,52 +60,93 @@ export function ConnectorsTab({ tx, lang, advanced }: { tx: Tx; lang: "en" | "ar
   const { toast } = useToast();
   const q = useFetch<{ cards: ConnectorCard[]; attention: ConnectorSummary[] }>("/connectors");
   const [open, setOpen] = useState<string | null>(() => hashParam("connector"));
-  const [blocked, setBlocked] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState<{ url: string; nonce: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const origin = useRef(backendOrigin());
+  /** This tab's own nonce (the popup's relay page shares localStorage and may clear it). */
+  const pendingNonce = useRef<string | null>(readPending()?.nonce ?? null);
 
-  const report = (r: OAuthResult) => {
-    toast(r.connected ? tx("Connected.", "تم الربط.") : oauthReasonText(r.reason, tx), r.connected ? "success" : "error");
+  /** Review M1: "Connected" only once the refetched list shows the connector active. */
+  const report = async (r: OAuthResult) => {
+    clearPending();
+    setWaiting(null);
+    let cards: ConnectorCard[] = [];
+    try {
+      cards = (await api.get<{ cards: ConnectorCard[] }>("/connectors")).cards ?? [];
+    } catch {
+      cards = [];
+    }
     void q.refetch();
-    if (r.connected && r.connectorId) setOpen(r.connectorId);
+    if (r.connected) {
+      if (confirmedConnected(r, cards)) {
+        toast(tx("Connected.", "تم الربط."), "success");
+        setOpen(r.connectorId);
+      }
+      return; // unconfirmed: neutral (the list shows the real state)
+    }
+    toast(oauthReasonText(r.reason, tx), "error");
   };
 
-  // The popup's result (backend origin and exact shape only).
+  // The popup relays its result on the same-origin channel with our nonce.
   useEffect(() => {
-    const onMessage = (ev: MessageEvent) => {
-      const r = acceptOAuthMessage({ origin: ev.origin, data: ev.data }, origin.current);
-      if (r) report(r);
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel(OAUTH_CHANNEL);
+    ch.onmessage = (ev: MessageEvent) => {
+      const r = acceptOAuthBroadcast(ev.data, pendingNonce.current);
+      if (r) {
+        pendingNonce.current = null;
+        void report(r);
+      }
     };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    return () => ch.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The full-page fallback lands back here with connected=…&reason=….
+  // A page loading with the callback's result in its hash is either the
+  // popup (relay and close) or this tab back from the full-page redirect.
   useEffect(() => {
     const r = oauthResultFromHash(window.location.hash);
-    if (r) {
-      report(r);
-      clearHashParams(["connected", "reason"]);
+    if (!r) return;
+    clearHashParams(["connected", "reason", "connector"]);
+    const pending = readPending();
+    if (pending?.mode === "popup" && typeof BroadcastChannel !== "undefined") {
+      const ch = new BroadcastChannel(OAUTH_CHANNEL);
+      ch.postMessage(oauthBroadcast(r, pending.nonce));
+      ch.close();
+      window.close();
+      // Not closable (opened some other way): show the result here too,
+      // after the opener tab had its chance to read the shared nonce.
+      window.setTimeout(() => {
+        if (!window.closed) void report(r);
+      }, 500);
+      return;
     }
+    void report(r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const connect = async (provider: string) => {
-    setBlocked(null);
-    // Opened synchronously (inside the click) so popup blockers allow it.
-    const popup = window.open("", "kewy-connector-oauth", "width=560,height=720");
+    setWaiting(null);
     try {
       const { authorizeUrl } = await api.get<{ authorizeUrl: string }>(`/connectors/oauth/start?provider=${encodeURIComponent(provider)}`);
-      const safe = /^https:\/\//.test(authorizeUrl) || /^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(authorizeUrl);
-      if (!safe) throw new Error("bad authorize url");
-      if (popup && !popup.closed) popup.location.href = authorizeUrl;
-      else setBlocked(authorizeUrl);
+      if (!allowAuthorizeUrl(authorizeUrl, import.meta.env.DEV)) throw new Error("bad authorize url");
+      const nonce = newOAuthNonce();
+      pendingNonce.current = nonce;
+      savePending({ nonce, mode: "popup", at: Date.now() });
+      // noopener: the vendor's pages can never reach this tab (window.open
+      // then returns null, so a blocked popup cannot be detected: the
+      // "Continue in this tab" link is always offered).
+      window.open(authorizeUrl, "_blank", "noopener,noreferrer,width=560,height=720");
+      setWaiting({ url: authorizeUrl, nonce });
     } catch (e) {
-      popup?.close();
       toast(connectorErrorText(e, tx), "error");
     }
+  };
+
+  const continueHere = () => {
+    if (!waiting) return;
+    savePending({ nonce: waiting.nonce, mode: "redirect", at: Date.now() });
+    window.location.assign(waiting.url);
   };
 
   const closeDetail = () => {
@@ -131,11 +180,16 @@ export function ConnectorsTab({ tx, lang, advanced }: { tx: Tx; lang: "en" | "ar
         </div>
       ))}
 
-      {blocked && (
+      {waiting && (
         <div role="status" style={{ fontSize: 12.5, padding: 10, borderRadius: 10, background: "var(--bg-2)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ flex: 1 }}>{tx("Your browser blocked the sign-in window.", "منع متصفحك نافذة تسجيل الدخول.")}</span>
-          <button type="button" className="btn sm primary" onClick={() => window.location.assign(blocked)}>
+          <span style={{ flex: 1 }}>
+            {tx("Finish signing in in the new window. No window opened?", "أكمل تسجيل الدخول في النافذة الجديدة. لم تُفتح نافذة؟")}
+          </span>
+          <button type="button" className="btn sm primary" onClick={continueHere}>
             {tx("Continue in this tab", "المتابعة في هذا التبويب")}
+          </button>
+          <button type="button" className="btn sm ghost" onClick={() => setWaiting(null)}>
+            {tx("Dismiss", "إغلاق")}
           </button>
         </div>
       )}
@@ -210,7 +264,10 @@ export function ConnectorsTab({ tx, lang, advanced }: { tx: Tx; lang: "en" | "ar
       {advanced && (
         <div style={{ marginTop: 8 }}>
           <button type="button" className="btn sm ghost" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? "▾" : "▸"} {tx("Advanced", "متقدم")}
+            <span aria-hidden="true" style={{ display: "inline-block", transform: showAdvanced ? "none" : lang === "ar" ? "scaleX(-1)" : "none" }}>
+              {showAdvanced ? "▾" : "▸"}
+            </span>{" "}
+            {tx("Advanced", "متقدم")}
           </button>
           {showAdvanced && (
             <div style={{ display: "grid", gap: 8, marginTop: 8 }}>

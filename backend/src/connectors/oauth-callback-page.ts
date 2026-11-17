@@ -18,7 +18,12 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 export function callbackPage(outcome: CallbackOutcome, frontendOrigin: string, fallbackUrl: string): { html: string; headers: Record<string, string> } {
   const nonce = randomBytes(16).toString("base64");
   const message = JSON.stringify({ type: "kewy-connector-oauth", connected: outcome.connected, connectorId: outcome.connectorId, reason: outcome.reason });
-  const script = `(function(){var m=${message};var o=${JSON.stringify(frontendOrigin)};try{if(window.opener){window.opener.postMessage(m,o);window.close();return}}catch(e){}window.location.replace(${JSON.stringify(fallbackUrl)})})();`;
+  // Review M2: the frontend opens this flow with `noopener`, so normally there
+  // is no opener and the page redirects to the frontend, which relays the
+  // result over a same-origin BroadcastChannel. If an opener exists anyway,
+  // it is detached (window.opener = null) before the single postMessage to
+  // the frontend origin, so nothing loaded later in this window keeps it.
+  const script = `(function(){var m=${message};var o=${JSON.stringify(frontendOrigin)};var op=null;try{op=window.opener;window.opener=null}catch(e){}try{if(op){op.postMessage(m,o);window.close();return}}catch(e){}window.location.replace(${JSON.stringify(fallbackUrl)})})();`;
   const title = outcome.connected ? "Connected" : "Not connected";
   const html =
     `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>${title}</title></head>` +

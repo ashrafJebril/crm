@@ -209,6 +209,7 @@ export function ConnectorDetail({
               const badge = kindBadge(t.kind, tx);
               const why = switchReasonText(st.reason, tx);
               const flag = flagText(t.flag, tx);
+              const reasonId = `tool-${id}-${t.name}-reason`.replace(/[^A-Za-z0-9_-]/g, "_");
               return (
                 <div key={t.name} style={{ display: "grid", gap: 4, padding: "8px 10px", border: "1px solid var(--line-soft)", borderRadius: 8, opacity: t.removed ? 0.6 : 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -218,6 +219,7 @@ export function ConnectorDetail({
                       aria-label={t.title ?? t.name}
                       checked={st.on}
                       disabled={st.disabled || busy}
+                      aria-describedby={why && !t.removed ? reasonId : undefined}
                       onChange={() => toggle(t)}
                     />
                     <bdi dir="ltr" style={{ ...MONO, fontWeight: 600 }}>
@@ -247,7 +249,11 @@ export function ConnectorDetail({
                       {flag}
                     </div>
                   )}
-                  {why && !t.removed && <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{why}</div>}
+                  {why && !t.removed && (
+                    <div id={reasonId} style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
+                      {why}
+                    </div>
+                  )}
                 </div>
               );
             })
