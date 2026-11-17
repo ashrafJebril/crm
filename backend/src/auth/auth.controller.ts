@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpException, Patch, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, HttpException, Param, Patch, Post, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { SlidingWindowLimiter } from "../common/rate-limit";
 import { AuthService } from "./auth.service";
@@ -11,6 +11,8 @@ import {
 } from "./dto";
 import { Public } from "./public.decorator";
 import type { JwtPayload } from "./auth.guard";
+import { InvitationsService } from "../members/invitations.service";
+import { AcceptInvitationSignedInDto } from "../members/members.dto";
 
 /**
  * The end user's IP, forwarded to Kewy's per-IP login limit. On Fly the edge
@@ -31,7 +33,10 @@ export class AuthController {
   /** Per process, like the SP-19 widget limiters. */
   readonly registerLimiter = new SlidingWindowLimiter(REGISTER_LIMIT);
 
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly invitations: InvitationsService,
+  ) {}
 
   @Public()
   @Post("login")
@@ -58,6 +63,26 @@ export class AuthController {
   @Get("workspaces")
   myWorkspaces(@Req() req: Request & { user: JwtPayload }) {
     return this.auth.myWorkspaces(req.user.sub);
+  }
+
+  /** SP-26: activation by slug (ruling 10). */
+  @Get("workspaces/by-slug/:slug")
+  workspaceBySlug(@Param("slug") slug: string, @Req() req: Request & { user: JwtPayload }) {
+    return this.auth.workspaceBySlug(req.user.sub, slug);
+  }
+
+  /** SP-26: `{ pending }`, a count only (C1): the invitee opens the emailed link. */
+  @Get("invitations")
+  myInvitations(@Req() req: Request & { user: JwtPayload }) {
+    return this.invitations.pendingCountForUser(req.user.sub);
+  }
+
+  /** SP-26: accept with the emailed token while signed in (email must match);
+   *  the session switches to that workspace. */
+  @Post("invitations/accept")
+  async acceptInvitation(@Body() dto: AcceptInvitationSignedInDto, @Req() req: Request & { user: JwtPayload }) {
+    const res = await this.invitations.acceptSignedIn(req.user.sub, dto.token);
+    return { ...(await this.auth.issueFor(res.userId, res.workspaceId)), rolePending: res.rolePending };
   }
 
   @Post("switch-workspace")

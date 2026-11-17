@@ -79,6 +79,9 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
       user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       workspace: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     },
+    // SP-26 (ruling 6): no pending invitation and no removal record by default.
+    invitation: { findFirst: jest.fn().mockResolvedValue(null) },
+    auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const workspaces = {
     create: jest.fn().mockResolvedValue({ ...workspace, id: "ws-new" }),

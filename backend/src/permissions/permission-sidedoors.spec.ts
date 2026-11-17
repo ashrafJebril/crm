@@ -31,6 +31,12 @@ import { TicketsService } from "../tickets/tickets.service";
 import type { Prisma } from "@prisma/client";
 import { InsightsService } from "../insights/insights.service";
 import { HomeService } from "../home/home.service";
+import { makeWorld, U as SP26_U, WS as SP26_WS, WS2 as SP26_WS2 } from "../members/__fixtures__/members-world";
+import { AuditController } from "../audit/audit.controller";
+import { WorkspacesController } from "../workspaces/workspaces.controller";
+import { WorkspacesService } from "../workspaces/workspaces.service";
+import { AuthService } from "../auth/auth.service";
+import { AuthController } from "../auth/auth.controller";
 import { salesOracle, supportOracle } from "../insights/insights-oracle";
 import { parseRange } from "../insights/insights-range";
 import { ASSIGNED, SALES_ASSIGNED, SALES_OWNER } from "../insights/insights-expected";
@@ -1230,5 +1236,59 @@ describe("SP-24 staff lifecycle notifications", () => {
     expect((await exec.recipients(lw.A, { recipient: "assignee", messageKey: "lifecycle.ticket_opened" }, w.db.ticket[0])).sort()).toEqual(
       ["uAdmin", "uAssigned", "uOwner"],
     );
+  });
+});
+
+describe("SP-26 members side doors", () => {
+  const reqAs = (sub: string, workspaceId: string) => ({ user: { sub, workspaceId } }) as never;
+
+  it("audit log of workspace A is 404 from workspace B", async () => {
+    const w = makeWorld();
+    await w.audit.record(w.prisma, { workspaceId: SP26_WS, actorId: SP26_U.owner, action: "member.removed", targetKind: "member", targetId: SP26_U.agent });
+    const ctl = new AuditController(w.audit);
+    // A member of B (JWT workspace B) asks for A's log.
+    expect(() => ctl.list(SP26_WS, {}, reqAs(SP26_U.other, SP26_WS2))).toThrow(NotFoundException);
+    // B's own log never contains A's rows.
+    expect((await ctl.list(SP26_WS2, {}, reqAs(SP26_U.other, SP26_WS2))).items).toEqual([]);
+    expect((await ctl.list(SP26_WS, {}, reqAs(SP26_U.owner, SP26_WS))).items).toHaveLength(1);
+  });
+
+  it("open-work of a foreign member id is 404", async () => {
+    const w = makeWorld();
+    const svc = new WorkspacesService(w.prisma, {} as never, w.permissions, w.audit, w.handover);
+    const ctl = new WorkspacesController(svc, w.handover);
+    // U.other is a member of B only: asking A for their open work is a 404, not an empty answer.
+    const err = await ctl.openWork(SP26_WS, SP26_U.other, undefined, reqAs(SP26_U.owner, SP26_WS)).catch((e) => e);
+    expect(err).toBeInstanceOf(NotFoundException);
+    expect(err.getResponse()).toMatchObject({ message: "members.not_found" });
+    await expect(ctl.openWork(SP26_WS, SP26_U.agent, undefined, reqAs(SP26_U.owner, SP26_WS))).resolves.toMatchObject({ total: 0 });
+    // Handover and removal of the same foreign id are 404 too.
+    await expect(ctl.handOver(SP26_WS, SP26_U.other, { handoverTo: SP26_U.admin }, reqAs(SP26_U.owner, SP26_WS))).rejects.toBeInstanceOf(NotFoundException);
+    await expect(ctl.removeMember(SP26_WS, SP26_U.other, reqAs(SP26_U.owner, SP26_WS), {})).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("by-slug lookup does not reveal a workspace the user is not in", async () => {
+    const w = makeWorld();
+    const auth = new AuthService(w.prisma, {} as never, {} as never, {} as never, {} as never);
+    await expect(auth.workspaceBySlug(SP26_U.agent, "no-such-slug")).rejects.toBeInstanceOf(NotFoundException);
+    const foreign = await auth.workspaceBySlug(SP26_U.agent, "other-co");
+    expect(foreign).toEqual({ member: false });
+    expect(JSON.stringify(foreign)).not.toMatch(/Other Co|ws2/);
+    expect(await auth.workspaceBySlug(SP26_U.agent, "acme")).toEqual({ id: SP26_WS, name: "Acme", member: true });
+  });
+
+  it("the invitee routes need the emailed token and list no ids (C1)", async () => {
+    const w = makeWorld();
+    const auth = { issueFor: jest.fn().mockResolvedValue({ token: "jwt" }) };
+    const ctl = new AuthController(auth as never, w.invitations);
+    const inv = await w.invitations.create(SP26_WS, { email: "other@else.test", roleId: "ws1_r_admin" }, { userId: SP26_U.owner });
+    const listed = await ctl.myInvitations(reqAs(SP26_U.other, SP26_WS2));
+    expect(listed).toEqual({ pending: 1 });
+    expect(JSON.stringify(listed)).not.toContain(inv.invitation.id);
+    // The invitation id is not a token: 410, nobody joins, no session.
+    const err = await ctl.acceptInvitation({ token: inv.invitation.id }, reqAs(SP26_U.other, SP26_WS2)).catch((e) => e);
+    expect(err.getStatus()).toBe(410);
+    expect(auth.issueFor).not.toHaveBeenCalled();
+    expect(w.db.workspaceMember.some((m) => m.userId === SP26_U.other && m.workspaceId === SP26_WS)).toBe(false);
   });
 });

@@ -2,7 +2,13 @@ import { ROUTE_PERMISSIONS } from "./permission-map";
 import { SYSTEM_ROLES, SystemRoleKey } from "./system-roles";
 import { hasPermission } from "./permission.service";
 import { blockedForImpersonation } from "./impersonation";
-import { assertRequestPermission } from "./permission.guard";
+import { assertRequestPermission, PermissionGuard } from "./permission.guard";
+import { blockedRouteForImpersonation } from "./impersonation";
+import { Reflector } from "@nestjs/core";
+import { ExecutionContext, ForbiddenException } from "@nestjs/common";
+import { WorkspacesController } from "../workspaces/workspaces.controller";
+import { InvitationsController } from "../members/invitations.controller";
+import { AuditController } from "../audit/audit.controller";
 import type { PermissionsJson } from "./catalog";
 
 /** Review Focus 3: the system roles reproduce today's decisions. */
@@ -733,6 +739,71 @@ describe("system-role decision table", () => {
 
     it("impersonation is not blocked", () => {
       for (const route of [...VIEW, ...WRITE]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
+  // SP-26: invitations, handover, removal and the audit log.
+  describe("SP-26 member routes", () => {
+    const LIST = "GET /workspaces/:id/invitations";
+    const WRITES = [
+      "POST /workspaces/:id/invitations",
+      "POST /workspaces/:id/invitations/:invId/resend",
+      "DELETE /workspaces/:id/invitations/:invId",
+      "GET /workspaces/:id/members/:userId/open-work",
+      "POST /workspaces/:id/members/:userId/handover",
+      "DELETE /workspaces/:id/members/:userId",
+    ];
+    const AUDIT = "GET /workspaces/:id/audit";
+    const OWN = ["GET /auth/invitations", "POST /auth/invitations/accept", "GET /auth/workspaces/by-slug/:slug"];
+
+    it("owner can do everything", () => {
+      for (const route of [LIST, ...WRITES, AUDIT, ...OWN]) expect({ route, ok: allowed("owner", route) }).toEqual({ route, ok: true });
+    });
+
+    it("admin can invite, resend, revoke, see open work, hand over, remove and read the audit log", () => {
+      for (const route of [LIST, ...WRITES, AUDIT]) expect({ route, ok: allowed("admin", route) }).toEqual({ route, ok: true });
+      // ...but inviting into the owner role is refused in the service
+      // (403 invitations.role_above_actor; members/invitations.service.spec.ts).
+    });
+
+    it("agent and viewer list invitations (members.view) but get 403 on every write and on audit", () => {
+      for (const role of ["agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, LIST) }).toEqual({ role, ok: true });
+        for (const route of [...WRITES, AUDIT]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("every signed-in user reaches their own invitations and the slug lookup", () => {
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        for (const route of OWN) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("impersonator cannot remove a member", async () => {
+      expect(blockedRouteForImpersonation("DELETE /workspaces/:id/members/:userId")).toBe(true);
+      expect(blockedRouteForImpersonation("POST /workspaces/:id/members/:userId/2fa/reset")).toBe(true);
+      const perms = { effective: jest.fn(), can: jest.fn() };
+      const guard = new PermissionGuard(new Reflector(), perms as never);
+      const run = (cls: Function, handler: Function) =>
+        guard.canActivate({
+          getType: () => "http",
+          switchToHttp: () => ({ getRequest: () => ({ user: { sub: "support", workspaceId: "ws1", impersonating: true } }) }),
+          getHandler: () => handler,
+          getClass: () => cls,
+        } as unknown as ExecutionContext);
+      const err = await run(WorkspacesController, WorkspacesController.prototype.removeMember).catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ message: "Not allowed during impersonation" });
+      // Reads and the other member routes stay open to a support session.
+      await expect(run(WorkspacesController, WorkspacesController.prototype.openWork)).resolves.toBe(true);
+      await expect(run(WorkspacesController, WorkspacesController.prototype.listMembers)).resolves.toBe(true);
+      await expect(run(InvitationsController, InvitationsController.prototype.list)).resolves.toBe(true);
+      await expect(run(InvitationsController, InvitationsController.prototype.revoke)).resolves.toBe(true);
+      await expect(run(AuditController, AuditController.prototype.list)).resolves.toBe(true);
+      expect(perms.effective).not.toHaveBeenCalled();
+      for (const route of [LIST, ...WRITES, AUDIT]) {
         expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
       }
     });

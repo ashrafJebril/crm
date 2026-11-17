@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -206,6 +207,12 @@ export class AuthService {
     }));
 
     if (memberships.length === 0) {
+      // SP-26 (ruling 6): someone removed from a workspace, or with a pending
+      // invitation, lands on the no-workspace page instead of in a fresh
+      // empty workspace. (register still auto-creates.)
+      if (await this.expectsNoWorkspace(user.id, user.email)) {
+        return this.issue(user, null, []);
+      }
       // Edge case: user with no workspace memberships. Create one on the fly
       // so they always land somewhere.
       const ws = await this.workspaces.create(
@@ -237,6 +244,44 @@ export class AuthService {
     if (open.length === 0) throw paymentOverdue();
     const home = open[0].workspace.id;
     return this.issue(user, home, memberships);
+  }
+
+  /** A pending invitation for this email, or an audit record of the user's
+   *  removal from some workspace (ruling 6). Both tables are unscoped. */
+  private async expectsNoWorkspace(userId: string, email: string): Promise<boolean> {
+    const [pending, removed] = await Promise.all([
+      this.prisma.invitation.findFirst({
+        where: { email: email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+        select: { id: true },
+      }),
+      this.prisma.auditLog.findFirst({
+        where: { action: "member.removed", targetKind: "member", targetId: userId },
+        select: { id: true },
+      }),
+    ]);
+    return !!pending || !!removed;
+  }
+
+  /** SP-26: a session for `userId` with `workspaceId` active (after an
+   *  invitation is accepted). */
+  async issueFor(userId: string, workspaceId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const memberships = await this.workspaces.listForUser(userId);
+    return this.issue(user, workspaceId, memberships);
+  }
+
+  /** GET /auth/workspaces/by-slug/:slug (ruling 10): an unknown slug is 404;
+   *  the slug of a workspace the user is not in gives `{ member: false }`
+   *  without its id or name. */
+  async workspaceBySlug(userId: string, slug: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { slug }, select: { id: true, name: true } });
+    if (!ws) throw new NotFoundException({ statusCode: 404, message: "workspaces.slug_not_found" });
+    const m = await this.prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId: ws.id } },
+      select: { workspaceId: true },
+    });
+    if (!m || m.workspaceId !== ws.id) return { member: false as const };
+    return { id: ws.id, name: ws.name, member: true as const };
   }
 
   async register(dto: RegisterDto) {

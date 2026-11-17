@@ -37,6 +37,9 @@ export class TeamController {
         initials: m.user.initials,
         color: m.user.color,
         status: m.user.status,
+        // SP-26: TOTP enabled (password sign-in only) and when they joined.
+        twoFA: m.user.twoFA === true,
+        joinedAt: m.createdAt,
       };
     });
   }

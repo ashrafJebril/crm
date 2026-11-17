@@ -29,4 +29,19 @@ describe("GET /team role fields", () => {
     expect(out[1]).toMatchObject({ role: "agent", roleId: "r_c", roleName: "Billing", roleNameAr: "فواتير" });
     expect(out[2]).toMatchObject({ roleId: "r_agent", roleName: "Agent" });
   });
+
+  it("adds twoFA and joinedAt (SP-26) and never the TOTP secret", async () => {
+    const joined = new Date("2026-11-01T10:00:00Z");
+    const ctl = make(
+      [
+        { user: { ...user, twoFA: true, totpSecretEnc: "enc:v1:x", password: "h" }, role: "agent", roleId: null, roleRef: null, createdAt: joined },
+        { user: { ...user, id: "u2" }, role: "agent", roleId: null, roleRef: null, createdAt: joined },
+      ],
+      [sys("agent", "Agent")],
+    );
+    const out = await ctl.list("ws1");
+    expect(out[0]).toMatchObject({ twoFA: true, joinedAt: joined });
+    expect(out[1]).toMatchObject({ twoFA: false });
+    expect(JSON.stringify(out)).not.toMatch(/enc:v1|totpSecretEnc|password/);
+  });
 });

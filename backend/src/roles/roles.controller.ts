@@ -37,7 +37,7 @@ export class RolesController {
   }
 
   @Delete(":id")
-  remove(@CurrentWorkspace() ws: string, @Param("id") id: string) {
-    return this.svc.remove(ws, id);
+  remove(@CurrentWorkspace() ws: string, @Param("id") id: string, @Req() req: Request & { user: JwtPayload }) {
+    return this.svc.remove(ws, id, actorOf(req.user));
   }
 }
