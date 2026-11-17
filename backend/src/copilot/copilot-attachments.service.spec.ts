@@ -3,7 +3,7 @@ import * as ExcelJS from "exceljs";
 import { MediaService } from "../media/media.service";
 import { AGENT, OWNER, WRITER, WS, copilotWorld, httpError, viewer, withKey } from "./copilot-test-world";
 import { CopilotAttachmentsSweep } from "./copilot-attachments.sweep";
-import { classifyAttachment } from "./copilot-attachments.service";
+import { classifyAttachment, XLSX_MAX_UNPACKED_BYTES, zipUncompressedSize } from "./copilot-attachments.service";
 import { ATTACH_DOC_MAX_BYTES, ATTACH_IMAGE_MAX_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_TEXT_MAX, ATTACH_UNSENT_TTL_MS } from "./copilot-constants";
 import { text } from "./fake-claude-stream";
 
@@ -156,9 +156,47 @@ describe("CopilotAttachmentsService", () => {
     const page = await lib.listPage(WS);
     expect(page.items.map((m: any) => m.id)).toEqual(["lib1"]);
     const mediaId = w.db.copilotAttachment.find((x) => x.id === a.id).mediaId;
+    // A count only: never the attachment ids or file names of another member.
+    await lib.remove(WS, mediaId).catch((e: any) => expect(JSON.stringify(e.getResponse())).not.toMatch(/photo.png|"id"/));
     expect(await httpError(lib.remove(WS, mediaId))).toMatchObject({
       status: 409,
-      body: { message: "media.in_use", copilot: [{ id: a.id, fileName: "photo.png" }] },
+      body: { message: "media.in_use", copilot: 1 },
     });
+  });
+});
+
+// ─── Task 2 review minors ────────────────────────────────────────────────
+describe("CopilotAttachmentsService review fixes", () => {
+  it("an unreadable image fails the turn (retryable) and leaves the history unchanged", async () => {
+    const w = copilotWorld({ script: [{ content: [text("Seen.")] }, { content: [text("Back.")] }] });
+    const img = await w.attachments.upload(WS, WRITER, file("photo.png", PNG));
+    const t = await withKey(() => w.turn(WRITER, { message: "What is this?", attachmentIds: [img.id] }));
+    expect(t.last.event).toBe("done");
+    const before = JSON.parse(JSON.stringify(w.db.copilotMessage.map((m) => m.content)));
+    // Storage is down for the next turn.
+    w.media.readBuffer.mockRejectedValueOnce(new Error("storage down"));
+    const t2 = await withKey(() => w.turn(WRITER, { sessionId: t.sessionId, message: "And now?" }));
+    expect(t2.last).toEqual({ event: "error", data: { code: "copilot.attachment_unavailable" } });
+    expect(w.fake.calls).toHaveLength(1);
+    // Earlier messages are byte-for-byte the same (no text swapped in for the image).
+    expect(JSON.parse(JSON.stringify(w.db.copilotMessage.slice(0, before.length).map((m) => m.content)))).toEqual(before);
+    // Retry when the storage is back: the turn goes through with the image intact.
+    const t3 = await withKey(() => w.turn(WRITER, { sessionId: t.sessionId, message: "Try again" }));
+    expect(t3.last.event).toBe("done");
+    expect(w.fake.calls[1].messages[0].content[0]).toEqual({ type: "image", source: { type: "base64", media_type: "image/png", data: PNG.toString("base64") } });
+  });
+
+  it("an XLSX that would inflate past the cap is refused before it is unpacked", async () => {
+    const w = copilotWorld();
+    const good = await xlsx([["a"], ["1"]]);
+    expect(zipUncompressedSize(good)).toBeGreaterThan(0);
+    // Claim a huge uncompressed size in the first central-directory entry.
+    const bomb = Buffer.from(good);
+    const cen = bomb.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    bomb.writeUInt32LE(XLSX_MAX_UNPACKED_BYTES + 1, cen + 24);
+    expect(await httpError(w.attachments.upload(WS, WRITER, file("bomb.xlsx", bomb)))).toMatchObject({ status: 400, body: { message: "copilot.attachment_too_large" } });
+    // A zip without a readable central directory is not a workbook.
+    expect(await httpError(w.attachments.upload(WS, WRITER, file("x.xlsx", Buffer.from("PK\u0003\u0004 not really a zip"))))).toMatchObject({ status: 400, body: { message: "copilot.attachment_type" } });
+    expect(w.db.media).toHaveLength(0);
   });
 });

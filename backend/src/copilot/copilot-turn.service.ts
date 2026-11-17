@@ -58,7 +58,7 @@ import { SourceCollector } from "./copilot-sources";
 import { fallbackTitle, makeTitle } from "./copilot-title";
 import { CopilotToolRegistry, noAccess, type ToolContext } from "./copilot-tools/registry";
 import { CopilotActionsService } from "./copilot-actions.service";
-import { CopilotAttachmentsService } from "./copilot-attachments.service";
+import { AttachmentUnavailable, CopilotAttachmentsService } from "./copilot-attachments.service";
 import { normalizeMode } from "./approval-policy";
 import type { ApprovalMode } from "./copilot-constants";
 
@@ -344,7 +344,8 @@ export class CopilotTurnService {
       }
     } catch (e) {
       this.log.warn(`copilot turn failed: ${(e as Error)?.name ?? "error"}`);
-      errorCode = "copilot.ai_failed";
+      // An unreadable image: retryable, and the history stays as it is.
+      errorCode = e instanceof AttachmentUnavailable ? "copilot.attachment_unavailable" : "copilot.ai_failed";
     }
 
     try {

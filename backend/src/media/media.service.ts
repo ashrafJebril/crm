@@ -776,15 +776,12 @@ export class MediaService {
         select: { id: true, title: true },
         orderBy: { createdAt: "asc" },
       });
-      // SP-18: a copilot attachment's file (the copilot deletes it with the attachment).
-      const copilot = await tx.copilotAttachment.findMany({
-        where: { workspaceId, mediaId: row.id },
-        select: { id: true, fileName: true },
-        orderBy: { createdAt: "asc" },
-      });
-      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0 || copilot.length > 0) {
+      // SP-18: a copilot attachment's file (the copilot deletes it with the
+      // attachment). A count only: never another member's file names.
+      const copilot = await tx.copilotAttachment.count({ where: { workspaceId, mediaId: row.id } });
+      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0 || copilot > 0) {
         // `copilot` only when present: the existing body keeps its shape.
-        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge, ...(copilot.length ? { copilot } : {}) });
+        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge, ...(copilot ? { copilot } : {}) });
       }
       await tx.media.delete({ where: { id: row.id } });
     });

@@ -22,7 +22,7 @@ import { Injectable } from "@nestjs/common";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { HISTORY_PAGE, TRANSCRIPT_TURNS_SENT, TURN_BUDGET_MS } from "./copilot-constants";
+import { ACTION_EXECUTING_STALE_MS, HISTORY_PAGE, TRANSCRIPT_TURNS_SENT, TURN_BUDGET_MS } from "./copilot-constants";
 import { copilotError } from "./copilot-errors";
 import type { CopilotSessionDetailDto, CopilotSessionDto, CopilotSessionPage, PendingCardDto } from "./copilot.dto";
 import { closeTranscript, NO_ANSWER, withoutThinking } from "./copilot-model";
@@ -58,6 +58,7 @@ export function cardDto(a: {
   refusal: string | null;
   feedback: string | null;
   resultJson?: unknown;
+  errorKey?: string | null;
 }): PendingCardDto {
   const card = (a.card ?? {}) as { title?: string; changes?: PendingCardDto["changes"] };
   return {
@@ -69,6 +70,7 @@ export function cardDto(a: {
     expiresAt: a.expiresAt.toISOString(),
     refusal: a.refusal,
     feedback: a.feedback,
+    errorKey: a.errorKey ?? null,
     ...(a.resultJson !== undefined && a.resultJson !== null ? { result: a.resultJson } : {}),
   };
 }
@@ -129,8 +131,17 @@ export class CopilotSessionsService {
         sources: m.sources ?? null,
         createdAt: m.createdAt.toISOString(),
       })),
-      // A card past its TTL reads as EXPIRED (it is marked so when acted on).
-      actions: actions.map((a) => cardDto(a.status === "PENDING" && a.expiresAt.getTime() <= now.getTime() ? { ...a, status: "EXPIRED" } : a)),
+      // A card past its TTL reads as EXPIRED (it is marked so when acted on);
+      // one stuck EXECUTING reads as FAILED "status unknown" (the sweep stores it).
+      actions: actions.map((a) =>
+        cardDto(
+          a.status === "PENDING" && a.expiresAt.getTime() <= now.getTime()
+            ? { ...a, status: "EXPIRED" }
+            : a.status === "EXECUTING" && a.decidedAt && a.decidedAt.getTime() < now.getTime() - ACTION_EXECUTING_STALE_MS
+              ? { ...a, status: "FAILED", errorKey: "copilot.action_unknown" }
+              : a,
+        ),
+      ),
     };
   }
 

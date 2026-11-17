@@ -43,6 +43,8 @@ export const TURN_BUDGET_MS = 300_000;
 export const HEARTBEAT_MS = 15_000;
 export const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const ACTION_TTL_MS = 30 * 60 * 1000;
+/** A card still EXECUTING after this is marked FAILED "copilot.action_unknown" (Task 2 review I1). */
+export const ACTION_EXECUTING_STALE_MS = 5 * 60 * 1000;
 export const FEEDBACK_MAX = 2000;
 export const TITLE_MAX = 60;
 export const HISTORY_PAGE = 20;

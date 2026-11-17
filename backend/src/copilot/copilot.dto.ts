@@ -51,6 +51,8 @@ export interface PendingCardDto {
   expiresAt: string;
   refusal: string | null;
   feedback: string | null;
+  /** FAILED: why ("copilot.action_unknown" when the outcome could not be recorded). */
+  errorKey: string | null;
   result?: unknown;
 }
 

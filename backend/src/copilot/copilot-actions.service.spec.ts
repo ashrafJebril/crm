@@ -2,7 +2,8 @@
 import { ConflictException } from "@nestjs/common";
 import { FOREIGN, OWNER, WRITER, WS, WS2, copilotWorld, httpError, viewer, withKey } from "./copilot-test-world";
 import { text, toolUse } from "./fake-claude-stream";
-import { ACTION_TTL_MS, FEEDBACK_MAX } from "./copilot-constants";
+import { ACTION_EXECUTING_STALE_MS, ACTION_TTL_MS, FEEDBACK_MAX } from "./copilot-constants";
+import { CopilotAttachmentsSweep } from "./copilot-attachments.sweep";
 
 const move = (id = "t1", stageId = "s2") => toolUse(id, "move_ticket_stage", { ticketId: "t-hidden", stageId });
 const activity = (id = "a1") => toolUse(id, "create_activity", { kind: "follow_up", title: "Call Layla back", dueAt: "2026-11-18T09:00:00+03:00", contactId: "c-layla" });
@@ -179,5 +180,45 @@ describe("CopilotActionsService", () => {
     expect(t.events.some((e) => e.event === "confirm")).toBe(false);
     const msgs = w.fake.calls[1].messages;
     expect(JSON.parse(msgs[msgs.length - 1].content[0].content)).toMatchObject({ error: "no_access", permission: "tickets.update" });
+  });
+});
+
+// ─── Task 2 review I1: a card never stays EXECUTING ──────────────────────
+describe("CopilotActionsService: no card stays EXECUTING", () => {
+  it("the audit fails before apply: FAILED, nothing written", async () => {
+    const { w, actions } = await proposed([activity()]);
+    jest.spyOn(w.prisma.copilotActionAudit, "create").mockImplementationOnce(() => Promise.reject(new Error("db down")) as any);
+    const { action } = await w.controller.approve(WS, viewer(WRITER), actions[0].id);
+    expect(action).toMatchObject({ status: "FAILED", errorKey: "copilot.action_failed" });
+    expect(actions[0].status).toBe("FAILED");
+    expect(w.activities.create).not.toHaveBeenCalled();
+  });
+
+  it("a crash leaves a stale EXECUTING row that the sweep resolves", async () => {
+    const { w, actions } = await proposed([activity()]);
+    const upd = w.prisma.copilotPendingAction.updateMany;
+    const real = upd.getMockImplementation()!;
+    // The write runs, then storing its result fails (as if the process died there).
+    upd.mockImplementation((a: any) => (a?.data?.status === "EXECUTED" ? Promise.reject(new Error("db down")) : real(a)) as any);
+    await expect(w.controller.approve(WS, viewer(WRITER), actions[0].id)).rejects.toThrow("db down");
+    upd.mockImplementation(real);
+    expect(w.activities.create).toHaveBeenCalledTimes(1);
+    expect(actions[0].status).toBe("EXECUTING");
+    // Within ACTION_EXECUTING_STALE_MS it is left alone.
+    expect(await w.actions.resolveStale(new Date(actions[0].decidedAt.getTime() + 60_000))).toBe(0);
+    // Read before the sweep: the card already says "status unknown".
+    const later = new Date(actions[0].decidedAt.getTime() + ACTION_EXECUTING_STALE_MS + 1000);
+    const d = await w.sessions.detail(WS, WRITER, actions[0].sessionId, later);
+    expect(d.actions[0]).toMatchObject({ status: "FAILED", errorKey: "copilot.action_unknown" });
+    // The hourly sweep stores it, once.
+    const sweep = new CopilotAttachmentsSweep(w.attachments, w.actions);
+    await sweep.sweep(later);
+    expect(actions[0]).toMatchObject({ status: "FAILED", errorKey: "copilot.action_unknown" });
+    expect(audits(w, actions[0].id).slice(-1)).toEqual(["FAILED"]);
+    expect(w.db.copilotMessage.filter((m) => m.role === "note").map((m) => m.text)).toContain("Status unknown: create_activity");
+    expect(await w.actions.resolveStale(later)).toBe(0);
+    // It is decided: approving again is 409, nothing runs twice.
+    expect(await httpError(w.controller.approve(WS, viewer(WRITER), actions[0].id))).toMatchObject({ status: 409, body: { status: "FAILED" } });
+    expect(w.activities.create).toHaveBeenCalledTimes(1);
   });
 });

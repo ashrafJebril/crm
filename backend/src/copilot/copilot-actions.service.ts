@@ -21,7 +21,7 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
-import { ACTION_TTL_MS, FEEDBACK_MAX, type ApprovalMode } from "./copilot-constants";
+import { ACTION_EXECUTING_STALE_MS, ACTION_TTL_MS, FEEDBACK_MAX, type ApprovalMode } from "./copilot-constants";
 import { copilotError } from "./copilot-errors";
 import { decideApproval, type PolicyDecision } from "./approval-policy";
 import { sealAction, sealMatches } from "./args-hash";
@@ -175,28 +175,65 @@ export class CopilotActionsService {
       const cur = await this.load(a.workspaceId, a.id);
       throw copilotError("copilot.action_closed", { status: cur?.status ?? a.status });
     }
-    await this.audit(a, decidedBy === "auto" ? "AUTO_APPLIED" : "APPROVED", viewer.userId);
-
+    // From here the row is EXECUTING: every failure must leave it FAILED (or,
+    // when even that write fails, to resolveStale), never EXECUTING for good.
     let result: unknown;
     try {
+      await this.audit(a, decidedBy === "auto" ? "AUTO_APPLIED" : "APPROVED", viewer.userId);
       result = await tool.apply(exec, args);
     } catch (e) {
       if (e instanceof CardOutdated) return this.refuse(a, "card_outdated", viewer.userId, now, "EXECUTING");
       if (e instanceof ForbiddenException) return this.refuse(a, "permission_revoked", viewer.userId, now, "EXECUTING");
       const errorKey = e instanceof HttpException ? String((e.getResponse() as { message?: unknown })?.message ?? e.message).slice(0, 120) : "copilot.action_failed";
-      await this.prisma.copilotPendingAction.updateMany({ where: { id: a.id, workspaceId: a.workspaceId, status: "EXECUTING" }, data: { status: "FAILED", errorKey } });
-      await this.audit(a, "FAILED", viewer.userId, { errorKey });
-      if (decidedBy === "approved") await this.note(a, `Failed: ${a.tool}`);
       this.log.warn(`copilot action failed: ${a.tool}`);
+      try {
+        await this.prisma.copilotPendingAction.updateMany({ where: { id: a.id, workspaceId: a.workspaceId, status: "EXECUTING" }, data: { status: "FAILED", errorKey } });
+        await this.audit(a, "FAILED", viewer.userId, { errorKey });
+        if (decidedBy === "approved") await this.note(a, `Failed: ${a.tool}`);
+      } catch {
+        /* resolveStale marks it */
+      }
       return cardDto(await this.load(a.workspaceId, a.id));
     }
-    await this.prisma.copilotPendingAction.updateMany({
-      where: { id: a.id, workspaceId: a.workspaceId, status: "EXECUTING" },
-      data: { status: "EXECUTED", resultJson: json(result ?? null) },
-    });
-    await this.audit(a, "EXECUTED", viewer.userId);
+    try {
+      await this.prisma.copilotPendingAction.updateMany({
+        where: { id: a.id, workspaceId: a.workspaceId, status: "EXECUTING" },
+        data: { status: "EXECUTED", resultJson: json(result ?? null) },
+      });
+    } catch (e) {
+      // The write happened but its status could not be stored: resolveStale
+      // marks it "status unknown" after ACTION_EXECUTING_STALE_MS.
+      this.log.warn(`copilot action result not stored: ${a.tool}`);
+      throw e;
+    }
+    await this.audit(a, "EXECUTED", viewer.userId).catch(() => undefined);
     if (decidedBy === "approved") await this.note(a, `Approved and done: ${a.tool}`);
     return cardDto(await this.load(a.workspaceId, a.id));
+  }
+
+  /**
+   * Cards left EXECUTING past ACTION_EXECUTING_STALE_MS (the process died
+   * during the write, or its result could not be stored) become FAILED with
+   * `errorKey: "copilot.action_unknown"`: the card says the outcome is
+   * unknown and to check the record. Returns how many.
+   */
+  async resolveStale(now = new Date()): Promise<number> {
+    const stale = (await this.prisma.copilotPendingAction.findMany({
+      where: { status: "EXECUTING", decidedAt: { lt: new Date(now.getTime() - ACTION_EXECUTING_STALE_MS) } },
+      take: 500,
+    })) as ActionRow[];
+    let n = 0;
+    for (const a of stale) {
+      const r = await this.prisma.copilotPendingAction.updateMany({
+        where: { id: a.id, workspaceId: a.workspaceId, status: "EXECUTING" },
+        data: { status: "FAILED", errorKey: "copilot.action_unknown" },
+      });
+      if (r.count !== 1) continue;
+      n++;
+      await this.audit(a, "FAILED", null, { errorKey: "copilot.action_unknown" }).catch(() => undefined);
+      await this.note(a, `Status unknown: ${a.tool}`);
+    }
+    return n;
   }
 
   async approve(workspaceId: string, viewer: Viewer, id: string, now = new Date()): Promise<{ action: PendingCardDto }> {

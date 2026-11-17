@@ -19,7 +19,7 @@
  *  - Attachment text is data: it reaches the model wrapped with the
  *    customer-text notice and taints the session (ruling 5). It is never logged.
  */
-import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { HttpException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type Anthropic from "@anthropic-ai/sdk";
 import { PrismaService } from "../prisma/prisma.service";
 import { MediaService } from "../media/media.service";
@@ -37,6 +37,50 @@ import { copilotError } from "./copilot-errors";
 import { CUSTOMER_TEXT_NOTICE } from "./customer-text";
 
 export const COPILOT_PDF_TEXT = Symbol("COPILOT_PDF_TEXT");
+
+/**
+ * An image of this session's history could not be read (storage down, file
+ * gone). The turn fails with the retryable stream error
+ * `copilot.attachment_unavailable`; the history is never rewritten.
+ */
+export class AttachmentUnavailable extends Error {
+  constructor() {
+    super("copilot.attachment_unavailable");
+    this.name = "AttachmentUnavailable";
+  }
+}
+
+/** Decompressed size cap of an XLSX (zip-bomb guard before ExcelJS inflates it). */
+export const XLSX_MAX_UNPACKED_BYTES = 100 * 1024 * 1024;
+
+/**
+ * The total uncompressed size the zip's central directory declares, or null
+ * when it cannot be read (no end-of-central-directory record, ZIP64). Pure.
+ */
+export function zipUncompressedSize(buf: Buffer): number | null {
+  const EOCD = 0x06054b50;
+  const CEN = 0x02014b50;
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
+    if (buf.readUInt32LE(i) === EOCD) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const entries = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  if (entries === 0xffff || p === 0xffffffff) return null;
+  let total = 0;
+  for (let n = 0; n < entries; n++) {
+    if (p + 46 > buf.length || buf.readUInt32LE(p) !== CEN) return null;
+    const size = buf.readUInt32LE(p + 24);
+    if (size === 0xffffffff) return null;
+    total += size;
+    p += 46 + buf.readUInt16LE(p + 28) + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
+  }
+  return total;
+}
 
 export type AttachType = "pdf" | "csv" | "xlsx" | "txt" | "jpeg" | "png" | "webp";
 const EXT: Record<string, AttachType> = { pdf: "pdf", csv: "csv", xlsx: "xlsx", txt: "txt", jpg: "jpeg", jpeg: "jpeg", png: "png", webp: "webp" };
@@ -146,10 +190,17 @@ export class CopilotAttachmentsService {
     try {
       if (type === "pdf") return cap((await this.pdfText(buffer)).text.trim());
       if (type === "txt") return cap(buffer.toString("utf8").replace(/^﻿/, ""));
+      if (type === "xlsx") {
+        // A small zip can inflate to gigabytes: refuse before ExcelJS unpacks it (parseFile also caps rows).
+        const unpacked = zipUncompressedSize(buffer);
+        if (unpacked === null) throw copilotError("copilot.attachment_type");
+        if (unpacked > XLSX_MAX_UNPACKED_BYTES) throw copilotError("copilot.attachment_too_large", { maxBytes: ATTACH_DOC_MAX_BYTES });
+      }
       const parsed = await parseFile(buffer, fileName, { maxBytes: ATTACH_DOC_MAX_BYTES });
       const line = (cells: string[]) => cells.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(",");
       return cap([line(parsed.headers), ...parsed.rows.map(line)].join("\n"));
     } catch (e) {
+      if (e instanceof HttpException) throw e;
       if (e instanceof ImportFileError && e.messageKey === "imports.file_too_large") throw copilotError("copilot.attachment_too_large", { maxBytes: ATTACH_DOC_MAX_BYTES });
       throw copilotError("copilot.attachment_type");
     }
@@ -244,7 +295,8 @@ export class CopilotAttachmentsService {
 
   /**
    * Resolve stored image markers to base64 image blocks, for this session's
-   * own attachments only (any other id becomes a short text note).
+   * own attachments only. An image that cannot be read fails the turn
+   * (AttachmentUnavailable): the replay is never altered.
    */
   async hydrate(workspaceId: string, sessionId: string, messages: Anthropic.Beta.BetaMessageParam[]): Promise<Anthropic.Beta.BetaMessageParam[]> {
     const ids = new Set<string>();
@@ -263,6 +315,7 @@ export class CopilotAttachmentsService {
         this.log.warn("copilot attachment could not be read");
       }
     }
+    if ([...ids].some((id) => !data.has(id))) throw new AttachmentUnavailable();
     return messages.map((m) => {
       if (m.role !== "user" || !Array.isArray(m.content)) return m;
       return {
@@ -270,10 +323,8 @@ export class CopilotAttachmentsService {
         content: (m.content as unknown as Array<StoredImageBlock | Anthropic.Beta.BetaContentBlockParam>).map((b) => {
           const s = b as StoredImageBlock;
           if (s?.type !== "image" || s.source?.type !== "copilot_attachment") return b as Anthropic.Beta.BetaContentBlockParam;
-          const d = data.get(s.source.id);
-          return d
-            ? ({ type: "image", source: { type: "base64", media_type: d.media_type, data: d.data } } as Anthropic.Beta.BetaContentBlockParam)
-            : ({ type: "text", text: "(An attached image is no longer available.)" } as Anthropic.Beta.BetaContentBlockParam);
+          const d = data.get(s.source.id)!;
+          return { type: "image", source: { type: "base64", media_type: d.media_type, data: d.data } } as Anthropic.Beta.BetaContentBlockParam;
         }),
       } as Anthropic.Beta.BetaMessageParam;
     });
