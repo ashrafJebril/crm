@@ -720,7 +720,7 @@ describe("system-role decision table", () => {
       "DELETE /workspaces/:id/members/:userId",
     ];
     const AUDIT = "GET /workspaces/:id/audit";
-    const OWN = ["GET /auth/invitations", "POST /auth/invitations/:invId/accept", "GET /auth/workspaces/by-slug/:slug"];
+    const OWN = ["GET /auth/invitations", "POST /auth/invitations/accept", "GET /auth/workspaces/by-slug/:slug"];
 
     it("owner can do everything", () => {
       for (const route of [LIST, ...WRITES, AUDIT, ...OWN]) expect({ route, ok: allowed("owner", route) }).toEqual({ route, ok: true });

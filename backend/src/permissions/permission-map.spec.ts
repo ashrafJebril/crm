@@ -385,7 +385,7 @@ describe("permission map", () => {
       "GET /invitations/preview": "public",
       "POST /invitations/accept": "public",
       "GET /auth/invitations": "authenticated",
-      "POST /auth/invitations/:invId/accept": "authenticated",
+      "POST /auth/invitations/accept": "authenticated",
       "GET /workspaces/:id/members/:userId/open-work": "members.delete",
       "POST /workspaces/:id/members/:userId/handover": "members.update",
       "DELETE /workspaces/:id/members/:userId": "members.delete",

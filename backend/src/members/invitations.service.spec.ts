@@ -1,9 +1,9 @@
 import { ConsoleLogger, HttpException, Logger } from "@nestjs/common";
 import { FakeEmailSender } from "../email/fake-email-sender";
 import { InvitationsService } from "./invitations.service";
-import { INVITE_RESEND_GAP_MS, INVITE_RESEND_MAX, INVITE_TTL_MS } from "./members-constants";
+import { INVITE_MAX_LIFETIME_MS, INVITE_RESEND_GAP_MS, INVITE_RESEND_MAX, INVITE_TTL_MS } from "./members-constants";
 import { hashToken } from "./token-hash";
-import { makeWorld, NOW, R, tokenOf, U, WS, WS2 } from "./__fixtures__/members-world";
+import { makeWorld, NOW, R, tokenOf, U, withRollback, WS, WS2 } from "./__fixtures__/members-world";
 
 const owner = { userId: U.owner };
 const admin = { userId: U.admin };
@@ -105,11 +105,9 @@ describe("InvitationsService (SP-26)", () => {
 
   it("concurrent signed-in accept: exactly one succeeds", async () => {
     const w = makeWorld();
-    const inv = await w.invitations.create(WS2, { email: "agent@acme.test", roleId: "ws2_r_agent" }, { userId: U.other });
-    const results = await Promise.allSettled([
-      w.invitations.acceptSignedIn(U.agent, inv.invitation.id),
-      w.invitations.acceptSignedIn(U.agent, inv.invitation.id),
-    ]);
+    await w.invitations.create(WS2, { email: "agent@acme.test", roleId: "ws2_r_agent" }, { userId: U.other });
+    const token = tokenOf(w.email.lastTo("agent@acme.test")?.text);
+    const results = await Promise.allSettled([w.invitations.acceptSignedIn(U.agent, token), w.invitations.acceptSignedIn(U.agent, token)]);
     expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     expect(w.db.workspaceMember.filter((m) => m.userId === U.agent && m.workspaceId === "ws2")).toHaveLength(1);
   });
@@ -158,8 +156,9 @@ describe("InvitationsService (SP-26)", () => {
 
   it("accept signed in with another email is 403", async () => {
     const w = makeWorld();
-    const inv = await w.invitations.create(WS, { email: "someone@example.test", roleId: R.viewer }, owner);
-    expect(await failure(w.invitations.acceptSignedIn(U.other, inv.invitation.id))).toMatchObject({
+    await w.invitations.create(WS, { email: "someone@example.test", roleId: R.viewer }, owner);
+    const token = tokenOf(w.email.lastTo("someone@example.test")?.text);
+    expect(await failure(w.invitations.acceptSignedIn(U.other, token))).toMatchObject({
       status: 403,
       key: "invitations.email_mismatch",
     });
@@ -178,7 +177,7 @@ describe("InvitationsService (SP-26)", () => {
     // The token is not burnt: signing in and accepting works.
     const inv = w.db.invitation[0];
     expect(inv.acceptedAt).toBeNull();
-    await expect(w.invitations.acceptSignedIn(U.other, inv.id)).resolves.toMatchObject({ userId: U.other, workspaceId: WS });
+    await expect(w.invitations.acceptSignedIn(U.other, token)).resolves.toMatchObject({ userId: U.other, workspaceId: WS });
     expect(w.db.workspaceMember.find((m) => m.userId === U.other && m.workspaceId === WS)).toMatchObject({ role: "viewer", roleId: R.viewer });
   });
 
@@ -224,13 +223,73 @@ describe("InvitationsService (SP-26)", () => {
     expect(await failure(w.invitations.resend("ws2", b.invitation.id, { userId: U.other }))).toMatchObject({ status: 404 });
   });
 
-  it("the invitee's own list shows pending invitations across workspaces", async () => {
+  it("the invitee's listing is a count only and exposes no ids", async () => {
     const w = makeWorld();
-    await w.invitations.create(WS, { email: "other@else.test", roleId: R.agent }, owner);
-    const mine = await w.invitations.listForUser(U.other);
-    expect(mine).toHaveLength(1);
-    expect(mine[0]).toMatchObject({ workspace: { id: WS, name: "Acme" }, role: { id: R.agent }, status: "pending" });
-    expect(await w.invitations.listForUser(U.agent)).toEqual([]);
+    const inv = await w.invitations.create(WS, { email: "other@else.test", roleId: R.agent }, owner);
+    const mine = await w.invitations.pendingCountForUser(U.other);
+    expect(mine).toEqual({ pending: 1 });
+    const json = JSON.stringify(mine);
+    for (const leak of [inv.invitation.id, WS, "Acme", R.agent, "Agent", w.db.invitation[0].tokenHash]) expect(json).not.toContain(leak);
+    expect(await w.invitations.pendingCountForUser(U.agent)).toEqual({ pending: 0 });
+    // The token-gated preview carries no invitation id either.
+    expect(await w.invitations.preview(tokenOf(w.email.lastTo("other@else.test")?.text))).not.toHaveProperty("id");
+  });
+
+  it("an account with the matching email but no token cannot join (C1)", async () => {
+    const w = makeWorld();
+    // The attacker registered the invitee's email (no verification) and is signed in.
+    w.db.user.push({ id: "u_squat", email: "cfo@acme.test", name: "Squatter", password: "h", role: "Agent", initials: "S", color: "1", status: "offline", isSuperAdmin: false });
+    const inv = await w.invitations.create(WS, { email: "cfo@acme.test", roleId: R.admin }, owner);
+    // Neither the invitation id, nor a guessed or empty token, gets them in.
+    for (const t of [inv.invitation.id, undefined, "", "x".repeat(43)]) {
+      expect(await failure(w.invitations.acceptSignedIn("u_squat", t))).toMatchObject({ status: 410, key: "invitations.invalid" });
+    }
+    expect(w.db.workspaceMember.some((m) => m.userId === "u_squat")).toBe(false);
+    expect(w.db.invitation[0].acceptedAt).toBeNull();
+  });
+
+  it("a signed-in user with the token and the matching email joins", async () => {
+    const w = makeWorld();
+    await w.invitations.create(WS, { email: "Other@Else.test", roleId: R.agent }, owner);
+    const token = tokenOf(w.email.lastTo("other@else.test")?.text);
+    await expect(w.invitations.acceptSignedIn(U.other, token)).resolves.toEqual({ userId: U.other, workspaceId: WS, rolePending: false });
+    expect(w.db.workspaceMember.find((m) => m.userId === U.other && m.workspaceId === WS)).toMatchObject({ role: "agent", roleId: R.agent });
+    // Single use.
+    expect(await failure(w.invitations.acceptSignedIn(U.other, token))).toMatchObject({ status: 410 });
+  });
+
+  it("resend extends expiry 7 days from the resend, never past 14 days from creation", async () => {
+    const w = makeWorld();
+    const inv = await w.invitations.create(WS, { email: "life@example.test", roleId: R.viewer }, owner);
+    const created = inv.invitation.createdAt.getTime();
+    w.advance(3 * 86_400_000);
+    const r1 = await w.invitations.resend(WS, inv.invitation.id, owner);
+    expect(r1.invitation.expiresAt.getTime()).toBe(created + 3 * 86_400_000 + INVITE_TTL_MS);
+    w.advance(6 * 86_400_000); // day 9: 7 more days would be day 16
+    const r2 = await w.invitations.resend(WS, inv.invitation.id, owner);
+    expect(r2.invitation.expiresAt.getTime()).toBe(created + INVITE_MAX_LIFETIME_MS);
+    w.setClock(new Date(created + INVITE_MAX_LIFETIME_MS + 1));
+    expect(await failure(w.invitations.resend(WS, inv.invitation.id, owner))).toMatchObject({ status: 410, key: "invitations.invalid" });
+  });
+
+  it("a register racing the accept maps to sign_in_required, not a 500", async () => {
+    const w = makeWorld();
+    withRollback(w.prisma);
+    await w.invitations.create(WS, { email: "race2@example.test", roleId: R.agent }, owner);
+    const token = tokenOf(w.email.lastTo("race2@example.test")?.text);
+    // The account check passes, then a register commits the same email before the insert.
+    const create = w.prisma.user.create.getMockImplementation();
+    w.prisma.user.create.mockImplementationOnce((a: unknown) => {
+      w.db.user.push({ id: "u_reg", email: "race2@example.test", name: "Reg" });
+      return create(a);
+    });
+    expect(await failure(w.invitations.acceptWithToken({ token, password: "s3cret-pass" }))).toMatchObject({
+      status: 409,
+      key: "invitations.sign_in_required",
+    });
+    // Rolled back: the token is not burnt and nobody joined.
+    expect(w.db.invitation[0].acceptedAt).toBeNull();
+    expect(w.db.workspaceMember.some((m) => m.userId === "u_reg")).toBe(false);
   });
 
   it("an invalid or malformed token always gives the same 410", async () => {

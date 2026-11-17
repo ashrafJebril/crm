@@ -33,6 +33,13 @@ export class AcceptInvitationDto {
   password?: string;
 }
 
+/** POST /auth/invitations/accept (signed in): the emailed token. */
+export class AcceptInvitationSignedInDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{43}$/)
+  token!: string;
+}
+
 export class RemoveMemberDto {
   @IsOptional()
   @IsString()

@@ -77,7 +77,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /auth/change-password": "authenticated",
   // SP-26: the invitee's own invitations and activation by slug.
   "GET /auth/invitations": "authenticated",
-  "POST /auth/invitations/:invId/accept": "authenticated",
+  "POST /auth/invitations/accept": "authenticated",
   "GET /auth/workspaces/by-slug/:slug": "authenticated",
   "GET /me/permissions": "authenticated",
   "GET /notifications": "authenticated",

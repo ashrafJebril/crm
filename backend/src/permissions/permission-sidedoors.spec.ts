@@ -34,6 +34,7 @@ import { AuditController } from "../audit/audit.controller";
 import { WorkspacesController } from "../workspaces/workspaces.controller";
 import { WorkspacesService } from "../workspaces/workspaces.service";
 import { AuthService } from "../auth/auth.service";
+import { AuthController } from "../auth/auth.controller";
 import { salesOracle, supportOracle } from "../insights/insights-oracle";
 import { parseRange } from "../insights/insights-range";
 import { ASSIGNED, SALES_ASSIGNED, SALES_OWNER } from "../insights/insights-expected";
@@ -1136,5 +1137,20 @@ describe("SP-26 members side doors", () => {
     expect(foreign).toEqual({ member: false });
     expect(JSON.stringify(foreign)).not.toMatch(/Other Co|ws2/);
     expect(await auth.workspaceBySlug(SP26_U.agent, "acme")).toEqual({ id: SP26_WS, name: "Acme", member: true });
+  });
+
+  it("the invitee routes need the emailed token and list no ids (C1)", async () => {
+    const w = makeWorld();
+    const auth = { issueFor: jest.fn().mockResolvedValue({ token: "jwt" }) };
+    const ctl = new AuthController(auth as never, w.invitations);
+    const inv = await w.invitations.create(SP26_WS, { email: "other@else.test", roleId: "ws1_r_admin" }, { userId: SP26_U.owner });
+    const listed = await ctl.myInvitations(reqAs(SP26_U.other, SP26_WS2));
+    expect(listed).toEqual({ pending: 1 });
+    expect(JSON.stringify(listed)).not.toContain(inv.invitation.id);
+    // The invitation id is not a token: 410, nobody joins, no session.
+    const err = await ctl.acceptInvitation({ token: inv.invitation.id }, reqAs(SP26_U.other, SP26_WS2)).catch((e) => e);
+    expect(err.getStatus()).toBe(410);
+    expect(auth.issueFor).not.toHaveBeenCalled();
+    expect(w.db.workspaceMember.some((m) => m.userId === SP26_U.other && m.workspaceId === SP26_WS)).toBe(false);
   });
 });

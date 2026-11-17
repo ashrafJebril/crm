@@ -5,6 +5,8 @@ const DAY = 24 * 60 * MIN;
 export const INVITE_TTL_MS = 7 * DAY;
 export const INVITE_RESEND_MAX = 5;
 export const INVITE_RESEND_GAP_MS = 60_000;
+/** A resend extends an invitation, but never past this from its creation. */
+export const INVITE_MAX_LIFETIME_MS = 14 * DAY;
 
 export const RESET_TTL_MS = 30 * MIN;
 export const RESET_LIVE_MAX = 3;

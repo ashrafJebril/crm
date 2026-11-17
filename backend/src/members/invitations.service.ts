@@ -11,7 +11,7 @@ import { emailLang } from "../email/templates/layout";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import { workspaceContext } from "../common/workspace-context";
 import { memberError } from "./member-errors";
-import { INVITE_RESEND_GAP_MS, INVITE_RESEND_MAX, INVITE_TTL_MS, PASSWORD_MIN } from "./members-constants";
+import { INVITE_MAX_LIFETIME_MS, INVITE_RESEND_GAP_MS, INVITE_RESEND_MAX, INVITE_TTL_MS, PASSWORD_MIN } from "./members-constants";
 import { appPublicUrl, hashToken, isTokenShape, newToken } from "./token-hash";
 
 export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
@@ -227,6 +227,9 @@ export class InvitationsService {
     if (inv.sendCount >= INVITE_RESEND_MAX || now.getTime() - inv.lastSentAt.getTime() < INVITE_RESEND_GAP_MS) {
       throw memberError("invitations.resend_limited");
     }
+    // 7 days from this send, but never past 14 days from creation.
+    const expiresAt = new Date(Math.min(now.getTime() + INVITE_TTL_MS, inv.createdAt.getTime() + INVITE_MAX_LIFETIME_MS));
+    if (expiresAt.getTime() <= now.getTime()) throw memberError("invitations.invalid");
     // The inviter's grant may have changed since: check it again.
     if (inv.roleId) await this.assertInvitable(workspaceId, actor, await this.roleOf(workspaceId, inv.roleId));
 
@@ -236,7 +239,7 @@ export class InvitationsService {
         where: { id: inv.id, workspaceId, sendCount: inv.sendCount, acceptedAt: null, revokedAt: null },
         data: {
           tokenHash: hashToken(token),
-          expiresAt: new Date(now.getTime() + INVITE_TTL_MS),
+          expiresAt,
           sendCount: { increment: 1 },
           lastSentAt: now,
         },
@@ -335,7 +338,6 @@ export class InvitationsService {
     ]);
     if (!ws) throw memberError("invitations.invalid");
     return {
-      id: inv.id,
       email: inv.email,
       lang: emailLang(inv.lang),
       workspace: { id: ws.id, name: ws.name },
@@ -346,20 +348,19 @@ export class InvitationsService {
     };
   }
 
-  /** GET /auth/invitations: the signed-in user's pending invitations. */
-  async listForUser(userId: string) {
+  /**
+   * GET /auth/invitations: how many invitations are pending for the
+   * signed-in user's email. Only a count: no id, workspace or role, because
+   * the email is not verified and only the emailed token may act (C1). The
+   * no-workspace page says "open the link in your email".
+   */
+  async pendingCountForUser(userId: string): Promise<{ pending: number }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
-    if (!user) return [];
-    const now = this.now();
-    const rows = await this.prisma.invitation.findMany({
-      where: { email: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
-      include: { ...this.include, workspace: { select: { id: true, name: true } } },
-      orderBy: { createdAt: "desc" },
+    if (!user) return { pending: 0 };
+    const pending = await this.prisma.invitation.count({
+      where: { email: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: this.now() } },
     });
-    return rows.map((r) => ({
-      ...this.toDto(r as InvitationRow, now),
-      workspace: (r as { workspace?: { id: string; name: string } }).workspace ?? null,
-    }));
+    return { pending };
   }
 
   /** POST /invitations/accept (public, signed out). */
@@ -376,9 +377,16 @@ export class InvitationsService {
       const tokenHash = inv.tokenHash;
       const out = await this.prisma.$transaction(async (tx) => {
         await this.consume(tx, inv, { tokenHash });
-        const user = await tx.user.create({
-          data: { email: inv.email, name, password: hashed, role: "Agent", initials: initialsOf(name), color: "180", status: "offline" },
-        });
+        const user = await tx.user
+          .create({
+            data: { email: inv.email, name, password: hashed, role: "Agent", initials: initialsOf(name), color: "180", status: "offline" },
+          })
+          .catch((e: unknown) => {
+            // A concurrent register took this email after the check above:
+            // the transaction rolls back (token unburnt) and they sign in.
+            if ((e as { code?: string })?.code === "P2002") throw memberError("invitations.sign_in_required");
+            throw e;
+          });
         // Mirror to Kewy inside the transaction: a strict refusal rolls back.
         await this.kewySync.userCreated(user);
         const rolePending = await this.join(tx, inv, user.id);
@@ -389,17 +397,21 @@ export class InvitationsService {
     });
   }
 
-  /** POST /auth/invitations/:invId/accept (signed in): the invitation must be
-   *  for the signed-in user's email. */
-  async acceptSignedIn(userId: string, invId: string): Promise<AcceptResult> {
+  /**
+   * POST /auth/invitations/accept (signed in), body { token }. Every accept
+   * needs the emailed token (C1: an unverified account with the invitee's
+   * email alone must not join), and a signed-in user's email must match the
+   * invitation's (403 invitations.email_mismatch).
+   */
+  async acceptSignedIn(userId: string, token: unknown): Promise<AcceptResult> {
     return outsideTenancy(async () => {
+      const inv = await this.pendingByToken(token);
       const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
-      const inv = await this.prisma.invitation.findUnique({ where: { id: invId } });
-      if (!user || !inv) throw memberError("invitations.not_found");
-      if (this.statusOf(inv) !== "pending") throw memberError("invitations.invalid");
+      if (!user) throw memberError("invitations.invalid");
       if (user.email.toLowerCase() !== inv.email) throw memberError("invitations.email_mismatch");
+      const tokenHash = inv.tokenHash;
       const out = await this.prisma.$transaction(async (tx) => {
-        await this.consume(tx, inv, {});
+        await this.consume(tx, inv, { tokenHash });
         const rolePending = await this.join(tx, inv, user.id);
         return { userId: user.id, workspaceId: inv.workspaceId, rolePending };
       });

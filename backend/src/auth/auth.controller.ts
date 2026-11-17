@@ -11,6 +11,7 @@ import {
 import { Public } from "./public.decorator";
 import type { JwtPayload } from "./auth.guard";
 import { InvitationsService } from "../members/invitations.service";
+import { AcceptInvitationSignedInDto } from "../members/members.dto";
 
 /**
  * The end user's IP, forwarded to Kewy's per-IP login limit. On Fly the edge
@@ -58,16 +59,17 @@ export class AuthController {
     return this.auth.workspaceBySlug(req.user.sub, slug);
   }
 
-  /** SP-26: the signed-in user's pending invitations (never auto-accepted). */
+  /** SP-26: `{ pending }`, a count only (C1): the invitee opens the emailed link. */
   @Get("invitations")
   myInvitations(@Req() req: Request & { user: JwtPayload }) {
-    return this.invitations.listForUser(req.user.sub);
+    return this.invitations.pendingCountForUser(req.user.sub);
   }
 
-  /** SP-26: accept one of them; the session switches to that workspace. */
-  @Post("invitations/:invId/accept")
-  async acceptInvitation(@Param("invId") invId: string, @Req() req: Request & { user: JwtPayload }) {
-    const res = await this.invitations.acceptSignedIn(req.user.sub, invId);
+  /** SP-26: accept with the emailed token while signed in (email must match);
+   *  the session switches to that workspace. */
+  @Post("invitations/accept")
+  async acceptInvitation(@Body() dto: AcceptInvitationSignedInDto, @Req() req: Request & { user: JwtPayload }) {
+    const res = await this.invitations.acceptSignedIn(req.user.sub, dto.token);
     return { ...(await this.auth.issueFor(res.userId, res.workspaceId)), rolePending: res.rolePending };
   }
 
