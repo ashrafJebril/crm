@@ -1,3 +1,4 @@
+import { emailWhere, normalizeEmail } from "../auth/email";
 import {
   BadRequestException,
   ConflictException,
@@ -230,8 +231,8 @@ export class WorkspacesService {
     // Authorize the role before provisioning anything.
     const target = await this.resolveTarget(workspaceId, { role: dto.role });
     await this.authorizeAssignment(workspaceId, actor, target);
-    const email = dto.email.toLowerCase().trim();
-    let user = await this.prisma.user.findUnique({ where: { email } });
+    const email = normalizeEmail(dto.email);
+    let user = await this.prisma.user.findFirst({ where: emailWhere(email) });
     let provisionedPassword: string | undefined;
 
     if (user) {

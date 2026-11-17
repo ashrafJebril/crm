@@ -1,3 +1,4 @@
+import { normalizeEmail } from "./email";
 import { isPaymentLocked } from "../billing/payment-lock";
 import { paymentOverdue } from "../billing/payment-lock.service";
 import {
@@ -132,7 +133,7 @@ export class KewySsoService {
       update: claims.name ? { name: safeName, initials: initialsOf(safeName) } : {},
       create: {
         kewyAccountId: claims.sub,
-        email: (claims.email ?? `kewy_${claims.sub}@sso.local`).toLowerCase(),
+        email: normalizeEmail(claims.email ?? `kewy_${claims.sub}@sso.local`),
         name: safeName,
         initials: initialsOf(safeName),
         role: "Agent",

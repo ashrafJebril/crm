@@ -27,7 +27,7 @@ function setup(opts: { pendingInvite?: boolean; removed?: boolean }) {
     isSuperAdmin: false, password: HASH, kewyAccountId: null, memberships: [] as unknown[],
   };
   const prisma = {
-    user: { findUnique: jest.fn().mockResolvedValue(user) },
+    user: { findUnique: jest.fn().mockResolvedValue(user), findFirst: jest.fn().mockResolvedValue(null) },
     invitation: { findFirst: jest.fn().mockResolvedValue(opts.pendingInvite ? { id: "i1" } : null) },
     auditLog: { findFirst: jest.fn().mockResolvedValue(opts.removed ? { id: "a1" } : null) },
   };
@@ -61,7 +61,7 @@ describe("login with no workspace (SP-26 ruling 6)", () => {
     expect(res.activeWorkspaceId).toBeNull();
     expect(workspaces.create).not.toHaveBeenCalled();
     const where = prisma.invitation.findFirst.mock.calls[0][0].where;
-    expect(where).toMatchObject({ email: "noor@example.com", acceptedAt: null, revokedAt: null });
+    expect(where).toMatchObject({ email: { equals: "noor@example.com", mode: "insensitive" }, acceptedAt: null, revokedAt: null });
     expect(where.expiresAt.gt).toBeInstanceOf(Date);
   });
 
@@ -78,6 +78,7 @@ describe("login with no workspace (SP-26 ruling 6)", () => {
     const handle: any = {
       user: {
         findUnique: jest.fn(({ where }: any) => Promise.resolve(users.find((u) => u.email === where.email) ?? null)),
+        findFirst: jest.fn(({ where }: any) => Promise.resolve(users.find((u) => String(u.email).toLowerCase() === String(where.email?.equals ?? where.email).toLowerCase()) ?? null)),
         create: jest.fn(({ data }: any) => {
           const u = { id: "u9", isSuperAdmin: false, ...data };
           users.push(u);

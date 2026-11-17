@@ -1,3 +1,4 @@
+import { emailWhere, normalizeEmail } from "../auth/email";
 import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Invitation, Prisma } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
@@ -62,7 +63,7 @@ type InvitationRow = Invitation & {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function normaliseEmail(email: unknown): string {
-  const e = typeof email === "string" ? email.trim().toLowerCase() : "";
+  const e = normalizeEmail(email);
   if (!EMAIL_RE.test(e) || e.length > 254) throw memberError("invitations.invalid_email");
   return e;
 }
@@ -174,7 +175,7 @@ export class InvitationsService {
     const role = await this.roleOf(workspaceId, input.roleId);
     await this.assertInvitable(workspaceId, actor, role);
 
-    const existing = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    const existing = await this.prisma.user.findFirst({ where: emailWhere(email), select: { id: true } });
     if (existing) {
       const member = await this.prisma.workspaceMember.findUnique({
         where: { userId_workspaceId: { userId: existing.id, workspaceId } },
@@ -188,7 +189,7 @@ export class InvitationsService {
       // One pending invitation per (workspace, email): serialise the check.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invite:${workspaceId}:${email}`}))`;
       const pending = await tx.invitation.findFirst({
-        where: { workspaceId, email, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        where: { workspaceId, ...emailWhere(email), acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
         select: { id: true },
       });
       if (pending) throw memberError("invitations.pending_exists");
@@ -338,7 +339,7 @@ export class InvitationsService {
       this.prisma.workspace.findUnique({ where: { id: inv.workspaceId }, select: { id: true, name: true } }),
       inv.roleId ? this.prisma.role.findFirst({ where: { id: inv.roleId, workspaceId: inv.workspaceId } }) : null,
       inv.invitedById ? this.prisma.user.findUnique({ where: { id: inv.invitedById }, select: { name: true } }) : null,
-      this.prisma.user.findUnique({ where: { email: inv.email }, select: { id: true } }),
+      this.prisma.user.findFirst({ where: emailWhere(inv.email), select: { id: true } }),
     ]);
     if (!ws) throw memberError("invitations.invalid");
     return {
@@ -363,7 +364,7 @@ export class InvitationsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
     if (!user) return { pending: 0 };
     const pending = await this.prisma.invitation.count({
-      where: { email: user.email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: this.now() } },
+      where: { ...emailWhere(user.email), acceptedAt: null, revokedAt: null, expiresAt: { gt: this.now() } },
     });
     return { pending };
   }
@@ -372,7 +373,7 @@ export class InvitationsService {
   async acceptWithToken(input: { token: unknown; name?: string; password?: string }): Promise<AcceptResult> {
     return outsideTenancy(async () => {
       const inv = await this.pendingByToken(input.token);
-      const account = await this.prisma.user.findUnique({ where: { email: inv.email }, select: { id: true } });
+      const account = await this.prisma.user.findFirst({ where: emailWhere(inv.email), select: { id: true } });
       if (account) throw memberError("invitations.sign_in_required");
       if (typeof input.password !== "string" || input.password.length < PASSWORD_MIN) {
         throw authError("auth.password_too_short");
@@ -413,7 +414,7 @@ export class InvitationsService {
       const inv = await this.pendingByToken(token);
       const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
       if (!user) throw memberError("invitations.invalid");
-      if (user.email.toLowerCase() !== inv.email) throw memberError("invitations.email_mismatch");
+      if (normalizeEmail(user.email) !== normalizeEmail(inv.email)) throw memberError("invitations.email_mismatch");
       const tokenHash = inv.tokenHash;
       const out = await this.prisma.$transaction(async (tx) => {
         await this.consume(tx, inv, { tokenHash });

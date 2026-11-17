@@ -387,6 +387,8 @@ describe("inviteByEmail never changes an existing user's password", () => {
     prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue(existingUser),
+        // The email lookup is case-insensitive (findFirst).
+        findFirst: jest.fn().mockResolvedValue(existingUser),
         create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new", ...data })),
         update: jest.fn(),
         delete: jest.fn(),
@@ -427,6 +429,7 @@ describe("inviteByEmail never changes an existing user's password", () => {
 
   it("invite of a new user still sets the password", async () => {
     prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.findFirst.mockResolvedValue(null);
     const res = await svc.inviteByEmail(
       "ws1",
       { email: "n@b.co", role: "agent", name: "New", password: "secret12" } as never,

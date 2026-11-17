@@ -400,3 +400,18 @@ describe("InvitationsService (SP-26)", () => {
   });
 });
 
+describe("invitation email letter case (SP-20 live verification F2)", () => {
+  it("an invite email-match is case-insensitive, also for accounts stored in upper case", async () => {
+    const w = makeWorld();
+    // An account stored before emails were normalised.
+    w.db.user.find((u) => u.id === U.other)!.email = "Other@Else.TEST";
+    await w.invitations.create(WS, { email: "OTHER@else.test", roleId: R.agent }, owner);
+    expect(w.db.invitation[0].email).toBe("other@else.test");
+    const token = tokenOf(w.email.lastTo("other@else.test")?.text);
+    // Signed in as that account: its email matches whatever the case.
+    await expect(w.invitations.acceptSignedIn(U.other, token)).resolves.toMatchObject({ userId: U.other, workspaceId: WS });
+    // An existing member stored in upper case is still found (409, not a second account).
+    w.db.user.find((u) => u.id === U.agent)!.email = "AGENT@ACME.TEST";
+    expect(await failure(w.invitations.create(WS, { email: "agent@acme.test", roleId: R.viewer }, owner))).toMatchObject({ status: 409, key: "invitations.already_member" });
+  });
+});

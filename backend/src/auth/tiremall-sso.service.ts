@@ -1,3 +1,4 @@
+import { normalizeEmail } from "./email";
 import { isPaymentLocked } from "../billing/payment-lock";
 import { paymentOverdue } from "../billing/payment-lock.service";
 import {
@@ -115,7 +116,7 @@ export class TiremallSsoService {
         update: claims.name ? { name: safeName, initials: initialsOf(safeName) } : {},
         create: {
           tiremallUserId: claims.sub,
-          email: email.toLowerCase(),
+          email: normalizeEmail(email),
           name: safeName,
           initials: initialsOf(safeName),
           role: "Agent",
