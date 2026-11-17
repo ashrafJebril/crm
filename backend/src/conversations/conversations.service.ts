@@ -17,6 +17,7 @@ import { LOutboundService } from "../integrations/l-outbound.service";
 import { ChannelResolver, pickEffectiveChannel } from "../channels/channel-resolver.service";
 import { ChannelTransportRegistry, type TransportConversation } from "../channels/channel-transport";
 import { channelError } from "../channels/channel-errors";
+import { deliverViaTransport } from "../channels/deliver-via-transport";
 import { ensureLegacyChannels } from "../channels/legacy-mirror";
 import {
   CreateConversationDto,
@@ -389,53 +390,14 @@ export class ConversationsService {
     });
     if (!conv) throw new NotFoundException("Conversation not found");
 
-    const channel = await this.channels.forSend(workspaceId, conv);
-    const transport = this.transports.get(channel.provider);
-    if (!transport) throw channelError("channels.transport_unavailable", { provider: channel.provider });
-
-    const target: TransportConversation = {
-      id: conv.id,
+    // SP-22: the transport write is shared with the AI auto-reply.
+    const { message } = await deliverViaTransport(
+      { prisma: this.prisma, realtime: this.realtime, channels: this.channels, transports: this.transports, logger: this.logger },
       workspaceId,
-      channel: conv.channel,
-      channelId: channel.id,
-      externalId: conv.externalId,
-      contactId: conv.contactId,
-      contact: conv.contact ?? null,
-    };
-    const { providerMessageId } = await transport.sendText(channel, target, text);
-
-    const now = new Date();
-    const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const message = await this.prisma.message.create({
-      data: {
-        workspaceId,
-        conversationId: conv.id,
-        from: "human",
-        body: text,
-        t,
-        metaMessageId: providerMessageId,
-        deliveryStatus: providerMessageId ? "sent" : null,
-        deliveryStatusAt: providerMessageId ? now : null,
-        ...sentByData(staffSenderId(viewer)),
-      },
-    });
-    await this.prisma.conversation.update({
-      where: { id: conv.id },
-      // A human reply takes an AI-handled thread over, as in addMessage.
-      data: { preview: text.slice(0, 140), lastAt: "now", lastFrom: "human", unread: 0, aiPausedAt: now },
-    });
-    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
-      channel: conv.channel,
-      channelId: channel.id,
-      conversationId: conv.id,
-    });
-    if (transport.delivered) {
-      try {
-        await transport.delivered(channel, target, message);
-      } catch (e) {
-        this.logger.warn(`post-delivery hook failed for ${channel.provider}: ${(e as Error).message}`);
-      }
-    }
+      conv,
+      text,
+      { from: "human", extra: sentByData(staffSenderId(viewer)) },
+    );
     return { ok: true as const, message };
   }
 }
