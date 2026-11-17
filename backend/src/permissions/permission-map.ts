@@ -115,7 +115,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /auth/sso/kewy": "public",
   "POST /auth/sso/tiremall": "public",
   // SP-26: invitation preview/accept for a signed-out invitee (token-gated, rate-limited).
-  "GET /invitations/preview": "public",
+  "POST /invitations/preview": "public",
   // SP-26 Task 2: password reset and the second login step (rate-limited).
   "POST /auth/password/forgot": "public",
   "POST /auth/password/reset": "public",

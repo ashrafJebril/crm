@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpException, HttpStatus, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, HttpCode, HttpException, HttpStatus, Post, Req } from "@nestjs/common";
 import type { Request } from "express";
 import { Public } from "../auth/public.decorator";
 import { AuthService } from "../auth/auth.service";
@@ -38,9 +38,11 @@ export class PublicInvitationsController {
     }
   }
 
+  /** The token travels in the body, never in a URL that access logs keep. */
   @Public()
-  @Get("preview")
-  preview(@Query("token") token: unknown, @Req() req: Request) {
+  @Post("preview")
+  @HttpCode(200)
+  preview(@Body("token") token: unknown, @Req() req: Request) {
     this.limit(req);
     return this.invitations.preview(token);
   }

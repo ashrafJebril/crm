@@ -97,7 +97,8 @@ export class PasswordResetService {
         to: user.email,
         lang,
         name: user.name,
-        link: `${appPublicUrl()}/reset?token=${encodeURIComponent(token)}`,
+        // A hash link: the token never reaches a server (no access log, no referrer).
+        link: `${appPublicUrl()}/#/reset-password?token=${encodeURIComponent(token)}`,
         minutes: Math.round(RESET_TTL_MS / 60_000),
       }),
     );

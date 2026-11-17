@@ -33,11 +33,28 @@ function current(hash: string): PublicPage | null {
   return parsePublicFragment(hash);
 }
 
+/**
+ * A token link opened in an already-running tab (pasted, or followed from
+ * another page of the app): the hash changes without a reload, so the boot
+ * capture never saw it. Capture and scrub it now, exactly like at boot
+ * (review M3). Returns the page when a token link was handled.
+ */
+export function captureTokenLink(win: Pick<Window, "location" | "history">): PublicPage | null {
+  if (!/[?&]token=/.test(win.location.hash) && !/[?&]token=/.test(win.location.search)) return null;
+  return captureFromLocation(win);
+}
+
+/** The page the app shows for a hash, after any token link in it was captured. */
+export function pageForHash(win: Pick<Window, "location" | "history">): PublicPage | null {
+  captureTokenLink(win);
+  return current(win.location.hash);
+}
+
 /** The public page for the current hash (re-evaluated on hashchange). */
 export function usePublicPage(): PublicPage | null {
   const [page, setPage] = useState<PublicPage | null>(() => current(window.location.hash));
   useEffect(() => {
-    const on = () => setPage(current(window.location.hash));
+    const on = () => setPage(pageForHash(window));
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);

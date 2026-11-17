@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { api } from "@/api/client";
+import { api, withSessionChange } from "@/api/client";
 import { useAuth, type LoginResponse } from "@/auth/context";
 import type { Tx } from "@/lib/tx";
 import { memberErrorText } from "@/screens/team/memberErrors";
@@ -75,8 +75,12 @@ export function TwoFactorCard({ tx, onStatus }: { tx: Tx; onStatus: (m: string) 
 
   const enable = () =>
     run(async () => {
-      const res = await api.post<LoginResponse & { recoveryCodes: string[] }>("/auth/2fa/enable", { code });
-      adoptSession(res);
+      // Turning 2FA on ends every session: hold stale 401s until the new token is in (I1).
+      const res = await withSessionChange(async () => {
+        const r = await api.post<LoginResponse & { recoveryCodes: string[] }>("/auth/2fa/enable", { code });
+        adoptSession(r);
+        return r;
+      });
       setSetup(null);
       setCodes(res.recoveryCodes);
       setStep("codes");
@@ -86,8 +90,7 @@ export function TwoFactorCard({ tx, onStatus }: { tx: Tx; onStatus: (m: string) 
 
   const disable = () =>
     run(async () => {
-      const res = await api.post<LoginResponse>("/auth/2fa/disable", { password, ...factor() });
-      adoptSession(res);
+      await withSessionChange(async () => adoptSession(await api.post<LoginResponse>("/auth/2fa/disable", { password, ...factor() })));
       setStep("idle");
       reset();
       onStatus(tx("Two-step verification is off. You were signed out on other devices.", "تم إيقاف التحقق بخطوتين وتسجيل خروجك من الأجهزة الأخرى."));

@@ -23,7 +23,7 @@ async function requestReset(w: ReturnType<typeof makeAuthWorld>, email: string, 
   expect(w.resets.forgot(email, "en", ip)).toEqual({ ok: true });
   await w.resets.pending;
   const mail = w.email.lastTo(email);
-  return mail ? tokenOf(mail.text.replace("/reset?token=", "/x?token=")) : null;
+  return mail ? tokenOf(mail.text.replace("/#/reset-password?token=", "/x?token=")) : null;
 }
 
 describe("PasswordResetService (SP-26)", () => {
@@ -33,6 +33,15 @@ describe("PasswordResetService (SP-26)", () => {
   });
   afterEach(() => {
     process.env = { ...env };
+  });
+
+  it("the emailed reset link is a hash link (the token never reaches a server)", async () => {
+    const w = makeAuthWorld();
+    expect(w.resets.forgot("agent@acme.test", "en", "9.9.9.9")).toEqual({ ok: true });
+    await w.resets.pending;
+    const text = w.email.lastTo("agent@acme.test")?.text ?? "";
+    expect(text).toMatch(/\/#\/reset-password\?token=[A-Za-z0-9_-]{43}/);
+    expect(text).not.toMatch(/\/reset\?token=/);
   });
 
   it("reset token hashed and single-use", async () => {

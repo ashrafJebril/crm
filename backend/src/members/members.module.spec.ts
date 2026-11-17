@@ -38,6 +38,10 @@ describe("SP-26 module wiring (no database)", () => {
     expect((ws as unknown as { twoFactor?: unknown }).twoFactor).toBeInstanceOf(TwoFactorService);
     expect(mod.get(AuthController)).toBeDefined();
     expect(mod.get(PublicInvitationsController)).toBeDefined();
+    // The preview takes the token in a POST body, never in the URL.
+    const proto = PublicInvitationsController.prototype as unknown as Record<string, unknown>;
+    expect(Reflect.getMetadata("method", proto.preview as object)).toBe(1); // RequestMethod.POST
+    expect(Reflect.getMetadata("path", proto.preview as object)).toBe("preview");
     expect(mod.get<{ enabled: boolean }>(EMAIL_SENDER).enabled).toBe(false);
     await mod.close();
   });

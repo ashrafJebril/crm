@@ -291,7 +291,8 @@ export class InvitationsService {
 
   /** Email the link, or (email off) return it once to the inviter. */
   private async deliver(inv: InvitationRow, token: string): Promise<InvitationWriteResult> {
-    const link = `${appPublicUrl()}/invite?token=${encodeURIComponent(token)}`;
+    // A hash link: the token never reaches a server (no access log, no referrer).
+    const link = `${appPublicUrl()}/#/accept-invite?token=${encodeURIComponent(token)}`;
     const invitation = this.toDto(inv);
     if (!this.email.enabled) return { invitation, link, emailSent: false };
     try {
@@ -328,7 +329,7 @@ export class InvitationsService {
     return inv;
   }
 
-  /** GET /invitations/preview?token= (public). */
+  /** POST /invitations/preview {token} (public). */
   async preview(token: unknown) {
     const inv = await this.pendingByToken(token);
     const [ws, role, inviter, account] = await Promise.all([

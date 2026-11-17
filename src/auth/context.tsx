@@ -4,11 +4,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { api, setPaymentOverdueHandler, setUnauthorizedHandler, tokenStore } from "@/api/client";
-import { disconnectSocket, ensureSocket } from "@/api/realtime";
+import { disconnectSocket, ensureSocket, reconnectSocket } from "@/api/realtime";
+import { nextSessionNotice, pickActiveWorkspace } from "./sessionModel";
 import { bootPaymentOverdue } from "@/lib/paymentLock";
 import type { Workspace } from "@/lib/types";
 
@@ -116,6 +118,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => readImpersonatingFromToken(),
   );
   const [sessionNotice, setSessionNotice] = useState<SessionNotice>(null);
+  // The workspace on screen, for adoptSession (M6) without a stale closure.
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeWorkspace?.id ?? null;
 
   // Bootstrap: if we already have a token, validate it and load workspaces.
   useEffect(() => {
@@ -156,12 +161,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const adoptSession = useCallback((res: LoginResponse) => {
     tokenStore.set(res.token);
+    // SP-26 I2: the server ended the old socket for good after a 2FA change;
+    // reconnect it so the handshake carries the new token (no-op at login).
+    reconnectSocket();
     setUser(res.user);
     setWorkspaces(res.workspaces);
-    const active =
-      res.workspaces.find((w) => w.id === res.activeWorkspaceId) ??
-      (res.activeWorkspaceId ? res.workspaces[0] : null) ??
-      null;
+    // M6: keep the workspace on screen unless it is no longer valid.
+    const active = pickActiveWorkspace(activeIdRef.current, res);
+    activeIdRef.current = active?.id ?? null;
     setActiveWorkspace(active);
     setImpersonating(readImpersonatingFromToken());
     setSessionNotice(null);
@@ -222,7 +229,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // why.
   useEffect(() => {
     setUnauthorizedHandler((reason) => {
-      setSessionNotice(reason === "auth.session_expired" ? "session_expired" : null);
+      // A later unrelated 401 never clears the "password or 2FA changed" notice.
+      setSessionNotice((prev) => nextSessionNotice(prev, reason));
       logout();
     });
     return () => setUnauthorizedHandler(null);

@@ -43,7 +43,8 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
     }
     let cancelled = false;
     api
-      .get<Preview>(`/invitations/preview?token=${encodeURIComponent(token)}`)
+      // POST: the token stays out of URLs and access logs (review M2).
+      .post<Preview>("/invitations/preview", { token })
       .then((p) => !cancelled && setPreview(p))
       .catch((e) => !cancelled && setLoadError(memberErrorText(e, tx)));
     return () => {

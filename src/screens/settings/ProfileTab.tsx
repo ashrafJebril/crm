@@ -3,7 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth, type AuthUser } from "@/auth/context";
 import { useMutation } from "@/api/useFetch";
-import { api } from "@/api/client";
+import { api, withSessionChange } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
 import { TwoFactorCard } from "./TwoFactorCard";
@@ -67,9 +67,12 @@ export function ProfileTab() {
       return;
     }
     try {
-      const res = await passMut.mutate({ currentPassword: currentPw, newPassword: newPw });
-      // SP-26: a password change ends every other session; keep this one.
-      if (res?.token) adoptToken(res.token);
+      // SP-26: a password change ends every other session; keep this one. Old
+      // in-flight requests' 401s are held until the new token is in place (I1).
+      await withSessionChange(async () => {
+        const res = await passMut.mutate({ currentPassword: currentPw, newPassword: newPw });
+        if (res?.token) adoptToken(res.token);
+      });
       setCurrentPw("");
       setNewPw("");
       setConfirmPw("");

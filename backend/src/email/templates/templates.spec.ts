@@ -32,7 +32,7 @@ describe("email templates (SP-26)", () => {
       workspaceName: "Acme <script>",
       inviterName: "Sara",
       roleName: "Agent",
-      link: "https://app.test/invite?token=abc&x=1",
+      link: "https://app.test/#/accept-invite?token=abc&x=1",
       expiresAt: new Date("2026-11-24T00:00:00Z"),
     };
     const ar = inviteEmail({ ...base, lang: "ar" });
@@ -40,8 +40,8 @@ describe("email templates (SP-26)", () => {
     expect(ar.html).toMatch(/dir="rtl"/);
     expect(ar.html).not.toContain("<script>");
     expect(ar.html).toContain("Acme &lt;script&gt;");
-    expect(ar.html).toContain("https://app.test/invite?token=abc&amp;x=1");
-    expect(ar.text).toContain("https://app.test/invite?token=abc&x=1");
+    expect(ar.html).toContain("https://app.test/#/accept-invite?token=abc&amp;x=1");
+    expect(ar.text).toContain("https://app.test/#/accept-invite?token=abc&x=1");
     expect(ar.text).toMatch(/2026/); // Latin digits
     expect(ar.html).not.toMatch(/You're invited/);
     expect(ar.kind).toBe("invite");
@@ -54,13 +54,13 @@ describe("email templates (SP-26)", () => {
   });
 
   it("reset email is one language and carries the link and expiry", () => {
-    const en = resetEmail({ to: "a@x.test", lang: "en", name: "Ann <b>", link: "https://app.test/reset?token=t&y=1", minutes: 30 });
+    const en = resetEmail({ to: "a@x.test", lang: "en", name: "Ann <b>", link: "https://app.test/#/reset-password?token=t&y=1", minutes: 30 });
     expect(en).toMatchObject({ subject: "Reset your password", kind: "password_reset" });
     expect(en.html).toMatch(/dir="ltr"/);
     expect(en.html).toContain("Ann &lt;b&gt;");
     expect(en.html).toContain("token=t&amp;y=1");
     expect(en.text).toContain("30 minutes");
-    const ar = resetEmail({ to: "a@x.test", lang: "ar", name: null, link: "https://app.test/reset?token=t", minutes: 30 });
+    const ar = resetEmail({ to: "a@x.test", lang: "ar", name: null, link: "https://app.test/#/reset-password?token=t", minutes: 30 });
     expect(ar.html).toMatch(/dir="rtl"/);
     expect(ar.subject).toBe("إعادة تعيين كلمة المرور");
     expect(ar.html).not.toMatch(/Reset your password/);

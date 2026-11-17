@@ -43,7 +43,7 @@ const ROLES: WorkspaceRole[] = ["owner", "admin", "agent", "viewer"];
 export function MembersTab() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { activeWorkspace, user } = useAuth();
+  const { activeWorkspace, user, impersonating } = useAuth();
 
   const wsId = activeWorkspace?.id;
   const { can } = usePermissions();
@@ -382,16 +382,19 @@ export function MembersTab() {
                       >
                         {tx("Reset password", "إعادة تعيين كلمة المرور")}
                       </button>
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        onClick={() => onRemove(m)}
-                        disabled={removeMut.loading || !canRemove}
-                        title={canRemove ? undefined : noPerm}
-                        style={{ color: "var(--bad)" }}
-                      >
-                        {tx("Remove", "حذف")}
-                      </button>
+                      {/* Never while impersonating (SP-26 review M1). */}
+                      {!impersonating && (
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          onClick={() => onRemove(m)}
+                          disabled={removeMut.loading || !canRemove}
+                          title={canRemove ? undefined : noPerm}
+                          style={{ color: "var(--bad)" }}
+                        >
+                          {tx("Remove", "حذف")}
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, type CSSProperties } from "react";
+import { memo, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import type { Tx } from "@/lib/tx";
@@ -28,6 +28,8 @@ import {
 import { AUDIT_ACTIONS, auditActionLabel, auditLine, auditTime } from "@/screens/team/auditModel";
 import { memberErrorText } from "@/screens/team/memberErrors";
 import { MemberHandoverDialog } from "@/screens/team/MemberHandoverDialog";
+import { memberActions } from "@/screens/team/memberActions";
+import { copyText } from "@/lib/copyText";
 
 type Tab = "members" | "pending" | "roles" | "activity";
 
@@ -89,7 +91,6 @@ function InviteModal({ wsId, roles, tx, lang, onClose, onSent }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
   const send = async () => {
@@ -135,11 +136,8 @@ function InviteModal({ wsId, roles, tx, lang, onClose, onSent }: {
                 "البريد غير مُعدّ، لذا شارك هذا الرابط معهم بنفسك. يظهر الآن فقط، ويعمل مرة واحدة، وتنتهي صلاحيته خلال 7 أيام.",
               )}
             </div>
-            <input readOnly dir="ltr" value={link} onFocus={(e) => e.currentTarget.select()} style={{ ...inputStyle, fontFamily: "var(--font-mono)", fontSize: 12 }} />
+            <CopyLinkField link={link} tx={tx} />
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn" onClick={() => void navigator.clipboard?.writeText(link).then(() => setCopied(true))}>
-                {copied ? tx("Copied", "تم النسخ") : tx("Copy link", "نسخ الرابط")}
-              </button>
               <button className="btn primary" onClick={onClose}>
                 {tx("Done", "تم")}
               </button>
@@ -237,11 +235,8 @@ function PendingTab({ wsId, tx, lang, canCreate, canDelete }: { wsId: string; tx
       {link && (
         <div className="card" style={{ padding: 12, display: "grid", gap: 8 }}>
           <div style={{ fontSize: 13 }}>{tx("Email is off: share this new link yourself. The old link no longer works.", "البريد غير مُفعّل: شارك هذا الرابط الجديد بنفسك. الرابط القديم لم يعد يعمل.")}</div>
-          <input readOnly dir="ltr" value={link} onFocus={(e) => e.currentTarget.select()} style={{ ...inputStyle, fontFamily: "var(--font-mono)", fontSize: 12, marginTop: 0 }} />
+          <CopyLinkField link={link} tx={tx} />
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn sm" onClick={() => void navigator.clipboard?.writeText(link)}>
-              {tx("Copy link", "نسخ الرابط")}
-            </button>
             <button className="btn sm ghost" onClick={() => setLink(null)}>
               {tx("Done", "تم")}
             </button>
@@ -385,19 +380,65 @@ function ActivityTab({ wsId, tx, lang, timeZone }: { wsId: string; tx: Tx; lang:
 
 /* ─── Team screen ────────────────────────────────────────────────────── */
 
+/**
+ * A one-time invitation link with Copy. When the clipboard API is missing or
+ * denied, the link is selected and the button becomes "Select and copy" with
+ * a hint to copy it by hand (review M4).
+ */
+function CopyLinkField({ link, tx }: { link: string; tx: Tx }) {
+  const ref = useRef<HTMLInputElement | null>(null);
+  const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
+  const select = () => {
+    ref.current?.focus();
+    ref.current?.select();
+  };
+  const copy = async () => {
+    if (state === "manual") {
+      select();
+      try {
+        // Legacy path for browsers without the async clipboard API.
+        if (document.execCommand?.("copy")) setState("copied");
+      } catch {
+        /* the selection stays for a manual copy */
+      }
+      return;
+    }
+    if (await copyText(link)) setState("copied");
+    else {
+      setState("manual");
+      select();
+    }
+  };
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <input ref={ref} readOnly dir="ltr" value={link} onFocus={(e) => e.currentTarget.select()} style={{ ...inputStyle, fontFamily: "var(--font-mono)", fontSize: 12, marginTop: 0 }} />
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button type="button" className="btn sm" onClick={() => void copy()}>
+          {state === "copied" ? tx("Copied", "تم النسخ") : state === "manual" ? tx("Select and copy", "حدّد وانسخ") : tx("Copy link", "نسخ الرابط")}
+        </button>
+        {state === "manual" && (
+          <span role="status" style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            {tx("Copying isn't allowed here. The link is selected: copy it with Ctrl+C (⌘C on Mac).", "النسخ غير مسموح هنا. تم تحديد الرابط: انسخه بـ Ctrl+C (أو ⌘C على ماك).")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TeamImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { activeWorkspace, user } = useAuth();
+  const { activeWorkspace, user, impersonating } = useAuth();
   const wsId = activeWorkspace?.id ?? null;
   const { can } = usePermissions();
   const { toast } = useToast();
   // Hidden actions are not rendered (the server refuses them anyway).
   const canView = can("members.view");
   const canInvite = can("members.create");
-  const canRemove = can("members.delete");
-  const canHandover = can("members.update");
   const canManage = can("members.manage");
+  // Row actions: Remove and the 2FA reset are hidden while impersonating (M1).
+  const actionsOf = (m: { twoFA: boolean }, self: boolean) => memberActions({ self, twoFA: m.twoFA, impersonating, can });
 
   const [tab, setTab] = useState<Tab>("members");
   const [showInvite, setShowInvite] = useState(false);
@@ -556,17 +597,17 @@ function TeamImpl() {
                           {day(m.joinedAt, t.lang)}
                         </td>
                         <td style={{ textAlign: "end", whiteSpace: "nowrap" }}>
-                          {!self && canHandover && (
+                          {actionsOf(m, self).includes("handover") && (
                             <button className="btn sm ghost" onClick={() => setDialog({ member: m, mode: "handover" })}>
                               {tx("Hand over work", "تسليم العمل")}
                             </button>
                           )}
-                          {!self && canManage && m.twoFA && (
+                          {actionsOf(m, self).includes("reset2fa") && (
                             <button className="btn sm ghost" onClick={() => void resetTwoFa(m)}>
                               {tx("Reset 2FA", "إعادة تعيين التحقق")}
                             </button>
                           )}
-                          {!self && canRemove && (
+                          {actionsOf(m, self).includes("remove") && (
                             <button className="btn sm danger" style={{ marginInlineStart: 6 }} onClick={() => setDialog({ member: m, mode: "remove" })}>
                               {tx("Remove member", "إزالة العضو")}
                             </button>
@@ -582,7 +623,7 @@ function TeamImpl() {
         </div>
       )}
 
-      {tab === "pending" && wsId && canView && <PendingTab wsId={wsId} tx={tx} lang={t.lang} canCreate={canInvite} canDelete={canRemove} />}
+      {tab === "pending" && wsId && canView && <PendingTab wsId={wsId} tx={tx} lang={t.lang} canCreate={canInvite} canDelete={can("members.delete")} />}
       {tab === "roles" && <RolesTab />}
       {tab === "activity" && wsId && canManage && <ActivityTab wsId={wsId} tx={tx} lang={t.lang} timeZone={activeWorkspace?.timezone} />}
 
