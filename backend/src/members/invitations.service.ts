@@ -8,6 +8,7 @@ import { AuditService } from "../audit/audit.service";
 import { EMAIL_SENDER, type EmailSender } from "../email/email-sender";
 import { inviteEmail } from "../email/templates/invite";
 import { emailLang } from "../email/templates/layout";
+import { maskEmail } from "./mask-email";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import { workspaceContext } from "../common/workspace-context";
 import { memberError } from "./member-errors";
@@ -212,7 +213,8 @@ export class InvitationsService {
         action: "invitation.created",
         targetKind: "invitation",
         targetId: created.id,
-        meta: { email, roleId: role.id },
+        // Audit rows keep only a masked email for a non-member (plan: audit log).
+        meta: { emailMasked: maskEmail(email), roleId: role.id },
       });
       return created as InvitationRow;
     });
@@ -253,7 +255,7 @@ export class InvitationsService {
         action: "invitation.resent",
         targetKind: "invitation",
         targetId: inv.id,
-        meta: { email: inv.email, sendCount: inv.sendCount + 1 },
+        meta: { emailMasked: maskEmail(inv.email), sendCount: inv.sendCount + 1 },
       });
       return (await tx.invitation.findUnique({ where: { id: inv.id }, include: this.include })) as InvitationRow;
     });
@@ -277,7 +279,7 @@ export class InvitationsService {
         action: "invitation.revoked",
         targetKind: "invitation",
         targetId: inv.id,
-        meta: { email: inv.email },
+        meta: { emailMasked: maskEmail(inv.email) },
       });
     });
     return { ok: true };
@@ -340,7 +342,8 @@ export class InvitationsService {
     ]);
     if (!ws) throw memberError("invitations.invalid");
     return {
-      email: inv.email,
+      // The token proves only that the link was opened: the address stays masked (plan: emailMasked).
+      emailMasked: maskEmail(inv.email),
       lang: emailLang(inv.lang),
       workspace: { id: ws.id, name: ws.name },
       role: role && role.workspaceId === inv.workspaceId ? { id: role.id, name: role.name, nameAr: role.nameAr } : null,
@@ -459,7 +462,8 @@ export class InvitationsService {
       action: "invitation.accepted",
       targetKind: "invitation",
       targetId: inv.id,
-      meta: { email: inv.email, roleId, rolePending },
+      // Now a member: the row names them by user id (actorId), never the email.
+      meta: { userId, roleId, rolePending },
     });
     return rolePending;
   }

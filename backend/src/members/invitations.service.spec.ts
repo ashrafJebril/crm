@@ -3,6 +3,7 @@ import { FakeEmailSender } from "../email/fake-email-sender";
 import { InvitationsService } from "./invitations.service";
 import { INVITE_MAX_LIFETIME_MS, INVITE_RESEND_GAP_MS, INVITE_RESEND_MAX, INVITE_TTL_MS } from "./members-constants";
 import { hashToken } from "./token-hash";
+import { maskEmail } from "./mask-email";
 import { makeWorld, NOW, R, tokenOf, U, withRollback, WS, WS2 } from "./__fixtures__/members-world";
 
 const owner = { userId: U.owner };
@@ -361,4 +362,41 @@ describe("InvitationsService (SP-26)", () => {
       expect(JSON.stringify(w.db.auditLog)).not.toMatch(/token|password|s3cret/i);
     });
   });
+
+  describe("non-member emails stay masked (live verification F1/F2)", () => {
+    it("maskEmail keeps the first letter and the domain", () => {
+      expect(maskEmail("nora@example.com")).toBe("n***@example.com");
+      expect(maskEmail("a@x.test")).toBe("a***@x.test");
+      expect(maskEmail("no-at-sign")).toBe("***");
+    });
+
+    it("the public preview returns emailMasked, never the address", async () => {
+      const w = makeWorld();
+      await w.invitations.create(WS, { email: "nora@example.com", roleId: R.viewer }, owner);
+      const token = tokenOf(w.email.lastTo("nora@example.com")?.text);
+      const p = await w.invitations.preview(token);
+      expect(p).toMatchObject({ emailMasked: "n***@example.com" });
+      expect(p).not.toHaveProperty("email");
+      expect(JSON.stringify(p)).not.toContain("nora@");
+    });
+
+    it("created, resent and revoked audit rows hold the masked email; accepted names the member by id", async () => {
+      const w = makeWorld();
+      const a = await w.invitations.create(WS, { email: "nora@example.com", roleId: R.viewer }, owner);
+      w.advance(INVITE_RESEND_GAP_MS + 1000);
+      await w.invitations.resend(WS, a.invitation.id, owner);
+      await w.invitations.revoke(WS, a.invitation.id, owner);
+      const b = await w.invitations.create(WS, { email: "omar@example.com", roleId: R.viewer }, owner);
+      const res = await w.invitations.acceptWithToken({ token: tokenOf(w.email.lastTo("omar@example.com")?.text), name: "Omar", password: "s3cret-pass" });
+      const meta = (action: string, id: string) => w.db.auditLog.find((r) => r.action === action && r.targetId === id)?.meta;
+      expect(meta("invitation.created", a.invitation.id)).toMatchObject({ emailMasked: "n***@example.com" });
+      expect(meta("invitation.resent", a.invitation.id)).toMatchObject({ emailMasked: "n***@example.com" });
+      expect(meta("invitation.revoked", a.invitation.id)).toEqual({ emailMasked: "n***@example.com" });
+      expect(meta("invitation.accepted", b.invitation.id)).toMatchObject({ userId: res.userId });
+      const rows = JSON.stringify(w.db.auditLog.filter((r) => r.action.startsWith("invitation.")));
+      expect(rows).not.toContain("nora@example.com");
+      expect(rows).not.toContain("omar@example.com");
+    });
+  });
 });
+
