@@ -1,4 +1,6 @@
-import { memo, useState } from "react";
+import { memo } from "react";
+import { useHashParam } from "@/lib/useHashParam";
+import { availableAgentTabs, pickAgentTab, type AgentTab } from "./agent/agentTabs";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { usePermissions } from "@/auth/usePermissions";
@@ -14,7 +16,7 @@ import { SkillsTab } from "./kewy-agent/skills/SkillsTab";
 
 // SP-20 adds the agent's settings and the "Try your agent" preview.
 // SP-22 adds the skills gallery (agent.view; actions gate themselves).
-type Tab = "settings" | "try" | "skills" | "knowledge" | "tools" | "mcp";
+type Tab = AgentTab;
 
 interface LStatus {
   connected: boolean;
@@ -23,7 +25,7 @@ interface LStatus {
 function KewyAgentImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { can } = usePermissions();
+  const { can, loading } = usePermissions();
   const canEditTools = can("agent.update");
   const canEditMcp = can("connectors.update");
   // SP-21: the knowledge (content, FAQs, guidelines, files, websites and the
@@ -32,7 +34,11 @@ function KewyAgentImpl() {
   // SP-20: settings for agent.view; the sandbox (a turn costs money, ruling 9) for agent.update.
   const canViewSettings = can("agent.view");
   const canTry = can("agent.update");
-  const [tab, setTab] = useState<Tab>(canViewSettings ? "settings" : canViewKnowledge ? "knowledge" : "tools");
+  // The tab is chosen only once permissions are known (else a cold load opens on Tools),
+  // honouring `#/agent?tab=…` when the member can open it. Clicking a tab updates the hash.
+  const [hashTab, setHashTab] = useHashParam("tab");
+  const tab = pickAgentTab({ loading, available: availableAgentTabs(can), requested: hashTab });
+  const setTab = (id: Tab) => setHashTab(id);
 
   const statusQ = useFetch<LStatus>("/integrations/l/status");
   const connected = statusQ.data?.connected === true;

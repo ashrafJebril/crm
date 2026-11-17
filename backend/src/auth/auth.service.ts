@@ -1,3 +1,4 @@
+import { emailWhere, normalizeEmail, pickByEmail } from "./email";
 import {
   BadRequestException,
   ConflictException,
@@ -62,7 +63,7 @@ export class AuthService {
    * response — is the same in every mode.
    */
   async login(dto: LoginDto, clientIp?: string) {
-    const email = dto.email.toLowerCase().trim();
+    const email = normalizeEmail(dto.email);
     const mode = authSource();
     if (mode === "local") return this.loginLocal(email, dto.password, { backfill: true });
 
@@ -107,7 +108,10 @@ export class AuthService {
   private async loginLocal(email: string, password: string, opts: { backfill: boolean }) {
     // One DB round-trip (user + memberships) plus the bcrypt compare; issue()
     // signs from this row instead of re-fetching.
-    const user = await this.prisma.user.findUnique({ where: { email }, include: LOGIN_INCLUDE });
+    // The normalised row first; then any letter case, so accounts stored before emails were normalised still sign in.
+    const user =
+      (await this.prisma.user.findUnique({ where: { email }, include: LOGIN_INCLUDE })) ??
+      (await this.prisma.user.findFirst({ where: emailWhere(email), include: LOGIN_INCLUDE }));
     // SSO-provisioned users have no local password — they come in via
     // POST /auth/sso/exchange, not this endpoint.
     if (!user || !user.password) throw new UnauthorizedException("Invalid credentials");
@@ -121,14 +125,14 @@ export class AuthService {
   private async loginWithKewy(email: string, auth: KewyAuthResult) {
     const ids = auth.identities.map((i) => i.externalUserId);
     const candidates = await this.prisma.user.findMany({
-      where: { OR: [...(ids.length ? [{ id: { in: ids } }] : []), { email }] },
+      where: { OR: [...(ids.length ? [{ id: { in: ids } }] : []), emailWhere(email)] },
       include: LOGIN_INCLUDE,
     });
     // Prefer a user Kewy itself linked (in identity order), else the email match.
     const byIdentity = ids
       .map((id) => candidates.find((u) => u.id === id))
       .find((u) => u !== undefined);
-    const user = byIdentity ?? candidates.find((u) => u.email === email);
+    const user = byIdentity ?? pickByEmail(candidates, email);
     if (!user) {
       this.logger.warn(`Kewy account ${auth.accountId} has no crm user`);
       throw new UnauthorizedException("Invalid credentials");
@@ -280,7 +284,7 @@ export class AuthService {
   private async expectsNoWorkspace(userId: string, email: string): Promise<boolean> {
     const [pending, removed] = await Promise.all([
       this.prisma.invitation.findFirst({
-        where: { email: email.toLowerCase(), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+        where: { ...emailWhere(email), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
         select: { id: true },
       }),
       this.prisma.auditLog.findFirst({
@@ -314,7 +318,9 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
-    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    // Stored normalised; a different-case duplicate of an existing account is refused.
+    const email = normalizeEmail(dto.email);
+    const exists = await this.prisma.user.findFirst({ where: emailWhere(email), select: { id: true } });
     if (exists) throw new ConflictException("Email already in use");
     const initials = dto.name
       .split(" ")
@@ -327,7 +333,7 @@ export class AuthService {
     const { workspace: ws, user } = await this.workspaces.createWithNewOwner(
       { name: dto.workspaceName ?? `${dto.name}'s workspace` },
       {
-        email: dto.email,
+        email,
         password: await bcrypt.hash(dto.password, 10),
         name: dto.name,
         role: dto.role ?? "Agent",

@@ -18,6 +18,7 @@ function build() {
   const handle: any = {
     user: {
       findUnique: jest.fn(({ where }: any) => Promise.resolve(users.find((u) => u.email === where.email) ?? null)),
+      findFirst: jest.fn(({ where }: any) => Promise.resolve(users.find((u) => String(u.email).toLowerCase() === String(where.email?.equals ?? where.email).toLowerCase()) ?? null)),
       create: jest.fn(({ data }: any) => {
         const u = { id: `u${users.length + 1}`, isSuperAdmin: false, ...data };
         users.push(u);
@@ -79,5 +80,19 @@ describe("AuthService.register atomicity", () => {
     const { auth, txOptions } = build();
     await auth.register(dto as never);
     expect(txOptions[0]).toMatchObject({ timeout: 30_000, maxWait: 10_000 });
+  });
+});
+
+describe("register email letter case (SP-20 live verification F2)", () => {
+  beforeEach(() => seed.mockReset().mockResolvedValue(undefined));
+
+  it("stores the email normalised and refuses a different-case duplicate", async () => {
+    const { auth, counts } = build();
+    const res = await auth.register({ ...dto, email: "  X-ownerA@Example.com " } as never);
+    expect(res.user.email).toBe("x-ownera@example.com");
+    for (const email of ["x-ownera@example.com", "X-OWNERA@EXAMPLE.COM", " X-ownerA@example.com"]) {
+      await expect(auth.register({ ...dto, email } as never)).rejects.toBeInstanceOf(ConflictException);
+    }
+    expect(counts().users).toBe(1);
   });
 });
