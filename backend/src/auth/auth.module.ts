@@ -14,6 +14,8 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
 import { requireJwtSecret } from "../common/jwt-secret";
 import { PermissionsModule } from "../permissions/permissions.module";
 import { PermissionGuard } from "../permissions/permission.guard";
+import { MembersModule } from "../members/members.module";
+import { PublicInvitationsController } from "../members/public-invitations.controller";
 
 @Module({
   imports: [
@@ -24,10 +26,14 @@ import { PermissionGuard } from "../permissions/permission.guard";
     }),
     WorkspacesModule,
     PermissionsModule,
+    // SP-26: the invitee's routes (GET /auth/invitations, accept).
+    MembersModule,
   ],
   // HJZ SSO bridge controller is inert unless AUTH_MODE=sso (the service
   // rejects calls), so registering it standalone-side is harmless.
-  controllers: [AuthController, SsoController, KewySsoController, TiremallSsoController],
+  // SP-26: PublicInvitationsController lives in members/ but needs AuthService
+  // to issue the session, so it is registered here (no module cycle).
+  controllers: [AuthController, SsoController, KewySsoController, TiremallSsoController, PublicInvitationsController],
   providers: [
     AuthService,
     SsoService,

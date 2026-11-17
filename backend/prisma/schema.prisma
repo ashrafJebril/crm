@@ -58,6 +58,19 @@ model User {
   /// SP-10 back-relations.
   staffResources        StaffResource[] @relation("StaffResourceUser")
   catalogImportsCreated CatalogImport[] @relation("CatalogImportCreatedBy")
+  /// SP-26 back-relations.
+  passwordResets        PasswordReset[] @relation("UserPasswordResets")
+  invitationsSent       Invitation[]    @relation("InvitationInvitedBy")
+  invitationsAccepted   Invitation[]    @relation("InvitationAcceptedBy")
+
+  /// SP-26: TOTP two-factor sign-in. `twoFA` above now means "TOTP enabled".
+  totpSecretEnc      String?   // enc:v1:… (token-crypto); never returned
+  totpPendingEnc     String?   // enrolment in progress
+  totpEnabledAt      DateTime?
+  totpLastStep       Int?      // replay guard (Int fits until year 6053 at 30 s steps)
+  totpRecoveryHashes String[]  @default([])
+  /// SP-26: carried as `sv` in the JWT; bumped to end every session.
+  sessionVersion     Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1300,6 +1313,10 @@ model Workspace {
   /// SP-21: agent knowledge sources.
   knowledgeSources  KnowledgeSource[]  @relation("WorkspaceKnowledgeSources")
 
+  /// SP-26: email invitations and the audit log.
+  invitations       Invitation[]       @relation("WorkspaceInvitations")
+  auditLogs         AuditLog[]         @relation("WorkspaceAuditLogs")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1350,9 +1367,68 @@ model Role {
 
   workspace Workspace         @relation("WorkspaceRoles", fields: [workspaceId], references: [id], onDelete: Cascade)
   members   WorkspaceMember[]
+  /// SP-26 back-relation.
+  invitations Invitation[]    @relation("RoleInvitations")
 
   @@unique([workspaceId, key])
   @@unique([workspaceId, name])
+}
+
+// SP-26: an email invitation to join a workspace. Only the sha256 of the emailed
+// token is stored; resend rotates it.
+model Invitation {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation("WorkspaceInvitations", fields: [workspaceId], references: [id], onDelete: Cascade)
+  email        String    // normalised: trimmed, lower-case
+  roleId       String?
+  role         Role?     @relation("RoleInvitations", fields: [roleId], references: [id], onDelete: SetNull)
+  lang         String    @default("ar") // "ar" | "en": email and accept-page language
+  tokenHash    String    @unique // sha256 hex of the emailed token
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  acceptedBy   User?     @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+  revokedAt    DateTime?
+  invitedById  String?
+  invitedBy    User?     @relation("InvitationInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  sendCount    Int       @default(1)
+  lastSentAt   DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+
+  @@index([workspaceId, email])
+  @@index([email])
+}
+
+// SP-26: the workspace audit log. actorId has no FK: the log outlives the user.
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAuditLogs", fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId     String?
+  actorKind   String    @default("user") // "user" | "system" | "api_key"
+  action      String
+  targetKind  String    // "member" | "invitation" | "role" | "workspace" | "user"
+  targetId    String?
+  meta        Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, action, createdAt])
+}
+
+// SP-26: a password reset request. Only the sha256 of the emailed token is stored.
+model PasswordReset {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation("UserPasswordResets", fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  requestedIp String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }
 
 // SP-03: a contacts/audience file import. The uploaded file lives in Media

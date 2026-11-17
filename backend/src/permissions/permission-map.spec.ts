@@ -376,6 +376,36 @@ describe("permission map", () => {
     for (const k of keys.filter((x) => / \/insights(\/|$)/.test(x))) expect({ k, p: ROUTE_PERMISSIONS[k] }).toEqual({ k, p: "reports.view" });
   });
 
+  it("permission map covers SP-26 routes", () => {
+    const sp26: Record<string, string> = {
+      "GET /workspaces/:id/invitations": "members.view",
+      "POST /workspaces/:id/invitations": "members.create",
+      "POST /workspaces/:id/invitations/:invId/resend": "members.create",
+      "DELETE /workspaces/:id/invitations/:invId": "members.delete",
+      "GET /invitations/preview": "public",
+      "POST /invitations/accept": "public",
+      "GET /auth/invitations": "authenticated",
+      "POST /auth/invitations/:invId/accept": "authenticated",
+      "GET /workspaces/:id/members/:userId/open-work": "members.delete",
+      "POST /workspaces/:id/members/:userId/handover": "members.update",
+      "DELETE /workspaces/:id/members/:userId": "members.delete",
+      "GET /workspaces/:id/audit": "members.manage",
+      "GET /auth/workspaces/by-slug/:slug": "authenticated",
+    };
+    for (const [k, p] of Object.entries(sp26)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // Every declared invitation/audit route is in the table (nothing unmapped or extra).
+    expect(keys.filter((k) => /\/(invitations|audit)(\/|$)/.test(k)).sort()).toEqual(
+      Object.keys(sp26).filter((k) => /\/(invitations|audit)(\/|$)/.test(k)).sort(),
+    );
+    // Route order: open-work and handover sit before the :userId catch-alls.
+    const ws = routes.filter((r) => r.key.includes("/workspaces/:id/members/:userId"));
+    const at = (k: string) => ws.findIndex((r) => r.key === k);
+    expect(at("GET /workspaces/:id/members/:userId/open-work")).toBeLessThan(at("PATCH /workspaces/:id/members/:userId"));
+    expect(at("POST /workspaces/:id/members/:userId/handover")).toBeLessThan(at("DELETE /workspaces/:id/members/:userId"));
+  });
+
     it("@RequirePermission overrides agree with the map", () => {
     for (const r of routes) {
       const p = Reflect.getMetadata(REQUIRE_PERMISSION_KEY, r.handler) as string | undefined;

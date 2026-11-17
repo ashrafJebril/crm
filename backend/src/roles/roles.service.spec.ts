@@ -29,7 +29,7 @@ describe("RolesService", () => {
       $transaction: jest.fn().mockImplementation((fn: any) => fn(prisma)),
     };
     permissions = { ensureSystemRoles: jest.fn(), invalidate: jest.fn(), assertCanGrant: jest.fn() };
-    svc = new RolesService(prisma, permissions as never);
+    svc = new RolesService(prisma, permissions as never, { record: jest.fn() } as never);
   });
 
   it("list returns roles with effective memberCount", async () => {
@@ -143,7 +143,7 @@ describe("RolesService", () => {
       effective = jest.fn().mockResolvedValue(eff(SYSTEM_ROLES.admin.permissions as never));
       (ps as any).effective = effective;
       (ps as any).invalidate = jest.fn();
-      real = new RolesService(prisma, ps);
+      real = new RolesService(prisma, ps, { record: jest.fn() } as never);
     });
 
     it("POST /roles with a permission the caller lacks -> 403", async () => {

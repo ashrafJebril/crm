@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Req } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthService } from "./auth.service";
 import {
@@ -10,6 +10,7 @@ import {
 } from "./dto";
 import { Public } from "./public.decorator";
 import type { JwtPayload } from "./auth.guard";
+import { InvitationsService } from "../members/invitations.service";
 
 /**
  * The end user's IP, forwarded to Kewy's per-IP login limit. On Fly the edge
@@ -24,7 +25,10 @@ function clientIp(req: Request): string | undefined {
 
 @Controller("auth")
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly invitations: InvitationsService,
+  ) {}
 
   @Public()
   @Post("login")
@@ -46,6 +50,25 @@ export class AuthController {
   @Get("workspaces")
   myWorkspaces(@Req() req: Request & { user: JwtPayload }) {
     return this.auth.myWorkspaces(req.user.sub);
+  }
+
+  /** SP-26: activation by slug (ruling 10). */
+  @Get("workspaces/by-slug/:slug")
+  workspaceBySlug(@Param("slug") slug: string, @Req() req: Request & { user: JwtPayload }) {
+    return this.auth.workspaceBySlug(req.user.sub, slug);
+  }
+
+  /** SP-26: the signed-in user's pending invitations (never auto-accepted). */
+  @Get("invitations")
+  myInvitations(@Req() req: Request & { user: JwtPayload }) {
+    return this.invitations.listForUser(req.user.sub);
+  }
+
+  /** SP-26: accept one of them; the session switches to that workspace. */
+  @Post("invitations/:invId/accept")
+  async acceptInvitation(@Param("invId") invId: string, @Req() req: Request & { user: JwtPayload }) {
+    const res = await this.invitations.acceptSignedIn(req.user.sub, invId);
+    return { ...(await this.auth.issueFor(res.userId, res.workspaceId)), rolePending: res.rolePending };
   }
 
   @Post("switch-workspace")

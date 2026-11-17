@@ -86,6 +86,14 @@ export class PrismaService implements OnModuleDestroy {
   get knowledgeSource() { return this.client.knowledgeSource; }
   get knowledgePage() { return this.client.knowledgePage; }
   get knowledgeChunk() { return this.client.knowledgeChunk; }
+  // SP-26: not tenant-scoped on purpose. Invitations are read and accepted
+  // from outside their workspace (public accept, the invitee's own list) and
+  // audit rows are written for the invited workspace while the request's
+  // context is another one, so every query names workspaceId explicitly.
+  // PasswordReset has no workspaceId.
+  get invitation() { return this.client.invitation; }
+  get auditLog() { return this.client.auditLog; }
+  get passwordReset() { return this.client.passwordReset; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

@@ -14,6 +14,8 @@ import { sanitizePermissions, type PermissionsJson } from "../permissions/catalo
 import { isEffectiveOwner } from "../permissions/member-role";
 import { SYSTEM_ROLES, isSystemRoleKey } from "../permissions/system-roles";
 import { seedWorkspaceDefaults, WORKSPACE_TX_OPTIONS } from "./workspace-defaults";
+import { AuditService } from "../audit/audit.service";
+import { HandoverService } from "../members/handover.service";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
@@ -52,6 +54,8 @@ export class WorkspacesService {
     private readonly prisma: PrismaService,
     private readonly kewySync: KewyIdentitySync,
     private readonly permissions: PermissionService,
+    private readonly audit: AuditService,
+    private readonly handover: HandoverService,
   ) {}
 
   async listForUser(userId: string) {
@@ -145,9 +149,21 @@ export class WorkspacesService {
     return ws;
   }
 
-  async update(id: string, dto: UpdateWorkspaceDto) {
+  async update(id: string, dto: UpdateWorkspaceDto, actor?: Actor) {
     await this.get(id);
-    return this.prisma.workspace.update({ where: { id }, data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.workspace.update({ where: { id }, data: dto });
+      // SP-26: which settings changed (names only; values may be long).
+      await this.audit.record(tx, {
+        workspaceId: id,
+        actorId: actor?.userId ?? null,
+        action: "workspace.settings_updated",
+        targetKind: "workspace",
+        targetId: id,
+        meta: { fields: Object.keys(dto).filter((k) => (dto as Record<string, unknown>)[k] !== undefined) },
+      });
+      return updated;
+    });
   }
 
   async requireMember(userId: string, workspaceId: string): Promise<WorkspaceRole> {
@@ -186,9 +202,18 @@ export class WorkspacesService {
     const target = await this.resolveTarget(workspaceId, { role: dto.role });
     await this.authorizeAssignment(workspaceId, actor, target);
     const roleId = target.roleId;
-    return this.prisma.workspaceMember.create({
+    const member = await this.prisma.workspaceMember.create({
       data: { userId: dto.userId, workspaceId, role: dto.role, roleId },
     });
+    await this.audit.record(this.prisma, {
+      workspaceId,
+      actorId: actor.userId,
+      action: "member.added",
+      targetKind: "member",
+      targetId: dto.userId,
+      meta: { role: dto.role, roleId },
+    });
+    return member;
   }
 
   /**
@@ -248,6 +273,15 @@ export class WorkspacesService {
     const roleId = target.roleId;
     const member = await this.prisma.workspaceMember.create({
       data: { userId: user.id, workspaceId, role: dto.role, roleId },
+    });
+    // SP-26: never the password; only whether an account was created.
+    await this.audit.record(this.prisma, {
+      workspaceId,
+      actorId: actor.userId,
+      action: "member.added",
+      targetKind: "member",
+      targetId: user.id,
+      meta: { role: dto.role, roleId, email, accountCreated: provisionedPassword !== undefined },
     });
 
     return {
@@ -351,10 +385,19 @@ export class WorkspacesService {
           await this.permissions.assertOwner(workspaceId, actor, "Only an owner can change an owner's role");
           if (target.legacyRole !== "owner") await this.assertAnotherOwner(tx, workspaceId, m.id);
         }
-        return tx.workspaceMember.update({
+        const row = await tx.workspaceMember.update({
           where: { id: m.id },
           data: { role: target.legacyRole, roleId: target.roleId },
         });
+        await this.audit.record(tx, {
+          workspaceId,
+          actorId: actor.userId,
+          action: "member.role_changed",
+          targetKind: "member",
+          targetId: userId,
+          meta: { from: { role: m.role, roleId: m.roleId }, to: { role: target.legacyRole, roleId: target.roleId } },
+        });
+        return row;
       },
       { isolationLevel: "Serializable" },
     ));
@@ -423,7 +466,16 @@ export class WorkspacesService {
     const hashed = await bcrypt.hash(dto.password, 10);
     // Kewy first so a strict failure leaves the local password unchanged.
     await this.kewySync.passwordReset(user, hashed);
-    await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { password: hashed } });
+      await this.audit.record(tx, {
+        workspaceId,
+        actorId: actor.userId,
+        action: "member.password_set_by_admin",
+        targetKind: "member",
+        targetId: userId,
+      });
+    });
     return {
       ok: true,
       user: { id: user.id, email: user.email, name: user.name },
@@ -431,22 +483,14 @@ export class WorkspacesService {
     };
   }
 
-  async removeMember(workspaceId: string, userId: string, actor: Actor) {
-    await this.serializable(() => this.prisma.$transaction(
-      async (tx) => {
-        const m = await this.findMember(tx, workspaceId, userId);
-        await this.permissions.assertCanActOn(workspaceId, actor, userId);
-        if (isEffectiveOwner(m)) {
-          await this.permissions.assertOwner(workspaceId, actor, "Only an owner can remove an owner");
-          await this.assertAnotherOwner(tx, workspaceId, m.id);
-        }
-        // Only the membership goes; the crm User (and so its Kewy identity) stays.
-        // Kewy resolves tenants from workspaces, so there is nothing to sync here.
-        await tx.workspaceMember.delete({ where: { id: m.id } });
-      },
-      { isolationLevel: "Serializable" },
-    ));
-    this.permissions.invalidate(workspaceId, userId);
-    return { ok: true };
+  /**
+   * SP-26: removal never orphans work. Delegates to
+   * HandoverService.removeWithHandover (one Serializable transaction: owner
+   * rules, open-work count, optional handover, delete, audit). Without
+   * `handoverTo`, a member holding open work is refused with 409
+   * members.handover_required.
+   */
+  async removeMember(workspaceId: string, userId: string, actor: Actor, handoverTo?: string) {
+    return this.handover.removeWithHandover(workspaceId, userId, actor, handoverTo);
   }
 }

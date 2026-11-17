@@ -52,6 +52,9 @@ import { StaffModule } from "./staff/staff.module";
 import { BookingsModule } from "./bookings/bookings.module";
 import { CatalogImportModule } from "./catalog-import/catalog-import.module";
 import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.module";
+import { EmailModule } from "./email/email.module";
+import { AuditModule } from "./audit/audit.module";
+import { MembersModule } from "./members/members.module";
 
 @Module({
   imports: [
@@ -60,6 +63,10 @@ import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.mo
     PrismaModule,
     KewyIdentityModule,
     BillingModule,
+    // SP-26: global email port and audit log, then members (invitations, handover).
+    EmailModule,
+    AuditModule,
+    MembersModule,
     AuthModule,
     // PermissionGuard is an APP_GUARD registered in AuthModule (after AuthGuard).
     PermissionsModule,

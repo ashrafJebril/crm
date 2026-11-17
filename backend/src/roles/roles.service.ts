@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PermissionService, type Actor } from "../permissions/permission.service";
 import { sanitizePermissions, validatePermissions } from "../permissions/catalog";
 import { resolveMemberRole } from "../permissions/member-role";
+import { AuditService } from "../audit/audit.service";
 import { CreateRoleDto, UpdateRoleDto } from "./roles.dto";
 
 const SYSTEM_ORDER = ["owner", "admin", "agent", "viewer"];
@@ -18,6 +19,7 @@ export class RolesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly permissions: PermissionService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Roles of the workspace with `memberCount` (effective role, so members
@@ -62,16 +64,28 @@ export class RolesService {
     const permissions = validatePermissions(dto.permissions);
     await this.permissions.assertCanGrant(workspaceId, actor, permissions, dto.conversationVisibility ?? "all");
     await this.assertNameFree(workspaceId, dto.name);
-    const role = await this.prisma.role.create({
-      data: {
+    const role = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.role.create({
+        data: {
+          workspaceId,
+          key: null,
+          name: dto.name.trim(),
+          nameAr: dto.nameAr.trim(),
+          isSystem: false,
+          permissions: permissions as Prisma.InputJsonValue,
+          conversationVisibility: dto.conversationVisibility ?? "all",
+        },
+      });
+      // SP-26 audit.
+      await this.audit.record(tx, {
         workspaceId,
-        key: null,
-        name: dto.name.trim(),
-        nameAr: dto.nameAr.trim(),
-        isSystem: false,
-        permissions: permissions as Prisma.InputJsonValue,
-        conversationVisibility: dto.conversationVisibility ?? "all",
-      },
+        actorId: actor.userId,
+        action: "role.created",
+        targetKind: "role",
+        targetId: created.id,
+        meta: { name: created.name, permissions, conversationVisibility: created.conversationVisibility },
+      });
+      return created;
     });
     return { ...role, permissions, memberCount: 0 };
   }
@@ -96,7 +110,23 @@ export class RolesService {
       data.conversationVisibility = dto.conversationVisibility;
     }
     // `key` is never writable: it is not in the DTO and not copied here.
-    const updated = await this.prisma.role.update({ where: { id }, data });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.role.update({ where: { id }, data });
+      // SP-26 audit: which fields changed, and the new matrix when it did.
+      await this.audit.record(tx, {
+        workspaceId,
+        actorId: actor.userId,
+        action: "role.updated",
+        targetKind: "role",
+        targetId: id,
+        meta: {
+          fields: Object.keys(data),
+          ...(data.permissions !== undefined ? { permissions: data.permissions } : {}),
+          ...(data.conversationVisibility !== undefined ? { conversationVisibility: data.conversationVisibility } : {}),
+        },
+      });
+      return row;
+    });
     // Every member of this role sees the change at once, not after the TTL.
     this.permissions.invalidate(workspaceId);
     return { ...updated, permissions: sanitizePermissions(updated.permissions) };
@@ -105,9 +135,9 @@ export class RolesService {
   /** The in-use check and the delete run in one Serializable transaction,
    *  so a concurrent assignment cannot slip in between; a serialization
    *  failure (P2034) is a retryable 409. */
-  async remove(workspaceId: string, id: string) {
+  async remove(workspaceId: string, id: string, actor?: Actor) {
     try {
-      return await this.removeTx(workspaceId, id);
+      return await this.removeTx(workspaceId, id, actor);
     } catch (e) {
       if ((e as { code?: string })?.code === "P2034") {
         throw new ConflictException("Another change happened at the same time — try again");
@@ -116,7 +146,7 @@ export class RolesService {
     }
   }
 
-  private removeTx(workspaceId: string, id: string) {
+  private removeTx(workspaceId: string, id: string, actor?: Actor) {
     return this.prisma.$transaction(async (tx) => {
       const role = await this.find(tx, workspaceId, id);
       if (role.isSystem) throw new BadRequestException("System roles cannot be deleted");
@@ -129,6 +159,14 @@ export class RolesService {
         });
       }
       await tx.role.delete({ where: { id } });
+      await this.audit.record(tx, {
+        workspaceId,
+        actorId: actor?.userId ?? null,
+        action: "role.deleted",
+        targetKind: "role",
+        targetId: id,
+        meta: { name: role.name },
+      });
       return { ok: true };
     }, { isolationLevel: "Serializable" });
   }
