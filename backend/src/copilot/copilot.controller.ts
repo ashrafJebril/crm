@@ -87,7 +87,8 @@ export class CopilotController {
     @Res() res: Response,
   ): Promise<void> {
     // Pre-flush: throws a normal HTTP error (400/403/404/409/429/503).
-    const turn = await this.turns.prepare(ws, viewer, dto);
+    // SP-26: the token's session version rides with the turn (a reset or 2FA change stops it).
+    const turn = await this.turns.prepare(ws, viewer, dto, new Date(), { sv: (req as Request & { user?: { sv?: number } }).user?.sv });
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");

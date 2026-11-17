@@ -47,6 +47,8 @@ describe("copilot error copy covers every SP-18 key in both languages", () => {
     expect(copilotKeyText("copilot.attachment_unavailable", en)).toBe("An attached image can't be loaded right now. Try again, or start a new chat.");
     expect(copilotKeyText("copilot.attachment_unavailable", ar)).toBe("تعذّر تحميل صورة مرفقة الآن. حاول مرة أخرى أو ابدأ محادثة جديدة.");
     expect(copilotKeyText("copilot.action_unknown", en)).toBe("Status unknown — check the record.");
+    expect(streamCodes()).toContain("copilot.session_expired");
+    expect(copilotKeyText("copilot.session_expired", en)).toMatch(/Sign in again/);
     expect(copilotKeyText("copilot.permission_revoked", ar)).toBe("تغيّرت صلاحياتك، لذلك لم يُنفَّذ شيء.");
     expect(copilotKeyText("copilot.ref_not_permitted", en, { index: 1 })).toContain("record 2");
     expect(copilotKeyText("copilot.attachment_too_large", en, { maxBytes: 5 * 1024 * 1024 })).toContain("5 MB");

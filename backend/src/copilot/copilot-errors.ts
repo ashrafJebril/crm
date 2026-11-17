@@ -30,7 +30,7 @@ export type CopilotErrorKey = keyof typeof COPILOT_ERROR_STATUS;
 export const COPILOT_ERROR_KEYS = Object.keys(COPILOT_ERROR_STATUS) as CopilotErrorKey[];
 
 /** `event: error {code}` values; every stream ends with `done` or one of these. */
-export const STREAM_ERROR_CODES = ["copilot.ai_failed", "copilot.refused", "copilot.limit", "copilot.timeout", "copilot.attachment_unavailable"] as const;
+export const STREAM_ERROR_CODES = ["copilot.ai_failed", "copilot.refused", "copilot.limit", "copilot.timeout", "copilot.attachment_unavailable", "copilot.session_expired"] as const;
 export type StreamErrorCode = (typeof STREAM_ERROR_CODES)[number];
 
 export function copilotError(key: CopilotErrorKey, extra: Record<string, unknown> = {}): HttpException {

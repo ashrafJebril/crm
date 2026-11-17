@@ -23,6 +23,7 @@ import { ConflictException, NotFoundException } from "@nestjs/common";
 import { buildRegistry } from "./copilot-tools/read-tools";
 import { CopilotActionsService } from "./copilot-actions.service";
 import { CopilotAttachmentsService } from "./copilot-attachments.service";
+import { SessionVersionService } from "../auth/session-version.service";
 import { fakeClaudeStream, type ScriptStep } from "./fake-claude-stream";
 import type { CopilotStreamDto } from "./copilot.dto";
 
@@ -218,7 +219,15 @@ export function copilotWorld(opts: WorldOpts = {}) {
   const sessions = new CopilotSessionsService(prisma);
   const refs = new CopilotRefsService(records);
   const actions = new CopilotActionsService(prisma, perm, sessions, registry);
-  const turns = new CopilotTurnService(prisma, claude, sessions, refs, perm, records, registry, actions, attachments);
+  // SP-26: the real session-version check (user rows without sessionVersion read as 0, like tokens without sv).
+  const sessionVersions = new SessionVersionService(prisma);
+  const turns = new CopilotTurnService(prisma, claude, sessions, refs, perm, records, registry, actions, attachments, sessionVersions);
+  /** A password reset or 2FA change: the user's sessions end. */
+  const bumpSession = (userId: string) => {
+    const u = (prisma.db.user as any[]).find((x) => x.id === userId);
+    u.sessionVersion = (u.sessionVersion ?? 0) + 1;
+    sessionVersions.bumped(userId);
+  };
   const controller = new CopilotController(turns, sessions, actions, attachments);
   /** Change a member's role (as the role editor would) and drop the cached role. */
   const setRole = (userId: string, permissions: Record<string, string[]>, conversationVisibility: "all" | "assigned" = "all") => {
@@ -245,7 +254,7 @@ export function copilotWorld(opts: WorldOpts = {}) {
 
   return {
     prisma, db: prisma.db as Record<string, any[]>, perm, records, search, tickets, bookings, knowledge, insights, sends, fake, claude, registry, sessions, refs, turns, controller, turn,
-    activities, moveTicket, knowledgeSources, media, pdfText, attachments, actions, roles, setRole, removeMember, restoreMember,
+    activities, moveTicket, knowledgeSources, media, pdfText, attachments, actions, roles, setRole, removeMember, restoreMember, sessionVersions, bumpSession,
   };
 }
 

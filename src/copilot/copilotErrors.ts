@@ -71,6 +71,7 @@ export const COPILOT_ERROR_COPY: Record<string, CopyFn> = {
   "copilot.refused": () => ["Kewy can't help with that request.", "لا يستطيع كيوي المساعدة في هذا الطلب."],
   "copilot.limit": () => ["That took too many steps. Try a narrower question.", "استغرق ذلك خطوات كثيرة. جرّب سؤالًا أدق."],
   "copilot.timeout": () => ["That took too long. Try again or ask something narrower.", "استغرق ذلك وقتًا طويلًا. حاول مرة أخرى أو اسأل سؤالًا أدق."],
+  "copilot.session_expired": () => ["Your session ended (your password or two-step verification changed). Sign in again to continue.", "انتهت جلستك (تغيّرت كلمة المرور أو التحقق بخطوتين). سجّل الدخول مجددًا للمتابعة."],
   "copilot.attachment_unavailable": () => ["An attached image can't be loaded right now. Try again, or start a new chat.", "تعذّر تحميل صورة مرفقة الآن. حاول مرة أخرى أو ابدأ محادثة جديدة."],
   // The client's own: the stream was cut (the answer may still arrive).
   [STREAM_LOST]: () => ["The connection dropped. Kewy's answer will appear here when it's ready.", "انقطع الاتصال. ستظهر إجابة كيوي هنا عندما تجهز."],

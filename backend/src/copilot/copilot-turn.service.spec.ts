@@ -496,3 +496,68 @@ describe("CopilotTurnService writes", () => {
     expect(results(w, 1).map((x) => JSON.parse(x.content).error)).toEqual(["not_found", "invalid", "invalid", "invalid", "not_found", "not_found"]);
   });
 });
+
+// ─── Final review: revoked sessions and support sessions ─────────────────
+describe("CopilotTurnService: session version and impersonation", () => {
+  const activity = (id = "w1") => toolUse(id, "create_activity", { kind: "call", title: "Call back", contactId: "c-layla" });
+
+  it("a session bump mid-turn stops further tool calls and auto-applies", async () => {
+    let w!: ReturnType<typeof copilotWorld>;
+    w = copilotWorld({
+      script: [
+        // The model asks for a read; meanwhile the member resets their password.
+        () => {
+          w.bumpSession(WRITER);
+          return { content: [toolUse("r1", "get_contact", { id: "c-layla" }), activity()], stop_reason: "tool_use" };
+        },
+        { content: [text("never reached")] },
+      ],
+    });
+    const t = await withKey(() => w.turn(WRITER, { approvalMode: "auto" }));
+    expect(t.last).toEqual({ event: "error", data: { code: "copilot.session_expired" } });
+    // No further model call, no tool ran, nothing applied or even proposed.
+    expect(w.fake.calls).toHaveLength(1);
+    expect(w.activities.create).not.toHaveBeenCalled();
+    expect(w.db.copilotPendingAction).toHaveLength(0);
+    expect(t.events.some((e) => e.event === "receipt" || e.event === "confirm")).toBe(false);
+    // The stored turn is closed (every tool call answered) and the lease is free.
+    expect(w.db.copilotSession[0].runningUntil).toBeNull();
+    const note = w.db.copilotMessage.find((m) => m.role === "note");
+    expect(note.text).toBe("copilot.session_expired");
+  });
+
+  it("a session already revoked before the first model call makes no call at all", async () => {
+    const w = copilotWorld({ script: [{ content: [activity()], stop_reason: "tool_use" }] });
+    const p = await withKey(() => w.turns.prepare(WS, viewer(WRITER), { message: "hi", approvalMode: "auto", lang: "en" } as any, NOW, { sv: 0 }));
+    w.bumpSession(WRITER);
+    const events: any[] = [];
+    await withKey(() => p.run((event, data) => events.push({ event, data })));
+    expect(events[events.length - 1]).toEqual({ event: "error", data: { code: "copilot.session_expired" } });
+    expect(w.fake.calls).toHaveLength(0);
+  });
+
+  it("support sessions (impersonation, super-admin) read but never propose or apply writes", async () => {
+    const w = copilotWorld({
+      script: [{ content: [toolUse("r1", "get_contact", { id: "c-layla" }), activity(), toolUse("m1", "move_ticket_stage", { ticketId: "t-hidden", stageId: "s2" })], stop_reason: "tool_use" }, { content: [text("ok")] }],
+    });
+    const p = await withKey(() => w.turns.prepare(WS, { userId: OWNER, bypass: true }, { message: "hi", approvalMode: "auto", lang: "en" } as any, NOW));
+    const events: any[] = [];
+    await withKey(() => p.run((event, data) => events.push({ event, data })));
+    const out = results(w, 1).map((r) => JSON.parse(r.content));
+    expect(out[0]).toMatchObject({ kind: "contact", id: "c-layla" });
+    expect(out[1]).toMatchObject({ error: "not_available" });
+    expect(out[1].note).toMatch(/not available while impersonating/);
+    expect(out[2]).toMatchObject({ error: "not_available" });
+    expect(w.db.copilotPendingAction).toHaveLength(0);
+    expect(w.activities.create).not.toHaveBeenCalled();
+    expect(w.moveTicket).not.toHaveBeenCalled();
+    expect(events.some((e) => e.event === "confirm" || e.event === "receipt")).toBe(false);
+    // And a support session cannot decide a member's card.
+    const w2 = copilotWorld({ script: [{ content: [activity()], stop_reason: "tool_use" }, { content: [text("ok")] }] });
+    await withKey(() => w2.turn(WRITER, {}));
+    const id = w2.db.copilotPendingAction[0].id;
+    expect(await httpError(w2.actions.approve(WS, { userId: WRITER, bypass: true }, id))).toMatchObject({ status: 404 });
+    expect(await httpError(w2.actions.decline(WS, { userId: WRITER, bypass: true }, id))).toMatchObject({ status: 404 });
+    expect(w2.db.copilotPendingAction[0].status).toBe("PENDING");
+  });
+});

@@ -2,7 +2,7 @@
  * SP-18 answers render a small markdown subset as React elements, never as
  * HTML (no dangerouslySetInnerHTML): paragraphs, line breaks, "-"/"*" and
  * "1." lists, **bold**, [label](href) links and bare URLs. Links open only
- * known in-app routes (bare, or `?record=<kind>:<id>`) and http(s) URLs, and
+ * known in-app routes (bare, or `?record=<kind>:<id>`) and https URLs, and
  * show their target as the title; anything else stays plain text.
  * Model output and customer-written text pass through React's escaping.
  */
@@ -27,7 +27,8 @@ export function safeLinkHref(href: string): string | null {
   if (h.startsWith("#")) return safeHash(h);
   try {
     const u = new URL(h);
-    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+    // https only: an http link from model output would leave the app unencrypted.
+    return u.protocol === "https:" ? u.toString() : null;
   } catch {
     return null;
   }

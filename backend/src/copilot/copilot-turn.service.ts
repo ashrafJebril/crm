@@ -26,7 +26,8 @@
  * Prompts, replies, tool inputs and results are never logged; usage numbers
  * are stored per assistant message (SP-28).
  */
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { SessionVersionService } from "../auth/session-version.service";
 import type Anthropic from "@anthropic-ai/sdk";
 import { ZodObject } from "zod";
 import { PrismaService } from "../prisma/prisma.service";
@@ -99,6 +100,8 @@ export class CopilotTurnService {
     @Inject(COPILOT_REGISTRY) private readonly registry: CopilotToolRegistry,
     private readonly actions: CopilotActionsService,
     private readonly attachments: CopilotAttachmentsService,
+    /** SP-26: a password reset or 2FA change ends the member's sessions, and their running turn too. */
+    @Optional() private readonly sessionVersions?: SessionVersionService,
   ) {}
 
   status(): { available: boolean; reasons: string[] } {
@@ -124,7 +127,8 @@ export class CopilotTurnService {
     return out;
   }
 
-  async prepare(workspaceId: string, viewer: Viewer, dto: CopilotStreamDto, now = new Date()): Promise<PreparedTurn> {
+  /** `auth.sv`: the token's session version, re-checked during the turn (SP-26). */
+  async prepare(workspaceId: string, viewer: Viewer, dto: CopilotStreamDto, now = new Date(), auth: { sv?: number } = {}): Promise<PreparedTurn> {
     const message = typeof dto.message === "string" ? dto.message.trim() : "";
     if (!message || message.length > MESSAGE_MAX) throw copilotError("copilot.message_invalid", { max: MESSAGE_MAX });
     if ((dto.attachmentIds?.length ?? 0) > ATTACH_MAX_PER_MESSAGE) throw copilotError("copilot.too_many_attachments", { max: ATTACH_MAX_PER_MESSAGE });
@@ -231,7 +235,7 @@ export class CopilotTurnService {
       return {
         sessionId: session.id,
         title: session.title,
-        run: (emit) => this.run({ workspaceId, viewer, sessionId: session.id, lang: dto.lang, model, message, isFirst, tainted, mode }, emit),
+        run: (emit) => this.run({ workspaceId, viewer, sessionId: session.id, lang: dto.lang, model, message, isFirst, tainted, mode, sv: auth.sv }, emit),
       };
     } catch (e) {
       await this.sessions.releaseTurn(workspaceId, session.id).catch(() => undefined);
@@ -240,7 +244,7 @@ export class CopilotTurnService {
   }
 
   private async run(
-    t: { workspaceId: string; viewer: Viewer; sessionId: string; lang: "en" | "ar"; model: string; message: string; isFirst: boolean; tainted: boolean; mode: ApprovalMode },
+    t: { workspaceId: string; viewer: Viewer; sessionId: string; lang: "en" | "ar"; model: string; message: string; isFirst: boolean; tainted: boolean; mode: ApprovalMode; sv?: number },
     emitRaw: Emit,
   ): Promise<void> {
     let ended = false;
@@ -282,9 +286,23 @@ export class CopilotTurnService {
       const tools = this.registry.definitions();
       let toolCalls = 0;
       let reissued = false;
+      // SP-26: the turn runs only while the member's session is current (checked before every model
+      // call, every tool and every auto-apply); a reset or 2FA change ends it with copilot.session_expired.
+      const guard = {
+        expired: false,
+        ok: async (): Promise<boolean> => {
+          if (guard.expired) return false;
+          if (this.sessionVersions && !(await this.sessionVersions.isCurrent(t.viewer.userId, t.sv))) guard.expired = true;
+          return !guard.expired;
+        },
+      };
       for (let i = 0; ; i++) {
         if (i >= MAX_ITERATIONS) {
           errorCode = "copilot.limit";
+          break;
+        }
+        if (!(await guard.ok())) {
+          errorCode = "copilot.session_expired";
           break;
         }
         const remaining = deadline - Date.now();
@@ -331,8 +349,12 @@ export class CopilotTurnService {
             break;
           }
           toolCalls += uses.length;
-          const results = await Promise.all(uses.map((u) => this.runTool(ctx, u, emit, t.mode)));
+          const results = await Promise.all(uses.map((u) => this.runTool(ctx, u, emit, t.mode, guard.ok)));
           turnMsgs.push({ role: "user", content: results });
+          if (guard.expired) {
+            errorCode = "copilot.session_expired";
+            break;
+          }
           continue;
         }
         finalText = res.content
@@ -389,12 +411,19 @@ export class CopilotTurnService {
     input: unknown,
     emit: Emit,
     mode: ApprovalMode,
+    sessionOk: () => Promise<boolean>,
   ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
     const res = (content: unknown): Anthropic.Beta.BetaToolResultBlockParam => ({ type: "tool_result", tool_use_id: toolUseId, content: JSON.stringify(content) });
+    // Support sessions (super-admin, impersonation) read but never change anything: no card, no auto-apply.
+    if (ctx.viewer.bypass) {
+      return res({ error: "not_available", note: "Changes are not available while impersonating. Reading still works; say so and do not retry." });
+    }
     if (!tool.propose) return { type: "tool_result", tool_use_id: toolUseId, is_error: true, content: "This change cannot be made from here." };
     const proposal = await tool.propose(ctx, input as never);
     if ("error" in proposal) return res(proposal);
     if (!(await this.perm.viewerCan(ctx.workspaceId, ctx.viewer, proposal.permission))) return res(noAccess(proposal.permission));
+    // The session is checked again right before a card may be applied by policy.
+    if (!(await sessionOk())) return { type: "tool_result", tool_use_id: toolUseId, is_error: true, content: "The member's session ended; nothing was changed." };
     const { action } = await this.actions.propose({ workspaceId: ctx.workspaceId, viewer: ctx.viewer, sessionId: ctx.sessionId, mode, tainted: ctx.isTainted() }, tool, proposal);
     if (action.status === "PENDING") {
       emit("confirm", { action });
@@ -409,10 +438,17 @@ export class CopilotTurnService {
   }
 
   /** One tool call → one tool_result (never throws). */
-  private async runTool(ctx: ToolContext, use: Anthropic.Beta.BetaToolUseBlock, emit: Emit, mode: ApprovalMode = "manual"): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
+  private async runTool(
+    ctx: ToolContext,
+    use: Anthropic.Beta.BetaToolUseBlock,
+    emit: Emit,
+    mode: ApprovalMode = "manual",
+    sessionOk: () => Promise<boolean> = async () => true,
+  ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
     const err = (text: string): Anthropic.Beta.BetaToolResultBlockParam => ({ type: "tool_result", tool_use_id: use.id, is_error: true, content: text });
     const tool = this.registry.get(use.name);
     if (!tool) return err(`Unknown tool: ${use.name}`);
+    if (!(await sessionOk())) return err("The member's session ended; nothing more runs.");
     emit("activity", { kind: use.name === "draft_reply" ? "drafting" : "tool", tool: tool.name, label: ctx.lang === "ar" ? tool.label[1] : tool.label[0] });
     // Parse (never match strings) and validate before anything runs.
     let input: unknown = use.input;
@@ -437,7 +473,7 @@ export class CopilotTurnService {
       }
     }
     try {
-      if (tool.kind === "write") return await this.proposeWrite(ctx, tool, use.id, parsed.data, emit, mode);
+      if (tool.kind === "write") return await this.proposeWrite(ctx, tool, use.id, parsed.data, emit, mode, sessionOk);
       const out = await tool.execute(ctx, parsed.data as never);
       const text = JSON.stringify(out ?? null) ?? "null";
       return { type: "tool_result", tool_use_id: use.id, content: text.length > TOOL_RESULT_MAX ? `${text.slice(0, TOOL_RESULT_MAX)}…` : text };

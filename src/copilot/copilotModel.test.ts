@@ -78,7 +78,10 @@ describe("markdown lite renders only the allowed subset", () => {
     expect(html("[x](data:text/html,hi)")).not.toContain("<a");
     expect(html("[x](//evil.example)")).not.toContain("<a");
     expect(html("# Heading\n> quote\n`code`")).toBe("<p># Heading<br/>&gt; quote<br/>`code`</p>");
-    expect(safeLinkHref("http://x.example/a")).toBe("http://x.example/a");
+    // https only.
+    expect(safeLinkHref("http://x.example/a")).toBeNull();
+    expect(html("See http://x.example/a and [x](http://x.example/b)")).not.toContain("<a");
+    expect(safeLinkHref("https://x.example/a")).toBe("https://x.example/a");
     expect(safeLinkHref("mailto:a@b.c")).toBeNull();
     // In-app links: known routes only, and only a record target as their query.
     expect(safeLinkHref("#/pipeline")).toBe("#/pipeline");

@@ -117,8 +117,10 @@ export class CopilotActionsService {
     }
   }
 
-  /** The member's own action, with membership checked first (404 for anyone else). */
+  /** The member's own action, with membership checked first (404 for anyone else, and for support sessions). */
   private async own(workspaceId: string, viewer: Viewer, id: string): Promise<ActionRow> {
+    // Super-admin and impersonation sessions never decide a member's card.
+    if (viewer.bypass) throw copilotError("copilot.not_found");
     if (!(await this.perm.effective(workspaceId, viewer.userId))) throw copilotError("copilot.not_found");
     const a = await this.prisma.copilotPendingAction.findFirst({ where: { id: String(id ?? ""), workspaceId, userId: viewer.userId } });
     if (!a) throw copilotError("copilot.not_found");
