@@ -59,7 +59,9 @@ export function McpServersTab({ tx, canEdit, canCreate, canDelete }: { tx: Tx; c
     api.post(`/integrations/l/mcp-servers/${id}/test`),
   );
 
-  const servers = listQ.data?.servers ?? [];
+  // SP-23 (ruling 9): the legacy list hides the setup-managed kewy_crm server
+  // and the connectors' own proxy servers (managed on the Connectors tab).
+  const servers = (listQ.data?.servers ?? []).filter((s) => s.name !== "kewy_crm" && !s.name.startsWith("kewy_conn_"));
 
   const [form, setForm] = useState<CreateServerInput>({ name: "", description: "", url: "" });
   const [headersText, setHeadersText] = useState("");

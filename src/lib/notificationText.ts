@@ -106,6 +106,11 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
         words.length > 1 ? words.slice(1).join(tx("; ", "؛ ")) : undefined,
       );
     }
+    case "connectors.needs_reconnect": {
+      // SP-23: body {provider, name, reason, connectorId}.
+      const name = str(p.name) ?? str(p.provider) ?? tx("A connector", "موصل");
+      return out(tx(`${name} needs reconnecting`, `يحتاج ${name} إلى إعادة الربط`));
+    }
     case "meta_ads.needs_reconnect": {
       // SP-15: body {reason: "token_refused"|"account_refused", adAccountName}.
       const name = str(p.adAccountName);

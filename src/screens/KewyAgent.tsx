@@ -11,10 +11,19 @@ import { AgentSettingsTab } from "./agent/AgentSettingsTab";
 import { TryAgentPanel } from "./agent/TryAgentPanel";
 import { ContinueSetupCard } from "./setup/ContinueSetupCard";
 import { SkillsTab } from "./kewy-agent/skills/SkillsTab";
+import { ConnectorsTab } from "./kewy-agent/connectors/ConnectorsTab";
 
 // SP-20 adds the agent's settings and the "Try your agent" preview.
 // SP-22 adds the skills gallery (agent.view; actions gate themselves).
-type Tab = "settings" | "try" | "skills" | "knowledge" | "tools" | "mcp";
+// SP-23: "connectors" replaces "mcp"; the legacy direct MCP servers live
+// under Connectors → Advanced (ruling 9).
+type Tab = "settings" | "try" | "skills" | "knowledge" | "tools" | "connectors";
+
+/** `#/agent?tab=connectors&connector=<id>` (deep links, OAuth returns, notifications). */
+function tabFromHash(): Tab | null {
+  const t = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("tab");
+  return t === "connectors" || t === "skills" || t === "knowledge" || t === "tools" || t === "settings" || t === "try" ? t : null;
+}
 
 interface LStatus {
   connected: boolean;
@@ -32,7 +41,13 @@ function KewyAgentImpl() {
   // SP-20: settings for agent.view; the sandbox (a turn costs money, ruling 9) for agent.update.
   const canViewSettings = can("agent.view");
   const canTry = can("agent.update");
-  const [tab, setTab] = useState<Tab>(canViewSettings ? "settings" : canViewKnowledge ? "knowledge" : "tools");
+  const canViewConnectors = can("connectors.view");
+  const [tab, setTab] = useState<Tab>(() => {
+    const fromHash = tabFromHash();
+    if (fromHash === "connectors" && canViewConnectors) return "connectors";
+    if (fromHash && fromHash !== "connectors") return fromHash;
+    return canViewSettings ? "settings" : canViewKnowledge ? "knowledge" : "tools";
+  });
 
   const statusQ = useFetch<LStatus>("/integrations/l/status");
   const connected = statusQ.data?.connected === true;
@@ -43,7 +58,7 @@ function KewyAgentImpl() {
     ...(canViewSettings ? [{ id: "skills" as const, label: "Skills", ar: "المهارات" }] : []),
     ...(canViewKnowledge ? [{ id: "knowledge" as const, label: "Knowledge", ar: "المعرفة" }] : []),
     { id: "tools", label: "Tools", ar: "الأدوات" },
-    { id: "mcp", label: "MCP Servers", ar: "خوادم MCP" },
+    ...(canViewConnectors ? [{ id: "connectors" as const, label: "Connectors", ar: "الموصلات" }] : []),
   ];
 
   // The "Not connected" card applies only to Tools and MCP.
@@ -98,10 +113,18 @@ function KewyAgentImpl() {
         {tab === "try" && canTry && <TryAgentPanel tx={tx} canUse={canTry} />}
         {tab === "skills" && canViewSettings && <SkillsTab tx={tx} lang={t.lang} />}
         {tab === "knowledge" && canViewKnowledge && <KnowledgePage tx={tx} lang={t.lang} />}
-        {(tab === "tools" || tab === "mcp") && !statusQ.loading && !connected && notConnected}
+        {tab === "tools" && !statusQ.loading && !connected && notConnected}
         {tab === "tools" && connected && <ToolsTab tx={tx} canEdit={canEditTools} />}
-        {tab === "mcp" && connected && (
-          <McpServersTab tx={tx} canEdit={canEditMcp} canCreate={can("connectors.create")} canDelete={can("connectors.delete")} />
+        {tab === "connectors" && canViewConnectors && (
+          <ConnectorsTab
+            tx={tx}
+            lang={t.lang}
+            advanced={
+              connected ? (
+                <McpServersTab tx={tx} canEdit={canEditMcp} canCreate={can("connectors.create")} canDelete={can("connectors.delete")} />
+              ) : undefined
+            }
+          />
         )}
       </div>
     </div>

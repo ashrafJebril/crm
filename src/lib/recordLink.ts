@@ -29,6 +29,17 @@ function channelIdOf(body: string | null | undefined): string | null {
   }
 }
 
+function connectorIdOf(body: string | null | undefined): string | null {
+  if (!body) return null;
+  try {
+    const v: unknown = JSON.parse(body);
+    const id = v && typeof v === "object" ? (v as { connectorId?: unknown }).connectorId : undefined;
+    return typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Where a notification opens: a channel's detail for health alerts, the Ads
  *  connection for a Meta Ads reconnect, else its record (`recordHref`). */
 export function notificationHref(
@@ -37,6 +48,11 @@ export function notificationHref(
 ): string | null {
   // SP-15: the Meta Ads reconnect alert opens the Ads connection tab.
   if (n.title === "meta_ads.needs_reconnect") return "#/ads?tab=connection";
+  // SP-23: a connector that needs reconnecting opens its detail.
+  if (n.title === "connectors.needs_reconnect") {
+    const id = connectorIdOf(n.body);
+    return id ? `#/agent?tab=connectors&connector=${encodeURIComponent(id)}` : "#/agent?tab=connectors";
+  }
   if (CHANNEL_TITLES.has(n.title)) {
     const id = channelIdOf(n.body);
     return id ? `#/channels?id=${encodeURIComponent(id)}` : "#/channels";
