@@ -284,8 +284,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `slot-race.spec.ts` (Review Focus 4); `schedule-fit rejects outside hours in workspace TZ`; `delete-service-with-references archives instead` (Review Focus 2); `illegal transition completed→pending rejected`.
 
 #### SP-11 Insights, working home, module settings. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-16-sp11-insights-home.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-16; live-verified on production (130 API/UI checks; insights and home SQL proven on Postgres, 40/40 DB specs after the seed fix in 0877a84). Also fixed the pre-existing 5000% win rate and the hardcoded topbar name. **Pending:** timing at scale (the 20k-message seed needs user approval); first-response subquery cost on very long conversations.
 - **Gaps:** support insights (AI resolution rate, median first response, median handling time, time saved, share turned into tickets, resolution-mix donut, hour-of-day peaks, by WhatsApp number, topic friction, "ask" box, Team tab per agent); sales insights (leads, replied, speed to reply, waiting, won, weekly trend, lead sources, speed distribution, stage funnel, lost reasons, Reps table with follow-up totals); a working home ("needs a person": waiting conversations, late follow-ups, unassigned tickets; Today/Tomorrow; "what the agent did while you were away"; a one-time Day-1 home); a per-module settings hub; fix the hardcoded "Yara" greeting (`Dashboard.tsx:237`).
 - **Depends on:** SP-01, SP-04, SP-07, SP-12.
 - **Read in Tkana:** `routes/{customer-service.insights,sales.insights,home,module-settings}.tsx`, `components/analytics/{support-analytics,support-team}.tsx`, `components/sales-insights/*`, `components/home/{working-home,power-up-home}.tsx`.
@@ -295,8 +295,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 ### Phase 5: AI
 
 #### SP-21 Knowledge upgrade. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-17-sp21-knowledge-upgrade.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-16; live-verified on production against local Claude, l, kewy-ai and website stubs (142 pass; F1/F2/F3/F5/F6 fixed in cd3d398). **Pending (user):** approval to run `backend/scripts/knowledge-migrate-in.ts --apply` on real workspaces; real-provider checks (Claude transcription and fallback, real crawl, real kewy-ai/l). The verification breached isolation once (a test workspace carried an HJZ tenant id 15:10–15:32 UTC on 2026-11-16); HJZ-side logs should be checked.
 - **Gaps:** a rich-text business content editor; a dedicated FAQ editor; guidelines (extra instructions); uploads of PDF/XLSX/CSV/ODS/images with processing status and a "what your assistant learned" preview; typed spreadsheet documents with downloadable .xlsx templates (offers, inventory, packages); website crawl sources (whole site or a path; daily/weekly/monthly/manual; per-page state synced / needs login / blocked).
 - **Read in Tkana:** `routes/knowledge*.ts(x)`, `components/knowledge/{KnowledgeContentEditor,KnowledgeDocumentsPanel,document-preview,website-sources}.tsx`, `lib/website-sources.ts`, `lib/knowledge-documents.template.server.ts`.
 - **Data:** `KnowledgeSource {kind:"content"|"faq"|"guideline"|"file"|"typed_doc"|"website", status, error?, schedule?, lastSyncAt}`, `KnowledgePage {sourceId, url, state, contentHash}`; the existing knowledge docs migrate in. HJZ-synced knowledge and the emergency stop are untouched.
