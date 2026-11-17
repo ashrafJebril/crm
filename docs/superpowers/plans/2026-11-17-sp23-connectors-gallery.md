@@ -444,22 +444,22 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 15. **Size.** The roadmap says L. Four build tasks plus verification (Task 3 drops if R8 defers the sync cards). **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision (R1–R15) and the base commit before Task 1 starts. Migration `20261117170000_connectors_gallery` needs explicit user approval before it runs.*
-- **R1** (Calendly + HubSpot + custom now; Pipedrive/Salla/Foodics coming soon): pending.
-- **R2** (hand-written proxy server; `@mastra/mcp` client after a spike; SDK fallback needs user approval): pending.
-- **R3** (hand-written OAuth + PKCE + DCR): pending.
-- **R4** (CRM proxy instead of direct vendor registration on l): pending.
-- **R5** (custom = none/headers only; custom OAuth deferred): pending.
-- **R6** (re-scan: new off, removed flagged, changed write tools switched off): pending.
-- **R7** (soft disconnect, best-effort vendor revocation): pending.
-- **R8** (Calendly bookings + HubSpot contacts sync, inbound, opt-in, or defer): pending.
-- **R9** (legacy MCP Servers under Advanced; no migration): pending.
-- **R10** (single agent switch, auto-bind on connect): pending.
-- **R11** (write access needs `connectors.manage`): pending.
-- **R12** (HubSpot disabled until its app is configured): pending.
-- **R13** (base on the SP-22 ship commit; schema ownership; migration order): pending.
-- **R14** (verification on the production DB with loopback vendor stubs; no external DNS; explicit migration approval): pending.
-- **R15** (size L; 4 build tasks + verification): pending.
+*Decided 2026-11-17 by the controller: R1–R7 and R9–R15 accepted as proposed (R2: any SDK fallback still needs explicit user approval before it is added). R8: sync cards are DEFERRED to a follow-up; Task 3 is skipped and the roadmap notes it. Base is the current feat/tkana-parity head with SP-22 merged (SHA in the ledger). Migration `20261117170000_connectors_gallery` needs explicit user approval before it runs.*
+- **R1** (Calendly + HubSpot + custom now; Pipedrive/Salla/Foodics coming soon): accepted.
+- **R2** (hand-written proxy server; `@mastra/mcp` client after a spike; SDK fallback needs user approval): accepted.
+- **R3** (hand-written OAuth + PKCE + DCR): accepted.
+- **R4** (CRM proxy instead of direct vendor registration on l): accepted.
+- **R5** (custom = none/headers only; custom OAuth deferred): accepted.
+- **R6** (re-scan: new off, removed flagged, changed write tools switched off): accepted.
+- **R7** (soft disconnect, best-effort vendor revocation): accepted.
+- **R8** (Calendly bookings + HubSpot contacts sync, inbound, opt-in, or defer): deferred (Task 3 skipped).
+- **R9** (legacy MCP Servers under Advanced; no migration): accepted.
+- **R10** (single agent switch, auto-bind on connect): accepted.
+- **R11** (write access needs `connectors.manage`): accepted.
+- **R12** (HubSpot disabled until its app is configured): accepted.
+- **R13** (base on the SP-22 ship commit; schema ownership; migration order): accepted.
+- **R14** (verification on the production DB with loopback vendor stubs; no external DNS; explicit migration approval): accepted.
+- **R15** (size L; 4 build tasks + verification): accepted.
 
 ---
 
