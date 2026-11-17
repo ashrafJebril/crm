@@ -95,7 +95,7 @@ export function TicketDetailContent({
     if (!t) return;
     update.mutate(
       { id: t.id, patch },
-      { onError: (e) => toast(ticketErrorText(e, tx, tx("Couldn't save the change.", "تعذّر حفظ التغيير.")), "error") },
+      { onError: (e) => toast(ticketErrorText(e, tx, tx("Couldn't save the change.", "تعذّر حفظ التغيير.")), "error", e) },
     );
   };
 

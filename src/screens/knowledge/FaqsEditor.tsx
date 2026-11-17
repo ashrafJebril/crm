@@ -79,7 +79,7 @@ export function FaqsEditor({ tx, canCreate, canEdit, canDelete }: { tx: Tx; canC
       await deleteSource(f.id);
       await q.refetch();
     } catch (e) {
-      toast(knowledgeErrorText(e, tx), "error");
+      toast(knowledgeErrorText(e, tx), "error", e);
     }
   }
 
@@ -91,7 +91,7 @@ export function FaqsEditor({ tx, canCreate, canEdit, canDelete }: { tx: Tx; canC
     try {
       q.setData(await reorderFaqs(next));
     } catch (e) {
-      toast(knowledgeErrorText(e, tx), "error");
+      toast(knowledgeErrorText(e, tx), "error", e);
       await q.refetch();
     }
   }

@@ -73,7 +73,7 @@ export function FilesPanel({
       await fn();
       await q.refetch();
     } catch (e) {
-      toast(knowledgeErrorText(e, tx), "error");
+      toast(knowledgeErrorText(e, tx), "error", e);
     }
   }
 

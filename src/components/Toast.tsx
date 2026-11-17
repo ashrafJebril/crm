@@ -1,4 +1,4 @@
-import { recentlyPlanRequired, recentlySignedOut } from "@/api/client";
+import { shouldShowToast } from "./toastFilter";
 import {
   createContext,
   useCallback,
@@ -17,7 +17,8 @@ interface ToastItem {
 }
 
 interface ToastApi {
-  toast: (message: string, kind?: ToastKind) => void;
+  /** `cause`: the error behind an error toast (lets the host skip one already explained elsewhere). */
+  toast: (message: string, kind?: ToastKind, cause?: unknown) => void;
 }
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -32,11 +33,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const seq = useRef(0);
 
-  const toast = useCallback((message: string, kind: ToastKind = "info") => {
-    // SP-26 M5: requests cut off by a forced sign-out don't spray error toasts.
-    if (kind === "error" && recentlySignedOut()) return;
-    // SP-28: a 402 PLAN_REQUIRED shows the "not in your plan" notice instead.
-    if (kind === "error" && recentlyPlanRequired()) return;
+  const toast = useCallback((message: string, kind: ToastKind = "info", cause?: unknown) => {
+    // SP-26 M5 (sign-out) and SP-28 (the plan-required error itself) stay quiet.
+    if (!shouldShowToast(message, kind, cause)) return;
     const id = ++seq.current;
     setItems((prev) => [...prev, { id, message, kind }]);
     window.setTimeout(() => {

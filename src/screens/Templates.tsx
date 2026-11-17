@@ -370,7 +370,7 @@ function TemplatesImpl() {
       refetch();
       setSelectedId(created.id);
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Duplicate failed", "error");
+      toast(err instanceof Error ? err.message : "Duplicate failed", "error", err);
     } finally {
       setPending(false);
       setMenuFor(null);
@@ -384,7 +384,7 @@ function TemplatesImpl() {
       if (selectedId === tpl.id) setSelectedId(null);
       refetch();
     } catch (err) {
-      toast(err instanceof Error ? err.message : "Delete failed", "error");
+      toast(err instanceof Error ? err.message : "Delete failed", "error", err);
     } finally {
       setPending(false);
       setConfirmDelete(null);

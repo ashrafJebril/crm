@@ -83,7 +83,7 @@ export function AudienceDetail({ tx, lang, id, onBack, onOpen, onChanged }: Prop
     try {
       setCount(await api.get<{ count: number | null; countedAt: string | null; timedOut: boolean; skipped?: boolean }>(`/segments/${encodeURIComponent(id)}/count`));
     } catch (e) {
-      toast(audienceErrorText(e, tx), "error");
+      toast(audienceErrorText(e, tx), "error", e);
     } finally {
       setRecounting(false);
     }

@@ -12,6 +12,7 @@ describe("JoteckService.patchWorkspace — Kewy package changes", () => {
 
   beforeEach(() => {
     raw = { workspace: { update: jest.fn().mockResolvedValue(row), updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn() } };
+    raw.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(raw));
     svc = new JoteckService({ raw } as never, {} as never, { ensureQuietly: jest.fn() } as never);
   });
 
@@ -41,6 +42,29 @@ describe("JoteckService.patchWorkspace — Kewy package changes", () => {
     expect(db).toMatchObject({ plan: "Gold", kewyPlan: "Gold" });
   });
 
+  it("a failing main update leaves the plan unchanged (SP-28 M3: one transaction)", async () => {
+    const db = { plan: "Ultimate", planOverriddenAt: null as Date | null, kewyPlan: "Ultimate" };
+    // A transaction double that undoes its writes when the callback throws.
+    raw.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => {
+      const before = { ...db };
+      try {
+        return await fn(raw);
+      } catch (e) {
+        Object.assign(db, before);
+        throw e;
+      }
+    });
+    raw.workspace.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (where.planOverriddenAt === null && db.planOverriddenAt) return { count: 0 };
+      Object.assign(db, data);
+      return { count: 1 };
+    });
+    raw.workspace.update.mockRejectedValue(new Error("write failed"));
+    await expect(svc.patchWorkspace("ws-1", { plan: "Basic", enabledModules: ["inbox"] })).rejects.toThrow("write failed");
+    expect(db).toEqual({ plan: "Ultimate", planOverriddenAt: null, kewyPlan: "Ultimate" });
+    expect(raw.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an empty plan", async () => {
     await expect(svc.patchWorkspace("ws-1", { plan: "  " })).rejects.toThrow(BadRequestException);
     expect(raw.workspace.update).not.toHaveBeenCalled();
@@ -57,7 +81,7 @@ describe("AdminService plan override (SP-28 R8)", () => {
   it("a super-admin plan sets the override; clear returns to Kewy's last plan", async () => {
     const { AdminService } = await import("../admin/admin.service");
     const db: any = { id: "ws-1", plan: "Ultimate", kewyPlan: "Ultimate", planOverriddenAt: null };
-    const raw = {
+    const raw: any = {
       workspace: {
         findUnique: jest.fn(async () => ({ ...db })),
         update: jest.fn(async ({ data }: any) => Object.assign(db, data)),
@@ -67,6 +91,7 @@ describe("AdminService plan override (SP-28 R8)", () => {
           return { count: 1 };
         }),
       },
+      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(raw)),
     };
     const plans = { invalidate: jest.fn() };
     const svc = new AdminService({ raw } as never, {} as never, {} as never, plans as never);

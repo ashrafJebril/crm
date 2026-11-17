@@ -87,6 +87,8 @@ export interface BannerView {
   kind: BannerKind;
   tone: "warn" | "bad";
   text: Copy;
+  /** The payment-due countdown is the lock warning every member must see: never dismissible. */
+  dismissible: boolean;
 }
 
 const HOUR_MS = 3_600_000;
@@ -128,18 +130,27 @@ export function bannersFor(status: BillingStatus | null | undefined, now: Date):
   const out: BannerView[] = [];
   const has = (b: BillingBanner) => status.banners.includes(b);
   if (has("grace") && status.payment.locksAt && !status.payment.locked) {
-    out.push({ kind: "payment_due", tone: "bad", text: BANNER_COPY.payment_due(countdownText(status.payment.locksAt, now)) });
+    out.push({ kind: "payment_due", tone: "bad", dismissible: false, text: BANNER_COPY.payment_due(countdownText(status.payment.locksAt, now)) });
   }
   if (has("low_balance") && status.wallet) {
     const empty = Number(status.wallet.balanceJod) <= 0;
-    out.push({ kind: empty ? "wallet_empty" : "wallet_low", tone: "warn", text: empty ? BANNER_COPY.wallet_empty : BANNER_COPY.wallet_low });
+    out.push({ kind: empty ? "wallet_empty" : "wallet_low", tone: "warn", dismissible: true, text: empty ? BANNER_COPY.wallet_empty : BANNER_COPY.wallet_low });
   }
   return out;
 }
 
-/** Dismissed banners stay hidden for the rest of that local day (per kind). */
-export const dismissKey = (kind: BannerKind, now: Date) =>
-  `billing.banner.${kind}.${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+/** A local day (YYYY-MM-DD) in the workspace timezone. */
+export function workspaceDay(at: Date, tz: string | null | undefined): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "Asia/Riyadh", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  } catch {
+    return at.toISOString().slice(0, 10);
+  }
+}
+
+/** A dismissed wallet banner stays hidden for the rest of the workspace's local day (per kind). */
+export const dismissKey = (kind: BannerKind, now: Date, tz: string | null | undefined) =>
+  `billing.banner.${kind}.${workspaceDay(now, tz)}`;
 
 // ── catalogue placeholders (R3) ──────────────────────────────────────────
 

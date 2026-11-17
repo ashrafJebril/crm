@@ -13,6 +13,7 @@ import {
   METERS,
   bannersFor,
   countdownText,
+  dismissKey,
   fillDays,
   formatJod,
   planCardView,
@@ -124,6 +125,19 @@ describe("banners from GET /billing/status", () => {
     expect(bannersFor(status({ banners: ["low_balance"], wallet: { balanceJod: "0.0000", lowBalance: true } }), now)[0].kind).toBe("wallet_empty");
     expect(bannersFor(status(), now)).toEqual([]);
     expect(bannersFor(null, now)).toEqual([]);
+  });
+
+  it("the payment-due countdown is never dismissible; wallet banners dismiss per workspace day", () => {
+    const due = status({ banners: ["grace", "low_balance"], wallet: { balanceJod: "0.1000", lowBalance: true }, payment: { dueSince: "2026-11-17T09:00:00Z", locksAt: "2026-11-19T09:00:00Z", locked: false } });
+    const views = bannersFor(due, now);
+    expect(views.map((v) => [v.kind, v.dismissible])).toEqual([
+      ["payment_due", false],
+      ["wallet_low", true],
+    ]);
+    // 22:30Z on the 18th is already the 19th in Riyadh (UTC+3): the workspace's date, not UTC's.
+    const late = new Date("2026-11-18T22:30:00Z");
+    expect(dismissKey("wallet_low", late, "Asia/Riyadh")).toBe("billing.banner.wallet_low.2026-11-19");
+    expect(dismissKey("wallet_low", late, "America/New_York")).toBe("billing.banner.wallet_low.2026-11-18");
   });
 
   it("countdown words in both languages", () => {

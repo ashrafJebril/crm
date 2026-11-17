@@ -22,6 +22,8 @@ export class ApiError extends Error {
   // Parsed JSON response body (or raw text), for callers that need extra
   // fields such as a 409's `linked` counts.
   body?: unknown;
+  /** SP-28: a 402 PLAN_REQUIRED, already shown by the global "not in your plan" notice. */
+  planRequired?: boolean;
   constructor(message: string, status: number, code?: string, body?: unknown) {
     super(message);
     this.status = status;
@@ -136,26 +138,24 @@ function unauthorizedReason(data: unknown): string | undefined {
 }
 
 // SP-28: global "not in your plan" hook. Any 402 { code: "PLAN_REQUIRED",
-// feature, requiredPlan } opens one friendly notice instead of an error toast
-// (the Toast host drops error toasts for a moment after it fires).
+// feature, requiredPlan } opens one friendly notice. That error (and only
+// that error) is marked `planRequired`, so the toast path skips it; any other
+// error, even a moment later, still shows its toast.
 export const PLAN_REQUIRED_CODE = "PLAN_REQUIRED";
 export interface PlanRequiredInfo {
   feature: string | null;
   requiredPlan: string | null;
 }
 let onPlanRequired: ((info: PlanRequiredInfo) => void) | null = null;
-let planRequiredAt = 0;
-const PLAN_REQUIRED_QUIET_MS = 3000;
 export function setPlanRequiredHandler(fn: ((info: PlanRequiredInfo) => void) | null): void {
   onPlanRequired = fn;
 }
-/** True right after a PLAN_REQUIRED: the caller's own error toast stays quiet. */
-export function recentlyPlanRequired(now = Date.now()): boolean {
-  return planRequiredAt > 0 && now - planRequiredAt < PLAN_REQUIRED_QUIET_MS;
+/** The 402 PLAN_REQUIRED that the global notice already explained. */
+export function isPlanRequiredError(e: unknown): boolean {
+  return e instanceof ApiError && e.planRequired === true;
 }
 function notifyPlanRequired(data: unknown): void {
   const d = isObject(data) ? data : {};
-  planRequiredAt = Date.now();
   onPlanRequired?.({
     feature: typeof d.feature === "string" ? d.feature : null,
     requiredPlan: typeof d.requiredPlan === "string" ? d.requiredPlan : null,
@@ -292,8 +292,12 @@ function errorFromBody(data: unknown, status: number, notifyLock = true): ApiErr
         : `HTTP ${status}`;
   const code = isObject(data) && typeof data.code === "string" ? data.code : undefined;
   if (notifyLock && status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
-  if (status === 402 && code === PLAN_REQUIRED_CODE) notifyPlanRequired(data);
-  return new ApiError(message, status, code, data);
+  const err = new ApiError(message, status, code, data);
+  if (status === 402 && code === PLAN_REQUIRED_CODE) {
+    err.planRequired = true;
+    notifyPlanRequired(data);
+  }
+  return err;
 }
 
 // POST that reads a Server-Sent Events stream instead of a single JSON body —

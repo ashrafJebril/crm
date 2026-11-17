@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
+import { useAuth } from "@/auth/context";
 import { makeTx } from "@/lib/tx";
 import { IconX } from "@/icons";
 import { bannersFor, dismissKey, type BannerKind } from "@/screens/billing/billingModel";
@@ -17,23 +18,26 @@ const readDismissed = (key: string) => {
  * SP-28 billing banners under the top bar, from GET /billing/status: a payment
  * due (counting down to the existing payment lock) for every member, and a low
  * or empty wallet for billing.view holders (the reduced status has no wallet).
- * A dismissed banner stays hidden for the rest of that day.
+ * The payment-due countdown is never dismissible; a dismissed wallet banner
+ * stays hidden for the rest of the workspace's local day.
  */
 export function BillingBanner() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const q = useBillingStatus();
+  const tz = useAuth().activeWorkspace?.timezone;
   const [now, setNow] = useState(() => new Date());
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(id);
   }, []);
-  const banners = bannersFor(q.data, now).filter((b) => !readDismissed(dismissKey(b.kind, now)));
+  // The payment-due countdown cannot be dismissed; wallet banners hide for the workspace's day.
+  const banners = bannersFor(q.data, now).filter((b) => !b.dismissible || !readDismissed(dismissKey(b.kind, now, tz)));
   if (banners.length === 0) return null;
   const dismiss = (kind: BannerKind) => {
     try {
-      localStorage.setItem(dismissKey(kind, now), "1");
+      localStorage.setItem(dismissKey(kind, now, tz), "1");
     } catch {
       /* storage blocked: hidden until the next render only */
     }
@@ -58,9 +62,11 @@ export function BillingBanner() {
           }}
         >
           <span style={{ flex: 1 }}>{tx(b.text[0], b.text[1])}</span>
-          <button type="button" className="btn icon ghost sm" aria-label={tx("Dismiss for today", "إخفاء لليوم")} onClick={() => dismiss(b.kind)}>
-            <IconX w={12} />
-          </button>
+          {b.dismissible && (
+            <button type="button" className="btn icon ghost sm" aria-label={tx("Dismiss for today", "إخفاء لليوم")} onClick={() => dismiss(b.kind)}>
+              <IconX w={12} />
+            </button>
+          )}
         </div>
       ))}
     </div>

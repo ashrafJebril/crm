@@ -62,7 +62,7 @@ export function PhotosTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
         "success",
       );
     } catch (e) {
-      toast(mediaErrorText(e, tx), "error");
+      toast(mediaErrorText(e, tx), "error", e);
       if (e instanceof ApiError && e.message === "media.title_required") setDetails(m);
     } finally {
       setBusy(null);
