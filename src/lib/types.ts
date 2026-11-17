@@ -1046,6 +1046,57 @@ export interface NotificationPreference {
   sound: boolean;
 }
 
+// ─── SP-22 skills gallery ────────────────────────────────────────────────
+
+export type SkillKey = "booking" | "customer_records" | "photos" | "support_tickets" | "lead_capture" | "calendly_scheduling";
+export type SkillStatus = "not_installed" | "enabled" | "disabled" | "needs_connector" | "needs_attention";
+export type SkillConfigFieldType = "text" | "textarea" | "number" | "select" | "boolean" | "tags";
+
+export interface SkillConfigField {
+  key: string;
+  type: SkillConfigFieldType;
+  labelEn: string;
+  labelAr: string;
+  helpEn?: string;
+  helpAr?: string;
+  required: boolean;
+  default?: unknown;
+  options?: string[];
+  min?: number;
+  max?: number;
+  maxLength?: number;
+}
+
+/** GET /skills row (backend SkillDto). */
+export interface Skill {
+  key: SkillKey;
+  /** The catalog version. */
+  version: number;
+  name: { en: string; ar: string };
+  description: { en: string; ar: string };
+  category: string;
+  tools: { name: string; kind: "read" | "write" }[];
+  requiredConnector: { provider: string; connected: boolean } | null;
+  configFields: SkillConfigField[];
+  installed: boolean;
+  status: SkillStatus;
+  installedVersion: number | null;
+  updateAvailable: boolean;
+  needsConfig: boolean;
+  config: Record<string, unknown>;
+  agents: { slug: string; name: { en: string; ar: string } }[];
+  usage: { calls7d: number; calls30d: number; lastUsedAt: string | null };
+  lastError: string | null;
+  attentionReason: "legacy_edited" | "apply_failed" | null;
+  /** The ledger row's version: what PATCH and update send as `version`. */
+  rowVersion: number;
+}
+
+export interface SkillList {
+  skills: Skill[];
+  agentConnected: boolean;
+}
+
 // ─── Workspaces ───────────────────────────────────────────────────────────
 
 export type WorkspaceRole = "owner" | "admin" | "agent" | "viewer";

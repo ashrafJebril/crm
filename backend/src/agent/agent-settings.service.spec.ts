@@ -30,6 +30,8 @@ function fakeL(initial = "You are support.") {
 function rawClient(linked: boolean) {
   const raw: Record<string, unknown> = {
     workspace: { findUnique: jest.fn(async () => ({ lWorkspaceId: linked ? "l-ws" : null })) },
+    // SP-22: no ledger rows (the default skills).
+    skillInstall: { findMany: jest.fn(async () => []) },
     $executeRaw: jest.fn(async () => 0),
   };
   raw.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(raw));

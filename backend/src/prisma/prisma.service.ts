@@ -99,6 +99,10 @@ export class PrismaService implements OnModuleDestroy {
   get auditLog() { return this.client.auditLog; }
   get passwordReset() { return this.client.passwordReset; }
 
+  // SP-22: the skills ledger and the agent's tool-call log (tenant-scoped).
+  get skillInstall() { return this.client.skillInstall; }
+  get agentToolCall() { return this.client.agentToolCall; }
+
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }
   get $executeRawUnsafe() { return this.client.$executeRawUnsafe.bind(this.client); }

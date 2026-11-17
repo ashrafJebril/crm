@@ -85,3 +85,38 @@ describe("TelegramClient", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("SP-22: the Telegram API base (Task 4 stubs it)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { telegramApiBase, TELEGRAM_DEFAULT_API, TelegramClient } = require("./telegram.client");
+
+  it("telegram base url defaults to the real api and accepts only https or loopback", () => {
+    expect(telegramApiBase({})).toBe(TELEGRAM_DEFAULT_API);
+    expect(TELEGRAM_DEFAULT_API).toBe("https://api.telegram.org");
+    expect(telegramApiBase({ TELEGRAM_API_BASE_URL: "http://127.0.0.1:4260/" })).toBe("http://127.0.0.1:4260");
+    expect(telegramApiBase({ TELEGRAM_API_BASE_URL: "http://localhost:4260" })).toBe("http://localhost:4260");
+    expect(telegramApiBase({ TELEGRAM_API_BASE_URL: "https://tg-proxy.example.com/api/" })).toBe("https://tg-proxy.example.com/api");
+    for (const bad of ["http://evil.example.com", "ftp://127.0.0.1", "not a url", "https://u:p@x.example.com", "http://127.0.0.2:1"]) {
+      expect({ bad, base: telegramApiBase({ TELEGRAM_API_BASE_URL: bad }) }).toEqual({ bad, base: TELEGRAM_DEFAULT_API });
+    }
+  });
+
+  it("sendMessage goes to the configured base, plain text (no parse_mode)", async () => {
+    const prev = process.env.TELEGRAM_API_BASE_URL;
+    process.env.TELEGRAM_API_BASE_URL = "http://127.0.0.1:4260";
+    const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    try {
+      const token = "123456:ABCDEFGHIJKLMNOPQRSTuvwxyz";
+      await new TelegramClient().sendMessage(token, "42", "<b>hi</b> *there*");
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(`http://127.0.0.1:4260/bot${token}/sendMessage`);
+      expect(JSON.parse(String(init.body))).toEqual({ chat_id: "42", text: "<b>hi</b> *there*" });
+    } finally {
+      fetchSpy.mockRestore();
+      if (prev === undefined) delete process.env.TELEGRAM_API_BASE_URL;
+      else process.env.TELEGRAM_API_BASE_URL = prev;
+    }
+  });
+});

@@ -1,3 +1,4 @@
+import { SkillsModule } from "../skills/skills.module";
 import { Module } from "@nestjs/common";
 import { AiModule } from "../ai/ai.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
@@ -21,7 +22,8 @@ import { SandboxService } from "./sandbox/sandbox.service";
  * KnowledgeSourcesModule's services.
  */
 @Module({
-  imports: [IntegrationsModule, AiModule, McpServerModule, KnowledgeSourcesModule],
+  // SP-22: SkillsModule for the sandbox's enabled tools.
+  imports: [IntegrationsModule, AiModule, McpServerModule, KnowledgeSourcesModule, SkillsModule],
   controllers: [AgentSettingsController, SandboxController, OnboardingController],
   providers: [AgentSettingsService, SandboxService, SandboxScheduler, OnboardingService],
   exports: [AgentSettingsService],

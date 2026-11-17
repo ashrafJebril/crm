@@ -16,6 +16,7 @@ import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { LWebhooksController } from "./l-webhooks.controller";
 import { LWebhooksService } from "./l-webhooks.service";
 import { LAgentService } from "./l-agent.service";
+import { AgentAutoReplyService } from "./agent-auto-reply.service";
 import { LAgentSetupService } from "./l-agent-setup.service";
 import { LConfigController } from "./l-config.controller";
 import { LJoteckClient } from "./l-joteck.client";
@@ -55,6 +56,8 @@ import { AgentReplyGate } from "../agent/agent-reply-gate";
     AiReplyController,
   ],
   providers: [
+    // SP-22: Telegram/web-chat auto-reply (registers with the global inbound sink).
+    AgentAutoReplyService,
     FacebookService,
     InstagramService,
     WhatsAppService,

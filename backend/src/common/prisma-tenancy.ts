@@ -57,6 +57,9 @@ const SCOPED_MODELS = new Set([
   "KnowledgeSource",
   "KnowledgePage",
   "KnowledgeChunk",
+  // SP-22
+  "SkillInstall",
+  "AgentToolCall",
   // SP-20
   "AgentSettings",
   "AgentSandboxThread",

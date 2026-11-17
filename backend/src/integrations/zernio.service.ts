@@ -1800,7 +1800,8 @@ export class ZernioService {
     // Our own outbound echo is not something to answer, and a thread only
     // auto-replies once someone has switched it into AI mode — and stops while
     // a human has taken it over (aiPausedAt), same as the kewy-ai path below.
-    if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && this.lAgent.enabled) {
+    // An escalated thread gets no auto-reply either (as on Telegram/web chat).
+    if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && !conv.escalated && this.lAgent.enabled) {
       this.queueAgentReply(workspaceId, conv.id, text, contact.id);
     }
     // Lifecycle automation (never throws): a customer message opens a ticket
@@ -1841,10 +1842,12 @@ export class ZernioService {
       // Skipped when the workspace's own l agent already took this message
       // (queueAgentReply above): both paths key off conv.aiEnabled, so with
       // both platforms configured the customer would get two AI replies.
+      // An escalated thread waits for a person: no kewy-ai auto-reply either.
       if (
         !isOutbound &&
         conv.aiEnabled &&
         !conv.aiPausedAt &&
+        !conv.escalated &&
         this.aiBridge.isConfigured() &&
         !(await this.lAgentAnswers(workspaceId)) &&
         // SP-20: the reply gate; never throws, fails closed.

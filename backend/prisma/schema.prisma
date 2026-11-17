@@ -65,6 +65,8 @@ model User {
   passwordResets        PasswordReset[] @relation("UserPasswordResets")
   invitationsSent       Invitation[]    @relation("InvitationInvitedBy")
   invitationsAccepted   Invitation[]    @relation("InvitationAcceptedBy")
+  /// SP-22 back-relation.
+  skillsInstalled       SkillInstall[]  @relation("SkillInstalledBy")
 
   /// SP-26: TOTP two-factor sign-in. `twoFA` above now means "TOTP enabled".
   totpSecretEnc      String?   // enc:v1:… (token-crypto); never returned
@@ -1326,6 +1328,10 @@ model Workspace {
   invitations       Invitation[]       @relation("WorkspaceInvitations")
   auditLogs         AuditLog[]         @relation("WorkspaceAuditLogs")
 
+  /// SP-22: the skills ledger and the agent's tool-call log.
+  skillInstalls     SkillInstall[]     @relation("WorkspaceSkillInstalls")
+  agentToolCalls    AgentToolCall[]    @relation("WorkspaceAgentToolCalls")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1982,4 +1988,44 @@ model AgentSandboxThread {
 
   @@unique([workspaceId, userId])
   @@index([expiresAt])
+}
+
+// ─── SP-22 skills gallery ──────────────────────────────────────────────────
+
+/// SP-22: one row per installed (or explicitly disabled default) skill.
+model SkillInstall {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation("WorkspaceSkillInstalls", fields: [workspaceId], references: [id], onDelete: Cascade)
+  skillKey         String
+  installedVersion Int
+  /// "enabled" | "disabled" | "needs_connector" | "needs_attention"
+  status           String    @default("enabled")
+  config           Json      @default("{}")
+  needsConfig      Boolean   @default(false)
+  lastAppliedAt    DateTime?
+  lastError        String?
+  installedById    String?
+  installedBy      User?     @relation("SkillInstalledBy", fields: [installedById], references: [id], onDelete: SetNull)
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([workspaceId, skillKey])
+}
+
+/// SP-22: one row per CRM MCP tool call made by the agent (no arguments, no results).
+model AgentToolCall {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAgentToolCalls", fields: [workspaceId], references: [id], onDelete: Cascade)
+  tool        String
+  skillKey    String?
+  outcome     String    // "ok" | "error"
+  errorCode   String?
+  durationMs  Int
+  at          DateTime  @default(now())
+
+  @@index([workspaceId, at])
+  @@index([workspaceId, skillKey, at])
 }

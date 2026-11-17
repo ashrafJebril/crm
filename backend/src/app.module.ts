@@ -41,6 +41,7 @@ import { TagsModule } from "./tags/tags.module";
 import { SavedRepliesModule } from "./saved-replies/saved-replies.module";
 import { WorkflowsModule } from "./workflows/workflows.module";
 import { McpServerModule } from "./mcp-server/mcp-server.module";
+import { SkillsModule } from "./skills/skills.module";
 import { AdsModule } from "./ads/ads.module";
 import { MetaAdsModule } from "./meta-ads/meta-ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
@@ -110,6 +111,8 @@ import { MembersModule } from "./members/members.module";
     IntegrationsModule,
     ChannelsModule,
     McpServerModule,
+    // SP-22: the skills gallery (also imported by McpServerModule and AgentModule).
+    SkillsModule,
     TicketsModule,
     PipelinesModule,
     ResolutionModule,

@@ -744,6 +744,31 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-22: the skills gallery (resource agent).
+  describe("SP-22 skill routes", () => {
+    const VIEW = ["GET /skills"];
+    const WRITE = ["POST /skills/:key/install", "PATCH /skills/:key", "POST /skills/:key/update", "POST /skills/:key/retry", "DELETE /skills/:key"];
+
+    it("owner and admin can do everything", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...VIEW, ...WRITE]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("agent and viewer can list but get 403 on install, patch, update, retry and uninstall", () => {
+      for (const role of ["agent", "viewer"] as const) {
+        for (const route of VIEW) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+        for (const route of WRITE) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of [...VIEW, ...WRITE]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
   // SP-26: invitations, handover, removal and the audit log.
   describe("SP-26 member routes", () => {
     const LIST = "GET /workspaces/:id/invitations";

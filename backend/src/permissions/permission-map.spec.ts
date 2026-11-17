@@ -370,6 +370,23 @@ describe("permission map", () => {
     expect(catalog).toEqual(Object.keys(sp10).sort());
   });
 
+  it("permission map covers SP-22 routes", () => {
+    const sp22: Record<string, string> = {
+      "GET /skills": "agent.view",
+      "POST /skills/:key/install": "agent.update",
+      "PATCH /skills/:key": "agent.update",
+      "POST /skills/:key/update": "agent.update",
+      "POST /skills/:key/retry": "agent.update",
+      "DELETE /skills/:key": "agent.delete",
+    };
+    for (const [k, p] of Object.entries(sp22)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    expect(keys.filter((k) => / \/skills(\/|$)/.test(k)).sort()).toEqual(Object.keys(sp22).sort());
+    // The MCP route is unchanged in shape (public, its own guard).
+    expect(ROUTE_PERMISSIONS["POST /mcp/v1"]).toBe("public");
+  });
+
   it("permission map covers SP-24 routes", () => {
     const sp24: Record<string, string> = {
       "GET /lifecycle": "workflows.view",
