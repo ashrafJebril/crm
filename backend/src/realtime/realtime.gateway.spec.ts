@@ -1,4 +1,4 @@
-import { RealtimeGateway, sessionRoom, userRoom } from "./realtime.gateway";
+import { RealtimeGateway, SESSION_RECHECK_MS, sessionRoom, userRoom } from "./realtime.gateway";
 import { SessionVersionService } from "../auth/session-version.service";
 import { RealtimeService } from "./realtime.service";
 
@@ -168,5 +168,43 @@ describe("RealtimeGateway session version (SP-26 I1)", () => {
     gw.onModuleDestroy();
     sessions.bumped("u1");
     expect(disconnectSockets).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RealtimeGateway periodic session re-check (SP-26 I1, cross-instance)", () => {
+  it("drops sockets whose sv went stale on another instance, one lookup per user and sv", async () => {
+    const versions: Record<string, number> = { u1: 1, u2: 0 };
+    const findUnique = jest.fn(async ({ where }: { where: { id: string } }) => ({ sessionVersion: versions[where.id] ?? 0 }));
+    const sessions = new SessionVersionService({ user: { findUnique } } as never);
+    const gw = new RealtimeGateway({} as never, {} as never, {} as never, sessions);
+    const sock = (sub: string, sv: number | undefined) => ({ data: { user: { sub, sv, workspaceId: "w1" } }, disconnect: jest.fn() });
+    // u1 was bumped to 1 on another machine: its sv-0 sockets are stale.
+    const stale = [sock("u1", 0), sock("u1", undefined)];
+    const fresh = [sock("u1", 1), sock("u2", 0), sock("u2", 0)];
+    const anon = { data: {}, disconnect: jest.fn() };
+    gw.server = { sockets: { sockets: new Map([...stale, ...fresh, anon].map((s, i) => [`s${i}`, s])) } } as never;
+    expect(await gw.recheckSessions()).toBe(2);
+    for (const s of stale) expect(s.disconnect).toHaveBeenCalledWith(true);
+    for (const s of [...fresh, anon]) expect(s.disconnect).not.toHaveBeenCalled();
+    // Batched and cached: one read per user.
+    expect(findUnique).toHaveBeenCalledTimes(2);
+    expect(SESSION_RECHECK_MS).toBe(60_000);
+  });
+
+  it("runs on a timer from module init until destroy", async () => {
+    jest.useFakeTimers();
+    try {
+      const sessions = { onBump: jest.fn(() => () => undefined), isCurrent: jest.fn() };
+      const gw = new RealtimeGateway({} as never, {} as never, {} as never, sessions as never);
+      const spy = jest.spyOn(gw, "recheckSessions").mockResolvedValue(0);
+      gw.onModuleInit();
+      jest.advanceTimersByTime(SESSION_RECHECK_MS * 2);
+      expect(spy).toHaveBeenCalledTimes(2);
+      gw.onModuleDestroy();
+      jest.advanceTimersByTime(SESSION_RECHECK_MS * 3);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
