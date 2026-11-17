@@ -758,7 +758,7 @@ describe("system-role decision table", () => {
     const AUDIT = "GET /workspaces/:id/audit";
     // Task 2: members.manage, like the audit log.
     const TWO_FA_RESET = "POST /workspaces/:id/members/:userId/2fa/reset";
-    const ACCOUNT = ["POST /auth/2fa/setup", "POST /auth/2fa/enable", "POST /auth/2fa/disable"];
+    const ACCOUNT = ["POST /auth/2fa/setup", "POST /auth/2fa/enable", "POST /auth/2fa/disable", "POST /auth/2fa/recovery-codes"];
     const PUBLIC = ["POST /auth/password/forgot", "POST /auth/password/reset", "POST /auth/2fa/verify"];
 
     it("owner and admin reset a member's 2FA; agent and viewer get 403", () => {

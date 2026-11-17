@@ -100,14 +100,21 @@ export class TwoFaVerifyDto {
   recoveryCode?: string;
 }
 
-/** SP-26: POST /auth/2fa/disable. */
+/** SP-26: POST /auth/2fa/disable and POST /auth/2fa/recovery-codes: the
+ *  password plus exactly one of a TOTP code or a recovery code. */
 export class TwoFaDisableDto {
   @IsString()
   @MaxLength(200)
   password!: string;
 
+  @IsOptional()
   @Matches(/^\d{6}$/)
-  code!: string;
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  recoveryCode?: string;
 }
 
 export class ChangePasswordDto {

@@ -40,4 +40,25 @@ export class SessionVersionService {
   invalidate(userId: string): void {
     this.cache.delete(userId);
   }
+
+  private readonly listeners = new Set<(userId: string) => void>();
+
+  /** Called by the realtime gateway: close a user's sockets on a bump. */
+  onBump(fn: (userId: string) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  /** After a committed bump: drop the cache entry and tell listeners (the
+   *  realtime gateway disconnects the user's sockets on this process). */
+  bumped(userId: string): void {
+    this.invalidate(userId);
+    for (const fn of this.listeners) {
+      try {
+        fn(userId);
+      } catch {
+        /* a listener failure never fails the bump */
+      }
+    }
+  }
 }

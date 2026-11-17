@@ -27,6 +27,22 @@ export interface ChallengePayload {
   sv: number;
 }
 
+/** Exactly one of a TOTP code or a recovery code. */
+export interface SecondFactor {
+  code?: string;
+  recoveryCode?: string;
+}
+
+type Tx = Parameters<Parameters<PrismaService["$transaction"]>[0]>[0];
+
+/** Which factor was given; 400 auth.2fa_code_invalid for both or neither. */
+function oneFactor(f: SecondFactor): "code" | "recovery" {
+  const hasCode = typeof f.code === "string" && f.code !== "";
+  const hasRecovery = typeof f.recoveryCode === "string" && f.recoveryCode !== "";
+  if (hasCode === hasRecovery) throw authError("auth.2fa_code_invalid");
+  return hasCode ? "code" : "recovery";
+}
+
 /** Every TOTP field cleared (disable and owner reset). */
 const CLEARED = {
   twoFA: false,
@@ -80,8 +96,9 @@ export class TwoFactorService {
     return { secret, otpauthUrl: otpauthUrl(secret, u.email) };
   }
 
-  /** POST /auth/2fa/enable {code}: confirms the pending secret; returns the
-   *  recovery codes once. */
+  /** POST /auth/2fa/enable {code}: confirms the pending secret, ends every
+   *  other session (the caller re-issues this one), and returns the recovery
+   *  codes once. */
   async enable(userId: string, code: string): Promise<{ recoveryCodes: string[] }> {
     const u = await this.user(userId);
     if (u.twoFA) throw authError("auth.2fa_already_enabled");
@@ -101,33 +118,56 @@ export class TwoFactorService {
           totpEnabledAt: this.now(),
           totpLastStep: step,
           totpRecoveryHashes: hashes,
+          ...SessionVersionService.bump(),
         },
       });
       if (res.count === 0) throw authError("auth.2fa_already_enabled");
       await this.audit.recordForUser(tx, u.id, { actorId: u.id, action: "security.2fa_enabled", targetKind: "user", targetId: u.id });
     });
+    this.sessions.bumped(u.id);
     return { recoveryCodes: codes };
   }
 
-  /** POST /auth/2fa/disable {password, code}: clears every TOTP field and
-   *  ends every session. */
-  async disable(userId: string, password: string, code: string): Promise<{ ok: true }> {
+  /** POST /auth/2fa/disable {password, code | recoveryCode}: clears every
+   *  TOTP field and ends every session. */
+  async disable(userId: string, password: string, factor: SecondFactor): Promise<{ ok: true }> {
     const u = await this.user(userId);
     if (!u.twoFA || !u.totpSecretEnc) throw authError("auth.2fa_not_enabled");
-    if (!u.password || !(await bcrypt.compare(password, u.password))) {
-      throw new BadRequestException("Current password is incorrect");
-    }
+    await this.assertPassword(u.password, password);
     await this.prisma.$transaction(async (tx) => {
       await this.lock(tx, u.id);
       const fresh = await tx.user.findUnique({ where: { id: u.id } });
       if (!fresh?.twoFA || !fresh.totpSecretEnc) throw authError("auth.2fa_not_enabled");
-      const step = verifyTotp(decryptSecret(fresh.totpSecretEnc), code, this.now().getTime(), fresh.totpLastStep);
-      if (step === null) throw authError("auth.2fa_code_invalid");
+      await this.spendSecondFactor(tx, fresh, factor);
       await tx.user.update({ where: { id: u.id }, data: { ...CLEARED, ...SessionVersionService.bump() } });
       await this.audit.recordForUser(tx, u.id, { actorId: u.id, action: "security.2fa_disabled", targetKind: "user", targetId: u.id });
     });
-    this.sessions.invalidate(u.id);
+    this.sessions.bumped(u.id);
     return { ok: true };
+  }
+
+  /** POST /auth/2fa/recovery-codes {password, code | recoveryCode}: replaces
+   *  every recovery code; the new ones are returned once. */
+  async regenerateRecoveryCodes(userId: string, password: string, factor: SecondFactor): Promise<{ recoveryCodes: string[] }> {
+    const u = await this.user(userId);
+    if (!u.twoFA || !u.totpSecretEnc) throw authError("auth.2fa_not_enabled");
+    await this.assertPassword(u.password, password);
+    const codes = generateRecoveryCodes();
+    const hashes = await hashRecoveryCodes(codes);
+    await this.prisma.$transaction(async (tx) => {
+      await this.lock(tx, u.id);
+      const fresh = await tx.user.findUnique({ where: { id: u.id } });
+      if (!fresh?.twoFA || !fresh.totpSecretEnc) throw authError("auth.2fa_not_enabled");
+      await this.spendSecondFactor(tx, fresh, factor);
+      await tx.user.update({ where: { id: u.id }, data: { totpRecoveryHashes: hashes } });
+      await this.audit.recordForUser(tx, u.id, {
+        actorId: u.id,
+        action: "security.2fa_recovery_codes_regenerated",
+        targetKind: "user",
+        targetId: u.id,
+      });
+    });
+    return { recoveryCodes: codes };
   }
 
   /** The login challenge for a user with 2FA on: a 5-minute JWT that only
@@ -143,7 +183,7 @@ export class TwoFactorService {
    * the normal login payload. 10 tries per challenge user and 30 per IP per
    * 15 min.
    */
-  async verify(input: { challenge: unknown; code?: string; recoveryCode?: string }, ip?: string): Promise<string> {
+  async verify(input: { challenge: unknown } & SecondFactor, ip?: string): Promise<string> {
     const ipHit = this.byIp.hit(`ip:${ip ?? "unknown"}`);
     if (!ipHit.ok) throw authError("auth.rate_limited", { retryAfterSec: ipHit.retryAfterSec });
     let claims: Partial<ChallengePayload>;
@@ -155,9 +195,7 @@ export class TwoFactorService {
     if (claims.purpose !== "2fa" || typeof claims.sub !== "string") throw authError("auth.2fa_challenge_invalid");
     const subHit = this.bySub.hit(`sub:${claims.sub}`);
     if (!subHit.ok) throw authError("auth.rate_limited", { retryAfterSec: subHit.retryAfterSec });
-    const hasCode = typeof input.code === "string" && input.code !== "";
-    const hasRecovery = typeof input.recoveryCode === "string" && input.recoveryCode !== "";
-    if (hasCode === hasRecovery) throw authError("auth.2fa_code_invalid");
+    oneFactor(input);
 
     const userId = claims.sub;
     await this.prisma.$transaction(async (tx) => {
@@ -166,32 +204,53 @@ export class TwoFactorService {
       if (!u || !u.twoFA || !u.totpSecretEnc || (u.sessionVersion ?? 0) !== (claims.sv ?? 0)) {
         throw authError("auth.2fa_challenge_invalid");
       }
-      if (hasCode) {
-        const step = verifyTotp(decryptSecret(u.totpSecretEnc), input.code as string, this.now().getTime(), u.totpLastStep);
-        if (step === null) throw authError("auth.2fa_code_invalid");
-        const res = await tx.user.updateMany({
-          where: { id: u.id, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
-          data: { totpLastStep: step },
-        });
-        if (res.count === 0) throw authError("auth.2fa_code_invalid");
-        return;
-      }
-      const hash = await matchRecoveryCode(input.recoveryCode as string, u.totpRecoveryHashes ?? []);
-      if (!hash) throw authError("auth.2fa_code_invalid");
-      const res = await tx.user.updateMany({
-        where: { id: u.id, totpRecoveryHashes: { has: hash } },
-        data: { totpRecoveryHashes: (u.totpRecoveryHashes ?? []).filter((h) => h !== hash) },
-      });
-      if (res.count === 0) throw authError("auth.2fa_code_invalid");
-      await this.audit.recordForUser(tx, u.id, {
-        actorId: u.id,
-        action: "security.2fa_recovery_code_used",
-        targetKind: "user",
-        targetId: u.id,
-        meta: { remaining: (u.totpRecoveryHashes ?? []).length - 1 },
-      });
+      await this.spendSecondFactor(tx, u, input);
     });
     return userId;
+  }
+
+  private async assertPassword(hash: string | null, password: string): Promise<void> {
+    if (!hash || typeof password !== "string" || !(await bcrypt.compare(password, hash))) {
+      throw new BadRequestException("Current password is incorrect");
+    }
+  }
+
+  /**
+   * Checks and spends exactly one second factor inside `tx` (the caller holds
+   * the user's advisory lock): a TOTP code moves totpLastStep forward (a step
+   * is good once); a recovery code's hash is removed (good once) and audited.
+   */
+  private async spendSecondFactor(
+    tx: Tx,
+    u: { id: string; totpSecretEnc: string | null; totpLastStep: number | null; totpRecoveryHashes: string[] | null },
+    factor: SecondFactor,
+  ): Promise<void> {
+    const kind = oneFactor(factor);
+    if (kind === "code") {
+      const step = verifyTotp(decryptSecret(u.totpSecretEnc as string), factor.code as string, this.now().getTime(), u.totpLastStep);
+      if (step === null) throw authError("auth.2fa_code_invalid");
+      const res = await tx.user.updateMany({
+        where: { id: u.id, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
+        data: { totpLastStep: step },
+      });
+      if (res.count === 0) throw authError("auth.2fa_code_invalid");
+      return;
+    }
+    const hashes = u.totpRecoveryHashes ?? [];
+    const hash = await matchRecoveryCode(factor.recoveryCode as string, hashes);
+    if (!hash) throw authError("auth.2fa_code_invalid");
+    const res = await tx.user.updateMany({
+      where: { id: u.id, totpRecoveryHashes: { has: hash } },
+      data: { totpRecoveryHashes: hashes.filter((h) => h !== hash) },
+    });
+    if (res.count === 0) throw authError("auth.2fa_code_invalid");
+    await this.audit.recordForUser(tx, u.id, {
+      actorId: u.id,
+      action: "security.2fa_recovery_code_used",
+      targetKind: "user",
+      targetId: u.id,
+      meta: { remaining: hashes.length - 1 },
+    });
   }
 
   /**
@@ -228,7 +287,7 @@ export class TwoFactorService {
         targetId: u.id,
       });
     });
-    this.sessions.invalidate(u.id);
+    this.sessions.bumped(u.id);
     if (this.email.enabled) {
       try {
         const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, lang: true } });

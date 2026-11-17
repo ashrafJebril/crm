@@ -141,6 +141,18 @@ describe("PasswordResetService (SP-26)", () => {
     expect(w.email.sent).toHaveLength(0);
   });
 
+  it("two concurrent submits of one link: exactly one resets, Kewy is written once", async () => {
+    const w = makeAuthWorld();
+    const token = await requestReset(w, "agent@acme.test");
+    const results = await Promise.allSettled([w.resets.reset(token, "first-pass-11"), w.resets.reset(token, "second-pass-22")]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(w.kewySync.passwordReset).toHaveBeenCalledTimes(1);
+    const winner = results[0].status === "fulfilled" ? "first-pass-11" : "second-pass-22";
+    expect(await bcrypt.compare(winner, w.userRow(w.U.agent).password)).toBe(true);
+    expect(w.kewySync.passwordReset.mock.calls[0][1]).toBe(w.userRow(w.U.agent).password);
+    expect(w.userRow(w.U.agent).sessionVersion).toBe(1);
+  });
+
   describe("logging", () => {
     let lines: string[];
     beforeEach(() => {

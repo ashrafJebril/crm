@@ -79,6 +79,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /auth/2fa/setup": "authenticated",
   "POST /auth/2fa/enable": "authenticated",
   "POST /auth/2fa/disable": "authenticated",
+  "POST /auth/2fa/recovery-codes": "authenticated",
   // SP-26: the invitee's own invitations and activation by slug.
   "GET /auth/invitations": "authenticated",
   "POST /auth/invitations/accept": "authenticated",

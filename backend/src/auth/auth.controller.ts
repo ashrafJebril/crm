@@ -139,17 +139,25 @@ export class AuthController {
     return this.twoFactor.setup(req.user.sub);
   }
 
-  /** SP-26: confirm with a code; the recovery codes are returned once. */
+  /** SP-26: confirm with a code; the recovery codes are returned once with
+   *  a fresh session (enabling ends every other session). */
   @Post("2fa/enable")
-  enableTwoFactor(@Body() dto: TwoFaEnableDto, @Req() req: Request & { user: JwtPayload }) {
-    return this.twoFactor.enable(req.user.sub, dto.code);
+  async enableTwoFactor(@Body() dto: TwoFaEnableDto, @Req() req: Request & { user: JwtPayload }) {
+    const { recoveryCodes } = await this.twoFactor.enable(req.user.sub, dto.code);
+    return { ...(await this.auth.reissue(req.user.sub, req.user.workspaceId)), recoveryCodes };
+  }
+
+  /** SP-26: replace every recovery code (password plus a code or a recovery code). */
+  @Post("2fa/recovery-codes")
+  regenerateRecoveryCodes(@Body() dto: TwoFaDisableDto, @Req() req: Request & { user: JwtPayload }) {
+    return this.twoFactor.regenerateRecoveryCodes(req.user.sub, dto.password, { code: dto.code, recoveryCode: dto.recoveryCode });
   }
 
   /** SP-26: needs the password and a code; ends every other session and
    *  returns a fresh token for this one. */
   @Post("2fa/disable")
   async disableTwoFactor(@Body() dto: TwoFaDisableDto, @Req() req: Request & { user: JwtPayload }) {
-    await this.twoFactor.disable(req.user.sub, dto.password, dto.code);
+    await this.twoFactor.disable(req.user.sub, dto.password, { code: dto.code, recoveryCode: dto.recoveryCode });
     return this.auth.reissue(req.user.sub, req.user.workspaceId);
   }
 

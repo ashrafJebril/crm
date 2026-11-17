@@ -1,5 +1,7 @@
 import { ConsoleLogger, ForbiddenException, HttpException, Logger, UnauthorizedException } from "@nestjs/common";
 import { TeamController } from "../team/team.module";
+import { AuthController } from "./auth.controller";
+import { normaliseRecoveryCode } from "./recovery-codes";
 import { WorkspacesController } from "../workspaces/workspaces.controller";
 import { stepAt, totpAt } from "./totp";
 import { ENC_KEY, makeAuthWorld, PW } from "./__fixtures__/auth-world";
@@ -161,17 +163,17 @@ describe("TwoFactorService (SP-26)", () => {
     w.advance(30_000);
     const before = (await w.auth.loginAfterTwoFactor(w.U.agent)).token;
     await expect(w.authenticate(before)).resolves.toBeDefined();
-    expect((await failure(w.twoFactor.disable(w.U.agent, "wrong-password", codeAt(w, secret)))).status).toBe(400);
-    expect(await failure(w.twoFactor.disable(w.U.agent, PW, "000000"))).toMatchObject({ status: 400, key: "auth.2fa_code_invalid" });
+    expect((await failure(w.twoFactor.disable(w.U.agent, "wrong-password", { code: codeAt(w, secret) }))).status).toBe(400);
+    expect(await failure(w.twoFactor.disable(w.U.agent, PW, { code: "000000" }))).toMatchObject({ status: 400, key: "auth.2fa_code_invalid" });
     expect(w.userRow(w.U.agent).twoFA).toBe(true);
-    await expect(w.twoFactor.disable(w.U.agent, PW, codeAt(w, secret))).resolves.toEqual({ ok: true });
+    await expect(w.twoFactor.disable(w.U.agent, PW, { code: codeAt(w, secret) })).resolves.toEqual({ ok: true });
     expect(w.userRow(w.U.agent)).toMatchObject({
-      twoFA: false, totpSecretEnc: null, totpPendingEnc: null, totpEnabledAt: null, totpLastStep: null, totpRecoveryHashes: [], sessionVersion: 1,
+      twoFA: false, totpSecretEnc: null, totpPendingEnc: null, totpEnabledAt: null, totpLastStep: null, totpRecoveryHashes: [], sessionVersion: 2, // enable 1, disable 2
     });
     await expect(w.authenticate(before)).rejects.toMatchObject({ response: { message: "auth.session_expired" } });
     // The controller hands back a fresh token that works.
     const fresh = await w.auth.reissue(w.U.agent, WS);
-    await expect(w.authenticate(fresh.token)).resolves.toMatchObject({ sv: 1, workspaceId: WS });
+    await expect(w.authenticate(fresh.token)).resolves.toMatchObject({ sv: 2, workspaceId: WS });
     expect(w.db.auditLog.filter((a) => a.action === "security.2fa_disabled").map((a) => a.workspaceId)).toEqual([WS]);
     expect(w.db.auditLog.filter((a) => a.action === "security.2fa_enabled")).toHaveLength(1);
   });
@@ -191,7 +193,7 @@ describe("TwoFactorService (SP-26)", () => {
     w.db.workspaceMember = w.db.workspaceMember.filter((m) => m.id !== "m_agent2");
     const token = (await w.auth.loginAfterTwoFactor(w.U.agent)).token;
     await expect(w.twoFactor.resetByOwner(WS, w.U.agent, { userId: w.U.owner })).resolves.toEqual({ ok: true });
-    expect(w.userRow(w.U.agent)).toMatchObject({ twoFA: false, totpSecretEnc: null, sessionVersion: 1 });
+    expect(w.userRow(w.U.agent)).toMatchObject({ twoFA: false, totpSecretEnc: null, sessionVersion: 2 });
     expect(w.db.auditLog.filter((a) => a.action === "security.2fa_reset_by_owner")).toEqual([
       expect.objectContaining({ workspaceId: WS, actorId: w.U.owner, targetId: w.U.agent }),
     ]);
@@ -204,6 +206,51 @@ describe("TwoFactorService (SP-26)", () => {
       status: 409,
       key: "auth.2fa_not_enabled",
     });
+  });
+
+  it("enabling ends other sessions and the controller returns a fresh token with the codes", async () => {
+    const w = makeAuthWorld();
+    const before = (await login(w, "agent@acme.test")).token as string;
+    await expect(w.authenticate(before)).resolves.toMatchObject({ sv: 0 });
+    const { secret } = await w.twoFactor.setup(w.U.agent);
+    const ctl = new AuthController(w.auth, {} as never, w.resets, w.twoFactor);
+    const req = { user: { sub: w.U.agent, workspaceId: WS } } as never;
+    const res = await ctl.enableTwoFactor({ code: codeAt(w, secret) }, req);
+    expect(res.recoveryCodes).toHaveLength(10);
+    expect(w.userRow(w.U.agent).sessionVersion).toBe(1);
+    await expect(w.authenticate(before)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(w.authenticate(res.token)).resolves.toMatchObject({ sv: 1, workspaceId: WS });
+  });
+
+  it("disable accepts a recovery code with the password", async () => {
+    const w = makeAuthWorld();
+    const { recoveryCodes } = await enrol(w, w.U.agent);
+    expect(await failure(w.twoFactor.disable(w.U.agent, PW, { recoveryCode: "aaaa-aaaa" }))).toMatchObject({ status: 400 });
+    expect(await failure(w.twoFactor.disable(w.U.agent, PW, {}))).toMatchObject({ status: 400, key: "auth.2fa_code_invalid" });
+    expect((await failure(w.twoFactor.disable(w.U.agent, "nope", { recoveryCode: recoveryCodes[0] }))).status).toBe(400);
+    await expect(w.twoFactor.disable(w.U.agent, PW, { recoveryCode: recoveryCodes[0] })).resolves.toEqual({ ok: true });
+    expect(w.userRow(w.U.agent)).toMatchObject({ twoFA: false, totpRecoveryHashes: [], sessionVersion: 2 });
+  });
+
+  it("regenerating recovery codes needs the password and a factor, replaces every code and is audited", async () => {
+    const w = makeAuthWorld();
+    const { secret, recoveryCodes } = await enrol(w, w.U.agent);
+    const oldHashes = [...w.userRow(w.U.agent).totpRecoveryHashes];
+    expect((await failure(w.twoFactor.regenerateRecoveryCodes(w.U.agent, "nope", { recoveryCode: recoveryCodes[0] }))).status).toBe(400);
+    w.advance(30_000);
+    const ctl = new AuthController(w.auth, {} as never, w.resets, w.twoFactor);
+    const res = await ctl.regenerateRecoveryCodes({ password: PW, code: codeAt(w, secret) }, { user: { sub: w.U.agent, workspaceId: WS } } as never);
+    expect(res.recoveryCodes).toHaveLength(10);
+    const row = w.userRow(w.U.agent);
+    expect(row.totpRecoveryHashes).toHaveLength(10);
+    for (const h of row.totpRecoveryHashes) expect(oldHashes).not.toContain(h);
+    expect(JSON.stringify(row)).not.toContain(normaliseRecoveryCode(res.recoveryCodes[0]));
+    // Old codes are dead, new ones work; the session version is unchanged.
+    expect(row.sessionVersion).toBe(1);
+    const { challenge } = await login(w, "agent@acme.test");
+    expect(await failure(w.twoFactor.verify({ challenge, recoveryCode: recoveryCodes[1] }))).toMatchObject({ status: 400 });
+    await expect(w.twoFactor.verify({ challenge, recoveryCode: res.recoveryCodes[1] })).resolves.toBe(w.U.agent);
+    expect(w.db.auditLog.filter((a) => a.action === "security.2fa_recovery_codes_regenerated")).toHaveLength(1);
   });
 
   describe("logging", () => {

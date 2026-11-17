@@ -432,6 +432,7 @@ describe("permission map", () => {
       "POST /auth/2fa/setup": "authenticated",
       "POST /auth/2fa/enable": "authenticated",
       "POST /auth/2fa/disable": "authenticated",
+      "POST /auth/2fa/recovery-codes": "authenticated",
       "POST /workspaces/:id/members/:userId/2fa/reset": "members.manage",
     };
     for (const [k, p] of Object.entries(sp26)) {

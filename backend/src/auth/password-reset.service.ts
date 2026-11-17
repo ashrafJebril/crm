@@ -115,14 +115,17 @@ export class PasswordResetService {
     const user = await this.prisma.user.findUnique({ where: { id: row.userId } });
     if (!user || !this.eligible(user)) throw authError("auth.reset_invalid");
     const hashed = await bcrypt.hash(password, 10);
-    // Kewy first: a strict failure leaves the local password unchanged.
+    // Consume first (compare-and-set): of two concurrent submits exactly one
+    // continues, so Kewy and the local hash can never diverge. A strict Kewy
+    // failure after this leaves the old password and a spent link; the user
+    // asks for a new one.
+    const used = await this.prisma.passwordReset.updateMany({
+      where: { id: row.id, tokenHash: row.tokenHash, usedAt: null, expiresAt: { gt: now } },
+      data: { usedAt: now },
+    });
+    if (used.count === 0) throw authError("auth.reset_invalid");
     await this.kewySync.passwordReset(user, hashed);
     await this.prisma.$transaction(async (tx) => {
-      const used = await tx.passwordReset.updateMany({
-        where: { id: row.id, tokenHash: row.tokenHash, usedAt: null, expiresAt: { gt: now } },
-        data: { usedAt: now },
-      });
-      if (used.count === 0) throw authError("auth.reset_invalid");
       // Every other live link dies too.
       await tx.passwordReset.updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: now } });
       await tx.user.update({ where: { id: user.id }, data: { password: hashed, ...SessionVersionService.bump() } });
@@ -133,7 +136,7 @@ export class PasswordResetService {
         targetId: user.id,
       });
     });
-    this.sessions.invalidate(user.id);
+    this.sessions.bumped(user.id);
     return { ok: true };
   }
 }

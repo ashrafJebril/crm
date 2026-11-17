@@ -405,7 +405,7 @@ export class AuthService {
       where: { id: userId },
       data: { password: hash, ...SessionVersionService.bump() },
     });
-    this.sessions.invalidate(userId);
+    this.sessions.bumped(userId);
     const memberships = await this.workspaces.listForUser(userId);
     const active = workspaceId && memberships.some((m) => m.id === workspaceId) ? workspaceId : null;
     const { token } = await this.issue(updated, active, memberships);

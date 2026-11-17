@@ -13,7 +13,7 @@ import { AuthService } from "./auth.service";
 type Session = Extract<Awaited<ReturnType<AuthService["login"]>>, { token: string }>;
 type SessionAuth = Omit<AuthService, "login"> & { login: (...a: Parameters<AuthService["login"]>) => Promise<Session> };
 /** SP-26 constructor deps: 2FA challenges and session versions. */
-const sp26Deps = [{ challengeFor: jest.fn() } as never, { invalidate: jest.fn() } as never] as const;
+const sp26Deps = [{ challengeFor: jest.fn() } as never, { invalidate: jest.fn(), bumped: jest.fn() } as never] as const;
 
 const PASSWORD = "secret123";
 const HASH = bcrypt.hashSync(PASSWORD, 4);
