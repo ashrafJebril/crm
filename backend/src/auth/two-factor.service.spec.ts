@@ -26,6 +26,10 @@ async function enrol(w: ReturnType<typeof makeAuthWorld>, userId: string) {
   return { secret, otpauthUrl, recoveryCodes };
 }
 
+// bcrypt hashes 10 recovery codes per enrolment; under the full parallel suite
+// a test can exceed jest's 5 s default (it passes alone in about 1 s).
+jest.setTimeout(30_000);
+
 const codeAt = (w: ReturnType<typeof makeAuthWorld>, secret: string) => totpAt(secret, stepAt(w.now().getTime()));
 const login = (w: ReturnType<typeof makeAuthWorld>, email: string) => w.auth.login({ email, password: PW }) as Promise<Record<string, any>>;
 
