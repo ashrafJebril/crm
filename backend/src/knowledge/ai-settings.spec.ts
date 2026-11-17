@@ -9,11 +9,13 @@ const SECRET = "test-admin-secret-not-a-real-key";
 
 /** Same helper as knowledge.spec.ts: env set for the duration of `fn`,
  *  including when `fn` is async. */
-function withConfig<T>(fn: () => T): T {
+/** Runs `fn` with kewy-ai configured (the default), or with both variables
+ *  emptied so a developer's local `.env` cannot make "unconfigured" tests call out. */
+function withConfig<T>(fn: () => T, configured = true): T {
   const prevUrl = process.env.KEWY_AI_URL;
   const prevSecret = process.env.KEWY_AI_ADMIN_SECRET;
-  process.env.KEWY_AI_URL = URL_BASE;
-  process.env.KEWY_AI_ADMIN_SECRET = SECRET;
+  process.env.KEWY_AI_URL = configured ? URL_BASE : "";
+  process.env.KEWY_AI_ADMIN_SECRET = configured ? SECRET : "";
   const restore = () => {
     if (prevUrl === undefined) delete process.env.KEWY_AI_URL;
     else process.env.KEWY_AI_URL = prevUrl;
@@ -352,7 +354,8 @@ describe("AiSettingsService — the local emergency stop (SP-20)", () => {
     expect(await gate.decide(WS_A, { conversationId: null, contactId: null })).toEqual({ reply: true, reason: "ok" });
   });
 
-  it("without kewy-ai config only the local stop changes", async () => {
+  it("without kewy-ai config only the local stop changes", () =>
+    withConfig(async () => {
     const { prisma, svc } = world();
     const { calls } = stubFetch({ body: {} });
     const off = await svc.setEnabled(WS_A, { enabled: false, reason: "Closed today", userId: "u1" });
@@ -367,7 +370,7 @@ describe("AiSettingsService — the local emergency stop (SP-20)", () => {
     expect(on).toEqual({ aiEnabled: true, changed: true });
     expect((await svc.get(WS_A)).stoppedLocally).toBe(false);
     expect(calls).toHaveLength(0);
-  });
+    }, false));
 
   it("enabling while kewy-ai fails clears the local stop and returns the upstream failure", async () => {
     const { prisma, svc } = world();
