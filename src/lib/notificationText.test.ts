@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { notificationText } from "./notificationText";
 import { makeTx } from "./tx";
 import { notificationHref, recordHref } from "./recordLink";
+import backendDto from "../../backend/src/notifications/notifications.dto.ts?raw";
+import prefsSource from "../shell/NotificationPrefsDialog.tsx?raw";
 
 const en = makeTx("en");
 const ar = makeTx("ar");
@@ -179,5 +181,24 @@ describe("meta ads reconnect notification text and deep link", () => {
     expect(notificationHref({ ...n({}), body: null }, "#/dashboard")).toBe("#/ads?tab=connection");
     expect(notificationHref({ ...n({ channelId: "ch1" }), title: "channel.health_downgraded" }, "#/inbox")).toBe("#/channels?id=ch1");
     expect(notificationHref({ title: "import.failed", body: null, recordKind: null, recordId: null }, "#/inbox")).toBeNull();
+  });
+});
+
+describe("SP-24 lifecycle notifications", () => {
+  const base = { type: "lifecycle", recordKind: "ticket", recordId: "t1" };
+  it("new ticket and new lead render in both languages with Latin digits", () => {
+    const body = JSON.stringify({ number: 1024, title: "Order not delivered", contactName: "Sara" });
+    const enT = notificationText(makeTx("en"), { ...base, title: "lifecycle.ticket_opened", body });
+    expect(enT).toEqual({ title: "New ticket #1024 · Sara", body: "Order not delivered" });
+    const arL = notificationText(makeTx("ar"), { ...base, title: "lifecycle.new_lead", body });
+    expect(arL.title).toBe("عميل محتمل جديد رقم 1024 · Sara");
+    expect(notificationText(makeTx("en"), { ...base, title: "lifecycle.new_lead", body: null }).title).toBe("New lead");
+    expect(notificationText(makeTx("en"), { ...base, title: "lifecycle.other_thing", body: null }).title).toBe("Automatic message alert");
+  });
+
+  it("the lifecycle type is in the notification preferences, as on the server", () => {
+    const types = [.../NOTIFICATION_TYPES = \[([^\]]*)\]/.exec(backendDto)![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(types).toContain("lifecycle");
+    for (const t of types) expect(prefsSource).toContain(`type: "${t}"`);
   });
 });

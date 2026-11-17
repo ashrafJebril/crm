@@ -154,15 +154,46 @@ describe("enable gate and toggle", () => {
       status: 409,
       body: { statusCode: 409, message: "lifecycle.template_missing", language: "en" },
     });
-    // Pending / paused variants enable (in review / paused) but send nothing.
+    // An approved variant plus one in review enables; the AR send falls back to EN.
     await w.lifecycle.setup(A, "booking_confirmed"); // recreates the missing EN one
     w.setStatus("kewy_booking_confirmed_ar", "pending");
-    w.setStatus("kewy_booking_confirmed_en", "paused");
+    w.setStatus("kewy_booking_confirmed_en", "approved");
     expect((await w.lifecycle.patch(A, "booking_confirmed", { enabled: true })).enabled).toBe(true);
     await w.bookings.create(A, bookingInput());
     await w.flush();
-    expect(w.zernio.sends).toHaveLength(0);
-    expect(w.runs()[0].result.send).toEqual({ skipped: true, reason: "template_not_approved", conversationId: "convAr" });
+    expect(w.zernio.sends.map((s) => s.name)).toEqual(["kewy_booking_confirmed_en"]);
+  });
+
+  it("enable needs at least one approved variant; turning off is always allowed", async () => {
+    const w = lifecycleWorld();
+    await w.lifecycle.setup(A, "booking_confirmed");
+    const refused = { status: 409, body: { statusCode: 409, message: "lifecycle.no_approved_template" } };
+    // Both failed: refused (nothing could ever send).
+    w.setStatus("kewy_booking_confirmed_ar", "failed");
+    w.setStatus("kewy_booking_confirmed_en", "failed");
+    expect(await failure(w.lifecycle.patch(A, "booking_confirmed", { enabled: true }))).toEqual(refused);
+    // Both in review / paused / not submitted: refused too.
+    for (const [ar, en] of [["pending", "pending"], ["pending", "paused"], ["local", "submitted"]]) {
+      w.setStatus("kewy_booking_confirmed_ar", ar);
+      w.setStatus("kewy_booking_confirmed_en", en);
+      expect(await failure(w.lifecycle.patch(A, "booking_confirmed", { enabled: true }))).toEqual(refused);
+    }
+    expect(sysWf(w, "booking_confirmed").status).toBe("draft");
+    expect((await w.lifecycle.list(A)).rows.find((r) => r.key === "booking_confirmed")?.blockedReason).toBe("no_approved_template");
+    // One approved, one pending: allowed.
+    w.setStatus("kewy_booking_confirmed_ar", "approved");
+    w.setStatus("kewy_booking_confirmed_en", "pending");
+    expect((await w.lifecycle.patch(A, "booking_confirmed", { enabled: true })).enabled).toBe(true);
+    // Both lose approval while on: the row says so, and turning it off still works.
+    w.setStatus("kewy_booking_confirmed_ar", "paused");
+    const row = (await w.lifecycle.list(A)).rows.find((r) => r.key === "booking_confirmed")!;
+    expect(row).toMatchObject({ enabled: true, blockedReason: "no_approved_template" });
+    expect((await w.lifecycle.patch(A, "booking_confirmed", { enabled: false })).enabled).toBe(false);
+    // Also with a rejected variant.
+    w.setStatus("kewy_booking_confirmed_ar", "approved");
+    await w.lifecycle.patch(A, "booking_confirmed", { enabled: true });
+    w.setStatus("kewy_booking_confirmed_en", "rejected", "BAD");
+    expect((await w.lifecycle.patch(A, "booking_confirmed", { enabled: false })).enabled).toBe(false);
   });
 });
 

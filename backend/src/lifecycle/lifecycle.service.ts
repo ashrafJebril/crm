@@ -41,7 +41,7 @@ export interface LifecycleRowDto {
   recipient: { kind: RecipientKind; userIds: string[] };
   offsetMinutes: number | null;
   variants: { ar: TemplateVariantDto | null; en: TemplateVariantDto | null } | null;
-  blockedReason: "template_rejected" | "template_missing" | "whatsapp_not_connected" | null;
+  blockedReason: "template_rejected" | "template_missing" | "whatsapp_not_connected" | "no_approved_template" | null;
   lastSentAt: string | null;
   sent30d: number;
   /** Skipped runs of the last 30 days by reason (opted_out, channel_disconnected, …). */
@@ -164,6 +164,7 @@ export class LifecycleService {
       if (!ctx.connected) blockedReason = "whatsapp_not_connected";
       else if (LANGS.some((l) => variants[l] && BLOCKING.has(variants[l]!.status))) blockedReason = "template_rejected";
       else if (LANGS.some((l) => !variants[l])) blockedReason = "template_missing";
+      else if (!LANGS.some((l) => variants[l]!.status === "approved")) blockedReason = "no_approved_template";
     }
     const step = wf ? firstStep(wf.steps) : null;
     const recipient: LifecycleRowDto["recipient"] =
@@ -294,7 +295,11 @@ export class LifecycleService {
     return this.getRow(workspaceId, key);
   }
 
-  /** Both variants exist and neither is rejected/disabled; WhatsApp connected. */
+  /**
+   * Both variants exist, neither is rejected/disabled, at least one is
+   * approved (else every send would be skipped), and WhatsApp is connected.
+   * Turning a message off never runs this gate.
+   */
   private async enableGate(workspaceId: string, key: LifecycleKey): Promise<void> {
     if (LIFECYCLE_CATALOG[key].audience !== "customer") return;
     if (!(await this.whatsappConnected(workspaceId))) throw lifecycleError("lifecycle.whatsapp_not_connected");
@@ -307,6 +312,7 @@ export class LifecycleService {
       if (!t) throw lifecycleError("lifecycle.template_missing", { language: lang });
       if (BLOCKING.has(t.status)) throw lifecycleError("lifecycle.template_rejected", { language: lang, reason: t.metaRejectionReason ?? null });
     }
+    if (!rows.some((r) => r.status === "approved")) throw lifecycleError("lifecycle.no_approved_template");
   }
 
   private async validRecipient(

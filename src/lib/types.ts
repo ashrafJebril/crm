@@ -1112,7 +1112,13 @@ export type WorkflowTriggerType =
   | "schedule"
   | "webhook"
   | "appointment_completed"
-  | "sale_completed";
+  | "sale_completed"
+  // SP-24: lifecycle events (user workflows may use them too).
+  | "appointment_confirmed"
+  | "appointment_cancelled"
+  | "ticket_resolved"
+  // SP-24: system workflows only (the booking reminder); never offered in the builder.
+  | "appointment_reminder_due";
 
 export type WorkflowStatus = "draft" | "active";
 
@@ -1226,6 +1232,8 @@ export interface Workflow {
   triggerConfig: Record<string, unknown>;
   steps: WorkflowStepGraph;
   webhookSecret: string | null;
+  /** SP-24: `lifecycle.<key>` on a system workflow (managed in Automatic messages; locked here). */
+  systemKey?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1703,4 +1711,52 @@ export interface KnowledgePreview {
   sourceId: string;
   groups: { heading: string | null; items: { chunkId: string; text: string; rowRef: number | null; url: string | null }[] }[];
   truncated: boolean;
+}
+
+// ─── SP-24 lifecycle messages (mirror of backend/src/lifecycle/lifecycle.service.ts) ──
+
+export type LifecycleKey =
+  | "booking_confirmed"
+  | "booking_reminder"
+  | "booking_cancelled"
+  | "ticket_opened"
+  | "ticket_resolved"
+  | "ticket_opened_staff"
+  | "new_lead_staff";
+
+export interface TemplateVariant {
+  templateId: string;
+  name: string;
+  language: string;
+  /** Template["status"]: approved | pending | rejected | submitted | failed | local | paused | disabled. */
+  status: string;
+  rejectionReason: string | null;
+  quality: string | null;
+}
+
+export type LifecycleRecipientKind = "customer" | "assignee" | "permitted" | "members";
+
+export interface LifecycleRow {
+  key: LifecycleKey;
+  audience: "customer" | "staff";
+  setUp: boolean;
+  enabled: boolean;
+  workflowId: string | null;
+  recipient: { kind: LifecycleRecipientKind; userIds: string[] };
+  /** booking_reminder only (minutes before the booking). */
+  offsetMinutes: number | null;
+  /** Customer rows only. */
+  variants: { ar: TemplateVariant | null; en: TemplateVariant | null } | null;
+  blockedReason: "template_rejected" | "template_missing" | "whatsapp_not_connected" | "no_approved_template" | null;
+  lastSentAt: string | null;
+  sent30d: number;
+  /** Skipped runs of the last 30 days by reason. */
+  skipped30d: Record<string, number>;
+}
+
+export interface LifecycleList {
+  rows: LifecycleRow[];
+  whatsappConnected: boolean;
+  /** In server memory only: null after a restart until the next Sync. */
+  lastSyncedAt: string | null;
 }
