@@ -38,7 +38,7 @@ describe("copilot write tools", () => {
     expect(await t.propose!(ctxFor(WRITER), { kind: "call", title: "x" } as never)).toMatchObject({ error: "invalid" });
     expect(await t.recheck!(execFor(WRITER), { contactId: "c-layla" })).toBe("ok");
     expect(await t.recheck!(execFor(WRITER), { contactId: "c-foreign" })).toBe("permission_revoked");
-    expect(await t.apply!(execFor(WRITER), { kind: "call", title: "x", contactId: "c-layla" })).toEqual({ activityId: "act-1" });
+    expect(await t.apply!(execFor(WRITER), { kind: "call", title: "x", contactId: "c-layla" })).toEqual({ activityId: "act-1", contactId: "c-layla" });
   });
 
   it("move_ticket_stage: risk by target, recheck against the sealed stage, conflicts become CardOutdated", async () => {

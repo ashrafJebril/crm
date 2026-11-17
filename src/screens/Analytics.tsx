@@ -1,4 +1,5 @@
 import { memo, useState } from "react";
+import { InsightsAskBox } from "@/copilot/AskBox";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
@@ -333,6 +334,8 @@ function AnalyticsImpl() {
       {tab === "overview" && <OverviewTab days={days} tx={tx} />}
       {tab !== "overview" && (
         <div style={{ padding: "0 24px 24px" }}>
+          {/* SP-18 (ruling 11): reports.view and an available copilot; the server recomputes the numbers. */}
+          <InsightsAskBox tx={tx} />
           {tab === "support" ? (
             <SupportInsights params={params} setParams={setParams} today={today} lang={t.lang} tx={tx} canChannels={can("channels.view")} workspaceLang={activeWorkspace?.lang} />
           ) : (

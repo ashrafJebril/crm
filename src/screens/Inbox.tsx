@@ -1,4 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { REPLY_DRAFT_EVENT, takeReplyDraft } from "@/copilot/replyDraft";
 import { openParamForRoute, useOpenParam } from "@/lib/useOpenParam";
 import { InlineNote } from "@/components/InlineNote";
 import { mergeByTime } from "@/lib/mentions";
@@ -1330,6 +1331,19 @@ function ConversationPane({
   const canViewAds = can("reports.view");
   const noPermCompose = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const [draft, setDraft] = useState<string>("");
+  // SP-18 "Copy to reply box": a copilot draft for this conversation fills the composer (never sends).
+  useEffect(() => {
+    const take = () => {
+      const text = takeReplyDraft(conv.id);
+      if (text !== null) setDraft(text);
+    };
+    take();
+    const onOffer = (e: Event) => {
+      if ((e as CustomEvent<{ conversationId?: string }>).detail?.conversationId === conv.id) take();
+    };
+    window.addEventListener(REPLY_DRAFT_EVENT, onOffer);
+    return () => window.removeEventListener(REPLY_DRAFT_EVENT, onOffer);
+  }, [conv.id]);
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState<boolean>(false);

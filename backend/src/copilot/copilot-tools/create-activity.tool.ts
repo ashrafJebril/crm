@@ -71,7 +71,8 @@ export function createActivityTool(deps: WriteToolDeps): CopilotTool {
     },
     async apply(exec: ExecContext, args) {
       const row = await deps.activities.create(exec.workspaceId, args as unknown as CreateActivityDto, exec.viewer.userId, exec.viewer);
-      return { activityId: (row as { id: string }).id };
+      // The record it hangs on, so the receipt can link to it.
+      return { activityId: (row as { id: string }).id, ...(args.ticketId ? { ticketId: String(args.ticketId) } : { contactId: String(args.contactId) }) };
     },
   };
 }
