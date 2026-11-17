@@ -19,7 +19,7 @@ const MIN_MS = 60_000;
  * `booking_reminder` system workflow: pending/confirmed bookings whose start
  * lies in (now + offset − 15 min, now + offset] and is still in the future
  * start one run each, straight through the dispatch (no event round trip).
- * The `LifecycleDelivery` claim (`reminder:<startAt>:<offset>`) makes an
+ * The `LifecycleDelivery` claim (`reminder:<startAt>`) makes an
  * overlapping tick, a second instance or a replay send nothing; a reschedule
  * gets a new key, so the new time gets its own reminder. A payment-locked
  * workspace is skipped without a claim, so the next tick retries while the
@@ -71,7 +71,7 @@ export class LifecycleReminderScheduler {
         ]);
         for (const a of appts) {
           const contact = (a as unknown as { contact?: { id: string; name: string; firstName: string | null; phone: string | null } }).contact ?? null;
-          const run = await this.dispatch.startTriggeredRun(wf, appointmentPayload(a, contact, ws?.timezone, reminderKey(a.startAt, offset)));
+          const run = await this.dispatch.startTriggeredRun(wf, appointmentPayload(a, contact, ws?.timezone, reminderKey(a.startAt)));
           if (!run) continue;
           started += 1;
           await this.markSent(wf.workspaceId, a.id, run.id);

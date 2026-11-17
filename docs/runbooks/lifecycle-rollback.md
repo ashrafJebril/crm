@@ -35,3 +35,18 @@ rows as editable (and deletable) user workflows.
   `LifecycleDelivery` table are invisible to older code. Do not drop them.
 - After rolling forward again, owners switch the messages back on from
   Settings → Automatic messages (the setup is kept; only the switch is off).
+
+## Ops note: what happens during a payment lock
+
+- **Event triggers are dropped, not retried.** `appointment_confirmed`,
+  `appointment_cancelled`, `ticket_created` and `ticket_resolved` start no run
+  while the workspace is payment-locked (the dispatch refuses the run and takes
+  no claim). Unlocking does not replay them: a booking confirmed during the
+  lock gets no "confirmed" message.
+- **Reminders are retried.** The reminder scheduler skips a locked workspace
+  without taking a claim, so a later tick sends the reminder while the booking
+  is still inside its window (and still in the future).
+- **A run already started is parked, not dropped.** A run that reaches its
+  send step while the workspace is locked waits (`status = 'waiting'`) and is
+  resumed by the run poller after unlock, unless the message was switched off
+  meanwhile (switching off cancels it).

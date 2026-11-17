@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { A, bookingInput, failure, lifecycleWorld } from "./lifecycle-test-world";
 import { LIFECYCLE_CATALOG } from "./lifecycle-catalog";
+import { validate } from "class-validator";
+import { plainToInstance } from "class-transformer";
+import { CreateWorkflowDto, UpdateWorkflowDto, USER_TRIGGER_TYPES } from "../workflows/workflows.dto";
 
 const sysWf = (w: ReturnType<typeof lifecycleWorld>, key: string) => w.db.workflow.find((x) => x.systemKey === `lifecycle.${key}`);
 
@@ -173,10 +176,40 @@ describe("locks and filters", () => {
     expect(await failure(w.workflows.update(A, id, { steps: { entry: null, steps: {} } } as any))).toEqual(locked);
     expect(await failure(w.workflows.update(A, id, { name: "Renamed" } as any))).toEqual(locked);
     expect(await failure(w.workflows.remove(A, id))).toEqual(locked);
-    expect((await w.workflows.activate(A, id)).status).toBe("active");
-    expect((await w.workflows.deactivate(A, id)).status).toBe("draft");
+    // Toggled only through the lifecycle API (its enable gate): the generic
+    // activate / deactivate / test routes refuse system rows.
+    expect(await failure(w.workflows.activate(A, id))).toEqual(locked);
+    expect(await failure(w.workflows.deactivate(A, id))).toEqual(locked);
+    expect(await failure(w.workflows.test(A, id, { payload: { ticket: { id: "x" } } } as any))).toEqual(locked);
+    expect(sysWf(w, "ticket_opened_staff").status).toBe("draft");
+    expect(w.runs()).toHaveLength(0);
+    expect((await w.lifecycle.patch(A, "ticket_opened_staff", { enabled: true })).enabled).toBe(true);
+    expect((await w.lifecycle.patch(A, "ticket_opened_staff", { enabled: false })).enabled).toBe(false);
     expect((await w.workflows.list(A))[0].systemKey).toBe("lifecycle.ticket_opened_staff");
     expect((await w.workflows.get(A, id)).systemKey).toBe("lifecycle.ticket_opened_staff");
+  });
+
+  it("generic activate cannot bypass the enable gate", async () => {
+    const w = lifecycleWorld();
+    await w.lifecycle.setup(A, "booking_confirmed");
+    w.setStatus("kewy_booking_confirmed_ar", "rejected", "INVALID_FORMAT");
+    const id = sysWf(w, "booking_confirmed").id;
+    expect(await failure(w.workflows.activate(A, id))).toMatchObject({ status: 409, body: { message: "workflows.system_locked" } });
+    expect(sysWf(w, "booking_confirmed").status).toBe("draft");
+  });
+
+  it("appointment_reminder_due is not a user trigger", async () => {
+    const w = lifecycleWorld();
+    const steps = { entry: "s", steps: { s: { id: "s", type: "send_whatsapp", config: { message: "hi" } } } };
+    expect(await failure(w.workflows.create(A, { name: "x", triggerType: "appointment_reminder_due", steps } as any))).toMatchObject({ status: 400 });
+    const user = await w.workflows.create(A, { name: "x", triggerType: "appointment_confirmed", steps } as any);
+    expect(await failure(w.workflows.update(A, user.id, { triggerType: "appointment_reminder_due" } as any))).toMatchObject({ status: 400 });
+    // The DTOs reject it too (the global ValidationPipe).
+    expect(USER_TRIGGER_TYPES).not.toContain("appointment_reminder_due");
+    expect(USER_TRIGGER_TYPES).toContain("appointment_confirmed");
+    expect(await validate(plainToInstance(CreateWorkflowDto, { name: "x", triggerType: "appointment_reminder_due" }))).not.toHaveLength(0);
+    expect(await validate(plainToInstance(UpdateWorkflowDto, { triggerType: "appointment_reminder_due" }))).not.toHaveLength(0);
+    expect(await validate(plainToInstance(CreateWorkflowDto, { name: "x", triggerType: "ticket_resolved" }))).toHaveLength(0);
   });
 
   it("pipelineKind filter matches only that kind; user workflow without filter still fires", async () => {
@@ -256,10 +289,23 @@ describe("reminders", () => {
     w.db.appointment[0].startAt = at(58);
     await w.scheduler.tick({ now: NOW });
     expect(w.db.lifecycleDelivery.map((d) => d.occurrenceKey)).toEqual([
-      `reminder:${at(55).toISOString()}:60`,
-      `reminder:${at(58).toISOString()}:60`,
+      `reminder:${at(55).toISOString()}`,
+      `reminder:${at(58).toISOString()}`,
     ]);
     expect(w.zernio.sends).toHaveLength(2);
+  });
+
+  it("changing the offset does not send a second reminder for the same booking", async () => {
+    const w = await reminderWorld();
+    w.db.appointment.push(appt("a1", at(55)));
+    await w.scheduler.tick({ now: NOW });
+    expect(w.zernio.sends).toHaveLength(1);
+    // A larger offset puts the same booking in the window again: no new send.
+    await w.lifecycle.patch(A, "booking_reminder", { offsetMinutes: 120 });
+    await w.scheduler.tick({ now: at(-60) });
+    await w.scheduler.tick({ now: at(-62) });
+    expect(w.zernio.sends).toHaveLength(1);
+    expect(w.db.lifecycleDelivery).toHaveLength(1);
   });
 
   it("past reminder is skipped", async () => {

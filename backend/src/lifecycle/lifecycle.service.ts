@@ -287,9 +287,9 @@ export class LifecycleService {
 
     if (dto.enabled === true) {
       await this.enableGate(workspaceId, key);
-      await this.workflows.activate(workspaceId, wf.id);
+      await this.workflows.activateSystem(workspaceId, wf.id);
     } else if (dto.enabled === false) {
-      await this.workflows.deactivate(workspaceId, wf.id);
+      await this.workflows.deactivateSystem(workspaceId, wf.id);
     }
     return this.getRow(workspaceId, key);
   }

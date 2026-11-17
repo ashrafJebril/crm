@@ -18,16 +18,23 @@ export const TRIGGER_TYPES = [
 ] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
 
+/** SP-24: triggers only system (lifecycle) workflows use; never user-chosen. */
+export const SYSTEM_ONLY_TRIGGER_TYPES = ["appointment_reminder_due"] as const;
+/** What a user workflow may choose (create / update validation). */
+export const USER_TRIGGER_TYPES = TRIGGER_TYPES.filter(
+  (t) => !(SYSTEM_ONLY_TRIGGER_TYPES as readonly string[]).includes(t),
+) as Exclude<TriggerType, (typeof SYSTEM_ONLY_TRIGGER_TYPES)[number]>[];
+
 export class CreateWorkflowDto {
   @IsString() name!: string;
-  @IsIn(TRIGGER_TYPES) triggerType!: TriggerType;
+  @IsIn(USER_TRIGGER_TYPES) triggerType!: TriggerType;
   @IsOptional() @IsObject() triggerConfig?: Record<string, unknown>;
   @IsOptional() @IsObject() steps?: unknown;
 }
 
 export class UpdateWorkflowDto {
   @IsOptional() @IsString() name?: string;
-  @IsOptional() @IsIn(TRIGGER_TYPES) triggerType?: TriggerType;
+  @IsOptional() @IsIn(USER_TRIGGER_TYPES) triggerType?: TriggerType;
   @IsOptional() @IsObject() triggerConfig?: Record<string, unknown>;
   @IsOptional() @IsObject() steps?: unknown;
 }

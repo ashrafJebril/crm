@@ -5,7 +5,8 @@ import { formatBookingTexts } from "./lifecycle-text";
  * (templates never format dates) and an `occurrenceKey` the dispatch claims
  * once per (workflow, entity, occurrence):
  *  - `confirmed:<startAt ISO>`, `cancelled:<startAt ISO>`,
- *    `reminder:<startAt ISO>:<offsetMinutes>`;
+ *    `reminder:<startAt ISO>` (one reminder per booking start time: changing
+ *    the offset never re-sends; a reschedule is a new occurrence);
  *  - `ticket_created:<ticketId>`, `ticket_resolved:<ticketId>:<enteredStageAt ISO>`.
  */
 
@@ -51,7 +52,7 @@ export function appointmentPayload(
 
 export const confirmedKey = (startAt: Date) => `confirmed:${startAt.toISOString()}`;
 export const cancelledKey = (startAt: Date) => `cancelled:${startAt.toISOString()}`;
-export const reminderKey = (startAt: Date, offsetMinutes: number) => `reminder:${startAt.toISOString()}:${offsetMinutes}`;
+export const reminderKey = (startAt: Date) => `reminder:${startAt.toISOString()}`;
 export const ticketCreatedKey = (ticketId: string) => `ticket_created:${ticketId}`;
 export const ticketResolvedKey = (ticketId: string, enteredStageAt: Date) => `ticket_resolved:${ticketId}:${enteredStageAt.toISOString()}`;
 

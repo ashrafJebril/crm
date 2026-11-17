@@ -77,7 +77,11 @@ describe("SP-24 lifecycle messages migration", () => {
     expect(FOLDER.slice(0, 14) > "20261116130000").toBe(true);
     expect(FOLDER.slice(0, 14) > "20261117140000").toBe(true);
     const folders = readdirSync(MIGRATIONS).filter((f) => /^\d{14}_/.test(f)).sort();
-    expect(folders[folders.indexOf(FOLDER) - 1]).toBe("20261117120000_knowledge_upgrade");
+    // Relative to the pinned predecessors, not adjacency (SP-20's
+    // 20261117130000 may land between them).
+    for (const before of Object.keys(PINNED)) {
+      expect({ before, after: folders.indexOf(FOLDER) > folders.indexOf(before) }).toEqual({ before, after: true });
+    }
 
     // LF only.
     expect(raw.includes(Buffer.from("\r\n"))).toBe(false);
