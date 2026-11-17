@@ -463,6 +463,13 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /agent/settings": "agent.view",
   "PATCH /agent/settings": "agent.update",
   "POST /agent/settings/resync": "agent.update",
+  // SP-22: the skills gallery.
+  "GET /skills": "agent.view",
+  "POST /skills/:key/install": "agent.update",
+  "PATCH /skills/:key": "agent.update",
+  "POST /skills/:key/update": "agent.update",
+  "POST /skills/:key/retry": "agent.update",
+  "DELETE /skills/:key": "agent.delete",
   // A sandbox turn costs money (ruling 9): owners and admins by default.
   "GET /agent/sandbox": "agent.update",
   "POST /agent/sandbox/messages": "agent.update",

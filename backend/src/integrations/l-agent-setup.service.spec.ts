@@ -5,6 +5,8 @@ import { withAdvisoryLocks } from "../channels/test-prisma";
 function rawClient(lWorkspaceId: string | null = "l-1") {
   const raw: any = {
     workspace: { findUnique: jest.fn().mockResolvedValue({ lWorkspaceId }) },
+    // SP-22: no ledger rows (the default skills).
+    skillInstall: { findMany: jest.fn().mockResolvedValue([]) },
     $executeRaw: jest.fn(async () => 0),
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(raw)),
   };
@@ -103,7 +105,8 @@ describe("LAgentSetupService", () => {
       expect((await svc.ensure("ws-1")).prompt).toBe("updated");
       expect(puts()).toHaveLength(1);
       const content: string = puts()[0][1].body.content;
-      expect(content.startsWith("You are support.\n\n<!-- kewy-crm-tools -->")).toBe(true);
+      // SP-22: the sections are now the booking/photos skills' delimited blocks.
+      expect(content.startsWith("You are support.\n\n<!-- kewy-skill:booking:v1 -->\n<!-- kewy-crm-tools -->")).toBe(true);
       expect(content.indexOf("<!-- kewy-crm-tools -->")).toBeLessThan(content.indexOf("<!-- kewy-crm-photos -->"));
       expect(content).toContain("list_photos");
       expect(content.split("<!-- kewy-crm-photos -->")).toHaveLength(2);
@@ -115,8 +118,11 @@ describe("LAgentSetupService", () => {
       expect((await svc.ensure("ws-1")).prompt).toBe("updated");
       expect(puts()).toHaveLength(1);
       const content: string = puts()[0][1].body.content;
-      expect(content.startsWith(`${before}\n\n<!-- kewy-crm-photos -->`)).toBe(true);
+      // SP-22: an edited legacy section (here the tools stub) is left as is and
+      // its skill gets no block; the photos block is added.
+      expect(content.startsWith(`${before}\n\n<!-- kewy-skill:photos:v1 -->\n<!-- kewy-crm-photos -->`)).toBe(true);
       expect(content.split("<!-- kewy-crm-tools -->")).toHaveLength(2);
+      expect(content).not.toContain("kewy-skill:booking");
     });
 
     it("all present: no PUT, already-present", async () => {
@@ -128,19 +134,30 @@ describe("LAgentSetupService", () => {
     it("an empty prompt gets both sections without a leading blank line", async () => {
       withPrompt("");
       await svc.ensure("ws-1");
-      expect(puts()[0][1].body.content.startsWith("<!-- kewy-crm-tools -->")).toBe(true);
+      expect(puts()[0][1].body.content.startsWith("<!-- kewy-skill:booking:v1 -->\n<!-- kewy-crm-tools -->")).toBe(true);
     });
 
-    it("SP-10: an agent set up before SP-10 gets the booking-slots section appended once", async () => {
+    it("SP-22: edited pre-SP-22 sections are left as is and their skills get no block (ruling 4)", async () => {
+      // Stubs that are not the exact legacy text: the booking and photos
+      // skills' legacy parts stay untouched and nothing of theirs is added
+      // (AgentPromptService flags them needs_attention); knowledge is appended.
       const before = "You are support.\n\n<!-- kewy-crm-tools -->\n## Booking\n\n<!-- kewy-crm-photos -->\n## Photos";
       withPrompt(before);
       expect((await svc.ensure("ws-1")).prompt).toBe("updated");
       expect(puts()).toHaveLength(1);
       const content: string = puts()[0][1].body.content;
-      expect(content.startsWith(`${before}\n\n<!-- kewy-crm-booking-slots -->`)).toBe(true);
-      expect(content).toContain("Use find_slots before booking a catalog service");
-      expect(content).toContain("list_services");
-      expect(content.split("<!-- kewy-crm-booking-slots -->")).toHaveLength(2);
+      expect(content.startsWith(`${before}\n\n<!-- kewy-crm-knowledge -->`)).toBe(true);
+      expect(content).not.toContain("kewy-skill:");
+    });
+
+    it("SP-22: the exact pre-SP-22 sections become delimited blocks, once (an agent set up before SP-10 gets booking slots)", async () => {
+      const { CRM_PROMPT_SECTION, CRM_PHOTOS_SECTION, CRM_BOOKING_SLOTS_SECTION } = await import("./l-agent-setup.service");
+      withPrompt(["You are support.", CRM_PROMPT_SECTION, CRM_PHOTOS_SECTION].join("\n\n"));
+      await svc.ensure("ws-1");
+      const content: string = puts()[0][1].body.content;
+      expect(content.startsWith("You are support.\n\n<!-- kewy-skill:booking:v1 -->")).toBe(true);
+      expect(content).toContain(CRM_BOOKING_SLOTS_SECTION);
+      for (const m of ["<!-- kewy-crm-tools -->", "<!-- kewy-crm-photos -->", "<!-- kewy-crm-booking-slots -->"]) expect(content.split(m)).toHaveLength(2);
     });
 
     it("a new registration describes approved photos", async () => {
@@ -291,7 +308,7 @@ describe("LAgentSetupService", () => {
 
     it("without the lock the same interleaving loses a block (the test can tell)", async () => {
       const l = slowL(ALL);
-      const bare: any = { workspace: { findUnique: jest.fn().mockResolvedValue({ lWorkspaceId: "l-1" }) }, $executeRaw: jest.fn(), $transaction: (fn: (tx: unknown) => unknown) => fn(bare) };
+      const bare: any = { workspace: { findUnique: jest.fn().mockResolvedValue({ lWorkspaceId: "l-1" }) }, skillInstall: { findMany: jest.fn().mockResolvedValue([]) }, $executeRaw: jest.fn(), $transaction: (fn: (tx: unknown) => unknown) => fn(bare) };
       const a = new LAgentSetupService({ raw: bare } as never, l.client as never, resolver, mcp, tokens);
       const b = new LAgentSetupService({ raw: bare } as never, l.client as never, resolver, mcp, tokens);
       await Promise.all([a.writePromptBlock("ws-1", "persona", "PERSONA"), b.writePromptBlock("ws-1", "guidelines", "GUIDELINES")]);

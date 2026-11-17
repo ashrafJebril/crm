@@ -462,6 +462,9 @@ const DEFAULTS: Record<string, () => Row> = {
   }),
   auditLog: () => ({ actorId: null, actorKind: "user", targetId: null, meta: null }),
   passwordReset: () => ({ usedAt: null, requestedIp: null }),
+  // SP-22
+  skillInstall: () => ({ status: "enabled", config: {}, needsConfig: false, lastAppliedAt: null, lastError: null, installedById: null, version: 0 }),
+  agentToolCall: () => ({ skillKey: null, errorCode: null, at: new Date() }),
 };
 
 /** SP-15 unique constraints, as Postgres enforces them (P2002). */
@@ -485,6 +488,8 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   // SP-26
   invitation: [["Invitation_tokenHash_key", ["tokenHash"]]],
   passwordReset: [["PasswordReset_tokenHash_key", ["tokenHash"]]],
+  // SP-22
+  skillInstall: [["SkillInstall_workspaceId_skillKey_key", ["workspaceId", "skillKey"]]],
   workspaceMember: [["WorkspaceMember_userId_workspaceId_key", ["userId", "workspaceId"]]],
   user: [["User_email_key", ["email"]]],
 };
@@ -943,6 +948,9 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     lifecycleDelivery: model("lifecycleDelivery"),
     // SP-26: invitations, the audit log and password resets.
     invitation: model("invitation"),
+    // SP-22: the skills ledger and the tool-call log.
+    skillInstall: model("skillInstall"),
+    agentToolCall: model("agentToolCall"),
     auditLog: model("auditLog"),
     passwordReset: model("passwordReset"),
     activity: model("activity"),

@@ -32,6 +32,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { ClaudeService } from "../../ai/claude.service";
 import { ClaudeFailure } from "../../ai/claude-errors";
 import { McpToolsFactory } from "../../mcp-server/mcp-tools.factory";
+import { SkillsService } from "../../skills/skills.service";
 import { LAgentSetupService, crmPromptSections } from "../../integrations/l-agent-setup.service";
 import { GUIDELINES_BLOCK } from "../../knowledge-sources/knowledge-publisher";
 import { SlidingWindowLimiter } from "../../common/rate-limit";
@@ -176,6 +177,8 @@ export class SandboxService {
     @Optional() private readonly agentSetup?: LAgentSetupService,
     // Review: read tools run with the member's own permissions (global PermissionsModule; specs may omit it).
     @Optional() private readonly perm?: PermissionService,
+    // SP-22: the sandbox offers the same tools as the live agent (enabled skills).
+    @Optional() private readonly skills?: SkillsService,
   ) {
     this.limiter = new SlidingWindowLimiter({ limit: SANDBOX_RATE.turns, windowMs: SANDBOX_RATE.windowMs });
   }
@@ -250,7 +253,8 @@ export class SandboxService {
 
     const row = await this.thread(workspaceId, userId, now);
     const turns = readTurns(row?.messages);
-    const tools = this.tools.build(workspaceId, { mode: "sandbox" }) as unknown as Record<string, SandboxableTool>;
+    const enabled = this.skills ? await this.skills.enabledFor(workspaceId) : undefined;
+    const tools = this.tools.build(workspaceId, { mode: "sandbox", enabled }) as unknown as Record<string, SandboxableTool>;
     const defs = toolDefinitions(tools);
     const system = await this.systemPrompt(workspaceId);
     const key = createHash("sha256").update(system).update("\u0000").update(JSON.stringify(defs)).digest("hex");
