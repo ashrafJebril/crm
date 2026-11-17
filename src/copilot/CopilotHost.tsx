@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { OPEN_COPILOT_EVENT, useCopilotAvailable } from "./copilotApi";
+import { isShortcut, shortcutAllowed } from "./drawerKeys";
 
 // The drawer (TipTap and all) loads on first open, not with the app shell.
 const CopilotDrawer = lazy(() => import("./CopilotDrawer"));
@@ -8,7 +9,7 @@ const CopilotDrawer = lazy(() => import("./CopilotDrawer"));
  * SP-18: listens for "open the copilot" (Topbar button, ask boxes) and
  * Ctrl/Cmd+J. Nothing renders while `GET /copilot/status` says unavailable.
  * Once opened, the drawer stays mounted (hidden when closed) so a running
- * turn keeps streaming into it.
+ * turn keeps streaming into it and the composer keeps its draft.
  */
 export function CopilotHost() {
   const available = useCopilotAvailable();
@@ -24,7 +25,8 @@ export function CopilotHost() {
       if (p) setPrompt((x) => ({ text: p, n: (x?.n ?? 0) + 1 }));
     };
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "j") {
+      // Not while typing in a field outside the drawer (the field keeps its own keys).
+      if (isShortcut(e) && shortcutAllowed(e.target as HTMLElement | null)) {
         e.preventDefault();
         setLoaded(true);
         setOpen((o) => !o);

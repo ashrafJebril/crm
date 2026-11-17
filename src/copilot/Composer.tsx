@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
@@ -74,26 +74,38 @@ function renderItems(container: HTMLDivElement, items: RefCandidate[], command: 
  * member's own search, bookings with bookings.view; at most MAX_REFS), file
  * attachments checked here like the server (type, size, count) with upload
  * progress and remove-before-send. Enter sends, Shift+Enter starts a line.
+ *
+ * The composer stays mounted while the drawer is hidden, so a draft, its
+ * references and its attachments survive closing. It clears only when the
+ * send is accepted (`onSend` resolves true); a refused send keeps
+ * everything for another try.
  */
-export function Composer({
-  tx,
-  lang,
-  disabled,
-  initialText,
-  onSend,
-}: {
+export interface ComposerHandle {
+  focus: () => void;
+}
+
+export const Composer = forwardRef<ComposerHandle, {
   tx: Tx;
   lang: "en" | "ar";
   disabled: boolean;
-  initialText?: string;
-  onSend: (m: { text: string; refs: CopilotRef[]; attachments: CopilotAttachmentInfo[] }) => void;
-}) {
+  onSend: (m: { text: string; refs: CopilotRef[]; attachments: CopilotAttachmentInfo[] }) => Promise<boolean>;
+  /** The @ list opened or closed (the drawer's Escape leaves the drawer open while it is). */
+  onSuggestingChange?: (open: boolean) => void;
+}>(function Composer({ tx, lang, disabled, onSend, onSuggestingChange }, ref) {
   const { can } = usePermissions();
   const canBookings = can("bookings.view");
   const [files, setFiles] = useState<Pending[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [length, setLength] = useState(0);
   const suggesting = useRef(false);
+  const [sending, setSending] = useState(false);
+  // The editor keeps its first extensions: reach the latest callback through a ref.
+  const onSuggestRef = useRef(onSuggestingChange);
+  onSuggestRef.current = onSuggestingChange;
+  const setSuggesting = (v: boolean) => {
+    suggesting.current = v;
+    onSuggestRef.current?.(v);
+  };
   const sendRef = useRef<() => void>(() => undefined);
   const fileInput = useRef<HTMLInputElement | null>(null);
 
@@ -117,7 +129,7 @@ export function Composer({
         let current: { items: RefCandidate[]; command: (a: { id: string; label: string }) => void } | null = null;
         return {
           onStart: (props) => {
-            suggesting.current = true;
+            setSuggesting(true);
             current = { items: props.items as RefCandidate[], command: props.command };
             list = document.createElement("div");
             list.className = "mention-suggestion-list";
@@ -140,7 +152,10 @@ export function Composer({
           },
           onKeyDown: (props) => {
             if (props.event.key === "Escape") {
+              // Handled here: the drawer must not close (it checks defaultPrevented).
+              props.event.preventDefault();
               popup[0]?.hide();
+              setSuggesting(false);
               return true;
             }
             // Enter takes the first match.
@@ -152,7 +167,7 @@ export function Composer({
             return false;
           },
           onExit: () => {
-            suggesting.current = false;
+            setSuggesting(false);
             popup[0]?.destroy();
           },
         };
@@ -171,7 +186,7 @@ export function Composer({
         renderHTML: ({ node, options }) => ["span", options.HTMLAttributes, `@${(node.attrs.label as string | null) ?? ""}`],
       }),
     ],
-    content: initialText ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: initialText }] }] } : "",
+    content: "",
     editorProps: {
       attributes: { class: "copilot-editor", dir: "auto", "aria-label": tx("Ask Kewy", "اسأل كيوي") },
       handleKeyDown: (_view, event) => {
@@ -186,18 +201,13 @@ export function Composer({
     onUpdate: ({ editor: e }) => setLength(serialize(e.getJSON()).text.length),
   });
 
-  useEffect(() => {
-    if (editor && initialText) {
-      editor.commands.setContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: initialText }] }] });
-      setLength(initialText.length);
-    }
-  }, [editor, initialText]);
+  useImperativeHandle(ref, () => ({ focus: () => editor?.commands.focus("end") }), [editor]);
 
   const uploading = files.some((f) => f.status === "uploading");
   const ready = files.filter((f) => f.status === "ready");
 
   sendRef.current = () => {
-    if (!editor || disabled || uploading) return;
+    if (!editor || disabled || uploading || sending) return;
     const { text, refs } = serialize(editor.getJSON());
     if (!text) return;
     if (text.length > MESSAGE_MAX) {
@@ -205,10 +215,16 @@ export function Composer({
       return;
     }
     setError(null);
-    onSend({ text, refs, attachments: ready.map((f) => ({ id: f.id!, fileName: f.fileName, kind: f.kind! })) });
-    editor.commands.clearContent(true);
-    setLength(0);
-    setFiles([]);
+    setSending(true);
+    void onSend({ text, refs, attachments: ready.map((f) => ({ id: f.id!, fileName: f.fileName, kind: f.kind! })) })
+      .then((accepted) => {
+        // Cleared only once the server took the message; a refusal keeps text, references and files.
+        if (!accepted) return;
+        editor.commands.clearContent(true);
+        setLength(0);
+        setFiles((fs) => fs.filter((f) => !ready.some((r) => r.localId === f.localId)));
+      })
+      .finally(() => setSending(false));
   };
 
   const pick = (list: FileList | null) => {
@@ -226,7 +242,14 @@ export function Composer({
       const abort = new AbortController();
       setFiles((fs) => [...fs, { localId, fileName: file.name, progress: 0, status: "uploading", kind: check.kind, abort }]);
       uploadAttachment(file, (p) => setFiles((fs) => fs.map((f) => (f.localId === localId ? { ...f, progress: p } : f))), abort.signal)
-        .then((a) => setFiles((fs) => fs.map((f) => (f.localId === localId ? { ...f, status: "ready", progress: 1, id: a.id, kind: a.kind } : f))))
+        .then((a) => {
+          // Removed while uploading but the server finished first: delete it (else the 24 h sweep would).
+          if (abort.signal.aborted) {
+            void deleteAttachment(a.id).catch(() => undefined);
+            return;
+          }
+          setFiles((fs) => fs.map((f) => (f.localId === localId ? { ...f, status: "ready", progress: 1, id: a.id, kind: a.kind } : f)));
+        })
         .catch((e) => {
           if (abort.signal.aborted) return;
           setFiles((fs) => fs.map((f) => (f.localId === localId ? { ...f, status: "error", error: copilotErrorText(e, tx) } : f)));
@@ -277,10 +300,10 @@ export function Composer({
         <span className="mono copilot-count" data-over={length > MESSAGE_MAX ? "1" : undefined}>
           {length.toLocaleString("en-US")}/{MESSAGE_MAX.toLocaleString("en-US")}
         </span>
-        <button type="button" className="btn primary sm" disabled={disabled || uploading || length === 0} onClick={() => sendRef.current()}>
+        <button type="button" className="btn primary sm" disabled={disabled || uploading || sending || length === 0} onClick={() => sendRef.current()}>
           {tx("Send", "إرسال")}
         </button>
       </div>
     </div>
   );
-}
+});

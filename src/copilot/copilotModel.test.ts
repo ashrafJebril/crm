@@ -66,10 +66,10 @@ describe("approval mode defaults to manual and survives a blocked storage", () =
 
 describe("markdown lite renders only the allowed subset", () => {
   it("paragraphs, breaks, lists, bold and safe links", () => {
-    expect(html("Hi **there**\nline two\n\n- one\n- [Open](#/inbox?open=v1)\n\n1. a\n2. b")).toBe(
-      '<p>Hi <strong>there</strong><br/>line two</p><ul><li>one</li><li><a href="#/inbox?open=v1">Open</a></li></ul><ol><li>a</li><li>b</li></ol>',
+    expect(html("Hi **there**\nline two\n\n- one\n- [Open](#/inbox?record=conversation:v1)\n\n1. a\n2. b")).toBe(
+      '<p>Hi <strong>there</strong><br/>line two</p><ul><li>one</li><li><a href="#/inbox?record=conversation:v1" title="#/inbox?record=conversation:v1">Open</a></li></ul><ol><li>a</li><li>b</li></ol>',
     );
-    expect(html("See https://kewy.ai/help.")).toBe('<p>See <a href="https://kewy.ai/help" target="_blank" rel="noopener noreferrer">https://kewy.ai/help</a>.</p>');
+    expect(html("See https://kewy.ai/help.")).toBe('<p>See <a href="https://kewy.ai/help" title="https://kewy.ai/help" target="_blank" rel="noopener noreferrer">https://kewy.ai/help</a>.</p>');
   });
 
   it("never renders HTML or unsafe links", () => {
@@ -80,6 +80,13 @@ describe("markdown lite renders only the allowed subset", () => {
     expect(html("# Heading\n> quote\n`code`")).toBe("<p># Heading<br/>&gt; quote<br/>`code`</p>");
     expect(safeLinkHref("http://x.example/a")).toBe("http://x.example/a");
     expect(safeLinkHref("mailto:a@b.c")).toBeNull();
+    // In-app links: known routes only, and only a record target as their query.
+    expect(safeLinkHref("#/pipeline")).toBe("#/pipeline");
+    expect(safeLinkHref("#/contacts?record=contact:c1")).toBe("#/contacts?record=contact:c1");
+    for (const bad of ["#/inbox?open=v1", "#/settings", "#/admin", "#/contacts?record=contact:c1&x=1", "#/contacts?record=user:u1", "#/unknown", "#settings"]) {
+      expect({ bad, href: safeLinkHref(bad) }).toEqual({ bad, href: null });
+    }
+    expect(html("[Billing](#/settings?tab=billing)")).not.toContain("<a");
   });
 });
 

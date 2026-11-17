@@ -314,6 +314,8 @@ async function postEventStream(path: string, body: unknown, opts: EventStreamOpt
   const tok = tokenStore.get();
   if (tok) headers.Authorization = `Bearer ${tok}`;
   const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}), signal: opts.signal });
+  // Same token-guarded session-expiry path as request().
+  // INTEGRATION(SP-26): on merge with feat/tkana-parity, replace with notifyUnauthorized(tok, "auth.session_expired").
   if (res.status === 401 && tok) onUnauthorized?.();
   if (!res.ok || !res.body) {
     const raw = await res.text();

@@ -767,6 +767,7 @@ input, textarea, select { font-family: inherit; }
   justify-content: flex-end;
   background: rgba(0, 0, 0, 0.25);
 }
+.copilot-backdrop[hidden] { display: none; }
 .copilot-drawer {
   position: relative;
   inset-inline-end: 0;

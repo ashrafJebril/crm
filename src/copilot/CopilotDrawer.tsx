@@ -13,16 +13,24 @@ import { MODE_LABELS, readApprovalMode, TAINT_RULE, writeApprovalMode } from "./
 import { pageContextOf } from "./pageContext";
 import { refsForBody } from "./refs";
 import { MessageList } from "./MessageList";
-import { Composer } from "./Composer";
+import { Composer, type ComposerHandle } from "./Composer";
+import { FOCUSABLE, RESUME_MAX_FAILURES, shouldCloseOnEscape, trapTarget } from "./drawerKeys";
+
+type SendInput = { text: string; refs: CopilotRef[]; attachments: CopilotAttachmentInfo[] };
 
 /**
  * SP-18 "Ask Kewy" drawer: opened from the Topbar button, Ctrl/Cmd+J or an
  * ask box; resumes the member's latest chat from the last 24 h; New chat.
  *
- * The stream (POST /copilot/stream) always ends with done or error. When the
- * connection drops (tab asleep, network), the turn keeps running on the
- * server: the drawer re-reads the session until it is no longer running, and
- * also when the tab becomes visible again, so the answer is never lost.
+ *  - Stays mounted while closed (hidden), so a running turn keeps streaming
+ *    and the composer keeps its draft, references and attachments.
+ *  - aria-modal: the composer takes focus on open, Tab stays inside, and focus
+ *    returns to the opener on close. Escape closes it unless the `@` list is
+ *    open (Escape then closes only the list).
+ *  - The stream always ends with done or error. When the connection drops,
+ *    the turn keeps running on the server: the drawer re-reads the session
+ *    (while open and the tab is visible; at most 5 failed reads in a row).
+ *  - Reset (New chat) and a workspace switch abort the stream in flight.
  */
 export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean; onClose: () => void; prompt: { text: string; n: number } | null }) {
   const { t } = useTweaks();
@@ -34,26 +42,69 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
   const [mode, setMode] = useState<CopilotApprovalMode>(() => readApprovalMode(user?.id));
   const [sendError, setSendError] = useState<string | null>(null);
   const [resumed, setResumed] = useState(false);
-  // Text put back into the composer (a send refused before its stream).
-  const [restore, setRestore] = useState<{ text: string; n: number } | null>(null);
+  const [visible, setVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible");
   const streaming = useRef(false);
   const skipResume = useRef(false);
-  const lastSend = useRef<{ text: string; refs: CopilotRef[] } | null>(null);
+  const suggestionOpen = useRef(false);
+  const composer = useRef<ComposerHandle | null>(null);
+  const drawer = useRef<HTMLElement | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const abort = useRef<AbortController | null>(null);
+  /** Bumped by every reset: events of an older stream are dropped. */
+  const generation = useRef(0);
+  const failures = useRef(0);
+  const lastSend = useRef<SendInput | null>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  useEffect(() => setMode(readApprovalMode(user?.id)), [user?.id]);
-  // Another workspace: another history.
-  useEffect(() => {
+  /** Start over: abort the stream in flight and forget the chat on screen. */
+  const resetChat = useCallback(() => {
+    generation.current++;
+    abort.current?.abort();
+    abort.current = null;
+    streaming.current = false;
+    failures.current = 0;
     dispatch({ type: "reset" });
-    setResumed(false);
-  }, [activeWorkspace?.id]);
+    stateRef.current = EMPTY_CHAT;
+    setSendError(null);
+  }, []);
 
-  const reload = useCallback(async (id: string) => {
+  useEffect(() => setMode(readApprovalMode(user?.id)), [user?.id]);
+  // Another workspace: another history (and the old stream stops).
+  useEffect(() => {
+    resetChat();
+    setResumed(false);
+  }, [activeWorkspace?.id, resetChat]);
+  useEffect(() => () => abort.current?.abort(), []);
+
+  // Focus: the composer on open; back to the opener on close.
+  useEffect(() => {
+    if (open) {
+      const a = document.activeElement;
+      opener.current = a instanceof HTMLElement && !drawer.current?.contains(a) ? a : null;
+      const id = window.setTimeout(() => composer.current?.focus(), 0);
+      return () => window.clearTimeout(id);
+    }
+    const back = opener.current;
+    opener.current = null;
+    if (back?.isConnected) back.focus();
+  }, [open]);
+
+  useEffect(() => {
+    const onVis = () => setVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
+  /** Re-read a session; false when the read failed. */
+  const reload = useCallback(async (id: string): Promise<boolean> => {
+    const gen = generation.current;
     try {
-      dispatch({ type: "load", detail: await getSession(id) });
+      const d = await getSession(id);
+      if (gen === generation.current) dispatch({ type: "load", detail: d });
+      return true;
     } catch {
-      /* the next poll or open retries */
+      return false;
     }
   }, []);
 
@@ -70,97 +121,121 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
       .catch(() => undefined);
   }, [open, resumed, reload]);
 
-  // A turn running on the server without our stream (lost connection, reload): poll until it ends.
+  // A turn running on the server without our stream: poll while open and visible, give up after 5 failures.
   useEffect(() => {
-    if (!state.running || streaming.current || !state.sessionId) return;
+    if (!open || !visible || !state.running || streaming.current || !state.sessionId) return;
     const id = state.sessionId;
-    const timer = window.setInterval(() => void reload(id), RESUME_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [state.running, state.sessionId, reload]);
-
-  // Back to a visible tab: re-read the open chat (the answer may have arrived meanwhile).
-  useEffect(() => {
-    const onVis = () => {
-      const s = stateRef.current;
-      if (document.visibilityState === "visible" && s.sessionId && !streaming.current && (s.running || s.items.some((i) => i.type === "error" && i.code === STREAM_LOST))) void reload(s.sessionId);
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [reload]);
-
-  const send = useCallback(
-    async (m: { text: string; refs: CopilotRef[]; attachments: CopilotAttachmentInfo[] }) => {
-      if (streaming.current || stateRef.current.running) return;
-      setSendError(null);
-      lastSend.current = { text: m.text, refs: m.refs };
-      streaming.current = true;
-      const localId = `local-${Date.now()}`;
-      dispatch({
-        type: "send",
-        localId,
-        text: m.text,
-        references: m.refs.map((r) => ({ kind: r.kind, id: r.id, title: r.title ?? "" })),
-        attachments: m.attachments,
-      });
-      try {
-        const end = await streamTurn(
-          {
-            ...(stateRef.current.sessionId ? { sessionId: stateRef.current.sessionId } : {}),
-            message: m.text,
-            ...(m.refs.length ? { references: refsForBody(m.refs) } : {}),
-            ...(m.attachments.length ? { attachmentIds: m.attachments.map((a) => a.id) } : {}),
-            pageContext: pageContextOf(route, window.location.hash),
-            approvalMode: mode,
-            lang,
-          },
-          (event, data) => dispatch({ type: "event", event, data }),
-        );
-        streaming.current = false;
-        const sid = stateRef.current.sessionId;
-        // The stream was cut: the turn goes on server-side; mark it running and re-read.
-        if (end === "error" && sid && stateRef.current.items.some((i) => i.type === "error" && i.code === STREAM_LOST)) {
-          void reload(sid);
-        } else if (sid && (m.attachments.length || m.refs.length)) {
-          // The session may have become tainted (attachments, references): refresh the notice.
-          void getSession(sid).then((d) => d.tainted && dispatch({ type: "taint" })).catch(() => undefined);
+    const timer = window.setInterval(() => {
+      void reload(id).then((ok) => {
+        failures.current = ok ? 0 : failures.current + 1;
+        if (failures.current >= RESUME_MAX_FAILURES) {
+          failures.current = 0;
+          dispatch({ type: "event", event: "error", data: { code: STREAM_LOST } });
         }
-      } catch (e) {
-        streaming.current = false;
-        // Refused before the stream (400/403/404/409/429/503): nothing was stored; the text goes back to the composer.
-        dispatch({ type: "unsend", localId });
-        setSendError(copilotErrorText(e, tx));
-        setRestore((r) => ({ text: m.text, n: (r?.n ?? 0) + 1 }));
-      }
+      });
+    }, RESUME_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [open, visible, state.running, state.sessionId, reload]);
+
+  // Back to a visible tab with an open drawer: re-read the chat (the answer may have arrived).
+  useEffect(() => {
+    const s = stateRef.current;
+    if (open && visible && s.sessionId && !streaming.current && (s.running || s.items.some((i) => i.type === "error" && i.code === STREAM_LOST))) void reload(s.sessionId);
+  }, [open, visible, reload]);
+
+  /** Resolves true once the server accepted the message (its stream started), false when it was refused. */
+  const send = useCallback(
+    (m: SendInput): Promise<boolean> => {
+      if (streaming.current || stateRef.current.running) return Promise.resolve(false);
+      setSendError(null);
+      lastSend.current = m;
+      streaming.current = true;
+      const gen = generation.current;
+      const ctrl = new AbortController();
+      abort.current = ctrl;
+      const localId = `local-${Date.now()}`;
+      dispatch({ type: "send", localId, text: m.text, references: m.refs.map((r) => ({ kind: r.kind, id: r.id, title: r.title ?? "" })), attachments: m.attachments });
+      let accept!: (v: boolean) => void;
+      const accepted = new Promise<boolean>((r) => (accept = r));
+      void streamTurn(
+        {
+          ...(stateRef.current.sessionId ? { sessionId: stateRef.current.sessionId } : {}),
+          message: m.text,
+          ...(m.refs.length ? { references: refsForBody(m.refs) } : {}),
+          ...(m.attachments.length ? { attachmentIds: m.attachments.map((a) => a.id) } : {}),
+          pageContext: pageContextOf(route, window.location.hash),
+          approvalMode: mode,
+          lang,
+        },
+        (event, data) => {
+          accept(true);
+          if (gen === generation.current) dispatch({ type: "event", event, data });
+        },
+        ctrl.signal,
+      )
+        .then((end) => {
+          accept(true);
+          if (gen !== generation.current) return;
+          streaming.current = false;
+          abort.current = null;
+          const sid = stateRef.current.sessionId;
+          if (end === "error" && sid && stateRef.current.items.some((i) => i.type === "error" && i.code === STREAM_LOST)) {
+            // The stream was cut: the turn goes on server-side.
+            void reload(sid);
+          } else if (sid && (m.attachments.length || m.refs.length)) {
+            void getSession(sid).then((d) => d.tainted && gen === generation.current && dispatch({ type: "taint" })).catch(() => undefined);
+          }
+        })
+        .catch((e) => {
+          accept(false);
+          if (gen !== generation.current) return;
+          streaming.current = false;
+          abort.current = null;
+          // Refused before the stream: nothing was stored; the composer keeps text, references and files.
+          dispatch({ type: "unsend", localId });
+          setSendError(copilotErrorText(e, tx));
+        });
+      return accepted;
     },
     [route, mode, lang, reload, tx],
   );
 
-  // An ask box (e.g. insights) sends its question as soon as the drawer opens.
+  // An ask box (e.g. insights) sends its question in a fresh chat as soon as the drawer opens.
   const asked = useRef(0);
   useEffect(() => {
     if (!prompt || prompt.n === asked.current) return;
     asked.current = prompt.n;
     if (stateRef.current.running || streaming.current) return;
-    // A fresh chat for the question (never mixed into a resumed one).
     skipResume.current = true;
-    dispatch({ type: "reset" });
-    stateRef.current = EMPTY_CHAT;
+    resetChat();
     void send({ text: prompt.text, refs: [], attachments: [] });
-  }, [prompt, send]);
-
-  const newChat = () => {
-    if (streaming.current) return;
-    dispatch({ type: "reset" });
-    setSendError(null);
-  };
+  }, [prompt, send, resetChat]);
 
   const onCard = (c: PendingCard) => dispatch({ type: "card", card: c });
   const onStale = () => state.sessionId && void reload(state.sessionId);
+  // Retry the last message: the same text and references. Its attachments are already part of
+  // this chat (the stored message carries them, and the model sees them again); sending their ids
+  // again would be refused as already sent.
+  const retry = () => lastSend.current && void send({ ...lastSend.current, attachments: [] });
 
-  if (!open) return null;
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (shouldCloseOnEscape(e, suggestionOpen.current)) {
+      onClose();
+      return;
+    }
+    if (e.key === "Tab" && drawer.current) {
+      const items = Array.from(drawer.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+      const next = trapTarget(items, document.activeElement as HTMLElement | null, e.shiftKey);
+      if (next) {
+        e.preventDefault();
+        next.focus();
+      }
+    }
+  };
+
   return (
-    <div className="copilot-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className="copilot-drawer" role="dialog" aria-modal="true" aria-label={tx("Ask Kewy", "اسأل كيوي")} dir={lang === "ar" ? "rtl" : "ltr"} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div className="copilot-backdrop" hidden={!open} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <aside ref={drawer} className="copilot-drawer" role="dialog" aria-modal="true" aria-label={tx("Ask Kewy", "اسأل كيوي")} dir={lang === "ar" ? "rtl" : "ltr"} onKeyDown={onKeyDown}>
         <header className="copilot-head">
           <div className="copilot-title">
             <strong>{tx("Ask Kewy", "اسأل كيوي")}</strong>
@@ -170,7 +245,7 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
               </span>
             )}
           </div>
-          <button type="button" className="btn ghost sm" onClick={newChat} disabled={state.running}>
+          <button type="button" className="btn ghost sm" onClick={resetChat}>
             {tx("New chat", "محادثة جديدة")}
           </button>
           <button type="button" className="btn ghost icon sm" aria-label={tx("Close", "إغلاق")} onClick={onClose}>
@@ -204,25 +279,18 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
         </div>
         {state.items.length === 0 && !state.running ? (
           <div className="copilot-empty">
-            {tx("Ask about your customers, conversations, tickets, bookings or numbers. Kewy proposes changes; you approve them.", "اسأل عن عملائك أو محادثاتك أو تذاكرك أو حجوزاتك أو أرقامك. يقترح كيوي التغييرات وأنت توافق عليها.")}
+            <p>{tx("Ask about your customers, conversations, tickets, bookings or numbers. Kewy proposes changes; you approve them.", "اسأل عن عملائك أو محادثاتك أو تذاكرك أو حجوزاتك أو أرقامك. يقترح كيوي التغييرات وأنت توافق عليها.")}</p>
+            <p className="copilot-hint">{tx("Ctrl+J (⌘J on Mac) opens and closes Kewy.", "Ctrl+J (أو ⌘J على ماك) يفتح كيوي ويغلقه.")}</p>
           </div>
         ) : (
-          <MessageList
-            state={state}
-            tx={tx}
-            lang={lang}
-            onCard={onCard}
-            onStale={onStale}
-            onRetry={() => lastSend.current && void send({ text: lastSend.current.text, refs: lastSend.current.refs, attachments: [] })}
-            onNewChat={newChat}
-          />
+          <MessageList state={state} tx={tx} lang={lang} onCard={onCard} onStale={onStale} onRetry={retry} onNewChat={resetChat} />
         )}
         {sendError && (
           <div className="copilot-error" role="alert">
             {sendError}
           </div>
         )}
-        <Composer key={restore?.n ?? 0} tx={tx} lang={lang} disabled={state.running} initialText={restore?.text} onSend={(m) => void send(m)} />
+        <Composer ref={composer} tx={tx} lang={lang} disabled={state.running} onSend={send} onSuggestingChange={(v) => (suggestionOpen.current = v)} />
       </aside>
     </div>
   );

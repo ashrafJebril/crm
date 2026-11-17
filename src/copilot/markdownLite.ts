@@ -2,14 +2,29 @@
  * SP-18 answers render a small markdown subset as React elements, never as
  * HTML (no dangerouslySetInnerHTML): paragraphs, line breaks, "-"/"*" and
  * "1." lists, **bold**, [label](href) links and bare URLs. Links open only
- * in-app hashes (`#/…`) and http(s) URLs; anything else stays plain text.
+ * known in-app routes (bare, or `?record=<kind>:<id>`) and http(s) URLs, and
+ * show their target as the title; anything else stays plain text.
  * Model output and customer-written text pass through React's escaping.
  */
 import { createElement, Fragment, type ReactNode } from "react";
 
+/** In-app routes a model link may open (with no query, or only `?record=<kind>:<id>`). */
+const SAFE_ROUTES = new Set(["dashboard", "inbox", "calendar", "campaigns", "pipeline", "contacts", "followups", "analytics", "agent", "copilot"]);
+const RECORD_TARGET = /^(contact|conversation|ticket|booking|campaign):[A-Za-z0-9_-]{1,64}$/;
+
+function safeHash(h: string): string | null {
+  const m = /^#\/([a-z]+)(?:\?(.*))?$/.exec(h);
+  if (!m || !SAFE_ROUTES.has(m[1])) return null;
+  if (m[2] === undefined || m[2] === "") return `#/${m[1]}`;
+  const q = new URLSearchParams(m[2]);
+  const keys = [...q.keys()];
+  const rec = q.get("record");
+  return keys.length === 1 && keys[0] === "record" && rec && RECORD_TARGET.test(rec) ? `#/${m[1]}?record=${rec}` : null;
+}
+
 export function safeLinkHref(href: string): string | null {
   const h = href.trim();
-  if (h.startsWith("#/")) return h;
+  if (h.startsWith("#")) return safeHash(h);
   try {
     const u = new URL(h);
     return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
@@ -22,7 +37,8 @@ const INLINE = /\*\*([^*\n]+)\*\*|\[([^\]\n]{1,200})\]\(([^)\s]{1,2000})\)|(http
 
 function link(key: string, href: string, label: string): ReactNode {
   const external = !href.startsWith("#/");
-  return createElement("a", { key, href, ...(external ? { target: "_blank", rel: "noopener noreferrer" } : {}) }, label);
+  // The target is always visible on hover (title), whatever the label says.
+  return createElement("a", { key, href, title: href, ...(external ? { target: "_blank", rel: "noopener noreferrer" } : {}) }, label);
 }
 
 function inline(text: string, keyBase: string): ReactNode[] {
