@@ -483,7 +483,7 @@ export class TicketsService {
   /** assignsConversations: the linked conversation follows the ticket owner. Bulk assign goes through updateTicket, so it is covered too. */
   private syncConversationOwner(workspaceId: string, conversationId: string, ownerId: string, actorId?: string) {
     return assignConversationToTicketOwner(
-      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications },
+      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications, events: this.events },
       workspaceId,
       conversationId,
       ownerId,

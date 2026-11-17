@@ -3,6 +3,8 @@ import type { Prisma } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { RealtimeService } from "../realtime/realtime.service";
 import type { NotificationsService } from "../notifications/notifications.service";
+import type { EventEmitter2 } from "@nestjs/event-emitter";
+import { WEBHOOK_EVENT, type WebhookEmit } from "../webhooks/webhook-events";
 
 const logger = new Logger("ConversationAssignment");
 
@@ -10,6 +12,8 @@ export interface AssignmentDeps {
   prisma: PrismaService;
   realtime: RealtimeService;
   notifications?: NotificationsService;
+  /** SP-27: the webhook `conversation.assigned` emit (absent in some specs). */
+  events?: EventEmitter2;
 }
 
 export interface ApplyAssignmentOpts {
@@ -80,6 +84,21 @@ export async function applyConversationAssignment(deps: AssignmentDeps, o: Apply
     channel: fresh.channel,
     conversationId: fresh.id,
   });
+  // SP-27: webhook conversation.assigned on a change of assignee (the write
+  // above is not in a transaction, so this is after commit). The version
+  // makes each assignment its own occurrence.
+  if (typeof o.assigneeId === "string" && o.assigneeId !== current.assigneeId) {
+    try {
+      deps.events?.emit(WEBHOOK_EVENT, {
+        workspaceId,
+        type: "conversation.assigned",
+        entityId: fresh.id,
+        occurrence: `${fresh.id}:${fresh.version}`,
+      } satisfies WebhookEmit);
+    } catch {
+      // A webhook must never fail an assignment.
+    }
+  }
   if (
     typeof o.assigneeId === "string" &&
     o.assigneeId !== current.assigneeId &&

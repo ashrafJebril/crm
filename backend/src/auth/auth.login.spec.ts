@@ -78,6 +78,8 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
   const prisma = {
     user: {
       findUnique: jest.fn().mockResolvedValue(user),
+      // Legacy-case fallback of the local check (no other match here).
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue(user ? [user] : []),
       update: jest.fn().mockResolvedValue(user),
     },
@@ -356,5 +358,35 @@ describe("AuthService.login: payment lock", () => {
       localUser({ isSuperAdmin: true, memberships: [{ role: "owner", workspace: lockedWs }] }),
     );
     expect((await svc.login(dto)).activeWorkspaceId).toBe("wl");
+  });
+});
+
+describe("email letter case (SP-20 live verification F2)", () => {
+  /** A user table with case-sensitive storage, like the database. */
+  function caseWorld(stored: string) {
+    const ctx = setup("local", localUser({ email: stored }));
+    const row = localUser({ email: stored });
+    ctx.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { email: string } }) => (where.email === row.email ? row : null));
+    ctx.prisma.user.findFirst.mockImplementation(async ({ where }: { where: { email: { equals: string; mode: string } } }) =>
+      where.email.mode === "insensitive" && where.email.equals.toLowerCase() === row.email.toLowerCase() ? row : null,
+    );
+    return ctx;
+  }
+
+  it("a mixed-case sign-up can log in with any case", async () => {
+    // Registered as "X-ownerA@example.com": stored normalised.
+    const { svc } = caseWorld("x-ownera@example.com");
+    for (const email of ["X-ownerA@example.com", "x-ownera@example.com", "  X-OWNERA@EXAMPLE.COM "]) {
+      const res = await svc.login({ email, password: PASSWORD });
+      expect({ email, id: res.user.id }).toEqual({ email, id: "u1" });
+    }
+  });
+
+  it("an account stored before normalisation (upper case) still signs in, with any case", async () => {
+    const { svc, prisma } = caseWorld("X-ownerA@example.com");
+    const res = await svc.login({ email: "x-ownera@example.com", password: PASSWORD });
+    expect(res.user.id).toBe("u1");
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { email: { equals: "x-ownera@example.com", mode: "insensitive" } } }));
+    await expect(svc.login({ email: "nobody@example.com", password: PASSWORD })).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

@@ -140,6 +140,15 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
           : tx("New ticket", "تذكرة جديدة");
       return out(contact ? `${head} · ${contact}` : head, title);
     }
+    case "webhooks.endpoint_disabled": {
+      // SP-27: body {endpointId, url, reason: "failing"|"unsafe_url"}.
+      const url = str(p.url);
+      const why =
+        p.reason === "unsafe_url"
+          ? tx("Its URL now points to a private or blocked address.", "يشير رابطه الآن إلى عنوان خاص أو محظور.")
+          : tx("Deliveries failed for 72 hours.", "فشل التسليم لمدة 72 ساعة.");
+      return out(tx("A webhook was turned off", "تم إيقاف ويب هوك"), url ? `${url} · ${why}` : why);
+    }
     case "import.failed":
       return out(tx("An import failed", "فشل الاستيراد"));
     case "mention.note": {

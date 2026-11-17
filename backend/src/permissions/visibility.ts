@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { ConversationVisibility } from "./system-roles";
+import type { PermissionsJson } from "./catalog";
 
 /** The single place "assigned-only" conversation visibility is turned into a
  *  Prisma filter. `null` (super-admin / impersonation, no member row) sees
@@ -20,4 +21,8 @@ export function visibleConversationWhere(
 export interface Viewer {
   userId: string;
   bypass?: boolean;
+  /** SP-27: an API-key request: the key's scopes as permissions. Every
+   *  in-service permission check (`viewerCan`) is limited to them; conversation
+   *  visibility stays the creator's. */
+  limit?: PermissionsJson;
 }

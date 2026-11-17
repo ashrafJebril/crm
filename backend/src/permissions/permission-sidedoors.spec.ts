@@ -33,6 +33,11 @@ import { InsightsService } from "../insights/insights.service";
 import { HomeService } from "../home/home.service";
 import { makeWorld, U as SP26_U, WS as SP26_WS, WS2 as SP26_WS2 } from "../members/__fixtures__/members-world";
 import { AuditController } from "../audit/audit.controller";
+import { PermissionGuard } from "./permission.guard";
+import { Reflector } from "@nestjs/core";
+import type { ExecutionContext } from "@nestjs/common";
+import { CurrentViewer } from "../common/current-workspace.decorator";
+import { ROUTE_ARGS_METADATA } from "@nestjs/common/constants";
 import { WorkspacesController } from "../workspaces/workspaces.controller";
 import { WorkspacesService } from "../workspaces/workspaces.service";
 import { AuthService } from "../auth/auth.service";
@@ -1428,5 +1433,74 @@ describe("SP-23 connectors: side doors", () => {
     const admin = new ConnectorsController(w.service, perms(true) as never, {} as never);
     const ok = await admin.patchTools(CWS, { userId: "u" }, c.id, { version: 0, tools: [{ name: "cancel_event", access: "write" }] });
     expect(ok.tools[0]).toMatchObject({ access: "write", exposed: true });
+  });
+});
+
+// SP-27: an API key acts as its creator: the creator's visibility, and never
+// more than the creator's role or the key's scopes.
+describe("SP-27 api keys: side doors", () => {
+  const keyReq = (limit: Record<string, string[]>) => ({
+    user: { sub: ME, workspaceId: WS, role: "api_key", email: "", apiKeyId: "k1", apiKeyPermissions: limit },
+  });
+  /** What @CurrentViewer() resolves to for a request. */
+  const viewerOf = (req: unknown): Viewer => {
+    const meta = Reflect.getMetadata(ROUTE_ARGS_METADATA, ProbeController, "probe") as Record<string, { factory: Function }>;
+    const factory = Object.values(meta)[0].factory;
+    return factory(undefined, { switchToHttp: () => ({ getRequest: () => req }) });
+  };
+  class ProbeController {
+    probe(@CurrentViewer() _v: Viewer) {
+      return _v;
+    }
+  }
+
+  it("api key of an assigned-only creator cannot read unassigned conversations", async () => {
+    const prisma = makePrisma(ASSIGNED_PERMS, "assigned");
+    const perm = new PermissionService(prisma);
+    const svc = new ConversationsService(prisma, { emitToWorkspace: jest.fn() } as never, { queueReply: jest.fn() } as never, undefined, perm);
+    const v = viewerOf(keyReq({ conversations: ["view", "create", "update", "delete", "manage"] }));
+    // A key is never a bypass session, whatever its scopes.
+    expect(v).toEqual({ userId: ME, bypass: false, limit: expect.any(Object) });
+    expect((await svc.list(WS, v)).map((c: any) => c.id)).toEqual([MINE]);
+    await expect(svc.get(WS, NONE, v)).rejects.toThrow(NotFoundException);
+    await expect(svc.get(WS, OTHER, v)).rejects.toThrow(NotFoundException);
+    await expect(svc.get(WS, MINE, v)).resolves.toMatchObject({ id: MINE });
+  });
+
+  it("api key in-service checks are limited to its scopes (viewerCan)", async () => {
+    const prisma = makePrisma(ASSIGNED_PERMS, "assigned");
+    const perm = new PermissionService(prisma);
+    const v = viewerOf(keyReq({ contacts: ["view"] }));
+    expect(await perm.viewerCan(WS, v, "contacts.view")).toBe(true);
+    // The creator may view tickets and conversations; the key may not.
+    expect(await perm.viewerCan(WS, v, "tickets.view")).toBe(false);
+    expect(await perm.viewerCan(WS, v, "conversations.view")).toBe(false);
+    // ...and a scope above the creator's role grants nothing.
+    const wide = viewerOf(keyReq({ contacts: ["view", "delete"] }));
+    expect(await perm.viewerCan(WS, wide, "contacts.delete")).toBe(false);
+  });
+
+  it("api key cannot call auth or membership-exempt routes", async () => {
+    const perms = { effective: jest.fn(), can: jest.fn(), intersect: jest.fn() };
+    const guard = new PermissionGuard(new Reflector(), perms as never);
+    const run = (cls: Function, handler: Function) =>
+      guard
+        .canActivate({
+          getType: () => "http",
+          switchToHttp: () => ({ getRequest: () => keyReq({ contacts: ["read"] }) }),
+          getHandler: () => handler,
+          getClass: () => cls,
+        } as unknown as ExecutionContext)
+        .catch((e: any) => e);
+    for (const [cls, handler] of [
+      [AuthController, AuthController.prototype.me],
+      [WorkspacesController, WorkspacesController.prototype.create],
+      [WorkspacesController, WorkspacesController.prototype.list],
+    ] as const) {
+      const err = await run(cls, handler);
+      expect(err.getStatus?.()).toBe(403);
+      expect(err.getResponse()).toMatchObject({ message: "api_keys.route_not_allowed" });
+    }
+    expect(perms.effective).not.toHaveBeenCalled();
   });
 });

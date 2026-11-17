@@ -6,9 +6,11 @@ import { isChallenge, useAuth, type LoginResponse } from "./context";
 import { AuthBanner, AuthCard, AuthField, AuthTitle, authFieldStyle } from "./AuthCard";
 import { TwoFactorStep } from "./TwoFactorStep";
 import { leavePublicPage } from "./publicPageStore";
+import { maskEmail } from "./maskEmail";
 
 interface Preview {
-  email: string;
+  /** The invited address, masked (n***@example.com): the link alone never reveals it. */
+  emailMasked: string;
   lang: "ar" | "en";
   workspace: { id: string; name: string };
   role: { id: string; name: string; nameAr: string } | null;
@@ -33,6 +35,7 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [signInEmail, setSignInEmail] = useState("");
   const [challenge, setChallenge] = useState<string | null>(null);
   const [rolePending, setRolePending] = useState(false);
 
@@ -95,7 +98,8 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
     e.preventDefault();
     if (!preview) return;
     void run(async () => {
-      const res = await login(preview.email, password);
+      // The preview only has the masked address: the invitee types their own.
+      const res = await login(signInEmail.trim(), password);
       if (isChallenge(res)) setChallenge(res.challenge);
       setPassword("");
     });
@@ -134,8 +138,8 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
     />
   );
   const emailRow = (
-    <AuthField label={tx("Email", "البريد الإلكتروني")}>
-      <input value={preview.email} disabled dir="ltr" style={{ ...authFieldStyle, opacity: 0.7, fontFamily: "var(--font-mono)" }} />
+    <AuthField label={tx("Invited email", "البريد المدعو")}>
+      <input value={preview.emailMasked} disabled dir="ltr" style={{ ...authFieldStyle, opacity: 0.7, fontFamily: "var(--font-mono)" }} />
     </AuthField>
   );
 
@@ -157,7 +161,8 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
   }
 
   if (signedIn && user) {
-    const mismatch = user.email.toLowerCase() !== preview.email.toLowerCase();
+    // Only the masked address is known here; the server still checks the full one (403 invitations.email_mismatch).
+    const mismatch = maskEmail(user.email.toLowerCase()) !== preview.emailMasked.toLowerCase();
     return (
       <AuthCard dir={dir}>
         {header}
@@ -166,8 +171,8 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
             <>
               <AuthBanner
                 message={tx(
-                  `This invitation is for ${preview.email}, but you're signed in as ${user.email}. Sign out and sign in with the invited email.`,
-                  `هذه الدعوة موجهة إلى ${preview.email}، لكنك مسجّل الدخول باسم ${user.email}. سجّل الخروج ثم ادخل بالبريد المدعو.`,
+                  `This invitation is for ${preview.emailMasked}, but you're signed in as ${user.email}. Sign out and sign in with the invited email.`,
+                  `هذه الدعوة موجهة إلى ${preview.emailMasked}، لكنك مسجّل الدخول باسم ${user.email}. سجّل الخروج ثم ادخل بالبريد المدعو.`,
                 )}
               />
               <button type="button" className="btn" onClick={logout}>
@@ -194,8 +199,20 @@ export function AcceptInvite({ token, tx, lang }: { token: string; tx: Tx; lang:
             {tx("You already have an account. Sign in to join.", "لديك حساب بالفعل. سجّل الدخول للانضمام.")}
           </p>
           {emailRow}
+          <AuthField label={tx("Your email", "بريدك الإلكتروني")}>
+            <input
+              type="email"
+              required
+              autoFocus
+              dir="ltr"
+              autoComplete="email"
+              value={signInEmail}
+              onChange={(e) => setSignInEmail(e.target.value)}
+              style={authFieldStyle}
+            />
+          </AuthField>
           <AuthField label={tx("Password", "كلمة المرور")}>
-            <input type="password" required autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} style={authFieldStyle} />
+            <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} style={authFieldStyle} />
           </AuthField>
           {error && <AuthBanner message={error} />}
           <button type="submit" className="btn primary" disabled={busy} style={{ height: 40 }}>

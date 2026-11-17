@@ -1,3 +1,4 @@
+import { emailWhere, normalizeEmail } from "../auth/email";
 import {
   BadRequestException,
   ConflictException,
@@ -199,10 +200,11 @@ export class AdminService {
     // one user legitimately spans several workspaces — reuse the row and add a
     // membership rather than rejecting. Previously this threw a 409, which made
     // a second workspace (or any retry) impossible.
+    const ownerEmail = normalizeEmail(dto.ownerEmail);
     const existing = await this.prisma.raw.user.findFirst({
       where: dto.kewyAccountId
-        ? { OR: [{ kewyAccountId: dto.kewyAccountId }, { email: dto.ownerEmail }] }
-        : { email: dto.ownerEmail },
+        ? { OR: [{ kewyAccountId: dto.kewyAccountId }, emailWhere(ownerEmail)] }
+        : emailWhere(ownerEmail),
     });
 
     // The one genuine conflict left: the email belongs to somebody who is
@@ -253,7 +255,7 @@ export class AdminService {
             })
           : await tx.user.create({
               data: {
-                email: dto.ownerEmail,
+                email: ownerEmail,
                 name: dto.ownerName,
                 password: hashed,
                 kewyAccountId: dto.kewyAccountId ?? null,

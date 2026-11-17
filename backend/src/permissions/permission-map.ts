@@ -534,6 +534,22 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /integrations/mcp/token/status": "api_keys.view",
   "POST /integrations/mcp/token": "api_keys.create",
   "DELETE /integrations/mcp/token": "api_keys.delete",
+  // SP-27: organization API keys. A key itself can never reach these (its
+  // scopes never include api_keys); minting is blocked for impersonators.
+  "GET /api-keys": "api_keys.view",
+  "POST /api-keys": "api_keys.create",
+  "DELETE /api-keys/:id": "api_keys.delete",
+  // SP-27: outgoing webhooks (api_keys.*; create and rotate-secret are
+  // blocked for impersonators).
+  "GET /webhooks": "api_keys.view",
+  "POST /webhooks": "api_keys.create",
+  "PATCH /webhooks/:id": "api_keys.update",
+  "DELETE /webhooks/:id": "api_keys.delete",
+  "POST /webhooks/:id/rotate-secret": "api_keys.update",
+  "POST /webhooks/:id/test": "api_keys.update",
+  "GET /webhooks/:id/deliveries": "api_keys.view",
+  "GET /webhooks/:id/deliveries/:deliveryId": "api_keys.view",
+  "POST /webhooks/:id/deliveries/:deliveryId/redeliver": "api_keys.update",
 
   // ── Channels ──────────────────────────────────────────────────────────
   "GET /integrations/facebook/oauth/start": "channels.create",

@@ -13,10 +13,11 @@ import { PipelinesTab } from "./settings/PipelinesTab";
 import { SavedRepliesTab } from "./settings/SavedRepliesTab";
 import { ModulesTab } from "./settings/ModulesTab";
 import { LifecycleTab } from "./settings/LifecycleTab";
+import { DevelopersTab } from "./settings/developers/DevelopersTab";
 
-type Tab = "workspace" | "modules" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "automaticMessages" | "savedReplies" | "profile";
+type Tab = "workspace" | "modules" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "automaticMessages" | "savedReplies" | "developers" | "profile";
 
-const TAB_IDS: readonly Tab[] = ["workspace", "modules", "members", "integrations", "aiKnowledge", "pipelines", "automaticMessages", "savedReplies", "profile"];
+const TAB_IDS: readonly Tab[] = ["workspace", "modules", "members", "integrations", "aiKnowledge", "pipelines", "automaticMessages", "savedReplies", "developers", "profile"];
 
 /**
  * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
@@ -76,6 +77,8 @@ function SettingsImpl() {
     // SP-24: lifecycle messages (GET /lifecycle needs workflows.view).
     ...(can("workflows.view") ? [{ id: "automaticMessages" as const, label: "Automatic messages", ar: "الرسائل التلقائية" }] : []),
     ...(can("conversations.manage") ? [{ id: "savedReplies" as const, label: "Saved replies", ar: "الردود المحفوظة" }] : []),
+    // SP-27: API keys and webhooks (api_keys is hidden from viewers).
+    ...(can("api_keys.view") ? [{ id: "developers" as const, label: "Developers", ar: "المطورون" }] : []),
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
@@ -116,6 +119,7 @@ function SettingsImpl() {
           {tab === "pipelines" && <PipelinesTab />}
           {tab === "automaticMessages" && can("workflows.view") && <LifecycleTab />}
           {tab === "savedReplies" && <SavedRepliesTab />}
+          {tab === "developers" && can("api_keys.view") && <DevelopersTab />}
           {tab === "profile" && <ProfileTab />}
         </div>
       </div>

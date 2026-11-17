@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { JwtPayload } from "../auth/auth.guard";
 import { PaymentLockService, paymentOverdue } from "../billing/payment-lock.service";
 import { McpTokenService } from "../integrations/mcp-token.service";
+import { looksLikeApiKey } from "../api-keys/api-key-format";
 
 /**
  * Authenticates POST /api/mcp/v1 with a per-workspace bearer token instead of
@@ -23,6 +24,8 @@ export class McpAuthGuard implements CanActivate {
     if (!auth || !auth.startsWith("Bearer ")) {
       throw new UnauthorizedException("Missing bearer token");
     }
+    // SP-27: API keys are for the REST API only; never an MCP credential.
+    if (looksLikeApiKey(auth.slice(7))) throw new UnauthorizedException("API keys cannot call the MCP server");
     const workspaceId = await this.tokens.findWorkspaceByToken(auth.slice(7));
     if (!workspaceId) {
       throw new UnauthorizedException("Invalid or revoked MCP token");

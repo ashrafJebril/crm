@@ -108,7 +108,8 @@ export class InboundSinkService {
       payload: {
         contact: { id: contact.id, name: contact.name },
         conversation: { id: conv.id, channel: kind },
-        message: { body: input.text },
+        // SP-27: the id lets the webhook outbox re-read the stored message.
+        message: { id: message.id, body: input.text },
       },
     } satisfies WorkflowTriggerEvent);
 

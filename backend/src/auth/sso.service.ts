@@ -1,3 +1,4 @@
+import { normalizeEmail } from "./email";
 import {
   ForbiddenException,
   Injectable,
@@ -84,7 +85,7 @@ export class SsoService {
     });
 
     // 3. Upsert the mirrored User (keyed by hjz user id).
-    const safeEmail = (body.email ?? `hjz_${sub}@sso.local`).toLowerCase();
+    const safeEmail = normalizeEmail(body.email ?? `hjz_${sub}@sso.local`);
     const safeName = body.name ?? "HJZ User";
     const initials =
       safeName

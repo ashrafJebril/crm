@@ -1,3 +1,4 @@
+import { emailWhere, normalizeEmail, pickByEmail } from "./email";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { createHash } from "crypto";
@@ -43,7 +44,7 @@ export class PasswordResetService {
 
   /** POST /auth/password/forgot: always `{ok: true}` (202), unless rate-limited. */
   forgot(emailRaw: string, lang: unknown, ip: string | undefined): { ok: true } {
-    const email = String(emailRaw ?? "").trim().toLowerCase();
+    const email = normalizeEmail(String(emailRaw ?? ""));
     const emailKey = createHash("sha256").update(email).digest("hex");
     const a = this.byIp.hit(`ip:${ip ?? "unknown"}`);
     const b = a.ok ? this.byEmail.hit(`email:${emailKey}`) : a;
@@ -65,10 +66,15 @@ export class PasswordResetService {
   }
 
   async sendIfEligible(email: string, lang: "ar" | "en", ip: string | undefined): Promise<void> {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      select: { id: true, email: true, name: true, password: true, kewyAccountId: true },
-    });
+    // Case-insensitive: accounts stored before emails were normalised can reset too.
+    const user = pickByEmail(
+      await this.prisma.user.findMany({
+        where: emailWhere(email),
+        select: { id: true, email: true, name: true, password: true, kewyAccountId: true },
+        take: 5,
+      }),
+      email,
+    );
     if (!this.eligible(user) || !user) return;
     if (!this.email.enabled) return; // ruling 1: no reset link without email
     const token = newToken();

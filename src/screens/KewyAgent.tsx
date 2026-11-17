@@ -1,4 +1,6 @@
-import { memo, useState } from "react";
+import { memo } from "react";
+import { useHashParam } from "@/lib/useHashParam";
+import { availableAgentTabs, pickAgentTab, type AgentTab } from "./agent/agentTabs";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { usePermissions } from "@/auth/usePermissions";
@@ -15,15 +17,10 @@ import { ConnectorsTab } from "./kewy-agent/connectors/ConnectorsTab";
 
 // SP-20 adds the agent's settings and the "Try your agent" preview.
 // SP-22 adds the skills gallery (agent.view; actions gate themselves).
-// SP-23: "connectors" replaces "mcp"; the legacy direct MCP servers live
-// under Connectors → Advanced (ruling 9).
-type Tab = "settings" | "try" | "skills" | "knowledge" | "tools" | "connectors";
-
-/** `#/agent?tab=connectors&connector=<id>` (deep links, OAuth returns, notifications). */
-function tabFromHash(): Tab | null {
-  const t = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("tab");
-  return t === "connectors" || t === "skills" || t === "knowledge" || t === "tools" || t === "settings" || t === "try" ? t : null;
-}
+// SP-23: "connectors" replaces "mcp" (agentTabs.ts); the legacy direct MCP
+// servers live under Connectors → Advanced (ruling 9). The deep link
+// `#/agent?tab=connectors&connector=<id>` goes through the same hash logic.
+type Tab = AgentTab;
 
 interface LStatus {
   connected: boolean;
@@ -32,7 +29,7 @@ interface LStatus {
 function KewyAgentImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { can } = usePermissions();
+  const { can, loading } = usePermissions();
   const canEditTools = can("agent.update");
   const canEditMcp = can("connectors.update");
   // SP-21: the knowledge (content, FAQs, guidelines, files, websites and the
@@ -42,12 +39,11 @@ function KewyAgentImpl() {
   const canViewSettings = can("agent.view");
   const canTry = can("agent.update");
   const canViewConnectors = can("connectors.view");
-  const [tab, setTab] = useState<Tab>(() => {
-    const fromHash = tabFromHash();
-    if (fromHash === "connectors" && canViewConnectors) return "connectors";
-    if (fromHash && fromHash !== "connectors") return fromHash;
-    return canViewSettings ? "settings" : canViewKnowledge ? "knowledge" : "tools";
-  });
+  // The tab is chosen only once permissions are known (else a cold load opens on Tools),
+  // honouring `#/agent?tab=…` when the member can open it. Clicking a tab updates the hash.
+  const [hashTab, setHashTab] = useHashParam("tab");
+  const tab = pickAgentTab({ loading, available: availableAgentTabs(can), requested: hashTab });
+  const setTab = (id: Tab) => setHashTab(id);
 
   const statusQ = useFetch<LStatus>("/integrations/l/status");
   const connected = statusQ.data?.connected === true;

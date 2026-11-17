@@ -6,6 +6,7 @@
  * leaves the process.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { WORKFLOW_TRIGGER_EVENT } from "../workflows/workflow-events";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { ChannelResolver } from "../channels/channel-resolver.service";
 import { PermissionService } from "../permissions/permission.service";
@@ -135,7 +136,8 @@ export function lifecycleWorld(opts: { withWhatsapp?: boolean } = {}) {
 
   // Trigger events dispatch for real; `flush()` waits for them.
   const pending: Promise<unknown>[] = [];
-  const events = { emit: jest.fn((_name: string, evt: any) => pending.push(dispatch.handleTrigger(evt))) };
+  // Routed by name like the real EventEmitter (SP-27 adds webhook-only emits).
+  const events = { emit: jest.fn((name: string, evt: any) => name === WORKFLOW_TRIGGER_EVENT && pending.push(dispatch.handleTrigger(evt))) };
   const flush = async () => {
     while (pending.length) await pending.shift();
   };

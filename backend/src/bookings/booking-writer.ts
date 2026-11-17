@@ -25,6 +25,7 @@
  * `bookings.closed`); a change that does not move time, duration or resource
  * is never re-gated (so HJZ-linked rows and status changes are not).
  */
+import { WEBHOOK_EVENT, type WebhookEmit } from "../webhooks/webhook-events";
 import { NotFoundException } from "@nestjs/common";
 import type { Appointment, Prisma, Service, StaffResource } from "@prisma/client";
 import type { EventEmitter2 } from "@nestjs/event-emitter";
@@ -147,6 +148,12 @@ export class BookingWriter {
       return tx.appointment.create({ data });
     });
     void this.hjzSync?.changed(row.id);
+    // SP-27: webhook booking.created (after commit; the outbox re-reads the row).
+    try {
+      this.events?.emit(WEBHOOK_EVENT, { workspaceId, type: "booking.created", entityId: row.id } satisfies WebhookEmit);
+    } catch {
+      // A webhook must never fail a booking write.
+    }
     // SP-24: created as confirmed → "booking confirmed" (after commit).
     if (row.status === "confirmed") await this.emitLifecycle(workspaceId, "appointment_confirmed", row);
     const [out] = await this.read.annotate(workspaceId, [row]);

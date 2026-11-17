@@ -114,6 +114,12 @@ export class PrismaService implements OnModuleDestroy {
   get connectorCall() { return this.client.connectorCall; }
   get connectorSyncLink() { return this.client.connectorSyncLink; }
   get connectorSyncRun() { return this.client.connectorSyncRun; }
+  // SP-27: in the tenancy list (defence in depth). AuthGuard's lookup by hash
+  // is a findUnique before any workspace context exists; every other query
+  // names workspaceId explicitly.
+  get apiKey() { return this.client.apiKey; }
+  get webhookEndpoint() { return this.client.webhookEndpoint; }
+  get webhookDelivery() { return this.client.webhookDelivery; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

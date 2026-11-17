@@ -2159,3 +2159,49 @@ export interface ConnectorRescanResult {
   removed: string[];
   changed: string[];
 }
+
+// ─── SP-27 API keys and webhooks (mirror of backend api-keys / webhooks DTOs) ──
+
+export type KeyAction = "read" | "write" | "delete" | "admin";
+export type KeyScopes = Partial<Record<string, KeyAction[]>>;
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** `crm_<12 hex>`; the full key is shown once, at create. */
+  prefix: string;
+  scopes: KeyScopes;
+  createdBy: { id: string; name: string } | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  status: "active" | "expired" | "revoked";
+  createdAt: string;
+}
+
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  description: string | null;
+  events: string[];
+  active: boolean;
+  disabledReason: "manual" | "failing" | "unsafe_url" | null;
+  failingSince: string | null;
+  hasPreviousSecret: boolean;
+  createdAt: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  eventId: string;
+  event: string;
+  status: "pending" | "delivered" | "failed";
+  attempts: number;
+  responseCode: number | null;
+  lastError: string | null;
+  nextAttemptAt: string;
+  deliveredAt: string | null;
+  createdAt: string;
+  /** Only on GET …/deliveries/:id. */
+  payload?: unknown;
+}
