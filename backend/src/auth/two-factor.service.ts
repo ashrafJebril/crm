@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger } from "@nestjs/common";
+import { layoutBrandOf } from "../workspaces/email-brand";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { randomBytes } from "crypto";
@@ -290,9 +291,10 @@ export class TwoFactorService {
     this.sessions.bumped(u.id);
     if (this.email.enabled) {
       try {
-        const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { name: true, lang: true } });
+        const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { id: true, name: true, lang: true, logoMediaId: true, brandColor: true } });
         await this.email.send(
-          twoFactorResetEmail({ to: u.email, lang: ws?.lang === "en" ? "en" : "ar", name: u.name, workspaceName: ws?.name ?? "" }),
+          // SP-29: the workspace's logo and colour.
+          twoFactorResetEmail({ to: u.email, lang: ws?.lang === "en" ? "en" : "ar", name: u.name, workspaceName: ws?.name ?? "", brand: layoutBrandOf(ws) }),
         );
       } catch (e) {
         this.logger.warn(`2fa reset email for user ${u.id} failed: ${(e as Error)?.name ?? "Error"}`);

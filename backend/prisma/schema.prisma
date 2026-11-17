@@ -1343,6 +1343,12 @@ model Workspace {
   apiKeys           ApiKey[]           @relation("WorkspaceApiKeys")
   webhookEndpoints  WebhookEndpoint[]  @relation("WorkspaceWebhookEndpoints")
 
+  /// SP-29: the business logo (a Media row with purpose "brand_logo").
+  logoMediaId String?
+  logoMedia   Media?  @relation("WorkspaceLogo", fields: [logoMediaId], references: [id], onDelete: SetNull)
+  /// SP-29: "#rrggbb", lower-case; null = default.
+  brandColor  String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1566,6 +1572,10 @@ model Media {
   knowledgeSources KnowledgeSource[] @relation("MediaKnowledgeSources")
   /// SP-18: files attached to copilot messages (hidden media rows).
   copilotAttachments CopilotAttachment[] @relation("MediaCopilotAttachments")
+  /// SP-29: null = a library file; "brand_logo" = a workspace logo (hidden from the library list).
+  purpose        String?
+  /// SP-29 back-relation: workspaces using this file as their logo.
+  workspaceLogos Workspace[] @relation("WorkspaceLogo")
 
   createdAt DateTime @default(now())
 

@@ -9,7 +9,11 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
+  UseInterceptors,
 } from "@nestjs/common";
+import { WorkspaceBrandingService } from "./workspace-branding.service";
+import { LogoUploadInterceptor } from "./logo-upload.interceptor";
 import type { Request } from "express";
 import { WorkspacesService } from "./workspaces.service";
 import {
@@ -41,7 +45,14 @@ export class WorkspacesController {
     private readonly handover?: HandoverService,
     // SP-26 Task 2: optional for the same reason as `handover`.
     private readonly twoFactor?: TwoFactorService,
+    // SP-29: optional for the same reason as `handover`.
+    private readonly branding?: WorkspaceBrandingService,
   ) {}
+
+  private get brandingSvc(): WorkspaceBrandingService {
+    if (!this.branding) throw new Error("WorkspaceBrandingService is not available");
+    return this.branding;
+  }
 
   private get handovers(): HandoverService {
     if (!this.handover) throw new Error("HandoverService is not available");
@@ -87,6 +98,23 @@ export class WorkspacesController {
   ) {
     await this.authorize(id, req);
     return this.svc.update(id, dto, actorOf(req.user));
+  }
+
+  /** SP-29: upload the logo (PNG, JPEG or WebP, ≤ 2 MB; settings.update). Returns the workspace DTO. */
+  @Post(":id/logo")
+  @UseInterceptors(LogoUploadInterceptor)
+  async uploadLogo(@Param("id") id: string, @UploadedFile() file: Express.Multer.File | undefined, @Req() req: AuthedReq) {
+    await this.authorize(id, req);
+    await this.brandingSvc.uploadLogo(id, file, actorOf(req.user));
+    return this.svc.get(id);
+  }
+
+  /** SP-29: remove the logo (settings.update). Returns the workspace DTO. */
+  @Delete(":id/logo")
+  async removeLogo(@Param("id") id: string, @Req() req: AuthedReq) {
+    await this.authorize(id, req);
+    await this.brandingSvc.removeLogo(id, actorOf(req.user));
+    return this.svc.get(id);
   }
 
   @Get(":id/members")

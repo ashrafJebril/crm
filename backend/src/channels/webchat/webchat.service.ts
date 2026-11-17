@@ -9,6 +9,30 @@ import { InboundSinkService } from "../inbound-sink.service";
 import { renderChatPage, type WidgetLang } from "./hosted-page";
 import { COLOR_RE, MAX_GREETING, originOptions } from "./origin-match";
 import { isVisitorId, mintVisitor, verifyVisitorToken } from "./visitor-token";
+import { safeBrandColor } from "../../workspaces/brand-color";
+import { DEFAULT_CHAT_COLOR, logoPath } from "../../workspaces/brand-constants";
+
+/** SP-29: the workspace's brand on the chat page (name, current logo, colour). */
+export interface WidgetBrand {
+  name: string;
+  /** Relative public URL of the current logo (same origin as the page), or null. */
+  logoUrl: string | null;
+  /** The workspace brand colour (`#rrggbb`), or null. */
+  color: string | null;
+}
+
+/** The workspace fields the brand needs. */
+export type BrandWorkspace = { id: string; name: string; logoMediaId: string | null; brandColor: string | null };
+
+export function widgetBrand(ws: BrandWorkspace | null | undefined): WidgetBrand | null {
+  if (!ws) return null;
+  return { name: String(ws.name ?? ""), logoUrl: ws.logoMediaId ? logoPath(ws.id, ws.logoMediaId) : null, color: safeBrandColor(ws.brandColor) };
+}
+
+/** SP-29: the chat colour is the channel's, else the workspace's, else the default. */
+export function resolveChatColor(channelColor: string | null, brand: WidgetBrand | null): string {
+  return channelColor ?? brand?.color ?? DEFAULT_CHAT_COLOR;
+}
 
 export const MAX_WIDGET_MESSAGE = 2000;
 export const MAX_VISITOR_NAME = 80;
@@ -22,10 +46,13 @@ export interface WidgetPublicConfig {
   displayName: string;
   greeting: string | null;
   greetingAr: string | null;
-  color: string | null;
+  /** SP-29: the resolved colour (channel, then workspace brand, then the default). */
+  color: string;
   position: "start" | "end";
   askName: boolean;
   lang: WidgetLang | null;
+  /** SP-29: the workspace's name, logo and brand colour (null when not loaded). */
+  brand: WidgetBrand | null;
 }
 
 /** A message as a visitor sees it (no workspace, contact or conversation ids). */
@@ -47,6 +74,12 @@ const obj = (c: unknown): Record<string, unknown> =>
   c && typeof c === "object" && !Array.isArray(c) ? (c as Record<string, unknown>) : {};
 
 const asLang = (v: unknown): WidgetLang | null => (v === "en" || v === "ar" ? v : null);
+
+/** The channel's own colour (`config.color`, validated), or null. */
+export const channelColor = (channel: Pick<Channel, "config">): string | null => {
+  const c = obj(channel.config).color;
+  return typeof c === "string" && COLOR_RE.test(c) ? c : null;
+};
 
 /** The first en/ar tag of an Accept-Language header. */
 export function langFromAcceptLanguage(h: unknown): WidgetLang | null {
@@ -115,18 +148,33 @@ export class WebchatService implements OnModuleInit {
 
   // ── Public widget API ────────────────────────────────────────────────────
 
-  publicConfig(channel: Channel): WidgetPublicConfig {
+  publicConfig(channel: Channel, ws?: BrandWorkspace | null): WidgetPublicConfig {
     const c = obj(channel.config);
     const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, MAX_GREETING) : null);
+    const brand = widgetBrand(ws);
     return {
       displayName: channel.displayName,
       greeting: str(c.greeting),
       greetingAr: str(c.greetingAr),
-      color: typeof c.color === "string" && COLOR_RE.test(c.color) ? c.color : null,
+      color: resolveChatColor(channelColor(channel), brand),
       position: c.position === "start" ? "start" : "end",
       askName: c.askName === true,
       lang: asLang(c.lang),
+      brand,
     };
+  }
+
+  /** The channel's workspace brand fields (public routes: raw client, by the channel's own workspace). */
+  async brandWorkspace(channel: Channel): Promise<BrandWorkspace | null> {
+    return this.prisma.raw.workspace.findUnique({
+      where: { id: channel.workspaceId },
+      select: { id: true, name: true, logoMediaId: true, brandColor: true },
+    });
+  }
+
+  /** `GET /widget/:id/config` with the workspace brand. */
+  async publicConfigWithBrand(channel: Channel): Promise<WidgetPublicConfig> {
+    return this.publicConfig(channel, await this.brandWorkspace(channel));
   }
 
   /** `?lang=`, then the channel's `config.lang`, then the browser's
@@ -217,8 +265,10 @@ export class WebchatService implements OnModuleInit {
     opts: { embed: boolean; lang?: unknown; acceptLanguage?: unknown; apiOrigin: string; parent: string | null },
   ): Promise<{ html: string; csp: string }> {
     const lang = await this.resolveLang(channel, opts.lang, opts.acceptLanguage);
+    const brand = widgetBrand(await this.brandWorkspace(channel));
     return renderChatPage({
       channel: { id: channel.id, displayName: channel.displayName, config: channel.config },
+      brand: { logoUrl: brand?.logoUrl ?? null, color: resolveChatColor(channelColor(channel), brand) },
       lang,
       embed: opts.embed,
       nonce: randomBytes(16).toString("base64"),

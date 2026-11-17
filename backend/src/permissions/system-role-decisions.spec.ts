@@ -963,6 +963,28 @@ describe("system-role decision table", () => {
   });
 
   // SP-27: organization API keys and outgoing webhooks.
+  describe("SP-29 branding routes", () => {
+    const WRITES = ["POST /workspaces/:id/logo", "DELETE /workspaces/:id/logo", "PATCH /workspaces/:id"];
+    const PUBLIC = "GET /branding/:workspaceId/logo/:mediaId";
+
+    it("owner and admin can upload, delete and set the colour", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of WRITES) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("agent and viewer get 403", () => {
+      for (const role of ["agent", "viewer"] as const) {
+        for (const route of WRITES) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("the public logo route answers everyone", () => {
+      expect(ROUTE_PERMISSIONS[PUBLIC]).toBe("public");
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) expect(allowed(role, PUBLIC)).toBe(true);
+    });
+  });
+
   describe("SP-27 developer routes", () => {
     const KEYS = [
       "GET /api-keys",

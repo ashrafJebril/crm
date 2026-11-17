@@ -142,6 +142,7 @@ describe("helpers", () => {
   it("public config never echoes invalid stored values", () => {
     const b = build();
     const cfg = b.svc.publicConfig(wc("W1", { config: { color: "red;x", position: "middle", askName: "yes", lang: "fr", greeting: 7 } }) as never);
-    expect(cfg).toEqual({ displayName: "Site", greeting: null, greetingAr: null, color: null, position: "end", askName: false, lang: null });
+    // SP-29: the colour is resolved (an invalid channel colour falls through to the default); no workspace loaded → brand null.
+    expect(cfg).toEqual({ displayName: "Site", greeting: null, greetingAr: null, color: "#111827", position: "end", askName: false, lang: null, brand: null });
   });
 });

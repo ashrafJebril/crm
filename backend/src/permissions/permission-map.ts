@@ -600,6 +600,11 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /workspaces/:id/audit": "members.manage",
   "POST /workspaces/:id/members/:userId/2fa/reset": "members.manage",
   "PATCH /workspaces/:id": "settings.update",
+  // SP-29: the business logo (the brand colour rides on PATCH /workspaces/:id).
+  "POST /workspaces/:id/logo": "settings.update",
+  "DELETE /workspaces/:id/logo": "settings.update",
+  // SP-29 (ruling 6): the current logo only, for the chat page and emails.
+  "GET /branding/:workspaceId/logo/:mediaId": "public",
   // Automations (own resource; run/test endpoints are updates).
   "GET /workflows": "workflows.view",
   "GET /workflows/:id": "workflows.view",

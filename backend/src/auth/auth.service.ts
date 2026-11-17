@@ -1,4 +1,5 @@
 import { emailWhere, normalizeEmail, pickByEmail } from "./email";
+import { brandFields } from "../workspaces/workspaces.service";
 import {
   BadRequestException,
   ConflictException,
@@ -237,6 +238,7 @@ export class AuthService {
       lang: m.workspace.lang,
       plan: m.workspace.plan,
       role: m.role as WorkspaceRole,
+      ...brandFields(m.workspace),
     }));
 
     if (memberships.length === 0) {
@@ -261,6 +263,7 @@ export class AuthService {
           lang: ws.lang,
           plan: ws.plan,
           role: "owner",
+          ...brandFields(ws),
         },
       ]);
     }

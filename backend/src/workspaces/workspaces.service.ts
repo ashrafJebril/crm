@@ -1,4 +1,6 @@
 import { emailWhere, normalizeEmail } from "../auth/email";
+import { normalizeBrandColor, safeBrandColor } from "./brand-color";
+import { logoPath } from "./brand-constants";
 import {
   BadRequestException,
   ConflictException,
@@ -32,6 +34,11 @@ interface Target {
   roleId: string | null;
   permissions: PermissionsJson;
   visibility?: "all" | "assigned";
+}
+
+/** SP-29: the branding part of the workspace DTO (the logo's public URL; a safe colour). */
+export function brandFields(ws: { id: string; logoMediaId?: string | null; brandColor?: string | null }): { logoUrl: string | null; brandColor: string | null } {
+  return { logoUrl: ws.logoMediaId ? logoPath(ws.id, ws.logoMediaId) : null, brandColor: safeBrandColor(ws.brandColor) };
 }
 
 function initialsOf(name: string): string {
@@ -76,13 +83,14 @@ export class WorkspacesService {
       lang: m.workspace.lang,
       plan: m.workspace.plan,
       role: m.role as WorkspaceRole,
+      ...brandFields(m.workspace),
     }));
   }
 
   async get(id: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id } });
     if (!ws) throw new NotFoundException("Workspace not found");
-    return ws;
+    return { ...ws, ...brandFields(ws) };
   }
 
   async create(dto: CreateWorkspaceDto, ownerUserId: string) {
@@ -152,8 +160,11 @@ export class WorkspacesService {
 
   async update(id: string, dto: UpdateWorkspaceDto, actor?: Actor) {
     await this.get(id);
+    // SP-29: the brand colour is validated and stored lower-case `#rrggbb`; null clears.
+    const data: Prisma.WorkspaceUpdateInput = { ...dto };
+    if (dto.brandColor !== undefined) data.brandColor = normalizeBrandColor(dto.brandColor);
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.workspace.update({ where: { id }, data: dto });
+      const updated = await tx.workspace.update({ where: { id }, data });
       // SP-26: which settings changed (names only; values may be long).
       await this.audit.record(tx, {
         workspaceId: id,
@@ -163,7 +174,7 @@ export class WorkspacesService {
         targetId: id,
         meta: { fields: Object.keys(dto).filter((k) => (dto as Record<string, unknown>)[k] !== undefined) },
       });
-      return updated;
+      return { ...updated, ...brandFields(updated) };
     });
   }
 

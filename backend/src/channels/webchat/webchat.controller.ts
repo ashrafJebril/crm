@@ -101,7 +101,8 @@ export class WebchatController {
   @Get("widget/:channelId/config")
   config(@Req() req: WidgetRequest, @Query() _q: WidgetConfigQueryDto, @Res({ passthrough: true }) res: HeaderRes) {
     for (const [k, v] of PUBLIC_JSON_HEADERS) res.setHeader(k, v);
-    return this.svc.publicConfig(req.widgetChannel!);
+    // SP-29: with the workspace brand (logo, colour precedence channel > workspace > default).
+    return this.svc.publicConfigWithBrand(req.widgetChannel!);
   }
 
   @Public()
