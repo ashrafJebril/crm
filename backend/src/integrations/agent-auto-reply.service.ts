@@ -27,6 +27,11 @@ type Outcome =
   | "taken_over"
   | "failed";
 
+/** A conversation's running turn and the inbound coalesced behind it. */
+interface Turn {
+  pending: { texts: string[]; done: Promise<Outcome>; resolve: (o: Outcome) => void } | null;
+}
+
 const CONV_SELECT = {
   id: true,
   workspaceId: true,
@@ -56,7 +61,8 @@ const CONV_SELECT = {
  * Then l is asked once, keyed by the CRM conversation id (ruling 11); the
  * answer is validated (agent-answer.ts) and the image allowed only when it
  * is an approved photo of this workspace (SP-17). The thread and the gate are
- * re-checked at send time (a human reply during the l turn wins), and the
+ * re-checked at send time with the payment lock (a human reply during the l
+ * turn wins; turns of one conversation run one at a time), and the
  * answer goes out through the channel's own transport (plain text) as one
  * `from: "ai"` Message that never pauses the AI.
  *
@@ -85,9 +91,59 @@ export class AgentAutoReplyService implements OnModuleInit {
     this.sink?.registerAutoReply((workspaceId, conversationId, text) => this.maybeQueue(workspaceId, conversationId, text));
   }
 
+  /**
+   * Review hardening: one turn per conversation at a time, in process. An
+   * inbound that arrives while a turn runs is coalesced into the pending
+   * follow-up turn (texts joined in order), so a burst of three messages
+   * gives at most the running turn plus ONE turn that answers the latest
+   * state, never three overlapping replies.
+   */
+  private readonly turns = new Map<string, Turn>();
+
   /** Fire-and-forget: the inbound message is already stored. Never throws. */
   maybeQueue(workspaceId: string, conversationId: string, inboundText: string): void {
-    this.last = this.run(workspaceId, conversationId, inboundText).catch((err) => {
+    const key = `${workspaceId}:${conversationId}`;
+    const running = this.turns.get(key);
+    if (running) {
+      if (!running.pending) {
+        let resolve!: (o: Outcome) => void;
+        const done = new Promise<Outcome>((r) => (resolve = r));
+        running.pending = { texts: [], done, resolve };
+      }
+      running.pending.texts.push(inboundText);
+      this.last = running.pending.done;
+      return;
+    }
+    const turn: Turn = { pending: null };
+    this.turns.set(key, turn);
+    this.last = this.drive(key, turn, workspaceId, conversationId, inboundText);
+  }
+
+  /** Runs the turn, then any coalesced follow-up, then frees the slot. */
+  private async drive(key: string, turn: Turn, workspaceId: string, conversationId: string, text: string): Promise<Outcome> {
+    let current = text;
+    let settle: ((o: Outcome) => void) | null = null;
+    let first: Outcome | null = null;
+    try {
+      for (;;) {
+        const outcome = await this.safeRun(workspaceId, conversationId, current);
+        if (settle) settle(outcome);
+        else first = outcome;
+        const next = turn.pending;
+        turn.pending = null;
+        // No await between this check and the delete below: a new inbound
+        // either joined `pending` already or starts a fresh turn.
+        if (!next) return first ?? outcome;
+        current = next.texts.join("\n");
+        settle = next.resolve;
+      }
+    } finally {
+      this.turns.delete(key);
+    }
+  }
+
+  private safeRun(workspaceId: string, conversationId: string, text: string): Promise<Outcome> {
+    return this.run(workspaceId, conversationId, text).catch((err) => {
       this.logger.warn(`auto-reply failed for conversation ${conversationId}: ${err instanceof Error ? err.message : String(err)}`);
       return "failed" as const;
     });
@@ -138,6 +194,8 @@ export class AgentAutoReplyService implements OnModuleInit {
     // while l was thinking.
     const fresh = await this.load(workspaceId, conversationId);
     if (!fresh || !this.open(fresh)) return "taken_over";
+    // The workspace may have been locked during the l turn (fails closed).
+    if (await this.paymentLock?.isLocked(workspaceId)) return "locked";
     if (!(await this.gate.allows(workspaceId, { conversationId, contactId: fresh.contactId }, "l_auto_reply"))) return "gated";
 
     try {

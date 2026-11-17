@@ -33,8 +33,9 @@ export interface DeliverableConversation {
  * one Message row, the conversation preview, realtime `inbox.activity`, and
  * the transport's `delivered` hook (web chat: `widget.message`).
  *
- * A human reply takes an AI thread over (`aiPausedAt = now`); the AI's own
- * reply never pauses the AI and leaves the unread count alone.
+ * A human reply takes an AI thread over (`aiPausedAt = now`, written before
+ * `sendText` and kept if the send fails); the AI's own reply never pauses the
+ * AI and leaves the unread count alone.
  */
 export async function deliverViaTransport(
   deps: TransportDeliveryDeps,
@@ -56,6 +57,13 @@ export async function deliverViaTransport(
     contactId: conv.contactId,
     contact: conv.contact ?? null,
   };
+  if (opts.from === "human") {
+    // Review hardening: the takeover is recorded BEFORE the transport call,
+    // so an AI auto-reply re-checked while this send is in flight sees the
+    // thread taken over and is dropped. It stays set if the send fails: the
+    // human is handling the thread either way.
+    await deps.prisma.conversation.update({ where: { id: conv.id }, data: { aiPausedAt: new Date() } });
+  }
   const { providerMessageId } = await transport.sendText(channel, target, text);
 
   const now = new Date();

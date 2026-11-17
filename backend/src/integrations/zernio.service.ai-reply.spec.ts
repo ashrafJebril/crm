@@ -142,6 +142,18 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("stays silent on an escalated thread (WhatsApp/Zernio, like Telegram and web chat)", async () => {
+    const ask = jest.fn().mockResolvedValue({ answer: "hi" });
+    const { svc, send, prisma } = build({ id: CONV, aiEnabled: true, escalated: true, channel: "facebook" }, ask);
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    expect(prisma.message.create).toHaveBeenCalled();
+    expect(ask).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("keeps the kewy-ai bridge out of a thread the workspace's l agent answers", async () => {
     const ask = jest.fn().mockResolvedValue({ answer: "We offer property management." });
     const { svc, send, notifyInbound } = build(

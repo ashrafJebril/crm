@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { makeFakePrisma } from "../channels/test-prisma";
+import { makeFakePrisma, withAdvisoryLocks } from "../channels/test-prisma";
 import { ChannelTransportRegistry } from "../channels/channel-transport";
 import { InboundSinkService } from "../channels/inbound-sink.service";
 import { channelError } from "../channels/channel-errors";
+import { deliverViaTransport } from "../channels/deliver-via-transport";
 import { AgentReplyGate, invalidateAgentGate } from "../agent/agent-reply-gate";
 import { AgentAutoReplyService } from "./agent-auto-reply.service";
 
@@ -171,6 +172,105 @@ describe("AgentAutoReplyService (SP-22 Task 2)", () => {
     await inbound(w);
     expect(await w.svc.last).toBe("sent");
     expect(w.telegram.sendText).toHaveBeenCalledTimes(1);
+  });
+});
+
+function deferred<T = void>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((ok, bad) => ((resolve = ok), (reject = bad)));
+  return { promise, resolve, reject };
+}
+
+describe("AgentAutoReplyService review hardening", () => {
+  afterEach(() => invalidateAgentGate());
+
+  it("two concurrent identical inbounds give one stored message and one AI reply", async () => {
+    const w = world();
+    const locks = withAdvisoryLocks(w.prisma);
+    const [a, b] = await Promise.all([inbound(w), inbound(w)]);
+    await w.svc.last;
+    await flush();
+    expect([a.duplicate, b.duplicate].sort()).toEqual([false, true]);
+    expect(b.messageId).toBe(a.messageId);
+    expect(w.db.message.filter((m: any) => m.from === "them")).toHaveLength(1);
+    expect(w.lAgent.ask).toHaveBeenCalledTimes(1);
+    expect(aiMessages(w)).toHaveLength(1);
+    // Both deliveries queued on the same per-message lock.
+    expect(locks.order.filter((k) => k.includes("inbound:") && k.includes("tg:ch1:1"))).toHaveLength(2);
+  });
+
+  it("an AI reply re-checked during an in-flight human send is dropped; the takeover survives a failed send", async () => {
+    const w = world();
+    const humanSend = deferred<{ providerMessageId: string }>();
+    const humanInFlight = deferred();
+    let human: Promise<unknown> = Promise.resolve();
+    w.lAgent.ask.mockImplementation(async () => {
+      // A staff reply starts while l is thinking; its transport call hangs.
+      w.telegram.sendText.mockImplementationOnce(async () => {
+        humanInFlight.resolve();
+        return humanSend.promise;
+      });
+      const conv = w.db.conversation[0];
+      human = deliverViaTransport(
+        { prisma: w.prisma, realtime: w.realtime as never, channels: w.resolver as never, transports: (w.svc as any).transports, logger: { warn: jest.fn() } },
+        WS,
+        { ...conv, contact: w.db.contact[0] },
+        "Staff here",
+        { from: "human" },
+      ).catch((e) => e);
+      await humanInFlight.promise;
+      return { answer: "AI answer" };
+    });
+    await inbound(w);
+    expect(await w.svc.last).toBe("taken_over");
+    // Only the human's transport call happened; the AI never sent.
+    expect(w.telegram.sendText).toHaveBeenCalledTimes(1);
+    expect(aiMessages(w)).toHaveLength(0);
+    // The human send fails: the thread stays taken over.
+    humanSend.reject(new Error("telegram down"));
+    expect(await human).toBeInstanceOf(Error);
+    expect(w.db.conversation[0].aiPausedAt).toBeInstanceOf(Date);
+  });
+
+  it("turns of one conversation run one at a time; inbound during a turn is coalesced into one follow-up turn", async () => {
+    const w = world();
+    const gate = deferred();
+    let running = 0;
+    let maxRunning = 0;
+    (w.lAgent.ask as jest.Mock).mockImplementation(async (_ws: string, req: { message: string }) => {
+      running++;
+      maxRunning = Math.max(maxRunning, running);
+      if (req.message === "m1") await gate.promise;
+      running--;
+      return { answer: `re: ${req.message}` };
+    });
+    await inbound(w, "m1", "tg:ch1:m1");
+    const firstTurn = w.svc.last;
+    await flush();
+    await inbound(w, "m2", "tg:ch1:m2");
+    await inbound(w, "m3", "tg:ch1:m3");
+    const followUp = w.svc.last;
+    gate.resolve();
+    expect(await firstTurn).toBe("sent");
+    expect(await followUp).toBe("sent");
+    expect(maxRunning).toBe(1);
+    expect(w.lAgent.ask.mock.calls.map((c: any[]) => c[1].message)).toEqual(["m1", "m2\nm3"]);
+    expect(aiMessages(w).map((m: any) => m.body)).toEqual(["re: m1", "re: m2\nm3"]);
+    // The slot is freed: a later inbound starts a fresh turn.
+    await inbound(w, "m4", "tg:ch1:m4");
+    expect(await w.svc.last).toBe("sent");
+    expect(w.lAgent.ask).toHaveBeenCalledTimes(3);
+  });
+
+  it("the payment lock is re-checked at send time", async () => {
+    const w = world();
+    w.paymentLock.isLocked.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await inbound(w);
+    expect(await w.svc.last).toBe("locked");
+    expect(w.lAgent.ask).toHaveBeenCalledTimes(1);
+    expect(w.telegram.sendText).not.toHaveBeenCalled();
+    expect(aiMessages(w)).toHaveLength(0);
   });
 });
 
