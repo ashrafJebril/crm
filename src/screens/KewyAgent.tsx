@@ -10,9 +10,11 @@ import { McpServersTab } from "./kewy-agent/McpServersTab";
 import { AgentSettingsTab } from "./agent/AgentSettingsTab";
 import { TryAgentPanel } from "./agent/TryAgentPanel";
 import { ContinueSetupCard } from "./setup/ContinueSetupCard";
+import { SkillsTab } from "./kewy-agent/skills/SkillsTab";
 
 // SP-20 adds the agent's settings and the "Try your agent" preview.
-type Tab = "settings" | "try" | "knowledge" | "tools" | "mcp";
+// SP-22 adds the skills gallery (agent.view; actions gate themselves).
+type Tab = "settings" | "try" | "skills" | "knowledge" | "tools" | "mcp";
 
 interface LStatus {
   connected: boolean;
@@ -38,6 +40,7 @@ function KewyAgentImpl() {
   const tabs: Array<{ id: Tab; label: string; ar: string }> = [
     ...(canViewSettings ? [{ id: "settings" as const, label: "Settings", ar: "الإعدادات" }] : []),
     ...(canTry ? [{ id: "try" as const, label: "Try your agent", ar: "جرّب وكيلك" }] : []),
+    ...(canViewSettings ? [{ id: "skills" as const, label: "Skills", ar: "المهارات" }] : []),
     ...(canViewKnowledge ? [{ id: "knowledge" as const, label: "Knowledge", ar: "المعرفة" }] : []),
     { id: "tools", label: "Tools", ar: "الأدوات" },
     { id: "mcp", label: "MCP Servers", ar: "خوادم MCP" },
@@ -93,6 +96,7 @@ function KewyAgentImpl() {
         <ContinueSetupCard tx={tx} offerStart />
         {tab === "settings" && canViewSettings && <AgentSettingsTab tx={tx} lang={t.lang} canEdit={canTry} />}
         {tab === "try" && canTry && <TryAgentPanel tx={tx} canUse={canTry} />}
+        {tab === "skills" && canViewSettings && <SkillsTab tx={tx} lang={t.lang} />}
         {tab === "knowledge" && canViewKnowledge && <KnowledgePage tx={tx} lang={t.lang} />}
         {(tab === "tools" || tab === "mcp") && !statusQ.loading && !connected && notConnected}
         {tab === "tools" && connected && <ToolsTab tx={tx} canEdit={canEditTools} />}
