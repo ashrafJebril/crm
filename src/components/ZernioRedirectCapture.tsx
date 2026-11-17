@@ -124,7 +124,7 @@ export function ZernioRedirectCapture() {
                 predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/channels"),
               }),
             )
-            .catch((e) => toast(channelErrorText(e, tx), "error"));
+            .catch((e) => toast(channelErrorText(e, tx), "error", e));
         }
       })
       .catch((e) =>

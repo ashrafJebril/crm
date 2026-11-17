@@ -82,7 +82,7 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
       setReloadKey((k) => k + 1);
       toast(tx("Report updated", "تم تحديث التقرير"), "success");
     } catch (e) {
-      toast(campaignErrorText(e, tx), "error");
+      toast(campaignErrorText(e, tx), "error", e);
     } finally {
       setRefreshing(false);
     }
@@ -102,7 +102,7 @@ export function CampaignDetail({ id, onBack }: { id: string; onBack: () => void 
         "success",
       );
     } catch (e) {
-      toast(cancelErrorText(e, tx), "error");
+      toast(cancelErrorText(e, tx), "error", e);
       void campaignQ.refetch();
     } finally {
       setCancelling(false);

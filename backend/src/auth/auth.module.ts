@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { JwtModule } from "@nestjs/jwt";
 import { APP_GUARD } from "@nestjs/core";
+import { PlanFeatureGuard } from "../billing/plan-feature.guard";
 import { AuthController } from "./auth.controller";
 import { AuthService } from "./auth.service";
 import { AuthGuard } from "./auth.guard";
@@ -44,6 +45,9 @@ import { PublicInvitationsController } from "../members/public-invitations.contr
     // order, and PermissionGuard needs the req.user AuthGuard sets. (An
     // APP_GUARD in AppModule would run BEFORE this module's AuthGuard.)
     { provide: APP_GUARD, useClass: PermissionGuard },
+    // SP-28: the plan gate runs third, after the permission check, so a 402
+    // PLAN_REQUIRED only ever means "not in your plan" (never a 403's job).
+    { provide: APP_GUARD, useClass: PlanFeatureGuard },
   ],
   exports: [AuthService],
 })

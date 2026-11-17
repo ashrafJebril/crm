@@ -105,4 +105,6 @@ export interface LaunchJob {
   directPageSize: number;
   /** Consecutive identical row rejections in this run (direct sends, m1). */
   rejectStreak: { count: number; message: string | null };
+  /** SP-28: a direct send went out (usage metering; never throws). */
+  onSent?: (recipientId: string) => Promise<unknown>;
 }

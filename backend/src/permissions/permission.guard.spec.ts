@@ -213,6 +213,9 @@ describe("PermissionGuard", () => {
     const { AuthGuard } = require("../auth/auth.guard");
     const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, AuthModule) as Array<{ provide?: unknown; useClass?: unknown }>;
     const guards = providers.filter((p) => p && p.provide === APP_GUARD).map((p) => p.useClass);
-    expect(guards).toEqual([AuthGuard, PermissionGuard]);
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PlanFeatureGuard } = require("../billing/plan-feature.guard");
+    // SP-28: the plan gate runs third, after the permission check.
+    expect(guards).toEqual([AuthGuard, PermissionGuard, PlanFeatureGuard]);
   });
 });

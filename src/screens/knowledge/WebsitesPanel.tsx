@@ -170,7 +170,7 @@ export function WebsitesPanel({
       await fn();
       await q.refetch();
     } catch (e) {
-      toast(knowledgeErrorText(e, tx), "error");
+      toast(knowledgeErrorText(e, tx), "error", e);
     }
   }
 
@@ -181,7 +181,7 @@ export function WebsitesPanel({
     } catch (e) {
       const left = cooldownSeconds(e);
       if (left !== null) setCooldown((c) => ({ ...c, [s.id]: Date.now() + left * 1000 }));
-      toast(knowledgeErrorText(e, tx), "error");
+      toast(knowledgeErrorText(e, tx), "error", e);
     }
   }
 

@@ -112,6 +112,8 @@ export class PrismaService implements OnModuleDestroy {
   // is a findUnique before any workspace context exists; every other query
   // names workspaceId explicitly.
   get apiKey() { return this.client.apiKey; }
+  /** SP-28: usage metering (tenant-scoped). */
+  get usageEvent() { return this.client.usageEvent; }
   get webhookEndpoint() { return this.client.webhookEndpoint; }
   get webhookDelivery() { return this.client.webhookDelivery; }
 

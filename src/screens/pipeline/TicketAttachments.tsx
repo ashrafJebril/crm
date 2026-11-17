@@ -83,7 +83,7 @@ export function TicketAttachments({
   const candidates = useMemo(() => pendingCandidates(candidatesQ.data ?? [], items), [candidatesQ.data, items]);
   const cap = attachmentCapacity(items.length);
   const fullText = ticketKeyText("tickets.attachments_full", {}, tx) ?? "";
-  const fail = (e: unknown, fallback: string) => toast(ticketErrorText(e, tx, fallback), "error");
+  const fail = (e: unknown, fallback: string) => toast(ticketErrorText(e, tx, fallback), "error", e);
 
   const onDownload = async (row: AttachmentRow) => {
     setBusyDownload(row.id);

@@ -448,6 +448,24 @@ describe("permission map", () => {
     for (const k of keys.filter((x) => / \/insights(\/|$)/.test(x))) expect({ k, p: ROUTE_PERMISSIONS[k] }).toEqual({ k, p: "reports.view" });
   });
 
+  it("permission map covers SP-28 routes", () => {
+    // Re-scoped (no Stripe): read-only billing over Kewy data, plus the admin override clear.
+    const sp28: Record<string, string> = {
+      "GET /billing/status": "authenticated",
+      "GET /billing/catalog": "billing.view",
+      "GET /billing/wallet": "billing.view",
+      "GET /billing/wallet/ledger": "billing.view",
+      "GET /billing/usage": "billing.view",
+      "GET /billing/usage/daily": "billing.view",
+      "POST /admin/workspaces/:id/plan-override/clear": "authenticated",
+    };
+    for (const [k, p] of Object.entries(sp28)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // No Stripe routes exist.
+    expect(keys.filter((k) => /\/billing\/(checkout|subscription|portal|invoices|webhook|payment-method)/.test(k))).toEqual([]);
+  });
+
   it("permission map covers SP-27 routes", () => {
     const sp27: Record<string, string> = {
       "GET /api-keys": "api_keys.view",

@@ -22,6 +22,8 @@ export class ApiError extends Error {
   // Parsed JSON response body (or raw text), for callers that need extra
   // fields such as a 409's `linked` counts.
   body?: unknown;
+  /** SP-28: a 402 PLAN_REQUIRED, already shown by the global "not in your plan" notice. */
+  planRequired?: boolean;
   constructor(message: string, status: number, code?: string, body?: unknown) {
     super(message);
     this.status = status;
@@ -133,6 +135,31 @@ function linkedSignal(signal?: AbortSignal): { signal: AbortSignal; done: () => 
 
 function unauthorizedReason(data: unknown): string | undefined {
   return isObject(data) && typeof data.message === "string" ? data.message : undefined;
+}
+
+// SP-28: global "not in your plan" hook. Any 402 { code: "PLAN_REQUIRED",
+// feature, requiredPlan } opens one friendly notice. That error (and only
+// that error) is marked `planRequired`, so the toast path skips it; any other
+// error, even a moment later, still shows its toast.
+export const PLAN_REQUIRED_CODE = "PLAN_REQUIRED";
+export interface PlanRequiredInfo {
+  feature: string | null;
+  requiredPlan: string | null;
+}
+let onPlanRequired: ((info: PlanRequiredInfo) => void) | null = null;
+export function setPlanRequiredHandler(fn: ((info: PlanRequiredInfo) => void) | null): void {
+  onPlanRequired = fn;
+}
+/** The 402 PLAN_REQUIRED that the global notice already explained. */
+export function isPlanRequiredError(e: unknown): boolean {
+  return e instanceof ApiError && e.planRequired === true;
+}
+function notifyPlanRequired(data: unknown): void {
+  const d = isObject(data) ? data : {};
+  onPlanRequired?.({
+    feature: typeof d.feature === "string" ? d.feature : null,
+    requiredPlan: typeof d.requiredPlan === "string" ? d.requiredPlan : null,
+  });
 }
 
 // Global "payment overdue" hook: any 403 { code: "PAYMENT_OVERDUE" } (including
@@ -265,7 +292,12 @@ function errorFromBody(data: unknown, status: number, notifyLock = true): ApiErr
         : `HTTP ${status}`;
   const code = isObject(data) && typeof data.code === "string" ? data.code : undefined;
   if (notifyLock && status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
-  return new ApiError(message, status, code, data);
+  const err = new ApiError(message, status, code, data);
+  if (status === 402 && code === PLAN_REQUIRED_CODE) {
+    err.planRequired = true;
+    notifyPlanRequired(data);
+  }
+  return err;
 }
 
 // POST that reads a Server-Sent Events stream instead of a single JSON body —

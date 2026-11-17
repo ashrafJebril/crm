@@ -1032,6 +1032,25 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-28, re-scoped (Kewy bills; read-only here).
+  describe("SP-28 billing routes", () => {
+    const VIEW = ["GET /billing/catalog", "GET /billing/wallet", "GET /billing/wallet/ledger", "GET /billing/usage", "GET /billing/usage/daily"];
+
+    it("owner and admin see billing; every member gets the (reduced) status", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...VIEW, "GET /billing/status"]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+      for (const role of ["agent", "viewer"] as const) {
+        expect({ role, ok: allowed(role, "GET /billing/status") }).toEqual({ role, ok: true });
+        for (const route of VIEW) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: false });
+      }
+    });
+
+    it("impersonation is blocked on every billing.* route", () => {
+      for (const route of VIEW) expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: true });
+    });
+  });
+
     it("billing.manage and roles.manage are owner-only", () => {
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "billing.manage")).toBe(false);
     expect(hasPermission(SYSTEM_ROLES.admin.permissions, "roles.manage")).toBe(false);

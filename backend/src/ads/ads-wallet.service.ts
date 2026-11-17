@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { UsageService } from '../billing/usage.service';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getWorkspaceContext } from '../common/workspace-context';
@@ -34,7 +35,11 @@ export class InsufficientBalanceError extends Error {
 export class AdsWalletService {
   private readonly logger = new Logger(AdsWalletService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // SP-28: every ads AI turn is also a usage event (meter ads_ai).
+    @Optional() private readonly usage?: UsageService,
+  ) {}
 
   private workspaceId(): string {
     const ctx = getWorkspaceContext();
@@ -128,7 +133,7 @@ export class AdsWalletService {
     const costBasisUsd = new Prisma.Decimal(breakdown.usdCost);
     const costBasisJod = costBasisUsd.times(breakdown.fxRate);
 
-    return this.prisma.$transaction(async (tx: any) => {
+    const result = await this.prisma.$transaction(async (tx: any) => {
       await tx.adsWallet.upsert({
         where: { workspaceId },
         create: { balanceJod: ZERO } as any, // workspaceId injected by workspace-scope ext
@@ -142,10 +147,11 @@ export class AdsWalletService {
 
       if (applied.count === 1) {
         const w = await tx.adsWallet.findFirstOrThrow({ where: { workspaceId }, select: { id: true, balanceJod: true } });
-        await tx.adsWalletTransaction.create({
+        const row = await tx.adsWalletTransaction.create({
           data: {
             walletId: w.id,
             type: 'DEBIT',
+            meter: 'ads_ai', // SP-28
             amountJod: charge.negated() as any,
             balanceAfterJod: w.balanceJod as any,
             description: args.description ?? null,
@@ -154,7 +160,7 @@ export class AdsWalletService {
             costBasisJod: costBasisJod as any,
           },
         });
-        return { charged: charge, balanceAfter: w.balanceJod, shortfallJod: ZERO };
+        return { charged: charge, balanceAfter: w.balanceJod, shortfallJod: ZERO, txId: row?.id as string | undefined };
       }
 
       // Overdraw fallback — recover everything, drain to zero, prove the subsidy.
@@ -162,10 +168,11 @@ export class AdsWalletService {
       const collected = before.balanceJod;        // 0 <= collected < charge
       const shortfall = charge.minus(collected);
       await tx.adsWallet.updateMany({ where: { workspaceId }, data: { balanceJod: ZERO as any } });
-      await tx.adsWalletTransaction.create({
+      const row = await tx.adsWalletTransaction.create({
         data: {
           walletId: before.id,
           type: 'DEBIT',
+          meter: 'ads_ai', // SP-28
           amountJod: collected.negated() as any, // ledger integrity: what actually left
           balanceAfterJod: ZERO as any,
           description: args.description ?? null,
@@ -191,8 +198,14 @@ export class AdsWalletService {
           `billed=${charge.toFixed(4)} collected=${collected.toFixed(4)} ` +
           `shortfall=${shortfall.toFixed(4)} JOD — margin now uses collected, not billed`,
       );
-      return { charged: charge, balanceAfter: ZERO, shortfallJod: shortfall };
+      return { charged: charge, balanceAfter: ZERO, shortfallJod: shortfall, txId: row?.id as string | undefined };
     });
+    // SP-28: after commit, one usage event per charged turn (never fails the debit).
+    if (result.txId) {
+      await this.usage?.record(workspaceId, { meter: 'ads_ai', sourceKind: 'ads_wallet_tx', sourceId: result.txId });
+    }
+    const { txId: _txId, ...out } = result;
+    return out;
   }
 
   /**

@@ -72,7 +72,7 @@ export function TicketBookingCards({
         },
         onError: (e) => {
           setConfirmCancel(null);
-          toast(ticketErrorText(e, tx, tx("Couldn't update the booking.", "تعذّر تحديث الحجز.")), "error");
+          toast(ticketErrorText(e, tx, tx("Couldn't update the booking.", "تعذّر تحديث الحجز.")), "error", e);
         },
       },
     );

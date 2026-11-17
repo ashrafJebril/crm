@@ -42,7 +42,7 @@ export function LifecycleTab() {
       await fn();
       if (ok) toast(ok, "success");
     } catch (e) {
-      toast(lifecycleErrorText(e, tx), "error");
+      toast(lifecycleErrorText(e, tx), "error", e);
     } finally {
       setBusy(null);
     }

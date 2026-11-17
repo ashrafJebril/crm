@@ -150,6 +150,8 @@ export async function sendDirectPartition(job: LaunchJob, p: PartitionRow, ctx: 
         where: { id: r.id, workspaceId: ws, status: "queued" },
         data: { status: "sent", messageId: res.messageId, sentAt: new Date(job.now()) },
       });
+      // SP-28: meter the message (idempotent per recipient; never fails the send).
+      await job.onSent?.(r.id);
     }
     await job.yieldTick();
   }

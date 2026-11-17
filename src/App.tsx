@@ -29,6 +29,8 @@ import { ForgotPassword } from "@/auth/ForgotPassword";
 import { ResetPassword } from "@/auth/ResetPassword";
 import { Activate } from "@/auth/Activate";
 import { NoWorkspace } from "@/auth/NoWorkspace";
+import { BillingBanner } from "@/shell/BillingBanner";
+import { PlanRequiredNotice } from "@/components/PlanRequiredNotice";
 
 export default function App() {
   const { t, setTweak } = useTweaks();
@@ -82,9 +84,11 @@ export default function App() {
         <div className="app" data-embed="1">
           <EmbedBridge route={route} setRoute={setRoute} />
           <main className="main">
+            <BillingBanner />
             <ScreenSlot route={route} />
           </main>
           <RecordSheetHost />
+          <PlanRequiredNotice />
         </div>
       </ToastProvider>
     );
@@ -98,9 +102,11 @@ export default function App() {
         <Sidebar route={route} setRoute={setRoute} />
         <main className="main">
           <Topbar route={route} />
+          <BillingBanner />
           <ScreenSlot route={route} />
         </main>
         <RecordSheetHost />
+        <PlanRequiredNotice />
         <CommandPalette />
         <CopilotHost />
       </div>

@@ -2140,3 +2140,64 @@ export interface WebhookDelivery {
   /** Only on GET …/deliveries/:id. */
   payload?: unknown;
 }
+
+// ─── SP-28 billing, read-only over Kewy data (mirror of backend/src/billing) ──
+
+export type BillingMeter = "ai_reply" | "campaign_message" | "ads_ai";
+export type BillingBanner = "grace" | "low_balance";
+
+export interface BillingStatus {
+  billedBy: "kewy";
+  /** `key` is the CRM plan key, or null for a Kewy package name. */
+  plan: { key: "free" | "starter" | "growth" | "pro" | null; name: string };
+  overridden: boolean;
+  features: string[];
+  payment: { dueSince: string | null; locksAt: string | null; locked: boolean };
+  banners: BillingBanner[];
+  /** Only with billing.view. */
+  wallet?: { balanceJod: string; lowBalance: boolean };
+  usage?: BillingUsageSummary;
+}
+
+export interface BillingUsageSummary {
+  from: string;
+  to: string;
+  meters: { meter: BillingMeter; used: number; allowance: number | null }[];
+}
+
+export interface BillingDailyUsage {
+  meter: BillingMeter;
+  tz: string;
+  days: { day: string; qty: number }[];
+}
+
+export interface BillingLedgerItem {
+  id: string;
+  type: string;
+  meter: BillingMeter | null;
+  amountJod: string;
+  balanceAfterJod: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface BillingLedgerPage {
+  items: BillingLedgerItem[];
+  nextCursor: string | null;
+}
+
+export interface BillingCatalogPlan {
+  key: "free" | "starter" | "growth" | "pro";
+  rank: number;
+  /** Omitted until the user sets them (R3). */
+  priceJod?: { monthly: number | null; annual: number | null };
+  allowances?: Partial<Record<BillingMeter, number>>;
+  limits: { whatsappNumbers: number; seats?: number };
+  features: string[];
+}
+
+export interface BillingCatalog {
+  billedBy: "kewy";
+  plans: BillingCatalogPlan[];
+  features: string[];
+}

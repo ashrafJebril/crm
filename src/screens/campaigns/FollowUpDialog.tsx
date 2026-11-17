@@ -74,7 +74,7 @@ export function FollowUpDialog({ mode, campaign, outcome, outcomeCount, ticked, 
       onClose();
     } catch (e) {
       if (e instanceof ApiError && e.status === 403) {
-        toast(campaignErrorText(e, tx), "error");
+        toast(campaignErrorText(e, tx), "error", e);
         onClose();
         return;
       }

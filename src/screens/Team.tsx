@@ -204,7 +204,7 @@ function PendingTab({ wsId, tx, lang, canCreate, canDelete }: { wsId: string; tx
       await fn();
       q.refetch();
     } catch (e) {
-      toast(memberErrorText(e, tx), "error");
+      toast(memberErrorText(e, tx), "error", e);
     }
   };
 
@@ -323,7 +323,7 @@ function ActivityTab({ wsId, tx, lang, timeZone }: { wsId: string; tx: Tx; lang:
       const page = await api.get<AuditPage>(`/workspaces/${wsId}/audit?${qs.toString()}`);
       setMore((m) => [...m, page]);
     } catch (e) {
-      toast(memberErrorText(e, tx), "error");
+      toast(memberErrorText(e, tx), "error", e);
     } finally {
       setLoadingMore(false);
     }
@@ -465,7 +465,7 @@ function TeamImpl() {
       toast(tx("Two-step verification was turned off.", "تم إيقاف التحقق بخطوتين."), "success");
       refetch();
     } catch (e) {
-      toast(memberErrorText(e, tx), "error");
+      toast(memberErrorText(e, tx), "error", e);
     }
   };
 
