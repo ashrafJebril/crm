@@ -21,6 +21,7 @@ import {
   ToolPatchError,
   type StoredTool,
   type ToolAccess,
+  type ToolPatchEntry,
 } from "./connector-tools";
 import { CONNECTOR_UPSTREAM, UpstreamAuthError, type ConnectorUpstream } from "./connector-upstream";
 import { ConnectorAgentService } from "./connector-agent.service";
@@ -50,6 +51,10 @@ export interface ConnectorToolDto {
   access: ToolAccess;
   exposed: boolean;
   removed: boolean;
+  /** Why a re-scan switched it off (until the owner switches it again). */
+  flag: "reclassified" | "description_changed" | "schema_changed" | null;
+  /** Custom connectors: the owner marked it read-only. */
+  ownerRead: boolean;
 }
 
 export interface ConnectorDetailDto extends ConnectorSummaryDto {
@@ -85,8 +90,9 @@ const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
 const RESERVED_HEADERS = new Set(["host", "content-length", "content-type", "accept", "mcp-session-id", "mcp-protocol-version", "connection", "transfer-encoding"]);
 const DAY = 86_400_000;
 
-function maskSecret(v: string): string {
-  return `••••${v.length > 8 ? v.slice(-4) : ""}`;
+/** Hardening review: a secret header value is shown as "••••" only. */
+function maskSecret(_v: string): string {
+  return "••••";
 }
 
 /**
@@ -176,6 +182,8 @@ export class ConnectorsService {
         access: t.access,
         exposed: isExposed(t),
         removed: !!t.removedAt,
+        flag: t.flag ?? null,
+        ownerRead: t.ownerRead === true,
       })),
       toolsScannedAt: row.toolsScannedAt ?? null,
       sync: [],
@@ -287,8 +295,10 @@ export class ConnectorsService {
     const authKind: AuthKind = Object.keys(headers).length ? "headers" : "none";
     const headersEnc = authKind === "headers" ? sealJson(headers) : null;
 
-    const active = await this.prisma.connector.count({ where: { workspaceId, provider: "custom", status: { not: "disconnected" } } });
-    if (active >= CUSTOM_CONNECTORS_MAX) throw connectorError("connectors.custom_limit", { max: CUSTOM_CONNECTORS_MAX });
+    // A cheap early refusal; the authoritative count is under the lock below.
+    if ((await this.customCount(this.prisma, workspaceId)) >= CUSTOM_CONNECTORS_MAX) {
+      throw connectorError("connectors.custom_limit", { max: CUSTOM_CONNECTORS_MAX });
+    }
 
     // The check: initialize + tools/list through the SSRF guard.
     const target = { url: rawUrl, headers, trusted: false };
@@ -303,7 +313,15 @@ export class ConnectorsService {
       throw connectorError("connectors.check_failed", { reason });
     }
     const now = this.now();
-    const row = (await this.prisma.connector.create({
+    // Hardening review: count and create under a workspace advisory lock, so
+    // two concurrent creates cannot both pass the limit.
+    const row = (await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('connectors-custom:' || ${workspaceId}))`;
+        if ((await this.customCount(tx, workspaceId)) >= CUSTOM_CONNECTORS_MAX) {
+          throw connectorError("connectors.custom_limit", { max: CUSTOM_CONNECTORS_MAX });
+        }
+        return tx.connector.create({
       data: {
         workspaceId,
         provider: "custom",
@@ -318,10 +336,17 @@ export class ConnectorsService {
         connectedById: actorId,
         connectedAt: now,
       },
-    })) as Row;
+        });
+      },
+      { maxWait: 10_000, timeout: 15_000 },
+    )) as Row;
     await this.provisionQuietly(row);
     await this.notifySkills(workspaceId, "custom");
     return this.detailOf(await this.load(workspaceId, row.id));
+  }
+
+  private customCount(db: { connector: Pick<PrismaService["connector"], "count"> }, workspaceId: string): Promise<number> {
+    return db.connector.count({ where: { workspaceId, provider: "custom", status: { not: "disconnected" } } });
   }
 
   /** l registration is best effort at create; the agent switch retries it. */
@@ -344,18 +369,19 @@ export class ConnectorsService {
     const row = await this.load(workspaceId, id, { allowDisconnected: true });
     if (row.status === "disconnected") throw connectorError("connectors.disconnected");
     if (!Array.isArray(input.tools) || input.tools.length === 0 || input.tools.length > PATCH_TOOLS_MAX) throw connectorError("connectors.invalid_tools");
-    const patch: { name: string; access: ToolAccess }[] = [];
+    const patch: ToolPatchEntry[] = [];
     for (const t of input.tools as unknown[]) {
-      const { name, access } = (t ?? {}) as { name?: unknown; access?: unknown };
+      const { name, access, kind } = (t ?? {}) as { name?: unknown; access?: unknown; kind?: unknown };
       if (typeof name !== "string" || (access !== "off" && access !== "read" && access !== "write")) throw connectorError("connectors.invalid_tools");
-      patch.push({ name, access });
+      if (kind !== undefined && kind !== "read" && kind !== "write") throw connectorError("connectors.invalid_tools");
+      patch.push({ name, access, ...(kind ? { kind: kind as "read" | "write" } : {}) });
     }
     if (typeof input.version !== "number" || input.version !== row.version) {
       throw connectorError("connectors.version_conflict", { current: await this.detailOf(row) });
     }
     let next: StoredTool[];
     try {
-      next = applyPatch(storedTools(row.tools), patch, canManage);
+      next = applyPatch(storedTools(row.tools), patch, canManage, row.provider);
     } catch (e) {
       if (e instanceof ToolPatchError) {
         if (e.code === "write_access_requires_manage") throw connectorError("connectors.write_access_requires_manage", { tool: e.tool });

@@ -1,6 +1,8 @@
 import { catalogEntry, type ToolKind } from "./connector-catalog";
 
 export type ToolAccess = "off" | "read" | "write";
+/** Why a re-scan switched a tool off (shown until the owner switches it again). */
+export type ToolFlag = "reclassified" | "description_changed" | "schema_changed";
 
 /** One tool as stored in `Connector.tools`. */
 export interface StoredTool {
@@ -11,6 +13,9 @@ export interface StoredTool {
   access: ToolAccess;
   inputSchema: unknown;
   removedAt?: string | null;
+  /** Custom connectors: the owner explicitly marked this tool read-only. */
+  ownerRead?: boolean;
+  flag?: ToolFlag | null;
 }
 
 /** A tool as the upstream `tools/list` returns it. */
@@ -22,10 +27,17 @@ export interface UpstreamTool {
   annotations?: { readOnlyHint?: boolean; title?: string } | null;
 }
 
-/** `readOnlyHint === true` → read; else the curated override; else write. */
-export function kindOf(tool: UpstreamTool, provider: string): ToolKind {
-  if (tool.annotations?.readOnlyHint === true) return "read";
-  return catalogEntry(provider)?.kindOverrides?.[tool.name] ?? "write";
+/**
+ * Hardening review: the vendor's `readOnlyHint` is NOT trusted for custom
+ * connectors: every custom tool is "write" unless the owner marks it read.
+ * A curated provider uses our catalogue's own classification first, then
+ * the vendor hint, else "write".
+ */
+export function kindOf(tool: UpstreamTool, provider: string, ownerRead = false): ToolKind {
+  if (provider === "custom") return ownerRead ? "read" : "write";
+  const curated = catalogEntry(provider)?.kindOverrides?.[tool.name];
+  if (curated) return curated;
+  return tool.annotations?.readOnlyHint === true ? "read" : "write";
 }
 
 /**
@@ -56,6 +68,8 @@ export function storedTools(raw: unknown): StoredTool[] {
       access,
       inputSchema: r.inputSchema ?? { type: "object" },
       removedAt: typeof r.removedAt === "string" ? r.removedAt : null,
+      ownerRead: r.ownerRead === true,
+      flag: r.flag === "reclassified" || r.flag === "description_changed" || r.flag === "schema_changed" ? r.flag : null,
     });
   }
   return out;
@@ -79,15 +93,22 @@ export function initialTools(upstream: UpstreamTool[], provider: string): Stored
       access: provider !== "custom" && kind === "read" && on.has(u.name) ? "read" : "off",
       inputSchema: u.inputSchema ?? { type: "object" },
       removedAt: null,
+      ownerRead: false,
+      flag: null,
     };
   });
 }
 
 /**
- * Re-scan (ruling 6): new tools arrive off; vanished tools are flagged
- * `removedAt` (kept, never exposed); returning tools are un-flagged with
- * their old switch; a changed schema/description is updated, and a WRITE tool
- * whose schema changed is switched off. Returns the names per bucket.
+ * Re-scan (ruling 6, hardened): new tools arrive off; vanished tools are
+ * flagged `removedAt` (kept, never exposed); returning tools are un-flagged
+ * with their old switch. An ENABLED tool is switched off and flagged when:
+ *  - its kind changed (either way: a write→read reclassification must not
+ *    keep it on) → "reclassified";
+ *  - its description changed (descriptions are an instruction channel) →
+ *    "description_changed";
+ *  - it is a write tool whose schema changed → "schema_changed".
+ * A read tool whose schema alone changed keeps its switch.
  */
 export function applyRescan(
   old: StoredTool[],
@@ -104,7 +125,8 @@ export function applyRescan(
     if (seen.has(u.name)) continue;
     seen.add(u.name);
     const prev = byName.get(u.name);
-    const kind = kindOf(u, provider);
+    const ownerRead = prev?.ownerRead === true;
+    const kind = kindOf(u, provider, ownerRead);
     const next: StoredTool = {
       name: u.name,
       title: u.title ?? u.annotations?.title ?? null,
@@ -113,15 +135,22 @@ export function applyRescan(
       access: prev ? prev.access : "off",
       inputSchema: u.inputSchema ?? { type: "object" },
       removedAt: null,
+      ownerRead,
+      flag: prev?.flag ?? null,
     };
     if (!prev) {
       added.push(u.name);
     } else {
       const schemaChanged = schemaKey(prev.inputSchema) !== schemaKey(next.inputSchema);
-      if (schemaChanged || prev.description !== next.description || prev.kind !== kind) {
+      const descChanged = prev.description !== next.description;
+      const kindChanged = prev.kind !== kind;
+      if (schemaChanged || descChanged || kindChanged) {
         changed.push(u.name);
-        // A write tool whose schema (or kind) changed is switched off.
-        if (kind === "write" && (schemaChanged || prev.kind !== kind) && next.access !== "off") next.access = "off";
+        const flag: ToolFlag | null = kindChanged ? "reclassified" : descChanged ? "description_changed" : schemaChanged && kind === "write" ? "schema_changed" : null;
+        if (flag && next.access !== "off") {
+          next.access = "off";
+          next.flag = flag;
+        }
       }
     }
     tools.push(next);
@@ -141,22 +170,40 @@ export class ToolPatchError extends Error {
   }
 }
 
+export interface ToolPatchEntry {
+  name: string;
+  access: ToolAccess;
+  /** Custom connectors only: the owner's classification (needs connectors.manage). */
+  kind?: ToolKind;
+}
+
 /**
- * Applies `{name, access}` switches. Unknown tools → invalid_tools; a removed
- * tool → tool_removed; turning a WRITE tool to "write" needs connectors.manage
- * (ruling 11) → write_access_requires_manage.
+ * Applies `{name, access, kind?}` switches. Unknown tools → invalid_tools; a
+ * removed tool → tool_removed; turning a WRITE tool to "write", or marking a
+ * custom tool read (or write), needs connectors.manage (ruling 11) →
+ * write_access_requires_manage. `kind` is accepted only on custom
+ * connectors. Touching a tool clears its re-scan flag.
  */
-export function applyPatch(tools: StoredTool[], patch: { name: string; access: ToolAccess }[], canManage: boolean): StoredTool[] {
+export function applyPatch(tools: StoredTool[], patch: ToolPatchEntry[], canManage: boolean, provider = "custom"): StoredTool[] {
   const byName = new Map(tools.map((t) => [t.name, { ...t }]));
   for (const p of patch) {
     const t = byName.get(p.name);
     if (!t) throw new ToolPatchError("invalid_tools", p.name);
     if (!["off", "read", "write"].includes(p.access)) throw new ToolPatchError("invalid_tools", p.name);
     if (t.removedAt && p.access !== "off") throw new ToolPatchError("tool_removed", p.name);
+    if (p.kind !== undefined) {
+      if (provider !== "custom" || (p.kind !== "read" && p.kind !== "write")) throw new ToolPatchError("invalid_tools", p.name);
+      if (p.kind !== t.kind) {
+        if (!canManage) throw new ToolPatchError("write_access_requires_manage", p.name);
+        t.kind = p.kind;
+        t.ownerRead = p.kind === "read";
+      }
+    }
     if (t.kind === "write" && p.access === "write" && t.access !== "write" && !canManage) {
       throw new ToolPatchError("write_access_requires_manage", p.name);
     }
     t.access = p.access;
+    t.flag = null;
   }
   return tools.map((t) => byName.get(t.name) as StoredTool);
 }

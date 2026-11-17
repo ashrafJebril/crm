@@ -21,8 +21,9 @@ describe("custom connectors", () => {
     w.upstream.tools = upstreamTools;
     const d = await w.service.createCustom(WS, "u1", { name: "Bookings", url: "https://mcp.example.com/mcp", headers: [{ name: "X-Api-Key", value: "sk_live_abcdef123456" }] });
     expect(d).toMatchObject({ provider: "custom", status: "active", serverHost: "mcp.example.com", toolCounts: { on: 0, total: 2 } });
+    // Hardening: a custom server's readOnlyHint is not trusted: every tool is "write".
     expect(d.tools.map((t) => [t.name, t.kind, t.access, t.exposed])).toEqual([
-      ["get_event", "read", "off", false],
+      ["get_event", "write", "off", false],
       ["cancel_event", "write", "off", false],
     ]);
     // The check went through the upstream client with the secret header, not trusted.
@@ -31,7 +32,7 @@ describe("custom connectors", () => {
     const row = w.db.connector[0];
     expect(row.headersEnc.startsWith("enc:v1:")).toBe(true);
     expect(row.headersEnc).not.toContain("sk_live");
-    expect(d.headers).toEqual([{ name: "X-Api-Key", value: "••••3456" }]);
+    expect(d.headers).toEqual([{ name: "X-Api-Key", value: "••••" }]);
     // Registered on l through our proxy, bound, and skills told.
     expect(w.lRequests.map((r) => `${r.method} ${r.path}`)).toEqual([
       "POST /workspaces/lws-1/mcp-servers",
@@ -113,7 +114,7 @@ describe("tool switches and re-scan", () => {
         { name: "back", description: "back description", inputSchema: old[5].inputSchema, annotations: { readOnlyHint: true } },
         { name: "brand_new", description: "new", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
       ],
-      "custom",
+      "hubspot",
       NOW,
     );
     expect(r.added).toEqual(["brand_new"]);

@@ -45,6 +45,28 @@ export class ConnectorAgentService {
       return true;
     }
     if (!(await this.lLinked(conn.workspaceId))) return false;
+    // Hardening review: one provisioning per connector at a time (across
+    // machines): re-read under the lock; a concurrent caller that already
+    // created the l server wins and this call only binds.
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('connector-provision:' || ${conn.id}))`;
+        const fresh = (await tx.connector.findFirst({ where: { id: conn.id, workspaceId: conn.workspaceId } })) as Row | null;
+        if (!fresh) return false;
+        if (fresh.lServerId) {
+          if (opts.bind !== false && !fresh.agentBound) {
+            await this.lMcp.bind(conn.workspaceId, fresh.lServerId);
+            await tx.connector.updateMany({ where: { id: conn.id, workspaceId: conn.workspaceId }, data: { agentBound: true } });
+          }
+          return true;
+        }
+        return this.create(tx as unknown as PrismaService, conn, opts);
+      },
+      { maxWait: 30_000, timeout: 60_000 },
+    );
+  }
+
+  private async create(db: PrismaService, conn: Row, opts: { bind?: boolean }): Promise<boolean> {
     const minted = await mintProxyToken();
     const server = await this.lMcp.create(conn.workspaceId, {
       name: `kewy_conn_${conn.provider}_${conn.id.slice(-6)}`,
@@ -52,13 +74,13 @@ export class ConnectorAgentService {
       url: connectorProxyUrl(conn.id),
       headers: { Authorization: `Bearer ${minted.token}` },
     });
-    await this.prisma.connector.updateMany({
+    await db.connector.updateMany({
       where: { id: conn.id, workspaceId: conn.workspaceId },
       data: { lServerId: server.id, proxyTokenPrefix: minted.prefix, proxyTokenHash: minted.hash },
     });
     if (opts.bind !== false) {
       await this.lMcp.bind(conn.workspaceId, server.id);
-      await this.prisma.connector.updateMany({ where: { id: conn.id, workspaceId: conn.workspaceId }, data: { agentBound: true } });
+      await db.connector.updateMany({ where: { id: conn.id, workspaceId: conn.workspaceId }, data: { agentBound: true } });
     }
     return true;
   }

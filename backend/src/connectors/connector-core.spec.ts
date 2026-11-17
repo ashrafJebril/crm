@@ -32,12 +32,16 @@ describe("connector catalog", () => {
 });
 
 describe("tool rules", () => {
-  it("kind: readOnlyHint, then the catalog override, else write", () => {
-    expect(kindOf({ name: "x", annotations: { readOnlyHint: true } }, "custom")).toBe("read");
-    expect(kindOf({ name: "x", annotations: { readOnlyHint: false } }, "custom")).toBe("write");
+  it("kind: custom is write unless the owner marks it read; curated: our catalogue, then the hint, else write", () => {
+    // A custom server's readOnlyHint is never trusted.
+    expect(kindOf({ name: "x", annotations: { readOnlyHint: true } }, "custom")).toBe("write");
+    expect(kindOf({ name: "x", annotations: { readOnlyHint: true } }, "custom", true)).toBe("read");
     expect(kindOf({ name: "scheduled_events-get_event" }, "calendly")).toBe("read");
-    expect(kindOf({ name: "invitees-create_invitee", annotations: { readOnlyHint: true } }, "calendly")).toBe("read");
+    // Our classification wins over the vendor's hint.
+    expect(kindOf({ name: "invitees-create_invitee", annotations: { readOnlyHint: true } }, "calendly")).toBe("write");
+    expect(kindOf({ name: "unknown", annotations: { readOnlyHint: true } }, "calendly")).toBe("read");
     expect(kindOf({ name: "unknown" }, "calendly")).toBe("write");
+    expect(kindOf({ name: "deal_search", annotations: { readOnlyHint: true } }, "hubspot")).toBe("read");
   });
 
   it("exposure and first-scan defaults", () => {
