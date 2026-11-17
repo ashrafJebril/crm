@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { UsageService } from "../../billing/usage.service";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { ZernioBroadcastRecipient } from "../../integrations/zernio.client";
 import { normalizePhone } from "../campaign-audience";
@@ -89,7 +90,11 @@ export function eventsForZernioRecipient(r: ZernioBroadcastRecipient): Recipient
 export class RecipientTrackerService {
   private readonly log = new Logger(RecipientTrackerService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // SP-28: campaign messages are metered when a recipient is first seen sent.
+    @Optional() private readonly usage?: UsageService,
+  ) {}
 
   /**
    * A provider status event (Zernio `message.*` webhook or a Meta status).
@@ -191,6 +196,9 @@ export class RecipientTrackerService {
         where: { id: row.id, workspaceId: input.workspaceId, status: "queued", messageId: null, updatedAt: row.updatedAt },
         data: { status: next.status, messageId: next.messageId, sentAt: next.sentAt },
       });
+      if (res.count === 1) {
+        await this.usage?.record(input.workspaceId, { meter: "campaign_message", sourceKind: "campaign_recipient", sourceId: row.id });
+      }
       return res.count === 1;
     } catch (e) {
       this.log.warn(`recipient phone stamp failed: ${(e as Error).message}`);
@@ -269,6 +277,13 @@ export class RecipientTrackerService {
         AND r."campaignId" = ${campaign.id}
         AND r."status" = v."prevStatus"
         AND r."updatedAt" = v."prevUpdatedAt"`;
+    // SP-28: every recipient Zernio reports as sent is metered once (idempotent per row).
+    await this.usage?.recordMany(
+      campaign.workspaceId,
+      "campaign_message",
+      "campaign_recipient",
+      changes.filter((c) => c.sentAt !== null && c.sentAt !== undefined).map((c) => c.id),
+    );
     return { matched: rows.length, changed: Number(changed) };
   }
 

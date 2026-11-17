@@ -3,7 +3,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { PlanService } from "../billing/plan.service";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
@@ -35,6 +37,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly kewySync: KewyIdentitySync,
+    @Optional() private readonly plans?: PlanService,
   ) {}
 
   async listWorkspaces() {
@@ -126,7 +129,24 @@ export class AdminService {
 
   async updateWorkspace(id: string, dto: UpdateWorkspaceAdminDto) {
     await this.requireWorkspace(id);
-    return this.prisma.raw.workspace.update({ where: { id }, data: dto });
+    // SP-28 (R8): a super-admin plan is an override; Kewy's later plan pushes
+    // are kept in kewyPlan and do not replace it until the override is cleared.
+    const data = dto.plan !== undefined ? { ...dto, planOverriddenAt: new Date() } : dto;
+    const ws = await this.prisma.raw.workspace.update({ where: { id }, data });
+    if (dto.plan !== undefined) this.plans?.invalidate(id);
+    return ws;
+  }
+
+  /** SP-28 (R8): back to the plan Kewy last pushed (kept if Kewy never pushed one). */
+  async clearPlanOverride(id: string) {
+    const ws = await this.requireWorkspace(id);
+    const current = await this.prisma.raw.workspace.findUnique({ where: { id }, select: { plan: true, kewyPlan: true } });
+    const updated = await this.prisma.raw.workspace.update({
+      where: { id },
+      data: { planOverriddenAt: null, plan: current?.kewyPlan ?? current?.plan ?? (ws as { plan?: string }).plan ?? "free" },
+    });
+    this.plans?.invalidate(id);
+    return updated;
   }
 
   async suspendWorkspace(id: string, dto: SuspendWorkspaceDto) {

@@ -7,6 +7,7 @@ import { workspaceContext } from "../../common/workspace-context";
 import { RecipientTrackerService } from "../tracking/recipient-tracker.service";
 import { campaignError } from "../campaign-errors";
 import { SegmentsService } from "../../segments/segments.service";
+import { UsageService } from "../../billing/usage.service";
 import { AUDIENCE_PAGE, type AudienceResolver, resolveCampaignAudience } from "./audience-stream";
 import { type PartitionRow, prepareBroadcastPartition, sendBroadcastPartition } from "./broadcast-transport";
 import { sendDirectPartition } from "./direct-transport";
@@ -129,6 +130,8 @@ export class CampaignLaunchRunner {
     @Optional() tracker?: RecipientTrackerService,
     // Required by Nest (no @Optional: SegmentsModule provides it); hand-built specs may pass a stub or nothing.
     segments?: SegmentsService,
+    // SP-28: usage metering (global BillingModule); absent in hand-built specs.
+    @Optional() private readonly usage?: UsageService,
   ) {
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
     this.segments = segments ?? new SegmentsService(prisma);
@@ -279,6 +282,9 @@ export class CampaignLaunchRunner {
       throw new LeaseLost();
     };
     return {
+      onSent: (recipientId: string) =>
+        this.usage?.record(lease.workspaceId, { meter: "campaign_message", sourceKind: "campaign_recipient", sourceId: recipientId }) ??
+        Promise.resolve(false),
       prisma,
       zernio: this.zernio,
       campaignId: lease.id,

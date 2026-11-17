@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { UsageService } from "../billing/usage.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { LAgentService } from "./l-agent.service";
@@ -24,6 +25,7 @@ export class LOutboundService {
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly agent: LAgentService,
+    @Optional() private readonly usage?: UsageService,
   ) {}
 
   /**
@@ -67,7 +69,7 @@ export class LOutboundService {
       now.getMinutes(),
     ).padStart(2, "0")}`;
 
-    await this.prisma.message.create({
+    const msg = await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
         workspaceId,
@@ -81,6 +83,8 @@ export class LOutboundService {
       where: { id: conversation.id },
       data: { preview: result.answer.slice(0, 140), lastAt: "now", lastFrom: "ai" },
     });
+    // SP-28: meter the AI reply (once per message; never fails the reply).
+    await this.usage?.record(workspaceId, { meter: "ai_reply", sourceKind: "message", sourceId: msg.id });
 
     // The inbox is already rendered by the time this lands, so it has to be
     // told; otherwise the answer sits in the database unseen until a refresh.

@@ -434,6 +434,8 @@ const DEFAULTS: Record<string, () => Row> = {
   workflow: () => ({ systemKey: null, status: "draft", triggerConfig: {}, webhookSecret: null, lastScheduledAt: null }),
   workflowRun: () => ({ resumeAt: null, isTest: false, error: null, completedAt: null, startedAt: new Date(), result: {} }),
   lifecycleDelivery: () => ({ runId: null }),
+  // SP-28
+  usageEvent: () => ({ qty: 1, at: new Date(), walletTxId: null }),
   appointment: () => ({
     serviceId: null,
     resourceId: null,
@@ -526,6 +528,8 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
     ["ApiKey_hash_key", ["hash"]],
   ],
   webhookDelivery: [["WebhookDelivery_endpointId_eventId_key", ["endpointId", "eventId"]]],
+  // SP-28: usage metering is idempotent per source.
+  usageEvent: [["UsageEvent_idempotencyKey_key", ["idempotencyKey"]]],
 };
 /** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
 const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
@@ -757,6 +761,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
           const key = JSON.stringify(by.map((k) => x[k]));
           const g = groups.get(key) ?? Object.fromEntries([...by.map((k) => [k, x[k]]), ["_count", { _all: 0 }]]);
           g._count._all++;
+          // SP-28: `_sum` (usage totals per meter).
+          for (const f of Object.keys(a._sum ?? {})) {
+            g._sum ??= {};
+            g._sum[f] = (g._sum[f] ?? 0) + (Number(x[f]) || 0);
+          }
           // SP-15: `_max` (the inbox WhatsApp window query).
           for (const f of Object.keys(a._max ?? {})) {
             g._max ??= {};
@@ -1008,6 +1017,10 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     apiKey: model("apiKey"),
     webhookEndpoint: model("webhookEndpoint"),
     webhookDelivery: model("webhookDelivery"),
+    // SP-28
+    usageEvent: model("usageEvent"),
+    adsWallet: model("adsWallet"),
+    adsWalletTransaction: model("adsWalletTransaction"),
     activity: model("activity"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);

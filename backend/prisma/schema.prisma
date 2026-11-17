@@ -1197,6 +1197,12 @@ model Workspace {
   // suspendedAt (admin suspension); locked once older than PAYMENT_GRACE_DAYS.
   paymentDueSince DateTime?
 
+  // SP-28 (R8): a super-admin plan override. While set, Kewy's plan pushes do
+  // not overwrite `plan`; they are kept in `kewyPlan`, which "Clear override"
+  // restores. `kewyPlan` is the last plan Kewy pushed (null = never pushed).
+  planOverriddenAt DateTime?
+  kewyPlan         String?
+
   // HJZ SSO bridge — set on Workspaces that mirror an hjz tenant so we can
   // resolve `hjz tid → tkana workspace` idempotently across SSO exchanges
   // and client-sync webhooks. Nullable so existing standalone workspaces
@@ -1342,6 +1348,8 @@ model Workspace {
   /// SP-27: organization API keys and outgoing webhooks.
   apiKeys           ApiKey[]           @relation("WorkspaceApiKeys")
   webhookEndpoints  WebhookEndpoint[]  @relation("WorkspaceWebhookEndpoints")
+  /// SP-28: usage metering.
+  usageEvents       UsageEvent[]       @relation("WorkspaceUsageEvents")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1692,6 +1700,9 @@ model AdsWalletTransaction {
   costBasisUsd    Decimal?  @db.Decimal(24, 14) // indexed mirror of breakdownJson.usdCost
   costBasisJod    Decimal?  @db.Decimal(24, 14) // costBasisUsd × the frozen fx rate
   externalRef     String?   @unique // Stripe checkout session id — webhook idempotency key
+  // SP-28: the usage meter a DEBIT charged ("ads_ai" | "ai_reply" |
+  // "campaign_message"); null for TOPUP / MONTHLY_GRANT / REFUND / ADJUST.
+  meter           String?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceAdsWalletTransactions", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -2231,4 +2242,23 @@ model WebhookDelivery {
   @@index([status, nextAttemptAt])
   @@index([endpointId, createdAt])
   @@index([workspaceId, createdAt])
+}
+
+/// SP-28: one metered unit of usage (an AI reply, a campaign message, an ads
+/// AI turn). Idempotent per source (`idempotencyKey = meter:sourceKind:sourceId`).
+/// R6: metered, never charged in v1; `walletTxId` names the AdsWalletTransaction
+/// a future charge used (no FK).
+model UsageEvent {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation("WorkspaceUsageEvents", fields: [workspaceId], references: [id], onDelete: Cascade)
+  meter          String // "ai_reply" | "campaign_message" | "ads_ai"
+  qty            Int       @default(1)
+  at             DateTime  @default(now())
+  sourceKind     String
+  sourceId       String
+  idempotencyKey String    @unique
+  walletTxId     String?
+
+  @@index([workspaceId, meter, at])
 }

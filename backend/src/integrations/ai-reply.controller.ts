@@ -12,6 +12,8 @@ import {
 import type { Request } from "express";
 import { Public } from "../auth/public.decorator";
 import { PaymentLockService } from "../billing/payment-lock.service";
+import { UsageService } from "../billing/usage.service";
+import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { WhatsAppService } from "./whatsapp.service";
@@ -42,6 +44,7 @@ export class AiReplyController {
     private readonly zernio: ZernioService,
     @Optional() private readonly paymentLock?: PaymentLockService,
     @Optional() channelResolver?: ChannelResolver,
+    @Optional() private readonly usage?: UsageService,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
   }
@@ -227,6 +230,14 @@ export class AiReplyController {
     // the baseline new -> contacted move is never skipped when the suggestion
     // is rejected for low confidence. The service enforces forward-only,
     // the confidence floor, and never auto-closing won/lost.
+    // SP-28: meter the delivered reply, once per kewy-ai delivery (a retried
+    // webhook carries the same signed body). Never fails the reply.
+    await this.usage?.record(workspaceId, {
+      meter: "ai_reply",
+      sourceKind: "kewy_ai_reply",
+      sourceId: createHash("sha256").update(raw).digest("hex"),
+    });
+
     if (dto.stageGroupKey) {
       await this.pipelineAutomation.onAiStageSuggestion(
         workspaceId,

@@ -282,6 +282,8 @@ describe("SP-22 Task 2 wiring", () => {
     const params = Reflect.getMetadata("design:paramtypes", AgentAutoReplyService) as Array<{ name: string }>;
     expect(params.map((p) => p.name)).toEqual([
       "PrismaService", "RealtimeService", "ChannelResolver", "ChannelTransportRegistry", "LAgentService", "AgentReplyGate", "PaymentLockService", "InboundSinkService",
+      // SP-28: usage metering, from the global BillingModule.
+      "UsageService",
     ]);
   });
 });

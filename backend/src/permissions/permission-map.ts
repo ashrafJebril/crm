@@ -105,6 +105,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "PATCH /admin/workspaces/:id": "authenticated",
   "POST /admin/workspaces/:id/suspend": "authenticated",
   "POST /admin/workspaces/:id/impersonate": "authenticated",
+  // SP-28 (R8): a super-admin's plan override returns to Kewy's plan.
+  "POST /admin/workspaces/:id/plan-override/clear": "authenticated",
   "POST /admin/provision": "authenticated",
   "GET /admin/users": "authenticated",
 
@@ -534,6 +536,16 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /webhooks/:id/deliveries": "api_keys.view",
   "GET /webhooks/:id/deliveries/:deliveryId": "api_keys.view",
   "POST /webhooks/:id/deliveries/:deliveryId/redeliver": "api_keys.update",
+
+  // ── Billing (SP-28, re-scoped: read-only over Kewy data, no Stripe) ────
+  // Status is for every member (features and banners gate the UI); without
+  // billing.view the service drops the wallet and usage parts.
+  "GET /billing/status": "authenticated",
+  "GET /billing/catalog": "billing.view",
+  "GET /billing/wallet": "billing.view",
+  "GET /billing/wallet/ledger": "billing.view",
+  "GET /billing/usage": "billing.view",
+  "GET /billing/usage/daily": "billing.view",
 
   // ── Channels ──────────────────────────────────────────────────────────
   "GET /integrations/facebook/oauth/start": "channels.create",

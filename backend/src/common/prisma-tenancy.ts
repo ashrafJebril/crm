@@ -40,6 +40,8 @@ const SCOPED_MODELS = new Set([
   "AdsActionAudit",
   "AdsWallet",
   "AdsWalletTransaction",
+  // SP-28
+  "UsageEvent",
   // SP-15
   "AdSource",
   "AdReferral",

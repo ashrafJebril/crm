@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit, Optional } from "@nestjs/common";
+import { UsageService } from "../billing/usage.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { ChannelResolver } from "../channels/channel-resolver.service";
@@ -85,6 +86,7 @@ export class AgentAutoReplyService implements OnModuleInit {
     private readonly gate: AgentReplyGate,
     @Optional() private readonly paymentLock?: PaymentLockService,
     @Optional() private readonly sink?: InboundSinkService,
+    @Optional() private readonly usage?: UsageService,
   ) {}
 
   onModuleInit(): void {
@@ -198,8 +200,9 @@ export class AgentAutoReplyService implements OnModuleInit {
     if (await this.paymentLock?.isLocked(workspaceId)) return "locked";
     if (!(await this.gate.allows(workspaceId, { conversationId, contactId: fresh.contactId }, "l_auto_reply"))) return "gated";
 
+    let delivered: { message?: { id?: string } | null } | undefined;
     try {
-      await deliverViaTransport(
+      delivered = await deliverViaTransport(
         { prisma: this.prisma, realtime: this.realtime, channels: this.channels, transports: this.transports, logger: this.logger },
         workspaceId,
         fresh as DeliverableConversation,
@@ -210,6 +213,9 @@ export class AgentAutoReplyService implements OnModuleInit {
       this.logger.warn(`auto-reply not delivered for conversation ${conversationId}: ${err instanceof Error ? err.message : String(err)}`);
       return "channel_unavailable";
     }
+    // SP-28: meter the AI reply (once per message; never fails the reply).
+    const messageId = delivered?.message?.id;
+    if (messageId) await this.usage?.record(workspaceId, { meter: "ai_reply", sourceKind: "message", sourceId: messageId });
     return "sent";
   }
 }
