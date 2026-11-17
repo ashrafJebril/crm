@@ -323,8 +323,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `write tool never executes without approval in Manual mode`; `approval re-checks permission (role changed mid-turn → refused)`; `@ref of record without access → refused` (Review Focus 1); `history scoped to the member`.
 
 #### SP-24 Lifecycle messages. Size M
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-17-sp24-lifecycle-messages.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-17 and live-verified on production against local Zernio and l stubs (69 pass; 2 tester errors re-checked PASS; no code findings). Nothing sends until an owner sets up and enables a message; enabling needs an approved template; opted-out contacts get nothing; one send per occurrence. **Pending real-provider checks:** Meta template review and Zernio status/reason fields, a real template send (ar/en codes), the template status webhook, and the reminder cron across several deployed instances. **Product note:** staff notifications for tickets without a conversation follow tickets.view (an assigned-only agent is notified).
 - **Gaps:** one settings page for every automatic customer/staff message (booking confirmed/reminder/cancelled, ticket opened/resolved, new lead): on/off, edit, recipient, template status (approved/in review/rejected/paused) with sync/resubmit, AR/EN versions, custom automations.
 - **Read in Tkana:** `routes/settings.notifications.tsx`.
 - **Approach:** each lifecycle message is a **system workflow** (existing `backend/src/workflows`) with a locked trigger and a template step, so there is no second automation engine. The page is a focused view over those workflows.
