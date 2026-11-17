@@ -145,3 +145,49 @@ describe("knowledge source DTO: syncing", () => {
     expect(await w.svc.get(A, "f_queued")).toMatchObject({ status: "queued", syncing: false });
   });
 });
+
+describe("website check in test-base mode", () => {
+  afterEach(() => {
+    delete process.env.PUBLIC_FETCH_TEST_BASE;
+  });
+
+  it("skips DNS like the fetcher does (never in production)", async () => {
+    const lookups: string[] = [];
+    const urls: string[] = [];
+    const deps = {
+      resolve: async (host: string) => {
+        lookups.push(host);
+        throw new Error("no DNS in tests");
+      },
+      request: async (req: any) => {
+        urls.push(req.url.toString());
+        const robots = req.url.pathname.endsWith("/robots.txt");
+        const sitemap = req.url.pathname.endsWith("/sitemap.xml");
+        const body = robots ? "User-agent: *" : sitemap ? "" : html("Shop", "Welcome to the shop.");
+        return {
+          status: sitemap ? 404 : 200,
+          headers: { "content-type": robots ? "text/plain" : "text/html" },
+          body: (async function* () {
+            yield Buffer.from(body);
+          })(),
+          abort: () => undefined,
+        };
+      },
+    };
+    const w = knowledgeWorld();
+    const svc = new WebsitesService(w.prisma as any, w.svc, { kick: jest.fn() } as any, deps as any);
+    process.env.PUBLIC_FETCH_TEST_BASE = "http://127.0.0.1:4555";
+    await expect(svc.check("https://shop.example/")).resolves.toMatchObject({ ok: true, host: "shop.example" });
+    expect(lookups).toEqual([]);
+    expect(urls[0]).toBe("http://127.0.0.1:4555/shop.example/");
+    // Production ignores the test base: DNS runs (and here fails).
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      await expect(svc.check("https://shop.example/")).rejects.toBeTruthy();
+      expect(lookups).toEqual(["shop.example"]);
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+  });
+});
