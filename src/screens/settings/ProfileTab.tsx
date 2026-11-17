@@ -6,6 +6,7 @@ import { useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
+import { TwoFactorCard } from "./TwoFactorCard";
 
 /* Common avatar hues. Stored as strings (the existing palette is OKLCH hue). */
 const COLORS = ["150", "200", "240", "320", "60", "10", "100", "270"];
@@ -13,7 +14,7 @@ const COLORS = ["150", "200", "240", "320", "60", "10", "100", "270"];
 export function ProfileTab() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { user } = useAuth();
+  const { user, adoptToken } = useAuth();
 
   const [name, setName] = useState(user?.name ?? "");
   const [color, setColor] = useState(user?.color ?? "200");
@@ -32,7 +33,7 @@ export function ProfileTab() {
 
   const passMut = useMutation<
     { currentPassword: string; newPassword: string },
-    { ok: true }
+    { ok: true; token: string }
   >((input) => api.post("/auth/change-password", input));
 
   const onSaveProfile = async () => {
@@ -66,7 +67,9 @@ export function ProfileTab() {
       return;
     }
     try {
-      await passMut.mutate({ currentPassword: currentPw, newPassword: newPw });
+      const res = await passMut.mutate({ currentPassword: currentPw, newPassword: newPw });
+      // SP-26: a password change ends every other session; keep this one.
+      if (res?.token) adoptToken(res.token);
       setCurrentPw("");
       setNewPw("");
       setConfirmPw("");
@@ -216,6 +219,14 @@ export function ProfileTab() {
         </Field>
         <ErrorRow message={pwError ?? passMut.error} />
       </SettingsCard>
+
+      <TwoFactorCard
+        tx={tx}
+        onStatus={(m) => {
+          setStatus(m);
+          window.setTimeout(() => setStatus(null), 3200);
+        }}
+      />
 
       <StatusToast message={status} />
     </>

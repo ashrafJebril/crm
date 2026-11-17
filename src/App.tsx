@@ -20,11 +20,26 @@ import { invalidateIntegrations, refreshAfterConnect } from "@/embed/connected";
 import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import type { RouteId } from "@/lib/types";
 import { VALID_ROUTES } from "@/router";
+import { makeTx } from "@/lib/tx";
+import { usePublicPage } from "@/auth/publicPageStore";
+import { langParam, type PublicPage } from "@/auth/publicRoutes";
+import { AcceptInvite } from "@/auth/AcceptInvite";
+import { ForgotPassword } from "@/auth/ForgotPassword";
+import { ResetPassword } from "@/auth/ResetPassword";
+import { Activate } from "@/auth/Activate";
+import { NoWorkspace } from "@/auth/NoWorkspace";
 
 export default function App() {
-  const { t } = useTweaks();
+  const { t, setTweak } = useTweaks();
   const [route, setRoute] = useRoute();
   const { status, paymentOverdue } = useAuth();
+  // SP-26: invite/reset/forgot/activate pages render before the auth gate.
+  const publicPage = usePublicPage();
+  // An emailed link's `?lang=` wins once over the stored language.
+  useEffect(() => {
+    const l = langParam(window.location.search);
+    if (l) setTweak("lang", l);
+  }, [setTweak]);
 
   if (status === "loading") {
     return (
@@ -45,7 +60,12 @@ export default function App() {
     );
   }
 
+  if (publicPage) return <PublicPageView page={publicPage} lang={t.lang} />;
+
   if (paymentOverdue) return <PaymentLocked />;
+
+  // SP-26 ruling 6: signed in, no workspace (removed or invited).
+  if (status === "noWorkspace") return <NoWorkspace />;
 
   const embedded = isEmbedded();
   const screen = authScreen(status, embedded);
@@ -131,4 +151,19 @@ function EmbedAnonymous() {
 /** SP-20: #/signup shows the signup page, anything else the sign-in page. */
 function AuthEntry() {
   return useSignupHash() ? <Signup /> : <Login />;
+}
+
+/** SP-26: the public account pages, each in the page's language. */
+function PublicPageView({ page, lang }: { page: PublicPage; lang: "ar" | "en" }) {
+  const tx = makeTx(lang);
+  switch (page.kind) {
+    case "accept":
+      return <AcceptInvite token={page.token} tx={tx} lang={lang} />;
+    case "reset":
+      return <ResetPassword token={page.token || null} tx={tx} lang={lang} />;
+    case "forgot":
+      return <ForgotPassword tx={tx} lang={lang} />;
+    case "activate":
+      return <Activate slug={page.slug} next={page.next} tx={tx} lang={lang} />;
+  }
 }

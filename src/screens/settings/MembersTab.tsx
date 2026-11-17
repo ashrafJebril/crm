@@ -12,6 +12,7 @@ import { Badge } from "@/components/Badge";
 import type { WorkspaceRole } from "@/lib/types";
 import { arabicServerMessage, roleOptionsFromTeam, type RoleOption } from "@/lib/roleErrors";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
+import { MemberHandoverDialog } from "@/screens/team/MemberHandoverDialog";
 
 interface Member {
   id: string;
@@ -88,6 +89,8 @@ export function MembersTab() {
     }),
   );
 
+  // SP-26: removal goes through MemberHandoverDialog (open work must move).
+  const [removing, setRemoving] = useState<Member | null>(null);
   const removeMut = useMutation<{ userId: string }, { ok: true }>((input) =>
     api.delete<{ ok: true }>(`/workspaces/${wsId}/members/${input.userId}`),
   );
@@ -182,21 +185,7 @@ export function MembersTab() {
     }
   };
 
-  const onRemove = async (member: Member) => {
-    if (
-      !window.confirm(
-        tx(
-          `Remove ${member.user.name} from this workspace?`,
-          `إزالة ${member.user.name} من هذه المساحة؟`,
-        ),
-      )
-    ) {
-      return;
-    }
-    await removeMut.mutate({ userId: member.userId });
-    listQ.refetch();
-    showStatus(tx(`Removed ${member.user.name}.`, `تمت الإزالة.`));
-  };
+  const onRemove = (member: Member) => setRemoving(member);
 
   if (!activeWorkspace) {
     return (
@@ -416,6 +405,24 @@ export function MembersTab() {
           }
         />
       </SettingsCard>
+
+      {removing && wsId && (
+        <MemberHandoverDialog
+          workspaceId={wsId}
+          member={{ id: removing.userId, name: removing.user.name }}
+          mode="remove"
+          candidates={(listQ.data ?? []).map((m) => ({ id: m.userId, name: m.user.name }))}
+          tx={tx}
+          dir={t.lang === "ar" ? "rtl" : "ltr"}
+          onClose={() => setRemoving(null)}
+          onDone={() => {
+            const name = removing.user.name;
+            setRemoving(null);
+            listQ.refetch();
+            showStatus(tx(`Removed ${name}.`, `تمت إزالة ${name}.`));
+          }}
+        />
+      )}
 
       <StatusToast message={status} />
     </>

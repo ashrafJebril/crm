@@ -56,9 +56,15 @@ export const tokenStore = {
 // was rejected as expired/invalid — not a login attempt) tears the session
 // down and drops back to the login screen, instead of leaving every screen
 // stuck in a per-request error state.
-let onUnauthorized: (() => void) | null = null;
-export function setUnauthorizedHandler(fn: (() => void) | null): void {
+// SP-26: the handler gets the server's message key (e.g. "auth.session_expired"
+// after a password reset or 2FA change ended every session).
+let onUnauthorized: ((reason?: string) => void) | null = null;
+export function setUnauthorizedHandler(fn: ((reason?: string) => void) | null): void {
   onUnauthorized = fn;
+}
+
+function unauthorizedReason(data: unknown): string | undefined {
+  return isObject(data) && typeof data.message === "string" ? data.message : undefined;
 }
 
 // Global "payment overdue" hook: any 403 { code: "PAYMENT_OVERDUE" } (including
@@ -93,14 +99,14 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   // A 401 on a request that DID carry a token means the session token was
   // rejected (expired/invalid). Fire the global logout hook. Login/register
   // send no token, so their "invalid credentials" 401s never reach here.
-  if (res.status === 401 && tok) {
-    onUnauthorized?.();
-  }
-
   if (res.status === 204) return undefined as T;
 
   const raw = await res.text();
   const data: unknown = raw ? safeJson(raw) : undefined;
+
+  if (res.status === 401 && tok) {
+    onUnauthorized?.(unauthorizedReason(data));
+  }
 
   if (!res.ok) throw errorFromBody(data, res.status, !opts.localPaymentError);
   return data as T;
@@ -271,6 +277,7 @@ export const api = {
   getBlob:    (path: string) => getBlob(path),
   patch:      <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
   put:        <T,>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
-  delete:     <T,>(path: string) => request<T>(path, { method: "DELETE" }),
+  // SP-26: DELETE …/members/:userId takes an optional `{handoverTo}` body.
+  delete:     <T,>(path: string, body?: unknown) => request<T>(path, { method: "DELETE", body }),
   postStream: <T,>(path: string, body?: unknown) => postStream<T>(path, body),
 };
