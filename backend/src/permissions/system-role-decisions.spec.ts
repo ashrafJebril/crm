@@ -115,6 +115,8 @@ const VIEWER_SAFE_NON_GET = new Set([
   "POST /segments/preview",
   // SP-13: the campaign review-step preview writes nothing.
   "POST /campaigns/preview",
+  // SP-24: Sync is the template reconcile GET /templates already writes (templates.view).
+  "POST /lifecycle/sync",
 ]);
 
 describe("system-role decision table", () => {
@@ -670,6 +672,33 @@ describe("system-role decision table", () => {
       const reportsOnly: PermissionsJson = { reports: ["view"] };
       expect(hasPermission(reportsOnly, ROUTE_PERMISSIONS[SALES] as string)).toBe(true);
       expect(hasPermission(reportsOnly, "tickets.view")).toBe(false);
+    });
+  });
+
+  // SP-24: Automatic messages (system workflows).
+  describe("SP-24 lifecycle routes", () => {
+    const VIEW = ["GET /lifecycle", "POST /lifecycle/sync"];
+    const WRITE = ["POST /lifecycle/:key/setup", "PATCH /lifecycle/:key"];
+
+    it("owner and admin can do everything", () => {
+      for (const role of ["owner", "admin"] as const) {
+        for (const route of [...VIEW, ...WRITE]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("agent can view, set up and toggle", () => {
+      for (const route of [...VIEW, ...WRITE]) expect({ route, ok: allowed("agent", route) }).toEqual({ route, ok: true });
+    });
+
+    it("viewer can view and sync but gets 403 on setup and patch", () => {
+      for (const route of VIEW) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: true });
+      for (const route of WRITE) expect({ route, ok: allowed("viewer", route) }).toEqual({ route, ok: false });
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of [...VIEW, ...WRITE]) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
     });
   });
 

@@ -1046,3 +1046,51 @@ describe("SP-21 knowledge files", () => {
     expect((await w.media.listPage(kw.A, undefined, { kind: "all" })).items).toEqual([]);
   });
 });
+
+/**
+ * SP-24 Review Focus 4: a staff lifecycle notification never reaches a member
+ * without tickets.view, or an assigned-only member for a ticket whose
+ * conversation they cannot see. The real PermissionService and
+ * NotifyStaffExecutor over the in-memory Prisma double.
+ */
+describe("SP-24 staff lifecycle notifications", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const lw = require("../lifecycle/lifecycle-test-world") as typeof import("../lifecycle/lifecycle-test-world");
+
+  it("staff lifecycle notification skips members who cannot see the ticket conversation", async () => {
+    const w = lw.lifecycleWorld();
+    // A support ticket on an unassigned conversation.
+    w.db.ticket.push({ id: "tk1", workspaceId: lw.A, number: 7, title: "Broken", pipelineId: "plSupport", stageId: "stOpen", contactId: "cAr", conversationId: "convAr", ownerId: null });
+    const exec = (w.runner as any).notifyStaff;
+    const ctx = { trigger: { ticket: { id: "tk1" } }, steps: {} };
+
+    // permitted: owner and admin; not the assigned-only agent (conversation
+    // unassigned), not the custom role without tickets.view.
+    await exec.execute(lw.A, { recipient: "permitted", messageKey: "lifecycle.ticket_opened" }, ctx);
+    expect(w.notifications.sent[0].userIds).toEqual(["uAdmin", "uOwner"]);
+    expect(w.notifications.sent[0].n).toMatchObject({ type: "lifecycle", title: "lifecycle.ticket_opened", recordKind: "ticket", recordId: "tk1" });
+    expect(JSON.parse(w.notifications.sent[0].n.body)).toEqual({ number: 7, title: "Broken", contactName: "ليلى أحمد" });
+
+    // Named members are filtered the same way.
+    expect(
+      await exec.recipients(lw.A, { recipient: "members", userIds: ["uAssigned", "uNoTickets", "uAdmin"], messageKey: "lifecycle.ticket_opened" }, w.db.ticket[0]),
+    ).toEqual(["uAdmin"]);
+
+    // Once the conversation is assigned to the agent, they may see it.
+    w.db.conversation.find((c: any) => c.id === "convAr").assigneeId = "uAssigned";
+    expect(await exec.recipients(lw.A, { recipient: "permitted", messageKey: "lifecycle.ticket_opened" }, w.db.ticket[0])).toEqual(
+      expect.arrayContaining(["uAssigned", "uOwner", "uAdmin"]),
+    );
+
+    // assignee with an assignee → only the assignee (if permitted).
+    w.db.ticket[0].ownerId = "uAdmin";
+    expect(await exec.recipients(lw.A, { recipient: "assignee", messageKey: "lifecycle.ticket_opened" }, w.db.ticket[0])).toEqual(["uAdmin"]);
+    w.db.ticket[0].ownerId = "uNoTickets";
+    expect(await exec.recipients(lw.A, { recipient: "assignee", messageKey: "lifecycle.ticket_opened" }, w.db.ticket[0])).toEqual([]);
+    // assignee with no assignee falls back to permitted.
+    w.db.ticket[0].ownerId = null;
+    expect((await exec.recipients(lw.A, { recipient: "assignee", messageKey: "lifecycle.ticket_opened" }, w.db.ticket[0])).sort()).toEqual(
+      ["uAdmin", "uAssigned", "uOwner"],
+    );
+  });
+});

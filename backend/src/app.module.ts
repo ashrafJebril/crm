@@ -19,6 +19,7 @@ import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { InsightsModule } from "./insights/insights.module";
 import { HomeModule } from "./home/home.module";
+import { LifecycleModule } from "./lifecycle/lifecycle.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { ChannelsCoreModule } from "./channels/channels-core.module";
 import { ChannelsModule } from "./channels/channels.module";
@@ -87,6 +88,8 @@ import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.mo
     InsightsModule,
     // SP-11: the working home (Task 3).
     HomeModule,
+    // SP-24: lifecycle messages (system workflows).
+    LifecycleModule,
     // SP-19: global routing core (resolver, transports, inbound sink) before
     // anything that sends or receives, then the /channels hub.
     ChannelsCoreModule,

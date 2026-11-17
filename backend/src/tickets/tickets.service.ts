@@ -23,6 +23,7 @@ import {
   UpdateTicketDto,
 } from "./tickets.dto";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { ticketCreatedKey, ticketPayloadExtras, ticketResolvedKey } from "../lifecycle/lifecycle-payload";
 import { DEFAULT_TZ } from "../activities/buckets";
 import { assignConversationToTicketOwner } from "./ticket-conversation-assign";
 import { UNDO_NOTE, undoRefusal } from "./undo-stage";
@@ -392,10 +393,11 @@ export class TicketsService {
       await this.notifyTicketOwner(workspaceId, dto.ownerId, ticket.id, ticket.title, actorId);
     }
 
+    // SP-24: pipelineKind (the lifecycle filter), the contact and the claim key.
     this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
       workspaceId,
       triggerType: "ticket_created",
-      payload: { ticket },
+      payload: { ticket, ...ticketPayloadExtras(ticket, pl?.kind), occurrenceKey: ticketCreatedKey(ticket.id) },
     } satisfies WorkflowTriggerEvent);
 
     return ticket;
@@ -623,8 +625,22 @@ export class TicketsService {
     this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
       workspaceId,
       triggerType: "ticket_stage_changed",
-      payload: { ticket: updated },
+      payload: { ticket: updated, ...ticketPayloadExtras(updated, ticket.pipeline?.kind) },
     } satisfies WorkflowTriggerEvent);
+    // SP-24 (ruling 10): beside ticket_stage_changed, when the new stage is
+    // terminal and won. A reopen-and-resolve gets a new occurrence (new
+    // enteredStageAt).
+    if (targetStage.isTerminal && targetStage.isWon) {
+      this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType: "ticket_resolved",
+        payload: {
+          ticket: updated,
+          ...ticketPayloadExtras(updated, ticket.pipeline?.kind),
+          occurrenceKey: ticketResolvedKey(updated.id, new Date(updated.enteredStageAt ?? Date.now())),
+        },
+      } satisfies WorkflowTriggerEvent);
+    }
 
     return updated;
   }
@@ -856,7 +872,7 @@ export class TicketsService {
     this.events?.emit(WORKFLOW_TRIGGER_EVENT, {
       workspaceId,
       triggerType: "ticket_stage_changed",
-      payload: { ticket: updated },
+      payload: { ticket: updated, ...ticketPayloadExtras(updated, ticket.pipeline?.kind) },
     } satisfies WorkflowTriggerEvent);
     return updated;
   }

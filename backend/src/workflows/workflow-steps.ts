@@ -23,6 +23,19 @@ export interface SendWhatsappTemplateConfig {
   name: string;
   language: string;
   variables: string[];
+  /**
+   * SP-24: AR/EN variants. When present the executor picks the language from
+   * the conversation (else the workspace) and sends only an approved variant,
+   * falling back to the other approved one (each may carry its own variables).
+   */
+  variants?: Partial<Record<"ar" | "en", { name: string; language: string; variables?: string[] }>>;
+}
+
+/** SP-24: an in-app notification to staff (no customer send). */
+export interface NotifyStaffConfig {
+  recipient: "assignee" | "permitted" | "members";
+  userIds?: string[];
+  messageKey: "lifecycle.ticket_opened" | "lifecycle.new_lead";
 }
 
 export interface AskAgentConfig {
@@ -83,6 +96,11 @@ export interface UpdateDataStep extends BaseStep {
   config: UpdateDataConfig;
 }
 
+export interface NotifyStaffStep extends BaseStep {
+  type: "notify_staff";
+  config: NotifyStaffConfig;
+}
+
 export interface DelayStep extends BaseStep {
   type: "delay";
   config: DelayConfig;
@@ -95,6 +113,7 @@ export type Step =
   | SendWhatsappTemplateStep
   | AskAgentStep
   | UpdateDataStep
+  | NotifyStaffStep
   | DelayStep;
 
 export interface StepGraph {
@@ -117,8 +136,11 @@ const STEP_TYPES = [
   "send_whatsapp_template",
   "ask_agent",
   "update_data",
+  "notify_staff",
   "delay",
 ] as const;
+const NOTIFY_RECIPIENTS = ["assignee", "permitted", "members"];
+const NOTIFY_MESSAGE_KEYS = ["lifecycle.ticket_opened", "lifecycle.new_lead"];
 
 const CONDITION_OPERATORS: ConditionOperator[] = ["equals", "not_equals", "contains", "not_contains"];
 const DELAY_UNITS = ["minutes", "hours", "days"];
@@ -166,6 +188,30 @@ function validateConfig(type: Step["type"], config: unknown, strict: boolean): v
       }
       if (strict && config.variables.some((v) => v.trim().length === 0)) {
         throw new Error("send_whatsapp_template.variables must all be filled in");
+      }
+      if (config.variants !== undefined) {
+        if (!isObject(config.variants)) throw new Error("send_whatsapp_template.variants must be an object");
+        for (const [lang, v] of Object.entries(config.variants)) {
+          if (lang !== "ar" && lang !== "en") throw new Error("send_whatsapp_template.variants keys must be ar or en");
+          if (!isObject(v)) throw new Error(`send_whatsapp_template.variants.${lang} must be an object`);
+          requireNonEmptyString(v.name, `send_whatsapp_template.variants.${lang}.name`, true);
+          requireNonEmptyString(v.language, `send_whatsapp_template.variants.${lang}.language`, true);
+          if (v.variables !== undefined && (!Array.isArray(v.variables) || v.variables.some((x) => typeof x !== "string"))) {
+            throw new Error(`send_whatsapp_template.variants.${lang}.variables must be an array of strings`);
+          }
+        }
+      }
+      return;
+    }
+    case "notify_staff": {
+      if (!NOTIFY_RECIPIENTS.includes(config.recipient as string)) {
+        throw new Error(`notify_staff.recipient must be one of ${NOTIFY_RECIPIENTS.join(", ")}`);
+      }
+      if (!NOTIFY_MESSAGE_KEYS.includes(config.messageKey as string)) {
+        throw new Error(`notify_staff.messageKey must be one of ${NOTIFY_MESSAGE_KEYS.join(", ")}`);
+      }
+      if (config.userIds !== undefined && (!Array.isArray(config.userIds) || config.userIds.some((x) => typeof x !== "string"))) {
+        throw new Error("notify_staff.userIds must be an array of strings");
       }
       return;
     }

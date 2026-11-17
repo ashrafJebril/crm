@@ -20,6 +20,8 @@ export const NOTIFICATION_TYPES = [
   "knowledge_source_failed",
   "campaign_finished",
   "import_finished",
+  // SP-24 (ruling 6): staff lifecycle messages (new ticket, new lead).
+  "lifecycle",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 
