@@ -10,6 +10,7 @@ import { ToastProvider, useToast } from "@/components/Toast";
 import { ZernioRedirectCapture } from "@/components/ZernioRedirectCapture";
 import { useAuth } from "@/auth/context";
 import { Login } from "@/auth/Login";
+import { Signup, useSignupHash } from "@/auth/Signup";
 import { PaymentLocked } from "@/auth/PaymentLocked";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
 import { RecordSheetHost } from "@/shell/RecordSheetHost";
@@ -50,7 +51,8 @@ export default function App() {
   const screen = authScreen(status, embedded);
 
   if (screen === "embed-failed") return <EmbedAnonymous />;
-  if (screen === "login") return <Login />;
+  // SP-20: the public signup page (#/signup) sits next to the sign-in page.
+  if (screen === "login") return <AuthEntry />;
 
   if (embedded) {
     return (
@@ -124,4 +126,9 @@ function EmbedAnonymous() {
     postToParent({ type: "kewy:sso-failed" });
   }, []);
   return <EmbedSignInFailed />;
+}
+
+/** SP-20: #/signup shows the signup page, anything else the sign-in page. */
+function AuthEntry() {
+  return useSignupHash() ? <Signup /> : <Login />;
 }

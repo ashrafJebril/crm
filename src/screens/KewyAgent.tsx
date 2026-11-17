@@ -7,8 +7,12 @@ import { PageHeader } from "@/components/PageHeader";
 import { KnowledgePage } from "./knowledge/KnowledgePage";
 import { ToolsTab } from "./kewy-agent/ToolsTab";
 import { McpServersTab } from "./kewy-agent/McpServersTab";
+import { AgentSettingsTab } from "./agent/AgentSettingsTab";
+import { TryAgentPanel } from "./agent/TryAgentPanel";
+import { ContinueSetupCard } from "./setup/ContinueSetupCard";
 
-type Tab = "knowledge" | "tools" | "mcp";
+// SP-20 adds the agent's settings and the "Try your agent" preview.
+type Tab = "settings" | "try" | "knowledge" | "tools" | "mcp";
 
 interface LStatus {
   connected: boolean;
@@ -23,12 +27,17 @@ function KewyAgentImpl() {
   // SP-21: the knowledge (content, FAQs, guidelines, files, websites and the
   // SP-17 photos) lives in the CRM, so it no longer needs an l link.
   const canViewKnowledge = can("knowledge.view");
-  const [tab, setTab] = useState<Tab>(canViewKnowledge ? "knowledge" : "tools");
+  // SP-20: settings for agent.view; the sandbox (a turn costs money, ruling 9) for agent.update.
+  const canViewSettings = can("agent.view");
+  const canTry = can("agent.update");
+  const [tab, setTab] = useState<Tab>(canViewSettings ? "settings" : canViewKnowledge ? "knowledge" : "tools");
 
   const statusQ = useFetch<LStatus>("/integrations/l/status");
   const connected = statusQ.data?.connected === true;
 
   const tabs: Array<{ id: Tab; label: string; ar: string }> = [
+    ...(canViewSettings ? [{ id: "settings" as const, label: "Settings", ar: "الإعدادات" }] : []),
+    ...(canTry ? [{ id: "try" as const, label: "Try your agent", ar: "جرّب وكيلك" }] : []),
     ...(canViewKnowledge ? [{ id: "knowledge" as const, label: "Knowledge", ar: "المعرفة" }] : []),
     { id: "tools", label: "Tools", ar: "الأدوات" },
     { id: "mcp", label: "MCP Servers", ar: "خوادم MCP" },
@@ -60,8 +69,8 @@ function KewyAgentImpl() {
       <PageHeader
         title={tx("Kewy AI agent", "وكيل كيوي الذكاء")}
         subtitle={tx(
-          "Manage your agent's knowledge, photos, tools, and MCP connections.",
-          "إدارة معرفة وكيلك وصوره وأدواته واتصالات MCP.",
+          "Set up your agent, try it, and manage its knowledge, photos, tools, and MCP connections.",
+          "أعدّ وكيلك وجرّبه، وأدِر معرفته وصوره وأدواته واتصالات MCP.",
         )}
       />
 
@@ -81,8 +90,11 @@ function KewyAgentImpl() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+        <ContinueSetupCard tx={tx} offerStart />
+        {tab === "settings" && canViewSettings && <AgentSettingsTab tx={tx} lang={t.lang} canEdit={canTry} />}
+        {tab === "try" && canTry && <TryAgentPanel tx={tx} canUse={canTry} />}
         {tab === "knowledge" && canViewKnowledge && <KnowledgePage tx={tx} lang={t.lang} />}
-        {tab !== "knowledge" && !statusQ.loading && !connected && notConnected}
+        {(tab === "tools" || tab === "mcp") && !statusQ.loading && !connected && notConnected}
         {tab === "tools" && connected && <ToolsTab tx={tx} canEdit={canEditTools} />}
         {tab === "mcp" && connected && (
           <McpServersTab tx={tx} canEdit={canEditMcp} canCreate={can("connectors.create")} canDelete={can("connectors.delete")} />

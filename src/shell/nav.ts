@@ -67,4 +67,6 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   channels:    { en: "Channels",        ar: "القنوات" },
   ads:         { en: "Ads",             ar: "الإعلانات" },
   admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
+  // SP-20: reached from signup and the "Continue setup" cards, not the sidebar.
+  setup:       { en: "Set up your agent", ar: "إعداد وكيلك" },
 };

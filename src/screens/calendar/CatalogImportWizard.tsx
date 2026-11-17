@@ -54,11 +54,13 @@ interface Props {
   onClose: () => void;
   /** Called when a run finished (the catalog changed). */
   onFinished: () => void;
+  /** SP-20: open on the URL source with this address (onboarding's "Import these services"). */
+  initialUrl?: string;
 }
 
 type Source = "paste" | "url" | "file";
 
-export function CatalogImportWizard({ tx, lang, tz, initialKind, onClose, onFinished }: Props) {
+export function CatalogImportWizard({ tx, lang, tz, initialKind, onClose, onFinished, initialUrl }: Props) {
   const [jobId, setJobId] = useState<string | null>(null);
   // The job the start call returned, shown until the job's own query answers
   // (the query is still disabled when the start call resolves, so it can't be
@@ -81,7 +83,7 @@ export function CatalogImportWizard({ tx, lang, tz, initialKind, onClose, onFini
           <h3 style={{ margin: 0, fontSize: 16, flex: 1 }}>{tx("Import services and staff", "استيراد الخدمات والموظفين")}</h3>
           <Steps step={step} tx={tx} />
         </div>
-        {step === "source" && <SourceStep tx={tx} initialKind={initialKind} onStarted={(j) => { setStarted(j); setJobId(j.id); }} />}
+        {step === "source" && <SourceStep tx={tx} initialKind={initialKind} initialUrl={initialUrl} onStarted={(j) => { setStarted(j); setJobId(j.id); }} />}
         {step === "extracting" && job && <Working tx={tx} job={job} onCancel={async () => jobQ.setData(await cancelCatalogImport(job.id))} />}
         {step === "review" && job && <ReviewStep tx={tx} lang={lang} tz={tz} job={job} setJob={(j) => jobQ.setData(j)} />}
         {step === "running" && job && <Working tx={tx} job={job} onCancel={async () => jobQ.setData(await cancelCatalogImport(job.id))} />}
@@ -112,11 +114,11 @@ function Steps({ step, tx }: { step: string; tx: Tx }) {
 
 // ── 1. source ───────────────────────────────────────────────────────────
 
-function SourceStep({ tx, initialKind, onStarted }: { tx: Tx; initialKind: ImportKind; onStarted: (j: CatalogImport) => void }) {
-  const [source, setSource] = useState<Source>("paste");
+function SourceStep({ tx, initialKind, initialUrl, onStarted }: { tx: Tx; initialKind: ImportKind; initialUrl?: string; onStarted: (j: CatalogImport) => void }) {
+  const [source, setSource] = useState<Source>(initialUrl ? "url" : "paste");
   const [kind, setKind] = useState<ImportKind>(initialKind);
   const [text, setText] = useState("");
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<{ text: string; aiUnavailable: boolean } | null>(null);
   const [busy, setBusy] = useState(false);

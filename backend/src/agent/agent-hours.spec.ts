@@ -85,3 +85,14 @@ describe("agent working hours", () => {
     expect(insideSchedule(SUN_THU_9_17, SUN_1000_RIYADH, "Not/AZone")).toBe(true);
   });
 });
+
+describe("agent working hours: the fixture shared with the frontend mirror", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fixture = require("./agent-hours.fixture.json") as {
+    schedules: Record<string, unknown>;
+    cases: { mode: string; schedule: string; now: string; tz: string; available: boolean }[];
+  };
+  it.each(fixture.cases.map((c) => [`${c.mode} ${c.schedule} ${c.now} ${c.tz}`, c] as const))("%s", (_name, c) => {
+    expect(agentAvailableAt({ hoursMode: c.mode, schedule: fixture.schedules[c.schedule] }, new Date(c.now), c.tz)).toBe(c.available);
+  });
+});

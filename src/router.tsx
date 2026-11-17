@@ -21,6 +21,8 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   channels: lazy(() => import("@/screens/channels/ChannelsPage")),
   ads: lazy(() => import("@/screens/ads/AdsPage")),
   admin: lazy(() => import("@/screens/Admin")),
+  // SP-20: guided onboarding (signup and the "Continue setup" cards link here).
+  setup: lazy(() => import("@/screens/setup/SetupPage")),
 };
 
 export const VALID_ROUTES = new Set<RouteId>(Object.keys(screens) as RouteId[]);

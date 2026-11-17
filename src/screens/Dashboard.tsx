@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useRoute } from "@/router";
 import { PageHeader } from "@/components/PageHeader";
+import { ContinueSetupCard } from "@/screens/setup/ContinueSetupCard";
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import { AreaChart, Spark } from "@/components/charts";
@@ -286,6 +287,8 @@ function DashboardImpl() {
       />
 
       <div style={{ padding: "0 24px 24px", display: "grid", gap: 16 }}>
+        {/* SP-20: a skipped onboarding offers "Continue setup" here. */}
+        <ContinueSetupCard tx={tx} />
         {home && showDay1(home) ? (
           <Day1Home steps={home.day1.steps} tx={tx} canDismiss={canDismissDay1(home)} onDismissed={() => void homeQ.refetch()} />
         ) : (

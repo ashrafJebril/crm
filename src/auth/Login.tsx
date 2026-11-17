@@ -355,6 +355,10 @@ export function Login() {
             </form>
           </>
         )}
+        {/* SP-20: the guided signup (account, then the agent setup). */}
+        <div style={{ marginTop: 16, fontSize: 13, textAlign: "center" }} className="muted">
+          {tx("New here?", "جديد هنا؟")} <a href="#/signup">{tx("Create an account and set up your agent", "أنشئ حسابًا وأعدّ وكيلك")}</a>
+        </div>
       </div>
     </div>
   );
