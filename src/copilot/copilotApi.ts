@@ -1,6 +1,6 @@
 /** SP-18 copilot API calls (routes in backend/src/copilot/copilot.controller.ts). */
 import { useQuery } from "@tanstack/react-query";
-import { api, API_BASE, ApiError, tokenStore } from "@/api/client";
+import { api, API_BASE, ApiError, notifyUnauthorized, tokenStore } from "@/api/client";
 import { useAuth } from "@/auth/context";
 import type {
   CopilotApprovalMode,
@@ -60,6 +60,8 @@ export function uploadAttachment(file: File, onProgress: (fraction: number) => v
         return;
       }
       const msg = body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string" ? (body as { message: string }).message : `HTTP ${xhr.status}`;
+      // The same token-guarded session expiry as every other request.
+      if (xhr.status === 401 && tok) notifyUnauthorized(tok, msg.startsWith("auth.") ? msg : "auth.session_expired");
       reject(new ApiError(msg, xhr.status, undefined, body));
     };
     xhr.onerror = () => reject(new ApiError("network", 0));

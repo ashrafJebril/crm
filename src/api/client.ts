@@ -395,13 +395,22 @@ async function postEventStream(path: string, body: unknown, opts: EventStreamOpt
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "text/event-stream" };
   const tok = tokenStore.get();
   if (tok) headers.Authorization = `Bearer ${tok}`;
-  const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}), signal: opts.signal });
-  // Same token-guarded session-expiry path as request().
-  // INTEGRATION(SP-26): on merge with feat/tkana-parity, replace with notifyUnauthorized(tok, "auth.session_expired").
-  if (res.status === 401 && tok) onUnauthorized?.();
+  // A forced sign-out aborts the stream with every other request.
+  const link = linkedSignal(opts.signal);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}), signal: link.signal });
+  } catch (e) {
+    link.done();
+    throw e;
+  }
   if (!res.ok || !res.body) {
+    link.done();
     const raw = await res.text();
-    throw errorFromBody(raw ? safeJson(raw) : undefined, res.status);
+    const data = raw ? safeJson(raw) : undefined;
+    // Same token-guarded session-expiry path as request(): only a 401 for the current token signs out.
+    if (res.status === 401 && tok) notifyUnauthorized(tok, unauthorizedReason(data) ?? "auth.session_expired");
+    throw errorFromBody(data, res.status);
   }
   const reader = createEventReader(opts.onEvent);
   const stream = res.body.getReader();
@@ -415,6 +424,7 @@ async function postEventStream(path: string, body: unknown, opts: EventStreamOpt
   } catch {
     /* cut: end() delivers the synthetic error */
   } finally {
+    link.done();
     stream.cancel().catch(() => undefined);
   }
   return reader.end();

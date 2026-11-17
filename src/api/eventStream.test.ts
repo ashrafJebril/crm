@@ -58,3 +58,28 @@ describe("event stream parser handles split chunks and ends with an error when c
     expect(seen2).toEqual(["error"]);
   });
 });
+
+describe("postEventStream session expiry (SP-26 token-guarded path)", () => {
+  it("a 401 for the current token signs out with the server's reason, before any event", async () => {
+    const { api, setUnauthorizedHandler, tokenStore, ApiError } = await import("./client");
+    const realFetch = globalThis.fetch;
+    const seen: (string | undefined)[] = [];
+    setUnauthorizedHandler((r) => seen.push(r));
+    tokenStore.set("tok-1");
+    try {
+      globalThis.fetch = (async () => new Response(JSON.stringify({ statusCode: 401, message: "auth.session_expired" }), { status: 401 })) as typeof fetch;
+      const events: string[] = [];
+      await expect(api.postEventStream("/copilot/stream", {}, { onEvent: (e) => events.push(e) })).rejects.toBeInstanceOf(ApiError);
+      expect(seen).toEqual(["auth.session_expired"]);
+      expect(events).toEqual([]);
+      // A 401 without a message still names the reason.
+      globalThis.fetch = (async () => new Response("", { status: 401 })) as typeof fetch;
+      await expect(api.postEventStream("/copilot/stream", {}, { onEvent: () => undefined })).rejects.toBeInstanceOf(ApiError);
+      expect(seen[seen.length - 1]).toBe("auth.session_expired");
+    } finally {
+      globalThis.fetch = realFetch;
+      setUnauthorizedHandler(null);
+      tokenStore.clear();
+    }
+  });
+});
