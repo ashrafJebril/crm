@@ -274,8 +274,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `slaDueAt recalculated on stage change`; `attachment route 404 for foreign workspace`; `overdue badge when now > slaDueAt and not terminal` (vitest).
 
 #### SP-10 Bookings: services, staff, availability, board. Size XL
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-16-sp10-bookings.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-16 and live-verified on production against local HJZ, Anthropic and website stubs (117/120 API; F1 parallel-booking 500s and F2 import-wizard crash fixed in 2ded7bf). **Follow-ups:** `assertOffers` outside the lock (M4); reschedule picker for bookings under 5 min; pre-08:00 grid clamp. **Pending real-provider checks:** Anthropic catalog extraction on real menus, a real website fetch, a real HJZ push.
 - **Gaps:** a services catalog (colour, duration, price, providers, active); staff resources (role, weekly working schedule, services, active; cards/table, search); a schedule-fit gate plus slot availability; a bookings kanban with allowed transitions (pending → confirmed → completed / no-show / cancelled); agenda view with daily minutes; reschedule dialog; service filter; booking search typeahead; view/date in the URL; a catalog import wizard (paste / website URL / file → AI extraction → review with duplicates unchecked → resumable run, per-kind .xlsx templates).
 - **Read in Tkana:** `routes/booking.*.ts(x)`, `routes/pipeline.bookings.tsx`, `components/booking/{resources-tab,services-tab,import-dialog,catalog-import,agenda-view,service-filter}.tsx`, `components/weekly-schedule-editor.tsx`, `lib/bookings/schedule-fit.ts`, `components/pipeline/bookings/stages.ts`.
 - **Data:** `Service {name, nameAr, color, durationMin, price?, currency, active}`, `StaffResource {userId?, name, role, schedule Json /* {mon:[{from,to}]} */, active}`, `StaffService` join; `Appointment` + `serviceId?`, `resourceId?`, `status` with a transition table; the free-text `service` is kept for legacy rows and HJZ.
