@@ -218,3 +218,23 @@ describe("SkillsService (SP-22)", () => {
     expect(res.skills.map((s) => s.key)).toEqual(SKILL_CATALOG.map((e) => e.key));
   });
 });
+
+describe("SP-22 review I3: legacy-edited skills", () => {
+  it("a skill whose old section was edited on l cannot be disabled or uninstalled until it is removed", async () => {
+    const { CRM_PROMPT_SECTION } = await import("./skill-catalog");
+    const w = makeSkillsWorld({ prompt: ["Owner.", CRM_PROMPT_SECTION.replace("Confirm", "Always confirm")].join("\n\n") });
+    await w.prompts.apply(WS);
+    const booking = (await w.skills.list(WS)).skills.find((s) => s.key === "booking")!;
+    expect(booking).toMatchObject({ status: "needs_attention", attentionReason: "legacy_edited" });
+    expect(await failure(w.skills.patch(WS, "booking", { enabled: false, version: booking.rowVersion }))).toMatchObject({
+      status: 409,
+      body: { message: "skills.legacy_edited", key: "booking" },
+    });
+    expect(await failure(w.skills.uninstall(WS, "booking"))).toMatchObject({ status: 409, body: { message: "skills.legacy_edited" } });
+    // Once the owner removes the old section on l, a retry clears it and disabling works.
+    w.l.state.content = "Owner.";
+    const r = await w.skills.retry(WS, "booking");
+    expect(r).toMatchObject({ status: "enabled", attentionReason: null });
+    await expect(w.skills.patch(WS, "booking", { enabled: false, version: r.rowVersion })).resolves.toMatchObject({ status: "disabled" });
+  });
+});

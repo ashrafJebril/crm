@@ -5,7 +5,7 @@ import { LJoteckClient } from "./l-joteck.client";
 import { LMcpService } from "./l-mcp.service";
 import { McpTokenService } from "./mcp-token.service";
 import { upsertBlock } from "../knowledge-sources/prompt-blocks";
-import { composeSkillPrompt, defaultEnabled, enabledFromStates, loadSkillRows, resolveSkillStates } from "../skills/skill-state";
+import { composeSkillPrompt, defaultEnabled, enabledFromStates, loadSkillRows, resolveSkillStates, type EnabledSkills } from "../skills/skill-state";
 import { SKILL_CATALOG, type SkillCatalog, type SkillKey } from "../skills/skill-catalog";
 
 // l requires ^[a-z][a-z0-9_]*$ for MCP server names.
@@ -36,8 +36,8 @@ const PROMPT_SECTIONS: ReadonlyArray<readonly [marker: string, section: string]>
 
 /** SP-20: the CRM's prompt text (the sandbox's prompt when no l agent is
  *  linked): the default skills' blocks, then the knowledge section. */
-export function crmPromptSections(): string {
-  return [composeSkillPrompt("", defaultEnabled()).prompt, ...PROMPT_SECTIONS.map(([, section]) => section)].filter(Boolean).join("\n\n");
+export function crmPromptSections(enabled: EnabledSkills = defaultEnabled()): string {
+  return [composeSkillPrompt("", enabled).prompt, ...PROMPT_SECTIONS.map(([, section]) => section)].filter(Boolean).join("\n\n");
 }
 
 /** SP-22: the outcome of writing the skill blocks. */
@@ -191,9 +191,17 @@ export class LAgentSetupService {
     const { changed } = await this.editPrompt(workspaceId, ws.lWorkspaceId, async (current) => {
       const composed = await this.composeSkills(workspaceId, current, catalog);
       legacyEdited = composed.legacyEdited;
+      this.warnDangling(workspaceId, composed.dangling);
       return composed.prompt;
     });
     return { changed, legacyEdited };
+  }
+
+  /** Review M2: like the persona path, say so when a block's end marker is missing. */
+  private warnDangling(workspaceId: string, keys: string[]): void {
+    for (const key of keys) {
+      this.logger.warn(`prompt block kewy-skill:${key} for workspace ${workspaceId}: end marker missing, left as text and wrote a fresh block`);
+    }
   }
 
   private async composeSkills(workspaceId: string, current: string, catalog: SkillCatalog = SKILL_CATALOG) {
@@ -211,7 +219,9 @@ export class LAgentSetupService {
     await this.editPrompt(workspaceId, lWorkspaceId, async (current) => {
       // SP-22: the skills' blocks (and the one-time legacy migration), then
       // any missing marker section, then the persona block.
-      const skilled = (await this.composeSkills(workspaceId, current)).prompt;
+      const composed = await this.composeSkills(workspaceId, current);
+      this.warnDangling(workspaceId, composed.dangling);
+      const skilled = composed.prompt;
       const missing = PROMPT_SECTIONS.filter(([marker]) => !skilled.includes(marker)).map(([, section]) => section);
       const withSections = missing.length === 0 ? skilled : [skilled.trimEnd(), ...missing].filter(Boolean).join("\n\n");
       prompt = withSections === current ? "already-present" : "updated";

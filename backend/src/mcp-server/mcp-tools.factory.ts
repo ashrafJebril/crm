@@ -20,6 +20,8 @@ import { AgentToolCallRecorder, errorCodeOf } from "../skills/agent-tool-call.re
 /** SP-22: at most this many open support tickets per contact (a looping or injected agent). */
 export const OPEN_TICKETS_PER_CONTACT = 3;
 export const MY_TICKETS_LIMIT = 10;
+/** Review I2: the cap's count and create share one advisory-locked transaction. */
+export const TICKET_CAP_TX = { maxWait: 10_000, timeout: 20_000 } as const;
 /** Priorities the agent may pass (ignored: the skill config decides). Never "urgent". */
 const AGENT_TICKET_PRIORITIES = ["low", "normal", "high"] as const;
 const TOOL_SKILL = toolSkillMap(SKILL_CATALOG);
@@ -416,20 +418,29 @@ export class McpToolsFactory {
         })
       : null;
     if (!pipeline || !stage) throw new BadRequestException("tickets.no_support_pipeline");
-    const open = await prisma.ticket.count({
-      where: { workspaceId, contactId: input.contactId, closedAt: null, pipeline: { kind: "support" } },
-    });
-    if (open >= OPEN_TICKETS_PER_CONTACT) throw new BadRequestException("tickets.too_many_open");
     const priority = AGENT_TICKET_PRIORITIES.includes(config.defaultPriority as never) ? (config.defaultPriority as string) : "normal";
-    const t = (await this.need(this.tickets, "Tickets").createTicket(workspaceId, {
-      pipelineId: pipeline.id,
-      stageId: stage.id,
-      contactId: input.contactId,
-      title: input.title,
-      description: input.description,
-      category: input.category,
-      priority,
-    })) as { id: string; number: number; stage?: { label?: string } | null };
+    const tickets = this.need(this.tickets, "Tickets");
+    // Review I2: two concurrent calls for one contact cannot both pass the
+    // cap. The lock is held (transaction-scoped) until the create committed.
+    const t = await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`support-cap:${workspaceId}:${input.contactId}`}))`;
+        const open = await tx.ticket.count({
+          where: { workspaceId, contactId: input.contactId, closedAt: null, pipeline: { kind: "support" } },
+        });
+        if (open >= OPEN_TICKETS_PER_CONTACT) throw new BadRequestException("tickets.too_many_open");
+        return (await tickets.createTicket(workspaceId, {
+          pipelineId: pipeline.id,
+          stageId: stage.id,
+          contactId: input.contactId,
+          title: input.title,
+          description: input.description,
+          category: input.category,
+          priority,
+        })) as { id: string; number: number; stage?: { label?: string } | null };
+      },
+      TICKET_CAP_TX,
+    );
     return { id: t.id, number: t.number, stage: t.stage?.label ?? stage.label };
   }
 

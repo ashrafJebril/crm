@@ -183,3 +183,29 @@ describe("MCP tools gated by skills (SP-22)", () => {
     expect(w.prisma.db.agentToolCall).toHaveLength(before);
   });
 });
+
+describe("SP-22 review I2: ticket cap under concurrency", () => {
+  it("two concurrent calls with 2 open tickets create exactly one", async () => {
+    const { withAdvisoryLocks } = await import("../channels/test-prisma");
+    const w = world();
+    const locks = withAdvisoryLocks(w.prisma);
+    for (let i = 0; i < 2; i++) {
+      w.prisma.db.ticket.push({ id: `old${i}`, workspaceId: WS, number: 100 + i, pipelineId: "pSup", stageId: "sOpen", contactId: "c1", title: "old", priority: "normal", closedAt: null, createdAt: new Date() });
+    }
+    // A slow create, so both callers would pass an unlocked count.
+    const create = w.tickets.createTicket.getMockImplementation()!;
+    w.tickets.createTicket.mockImplementation(async (ws: string, dto: unknown) => {
+      await new Promise((r) => setTimeout(r, 20));
+      return create(ws, dto);
+    });
+    const tools = w.factory.build(WS, { enabled: enabledWith([{ skillKey: "support_tickets", status: "enabled" }]) });
+    const results = await Promise.allSettled([
+      tools.open_support_ticket.execute!({ contactId: "c1", title: "A" } as never, {} as never),
+      tools.open_support_ticket.execute!({ contactId: "c1", title: "B" } as never, {} as never),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(w.tickets.createTicket).toHaveBeenCalledTimes(1);
+    expect(w.prisma.db.ticket.filter((t: { contactId: string; closedAt: unknown }) => t.contactId === "c1" && !t.closedAt)).toHaveLength(3);
+    expect(locks.order).toEqual([expect.stringContaining("support-cap:ws1:c1"), expect.stringContaining("support-cap:ws1:c1")]);
+  });
+});
