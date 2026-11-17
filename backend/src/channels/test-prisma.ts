@@ -422,6 +422,12 @@ const DEFAULTS: Record<string, () => Row> = {
     version: 0,
   }),
   agentSandboxThread: () => ({ messages: [], transcript: [] }),
+  // SP-18: the copilot (the DB defaults).
+  copilotSession: () => ({ persona: "aida", title: null, runningUntil: null, tainted: false, deletedAt: null }),
+  copilotMessage: () => ({ text: "", content: null, references: null, attachments: null, sources: null, pageContext: null, usage: null }),
+  copilotPendingAction: () => ({ status: "PENDING", decidedBy: null, decidedById: null, decidedAt: null, feedback: null, refusal: null, resultJson: null, errorKey: null }),
+  copilotAttachment: () => ({ sessionId: null, mediaId: null, text: null, truncated: false, sentAt: null }),
+  copilotActionAudit: () => ({ actorId: null, detail: null }),
   // SP-24
   workflow: () => ({ systemKey: null, status: "draft", triggerConfig: {}, webhookSecret: null, lastScheduledAt: null }),
   workflowRun: () => ({ resumeAt: null, isTest: false, error: null, completedAt: null, startedAt: new Date(), result: {} }),
@@ -520,6 +526,9 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
     adReferrals: ["adReferral", "conversationId", "many"],
     // SP-09: the derived ticket channel.
     channelRef: ["channel", "channelId", "one"],
+    // SP-18: the copilot reads conversations with their contact and assignee.
+    contact: ["contact", "contactId", "one"],
+    assignee: ["user", "assigneeId", "one"],
   },
   adReferral: {
     conversation: ["conversation", "conversationId", "one"],
@@ -544,7 +553,7 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
   },
   message: { conversation: ["conversation", "conversationId", "one"] },
   // SP-24: the runner's opt-out lookup (`conversations: { some: { id } }`).
-  contact: { conversations: ["conversation", "contactId", "many"] },
+  contact: { conversations: ["conversation", "contactId", "many"], owner: ["user", "ownerId", "one"] },
   // SP-10: the booking's contact (so a nested select is honoured) and catalog links.
   appointment: {
     contact: ["contact", "contactId", "one"],
@@ -558,7 +567,7 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
     pages: ["knowledgePage", "sourceId", "many"],
   },
   knowledgeChunk: { source: ["knowledgeSource", "sourceId", "one"], page: ["knowledgePage", "pageId", "one"] },
-  media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"] },
+  media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"], copilotAttachments: ["copilotAttachment", "mediaId", "many"] },
   // SP-26
   workspaceMember: { user: ["user", "userId", "one"], workspace: ["workspace", "workspaceId", "one"] },
   // SP-26 Task 2: the login include (user.memberships → workspace).
@@ -574,6 +583,8 @@ const RELATION_FILTERS: Record<string, string[]> = {
   ticket: ["stage", "pipeline", "contact"],
   ticketAttachment: ["ticket", "media"],
   message: ["conversation"],
+  // SP-18: `conversation: { contact: { name: { contains } } }`.
+  conversation: ["contact"],
 };
 
 /**
@@ -944,6 +955,12 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     // SP-20: agent settings and sandbox threads.
     agentSettings: model("agentSettings"),
     agentSandboxThread: model("agentSandboxThread"),
+    // SP-18: the copilot.
+    copilotSession: model("copilotSession"),
+    copilotMessage: model("copilotMessage"),
+    copilotPendingAction: model("copilotPendingAction"),
+    copilotAttachment: model("copilotAttachment"),
+    copilotActionAudit: model("copilotActionAudit"),
     // SP-24: system workflows, their runs and the lifecycle claim.
     workflow: model("workflow"),
     workflowRun: model("workflowRun"),

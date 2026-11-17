@@ -14,6 +14,7 @@ import { Signup, useSignupHash } from "@/auth/Signup";
 import { PaymentLocked } from "@/auth/PaymentLocked";
 import { ImpersonationBanner } from "@/shell/ImpersonationBanner";
 import { RecordSheetHost } from "@/shell/RecordSheetHost";
+import { CopilotHost } from "@/copilot/CopilotHost";
 import { authScreen, isEmbedded, parseInbound, postToParent } from "@/embed/embed";
 import { setEmbedVisible } from "@/embed/visibility";
 import { invalidateIntegrations, refreshAfterConnect } from "@/embed/connected";
@@ -101,6 +102,7 @@ export default function App() {
         </main>
         <RecordSheetHost />
         <CommandPalette />
+        <CopilotHost />
       </div>
     </ToastProvider>
   );

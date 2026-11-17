@@ -491,6 +491,21 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /onboarding/learn": "settings.update",
   "POST /onboarding/learn/apply": "settings.update",
 
+  // ── SP-18 copilot ("Ask Kewy") ────────────────────────────────────────
+  // Every member may chat (ruling 2); each tool checks its own permission as
+  // the member, so the copilot shows only what the member could open in the UI.
+  // Sessions are the member's own (404 otherwise). Task 2 adds actions and attachments.
+  "POST /copilot/stream": "authenticated",
+  "GET /copilot/status": "authenticated",
+  "GET /copilot/sessions": "authenticated",
+  "GET /copilot/sessions/:id": "authenticated",
+  "DELETE /copilot/sessions/:id": "authenticated",
+  // Task 2: cards (the proposing member only; the tool's permission is re-checked at approval) and attachments.
+  "POST /copilot/actions/:id/approve": "authenticated",
+  "POST /copilot/actions/:id/decline": "authenticated",
+  "POST /copilot/attachments": "authenticated",
+  "DELETE /copilot/attachments/:id": "authenticated",
+
   // ── Connectors (MCP servers bound to the agent) ───────────────────────
   "GET /integrations/l/mcp-servers": "connectors.view",
   "POST /integrations/l/mcp-servers": "connectors.create",

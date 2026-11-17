@@ -63,6 +63,12 @@ const SCOPED_MODELS = new Set([
   // SP-20
   "AgentSettings",
   "AgentSandboxThread",
+  // SP-18
+  "CopilotSession",
+  "CopilotMessage",
+  "CopilotPendingAction",
+  "CopilotAttachment",
+  "CopilotActionAudit",
 ]);
 
 const READ_ACTIONS = new Set([

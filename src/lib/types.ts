@@ -32,7 +32,9 @@ export type RouteId =
   | "ads"
   | "admin"
   // SP-20: guided onboarding.
-  | "setup";
+  | "setup"
+  // SP-18: the member's "Ask Kewy" history.
+  | "copilot";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
 
@@ -1969,3 +1971,126 @@ export interface OnboardingState {
 export interface LearnApplyResult {
   applied: { content: "replaced" | "appended" | "written" | "skipped"; faqsAdded: number; faqsSkipped: number; hours: boolean };
 }
+
+// ─── SP-18 copilot ("Ask Kewy") ───────────────────────────────────────────
+// Shapes of backend/src/copilot/copilot.dto.ts and the stream protocol.
+
+export type CopilotPageKey =
+  | "dashboard"
+  | "inbox"
+  | "conversation"
+  | "contacts"
+  | "contact"
+  | "pipeline"
+  | "ticket"
+  | "calendar"
+  | "booking"
+  | "followups"
+  | "campaigns"
+  | "campaign"
+  | "agent"
+  | "knowledge"
+  | "insights_support"
+  | "insights_sales"
+  | "other";
+/** Alias used by the plan's file list. */
+export type PageKey = CopilotPageKey;
+
+export type CopilotApprovalMode = "manual" | "agent_decides" | "auto";
+export type CopilotRefKind = "contact" | "ticket" | "booking";
+
+export interface CopilotRef {
+  kind: CopilotRefKind;
+  id: string;
+  title?: string;
+}
+
+export interface CopilotPageContext {
+  page: CopilotPageKey;
+  recordKind?: "contact" | "conversation" | "ticket" | "booking" | "campaign";
+  recordId?: string;
+  from?: string;
+  to?: string;
+  channelId?: string;
+  pipelineId?: string;
+}
+
+export interface PendingCard {
+  id: string;
+  tool: string;
+  title: string;
+  changes: { label: string; before?: string; after: string }[];
+  /** PENDING | EXECUTING | EXECUTED | FAILED | REJECTED | EXPIRED */
+  status: string;
+  expiresAt: string;
+  /** permission_revoked | card_outdated | declined | null */
+  refusal: string | null;
+  feedback: string | null;
+  /** FAILED: why ("copilot.action_unknown" when the outcome could not be recorded). */
+  errorKey?: string | null;
+  result?: unknown;
+}
+
+export type CopilotSourceCard =
+  | { kind: "record"; recordKind: string; id: string; title: string }
+  | { kind: "knowledge"; sourceId: string; title: string; url?: string };
+
+export interface CopilotAttachmentInfo {
+  id: string;
+  fileName: string;
+  kind: "document" | "image";
+}
+
+export interface CopilotSession {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+  running: boolean;
+}
+
+export interface CopilotMessage {
+  id: string;
+  /** user | assistant | note */
+  role: string;
+  text: string;
+  references: { kind: string; id: string; title: string }[] | null;
+  attachments: CopilotAttachmentInfo[] | null;
+  sources: CopilotSourceCard[] | null;
+  createdAt: string;
+}
+
+export interface CopilotSessionDetail {
+  id: string;
+  title: string | null;
+  running: boolean;
+  tainted: boolean;
+  messages: CopilotMessage[];
+  actions: PendingCard[];
+}
+
+export interface CopilotSessionPage {
+  items: CopilotSession[];
+  nextCursor: string | null;
+}
+
+/** `POST /copilot/attachments` (backend CopilotAttachmentDto). */
+export interface CopilotUploadedAttachment {
+  id: string;
+  fileName: string;
+  kind: "document" | "image";
+  mimeType: string;
+  sizeBytes: number;
+  truncated: boolean;
+}
+
+/** One stream event (`event:` name + its JSON). */
+export type CopilotEvent =
+  | { event: "session"; data: { sessionId: string; title: string | null } }
+  | { event: "activity"; data: { kind: string; tool?: string; label: string } }
+  | { event: "token"; data: { text: string } }
+  | { event: "confirm"; data: { action: PendingCard } }
+  | { event: "receipt"; data: { action: PendingCard } }
+  | { event: "draft"; data: { conversationId: string; text: string } }
+  | { event: "sources"; data: { items: CopilotSourceCard[] } }
+  | { event: "done"; data: { messageId: string; usage?: { inputTokens: number; outputTokens: number } } }
+  | { event: "error"; data: { code: string } };

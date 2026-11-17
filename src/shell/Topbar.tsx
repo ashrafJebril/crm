@@ -8,6 +8,7 @@ import { Avatar } from "@/components/Avatar";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { NotificationsBell } from "./NotificationsBell";
 import { openPalette } from "@/components/CommandPalette";
+import { openCopilot, useCopilotAvailable } from "@/copilot/copilotApi";
 
 interface TopbarProps {
   route: RouteId;
@@ -20,6 +21,8 @@ function TopbarImpl({ route }: TopbarProps) {
   const workspaceName = activeWorkspace?.name?.trim() || (t.lang === "ar" ? "نشاطك التجاري" : "Your business");
   const isAr = t.lang === "ar";
   const title = TITLES[route][t.lang];
+  // SP-18: hidden when GET /copilot/status says the copilot is unavailable.
+  const copilot = useCopilotAvailable();
 
   return (
     <div className="topbar">
@@ -70,6 +73,16 @@ function TopbarImpl({ route }: TopbarProps) {
       >
         {t.theme === "dark" ? <IconMoon w={16} /> : <IconSun w={16} />}
       </button>
+      {copilot && (
+        <button
+          type="button"
+          className="btn ghost sm"
+          title={isAr ? "اسأل كيوي (Ctrl+J)" : "Ask Kewy (Ctrl+J)"}
+          onClick={() => openCopilot()}
+        >
+          ✦ {isAr ? "اسأل كيوي" : "Ask Kewy"}
+        </button>
+      )}
       <NotificationsBell />
       <button className="btn primary">
         <IconPlus w={14} />

@@ -54,6 +54,7 @@ import { BookingsModule } from "./bookings/bookings.module";
 import { CatalogImportModule } from "./catalog-import/catalog-import.module";
 import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.module";
 import { AgentModule } from "./agent/agent.module";
+import { CopilotModule } from "./copilot/copilot.module";
 
 import { EmailModule } from "./email/email.module";
 import { AuditModule } from "./audit/audit.module";
@@ -95,6 +96,8 @@ import { MembersModule } from "./members/members.module";
     KnowledgeSourcesModule,
     // SP-20: agent settings (the reply gate lives in IntegrationsModule).
     AgentModule,
+    // SP-18: the in-app copilot ("Ask Kewy").
+    CopilotModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,

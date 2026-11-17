@@ -1,4 +1,5 @@
 import { PAYMENT_OVERDUE } from "@/lib/paymentLock";
+import { createSseParser, STREAM_LOST, TERMINAL_EVENTS } from "./eventStream";
 
 // Tiny typed fetch wrapper. Reads JWT from localStorage and attaches it.
 // Throws ApiError on non-2xx so hooks can show error states.
@@ -343,6 +344,92 @@ async function postStream<T>(path: string, body?: unknown): Promise<T> {
   return result;
 }
 
+export interface EventStreamOpts {
+  /** Every frame as it arrives (`data` parsed as JSON when it parses, else the raw string). */
+  onEvent: (event: string, data: unknown) => void;
+  signal?: AbortSignal;
+}
+
+/**
+ * The reading rule of `postEventStream` over already-decoded chunks: frames
+ * go to `onEvent` until the first terminal event (`done` / `error`); a stream
+ * that ends without one gets a synthetic `error {code: "copilot.stream_lost"}`.
+ * Exported for the parser tests.
+ */
+export function createEventReader(onEvent: (event: string, data: unknown) => void) {
+  let terminal: "done" | "error" | null = null;
+  const parser = createSseParser((f) => {
+    if (terminal) return;
+    if (TERMINAL_EVENTS.has(f.event)) terminal = f.event as "done" | "error";
+    onEvent(f.event, safeJson(f.data));
+  });
+  return {
+    push(chunk: string) {
+      if (!terminal) parser.push(chunk);
+    },
+    get terminal() {
+      return terminal;
+    },
+    /** The stream ended (or was cut): returns the terminal event, delivering the synthetic error when there was none. */
+    end(): "done" | "error" {
+      parser.end();
+      if (!terminal) {
+        terminal = "error";
+        onEvent("error", { code: STREAM_LOST });
+      }
+      return terminal;
+    },
+  };
+}
+
+/**
+ * SP-18: POST that reads a stream of named SSE events (a copilot turn).
+ * Pre-flush refusals (400/403/404/409/429/503) throw ApiError like
+ * `request()`, before any event. Then each frame goes to `onEvent` as it
+ * arrives; heartbeats are skipped. Every stream ends with `done` or `error`:
+ * one cut early (network, server restart, abort) gets the synthetic
+ * `copilot.stream_lost` error, so the caller re-reads the session (the turn
+ * keeps running on the server and its answer is stored).
+ */
+async function postEventStream(path: string, body: unknown, opts: EventStreamOpts): Promise<"done" | "error"> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "text/event-stream" };
+  const tok = tokenStore.get();
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  // A forced sign-out aborts the stream with every other request.
+  const link = linkedSignal(opts.signal);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body ?? {}), signal: link.signal });
+  } catch (e) {
+    link.done();
+    throw e;
+  }
+  if (!res.ok || !res.body) {
+    link.done();
+    const raw = await res.text();
+    const data = raw ? safeJson(raw) : undefined;
+    // Same token-guarded session-expiry path as request(): only a 401 for the current token signs out.
+    if (res.status === 401 && tok) notifyUnauthorized(tok, unauthorizedReason(data) ?? "auth.session_expired");
+    throw errorFromBody(data, res.status);
+  }
+  const reader = createEventReader(opts.onEvent);
+  const stream = res.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (!reader.terminal) {
+      const chunk = await stream.read();
+      if (chunk.done) break;
+      reader.push(decoder.decode(chunk.value, { stream: true }));
+    }
+  } catch {
+    /* cut: end() delivers the synthetic error */
+  } finally {
+    link.done();
+    stream.cancel().catch(() => undefined);
+  }
+  return reader.end();
+}
+
 export const api = {
   get:        <T,>(path: string, signal?: AbortSignal) => request<T>(path, { method: "GET", signal }),
   getWithHeaders: <T,>(path: string, signal?: AbortSignal) => getWithHeaders<T>(path, signal),
@@ -356,4 +443,5 @@ export const api = {
   // SP-26: DELETE …/members/:userId takes an optional `{handoverTo}` body.
   delete:     <T,>(path: string, body?: unknown) => request<T>(path, { method: "DELETE", body }),
   postStream: <T,>(path: string, body?: unknown) => postStream<T>(path, body),
+  postEventStream: (path: string, body: unknown, opts: EventStreamOpts) => postEventStream(path, body, opts),
 };
