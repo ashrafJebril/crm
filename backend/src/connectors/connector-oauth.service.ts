@@ -9,7 +9,7 @@ import { connectorError } from "./connector-errors";
 import { openJson, sealJson, trustedServer, type StoredToken } from "./connector-credentials";
 import { CALENDLY_SCOPES, connectorRedirectUri, hubspotClient } from "./connector-oauth-config";
 import { ConnectorOAuthHttp, type OAuthClient } from "./connector-oauth-http";
-import { NonceStore, newNonce, signConnectorState, verifyConnectorState } from "./connector-oauth-state";
+import { NonceStore, newNonce, signConnectorState, verifySignedState, type VerifiedState } from "./connector-oauth-state";
 import { ConnectorAgentService } from "./connector-agent.service";
 import { ConnectorCallRecorder } from "./connector-call.recorder";
 import { ConnectorStatusService } from "./connector-status.service";
@@ -102,7 +102,7 @@ export class ConnectorOAuthService {
         where: { id: row.id, workspaceId },
         data: { oauthPendingEnc: sealJson({ verifier, nonce }), oauthPendingExpiresAt: new Date(this.now().getTime() + OAUTH_STATE_TTL_MS) },
       });
-      const state = signConnectorState(this.jwt, { workspaceId, userId, connectorId: row.id, nonce });
+      const state = signConnectorState(this.jwt, { workspaceId, userId, connectorId: row.id, nonce, t: this.now().getTime() });
       const auth = new URL(meta.authorization_endpoint);
       auth.searchParams.set("response_type", "code");
       auth.searchParams.set("client_id", client.client_id);
@@ -122,14 +122,35 @@ export class ConnectorOAuthService {
 
   /** Never throws: every outcome is a hand-off page. */
   async callback(q: { code?: string; state?: string; error?: string }): Promise<CallbackOutcome> {
+    const signed = verifySignedState(this.jwt, q.state);
+    if (!signed) return { connected: false, connectorId: null, reason: "invalid_state" };
+    // A duplicate arriving while the first callback for this state is still
+    // running (same machine) waits for it, then re-reads the status.
+    const running = this.inflight.get(signed.nonce);
+    if (running) await running.catch(() => undefined);
+    const p = this.complete(q, signed);
+    if (!running) {
+      this.inflight.set(signed.nonce, p);
+      void p.finally(() => this.inflight.delete(signed.nonce)).catch(() => undefined);
+    }
+    return p;
+  }
+
+  private readonly inflight = new Map<string, Promise<CallbackOutcome>>();
+
+  private async complete(q: { code?: string; state?: string; error?: string }, st: VerifiedState): Promise<CallbackOutcome> {
     const out = (connectorId: string | null, reason: string | null): CallbackOutcome => ({ connected: reason === null, connectorId, reason });
-    const st = verifyConnectorState(this.jwt, q.state, this.nonces);
-    if (!st) return out(null, "invalid_state");
     const row = (await this.prisma.connector.findFirst({ where: { id: st.connectorId, workspaceId: st.workspaceId } })) as Row | null;
     if (!row || row.authKind !== "oauth") return out(null, "invalid_state");
+    // Review: a duplicate callback for the same state (a double load, two
+    // tabs) that loses the race reports the winner's result: "connected" when
+    // the connector is now active from a connect made after this state was
+    // issued, never a misleading failure.
+    const lost = async (reason: string) => (await this.connectedSince(row.id, row.workspaceId, st)) ? out(row.id, null) : out(row.id, reason);
+    if (!this.nonces.use(st.nonce, (st.exp ?? 0) * 1000)) return lost("invalid_state");
     const pending = openJson<{ verifier?: string; nonce?: string }>(row.oauthPendingEnc);
     const live = !!row.oauthPendingExpiresAt && row.oauthPendingExpiresAt.getTime() > this.now().getTime();
-    if (!pending?.verifier || pending.nonce !== st.nonce || !live) return out(row.id, "invalid_state");
+    if (!pending?.verifier || pending.nonce !== st.nonce || !live) return lost("invalid_state");
     const clearPending = () =>
       this.prisma.connector.updateMany({ where: { id: row.id, workspaceId: row.workspaceId }, data: { oauthPendingEnc: null, oauthPendingExpiresAt: null } });
     if (q.error || !q.code || q.code.length > 4096) {
@@ -155,6 +176,7 @@ export class ConnectorOAuthService {
     try {
       set = await this.http.exchange(meta, client, { code: q.code, verifier: pending.verifier, redirectUri: connectorRedirectUri() }, trusted);
     } catch (e) {
+      if (await this.connectedSince(row.id, row.workspaceId, st)) return out(row.id, null);
       await clearPending();
       this.logger.warn(`connector oauth exchange failed (${row.provider}) ws=${row.workspaceId}: ${(e as Error).name}`);
       return out(row.id, "exchange_failed");
@@ -180,6 +202,16 @@ export class ConnectorOAuthService {
     await this.status.set(row, "active", null);
     await this.afterConnect(row.id, row.workspaceId, set.access_token);
     return out(row.id, null);
+  }
+
+  /** Re-read: is the connector active from a connect made since this state was issued? */
+  private async connectedSince(id: string, workspaceId: string, st: VerifiedState): Promise<boolean> {
+    const fresh = (await this.prisma.connector.findFirst({ where: { id, workspaceId }, select: { status: true, connectedAt: true } })) as {
+      status: string;
+      connectedAt: Date | null;
+    } | null;
+    if (typeof st.t !== "number") return false;
+    return !!fresh && fresh.status === "active" && !!fresh.connectedAt && fresh.connectedAt.getTime() >= st.t;
   }
 
   /** Scan (keeping switches on a reconnect), probe the label, provision on l. Best effort. */

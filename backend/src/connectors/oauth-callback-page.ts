@@ -23,7 +23,7 @@ export function callbackPage(outcome: CallbackOutcome, frontendOrigin: string, f
   const html =
     `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>${title}</title></head>` +
     `<body><p>${esc(title)}. You can close this window.</p><p dir="rtl">${outcome.connected ? "تم الربط" : "لم يتم الربط"}. يمكنك إغلاق هذه النافذة.</p>` +
-    `<p><a href="${esc(fallbackUrl)}">Continue</a></p><script nonce="${nonce}">${script.replace(/</g, "\u003c")}</script></body></html>`;
+    `<p><a href="${esc(fallbackUrl)}">Continue</a></p><script nonce="${nonce}">${script.replace(/</g, "\\u003c")}</script></body></html>`;
   return {
     html,
     headers: {

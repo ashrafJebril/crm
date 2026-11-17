@@ -36,11 +36,17 @@ describe("connector oauth", () => {
     const foreign = signConnectorState(w.jwt, { workspaceId: WS2, userId: "u_owner", connectorId: c.id, nonce: newNonce() });
     expect(await outcome(foreign)).toMatchObject({ reason: "invalid_state" });
     nothingStored(c);
-    // The real state works once; the replay is refused.
+    // The real state works once. A duplicate of it never exchanges again; it
+    // reports the winner's result (connected) instead of a misleading failure.
     expect(await outcome(s.state)).toEqual({ connected: true, connectorId: c.id, reason: null });
     const tokenBefore = c.tokenEnc;
-    expect(await outcome(s.state)).toMatchObject({ connected: false, reason: "invalid_state" });
+    const exchanges = w.vendor.requests.filter((r) => r.form.grant_type === "authorization_code").length;
+    expect(await outcome(s.state)).toEqual({ connected: true, connectorId: c.id, reason: null });
     expect(c.tokenEnc).toBe(tokenBefore);
+    expect(w.vendor.requests.filter((r) => r.form.grant_type === "authorization_code")).toHaveLength(exchanges);
+    // A replay after the connector broke again is refused.
+    c.status = "needs_reconnect";
+    expect(await outcome(s.state)).toMatchObject({ connected: false, reason: "invalid_state" });
   });
 
   it("callback rechecks permission", async () => {

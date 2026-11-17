@@ -13,6 +13,8 @@ export interface ConnectorOAuthState {
   connectorId: string;
   nonce: string;
   purpose: string;
+  /** When start issued it (ms, the service clock): a lost duplicate callback compares connectedAt with it. */
+  t?: number;
 }
 
 /** HKDF-derived key under its own label (the SP-15 pattern). */
@@ -52,16 +54,25 @@ export class NonceStore {
   }
 }
 
-/** Signature, audience, expiry, purpose and shape; then the nonce is used up. */
-export function verifyConnectorState(jwt: JwtService, state: string | undefined, nonces: NonceStore): ConnectorOAuthState | null {
+export type VerifiedState = ConnectorOAuthState & { exp?: number; iat?: number };
+
+/** Signature, audience, expiry, purpose and shape (the nonce is NOT used up). */
+export function verifySignedState(jwt: JwtService, state: string | undefined): VerifiedState | null {
   if (!state || state.length > 4096) return null;
-  let p: ConnectorOAuthState & { exp?: number };
+  let p: VerifiedState;
   try {
-    p = jwt.verify<ConnectorOAuthState & { exp?: number }>(state, { secret: connectorStateSecret(), audience: CONNECTOR_STATE_AUDIENCE });
+    p = jwt.verify<VerifiedState>(state, { secret: connectorStateSecret(), audience: CONNECTOR_STATE_AUDIENCE });
   } catch {
     return null;
   }
   if (p?.purpose !== CONNECTOR_STATE_PURPOSE) return null;
   for (const k of ["workspaceId", "userId", "connectorId", "nonce"] as const) if (typeof p[k] !== "string" || !p[k]) return null;
+  return p;
+}
+
+/** Signature, audience, expiry, purpose and shape; then the nonce is used up. */
+export function verifyConnectorState(jwt: JwtService, state: string | undefined, nonces: NonceStore): ConnectorOAuthState | null {
+  const p = verifySignedState(jwt, state);
+  if (!p) return null;
   return nonces.use(p.nonce, (p.exp ?? 0) * 1000) ? p : null;
 }

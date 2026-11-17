@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { safeFetch, SafeFetchError, type SafeFetchDeps } from "./safe-fetch";
+import { parseConnectorUrl, safeFetch, SafeFetchError, type SafeFetchDeps } from "./safe-fetch";
 
 /**
  * SP-23: every OAuth HTTP call (discovery, DCR, token, refresh, revoke) goes
@@ -88,8 +88,21 @@ export class ConnectorOAuthHttp {
     const res = await this.call(`${asBase}/.well-known/oauth-authorization-server`, { method: "GET", trusted });
     if (res.status !== 200) throw new OAuthHttpError("bad_response");
     const m = json(res.body);
-    const authorization_endpoint = str(m.authorization_endpoint);
-    const token_endpoint = str(m.token_endpoint);
+    // Review: the endpoints are vendor data and the authorize URL goes to the
+    // browser: each must pass the URL policy (https, public host; a loopback
+    // stub only for a trusted curated server outside production) before it is
+    // stored. `javascript:`, `http:`, private hosts… are refused.
+    const endpoint = (v: unknown): string | undefined => {
+      const raw = str(v);
+      if (!raw) return undefined;
+      try {
+        return parseConnectorUrl(raw, { trusted }).toString();
+      } catch {
+        throw new OAuthHttpError("unsafe_url");
+      }
+    };
+    const authorization_endpoint = endpoint(m.authorization_endpoint);
+    const token_endpoint = endpoint(m.token_endpoint);
     if (!authorization_endpoint || !token_endpoint) throw new OAuthHttpError("bad_response");
     const methods = Array.isArray(m.code_challenge_methods_supported) ? m.code_challenge_methods_supported.filter((x): x is string => typeof x === "string") : undefined;
     // OAuth 2.1: S256 or nothing.
@@ -98,8 +111,8 @@ export class ConnectorOAuthHttp {
       issuer: str(m.issuer),
       authorization_endpoint,
       token_endpoint,
-      registration_endpoint: str(m.registration_endpoint),
-      revocation_endpoint: str(m.revocation_endpoint),
+      registration_endpoint: endpoint(m.registration_endpoint),
+      revocation_endpoint: endpoint(m.revocation_endpoint),
       code_challenge_methods_supported: methods,
     };
   }
