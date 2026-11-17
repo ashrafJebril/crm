@@ -266,18 +266,18 @@ What we take and what we don't:
 11. **Size.** S: 2 build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision below before Task 1 starts. The migration `20261118150000_org_branding` needs explicit user approval before it runs.*
-- **R1** (one brand colour): _pending_
-- **R2** (PNG/JPEG/WebP ≤ 2 MB, no SVG/GIF): _pending_
-- **R3** (brand colour on workspace marks only; app accent unchanged): _pending_
-- **R4** (logo in the sidebar card and switcher; breadcrumb shows the workspace name): _pending_
-- **R5** (add `Media.purpose`; library and `list_photos` show only `purpose IS NULL`): _pending_
-- **R6** (public current-logo route, immutable cache): _pending_
-- **R7** (logo uploads on choose; save bar for the other fields): _pending_
-- **R8** (fill the SP-26 email brand; skip if SP-26 has not shipped): _pending_
-- **R9** (base on the SP-28 ship commit; Task 1 owns the schema): _pending_
-- **R10** (verification on the production DB, local storage; migration needs explicit user approval): _pending_
-- **R11** (size S; 2 build tasks + verification): _pending_
+*Decided 2026-11-17 by the controller: R1–R11 accepted as proposed. R8: SP-26 has shipped, so fill its email brand. R9: SP-28 is still in review, so base on the current feat/tkana-parity head; the migration name already sorts after SP-28’s 20261118140000 and pins only folders present in the base (SHA in the ledger). The migration `20261118150000_org_branding` needs explicit user approval before it runs.*
+- **R1** (one brand colour): accepted
+- **R2** (PNG/JPEG/WebP ≤ 2 MB, no SVG/GIF): accepted
+- **R3** (brand colour on workspace marks only; app accent unchanged): accepted
+- **R4** (logo in the sidebar card and switcher; breadcrumb shows the workspace name): accepted
+- **R5** (add `Media.purpose`; library and `list_photos` show only `purpose IS NULL`): accepted
+- **R6** (public current-logo route, immutable cache): accepted
+- **R7** (logo uploads on choose; save bar for the other fields): accepted
+- **R8** (fill the SP-26 email brand; skip if SP-26 has not shipped): accepted
+- **R9** (base on the SP-28 ship commit; Task 1 owns the schema): accepted
+- **R10** (verification on the production DB, local storage; migration needs explicit user approval): accepted
+- **R11** (size S; 2 build tasks + verification): accepted
 
 ---
 
