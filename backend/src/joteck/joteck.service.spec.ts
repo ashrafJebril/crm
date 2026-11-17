@@ -11,22 +11,34 @@ describe("JoteckService.patchWorkspace — Kewy package changes", () => {
   let svc: JoteckService;
 
   beforeEach(() => {
-    raw = { workspace: { update: jest.fn().mockResolvedValue(row), findUnique: jest.fn() } };
+    raw = { workspace: { update: jest.fn().mockResolvedValue(row), updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUnique: jest.fn() } };
     svc = new JoteckService({ raw } as never, {} as never, { ensureQuietly: jest.fn() } as never);
   });
 
   it("stores the Kewy package name as the plan, with modules and status", async () => {
     await svc.patchWorkspace("ws-1", { plan: " Ultimate ", enabledModules: ["inbox"], active: true });
-    // SP-28: Kewy's plan is also remembered as kewyPlan (the override's way back).
-    expect(raw.workspace.update.mock.calls[0][0].data).toEqual({ plan: "Ultimate", kewyPlan: "Ultimate", enabledModules: ["inbox"], suspendedAt: null });
+    // SP-28: the plan is one conditional write (no override); Kewy's plan is
+    // always remembered as kewyPlan (the override's way back).
+    expect(raw.workspace.updateMany).toHaveBeenCalledWith({ where: { id: "ws-1", planOverriddenAt: null }, data: { plan: "Ultimate" } });
+    expect(raw.workspace.update.mock.calls[0][0].data).toEqual({ kewyPlan: "Ultimate", enabledModules: ["inbox"], suspendedAt: null });
   });
 
-  it("admin override survives a Kewy plan push (SP-28 R8)", async () => {
-    raw.workspace.findUnique.mockResolvedValue({ planOverriddenAt: new Date("2026-11-01T00:00:00Z") });
+  it("admin override survives a Kewy plan push, even one set mid-push (SP-28 R8)", async () => {
+    // The override lands between the push's reads: the conditional write sees it.
+    const db = { plan: "pro", planOverriddenAt: new Date("2026-11-01T00:00:00Z") as Date | null, kewyPlan: null as string | null };
+    raw.workspace.updateMany.mockImplementation(async ({ where, data }: any) => {
+      if (where.planOverriddenAt === null && db.planOverriddenAt !== null) return { count: 0 };
+      Object.assign(db, data);
+      return { count: 1 };
+    });
+    raw.workspace.update.mockImplementation(async ({ data }: any) => ({ ...row, ...Object.assign(db, data) }));
     await svc.patchWorkspace("ws-1", { plan: "Basic" });
-    const data = raw.workspace.update.mock.calls[0][0].data;
-    expect(data).toEqual({ kewyPlan: "Basic" });
-    expect(data).not.toHaveProperty("plan");
+    expect(db).toMatchObject({ plan: "pro", kewyPlan: "Basic" });
+    expect(raw.workspace.update.mock.calls[0][0].data).not.toHaveProperty("plan");
+    // No override: the push applies.
+    db.planOverriddenAt = null;
+    await svc.patchWorkspace("ws-1", { plan: "Gold" });
+    expect(db).toMatchObject({ plan: "Gold", kewyPlan: "Gold" });
   });
 
   it("rejects an empty plan", async () => {
@@ -37,6 +49,7 @@ describe("JoteckService.patchWorkspace — Kewy package changes", () => {
   it("leaves the plan alone when Kewy doesn't send one", async () => {
     await svc.patchWorkspace("ws-1", { active: false });
     expect(raw.workspace.update.mock.calls[0][0].data).not.toHaveProperty("plan");
+    expect(raw.workspace.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -48,6 +61,11 @@ describe("AdminService plan override (SP-28 R8)", () => {
       workspace: {
         findUnique: jest.fn(async () => ({ ...db })),
         update: jest.fn(async ({ data }: any) => Object.assign(db, data)),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          if (where.planOverriddenAt === null && db.planOverriddenAt) return { count: 0 };
+          Object.assign(db, data);
+          return { count: 1 };
+        }),
       },
     };
     const plans = { invalidate: jest.fn() };

@@ -10,6 +10,7 @@ import { ConversationsService } from "../conversations/conversations.service";
 import { ChannelResolver } from "../channels/channel-resolver.service";
 import { ChannelTransportRegistry } from "../channels/channel-transport";
 import { ZernioController } from "./zernio.controller";
+import { UsageService } from "../billing/usage.service";
 
 const WS = "ws-1";
 const CONV = "conv-1";
@@ -100,6 +101,37 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
       "ai",
       undefined,
     );
+  });
+
+  it("a Zernio AI reply records one ai_reply usage event (SP-28)", async () => {
+    const ask = jest.fn().mockResolvedValue({ answer: "We offer property management." });
+    const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+    send.mockResolvedValue({ ok: true, id: "z-1", messageId: "msg-ai-1" } as never);
+    const meter = makeFakePrisma({ usageEvent: [] });
+    const usage = new UsageService(meter as never);
+    (svc as unknown as { usage: UsageService }).usage = usage;
+    const record = jest.spyOn(usage, "record");
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+    // The same stored message delivered twice (a redelivered webhook) still counts once.
+    await usage.record(WS, { meter: "ai_reply", sourceKind: "message", sourceId: "msg-ai-1" });
+
+    expect(record).toHaveBeenCalledWith(WS, { meter: "ai_reply", sourceKind: "message", sourceId: "msg-ai-1" });
+    expect((meter.db as any).usageEvent).toHaveLength(1);
+    expect((meter.db as any).usageEvent[0]).toMatchObject({ workspaceId: WS, meter: "ai_reply", sourceId: "msg-ai-1" });
+  });
+
+  it("an undelivered Zernio AI reply is not metered", async () => {
+    const ask = jest.fn().mockResolvedValue({ answer: "hi" });
+    const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
+    send.mockRejectedValue(new Error("channel down"));
+    const usage = new UsageService(makeFakePrisma({ usageEvent: [] }) as never);
+    (svc as unknown as { usage: UsageService }).usage = usage;
+    const record = jest.spyOn(usage, "record");
+    await svc.handleEvent(inbound as never);
+    await settle();
+    expect(record).not.toHaveBeenCalled();
   });
 
   it("does not ask or send for a payment-locked workspace, but still stores the message", async () => {

@@ -199,9 +199,9 @@ export class JoteckService {
       if (!plan || plan.length > 60) throw new BadRequestException("plan must be 1-60 characters");
       // SP-28 (R8): Kewy's plan is always remembered; it becomes the plan
       // unless a super-admin override is in place (cleared from the admin).
+      // One conditional write: an override set mid-push is never overwritten.
       data.kewyPlan = plan;
-      const cur = await this.prisma.raw.workspace.findUnique({ where: { id }, select: { planOverriddenAt: true } });
-      if (!cur?.planOverriddenAt) data.plan = plan;
+      await this.prisma.raw.workspace.updateMany({ where: { id, planOverriddenAt: null }, data: { plan } });
     }
     const updated = await this.prisma.raw.workspace.update({
       where: { id },

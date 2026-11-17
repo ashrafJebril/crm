@@ -12,6 +12,7 @@ import { normalizeReaction } from "./message-reaction";
 import { randomBytes } from "crypto";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PaymentLockService } from "../billing/payment-lock.service";
+import { UsageService } from "../billing/usage.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
@@ -106,6 +107,8 @@ export class ZernioService {
     // SP-20: every automatic reply asks the gate first (IntegrationsModule
     // provides it; hand-built specs that do not pass one keep today's rules).
     @Optional() private readonly replyGate?: AgentReplyGate,
+    // SP-28: usage metering (global BillingModule); absent in hand-built specs.
+    @Optional() private readonly usage?: UsageService,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.tracker = tracker ?? new RecipientTrackerService(prisma);
@@ -1155,7 +1158,7 @@ export class ZernioService {
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    await this.prisma.message.create({
+    const stored = await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId: conv.id,
@@ -1186,7 +1189,8 @@ export class ZernioService {
     // Replying counts as making contact — moves the auto-created ticket
     // new → contacted (no-op when nothing sits in 'new'). Never throws.
     await this.pipelineAutomation.onOutboundReply(workspaceId, conv.contactId);
-    return { ok: true, id };
+    // SP-28: `messageId` is the stored Message row (the l auto-reply meters it).
+    return { ok: true, id, messageId: (stored as { id?: string } | null)?.id ?? null };
   }
 
   /**
@@ -2041,8 +2045,9 @@ export class ZernioService {
       // Message row (with real delivery metadata) plus the conversation
       // preview update — tagged "ai" so the thread still reads as the
       // agent's own turn instead of a staff reply.
+      let sent: { messageId?: string | null } | undefined;
       try {
-        await this.sendInDbConversation(
+        sent = await this.sendInDbConversation(
           workspaceId,
           conversationId,
           result.answer,
@@ -2062,7 +2067,7 @@ export class ZernioService {
           `l auto-reply image failed to send for conversation ${conversationId}, retrying text-only`,
           err instanceof Error ? err.stack : String(err),
         );
-        await this.sendInDbConversation(
+        sent = await this.sendInDbConversation(
           workspaceId,
           conversationId,
           result.answer,
@@ -2071,6 +2076,11 @@ export class ZernioService {
           "ai",
           undefined,
         );
+      }
+      // SP-28: meter the delivered AI reply once, by its stored Message row
+      // (the retry above replaces a failed send, it never adds a second row).
+      if (sent?.messageId) {
+        await this.usage?.record(workspaceId, { meter: "ai_reply", sourceKind: "message", sourceId: sent.messageId });
       }
     })().catch((err) => {
       this.log.error(
