@@ -32,7 +32,42 @@ export interface ToolContext {
   sources: SourceCollector;
   /** Customer-written text or outside content was read (ruling 5). */
   taint(): void;
+  /** True once the session read customer-written or outside content. */
+  isTainted(): boolean;
   emit: ToolEmit;
+}
+
+/** Where an approved write runs: as the member, at decision time (never the turn's context). */
+export interface ExecContext {
+  workspaceId: string;
+  viewer: Viewer;
+  sessionId: string;
+  now: Date;
+}
+
+/** The card the member sees (labels are keys the frontend renders bilingually). */
+export interface ActionCard {
+  title: string;
+  changes: { label: string; before?: string; after: string }[];
+}
+
+/** What a write tool proposes: the sealed args, the card, the permission it needs and its risk. */
+export interface WriteProposal {
+  args: Record<string, unknown>;
+  card: ActionCard;
+  permission: string;
+  risk: ToolRisk;
+}
+
+export type ToolRefusal = { error: string; note: string };
+export type Recheck = "ok" | "permission_revoked" | "card_outdated";
+
+/** Thrown by a write tool's apply when the record changed since the card. */
+export class CardOutdated extends Error {
+  constructor() {
+    super("card_outdated");
+    this.name = "CardOutdated";
+  }
 }
 
 export interface CopilotTool {
@@ -47,8 +82,20 @@ export interface CopilotTool {
   customerText?: string[];
   /** A short activity label, e.g. "Reading tickets". */
   label: [en: string, ar: string];
+  /** Read tools: run as the member. Write tools never execute from the loop (they propose). */
   execute(ctx: ToolContext, input: never): Promise<unknown>;
+  /** Write tools: validate as the member and build the card (no write). */
+  propose?(ctx: ToolContext, input: never): Promise<WriteProposal | ToolRefusal>;
+  /** Write tools: at approval, re-check the record as the member and that it did not change since the card. */
+  recheck?(exec: ExecContext, args: Record<string, unknown>): Promise<Recheck>;
+  /** Write tools: the write, through the existing service, as the member. May throw CardOutdated. */
+  apply?(exec: ExecContext, args: Record<string, unknown>): Promise<unknown>;
 }
+
+/** The loop never runs a write tool's execute. */
+export const WRITE_EXECUTE = async (): Promise<never> => {
+  throw new Error("write tools propose; they are applied by CopilotActionsService");
+};
 
 /** The result a tool returns when the member lacks its permission (no data). */
 export function noAccess(permission: string): { error: "no_access"; permission: string; note: string } {
