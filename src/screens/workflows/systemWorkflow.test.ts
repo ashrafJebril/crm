@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeTx } from "@/lib/tx";
-import { MANAGED_BADGE, isSystemWorkflow, newWorkflowTrigger, stepLabel, withoutNewParams } from "./systemWorkflow";
+import { MANAGED_BADGE, isSystemWorkflow, newWorkflowTrigger, stepGroup, stepLabel, triggerMeta, withoutNewParams } from "./systemWorkflow";
 
 const ARABIC = /[؀-ۿ]/;
 
@@ -26,5 +26,12 @@ describe("system workflows are locked and custom automations prefill the trigger
     expect(stepLabel("notify_staff")).toEqual(["Notify the team", "تنبيه الفريق"]);
     expect(stepLabel("send_whatsapp_template")[0]).toBeTruthy();
     expect(stepLabel("future_step")[0]).toBe("future step");
+  });
+
+  it("unknown step and trigger types fall back instead of crashing", () => {
+    expect(stepGroup("notify_staff")).toBe("message");
+    expect(stepGroup("delay")).toBe("logic");
+    expect(triggerMeta("appointment_reminder_due").en).toBe("Booking reminder");
+    expect(triggerMeta("some_future_trigger")).toEqual({ en: "some future trigger", ar: "some future trigger", descEn: "", descAr: "" });
   });
 });

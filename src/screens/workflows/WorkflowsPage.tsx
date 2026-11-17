@@ -9,10 +9,9 @@ import { IconPlus } from "@/icons";
 import type { Pipeline, Workflow, WorkflowStepGraph, WorkflowStepType } from "@/lib/types";
 import { WorkflowBuilder, newStepId } from "./WorkflowBuilder";
 import { orderedStepIds } from "./graph";
-import { TRIGGER_META } from "./stepMeta";
 import { StepIcon } from "./StepNode";
 import { instantiateTemplate, WORKFLOW_TEMPLATES, type WorkflowDraft, type WorkflowTemplate } from "./templates";
-import { AUTOMATIC_MESSAGES_HREF, MANAGED_BADGE, isSystemWorkflow, newWorkflowTrigger, stepLabel, withoutNewParams } from "./systemWorkflow";
+import { AUTOMATIC_MESSAGES_HREF, MANAGED_BADGE, isSystemWorkflow, newWorkflowTrigger, stepLabel, triggerMeta, withoutNewParams } from "./systemWorkflow";
 import "./workflows.css";
 
 const MAX_CHAIN_ICONS = 7;
@@ -42,7 +41,7 @@ function StepChain({ graph, tx }: { graph: WorkflowStepGraph; tx: Tx }) {
 }
 
 function TriggerLine({ type, tx }: { type: Workflow["triggerType"]; tx: Tx }) {
-  const trigger = TRIGGER_META[type];
+  const trigger = triggerMeta(type);
   return (
     <div className="wf-card-trigger">
       <StepIcon type="trigger" />

@@ -17,6 +17,7 @@ import { PILL_COPY, offsetChoices, offsetLabel, rowView, skippedTotal, syncedTex
 
 const PILL_TONE: Record<Pill, string> = {
   not_set_up: "",
+  not_submitted: "warn",
   paused: "warn",
   in_review: "",
   rejected: "bad",
@@ -183,7 +184,7 @@ function LifecycleRowCard({
     .filter(([, n]) => n > 0)
     .map(([reason, n]) => `${skipReasonLabel(reason, lang)} ${n}`)
     .join(lang === "ar" ? "، " : ", ");
-  const rejectedLang = v.variants.find((x) => x.pill === "rejected")?.lang ?? "ar";
+  const rejectedLang = v.variants.find((x) => x.pill === "rejected" || x.pill === "not_submitted")?.lang ?? "ar";
   const title = tx(v.title[0], v.title[1]);
 
   return (

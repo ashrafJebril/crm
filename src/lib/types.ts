@@ -1747,7 +1747,7 @@ export interface LifecycleRow {
   offsetMinutes: number | null;
   /** Customer rows only. */
   variants: { ar: TemplateVariant | null; en: TemplateVariant | null } | null;
-  blockedReason: "template_rejected" | "template_missing" | "whatsapp_not_connected" | null;
+  blockedReason: "template_rejected" | "template_missing" | "whatsapp_not_connected" | "no_approved_template" | null;
   lastSentAt: string | null;
   sent30d: number;
   /** Skipped runs of the last 30 days by reason. */

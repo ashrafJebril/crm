@@ -92,7 +92,8 @@ describe("lifecycle text", () => {
 
 describe("lifecycle errors", () => {
   it("every key carries its status and message", () => {
-    expect(LIFECYCLE_ERROR_KEYS).toHaveLength(8);
+    expect(LIFECYCLE_ERROR_KEYS).toHaveLength(9);
+    expect(lifecycleError("lifecycle.no_approved_template").getStatus()).toBe(409);
     expect(lifecycleError("lifecycle.invalid_offset").getStatus()).toBe(400);
     expect(lifecycleError("lifecycle.unknown_key").getStatus()).toBe(404);
     expect(lifecycleError("lifecycle.template_rejected", { language: "ar", reason: "X" }).getResponse()).toEqual({

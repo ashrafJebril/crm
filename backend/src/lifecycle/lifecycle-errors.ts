@@ -12,6 +12,7 @@ export type LifecycleErrorKey =
   | "lifecycle.template_rejected"
   | "lifecycle.template_missing"
   | "lifecycle.whatsapp_not_connected"
+  | "lifecycle.no_approved_template"
   | "workflows.system_locked";
 
 const STATUS: Record<LifecycleErrorKey, 400 | 404 | 409> = {
@@ -22,6 +23,8 @@ const STATUS: Record<LifecycleErrorKey, 400 | 404 | 409> = {
   "lifecycle.template_rejected": 409,
   "lifecycle.template_missing": 409,
   "lifecycle.whatsapp_not_connected": 409,
+  // Neither variant is approved: nothing could be sent (SP-24 Task 2 review I1).
+  "lifecycle.no_approved_template": 409,
   "workflows.system_locked": 409,
 };
 

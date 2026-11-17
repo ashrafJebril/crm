@@ -13,7 +13,8 @@ describe("lifecycle error copy covers every SP-24 key in both languages", () => 
   it("the key list equals the backend's STATUS record", () => {
     const status = /const STATUS[^{]*\{([^}]*)\}/.exec(backendErrors)![1];
     const keys = [...status.matchAll(/"([a-z_]+\.[a-z_]+)":/g)].map((m) => m[1]);
-    expect(keys.length).toBe(8);
+    expect(keys.length).toBe(9);
+    expect(keys).toContain("lifecycle.no_approved_template");
     expect(keys).toContain("workflows.system_locked");
     expect(Object.keys(LIFECYCLE_ERROR_COPY).sort()).toEqual([...keys].sort());
     for (const k of keys) {

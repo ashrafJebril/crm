@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LifecycleRow, TemplateVariant } from "@/lib/types";
 import { makeTx } from "@/lib/tx";
 import { REMINDER_OFFSET_MAX, REMINDER_OFFSET_MIN, REMINDER_OFFSETS } from "./lifecycleCatalog";
-import { BODY_MAX, EDIT_ISSUE_COPY, bodyParts, offersRecipients, offsetChoices, rowView, skippedTotal, syncedText, validateEdit, variantPill } from "./lifecycleRows";
+import { BODY_MAX, EDIT_ISSUE_COPY, PILL_COPY, bodyParts, offersRecipients, offsetChoices, rowView, skippedTotal, syncedText, validateEdit, variantPill } from "./lifecycleRows";
 
 const ARABIC = /[؀-ۿ]/;
 const ALL = () => true;
@@ -72,10 +72,37 @@ describe("row pill priority follows not set up, paused, in review, rejected, app
     expect(pill("rejected", "approved")).toBe("rejected");
     expect(pill("approved", "disabled")).toBe("rejected");
     expect(pill("approved", "approved")).toBe("approved");
+    expect(pill("local", "pending")).toBe("not_submitted");
+  });
+
+  it("a never-submitted (local) variant reads Not submitted, offers resubmit, and with nothing approved the switch is blocked", () => {
+    const v = rowView(
+      row({ variants: { ar: variant("ar", "local"), en: variant("en", "pending") }, blockedReason: "no_approved_template" }),
+      ALL,
+    );
+    expect(v.variants[0]).toMatchObject({ lang: "ar", pill: "not_submitted" });
+    expect(makeTx("ar")(...v.variants[0].reason!)).toMatch(ARABIC);
+    expect(v.actions).toContain("resubmit");
+    expect(v.switch).toMatchObject({ disabled: true });
+    expect(makeTx("en")(...v.switch.reason!)).toMatch(/approved/);
+    expect(makeTx("ar")(...v.switch.reason!)).toMatch(ARABIC);
+    expect(makeTx("en")(...PILL_COPY.not_submitted)).toBe("Not submitted");
+    expect(makeTx("ar")(...PILL_COPY.not_submitted)).toBe("لم يُرسل للمراجعة");
+  });
+
+  it("nothing approved blocks turning on but never turning off", () => {
+    const off = rowView(row({ variants: { ar: variant("ar", "failed"), en: variant("en", "failed") }, blockedReason: "no_approved_template" }), ALL);
+    expect(off.switch).toMatchObject({ on: false, disabled: true });
+    const on = rowView(row({ enabled: true, variants: { ar: variant("ar", "pending"), en: variant("en", "paused") }, blockedReason: "no_approved_template" }), ALL);
+    expect(on.switch).toMatchObject({ on: true, disabled: false });
+    // One approved and one in review: allowed.
+    const ok = rowView(row({ variants: { ar: variant("ar", "approved"), en: variant("en", "pending") }, blockedReason: null }), ALL);
+    expect(ok.switch.disabled).toBe(false);
   });
   it("variant pills: AR is the main variant", () => {
     expect(variantPill(null)).toBe("not_set_up");
-    expect(variantPill(variant("ar", "local"))).toBe("in_review");
+    expect(variantPill(variant("ar", "local"))).toBe("not_submitted");
+    expect(variantPill(variant("ar", "pending"))).toBe("in_review");
     expect(variantPill(variant("ar", "failed"))).toBe("rejected");
     expect(rowView(row(), ALL).variants.map((v) => v.lang)).toEqual(["ar", "en"]);
   });

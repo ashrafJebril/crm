@@ -4,8 +4,7 @@
  * `workflows.system_locked`, so the builder and list show them read-only.
  */
 import type { Workflow, WorkflowTriggerType } from "@/lib/types";
-import { STEP_META } from "./stepMeta";
-import { TRIGGER_ORDER } from "./stepMeta";
+import { STEP_META, TRIGGER_META, TRIGGER_ORDER, type StepGroup } from "./stepMeta";
 
 export const AUTOMATIC_MESSAGES_HREF = "#/settings?tab=automaticMessages";
 
@@ -19,6 +18,20 @@ export function stepLabel(type: string): [string, string] {
   if (meta) return [meta.en, meta.ar];
   if (type === "notify_staff") return ["Notify the team", "تنبيه الفريق"];
   return [type.replace(/_/g, " "), type.replace(/_/g, " ")];
+}
+
+/** A step type's colour group; an unknown type (e.g. a system-only step) reads as "message". */
+export function stepGroup(type: string): StepGroup {
+  const meta = (STEP_META as Record<string, { group: StepGroup } | undefined>)[type];
+  return meta?.group ?? "message";
+}
+
+/** A trigger's labels, with a neutral fallback for a type this build doesn't know. */
+export function triggerMeta(type: string): { en: string; ar: string; descEn: string; descAr: string } {
+  const meta = (TRIGGER_META as Record<string, { en: string; ar: string; descEn: string; descAr: string } | undefined>)[type];
+  if (meta) return meta;
+  const words = type.replace(/_/g, " ");
+  return { en: words, ar: words, descEn: "", descAr: "" };
 }
 
 /**

@@ -85,8 +85,8 @@ export function EditLifecycleMessage({ row, initialLang, tx, onClose, onSaved }:
 
         <div role="note" style={{ fontSize: 12.5, padding: "8px 12px", borderRadius: 8, background: "color-mix(in oklch, var(--warn) 10%, var(--bg-1))", border: "1px solid color-mix(in oklch, var(--warn) 40%, transparent)" }}>
           {tx(
-            "Saving sends the message to WhatsApp for review again. It stays paused until it is approved.",
-            "عند الحفظ تُرسل الرسالة إلى واتساب لمراجعتها من جديد، وتبقى متوقفة حتى تُعتمد.",
+            "Saving sends the message to WhatsApp for review again. Until it's approved, customers get the other language, or nothing if neither is approved.",
+            "عند الحفظ تُرسل الرسالة إلى واتساب لمراجعتها من جديد. إلى أن تتم الموافقة، يتلقى العملاء اللغة الأخرى، أو لا شيء إذا لم تتم الموافقة على أي منهما.",
           )}
         </div>
 

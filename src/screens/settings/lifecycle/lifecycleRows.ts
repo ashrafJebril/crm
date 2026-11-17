@@ -9,19 +9,24 @@ import { LIFECYCLE_CATALOG, REMINDER_OFFSET_MAX, REMINDER_OFFSET_MIN, REMINDER_O
 
 type Copy = [en: string, ar: string];
 
-export type Pill = "not_set_up" | "paused" | "in_review" | "rejected" | "approved";
+export type Pill = "not_set_up" | "not_submitted" | "paused" | "in_review" | "rejected" | "approved";
 export type RowAction = "setup" | "edit" | "resubmit" | "sync" | "recipient" | "offset";
 
 export const PILL_COPY: Record<Pill, Copy> = {
   not_set_up: ["Not set up", "غير مُعدّ"],
+  not_submitted: ["Not submitted", "لم يُرسل للمراجعة"],
   paused: ["Paused by WhatsApp", "أوقفه واتساب"],
   in_review: ["In review", "قيد المراجعة"],
   rejected: ["Rejected", "مرفوض"],
   approved: ["Approved", "معتمد"],
 };
 
-/** Row pill priority (as Tkana): not set up, paused, in review, rejected, approved. */
-const PRIORITY: Pill[] = ["not_set_up", "paused", "in_review", "rejected", "approved"];
+/**
+ * Row pill priority (as Tkana): not set up, paused, in review, rejected,
+ * approved. "Not submitted" (a `local` template that never reached WhatsApp)
+ * sits with not set up: neither can send.
+ */
+const PRIORITY: Pill[] = ["not_set_up", "not_submitted", "paused", "in_review", "rejected", "approved"];
 
 /** One template status → its pill. `disabled` blocks like a rejection; `failed` never reached review. */
 export function variantPill(v: TemplateVariant | null): Pill {
@@ -31,12 +36,14 @@ export function variantPill(v: TemplateVariant | null): Pill {
       return "approved";
     case "paused":
       return "paused";
+    case "local":
+      return "not_submitted";
     case "rejected":
     case "disabled":
     case "failed":
       return "rejected";
     default:
-      // pending | submitted | local
+      // pending | submitted
       return "in_review";
   }
 }
@@ -51,6 +58,7 @@ function variantReason(v: TemplateVariant | null): Copy | null {
   }
   if (v.status === "disabled") return ["Disabled by WhatsApp. Edit and resubmit it.", "عطّله واتساب. عدّله وأعد إرساله."];
   if (v.status === "failed") return ["Couldn't be sent to WhatsApp for review.", "تعذّر إرساله إلى واتساب للمراجعة."];
+  if (v.status === "local") return ["Never sent to WhatsApp for review. Resubmit it.", "لم يُرسل إلى واتساب للمراجعة. أعد إرساله."];
   if (v.status === "paused") return ["WhatsApp paused it after low-quality feedback.", "أوقفه واتساب بعد تقييمات منخفضة الجودة."];
   return null;
 }
@@ -65,6 +73,10 @@ export const BLOCKED_COPY: Record<NonNullable<LifecycleRow["blockedReason"]>, Co
     "لا يمكن التفعيل: يجب وجود الرسالتين العربية والإنجليزية. أعد الإعداد.",
   ],
   whatsapp_not_connected: ["Can't turn on: WhatsApp isn't connected.", "لا يمكن التفعيل: واتساب غير متصل."],
+  no_approved_template: [
+    "Can't turn on yet: WhatsApp hasn't approved the Arabic or the English message.",
+    "لا يمكن التفعيل بعد: لم يعتمد واتساب الرسالة العربية ولا الإنجليزية.",
+  ],
 };
 
 export interface VariantView {
@@ -100,7 +112,8 @@ export function rowView(row: LifecycleRow, can: (permission: Permission) => bool
   if (!row.setUp) statusPill = "not_set_up";
   else if (customer) statusPill = PRIORITY.find((p) => variants.some((v) => v.pill === p)) ?? "approved";
 
-  const needsFix = variants.some((v) => v.pill === "rejected");
+  // Rejected (incl. disabled/failed) and never-submitted variants are fixed by resubmitting.
+  const needsFix = variants.some((v) => v.pill === "rejected" || v.pill === "not_submitted");
   const actions: RowAction[] = [];
   if (!row.setUp && can("workflows.create")) actions.push("setup");
   if (row.setUp && customer && can("templates.update")) {

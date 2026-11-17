@@ -3,9 +3,8 @@ import type { Tx } from "@/lib/tx";
 import type { Workflow } from "@/lib/types";
 import { IconChev } from "@/icons";
 import { orderedStepIds } from "./graph";
-import { TRIGGER_META } from "./stepMeta";
 import { ExecutionsTab } from "./ExecutionsTab";
-import { AUTOMATIC_MESSAGES_HREF, MANAGED_BADGE, stepLabel } from "./systemWorkflow";
+import { AUTOMATIC_MESSAGES_HREF, MANAGED_BADGE, stepLabel, triggerMeta } from "./systemWorkflow";
 
 /**
  * SP-24: a system workflow opened from the list. Read-only: no Save, toggle
@@ -14,7 +13,7 @@ import { AUTOMATIC_MESSAGES_HREF, MANAGED_BADGE, stepLabel } from "./systemWorkf
  */
 export function LockedWorkflow({ wf, tx, lang, onClose }: { wf: Workflow; tx: Tx; lang: "en" | "ar"; onClose: () => void }) {
   const [tab, setTab] = useState<"overview" | "runs">("overview");
-  const trigger = TRIGGER_META[wf.triggerType];
+  const trigger = triggerMeta(wf.triggerType);
   const graph = wf.steps ?? { entry: null, steps: {} };
   return (
     <div className="wf-builder">

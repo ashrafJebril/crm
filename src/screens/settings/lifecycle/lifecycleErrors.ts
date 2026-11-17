@@ -52,6 +52,10 @@ export const LIFECYCLE_ERROR_COPY: Record<string, CopyFn> = {
     "WhatsApp isn't connected. Connect a number in Channels to turn on automatic messages.",
     "واتساب غير متصل. اربط رقمًا من القنوات لتفعيل الرسائل التلقائية.",
   ],
+  "lifecycle.no_approved_template": () => [
+    "WhatsApp hasn't approved the Arabic or the English message yet. Turn it on once one is approved.",
+    "لم يعتمد واتساب الرسالة العربية ولا الإنجليزية بعد. فعّلها عند اعتماد إحداهما.",
+  ],
   "workflows.system_locked": () => [
     "This workflow is managed in Automatic messages. Change it there.",
     "تُدار هذه الأتمتة من الرسائل التلقائية. عدّلها من هناك.",
