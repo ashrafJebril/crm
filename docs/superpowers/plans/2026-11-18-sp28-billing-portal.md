@@ -385,23 +385,23 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 16. **Size.** XL: 3 build tasks plus verification, plus a user-input dependency (ruling 3). **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision below before Task 1 starts. The migration `20261118140000_billing_portal` needs explicit user approval before it runs.*
-- **R1** (`billingSource` kewy|stripe; Stripe only for opted-in workspaces; Joteck ignored for Stripe ones): _pending_
-- **R2** (AdsWallet tables are the single wallet; `meter` column; ads keeps drain-to-zero): _pending_
-- **R3** (prices, allowances and feature placement from the user; placeholders hidden until set): _pending_
-- **R4** (grandfathering: gate only new features on free in v1): _pending_
-- **R5** (hosted Checkout and Customer Portal; no `@stripe/stripe-js` in v1): _pending_
-- **R6** (meter everything, charge nothing in v1): _pending_
-- **R7** (Stripe invoices and PDFs; tax configured in Stripe by the user; e-invoicing deferred; D4): _pending_
-- **R8** (admin override flag survives webhooks): _pending_
-- **R9** (immediate prorated plan changes; cancel at period end): _pending_
-- **R10** (a separate billing webhook endpoint and secret; ads endpoint kept): _pending_
-- **R11** (2-day grace, existing lock, no auto-downgrade): _pending_
-- **R12** (Stripe trials; banner only; reminder emails deferred): _pending_
-- **R13** (JOD for subscriptions): _pending_
-- **R14** (base on the SP-27 ship commit; Task 1 owns the schema): _pending_
-- **R15** (verification with a loopback Stripe stub on the production DB; migration needs explicit user approval): _pending_
-- **R16** (size XL; 3 build tasks + verification): _pending_
+*Decided 2026-11-17 by the controller, applying the user decision (Kewy/Joteck stays the billing source; no Stripe). Re-scope: Task 1 keeps only the schema/migration for usage metering and the plan catalogue (no Stripe customer, subscription, checkout, portal, invoices or billing webhook); Task 2 keeps the wallet facade, usage metering, plan gating and credit status on Kewy data; Task 3 is a read-only billing tab (plan and status from Kewy, usage, wallet, banners, not-in-plan) without checkout or invoices. R1: billingSource is kewy only, no column. R2, R4, R6, R11 accepted. R3 accepted: prices, allowances and feature placement come from the user; until set, nothing new is gated and placeholders stay hidden. R8 accepted only if the admin override applies to Kewy plans. R5, R7, R9, R10, R12, R13 not applicable (Stripe). R14: base on the SP-27 merge (SHA in the ledger). R15: verification on production with throwaway workspaces and a Joteck/Kewy stub; migration needs explicit user approval. R16: size M (2 build tasks + verification). The migration `20261118140000_billing_portal` needs explicit user approval before it runs.*
+- **R1** (`billingSource` kewy|stripe; Stripe only for opted-in workspaces; Joteck ignored for Stripe ones): decided (see note above)
+- **R2** (AdsWallet tables are the single wallet; `meter` column; ads keeps drain-to-zero): decided (see note above)
+- **R3** (prices, allowances and feature placement from the user; placeholders hidden until set): decided (see note above)
+- **R4** (grandfathering: gate only new features on free in v1): decided (see note above)
+- **R5** (hosted Checkout and Customer Portal; no `@stripe/stripe-js` in v1): not applicable (no Stripe)
+- **R6** (meter everything, charge nothing in v1): decided (see note above)
+- **R7** (Stripe invoices and PDFs; tax configured in Stripe by the user; e-invoicing deferred; D4): not applicable (no Stripe)
+- **R8** (admin override flag survives webhooks): decided (see note above)
+- **R9** (immediate prorated plan changes; cancel at period end): not applicable (no Stripe)
+- **R10** (a separate billing webhook endpoint and secret; ads endpoint kept): not applicable (no Stripe)
+- **R11** (2-day grace, existing lock, no auto-downgrade): decided (see note above)
+- **R12** (Stripe trials; banner only; reminder emails deferred): not applicable (no Stripe)
+- **R13** (JOD for subscriptions): not applicable (no Stripe)
+- **R14** (base on the SP-27 ship commit; Task 1 owns the schema): decided (see note above)
+- **R15** (verification with a loopback Stripe stub on the production DB; migration needs explicit user approval): decided (see note above)
+- **R16** (size XL; 3 build tasks + verification): decided (see note above)
 
 ---
 
