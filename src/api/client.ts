@@ -57,9 +57,82 @@ export const tokenStore = {
 // was rejected as expired/invalid — not a login attempt) tears the session
 // down and drops back to the login screen, instead of leaving every screen
 // stuck in a per-request error state.
-let onUnauthorized: (() => void) | null = null;
-export function setUnauthorizedHandler(fn: (() => void) | null): void {
+// SP-26: the handler gets the server's message key (e.g. "auth.session_expired"
+// after a password reset or 2FA change ended every session).
+let onUnauthorized: ((reason?: string) => void) | null = null;
+export function setUnauthorizedHandler(fn: ((reason?: string) => void) | null): void {
   onUnauthorized = fn;
+}
+
+// ── SP-26 review I1/M5: who may end the session ─────────────────────────
+//
+// A 401 only signs the user out when the token that request carried is still
+// the current one: requests already in flight with an old token (after a
+// change-password or 2FA on/off issued a new one) must not sign the user out
+// or clear the new token. While a session-changing call is pending, a 401 is
+// held, then fired afterwards only if the token did not change.
+let sessionChanges = 0;
+let held: { tok: string; reason?: string } | null = null;
+
+/** Runs a call that replaces the session token (change password, 2FA on/off). */
+export async function withSessionChange<T>(fn: () => Promise<T>): Promise<T> {
+  sessionChanges += 1;
+  try {
+    return await fn();
+  } finally {
+    sessionChanges -= 1;
+    if (sessionChanges === 0 && held) {
+      const h = held;
+      held = null;
+      notifyUnauthorized(h.tok, h.reason);
+    }
+  }
+}
+
+// Forced sign-out: every in-flight request is aborted, and error toasts are
+// suppressed for a moment, so a dying session doesn't spray errors (M5).
+let sessionAbort = new AbortController();
+let signedOutAt = 0;
+const SIGN_OUT_QUIET_MS = 3000;
+
+/** True right after a forced sign-out: callers' error toasts stay quiet. */
+export function recentlySignedOut(now = Date.now()): boolean {
+  return signedOutAt > 0 && now - signedOutAt < SIGN_OUT_QUIET_MS;
+}
+
+/** A 401 for the token `tok`: signs out only if `tok` is still the session. */
+export function notifyUnauthorized(tok: string, reason?: string): void {
+  if (sessionChanges > 0) {
+    held = { tok, reason };
+    return;
+  }
+  if (tokenStore.get() !== tok) return; // a stale request of an older session
+  signedOutAt = Date.now();
+  const dying = sessionAbort;
+  sessionAbort = new AbortController();
+  dying.abort();
+  onUnauthorized?.(reason);
+}
+
+/** The caller's signal joined with the session's: either aborts the fetch. */
+function linkedSignal(signal?: AbortSignal): { signal: AbortSignal; done: () => void } {
+  const ctl = new AbortController();
+  const session = sessionAbort.signal;
+  const abort = () => ctl.abort();
+  if (signal?.aborted || session.aborted) ctl.abort();
+  signal?.addEventListener("abort", abort);
+  session.addEventListener("abort", abort);
+  return {
+    signal: ctl.signal,
+    done: () => {
+      signal?.removeEventListener("abort", abort);
+      session.removeEventListener("abort", abort);
+    },
+  };
+}
+
+function unauthorizedReason(data: unknown): string | undefined {
+  return isObject(data) && typeof data.message === "string" ? data.message : undefined;
 }
 
 // Global "payment overdue" hook: any 403 { code: "PAYMENT_OVERDUE" } (including
@@ -84,24 +157,28 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   const tok = tokenStore.get();
   if (tok) headers.Authorization = `Bearer ${tok}`;
 
-  const res = await fetch(`${BASE}${path}`, {
-    method: opts.method ?? "GET",
-    headers,
-    body: opts.body === undefined ? undefined : isForm ? (opts.body as FormData) : JSON.stringify(opts.body),
-    signal: opts.signal,
-  });
+  const link = linkedSignal(opts.signal);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method: opts.method ?? "GET",
+      headers,
+      body: opts.body === undefined ? undefined : isForm ? (opts.body as FormData) : JSON.stringify(opts.body),
+      signal: link.signal,
+    });
+  } finally {
+    link.done();
+  }
 
   // A 401 on a request that DID carry a token means the session token was
   // rejected (expired/invalid). Fire the global logout hook. Login/register
   // send no token, so their "invalid credentials" 401s never reach here.
-  if (res.status === 401 && tok) {
-    onUnauthorized?.();
-  }
-
   if (res.status === 204) return undefined as T;
 
   const raw = await res.text();
   const data: unknown = raw ? safeJson(raw) : undefined;
+
+  if (res.status === 401 && tok) notifyUnauthorized(tok, unauthorizedReason(data));
 
   if (!res.ok) throw errorFromBody(data, res.status, !opts.localPaymentError);
   return data as T;
@@ -112,11 +189,18 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
 // request(), returning the parsed body with the headers.
 async function getWithHeaders<T>(path: string, signal?: AbortSignal): Promise<{ data: T; headers: Headers }> {
   const tok = tokenStore.get();
-  const res = await fetch(`${BASE}${path}`, {
-    headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-    signal,
-  });
-  if (res.status === 401 && tok) onUnauthorized?.();
+  const link = linkedSignal(signal);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+      signal: link.signal,
+    });
+  } finally {
+    link.done();
+  }
+  const raw0 = res.status === 401 && tok ? await res.clone().text() : "";
+  if (res.status === 401 && tok) notifyUnauthorized(tok, unauthorizedReason(raw0 ? safeJson(raw0) : undefined));
   const raw = await res.text();
   const data: unknown = raw ? safeJson(raw) : undefined;
   if (!res.ok) throw errorFromBody(data, res.status);
@@ -135,7 +219,7 @@ async function postBlob(path: string, body?: unknown): Promise<{ blob: Blob; fil
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401 && tok) onUnauthorized?.();
+  if (res.status === 401 && tok) notifyUnauthorized(tok);
   if (!res.ok) {
     const raw = await res.text();
     throw errorFromBody(raw ? safeJson(raw) : undefined, res.status);
@@ -152,7 +236,7 @@ async function getBlob(path: string): Promise<{ blob: Blob; filename: string | n
   const tok = tokenStore.get();
   if (tok) headers.Authorization = `Bearer ${tok}`;
   const res = await fetch(`${BASE}${path}`, { method: "GET", headers });
-  if (res.status === 401 && tok) onUnauthorized?.();
+  if (res.status === 401 && tok) notifyUnauthorized(tok);
   if (!res.ok) {
     const raw = await res.text();
     throw errorFromBody(raw ? safeJson(raw) : undefined, res.status);
@@ -204,9 +288,7 @@ async function postStream<T>(path: string, body?: unknown): Promise<T> {
 
   // Same "token was rejected" hook as request() — fires only when a token was
   // actually attached, so an unauthenticated call never trips it.
-  if (res.status === 401 && tok) {
-    onUnauthorized?.();
-  }
+  if (res.status === 401 && tok) notifyUnauthorized(tok);
 
   // Pre-flush HTTP error (e.g. 400 bad body, 402 insufficient balance) — no
   // stream ever opened; read the body and throw exactly like request().
@@ -348,7 +430,8 @@ export const api = {
   getBlob:    (path: string) => getBlob(path),
   patch:      <T,>(path: string, body?: unknown) => request<T>(path, { method: "PATCH", body }),
   put:        <T,>(path: string, body?: unknown) => request<T>(path, { method: "PUT", body }),
-  delete:     <T,>(path: string) => request<T>(path, { method: "DELETE" }),
+  // SP-26: DELETE …/members/:userId takes an optional `{handoverTo}` body.
+  delete:     <T,>(path: string, body?: unknown) => request<T>(path, { method: "DELETE", body }),
   postStream: <T,>(path: string, body?: unknown) => postStream<T>(path, body),
   postEventStream: (path: string, body: unknown, opts: EventStreamOpts) => postEventStream(path, body, opts),
 };

@@ -158,6 +158,9 @@ export class TiremallSsoService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // SP-26: sessionVersion (a reset or 2FA change ends this session too).
+      // SSO logins never ask for TOTP (ruling 9).
+      sv: user.sessionVersion ?? 0,
       workspaceId: workspace.id,
       // isSuperAdmin deliberately NOT set (same rationale as Kewy).
     });

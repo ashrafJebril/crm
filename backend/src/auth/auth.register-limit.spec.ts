@@ -8,7 +8,7 @@ describe("POST /auth/register limiter", () => {
 
   it("allows 5 registrations an hour per IP, then 429 with Retry-After; other IPs are unaffected", async () => {
     const auth = { register: jest.fn(async () => ({ token: "t" })) };
-    const c = new AuthController(auth as never);
+    const c = new AuthController(auth as never, {} as never, {} as never, {} as never);
     for (let i = 0; i < REGISTER_LIMIT.limit; i++) await c.register({} as never, req("1.2.3.4"), res() as never);
     const r = res();
     let err: unknown;

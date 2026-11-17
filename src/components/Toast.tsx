@@ -1,3 +1,4 @@
+import { recentlySignedOut } from "@/api/client";
 import {
   createContext,
   useCallback,
@@ -32,6 +33,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const seq = useRef(0);
 
   const toast = useCallback((message: string, kind: ToastKind = "info") => {
+    // SP-26 M5: requests cut off by a forced sign-out don't spray error toasts.
+    if (kind === "error" && recentlySignedOut()) return;
     const id = ++seq.current;
     setItems((prev) => [...prev, { id, message, kind }]);
     window.setTimeout(() => {

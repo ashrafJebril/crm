@@ -4,11 +4,13 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { api, setPaymentOverdueHandler, setUnauthorizedHandler, tokenStore } from "@/api/client";
-import { disconnectSocket, ensureSocket } from "@/api/realtime";
+import { disconnectSocket, ensureSocket, reconnectSocket } from "@/api/realtime";
+import { nextSessionNotice, pickActiveWorkspace } from "./sessionModel";
 import { bootPaymentOverdue } from "@/lib/paymentLock";
 import type { Workspace } from "@/lib/types";
 
@@ -20,26 +22,50 @@ export interface AuthUser {
   initials: string;
   color: string;
   isSuperAdmin?: boolean;
+  /** SP-26: TOTP two-step verification is on. */
+  twoFA?: boolean;
 }
 
-interface LoginResponse {
+/** A session as every login-like route returns it. */
+export interface LoginResponse {
   token: string;
   user: AuthUser;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
 }
 
+/** SP-26: a password login with two-step verification on. */
+export interface TwoFactorChallenge {
+  twoFactorRequired: true;
+  challenge: string;
+}
+
+export type AuthStatus = "loading" | "anonymous" | "authenticated" | "noWorkspace";
+
+/** Why the last session ended, for the sign-in page's notice. */
+export type SessionNotice = "session_expired" | null;
+
 interface AuthContextValue {
   user: AuthUser | null;
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
-  status: "loading" | "anonymous" | "authenticated";
+  /** "noWorkspace": signed in but in no workspace (removed, or invited): the
+   *  NoWorkspace page shows instead of logging out (SP-26 ruling 6). */
+  status: AuthStatus;
   /** True when the current JWT is an impersonation session (super-admin
    *  entered another tenant's workspace). UI surfaces a banner + offers exit. */
   impersonating: boolean;
   /** True once any request was refused with PAYMENT_OVERDUE; cleared on logout. */
   paymentOverdue: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  sessionNotice: SessionNotice;
+  /** Resolves with a challenge when two-step verification is on. */
+  login: (email: string, password: string) => Promise<TwoFactorChallenge | void>;
+  /** SP-26: the second step after a challenge. */
+  completeTwoFactor: (challenge: string, factor: { code?: string; recoveryCode?: string }) => Promise<void>;
+  /** SP-26: adopt a session another route returned (accept invite, 2FA enable/disable). */
+  adoptSession: (res: LoginResponse) => void;
+  /** SP-26: swap in a fresh token (change-password returns only a token). */
+  adoptToken: (token: string) => void;
   register: (input: {
     email: string;
     password: string;
@@ -76,19 +102,25 @@ function readWorkspaceIdFromToken(): string | null {
   return readTokenPayload<{ workspaceId?: string }>()?.workspaceId ?? null;
 }
 
+export function isChallenge(res: unknown): res is TwoFactorChallenge {
+  return !!res && typeof res === "object" && (res as { twoFactorRequired?: unknown }).twoFactorRequired === true;
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
-  const [status, setStatus] = useState<"loading" | "anonymous" | "authenticated">(
-    "loading",
-  );
+  const [status, setStatus] = useState<AuthStatus>("loading");
   const [paymentOverdue, setPaymentOverdue] = useState(() => bootPaymentOverdue());
   const [impersonating, setImpersonating] = useState<boolean>(
     () => readImpersonatingFromToken(),
   );
+  const [sessionNotice, setSessionNotice] = useState<SessionNotice>(null);
+  // The workspace on screen, for adoptSession (M6) without a stale closure.
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeWorkspace?.id ?? null;
 
   // Bootstrap: if we already have a token, validate it and load workspaces.
   useEffect(() => {
@@ -110,14 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setActiveWorkspace(
           (claimedId && wss.find((w) => w.id === claimedId)) || wss[0] || null,
         );
-        if (wss.length === 0) {
-          // Inconsistent state — log out to recover.
-          tokenStore.clear();
-          setUser(null);
-          setStatus("anonymous");
-        } else {
-          setStatus("authenticated");
-        }
+        // SP-26: no workspace is a page of its own (removed or invited), not a logout.
+        setStatus(wss.length === 0 ? "noWorkspace" : "authenticated");
       })
       .catch(() => {
         if (cancelled) return;
@@ -133,19 +159,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const res = await api.post<LoginResponse>("/auth/login", { email, password });
+  const adoptSession = useCallback((res: LoginResponse) => {
     tokenStore.set(res.token);
+    // SP-26 I2: the server ended the old socket for good after a 2FA change;
+    // reconnect it so the handshake carries the new token (no-op at login).
+    reconnectSocket();
     setUser(res.user);
     setWorkspaces(res.workspaces);
-    const active =
-      res.workspaces.find((w) => w.id === res.activeWorkspaceId) ??
-      res.workspaces[0] ??
-      null;
+    // M6: keep the workspace on screen unless it is no longer valid.
+    const active = pickActiveWorkspace(activeIdRef.current, res);
+    activeIdRef.current = active?.id ?? null;
     setActiveWorkspace(active);
     setImpersonating(readImpersonatingFromToken());
-    setStatus("authenticated");
+    setSessionNotice(null);
+    setStatus(active ? "authenticated" : "noWorkspace");
   }, []);
+
+  const adoptToken = useCallback((token: string) => {
+    tokenStore.set(token);
+    // The socket handshake reads tokenStore: reconnect with the new session.
+    try {
+      ensureSocket().disconnect().connect();
+    } catch {
+      /* no socket yet */
+    }
+  }, []);
+
+  const login = useCallback(async (email: string, password: string) => {
+    const res = await api.post<LoginResponse | TwoFactorChallenge>("/auth/login", { email, password });
+    if (isChallenge(res)) return res;
+    adoptSession(res);
+  }, [adoptSession]);
+
+  const completeTwoFactor = useCallback(
+    async (challenge: string, factor: { code?: string; recoveryCode?: string }) => {
+      const res = await api.post<LoginResponse>("/auth/2fa/verify", { challenge, ...factor });
+      adoptSession(res);
+    },
+    [adoptSession],
+  );
 
   const register = useCallback(
     async (input: {
@@ -155,17 +207,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       workspaceName?: string;
     }) => {
       const res = await api.post<LoginResponse>("/auth/register", input);
-      tokenStore.set(res.token);
-      setUser(res.user);
-      setWorkspaces(res.workspaces);
-      const active =
-        res.workspaces.find((w) => w.id === res.activeWorkspaceId) ??
-        res.workspaces[0] ??
-        null;
-      setActiveWorkspace(active);
-      setStatus("authenticated");
+      adoptSession(res);
     },
-    [],
+    [adoptSession],
   );
 
   const logout = useCallback(() => {
@@ -179,11 +223,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus("anonymous");
   }, []);
 
-  // Any authenticated request that comes back 401 (expired/invalid token)
-  // tears the session down via this hook — see client.ts. Registered once;
-  // logout is stable.
+  // Any authenticated request that comes back 401 (expired/invalid token,
+  // or SP-26 auth.session_expired after a reset or 2FA change) tears the
+  // session down via this hook — see client.ts. The sign-in page then says
+  // why.
   useEffect(() => {
-    setUnauthorizedHandler(() => logout());
+    setUnauthorizedHandler((reason) => {
+      // A later unrelated 401 never clears the "password or 2FA changed" notice.
+      setSessionNotice((prev) => nextSessionNotice(prev, reason));
+      logout();
+    });
     return () => setUnauthorizedHandler(null);
   }, [logout]);
 
@@ -202,9 +251,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ensureSocket().disconnect().connect();
     setUser(resp.user);
     setWorkspaces(resp.workspaces);
-    setActiveWorkspace(
-      resp.workspaces.find((w) => w.id === resp.activeWorkspaceId) ?? null,
-    );
+    const active = resp.workspaces.find((w) => w.id === resp.activeWorkspaceId) ?? null;
+    setActiveWorkspace(active);
+    if (active) setStatus("authenticated");
   }, []);
 
   const createWorkspace = useCallback(async (name: string): Promise<Workspace> => {
@@ -230,13 +279,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status,
       impersonating,
       paymentOverdue,
+      sessionNotice,
       login,
+      completeTwoFactor,
+      adoptSession,
+      adoptToken,
       register,
       logout,
       switchWorkspace,
       createWorkspace,
     }),
-    [user, workspaces, activeWorkspace, status, impersonating, paymentOverdue, login, register, logout, switchWorkspace, createWorkspace],
+    [user, workspaces, activeWorkspace, status, impersonating, paymentOverdue, sessionNotice, login, completeTwoFactor, adoptSession, adoptToken, register, logout, switchWorkspace, createWorkspace],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

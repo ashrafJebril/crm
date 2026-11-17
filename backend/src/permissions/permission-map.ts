@@ -75,6 +75,15 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /auth/workspaces": "authenticated",
   "POST /auth/switch-workspace": "authenticated",
   "POST /auth/change-password": "authenticated",
+  // SP-26 Task 2: two-step verification for the signed-in user.
+  "POST /auth/2fa/setup": "authenticated",
+  "POST /auth/2fa/enable": "authenticated",
+  "POST /auth/2fa/disable": "authenticated",
+  "POST /auth/2fa/recovery-codes": "authenticated",
+  // SP-26: the invitee's own invitations and activation by slug.
+  "GET /auth/invitations": "authenticated",
+  "POST /auth/invitations/accept": "authenticated",
+  "GET /auth/workspaces/by-slug/:slug": "authenticated",
   "GET /me/permissions": "authenticated",
   "GET /notifications": "authenticated",
   "GET /notifications/unread-count": "authenticated",
@@ -105,6 +114,13 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /auth/sso/exchange": "public",
   "POST /auth/sso/kewy": "public",
   "POST /auth/sso/tiremall": "public",
+  // SP-26: invitation preview/accept for a signed-out invitee (token-gated, rate-limited).
+  "POST /invitations/preview": "public",
+  // SP-26 Task 2: password reset and the second login step (rate-limited).
+  "POST /auth/password/forgot": "public",
+  "POST /auth/password/reset": "public",
+  "POST /auth/2fa/verify": "public",
+  "POST /invitations/accept": "public",
   "GET /health": "public",
   "POST /ads/webhook/stripe": "public",
   "POST /ai/reply": "public",
@@ -551,6 +567,15 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "PATCH /workspaces/:id/members/:userId": "members.update",
   "PATCH /workspaces/:id/members/:userId/password": "members.update",
   "DELETE /workspaces/:id/members/:userId": "members.delete",
+  // SP-26: email invitations, handover on removal and the audit log (ruling 8).
+  "GET /workspaces/:id/invitations": "members.view",
+  "POST /workspaces/:id/invitations": "members.create",
+  "POST /workspaces/:id/invitations/:invId/resend": "members.create",
+  "DELETE /workspaces/:id/invitations/:invId": "members.delete",
+  "GET /workspaces/:id/members/:userId/open-work": "members.delete",
+  "POST /workspaces/:id/members/:userId/handover": "members.update",
+  "GET /workspaces/:id/audit": "members.manage",
+  "POST /workspaces/:id/members/:userId/2fa/reset": "members.manage",
   "PATCH /workspaces/:id": "settings.update",
   // Automations (own resource; run/test endpoints are updates).
   "GET /workflows": "workflows.view",

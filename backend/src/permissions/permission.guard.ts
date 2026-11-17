@@ -6,7 +6,7 @@ import { PermissionService, type EffectiveRole } from "./permission.service";
 import { REQUIRE_PERMISSION_KEY } from "./require-permission.decorator";
 import { ROUTE_PERMISSIONS, membershipExempt, routeKeysFor, type RouteRule } from "./permission-map";
 import type { Permission } from "./catalog";
-import { blockedForImpersonation } from "./impersonation";
+import { blockedForImpersonation, blockedRouteForImpersonation } from "./impersonation";
 
 export type PermissionRequest = Request & { user?: JwtPayload; permissions?: EffectiveRole };
 
@@ -14,7 +14,7 @@ export function missingPermission(permission: string): ForbiddenException {
   return new ForbiddenException({ statusCode: 403, message: "Missing permission", permission });
 }
 
-export { blockedForImpersonation };
+export { blockedForImpersonation, blockedRouteForImpersonation };
 
 function impersonationDenied(permission: string): ForbiddenException {
   return new ForbiddenException({
@@ -53,7 +53,8 @@ export function assertRequestPermission(req: PermissionRequest, permission: Perm
  *  - "authenticated" on an own-account route (/auth/*, /admin/*, workspace
  *    list/create): pass without membership
  *  - super-admin: pass
- *  - impersonation: pass, except billing.* and campaigns.manage → 403
+ *  - impersonation: pass, except billing.* and campaigns.manage, and the
+ *    SP-26 per-route blocks (removing a member, resetting 2FA) → 403
  *  - non-member: 403 { message: "Not a member" } (also for "authenticated")
  *  - "authenticated": pass
  *  - unmapped route: 403 (fail closed; permission-map.spec prevents this)
@@ -80,6 +81,7 @@ export class PermissionGuard implements CanActivate {
       if (rule !== undefined && rule !== "authenticated" && blockedForImpersonation(rule)) {
         throw impersonationDenied(rule);
       }
+      if (blockedRouteForImpersonation(key)) throw impersonationDenied(rule ?? (key as string));
       return true;
     }
 

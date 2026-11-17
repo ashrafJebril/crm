@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { WorkspacesService } from "./workspaces.service";
 import { PermissionService, type Actor, type EffectiveRole } from "../permissions/permission.service";
 import { SYSTEM_ROLES } from "../permissions/system-roles";
+import { AuditService } from "../audit/audit.service";
+import { HandoverService } from "../members/handover.service";
 
 const sys = (key: keyof typeof SYSTEM_ROLES) => ({
   id: `r_${key}`, workspaceId: "ws1", key, isSystem: true, name: key, nameAr: key,
@@ -14,6 +16,9 @@ const custom = {
 const mem = (over: Record<string, unknown>) => ({
   id: "m1", workspaceId: "ws1", role: "owner", roleId: "r_owner", roleRef: sys("owner"), ...over,
 });
+/** SP-26: removal returns what moved; nothing here holds open work. */
+const NO_WORK = { conversations: 0, tickets: { deals: 0, leads: 0, support: 0 }, followUps: 0, contacts: 0, bookings: 0, total: 0 };
+const removed = { ok: true, moved: NO_WORK };
 const effOf = (key: keyof typeof SYSTEM_ROLES | null, perms?: Record<string, string[]>): EffectiveRole => ({
   roleId: key ? `r_${key}` : "r_c", key, name: key ?? "c", nameAr: "x",
   permissions: (perms ?? (key ? SYSTEM_ROLES[key].permissions : {})) as never,
@@ -40,6 +45,13 @@ describe("WorkspacesService member roles (SP-25)", () => {
       },
       role: { findFirst: jest.fn().mockResolvedValue(null) },
       $transaction: jest.fn().mockImplementation((fn: any) => fn(prisma)),
+      // SP-26: removal counts open work (none here) and writes an audit row.
+      conversation: { count: jest.fn().mockResolvedValue(0) },
+      ticket: { count: jest.fn().mockResolvedValue(0) },
+      activity: { count: jest.fn().mockResolvedValue(0) },
+      contact: { count: jest.fn().mockResolvedValue(0) },
+      appointment: { count: jest.fn().mockResolvedValue(0) },
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
     permissions = new PermissionService(prisma);
     effective = jest.fn().mockResolvedValue(effOf("owner")); // the caller is an owner by default
@@ -49,7 +61,9 @@ describe("WorkspacesService member roles (SP-25)", () => {
     (permissions as any).systemRoleRow = jest
       .fn()
       .mockImplementation((_ws: string, role: string) => Promise.resolve(sys(role as never)));
-    svc = new WorkspacesService(prisma, {} as never, permissions);
+    const audit = new AuditService(prisma);
+    const handover = new HandoverService(prisma, permissions, audit, { notify: jest.fn() } as never, { emitToWorkspace: jest.fn() } as never);
+    svc = new WorkspacesService(prisma, {} as never, permissions, audit, handover);
   });
 
   describe("updateMemberRole with a legacy role string", () => {
@@ -175,7 +189,7 @@ describe("WorkspacesService member roles (SP-25)", () => {
 
     it("removing a non-owner is fine and invalidates the cache", async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue(mem({ id: "m3", role: "agent", roleId: null, roleRef: null }));
-      await expect(svc.removeMember("ws1", "u3", owner)).resolves.toEqual({ ok: true });
+      await expect(svc.removeMember("ws1", "u3", owner)).resolves.toEqual(removed);
       expect(invalidate).toHaveBeenCalledWith("ws1", "u3");
     });
   });
@@ -296,7 +310,7 @@ describe("WorkspacesService member roles (SP-25)", () => {
 
     it("an admin can still manage non-owners", async () => {
       prisma.workspaceMember.findUnique.mockResolvedValue(mem({ role: "viewer", roleId: null, roleRef: null }));
-      await expect(svc.removeMember("ws1", "u1", adminActor)).resolves.toEqual({ ok: true });
+      await expect(svc.removeMember("ws1", "u1", adminActor)).resolves.toEqual(removed);
     });
   });
 
@@ -339,15 +353,15 @@ describe("WorkspacesService member roles (SP-25)", () => {
 
     it("a subset target is fine (admin over agent)", async () => {
       roles(effOf("admin"), effOf("agent"));
-      await expect(svc.removeMember("ws1", "u1", actor)).resolves.toEqual({ ok: true });
+      await expect(svc.removeMember("ws1", "u1", actor)).resolves.toEqual(removed);
       await expect(svc.updateMemberRole("ws1", "u1", { role: "viewer" }, actor)).resolves.toBeDefined();
     });
 
     it("an effective owner and a super-admin may act on anyone", async () => {
       roles(effOf("owner"), effOf("admin"));
-      await expect(svc.removeMember("ws1", "u1", actor)).resolves.toEqual({ ok: true });
+      await expect(svc.removeMember("ws1", "u1", actor)).resolves.toEqual(removed);
       roles(effOf(null, {}), effOf("admin"));
-      await expect(svc.removeMember("ws1", "u1", { userId: "s", isSuperAdmin: true })).resolves.toEqual({ ok: true });
+      await expect(svc.removeMember("ws1", "u1", { userId: "s", isSuperAdmin: true })).resolves.toEqual(removed);
     });
   });
 
@@ -389,7 +403,7 @@ describe("inviteByEmail never changes an existing user's password", () => {
     (permissions as any).systemRoleRow = jest
       .fn()
       .mockImplementation((_ws: string, role: string) => Promise.resolve(sys(role as never)));
-    svc = new WorkspacesService(prisma, kewySync, permissions);
+    svc = new WorkspacesService(prisma, kewySync, permissions, { record: jest.fn() } as never, {} as never);
   });
 
   it("invite of an existing member -> 409 and no password write", async () => {

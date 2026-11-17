@@ -264,6 +264,70 @@ export interface TeamMember {
   initials: string;
   color: string;
   email?: string;
+  /** SP-26: TOTP two-step verification on (password sign-in only). */
+  twoFA?: boolean;
+  /** SP-26: when the member joined this workspace (ISO). */
+  joinedAt?: string;
+}
+
+// ─── SP-26: invitations, handover, audit ─────────────────────────────────
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: { id: string; name: string; nameAr: string } | null;
+  status: InvitationStatus;
+  invitedBy: { id: string; name: string } | null;
+  expiresAt: string;
+  lastSentAt: string;
+  sendCount: number;
+  createdAt: string;
+}
+
+export interface InvitationList {
+  items: Invitation[];
+  counts: Record<InvitationStatus | "all", number>;
+}
+
+/** `{invitation, link?}`: `link` only when email is off (shown once). */
+export interface InvitationWrite {
+  invitation: Invitation;
+  link?: string;
+  emailSent: boolean;
+}
+
+export interface OpenWork {
+  conversations: number;
+  tickets: { deals: number; leads: number; support: number };
+  followUps: number;
+  contacts: number;
+  /** Shown, never moved; not part of `total`. */
+  bookings: number;
+  total: number;
+}
+
+export interface HandoverRefusal {
+  reason: "not_member" | "same_user" | "missing_permission";
+  resource?: "conversations" | "tickets" | "contacts";
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  actor: { id: string; name: string } | null;
+  actorKind: string;
+  targetKind: string;
+  targetId: string | null;
+  targetLabel: string | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface AuditPage {
+  items: AuditEntry[];
+  nextCursor: string | null;
 }
 
 export interface ConversationLabel {

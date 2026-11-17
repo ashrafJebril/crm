@@ -92,7 +92,7 @@ describe("C1: tenancy context A targeting workspace B", () => {
   it("controller: every member-management route refuses with 400 before any write", async () => {
     const { prisma, writes } = makePrisma();
     const perms = new PermissionService(prisma);
-    const svc = new WorkspacesService(prisma, {} as never, perms);
+    const svc = new WorkspacesService(prisma, {} as never, perms, {} as never, {} as never);
     const ctl = new WorkspacesController(svc);
     const req = { user: { sub: "actor", workspaceId: "wsA" } } as never;
     const calls: Array<() => Promise<unknown>> = [
@@ -115,7 +115,7 @@ describe("C1: tenancy context A targeting workspace B", () => {
     // is discarded and SYSTEM_ROLES.admin is what gets checked.
     const { prisma, writes } = makePrisma();
     const perms = new PermissionService(prisma);
-    const svc = new WorkspacesService(prisma, {} as never, perms);
+    const svc = new WorkspacesService(prisma, {} as never, perms, {} as never, {} as never);
     const err: any = await inA(() => svc.updateMemberRole("wsB", "u2", { role: "admin" }, { userId: "actor" })).catch((e) => e);
     expect(err).toBeInstanceOf(ForbiddenException);
     expect(err.message).toBe("Cannot grant permissions you don't have");

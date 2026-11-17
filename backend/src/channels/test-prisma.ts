@@ -437,6 +437,37 @@ const DEFAULTS: Record<string, () => Row> = {
     resourceId: null,
     version: 0,
   }),
+  // SP-26: the new User columns and the invitation/audit/reset defaults.
+  user: () => ({
+    password: null,
+    role: "Agent",
+    initials: "U",
+    color: "180",
+    status: "offline",
+    twoFA: false,
+    isSuperAdmin: false,
+    externalId: null,
+    kewyAccountId: null,
+    tiremallUserId: null,
+    totpSecretEnc: null,
+    totpPendingEnc: null,
+    totpEnabledAt: null,
+    totpLastStep: null,
+    totpRecoveryHashes: [],
+    sessionVersion: 0,
+  }),
+  invitation: () => ({
+    roleId: null,
+    lang: "ar",
+    acceptedAt: null,
+    acceptedById: null,
+    revokedAt: null,
+    invitedById: null,
+    sendCount: 1,
+    lastSentAt: new Date(),
+  }),
+  auditLog: () => ({ actorId: null, actorKind: "user", targetId: null, meta: null }),
+  passwordReset: () => ({ usedAt: null, requestedIp: null }),
 };
 
 /** SP-15 unique constraints, as Postgres enforces them (P2002). */
@@ -457,6 +488,11 @@ const SP15_UNIQUES: Record<string, Array<[string, string[]]>> = {
   agentSandboxThread: [["AgentSandboxThread_workspaceId_userId_key", ["workspaceId", "userId"]]],
   // SP-24: the once-per-occurrence claim.
   lifecycleDelivery: [["LifecycleDelivery_workflowId_entityId_occurrenceKey_key", ["workflowId", "entityId", "occurrenceKey"]]],
+  // SP-26
+  invitation: [["Invitation_tokenHash_key", ["tokenHash"]]],
+  passwordReset: [["PasswordReset_tokenHash_key", ["tokenHash"]]],
+  workspaceMember: [["WorkspaceMember_userId_workspaceId_key", ["userId", "workspaceId"]]],
+  user: [["User_email_key", ["email"]]],
 };
 /** SP-10: unique indexes over a nullable column (NULLs are distinct, as in Postgres). */
 const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
@@ -527,6 +563,15 @@ const RELATIONS: Record<string, Record<string, [string, string, "one" | "many"]>
   },
   knowledgeChunk: { source: ["knowledgeSource", "sourceId", "one"], page: ["knowledgePage", "pageId", "one"] },
   media: { knowledgeSources: ["knowledgeSource", "mediaId", "many"], copilotAttachments: ["copilotAttachment", "mediaId", "many"] },
+  // SP-26
+  workspaceMember: { user: ["user", "userId", "one"], workspace: ["workspace", "workspaceId", "one"] },
+  // SP-26 Task 2: the login include (user.memberships → workspace).
+  user: { memberships: ["workspaceMember", "userId", "many"] },
+  invitation: {
+    role: ["role", "roleId", "one"],
+    invitedBy: ["user", "invitedById", "one"],
+    workspace: ["workspace", "workspaceId", "one"],
+  },
 };
 /** SP-09: to-one relations `matches` follows as filters. */
 const RELATION_FILTERS: Record<string, string[]> = {
@@ -728,7 +773,8 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
       update: op((a) => {
         const row = rows().find((x) => matches(x, a.where, db, name));
         if (!row) throw p2025();
-        const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
+        // Like Prisma, an explicit updatedAt in `data` wins over @updatedAt (SP-26).
+        const next = { ...row, ...applyData(row, a.data), updatedAt: a.data?.updatedAt instanceof Date ? a.data.updatedAt : new Date() };
         if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
         if (name === "ticket") ticketSlaHook(db, row, next, a.data);
         nullableUniqueCheck(name, rows(), row, next);
@@ -738,7 +784,8 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
       updateMany: op((a) => {
         const hit = rows().filter((x) => matches(x, a.where, db, name));
         for (const row of hit) {
-          const next = { ...row, ...applyData(row, a.data), updatedAt: new Date() };
+          // Like Prisma, an explicit updatedAt in `data` wins over @updatedAt (SP-26).
+          const next = { ...row, ...applyData(row, a.data), updatedAt: a.data?.updatedAt instanceof Date ? a.data.updatedAt : new Date() };
           if (name === "channel") checkChannelUniques(rows().filter((x) => x !== row), next);
           if (name === "ticket") ticketSlaHook(db, row, next, a.data);
           nullableUniqueCheck(name, rows(), row, next);
@@ -828,6 +875,12 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     for (const s of db.knowledgeSource ?? []) if (s.mediaId === row.id) s.mediaId = null;
     if (db.knowledgePage) db.knowledgePage = db.knowledgePage.filter((p) => p.sourceId !== row.id);
     if (db.knowledgeChunk) db.knowledgeChunk = db.knowledgeChunk.filter((c) => c.sourceId !== row.id && c.pageId !== row.id);
+    // SP-26: Invitation.roleId / acceptedById / invitedById -> SET NULL.
+    for (const i of db.invitation ?? []) {
+      if (i.roleId === row.id) i.roleId = null;
+      if (i.acceptedById === row.id) i.acceptedById = null;
+      if (i.invitedById === row.id) i.invitedById = null;
+    }
   }
 
   /** Snapshot every row (keeping object identity) so a failed array
@@ -907,6 +960,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     workflow: model("workflow"),
     workflowRun: model("workflowRun"),
     lifecycleDelivery: model("lifecycleDelivery"),
+    // SP-26: invitations, the audit log and password resets.
+    invitation: model("invitation"),
+    auditLog: model("auditLog"),
+    passwordReset: model("passwordReset"),
+    activity: model("activity"),
     $transaction: jest.fn(async (arg: any) => {
       if (typeof arg === "function") return arg(prisma);
       const restore = snapshot();

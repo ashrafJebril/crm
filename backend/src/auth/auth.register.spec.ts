@@ -52,9 +52,9 @@ function build() {
     }),
   };
   const kewySync = { userCreated: jest.fn().mockResolvedValue(undefined) };
-  const ws = new WorkspacesService(handle as never, kewySync as never, {} as never);
+  const ws = new WorkspacesService(handle as never, kewySync as never, {} as never, { record: jest.fn() } as never, {} as never);
   const jwt = { signAsync: jest.fn().mockResolvedValue("tok") };
-  const auth = new AuthService(handle as never, jwt as never, ws, {} as never, kewySync as never);
+  const auth = new AuthService(handle as never, jwt as never, ws, {} as never, kewySync as never, {} as never, {} as never);
   return { auth, txOptions, counts: () => ({ users: users.length, workspaces: workspaces.length, members: members.length }) };
 }
 

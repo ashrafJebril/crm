@@ -28,6 +28,18 @@ export function ensureSocket(): Socket {
   return socket;
 }
 
+/**
+ * After the session token changed (2FA on/off, password change): reconnect an
+ * existing socket so its handshake reads the new token. The server ended the
+ * old connection for good (`disconnectSockets(true)`), so it never reconnects
+ * by itself. No socket yet (e.g. at login) → nothing to do.
+ */
+export function reconnectSocket(): boolean {
+  if (!socket) return false;
+  socket.disconnect().connect();
+  return true;
+}
+
 /** Tear the socket down on logout so the next login gets a fresh connection
  *  with the new JWT (and joins the new workspace's room). */
 export function disconnectSocket(): void {

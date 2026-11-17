@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from "@nestjs/common";
 import type { Request } from "express";
@@ -21,6 +22,9 @@ import {
 } from "./workspaces.dto";
 import type { JwtPayload } from "../auth/auth.guard";
 import { actorOf } from "../permissions/permission.service";
+import { HandoverService } from "../members/handover.service";
+import { TwoFactorService } from "../auth/two-factor.service";
+import { HandoverDto, RemoveMemberDto } from "../members/members.dto";
 
 type AuthedReq = Request & { user: JwtPayload };
 
@@ -29,7 +33,20 @@ export const SWITCH_WORKSPACE_FIRST = "Switch to this workspace first";
 
 @Controller("workspaces")
 export class WorkspacesController {
-  constructor(private readonly svc: WorkspacesService) {}
+  constructor(
+    private readonly svc: WorkspacesService,
+    // Always injected by Nest (WorkspacesModule imports MembersModule).
+    // Optional only so specs that build this controller by hand for the
+    // pre-SP-26 routes keep their one-argument constructor.
+    private readonly handover?: HandoverService,
+    // SP-26 Task 2: optional for the same reason as `handover`.
+    private readonly twoFactor?: TwoFactorService,
+  ) {}
+
+  private get handovers(): HandoverService {
+    if (!this.handover) throw new Error("HandoverService is not available");
+    return this.handover;
+  }
 
   /**
    * Member/settings routes: the global PermissionGuard has already checked
@@ -69,7 +86,7 @@ export class WorkspacesController {
     @Req() req: AuthedReq,
   ) {
     await this.authorize(id, req);
-    return this.svc.update(id, dto);
+    return this.svc.update(id, dto, actorOf(req.user));
   }
 
   @Get(":id/members")
@@ -98,6 +115,38 @@ export class WorkspacesController {
     return this.svc.inviteByEmail(id, dto, actorOf(req.user));
   }
 
+  // SP-26: declared before the :userId routes.
+  @Get(":id/members/:userId/open-work")
+  async openWork(
+    @Param("id") id: string,
+    @Param("userId") userId: string,
+    @Query("handoverTo") handoverTo: string | undefined,
+    @Req() req: AuthedReq,
+  ) {
+    await this.authorize(id, req);
+    return this.handovers.openWorkFor(id, userId, typeof handoverTo === "string" && handoverTo ? handoverTo : undefined);
+  }
+
+  @Post(":id/members/:userId/handover")
+  async handOver(
+    @Param("id") id: string,
+    @Param("userId") userId: string,
+    @Body() dto: HandoverDto,
+    @Req() req: AuthedReq,
+  ) {
+    await this.authorize(id, req);
+    return this.handovers.handOverOnly(id, userId, dto.handoverTo, actorOf(req.user));
+  }
+
+  /** SP-26: an owner/admin turns a member's 2FA off (members.manage;
+   *  blocked for impersonators in PermissionGuard and the service). */
+  @Post(":id/members/:userId/2fa/reset")
+  async resetTwoFactor(@Param("id") id: string, @Param("userId") userId: string, @Req() req: AuthedReq) {
+    await this.authorize(id, req);
+    if (!this.twoFactor) throw new Error("TwoFactorService is not available");
+    return this.twoFactor.resetByOwner(id, userId, actorOf(req.user));
+  }
+
   @Patch(":id/members/:userId")
   async updateMemberRole(
     @Param("id") id: string,
@@ -120,13 +169,16 @@ export class WorkspacesController {
     return this.svc.resetMemberPassword(id, userId, dto, actorOf(req.user));
   }
 
+  /** SP-26: 409 members.handover_required {openWork} while the member holds
+   *  open work and no `handoverTo` is given; else `{ ok, moved }`. */
   @Delete(":id/members/:userId")
   async removeMember(
     @Param("id") id: string,
     @Param("userId") userId: string,
     @Req() req: AuthedReq,
+    @Body() dto?: RemoveMemberDto,
   ) {
     await this.authorize(id, req);
-    return this.svc.removeMember(id, userId, actorOf(req.user));
+    return this.svc.removeMember(id, userId, actorOf(req.user), dto?.handoverTo || undefined);
   }
 }

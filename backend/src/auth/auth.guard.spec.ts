@@ -23,6 +23,8 @@ describe("AuthGuard payment lock", () => {
       { verifyAsync: jest.fn().mockImplementation(async () => payload) } as never,
       { getAllAndOverride: () => isPublic } as never,
       { isLocked } as never,
+      // SP-26: every token here is current.
+      { isCurrent: jest.fn().mockResolvedValue(true) } as never,
     );
   });
 

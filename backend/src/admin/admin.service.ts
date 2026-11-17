@@ -155,6 +155,8 @@ export class AdminService {
       role: admin.role,
       workspaceId,
       impersonating: true,
+      // SP-26: the super-admin's own sessionVersion.
+      sv: admin.sessionVersion ?? 0,
       // intentionally NOT setting isSuperAdmin — impersonation should not
       // carry super-admin powers; super-admin must log back in to exit.
     };
