@@ -135,6 +135,33 @@ function unauthorizedReason(data: unknown): string | undefined {
   return isObject(data) && typeof data.message === "string" ? data.message : undefined;
 }
 
+// SP-28: global "not in your plan" hook. Any 402 { code: "PLAN_REQUIRED",
+// feature, requiredPlan } opens one friendly notice instead of an error toast
+// (the Toast host drops error toasts for a moment after it fires).
+export const PLAN_REQUIRED_CODE = "PLAN_REQUIRED";
+export interface PlanRequiredInfo {
+  feature: string | null;
+  requiredPlan: string | null;
+}
+let onPlanRequired: ((info: PlanRequiredInfo) => void) | null = null;
+let planRequiredAt = 0;
+const PLAN_REQUIRED_QUIET_MS = 3000;
+export function setPlanRequiredHandler(fn: ((info: PlanRequiredInfo) => void) | null): void {
+  onPlanRequired = fn;
+}
+/** True right after a PLAN_REQUIRED: the caller's own error toast stays quiet. */
+export function recentlyPlanRequired(now = Date.now()): boolean {
+  return planRequiredAt > 0 && now - planRequiredAt < PLAN_REQUIRED_QUIET_MS;
+}
+function notifyPlanRequired(data: unknown): void {
+  const d = isObject(data) ? data : {};
+  planRequiredAt = Date.now();
+  onPlanRequired?.({
+    feature: typeof d.feature === "string" ? d.feature : null,
+    requiredPlan: typeof d.requiredPlan === "string" ? d.requiredPlan : null,
+  });
+}
+
 // Global "payment overdue" hook: any 403 { code: "PAYMENT_OVERDUE" } (including
 // login and the SSO exchange) lets AuthProvider swap in the lock screen.
 let onPaymentOverdue: (() => void) | null = null;
@@ -265,6 +292,7 @@ function errorFromBody(data: unknown, status: number, notifyLock = true): ApiErr
         : `HTTP ${status}`;
   const code = isObject(data) && typeof data.code === "string" ? data.code : undefined;
   if (notifyLock && status === 403 && code === PAYMENT_OVERDUE) onPaymentOverdue?.();
+  if (status === 402 && code === PLAN_REQUIRED_CODE) notifyPlanRequired(data);
   return new ApiError(message, status, code, data);
 }
 

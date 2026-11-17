@@ -14,10 +14,11 @@ import { SavedRepliesTab } from "./settings/SavedRepliesTab";
 import { ModulesTab } from "./settings/ModulesTab";
 import { LifecycleTab } from "./settings/LifecycleTab";
 import { DevelopersTab } from "./settings/developers/DevelopersTab";
+import { BillingTab } from "./settings/BillingTab";
 
-type Tab = "workspace" | "modules" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "automaticMessages" | "savedReplies" | "developers" | "profile";
+type Tab = "workspace" | "modules" | "members" | "integrations" | "aiKnowledge" | "pipelines" | "automaticMessages" | "savedReplies" | "developers" | "billing" | "profile";
 
-const TAB_IDS: readonly Tab[] = ["workspace", "modules", "members", "integrations", "aiKnowledge", "pipelines", "automaticMessages", "savedReplies", "developers", "profile"];
+const TAB_IDS: readonly Tab[] = ["workspace", "modules", "members", "integrations", "aiKnowledge", "pipelines", "automaticMessages", "savedReplies", "developers", "billing", "profile"];
 
 /**
  * The active tab lives IN THE URL (`#/settings?tab=aiKnowledge`), not in
@@ -79,6 +80,8 @@ function SettingsImpl() {
     ...(can("conversations.manage") ? [{ id: "savedReplies" as const, label: "Saved replies", ar: "الردود المحفوظة" }] : []),
     // SP-27: API keys and webhooks (api_keys is hidden from viewers).
     ...(can("api_keys.view") ? [{ id: "developers" as const, label: "Developers", ar: "المطورون" }] : []),
+    // SP-28: read-only billing over Kewy data.
+    ...(can("billing.view") ? [{ id: "billing" as const, label: "Billing", ar: "الفوترة" }] : []),
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
@@ -120,6 +123,7 @@ function SettingsImpl() {
           {tab === "automaticMessages" && can("workflows.view") && <LifecycleTab />}
           {tab === "savedReplies" && <SavedRepliesTab />}
           {tab === "developers" && can("api_keys.view") && <DevelopersTab />}
+          {tab === "billing" && can("billing.view") && <BillingTab />}
           {tab === "profile" && <ProfileTab />}
         </div>
       </div>
