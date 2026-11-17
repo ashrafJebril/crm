@@ -1,3 +1,4 @@
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { Prisma } from "@prisma/client";
 import {
   BadRequestException,
@@ -40,6 +41,8 @@ export class ConversationsService {
     // SP-19, from the global ChannelsCoreModule (unit specs may omit them).
     @Optional() channelResolver?: ChannelResolver,
     @Optional() transports?: ChannelTransportRegistry,
+    // SP-27: the webhook conversation.assigned emit (global EventEmitterModule).
+    @Optional() private readonly events?: EventEmitter2,
   ) {
     this.channels = channelResolver ?? new ChannelResolver(prisma);
     this.transports = transports ?? new ChannelTransportRegistry();
@@ -252,7 +255,7 @@ export class ConversationsService {
     }
 
     const { count, fresh } = await applyConversationAssignment(
-      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications },
+      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications, events: this.events },
       {
         workspaceId,
         conversationId: id,

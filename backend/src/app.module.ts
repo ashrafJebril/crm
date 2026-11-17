@@ -59,6 +59,7 @@ import { AuditModule } from "./audit/audit.module";
 import { AccountSecurityModule } from "./auth/account-security.module";
 import { MembersModule } from "./members/members.module";
 import { ApiKeysModule } from "./api-keys/api-keys.module";
+import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
   imports: [
@@ -121,6 +122,8 @@ import { ApiKeysModule } from "./api-keys/api-keys.module";
     NotesModule,
     RecordsModule,
     NotificationsModule,
+    // SP-27: outgoing webhooks (outbox listener, dispatcher, retention).
+    WebhooksModule,
     MediaModule,
     SocialModule,
     AdminModule,

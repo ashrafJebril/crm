@@ -10,6 +10,7 @@ import { WorkspacesController } from "../workspaces/workspaces.controller";
 import { InvitationsController } from "../members/invitations.controller";
 import { AuditController } from "../audit/audit.controller";
 import { ApiKeysController } from "../api-keys/api-keys.controller";
+import { WebhooksController } from "../webhooks/webhooks.controller";
 import type { PermissionsJson } from "./catalog";
 
 /** Review Focus 3: the system roles reproduce today's decisions. */
@@ -831,9 +832,22 @@ describe("system-role decision table", () => {
     });
   });
 
-  // SP-27: organization API keys (webhooks are added by Task 2).
+  // SP-27: organization API keys and outgoing webhooks.
   describe("SP-27 developer routes", () => {
-    const KEYS = ["GET /api-keys", "POST /api-keys", "DELETE /api-keys/:id"];
+    const KEYS = [
+      "GET /api-keys",
+      "POST /api-keys",
+      "DELETE /api-keys/:id",
+      "GET /webhooks",
+      "POST /webhooks",
+      "PATCH /webhooks/:id",
+      "DELETE /webhooks/:id",
+      "POST /webhooks/:id/rotate-secret",
+      "POST /webhooks/:id/test",
+      "GET /webhooks/:id/deliveries",
+      "GET /webhooks/:id/deliveries/:deliveryId",
+      "POST /webhooks/:id/deliveries/:deliveryId/redeliver",
+    ];
 
     it("owner and admin manage API keys", () => {
       for (const role of ["owner", "admin"] as const) {
@@ -863,6 +877,28 @@ describe("system-role decision table", () => {
       expect(err.getResponse()).toMatchObject({ message: "Not allowed during impersonation" });
       await expect(run(ApiKeysController.prototype.list)).resolves.toBe(true);
       await expect(run(ApiKeysController.prototype.revoke)).resolves.toBe(true);
+    });
+
+    it("impersonator cannot create a webhook or rotate its secret, but may list, edit, test and delete", async () => {
+      expect(blockedRouteForImpersonation("POST /webhooks")).toBe(true);
+      expect(blockedRouteForImpersonation("POST /webhooks/:id/rotate-secret")).toBe(true);
+      const perms = { effective: jest.fn(), can: jest.fn() };
+      const guard = new PermissionGuard(new Reflector(), perms as never);
+      const run = (handler: Function) =>
+        guard.canActivate({
+          getType: () => "http",
+          switchToHttp: () => ({ getRequest: () => ({ user: { sub: "support", workspaceId: "ws1", impersonating: true } }) }),
+          getHandler: () => handler,
+          getClass: () => WebhooksController,
+        } as unknown as ExecutionContext);
+      for (const h of [WebhooksController.prototype.create, WebhooksController.prototype.rotate]) {
+        const err = await run(h).catch((e) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.getResponse()).toMatchObject({ message: "Not allowed during impersonation" });
+      }
+      for (const h of [WebhooksController.prototype.list, WebhooksController.prototype.update, WebhooksController.prototype.test, WebhooksController.prototype.remove]) {
+        await expect(run(h)).resolves.toBe(true);
+      }
     });
   });
 

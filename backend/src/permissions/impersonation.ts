@@ -15,8 +15,10 @@ const BLOCKED_ROUTES = new Set([
   "DELETE /workspaces/:id/members/:userId",
   "POST /workspaces/:id/members/:userId/2fa/reset",
   // SP-27 (ruling 10): a support session must not mint credentials that
-  // outlive it. (Task 2 adds the webhook create and rotate-secret routes.)
+  // outlive it.
   "POST /api-keys",
+  "POST /webhooks",
+  "POST /webhooks/:id/rotate-secret",
 ]);
 
 export function blockedRouteForImpersonation(routeKey: string | undefined): boolean {

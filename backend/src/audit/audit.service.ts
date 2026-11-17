@@ -5,7 +5,7 @@ import { AUDIT_PAGE } from "../members/members-constants";
 import { getWorkspaceContext } from "../common/workspace-context";
 
 export type AuditActorKind = "user" | "system" | "api_key";
-export type AuditTargetKind = "member" | "invitation" | "role" | "workspace" | "user" | "api_key";
+export type AuditTargetKind = "member" | "invitation" | "role" | "workspace" | "user" | "api_key" | "webhook";
 
 /** What a writer records. `meta` must never hold a token, code, password or
  *  email body. */

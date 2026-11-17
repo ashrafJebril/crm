@@ -49,6 +49,8 @@ function matchValue(v: any, cond: any): boolean {
       const fold = (x: string) => (cond.mode === "insensitive" ? x.toLowerCase() : x);
       if (!fold(String(v ?? "")).includes(fold(String(cond.contains)))) return false;
     }
+    // SP-27: redelivery ids (`eventId: { startsWith }`).
+    if ("startsWith" in cond && !String(v ?? "").startsWith(String(cond.startsWith))) return false;
     if ("gt" in cond && !(v != null && v > cond.gt)) return false;
     if ("lt" in cond && !(v != null && v < cond.lt)) return false;
     if ("gte" in cond && !(v != null && v >= cond.gte)) return false;
