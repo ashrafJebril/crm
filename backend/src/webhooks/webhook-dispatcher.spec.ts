@@ -113,14 +113,106 @@ describe("WebhookDispatcher", () => {
     expect(JSON.parse(n.body)).toEqual({ endpointId: ep.id, url: "https://hooks.example.com/in", reason: "failing" });
     // Later ticks: the remaining rows close as endpoint_disabled, nothing is sent, no second notification.
     const sent = w.transport.calls.length;
-    w.clock.advance(9 * HOUR);
-    await d.tick();
+    for (let i = 0; i < 3; i++) {
+      w.clock.advance(9 * HOUR);
+      await d.tick(); // one row of the endpoint per tick
+    }
     expect(w.transport.calls).toHaveLength(sent);
     expect(w.db.webhookDelivery.every((r: any) => r.status === "failed")).toBe(true);
     expect(w.notifications.notify).toHaveBeenCalledTimes(1);
     // A success clears the failure clock; re-enabling resets it too.
     await w.service.update(WS, { userId: U.owner }, ep.id, { active: true });
     expect(w.db.webhookEndpoint[0]).toMatchObject({ active: true, disabledReason: null, failingSince: null });
+  });
+
+  it("a slow first delivery doesn't let a second instance claim later rows", async () => {
+    const w = webhooksWorld();
+    // Six endpoints, two rows each: one per endpoint per tick, five at a time.
+    const eps = [];
+    for (let i = 0; i < 6; i++) eps.push(await endpoint(w, ["contact.created"], WS, `https://h${i}.example.com/in`));
+    for (const ep of eps) {
+      await w.service.test(WS, ep.id);
+      await w.service.test(WS, ep.id);
+    }
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow = fakeTransport();
+    const orig = slow.request;
+    slow.request = async (req) => {
+      if (req.url.hostname === "h0.example.com") await gate; // the first endpoint hangs
+      return orig(req);
+    };
+    const a = w.dispatcher(slow);
+    const running = a.tick();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    // 25 s later (the old code wrote leases from the tick's start time), a
+    // second instance ticks: everything A claimed is still leased to A.
+    w.clock.advance(25_000);
+    const heldByA = new Set(w.db.webhookDelivery.filter((r: any) => r.leaseUntil && r.leaseUntil > w.clock.get()).map((r: any) => r.payload.id));
+    expect(heldByA.size).toBeGreaterThan(0);
+    const other = fakeTransport();
+    const b = w.dispatcher(other);
+    await b.tick();
+    // B only sends rows A never claimed.
+    for (const c of other.calls) expect(heldByA.has(c.headers["x-crm-event-id"])).toBe(false);
+    release();
+    await running;
+    // Every row was sent at most once across both instances.
+    const sends = [...slow.calls, ...other.calls].map((c) => c.headers["x-crm-event-id"]);
+    expect(new Set(sends).size).toBe(sends.length);
+    // A sent one row per endpoint in its tick.
+    expect(slow.calls.filter((c) => c.url.hostname === "h0.example.com")).toHaveLength(1);
+    expect(slow.calls).toHaveLength(6);
+  });
+
+  it("finish with a stolen lease writes nothing", async () => {
+    const w = webhooksWorld();
+    const ep = await endpoint(w);
+    await w.service.test(WS, ep.id);
+    const t = fakeTransport([500]);
+    const orig = t.request;
+    t.request = async (req) => {
+      // While A's request is in flight, its lease expires and B takes the row.
+      w.db.webhookDelivery[0].leaseUntil = new Date(w.clock.get().getTime() + 999_999);
+      return orig(req);
+    };
+    await w.dispatcher(t).tick();
+    expect(t.calls).toHaveLength(1);
+    expect(w.db.webhookDelivery[0]).toMatchObject({ status: "pending", attempts: 0, lastError: null, responseCode: null });
+    // ...and the endpoint's failure clock is not touched either.
+    expect(w.db.webhookEndpoint[0].failingSince).toBeNull();
+    // The fence itself: a write naming another lease matches nothing.
+    const d = w.dispatcher();
+    expect(await d.finish(w.db.webhookDelivery[0].id, new Date(1), { status: "failed" })).toEqual({ count: 0 });
+  });
+
+  it("a dead endpoint doesn't delay another endpoint's delivery", async () => {
+    const w = webhooksWorld();
+    const dead = await endpoint(w, ["contact.created"], WS, "https://dead.example.com/in");
+    const live = await endpoint(w, ["contact.created"], WS, "https://live.example.com/in");
+    for (let i = 0; i < 10; i++) await w.service.test(WS, dead.id);
+    await w.service.test(WS, live.id);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const t = fakeTransport();
+    const orig = t.request;
+    const started: string[] = [];
+    t.request = async (req) => {
+      started.push(req.url.hostname);
+      if (req.url.hostname === "dead.example.com") await gate;
+      return orig(req);
+    };
+    const running = w.dispatcher(t).tick();
+    for (let i = 0; i < 50 && started.length < 2; i++) await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+    // The live endpoint was served while the dead one still hangs.
+    expect(started).toEqual(expect.arrayContaining(["dead.example.com", "live.example.com"]));
+    expect(w.db.webhookDelivery.find((r: any) => r.endpointId === live.id)).toMatchObject({ status: "delivered" });
+    release();
+    await running;
+    // The dead endpoint cost exactly one attempt this tick.
+    expect(started.filter((h) => h === "dead.example.com")).toHaveLength(1);
   });
 
   it("unsafe url at send time disables immediately", async () => {

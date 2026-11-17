@@ -2,6 +2,7 @@
 import { Logger } from "@nestjs/common";
 import { endpoint, U, webhooksWorld, WS, WS2 } from "./__fixtures__/webhooks-world";
 import { WEBHOOK_ENDPOINTS_MAX } from "./webhook-events";
+import { WebhookRetentionScheduler } from "./webhook-retention.scheduler";
 import { WEBHOOK_ERROR_KEYS, webhookError, webhookErrorStatus } from "./webhook-errors";
 
 const owner = { userId: U.owner };
@@ -134,6 +135,25 @@ describe("WebhooksService", () => {
     expect(ids[2]).toBe(`${ids[0]}:r2`);
     expect(r2.deliveryId).not.toBe(r1.deliveryId);
     expect((await w.service.deliveries(WS, ep.id, { status: "delivered" })).items).toEqual([]);
+  });
+
+  it("retention deletes only final deliveries older than 30 days", async () => {
+    const w = webhooksWorld();
+    const ep = await endpoint(w);
+    const old = new Date(Date.parse("2026-10-01T00:00:00Z"));
+    const fresh = new Date(Date.parse("2026-11-17T00:00:00Z"));
+    for (const [id, status, createdAt] of [
+      ["d_old_delivered", "delivered", old],
+      ["d_old_failed", "failed", old],
+      ["d_old_pending", "pending", old],
+      ["d_new_delivered", "delivered", fresh],
+    ] as const) {
+      w.db.webhookDelivery.push({ id, workspaceId: WS, endpointId: ep.id, eventId: id, event: "ping", payload: {}, status, attempts: 1, createdAt });
+    }
+    const r = new WebhookRetentionScheduler(w.prisma);
+    r.now = w.clock.get;
+    expect(await r.sweep()).toBe(2);
+    expect(w.db.webhookDelivery.map((d: any) => d.id).sort()).toEqual(["d_new_delivered", "d_old_pending"]);
   });
 
   it("every webhook error key carries its status", () => {

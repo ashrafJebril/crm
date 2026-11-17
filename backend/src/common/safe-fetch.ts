@@ -8,7 +8,7 @@
  *    IPv4-mapped forms are refused) → UnsafeUrlError;
  *  - the socket is pinned to the checked address (DNS rebinding);
  *  - redirects are never followed: a 3xx is a failed delivery;
- *  - the response body is read to at most RESPONSE_READ_BYTES and dropped;
+ *  - the response body is never read: the socket closes once the status arrives;
  *  - a total timeout.
  *
  * Test-only loopback escape (ruling 5): `WEBHOOK_TEST_LOOPBACK=zz-verify`,
@@ -25,7 +25,6 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { isPublicAddress, redactedUrl, type ResolvedAddress } from "./public-fetch";
 
 export const SAFE_FETCH_TIMEOUT_MS = 10_000;
-export const RESPONSE_READ_BYTES = 2 * 1024;
 const ALLOWED_PORTS = new Set(["", "443", "8443"]);
 const LOOPBACK_RE = /^http:\/\/127\.0\.0\.1:\d{2,5}(\/|$)/;
 export const LOOPBACK_FLAG = "zz-verify";
@@ -153,7 +152,7 @@ export async function safePost(
 }
 
 /** Node's DNS and http(s); the socket is pinned to the checked address and
- *  the response is read to at most RESPONSE_READ_BYTES, then dropped. */
+ *  closed as soon as the response status arrives (the body is never read). */
 export function defaultSafeDeps(): SafeFetchDeps {
   return {
     async resolve(host) {
@@ -172,15 +171,11 @@ export function defaultSafeDeps(): SafeFetchDeps {
             ...(pinned ? { lookup: pinnedLookup(pinned) } : {}),
           } as https.RequestOptions,
           (res) => {
-            let read = 0;
-            res.on("data", (chunk: Buffer) => {
-              read += chunk.length;
-              if (read > RESPONSE_READ_BYTES) res.destroy();
-            });
+            // Only the status is used: close the socket at once, so a
+            // trickling body can never hold the connection (review minor).
             res.on("error", () => undefined);
-            res.on("close", () => undefined);
             resolve({ status: res.statusCode ?? 0 });
-            res.resume();
+            res.destroy();
           },
         );
         req.on("error", reject);
