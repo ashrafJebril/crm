@@ -9,7 +9,7 @@ import type { LearnApplyResult, OnboardingState } from "@/lib/types";
 import { ErrorRow, inputStyle } from "@/screens/settings/form";
 import { BUSINESS_NAME_MAX } from "@/screens/agent/agentConstants";
 import { ONBOARDING_PATH, onboardingLearn, onboardingWebsite, patchOnboarding, type OnboardingAction } from "@/screens/agent/agentApi";
-import { agentErrorText } from "@/screens/agent/agentErrors";
+import { agentErrorText, errorKey } from "@/screens/agent/agentErrors";
 import { progress, setupView, STEP_COPY, websiteReading } from "@/screens/agent/onboardingSteps";
 import { TryAgentPanel } from "@/screens/agent/TryAgentPanel";
 import { knowledgeErrorText } from "@/screens/knowledge/knowledgeErrors";
@@ -33,6 +33,7 @@ function SetupPageImpl() {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [applied, setApplied] = useState<LearnApplyResult | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   async function run<T>(fn: () => Promise<T>, onOk?: (v: T) => void, errText: (e: unknown) => string = (e) => agentErrorText(e, tx)) {
     setBusy(true);
@@ -43,6 +44,8 @@ function SetupPageImpl() {
       await q.refetch();
     } catch (e) {
       setError(errText(e));
+      // Review M2: the state changed under us (someone else drives it now, or it is no longer stuck): show the error and reload.
+      if (["onboarding.not_stuck", "onboarding.not_owner"].includes(errorKey(e))) void q.refetch();
     } finally {
       setBusy(false);
     }
@@ -55,6 +58,50 @@ function SetupPageImpl() {
       {text}
     </div>
   );
+
+  // Review M3: a non-starter sees who drives the setup; Take over / Start over only when it is stuck.
+  const rescue =
+    s && s.stuck && !s.isStarter && can("settings.manage") ? (
+      <div role="status" style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 10, fontSize: 13 }}>
+        {tx(
+          "This setup hasn't moved for a day, or the person who started it left. You can take it over or start over.",
+          "لم يتقدم هذا الإعداد منذ يوم، أو غادر من بدأه. يمكنك تولّيه أو البدء من جديد.",
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button type="button" className="btn" disabled={busy} onClick={() => void act("takeover")}>
+            {tx("Take over", "تولَّ الإعداد")}
+          </button>
+          {confirmReset ? (
+            <>
+              <span>
+                {tx(
+                  "Start over? This clears the business name, the website and what was learned.",
+                  "البدء من جديد؟ سيُمسح اسم النشاط والموقع وما تعلّمه الوكيل.",
+                )}
+              </span>
+              <button
+                type="button"
+                className="btn danger"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmReset(false);
+                  void act("reset");
+                }}
+              >
+                {tx("Yes, start over", "نعم، ابدأ من جديد")}
+              </button>
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => setConfirmReset(false)}>
+                {tx("Cancel", "إلغاء")}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn ghost" disabled={busy} onClick={() => setConfirmReset(true)}>
+              {tx("Start over", "ابدأ من جديد")}
+            </button>
+          )}
+        </div>
+      </div>
+    ) : null;
 
   let body: React.ReactNode = null;
   if (!s) {
@@ -79,6 +126,18 @@ function SetupPageImpl() {
         </div>
       </>
     );
+  } else if (view === "watching") {
+    const p = progress(s.step);
+    const who = s.startedByName ?? tx("Another team member", "عضو آخر في الفريق");
+    body = (
+      <>
+        {lineBox(tx(`${who} is setting this up.`, `${who} يقوم بإعداد هذا.`))}
+        <div className="muted mono" style={{ fontSize: 12 }}>
+          <bdi>{`${p.current}/${p.total}`}</bdi> · {tx(...STEP_COPY[s.step].label)}
+        </div>
+        {rescue}
+      </>
+    );
   } else if (view === "start") {
     body = (
       <>
@@ -93,22 +152,6 @@ function SetupPageImpl() {
         <div className="muted mono" style={{ fontSize: 12 }}>
           <bdi>{`${p.current}/${p.total}`}</bdi> · {tx(...STEP_COPY[s.step].label)}
         </div>
-        {s.stuck && can("settings.manage") && (
-          <div role="status" style={{ border: "1px solid var(--line)", borderRadius: 10, padding: 10, fontSize: 13 }}>
-            {tx(
-              "This setup hasn't moved for a day, or the person who started it left. You can take it over or start over.",
-              "لم يتقدم هذا الإعداد منذ يوم، أو غادر من بدأه. يمكنك تولّيه أو البدء من جديد.",
-            )}
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button type="button" className="btn" disabled={busy} onClick={() => void act("takeover")}>
-                {tx("Take over", "تولَّ الإعداد")}
-              </button>
-              <button type="button" className="btn ghost" disabled={busy} onClick={() => void act("reset")}>
-                {tx("Start over", "ابدأ من جديد")}
-              </button>
-            </div>
-          </div>
-        )}
         {lineBox(tx(...STEP_COPY[s.step].line))}
         {s.step === "business" && (
           <NameForm tx={tx} name={name || s.businessName || ""} setName={setName} busy={busy} onSubmit={() => void act("step", { step: "website", businessName: name || s.businessName || "" })} />

@@ -92,6 +92,8 @@ describe("OnboardingService", () => {
       learned: null,
       hoursApplyEnablesWorkingHours: false,
       stuck: false,
+      isStarter: false,
+      startedByName: null,
       canManage: true,
     });
     expect((await w.svc.get(A, AGENT)).canManage).toBe(false);
@@ -230,6 +232,16 @@ describe("OnboardingService", () => {
     await expect(w.svc.website(A, lim, { url: "https://salon.example/" })).rejects.toBeInstanceOf(ForbiddenException);
     expect(w.websites.create).not.toHaveBeenCalled();
     expect((await w.svc.get(A, lim)).websiteUrl).toBeNull();
+  });
+
+  it("says who is setting it up and whether the caller is the starter", async () => {
+    const w = world();
+    await w.svc.patch(A, OWNER, { action: "start", businessName: "Salon Noor" });
+    expect(await w.svc.get(A, OWNER)).toMatchObject({ isStarter: true, startedByName: "Owner A" });
+    expect(await w.svc.get(A, ADMIN)).toMatchObject({ isStarter: false, startedByName: "Owner A" });
+    // Once it is no longer in progress, nobody is "setting it up".
+    await w.svc.patch(A, OWNER, { action: "skip" });
+    expect(await w.svc.get(A, ADMIN)).toMatchObject({ isStarter: false, startedByName: null });
   });
 
   it("a stuck onboarding can be taken over or reset by settings.manage", async () => {

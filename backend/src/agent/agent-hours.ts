@@ -8,13 +8,16 @@
  *  - `always` → the agent may reply.
  *  - `within` → only while the local time is inside a window of that weekday.
  *  - `outside` → only while it is not.
- *  - An empty or unreadable stored schedule fails open (the agent replies), as
- *    Tkana does; the settings save refuses an empty schedule for
- *    `within`/`outside`, so this only happens with hand-edited rows.
+ *  - The stored schedule is read window by window (review M4): a window that
+ *    does not parse (bad time, from >= to, a start at 24:00, a non-array day,
+ *    an unknown day) is skipped, the rest still count. With no usable window
+ *    at all the schedule fails open (the agent replies), as Tkana does; the
+ *    settings save refuses an empty schedule for `within`/`outside`, so this
+ *    only happens with hand-edited rows. The frontend mirror reads it the same
+ *    way (src/screens/agent/agentHours.ts; shared fixture).
  *  - An unknown timezone falls back to the SP-10 default zone (Asia/Riyadh).
  */
-import { wallClock, workspaceTz } from "../bookings/booking-time";
-import { isConfigured, readSchedule, windowsOf } from "../bookings/schedule";
+import { parseHHMM, wallClock, WEEKDAYS, workspaceTz, type Weekday } from "../bookings/booking-time";
 import type { HoursMode } from "./agent-constants";
 
 export interface HoursSettings {
@@ -22,12 +25,32 @@ export interface HoursSettings {
   schedule: unknown;
 }
 
-/** True when `now` falls inside a window of the schedule in `tz` (local wall time). */
+/** The usable windows of each weekday, in minutes; bad windows skipped. */
+export function usableWindows(schedule: unknown): Partial<Record<Weekday, { from: number; to: number }[]>> {
+  const out: Partial<Record<Weekday, { from: number; to: number }[]>> = {};
+  if (!schedule || typeof schedule !== "object" || Array.isArray(schedule)) return out;
+  for (const day of WEEKDAYS) {
+    const list = (schedule as Record<string, unknown>)[day];
+    if (!Array.isArray(list)) continue;
+    const ok: { from: number; to: number }[] = [];
+    for (const w of list) {
+      if (!w || typeof w !== "object") continue;
+      const from = parseHHMM((w as { from?: unknown }).from);
+      const to = parseHHMM((w as { to?: unknown }).to);
+      if (from === null || to === null || from >= 1440 || from >= to) continue;
+      ok.push({ from, to });
+    }
+    if (ok.length) out[day] = ok;
+  }
+  return out;
+}
+
+/** True when `now` falls inside a usable window in `tz` (local wall time); null when there is none. */
 export function insideSchedule(schedule: unknown, now: Date, tz: string): boolean | null {
-  const s = readSchedule(schedule);
-  if (!isConfigured(s)) return null;
+  const windows = usableWindows(schedule);
+  if (!Object.keys(windows).length) return null;
   const clock = wallClock(now, workspaceTz(tz));
-  return windowsOf(s, clock.weekday).some((w) => clock.minutes >= w.from && clock.minutes < w.to);
+  return (windows[clock.weekday] ?? []).some((w) => clock.minutes >= w.from && clock.minutes < w.to);
 }
 
 /** Whether the hours mode lets the agent reply at `now`. */

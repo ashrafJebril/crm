@@ -10,7 +10,9 @@ const fixture = JSON.parse(fixtureText) as {
 
 describe("agentHours mirrors the backend", () => {
   it("has the shared cases", () => {
-    expect(fixture.cases.length).toBeGreaterThanOrEqual(15);
+    expect(fixture.cases.length).toBeGreaterThanOrEqual(23);
+    expect(fixture.cases.some((c) => c.schedule === "mixed")).toBe(true);
+    expect(fixture.cases.filter((c) => c.schedule === "nySpringGap" && c.tz === "America/New_York").length).toBeGreaterThanOrEqual(2);
   });
 
   it.each(fixture.cases.map((c) => [`${c.mode} ${c.schedule} ${c.now} ${c.tz}`, c] as const))("%s", (_n, c) => {

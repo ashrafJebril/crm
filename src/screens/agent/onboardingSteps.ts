@@ -55,13 +55,14 @@ export function showContinueCard(s: OnboardingState | null | undefined): boolean
 }
 
 /** The setup page drives an in-progress onboarding; anything else shows a start or done state. */
-export type SetupView = "start" | "steps" | "skipped" | "done" | "no_access";
+/** "watching": another member is driving it (read-only, take over only when stuck). */
+export type SetupView = "start" | "steps" | "watching" | "skipped" | "done" | "no_access";
 export function setupView(s: OnboardingState | null | undefined): SetupView {
   if (!s) return "start";
   if (!s.canManage) return "no_access";
   if (s.status === "done") return "done";
   if (s.status === "skipped") return "skipped";
-  if (s.status === "in_progress") return "steps";
+  if (s.status === "in_progress") return s.isStarter ? "steps" : "watching";
   return "start";
 }
 

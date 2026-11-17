@@ -12,6 +12,8 @@ const state = (over: Partial<OnboardingState> = {}): OnboardingState => ({
   learned: null,
   hoursApplyEnablesWorkingHours: false,
   stuck: false,
+  isStarter: true,
+  startedByName: "Owner",
   canManage: true,
   ...over,
 });
@@ -32,6 +34,7 @@ describe("onboarding steps", () => {
     expect(setupView(null)).toBe("start");
     expect(setupView(state({ status: "not_started" }))).toBe("start");
     expect(setupView(state())).toBe("steps");
+    expect(setupView(state({ isStarter: false }))).toBe("watching");
     expect(setupView(state({ status: "skipped" }))).toBe("skipped");
     expect(setupView(state({ status: "done" }))).toBe("done");
     expect(setupView(state({ canManage: false }))).toBe("no_access");

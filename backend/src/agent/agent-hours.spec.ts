@@ -92,6 +92,10 @@ describe("agent working hours: the fixture shared with the frontend mirror", () 
     schedules: Record<string, unknown>;
     cases: { mode: string; schedule: string; now: string; tz: string; available: boolean }[];
   };
+  it("covers a bad window next to good ones and the New York spring-forward gap", () => {
+    expect(fixture.cases.some((c) => c.schedule === "mixed")).toBe(true);
+    expect(fixture.cases.filter((c) => c.schedule === "nySpringGap" && c.tz === "America/New_York").length).toBeGreaterThanOrEqual(2);
+  });
   it.each(fixture.cases.map((c) => [`${c.mode} ${c.schedule} ${c.now} ${c.tz}`, c] as const))("%s", (_name, c) => {
     expect(agentAvailableAt({ hoursMode: c.mode, schedule: fixture.schedules[c.schedule] }, new Date(c.now), c.tz)).toBe(c.available);
   });

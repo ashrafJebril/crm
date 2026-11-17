@@ -44,6 +44,10 @@ export interface OnboardingDto {
   hoursApplyEnablesWorkingHours: boolean;
   /** In progress but its starter left or nothing moved for 24 h: a settings.manage member may take over or reset. */
   stuck: boolean;
+  /** The caller is the member driving this onboarding (review M3). */
+  isStarter: boolean;
+  /** The starter's name while it is in progress (others see "X is setting this up"). */
+  startedByName: string | null;
   canManage: boolean;
 }
 
@@ -105,6 +109,10 @@ export class OnboardingService {
       ? ((await this.prisma.agentSettings.findUnique({ where: { workspaceId }, select: { hoursMode: true } }))?.hoursMode ?? "always")
       : "always";
     const stuck = state?.status === "in_progress" ? isStuck(state, new Date(), await this.isMember(workspaceId, state.startedBy)) : false;
+    const starter =
+      state?.status === "in_progress" && state.startedBy
+        ? await this.prisma.user.findUnique({ where: { id: state.startedBy }, select: { name: true } })
+        : null;
     let website: OnboardingDto["website"] = null;
     if (state?.websiteSourceId) {
       const src = await this.prisma.knowledgeSource.findFirst({
@@ -125,6 +133,8 @@ export class OnboardingService {
       learned: state?.card ?? null,
       hoursApplyEnablesWorkingHours: !!state?.card?.hours && hoursMode !== "within",
       stuck,
+      isStarter: !!state?.startedBy && state.startedBy === viewer.userId,
+      startedByName: starter?.name ?? null,
       canManage,
     };
   }

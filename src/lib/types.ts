@@ -1845,6 +1845,9 @@ export interface OnboardingState {
   learned: LearnCard | null;
   hoursApplyEnablesWorkingHours: boolean;
   stuck: boolean;
+  /** The caller drives this onboarding (others see who does, read-only). */
+  isStarter: boolean;
+  startedByName: string | null;
   canManage: boolean;
 }
 

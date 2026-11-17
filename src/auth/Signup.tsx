@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "./context";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { BrandLogo } from "@/components/BrandLogo";
-import { patchOnboarding } from "@/screens/agent/agentApi";
+import { ONBOARDING_PATH, patchOnboarding } from "@/screens/agent/agentApi";
 import { BUSINESS_NAME_MAX } from "@/screens/agent/agentConstants";
 import { agentErrorText } from "@/screens/agent/agentErrors";
 
@@ -16,11 +17,19 @@ import { agentErrorText } from "@/screens/agent/agentErrors";
 
 export const isSignupHash = (hash: string) => /^#\/?signup(\?|$)/.test(hash);
 
+/**
+ * Review M5: while a signup is in flight the hash already reads #/setup (so
+ * the app opens on the setup page the moment the account exists, with no
+ * other route in between); the signup page stays on screen meanwhile.
+ */
+let signupInFlight = false;
+export const signupPending = () => signupInFlight;
+
 /** Re-renders when the hash switches between the sign-in and signup pages. */
 export function useSignupHash(): boolean {
-  const [on, setOn] = useState(() => isSignupHash(window.location.hash));
+  const [on, setOn] = useState(() => isSignupHash(window.location.hash) || signupInFlight);
   useEffect(() => {
-    const onHash = () => setOn(isSignupHash(window.location.hash));
+    const onHash = () => setOn(isSignupHash(window.location.hash) || signupInFlight);
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -31,6 +40,7 @@ export function Signup() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const { register } = useAuth();
+  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -43,20 +53,31 @@ export function Signup() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    // Point the app at #/setup before the auth state flips (the router reads
+    // it now; this page stays up while the request runs).
+    signupInFlight = true;
+    window.location.hash = "#/setup";
+    let registered = false;
     try {
       await register({ name: name.trim(), email: email.trim(), password, workspaceName: business.trim() });
-      // The account exists now: start onboarding (a failure here only means the owner starts it from the agent page).
-      try {
-        await patchOnboarding({ action: "start", businessName: business.trim() });
-      } catch {
-        /* the agent page offers "Set up your agent" */
-      }
-      window.location.hash = "#/setup";
+      registered = true;
     } catch (err) {
+      signupInFlight = false;
+      window.location.hash = "#/signup";
       setError(agentErrorText(err, tx, err instanceof Error && err.message ? err.message : undefined));
-    } finally {
       setBusy(false);
+      return;
+    } finally {
+      if (registered) signupInFlight = false;
     }
+    // The account exists now: start onboarding, then refresh the setup page's read
+    // (a failure here only means the owner starts it from the agent page).
+    try {
+      await patchOnboarding({ action: "start", businessName: business.trim() });
+    } catch {
+      /* the agent page offers "Set up your agent" */
+    }
+    void queryClient.invalidateQueries({ queryKey: [ONBOARDING_PATH] });
   }
 
   const field = {
