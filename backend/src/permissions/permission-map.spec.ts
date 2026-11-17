@@ -387,6 +387,22 @@ describe("permission map", () => {
     expect(at("POST /lifecycle/sync")).toBeLessThan(at("POST /lifecycle/:key/setup"));
   });
 
+  it("permission map covers SP-18 routes", () => {
+    // Ruling 2: every copilot route is `authenticated`; each tool checks its own permission as the member.
+    const sp18: Record<string, string> = {
+      "POST /copilot/stream": "authenticated",
+      "GET /copilot/status": "authenticated",
+      "GET /copilot/sessions": "authenticated",
+      "GET /copilot/sessions/:id": "authenticated",
+      "DELETE /copilot/sessions/:id": "authenticated",
+    };
+    for (const [k, p] of Object.entries(sp18)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // Task 1's exact set (Task 2 adds the action, attachment and feedback routes).
+    expect(keys.filter((k) => / \/copilot(\/|$)/.test(k)).sort()).toEqual(Object.keys(sp18).sort());
+  });
+
   it("permission map covers SP-11 routes (home part)", () => {
     for (const k of ["GET /home", "POST /home/seen", "POST /home/day1/dismiss"]) {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p: "authenticated" });

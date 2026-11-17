@@ -1232,3 +1232,97 @@ describe("SP-24 staff lifecycle notifications", () => {
     );
   });
 });
+
+// ─── SP-18: the copilot reads only what the member could open in the UI ──
+describe("SP-18 copilot", () => {
+  const withKey = async <T,>(fn: () => Promise<T>) => (await import("../copilot/copilot-test-world")).withKey(fn);
+  const results = (w: any, i: number) => {
+    const msgs = w.fake.calls[i].messages;
+    return msgs[msgs.length - 1].content as Array<{ tool_use_id: string; is_error?: boolean; content: string }>;
+  };
+
+  it("copilot @ picker and refs respect assigned visibility", async () => {
+    const { copilotWorld, httpError, viewer, AGENT, OWNER, WS, NOW } = await import("../copilot/copilot-test-world");
+    const w = copilotWorld();
+    const dto = (references: any[]) => ({ message: "x", approvalMode: "manual", lang: "en", references }) as any;
+    // The assigned-only agent: the unassigned conversation's ticket and a booking are refused before any model call.
+    for (const [refs, index] of [
+      [[{ kind: "ticket", id: "t-hidden" }], 0],
+      [[{ kind: "contact", id: "c-layla" }, { kind: "booking", id: "b1" }], 1],
+      [[{ kind: "contact", id: "c-foreign" }], 0],
+    ] as const) {
+      expect(await httpError(withKey(() => w.turns.prepare(WS, viewer(AGENT), dto(refs as any), NOW)))).toMatchObject({ status: 403, body: { message: "copilot.ref_not_permitted", index } });
+    }
+    expect(w.fake.calls).toHaveLength(0);
+    // The page context is re-read as the member as well.
+    expect(
+      await httpError(withKey(() => w.turns.prepare(WS, viewer(AGENT), { ...dto([]), pageContext: { page: "conversation", recordKind: "conversation", recordId: "v-hidden" } }, NOW))),
+    ).toMatchObject({ status: 400 });
+    // The picker's search runs as the member (SearchService applies the member's gating).
+    const { text, toolUse } = await import("../copilot/fake-claude-stream");
+    const w2 = copilotWorld({ script: [{ content: [toolUse("t1", "search_contacts", { query: "omar" })], stop_reason: "tool_use" }, { content: [text("ok")] }] });
+    await withKey(() => w2.turn(AGENT, { message: "x" }));
+    expect(w2.search.search).toHaveBeenCalledWith(WS, "omar", 10, { userId: AGENT, bypass: false });
+    // The owner may reference the same ticket.
+    const w3 = copilotWorld();
+    expect((await withKey(() => w3.turn(OWNER, { references: [{ kind: "ticket", id: "t-hidden" }] }))).last.event).toBe("done");
+  });
+
+  it("copilot conversation tools respect assigned visibility", async () => {
+    const { copilotWorld, AGENT } = await import("../copilot/copilot-test-world");
+    const { text, toolUse } = await import("../copilot/fake-claude-stream");
+    const w = copilotWorld({
+      script: [
+        {
+          content: [
+            toolUse("t1", "get_conversation", { id: "v-hidden" }),
+            toolUse("t2", "search_conversations", {}),
+            toolUse("t3", "search_conversations", { assignee: "unassigned" }),
+            toolUse("t4", "draft_reply", { conversationId: "v-hidden", text: "hi" }),
+            toolUse("t5", "get_contact", { id: "c-omar" }),
+          ],
+          stop_reason: "tool_use",
+        },
+        { content: [text("done")] },
+      ],
+    });
+    const t = await withKey(() => w.turn(AGENT, { message: "x" }));
+    const r = results(w, 1).map((x) => JSON.parse(x.content));
+    expect(r[0]).toMatchObject({ error: "not_found" });
+    expect(r[1].conversations.map((c: any) => c.id)).toEqual(["v-mine"]);
+    expect(r[2].conversations).toEqual([]);
+    expect(r[3]).toMatchObject({ error: "not_found" });
+    // The contact is open to the agent (contacts.view), but its hidden conversation is not linked.
+    expect(r[4].links.map((l: any) => l.id)).not.toContain("v-hidden");
+    const all = JSON.stringify(results(w, 1));
+    expect(all).not.toContain("secret");
+    expect(t.events.some((e) => e.event === "draft")).toBe(false);
+    // Nothing from the hidden thread was tainted in.
+    expect(w.db.copilotSession[0].tainted).toBe(false);
+  });
+
+  it("copilot source cards never name a hidden record", async () => {
+    const { copilotWorld, AGENT } = await import("../copilot/copilot-test-world");
+    const { text, toolUse } = await import("../copilot/fake-claude-stream");
+    const w = copilotWorld({
+      script: [
+        {
+          content: [
+            toolUse("t1", "get_conversation", { id: "v-hidden" }),
+            toolUse("t2", "get_ticket", { id: "t-hidden" }),
+            toolUse("t3", "get_booking", { id: "b1" }),
+            toolUse("t4", "get_contact", { id: "c-foreign" }),
+            toolUse("t5", "get_conversation", { id: "v-mine" }),
+          ],
+          stop_reason: "tool_use",
+        },
+        { content: [text("done")] },
+      ],
+    });
+    const t = await withKey(() => w.turn(AGENT, { message: "x" }));
+    const cards = t.events.find((e) => e.event === "sources")!.data.items;
+    expect(cards).toEqual([{ kind: "record", recordKind: "conversation", id: "v-mine", title: "Layla" }]);
+    const stored = w.db.copilotMessage.find((m: any) => m.role === "assistant").sources;
+    expect(JSON.stringify(stored)).not.toMatch(/Omar|t-hidden|b1|Foreign/);
+  });
+});

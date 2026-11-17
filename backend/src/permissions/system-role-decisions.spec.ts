@@ -711,6 +711,55 @@ describe("system-role decision table", () => {
     });
   });
 
+  // SP-18: the copilot (read part). The routes are open to every member; what
+  // the copilot can read is each tool's own permission, checked as the member.
+  describe("SP-18 copilot", () => {
+    const ROUTES = ["POST /copilot/stream", "GET /copilot/status", "GET /copilot/sessions", "GET /copilot/sessions/:id", "DELETE /copilot/sessions/:id"];
+    // Read tools → the permissions each needs (copilot-tools/*.tool.ts).
+    const TOOLS: Record<string, string[]> = {
+      search_contacts: ["contacts.view"],
+      get_contact: ["contacts.view"],
+      search_conversations: ["conversations.view"],
+      get_conversation: ["conversations.view"],
+      search_tickets: ["tickets.view"],
+      get_ticket: ["tickets.view"],
+      search_bookings: ["bookings.view"],
+      get_booking: ["bookings.view"],
+      list_campaigns: ["campaigns.view"],
+      get_campaign: ["campaigns.view"],
+      search_knowledge: ["knowledge.view"],
+      summarize_insights: ["reports.view"],
+      draft_reply: ["conversations.view", "conversations.create"],
+    };
+    const can = (role: SystemRoleKey, tool: string) => TOOLS[tool].every((p) => hasPermission(SYSTEM_ROLES[role].permissions, p));
+
+    it("every system role may open the copilot and its own history", () => {
+      for (const role of ["owner", "admin", "agent", "viewer"] as const) {
+        for (const route of ROUTES) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
+      }
+    });
+
+    it("the read tools match each tool's permissions in the registry", async () => {
+      const { copilotWorld } = await import("../copilot/copilot-test-world");
+      const reg = copilotWorld().registry;
+      expect(reg.names()).toEqual(Object.keys(TOOLS).sort());
+      for (const n of reg.names()) expect({ n, p: reg.get(n)!.permissions }).toEqual({ n, p: TOOLS[n] });
+    });
+
+    it("owner, admin and agent use every read tool; a viewer reads everything but cannot draft a reply", () => {
+      for (const role of ["owner", "admin", "agent"] as const) {
+        for (const tool of Object.keys(TOOLS)) expect({ role, tool, ok: can(role, tool) }).toEqual({ role, tool, ok: true });
+      }
+      for (const tool of Object.keys(TOOLS)) expect({ tool, ok: can("viewer", tool) }).toEqual({ tool, ok: tool !== "draft_reply" });
+    });
+
+    it("impersonation is not blocked", () => {
+      for (const route of ROUTES) {
+        expect({ route, blocked: blockedForImpersonation(ROUTE_PERMISSIONS[route] as string) }).toEqual({ route, blocked: false });
+      }
+    });
+  });
+
   // SP-24: Automatic messages (system workflows).
   describe("SP-24 lifecycle routes", () => {
     const VIEW = ["GET /lifecycle", "POST /lifecycle/sync"];

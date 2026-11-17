@@ -89,6 +89,12 @@ export class PrismaService implements OnModuleDestroy {
   // SP-20: agent configuration and sandbox threads.
   get agentSettings() { return this.client.agentSettings; }
   get agentSandboxThread() { return this.client.agentSandboxThread; }
+  // SP-18: the in-app copilot.
+  get copilotSession() { return this.client.copilotSession; }
+  get copilotMessage() { return this.client.copilotMessage; }
+  get copilotPendingAction() { return this.client.copilotPendingAction; }
+  get copilotAttachment() { return this.client.copilotAttachment; }
+  get copilotActionAudit() { return this.client.copilotActionAudit; }
 
   get $transaction() { return this.client.$transaction.bind(this.client); }
   get $executeRaw() { return this.client.$executeRaw.bind(this.client); }

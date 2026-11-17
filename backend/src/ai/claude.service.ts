@@ -221,6 +221,49 @@ export class ClaudeService {
   }
 
   /**
+   * SP-18: one streamed beta Messages call that forwards text deltas as they
+   * arrive (`onText`) and returns the final message (`finalMessage()`).
+   *
+   *  - `timeoutMs` caps the whole call (an abort signal, as `stream`); an
+   *    abort becomes a transient `ai_failed` with `stopReason: "timeout"`.
+   *  - A tool input the SDK could not parse as JSON (eager input streaming)
+   *    rejects with the SDK's plain `AnthropicError`, not an API error: it
+   *    becomes `ai_failed` with `stopReason: "invalid_tool_json"` so the
+   *    caller can re-issue the request. Its message holds model output and
+   *    is never logged.
+   *  - Typed API errors keep the shared mapping (auth → `ai_unavailable`).
+   */
+  async streamText(
+    params: BetaStreamParams,
+    label = "claude stream",
+    opts: { timeoutMs?: number; onText?: (text: string) => void } = {},
+  ): Promise<Anthropic.Beta.BetaMessage> {
+    const client = this.client();
+    const signal = opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined;
+    try {
+      const stream = client.beta.messages.stream(params, signal ? { timeout: opts.timeoutMs, signal } : undefined);
+      if (opts.onText) {
+        for await (const ev of stream) {
+          if (ev.type === "content_block_delta" && ev.delta.type === "text_delta") opts.onText(ev.delta.text);
+        }
+      }
+      return await stream.finalMessage();
+    } catch (e) {
+      if (signal?.aborted) {
+        this.log.warn(`${label} timed out`);
+        throw new ClaudeFailure("ai_failed", "timeout", true, "timeout");
+      }
+      if (e instanceof Anthropic.AnthropicError && !(e instanceof Anthropic.APIError)) {
+        this.log.warn(`${label}: a tool input was not valid JSON`);
+        throw new ClaudeFailure("ai_failed", "invalid_tool_json", true, "invalid_tool_json");
+      }
+      const f = mapClaudeError(e);
+      this.log.warn(`${label} failed: ${f.detail || f.key}`);
+      throw f;
+    }
+  }
+
+  /**
    * Transcribe a PDF or an image to plain text (SP-21 knowledge files). The
    * file block comes before the instruction; effort `low`; streamed with
    * TRANSCRIBE_MAX_TOKENS. Only `end_turn` is accepted: `refusal`,

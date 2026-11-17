@@ -60,6 +60,8 @@ model User {
   catalogImportsCreated CatalogImport[] @relation("CatalogImportCreatedBy")
   /// SP-20 back-relation.
   agentSandboxThreads AgentSandboxThread[] @relation("UserAgentSandboxThreads")
+  /// SP-18 back-relation.
+  copilotSessions CopilotSession[] @relation("UserCopilotSessions")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1308,6 +1310,9 @@ model Workspace {
   /// SP-20: {status: "not_started"|"in_progress"|"skipped"|"done", step, businessName, websiteUrl, websiteSourceId, learnedAt, startedBy, updatedAt}; null = never started (existing workspaces).
   onboardingState     Json?
 
+  /// SP-18: the in-app copilot's per-member chats.
+  copilotSessions     CopilotSession[]     @relation("WorkspaceCopilotSessions")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1470,6 +1475,8 @@ model Media {
   catalogImports CatalogImport[] @relation("CatalogImportFile")
   /// SP-21 back-relation: knowledge sources stored in this file (hidden from the library).
   knowledgeSources KnowledgeSource[] @relation("MediaKnowledgeSources")
+  /// SP-18: files attached to copilot messages (hidden media rows).
+  copilotAttachments CopilotAttachment[] @relation("MediaCopilotAttachments")
 
   createdAt DateTime @default(now())
 
@@ -1905,4 +1912,123 @@ model AgentSandboxThread {
 
   @@unique([workspaceId, userId])
   @@index([expiresAt])
+}
+
+// ─── SP-18 in-app copilot ────────────────────────────────────────────────
+
+/// SP-18: one member's copilot chat.
+model CopilotSession {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation("WorkspaceCopilotSessions", fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation("UserCopilotSessions", fields: [userId], references: [id], onDelete: Cascade)
+  /// "aida" today; registry key for future personas
+  persona      String    @default("aida")
+  title        String?
+  /// a turn in flight (lease); null when idle
+  runningUntil DateTime?
+  /// customer-written text or an attachment was read in this session (ruling 5)
+  tainted      Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  messages     CopilotMessage[]
+  actions      CopilotPendingAction[]
+
+  @@index([workspaceId, userId, updatedAt])
+}
+
+/// SP-18: one message of a session. `content` keeps the model transcript blocks (assistant tool_use, tool_result) for the next turn; `text` is what the member sees.
+model CopilotMessage {
+  id          String         @id @default(cuid())
+  workspaceId String
+  sessionId   String
+  session     CopilotSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// "user" | "assistant" | "tool" | "note"
+  role        String
+  text        String         @default("")
+  content     Json?
+  /// [{kind, id, title}]
+  references  Json?
+  /// [{id, fileName, kind}]
+  attachments Json?
+  /// [{kind, …}]
+  sources     Json?
+  pageContext Json?
+  /// {inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, model}
+  usage       Json?
+  createdAt   DateTime       @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([workspaceId])
+}
+
+/// SP-18: a write the copilot proposed; executed only on approval (or by policy, ruling 3).
+model CopilotPendingAction {
+  id          String         @id @default(cuid())
+  workspaceId String
+  sessionId   String
+  session     CopilotSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId      String
+  tool        String
+  argsJson    Json
+  argsHash    String
+  /// the card shown to the member: {title, changes: [{label, before?, after}]}
+  card        Json
+  permission  String
+  /// "PENDING" | "EXECUTING" | "EXECUTED" | "FAILED" | "REJECTED" | "EXPIRED"
+  status      String         @default("PENDING")
+  /// "approved" | "auto" | null
+  decidedBy   String?
+  decidedById String?
+  decidedAt   DateTime?
+  feedback    String?
+  /// "permission_revoked" | "card_outdated" | "declined" | null
+  refusal     String?
+  resultJson  Json?
+  errorKey    String?
+  expiresAt   DateTime
+  createdAt   DateTime       @default(now())
+
+  @@index([workspaceId, userId, status])
+  @@index([sessionId])
+}
+
+/// SP-18: a file attached to a copilot message.
+model CopilotAttachment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  sessionId   String?
+  mediaId     String?
+  media       Media?    @relation("MediaCopilotAttachments", fields: [mediaId], references: [id], onDelete: SetNull)
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  /// extracted text (documents); null for images
+  text        String?
+  truncated   Boolean   @default(false)
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, userId])
+  @@index([sessionId])
+  @@index([mediaId])
+}
+
+/// SP-18: append-only audit of pending-action transitions.
+model CopilotActionAudit {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actionId    String
+  /// PROPOSED | APPROVED | AUTO_APPLIED | EXECUTED | FAILED | REJECTED | EXPIRED | REFUSED
+  event       String
+  actorId     String?
+  tool        String
+  /// no customer text, no attachment text
+  detail      Json?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, actionId, createdAt])
 }
