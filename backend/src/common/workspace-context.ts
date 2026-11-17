@@ -4,6 +4,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface WorkspaceStore {
   workspaceId: string;
   userId: string;
+  /** SP-27: set when the request authenticated with an API key (userId is
+   *  then the key's creator). */
+  apiKeyId?: string;
 }
 
 export const workspaceContext = new AsyncLocalStorage<WorkspaceStore>();

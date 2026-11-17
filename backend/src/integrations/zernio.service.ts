@@ -1824,7 +1824,8 @@ export class ZernioService {
         payload: {
           contact: { id: contact.id, name: contact.name },
           conversation: { id: conv.id, channel },
-          message: { body: text },
+          // SP-27: the id lets the webhook outbox re-read the stored message.
+          message: { id: created.id, body: text },
         },
       } satisfies WorkflowTriggerEvent);
 

@@ -69,6 +69,13 @@ const SCOPED_MODELS = new Set([
   "CopilotPendingAction",
   "CopilotAttachment",
   "CopilotActionAudit",
+  // SP-27 (defence in depth): AuthGuard looks a key up by its unique hash
+  // (findUnique, not scoped) before any context exists; the dispatcher and
+  // the retention sweep run without a context; every request-path query
+  // names workspaceId explicitly anyway.
+  "ApiKey",
+  "WebhookEndpoint",
+  "WebhookDelivery",
 ]);
 
 const READ_ACTIONS = new Set([

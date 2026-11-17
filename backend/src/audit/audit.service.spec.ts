@@ -3,6 +3,7 @@ import { makeFakePrisma } from "../channels/test-prisma";
 import { AuditController } from "./audit.controller";
 import { AuditService } from "./audit.service";
 import { AUDIT_PAGE } from "../members/members-constants";
+import { workspaceContext } from "../common/workspace-context";
 
 const WS = "wsA";
 const base = new Date("2026-11-17T00:00:00.000Z");
@@ -25,6 +26,22 @@ function world() {
 }
 
 describe("AuditService (SP-26)", () => {
+  it("SP-27: a write made through an API key is recorded as api_key with the key id", async () => {
+    const { audit } = world();
+    const tx = { auditLog: { create: jest.fn().mockResolvedValue({}) } };
+    await workspaceContext.run({ workspaceId: WS, userId: "u1", apiKeyId: "k1" }, () =>
+      audit.record(tx as never, { workspaceId: WS, actorId: "u1", action: "x", targetKind: "member", meta: { a: 1 } }),
+    );
+    expect(tx.auditLog.create.mock.calls[0][0].data).toMatchObject({ actorId: "u1", actorKind: "api_key", meta: { a: 1, apiKeyId: "k1" } });
+    // Without a key (or for an explicit system actor) nothing changes.
+    await audit.record(tx as never, { workspaceId: WS, actorId: "u1", action: "x", targetKind: "member" });
+    expect(tx.auditLog.create.mock.calls[1][0].data).toMatchObject({ actorKind: "user" });
+    await workspaceContext.run({ workspaceId: WS, userId: "u1", apiKeyId: "k1" }, () =>
+      audit.record(tx as never, { workspaceId: WS, actorId: null, actorKind: "system", action: "x", targetKind: "member" }),
+    );
+    expect(tx.auditLog.create.mock.calls[2][0].data).toMatchObject({ actorKind: "system" });
+  });
+
   it("record writes through the given transaction and strips secret-looking meta", async () => {
     const { prisma, audit } = world();
     const tx = { auditLog: { create: jest.fn().mockResolvedValue({}) } };

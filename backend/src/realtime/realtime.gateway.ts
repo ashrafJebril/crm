@@ -1,3 +1,4 @@
+import { looksLikeApiKey } from "../api-keys/api-key-format";
 import { Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import {
@@ -113,7 +114,8 @@ export class RealtimeGateway
     const token =
       (client.handshake.auth?.token as string | undefined) ??
       this.tokenFromAuthHeader(client.handshake.headers["authorization"]);
-    if (!token) {
+    // SP-27: API keys get no live feed (REST only).
+    if (!token || looksLikeApiKey(token)) {
       client.disconnect();
       return;
     }

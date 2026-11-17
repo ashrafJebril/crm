@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Developers · API and webhooks</title>
+<style>
+  :root { --ink: #1c1d21; --ink-2: #4a4d55; --line: #e3e4e8; --bg: #ffffff; --bg-2: #f5f6f8; --accent: #2f5cff; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eceef2; --ink-2: #a9adb7; --line: #2b2e36; --bg: #14161b; --bg-2: #1c1f26; --accent: #7d9bff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
+  main { max-inline-size: 880px; margin-inline: auto; padding-block: 32px 64px; padding-inline: 20px; }
+  h1 { font-size: 26px; margin-block: 0 4px; }
+  h2 { font-size: 19px; margin-block: 36px 10px; padding-block-end: 6px; border-block-end: 1px solid var(--line); }
+  p, li { color: var(--ink-2); }
+  code, pre { font-family: var(--mono); font-size: 13px; }
+  pre { background: var(--bg-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  table { inline-size: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: start; padding-block: 7px; padding-inline: 8px; border-block-end: 1px solid var(--line); vertical-align: top; }
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button { font: inherit; padding-block: 6px; padding-inline: 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg-2); color: var(--ink); cursor: pointer; }
+  [data-lang] { display: none; }
+  html[lang="en"] [data-lang="en"], html[lang="ar"] [data-lang="ar"] { display: revert; }
+  .ltr { direction: ltr; unicode-bidi: isolate; }
+</style>
+</head>
+<body>
+<main>
+  <div class="bar">
+    <div>
+      <h1><span data-lang="en">API and webhooks</span><span data-lang="ar">الواجهة البرمجية والويب هوكس</span></h1>
+      <p style="margin:0"><span data-lang="en">For developers connecting their own tools to the CRM.</span><span data-lang="ar">للمطورين الذين يربطون أدواتهم الخاصة بنظام CRM.</span></p>
+    </div>
+    <button type="button" id="lang-toggle" aria-label="Language / اللغة">العربية</button>
+  </div>
+
+  <h2><span data-lang="en">Authentication</span><span data-lang="ar">المصادقة</span></h2>
+  <p data-lang="en">Create a key in Settings → Developers. Send it on every request. The key is shown once; store it like a password. A key acts as the member who created it, limited to the scopes you choose, and stops working if that member leaves the workspace. Keys keep working after a password change: revoke keys you no longer trust.</p>
+  <p data-lang="ar">أنشئ مفتاحًا من الإعدادات ← المطورون، وأرسله مع كل طلب. يظهر المفتاح مرة واحدة فقط؛ احفظه مثل كلمة المرور. يعمل المفتاح باسم العضو الذي أنشأه ضمن الصلاحيات التي تختارها، ويتوقف إذا غادر ذلك العضو مساحة العمل. تظل المفاتيح تعمل بعد تغيير كلمة المرور: ألغِ المفاتيح التي لم تعد تثق بها.</p>
+  <pre dir="ltr">curl https://YOUR-BACKEND/api/contacts \
+  -H "Authorization: Bearer crm_xxxxxxxxxxxx_…"</pre>
+  <p data-lang="en">Errors are JSON <code class="ltr">{"statusCode": 403, "message": "…"}</code>. An invalid, expired or revoked key gets <code class="ltr">401 api_keys.invalid</code>; a missing scope gets <code class="ltr">403</code>; more than 600 requests a minute per key gets <code class="ltr">429</code> with <code class="ltr">Retry-After</code>.</p>
+  <p data-lang="ar">الأخطاء بصيغة JSON ‏<code class="ltr">{"statusCode": 403, "message": "…"}</code>. المفتاح غير الصالح أو المنتهي أو الملغى يحصل على <code class="ltr">401 api_keys.invalid</code>، والصلاحية الناقصة على <code class="ltr">403</code>، وأكثر من 600 طلب في الدقيقة للمفتاح الواحد على <code class="ltr">429</code> مع <code class="ltr">Retry-After</code>.</p>
+
+  <h2><span data-lang="en">Scopes</span><span data-lang="ar">الصلاحيات</span></h2>
+  <p data-lang="en">Each resource gets <b>Read</b>, <b>Write</b> (includes Read: create and update), <b>Delete</b> or <b>Admin</b> (everything). Resources: contacts, conversations, tickets, pipelines, bookings, campaigns, templates, audiences, reports. Members, roles, billing, keys, settings and channels are never reachable with a key.</p>
+  <p data-lang="ar">لكل مورد: <b>قراءة</b>، أو <b>كتابة</b> (تشمل القراءة: الإنشاء والتعديل)، أو <b>حذف</b>، أو <b>إدارة كاملة</b> (كل شيء). الموارد: جهات الاتصال، المحادثات، التذاكر، المسارات، الحجوزات، الحملات، القوالب، الجماهير، التقارير. لا يمكن الوصول بالمفتاح إلى الأعضاء أو الأدوار أو الفوترة أو المفاتيح أو الإعدادات أو القنوات.</p>
+
+  <h2><span data-lang="en">Routes</span><span data-lang="ar">المسارات</span></h2>
+  <p><span data-lang="en">All paths are under</span><span data-lang="ar">جميع المسارات تحت</span> <code class="ltr">https://YOUR-BACKEND/api</code>.</p>
+  <table>
+    <thead><tr><th>Route</th><th><span data-lang="en">Scope</span><span data-lang="ar">الصلاحية</span></th></tr></thead>
+    <tbody dir="ltr">
+      <tr data-route="GET /contacts"><td><code>GET /contacts</code></td><td>contacts: read</td></tr>
+      <tr data-route="GET /contacts/:id"><td><code>GET /contacts/:id</code></td><td>contacts: read</td></tr>
+      <tr data-route="POST /contacts"><td><code>POST /contacts</code></td><td>contacts: write</td></tr>
+      <tr data-route="PATCH /contacts/:id"><td><code>PATCH /contacts/:id</code></td><td>contacts: write</td></tr>
+      <tr data-route="DELETE /contacts/:id"><td><code>DELETE /contacts/:id</code></td><td>contacts: delete</td></tr>
+      <tr data-route="GET /conversations"><td><code>GET /conversations</code></td><td>conversations: read</td></tr>
+      <tr data-route="GET /conversations/:id"><td><code>GET /conversations/:id</code></td><td>conversations: read</td></tr>
+      <tr data-route="GET /conversations/:id/messages"><td><code>GET /conversations/:id/messages</code></td><td>conversations: read</td></tr>
+      <tr data-route="GET /pipelines"><td><code>GET /pipelines</code></td><td>pipelines: read</td></tr>
+      <tr data-route="GET /tickets"><td><code>GET /tickets</code></td><td>tickets: read</td></tr>
+      <tr data-route="GET /tickets/:id"><td><code>GET /tickets/:id</code></td><td>tickets: read</td></tr>
+      <tr data-route="POST /tickets"><td><code>POST /tickets</code></td><td>tickets: write</td></tr>
+      <tr data-route="PATCH /tickets/:id"><td><code>PATCH /tickets/:id</code></td><td>tickets: write</td></tr>
+      <tr data-route="POST /tickets/:id/move"><td><code>POST /tickets/:id/move</code></td><td>tickets: write</td></tr>
+      <tr data-route="GET /appointments"><td><code>GET /appointments</code></td><td>bookings: read</td></tr>
+      <tr data-route="GET /appointments/:id"><td><code>GET /appointments/:id</code></td><td>bookings: read</td></tr>
+      <tr data-route="POST /appointments"><td><code>POST /appointments</code></td><td>bookings: write</td></tr>
+      <tr data-route="PATCH /appointments/:id"><td><code>PATCH /appointments/:id</code></td><td>bookings: write</td></tr>
+    </tbody>
+  </table>
+  <p data-lang="en">A key sees exactly what its creator sees: if the creator only sees conversations assigned to them, so does the key.</p>
+  <p data-lang="ar">يرى المفتاح بالضبط ما يراه منشئه: إذا كان المنشئ يرى المحادثات المسندة إليه فقط، فكذلك المفتاح.</p>
+
+  <h2><span data-lang="en">Webhooks</span><span data-lang="ar">الويب هوكس</span></h2>
+  <p data-lang="en">Add an https endpoint in Settings → Developers and pick its events. Each event is a JSON <code>POST</code>. Answer with any 2xx within 10 seconds. Anything else (including redirects, which are not followed) is retried after 1 minute, 5 minutes, 30 minutes, 2 hours and 8 hours: 6 attempts in all. An endpoint failing for 72 hours is turned off. Deliveries are at least once: use <code class="ltr">X-Crm-Event-Id</code> to ignore duplicates.</p>
+  <p data-lang="ar">أضف نقطة https من الإعدادات ← المطورون واختر أحداثها. كل حدث طلب <code>POST</code> بصيغة JSON. أجب بأي رمز 2xx خلال 10 ثوانٍ. أي رد آخر (بما في ذلك إعادة التوجيه، التي لا تتم متابعتها) يُعاد إرساله بعد دقيقة، ثم 5 دقائق، ثم 30 دقيقة، ثم ساعتين، ثم 8 ساعات: 6 محاولات إجمالًا. تُوقف النقطة التي تفشل لمدة 72 ساعة. قد يصل الحدث أكثر من مرة: استخدم <code class="ltr">X-Crm-Event-Id</code> لتجاهل التكرار.</p>
+  <table>
+    <thead><tr><th>Event</th><th><span data-lang="en">When</span><span data-lang="ar">متى</span></th><th><code>data</code></th></tr></thead>
+    <tbody>
+      <tr data-event="contact.created"><td dir="ltr"><code>contact.created</code></td><td><span data-lang="en">A contact is created</span><span data-lang="ar">إنشاء جهة اتصال</span></td><td dir="ltr"><code>contact {id, name, firstName, lastName, email, phone, lifecycle, source, tags, createdAt}</code></td></tr>
+      <tr data-event="conversation.assigned"><td dir="ltr"><code>conversation.assigned</code></td><td><span data-lang="en">A conversation gets a new assignee</span><span data-lang="ar">إسناد محادثة إلى عضو جديد</span></td><td dir="ltr"><code>conversation {id, channel, status}, assignee {id, name}, contact</code></td></tr>
+      <tr data-event="message.received"><td dir="ltr"><code>message.received</code></td><td><span data-lang="en">A customer message arrives</span><span data-lang="ar">وصول رسالة من عميل</span></td><td dir="ltr"><code>message {id, body, from, hasAttachment, createdAt}, conversation, contact</code></td></tr>
+      <tr data-event="ticket.created"><td dir="ltr"><code>ticket.created</code></td><td><span data-lang="en">A ticket or lead is created</span><span data-lang="ar">إنشاء تذكرة أو عميل محتمل</span></td><td dir="ltr"><code>ticket {id, number, title, pipelineId, stage, contactId, ownerId, priority, value, currency, …}, contact</code></td></tr>
+      <tr data-event="ticket.stage_changed"><td dir="ltr"><code>ticket.stage_changed</code></td><td><span data-lang="en">A ticket moves to another stage</span><span data-lang="ar">نقل تذكرة إلى مرحلة أخرى</span></td><td dir="ltr"><code>ticket {…, stage {id, key, label, labelAr, isTerminal, isWon}}, contact</code></td></tr>
+      <tr data-event="booking.created"><td dir="ltr"><code>booking.created</code></td><td><span data-lang="en">A booking is created</span><span data-lang="ar">إنشاء حجز</span></td><td dir="ltr"><code>booking {id, contactId, service, serviceAr, startAt, durationMin, status, …}, contact</code></td></tr>
+      <tr data-event="booking.completed"><td dir="ltr"><code>booking.completed</code></td><td><span data-lang="en">A booking is marked completed</span><span data-lang="ar">اكتمال حجز</span></td><td dir="ltr"><code>booking {…}, contact</code></td></tr>
+    </tbody>
+  </table>
+  <p data-lang="en">Every body is an envelope; "Send test" delivers a <code>ping</code>:</p>
+  <p data-lang="ar">كل طلب عبارة عن غلاف؛ ويرسل زر "إرسال اختبار" حدث <code>ping</code>:</p>
+  <pre dir="ltr">{
+  "id": "evt_3f2a…",
+  "type": "contact.created",
+  "createdAt": "2026-11-18T10:00:00.000Z",
+  "workspaceId": "…",
+  "data": { "contact": { "id": "…", "name": "Sara Ali", "phone": "966500000001", "tags": ["vip"], … } }
+}</pre>
+
+  <h2><span data-lang="en">Verifying signatures</span><span data-lang="ar">التحقق من التوقيع</span></h2>
+  <p data-lang="en">Each request carries <code class="ltr">X-Crm-Signature: t=&lt;unix seconds&gt;,v1=&lt;hex&gt;</code>, where <code class="ltr">v1 = HMAC-SHA256(secret, t + "." + rawBody)</code>. After you rotate the secret, the old one keeps signing for 24 hours, so the header carries two <code>v1</code> values; accept if any matches. Reject a timestamp more than 300 seconds (5 minutes) away from your clock. Always use the raw body, before any JSON parsing.</p>
+  <p data-lang="ar">يحمل كل طلب الترويسة <code class="ltr">X-Crm-Signature: t=&lt;ثوانٍ يونكس&gt;,v1=&lt;hex&gt;</code> حيث <code class="ltr">v1 = HMAC-SHA256(secret, t + "." + rawBody)</code>. بعد تدوير السر، يستمر السر القديم في التوقيع لمدة 24 ساعة، فتحمل الترويسة قيمتي <code>v1</code>؛ اقبل الطلب إذا طابقت أي منهما. ارفض الطابع الزمني الذي يبعد أكثر من 300 ثانية (5 دقائق) عن ساعتك. استخدم دائمًا النص الخام قبل تحليله كـ JSON.</p>
+  <pre dir="ltr">import { createHmac, timingSafeEqual } from "node:crypto";
+
+// header = req.headers["x-crm-signature"], rawBody = the request body as a string
+export function verify(secret, header, rawBody, nowSec = Math.floor(Date.now() / 1000)) {
+  let t = null;
+  const sigs = [];
+  for (const part of (header ?? "").split(",")) {
+    const [k, v] = part.split("=");
+    if (k === "t") t = Number(v);
+    if (k === "v1") sigs.push(v);
+  }
+  if (!t || Math.abs(nowSec - t) &gt; 300) return false; // replay window
+  const expected = createHmac("sha256", secret).update(`${t}.${rawBody}`).digest();
+  return sigs.some((s) =&gt; {
+    const got = Buffer.from(s, "hex");
+    return got.length === expected.length &amp;&amp; timingSafeEqual(got, expected);
+  });
+}</pre>
+  <p data-lang="en">Other headers: <code class="ltr">X-Crm-Event</code>, <code class="ltr">X-Crm-Event-Id</code>, <code class="ltr">X-Crm-Delivery-Attempt</code>, <code class="ltr">User-Agent: AramCRM-Webhooks/1</code>. Endpoint URLs must be public https addresses (port 443 or 8443) and cannot be changed after creation.</p>
+  <p data-lang="ar">ترويسات أخرى: <code class="ltr">X-Crm-Event</code>، <code class="ltr">X-Crm-Event-Id</code>، <code class="ltr">X-Crm-Delivery-Attempt</code>، <code class="ltr">User-Agent: AramCRM-Webhooks/1</code>. يجب أن تكون روابط النقاط عناوين https عامة (المنفذ 443 أو 8443) ولا يمكن تغييرها بعد الإنشاء.</p>
+</main>
+<script>
+  (function () {
+    var html = document.documentElement;
+    var btn = document.getElementById("lang-toggle");
+    function set(lang) {
+      html.setAttribute("lang", lang);
+      html.setAttribute("dir", lang === "ar" ? "rtl" : "ltr");
+      btn.textContent = lang === "ar" ? "English" : "العربية";
+      try { localStorage.setItem("developers-lang", lang); } catch (e) {}
+    }
+    var saved = null;
+    try { saved = localStorage.getItem("developers-lang"); } catch (e) {}
+    var q = new URLSearchParams(location.search).get("lang");
+    set(q === "ar" || q === "en" ? q : saved === "ar" ? "ar" : (navigator.language || "").slice(0, 2) === "ar" ? "ar" : "en");
+    btn.addEventListener("click", function () { set(html.getAttribute("lang") === "ar" ? "en" : "ar"); });
+  })();
+</script>
+</body>
+</html>

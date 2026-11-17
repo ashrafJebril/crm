@@ -2,9 +2,10 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AUDIT_PAGE } from "../members/members-constants";
+import { getWorkspaceContext } from "../common/workspace-context";
 
 export type AuditActorKind = "user" | "system" | "api_key";
-export type AuditTargetKind = "member" | "invitation" | "role" | "workspace" | "user";
+export type AuditTargetKind = "member" | "invitation" | "role" | "workspace" | "user" | "api_key" | "webhook";
 
 /** What a writer records. `meta` must never hold a token, code, password or
  *  email body. */
@@ -83,15 +84,19 @@ export class AuditService {
 
   /** Writes one audit row through `db` (pass the writer's transaction). */
   async record(db: AuditDb, e: AuditEntry): Promise<void> {
+    // SP-27: a write made through an API key is recorded as the key's (its
+    // creator is the actorId), with the key id in meta.
+    const apiKeyId = getWorkspaceContext()?.apiKeyId;
+    const viaKey = !!apiKeyId && (e.actorKind === undefined || e.actorKind === "user");
     await db.auditLog.create({
       data: {
         workspaceId: e.workspaceId,
         actorId: e.actorId,
-        actorKind: e.actorKind ?? "user",
+        actorKind: viaKey ? "api_key" : (e.actorKind ?? "user"),
         action: e.action,
         targetKind: e.targetKind,
         targetId: e.targetId ?? null,
-        meta: cleanMeta(e.meta),
+        meta: cleanMeta(viaKey ? { ...(e.meta ?? {}), apiKeyId } : e.meta),
       },
     });
   }
