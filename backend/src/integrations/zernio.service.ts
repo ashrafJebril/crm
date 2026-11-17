@@ -1842,10 +1842,12 @@ export class ZernioService {
       // Skipped when the workspace's own l agent already took this message
       // (queueAgentReply above): both paths key off conv.aiEnabled, so with
       // both platforms configured the customer would get two AI replies.
+      // An escalated thread waits for a person: no kewy-ai auto-reply either.
       if (
         !isOutbound &&
         conv.aiEnabled &&
         !conv.aiPausedAt &&
+        !conv.escalated &&
         this.aiBridge.isConfigured() &&
         !(await this.lAgentAnswers(workspaceId)) &&
         // SP-20: the reply gate; never throws, fails closed.

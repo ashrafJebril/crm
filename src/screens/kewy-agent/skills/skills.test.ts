@@ -7,7 +7,8 @@ import type { Skill, SkillConfigField } from "@/lib/types";
 import { SKILL_KEYS } from "./skillCatalog";
 import { cardView, filterSkills, statusLabel, usageText, usedBy } from "./skillView";
 import { droppedNotice, initialValues, parseTagsInput, validateConfig } from "./skillConfigForm";
-import { FIELD_ERROR_COPY, LEGACY_EDITED_COPY, SKILL_ERROR_COPY, fieldErrorsOf, skillErrorText } from "./skillErrors";
+import { FIELD_ERROR_COPY, LEGACY_EDITED_COPY, LEGACY_EDITED_LOCKED_COPY, SKILL_ERROR_COPY, fieldErrorsOf, skillErrorText } from "./skillErrors";
+import { quickActionLabel, turnOffConfirmText } from "./SkillDetailSheet";
 
 const en = makeTx("en");
 const ar = makeTx("ar");
@@ -161,5 +162,25 @@ describe("skill errors and catalog", () => {
     const m = /export const SKILL_KEYS = \[([^\]]+)\]/.exec(text);
     const keys = [...(m?.[1] ?? "").matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
     expect([...SKILL_KEYS]).toEqual(keys);
+  });
+});
+
+describe("SP-22 review fixes: confirmations and accessible names", () => {
+  const s = { name: { en: "Bookings", ar: "الحجوزات" } };
+  it("turning off asks first, in both languages", () => {
+    expect(turnOffConfirmText(s, makeTx("en"))).toBe("Turn off Bookings? Your agent stops using it right away.");
+    expect(turnOffConfirmText(s, makeTx("ar"))).toBe("إيقاف الحجوزات؟ سيتوقف وكيلك عن استخدامه فورًا.");
+  });
+
+  it("card quick actions are named with the skill", () => {
+    expect(quickActionLabel("turn_off", s, makeTx("en"))).toBe("Turn off: Bookings");
+    expect(quickActionLabel("install", s, makeTx("ar"))).toBe("تثبيت: الحجوزات");
+    expect(quickActionLabel("details", s, makeTx("en"))).toBe("Details: Bookings");
+    expect(quickActionLabel("settings", s, makeTx("ar"))).toBe("الإعدادات: الحجوزات");
+  });
+
+  it("the legacy-edited panel says turning off and uninstalling wait for the old text to go", () => {
+    expect(LEGACY_EDITED_LOCKED_COPY[0]).toBe("Turning it off and uninstalling are unavailable until the old text is removed from the agent prompt.");
+    expect(LEGACY_EDITED_LOCKED_COPY[1]).toMatch(/[؀-ۿ]/);
   });
 });

@@ -185,6 +185,22 @@ describe("ZernioService — l agent auto-reply on inbound social messages", () =
     expect(notifyInbound).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the kewy-ai bridge out of an escalated thread, and still stores the message", async () => {
+    const ask = jest.fn().mockResolvedValue(null);
+    const { svc, send, notifyInbound, prisma } = build(
+      { id: CONV, aiEnabled: true, escalated: true, channel: "facebook" },
+      ask,
+      { bridgeConfigured: true, workspace: { lEndpointId: null, lEndpointSecret: null } },
+    );
+
+    await svc.handleEvent(inbound as never);
+    await settle();
+
+    expect(prisma.message.create).toHaveBeenCalled();
+    expect(notifyInbound).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("does not answer our own outbound echo", async () => {
     const ask = jest.fn();
     const { svc, send } = build({ id: CONV, aiEnabled: true, channel: "facebook" }, ask);
@@ -513,6 +529,22 @@ describe("SP-20 reply gate wiring", () => {
       await svc.handleWebhook(mEvent("wamid.3") as never);
       expect(notifyInbound).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("the Meta kewy-ai bridge skips an escalated thread, and still stores the message", async () => {
+    const prisma = makeFakePrisma({ channel: [sp20Channel({ id: "M", provider: "meta", externalId: "pn-M" })] });
+    const { svc, notifyInbound } = metaWithGate(prisma, stubGate(true));
+    await svc.handleWebhook(mEvent("wamid.e1") as never);
+    prisma.db.conversation[0].aiEnabled = true;
+    prisma.db.conversation[0].escalated = true;
+    const before = prisma.db.message.length;
+    await svc.handleWebhook(mEvent("wamid.e2") as never);
+    expect(prisma.db.message.length).toBe(before + 1);
+    expect(notifyInbound).not.toHaveBeenCalled();
+    // Once a person de-escalates, the bridge answers again.
+    prisma.db.conversation[0].escalated = false;
+    await svc.handleWebhook(mEvent("wamid.e3") as never);
+    expect(notifyInbound).toHaveBeenCalledTimes(1);
   });
 
   it("inbound is stored when the gate says no", async () => {

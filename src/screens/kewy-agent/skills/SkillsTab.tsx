@@ -7,7 +7,7 @@ import type { Skill, SkillList } from "@/lib/types";
 import type { Tx } from "@/lib/tx";
 import { SKILL_ICON, type SkillIcon } from "./skillCatalog";
 import { cardView, filterSkills, reasonText, statusLabel, usageText, usedBy, type SkillFilter } from "./skillView";
-import { SkillDetailSheet, UNINSTALL_CONFIRM, actionLabel } from "./SkillDetailSheet";
+import { SkillDetailSheet, UNINSTALL_CONFIRM, actionLabel, quickActionLabel, turnOffConfirmText } from "./SkillDetailSheet";
 import { useSkillActions } from "./useSkillActions";
 
 const ICONS: Record<SkillIcon, (p: { w?: number }) => React.ReactElement> = {
@@ -50,6 +50,7 @@ export function SkillsTab({ tx, lang }: { tx: Tx; lang: "en" | "ar" }) {
       return;
     }
     if (kind === "uninstall" && !window.confirm(`${tx(`Uninstall ${s.name.en}?`, `إزالة ${s.name.ar}؟`)} ${tx(...UNINSTALL_CONFIRM)}`)) return;
+    if (kind === "turn_off" && !window.confirm(turnOffConfirmText(s, tx))) return;
     await actions.run(s, { kind });
   };
 
@@ -141,6 +142,7 @@ export function SkillsTab({ tx, lang }: { tx: Tx; lang: "en" | "ar" }) {
                       className="btn sm primary"
                       disabled={v.primaryAction.disabled || busy}
                       aria-describedby={reason ? reasonId : undefined}
+                      aria-label={quickActionLabel(primary, s, tx)}
                       onClick={() => void quick(s, primary)}
                     >
                       {actionLabel(primary, tx)}
@@ -149,11 +151,16 @@ export function SkillsTab({ tx, lang }: { tx: Tx; lang: "en" | "ar" }) {
                   {v.secondaryActions
                     .filter((a): a is "update" | "turn_off" => a === "update" || a === "turn_off")
                     .map((a) => (
-                      <button key={a} type="button" className="btn sm" disabled={busy} onClick={() => void quick(s, a)}>
+                      <button key={a} type="button" className="btn sm" disabled={busy} aria-label={quickActionLabel(a, s, tx)} onClick={() => void quick(s, a)}>
                         {actionLabel(a, tx)}
                       </button>
                     ))}
-                  <button type="button" className="btn sm ghost" aria-describedby={titleId} onClick={() => setOpen(s.key)}>
+                  <button
+                    type="button"
+                    className="btn sm ghost"
+                    aria-label={quickActionLabel(!v.readOnly && s.installed ? "settings" : "details", s, tx)}
+                    onClick={() => setOpen(s.key)}
+                  >
                     {v.readOnly ? tx("Details", "التفاصيل") : s.installed ? tx("Settings", "الإعدادات") : tx("Details", "التفاصيل")}
                   </button>
                 </div>

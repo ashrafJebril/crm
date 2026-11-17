@@ -28,6 +28,8 @@ export function useSkillActions(tx: Tx, reload: () => Promise<void> | void) {
   const { toast } = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  /** Bumped after a version-conflict reload, so an open sheet resets its form. */
+  const [conflicts, setConflicts] = useState(0);
 
   const run = async (skill: Skill, action: SkillAction): Promise<boolean> => {
     setBusy(`${skill.key}:${action.kind}`);
@@ -69,12 +71,18 @@ export function useSkillActions(tx: Tx, reload: () => Promise<void> | void) {
       if (key === "skills.invalid_config") setFieldErrors(fieldErrorsOf(e, tx));
       toast(skillErrorText(e, tx), "error");
       // Someone else changed it (or its state moved on): show the fresh row.
-      if (key === "skills.version_conflict" || (e instanceof ApiError && e.status === 409)) await reload();
+      if (key === "skills.version_conflict" || (e instanceof ApiError && e.status === 409)) {
+        await reload();
+        if (key === "skills.version_conflict") {
+          setFieldErrors({});
+          setConflicts((n) => n + 1);
+        }
+      }
       return false;
     } finally {
       setBusy(null);
     }
   };
 
-  return { run, busy, fieldErrors, setFieldErrors };
+  return { run, busy, fieldErrors, setFieldErrors, conflicts };
 }

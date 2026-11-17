@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal } from "@/components/Modal";
 import { Badge } from "@/components/Badge";
 import type { Skill } from "@/lib/types";
@@ -6,7 +6,7 @@ import type { Tx } from "@/lib/tx";
 import { CONNECTORS_HREF, PROVIDER_NAME } from "./skillCatalog";
 import { cardView, reasonText, statusLabel, usageText, usedBy, type CardView, type SecondaryKind, type PrimaryKind } from "./skillView";
 import { initialValues, validateConfig, type FormValue } from "./skillConfigForm";
-import { FIELD_ERROR_COPY, LEGACY_EDITED_COPY } from "./skillErrors";
+import { FIELD_ERROR_COPY, LEGACY_EDITED_COPY, LEGACY_EDITED_LOCKED_COPY } from "./skillErrors";
 import { ConfigFieldsForm } from "./ConfigFieldsForm";
 import type { SkillAction, useSkillActions } from "./useSkillActions";
 
@@ -32,6 +32,18 @@ export function actionLabel(kind: Exclude<PrimaryKind, null> | SecondaryKind, tx
 }
 
 export const UNINSTALL_CONFIRM: [string, string] = ["Its settings will be deleted.", "ستُحذف إعداداتها."];
+
+/** The turn-off confirmation (review I1): the agent stops using the skill at once. */
+export function turnOffConfirmText(skill: Pick<Skill, "name">, tx: Tx): string {
+  return tx(`Turn off ${skill.name.en}? Your agent stops using it right away.`, `إيقاف ${skill.name.ar}؟ سيتوقف وكيلك عن استخدامه فورًا.`);
+}
+
+/** A card quick action's accessible name, with the skill's name (review M2). */
+export function quickActionLabel(kind: Exclude<PrimaryKind, null> | SecondaryKind | "details", skill: Pick<Skill, "name">, tx: Tx): string {
+  const name = tx(skill.name.en, skill.name.ar);
+  const verb = kind === "details" ? tx("Details", "التفاصيل") : actionLabel(kind, tx);
+  return tx(`${verb}: ${name}`, `${verb}: ${name}`);
+}
 
 /**
  * SP-22: one skill in full. Tools in plain words (reads vs makes changes), the
@@ -59,6 +71,15 @@ export function SkillDetailSheet({
   const view: CardView = cardView(skill, can, agentConnected);
   const [values, setValues] = useState<Record<string, FormValue>>(() => initialValues(skill.configFields, skill.config));
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+  // Review M3: after a version conflict the list reloads; reset the form from
+  // the reloaded row (someone else's change), not the stale edit.
+  const seenConflicts = useRef(actions.conflicts);
+  useEffect(() => {
+    if (actions.conflicts === seenConflicts.current) return;
+    seenConflicts.current = actions.conflicts;
+    setValues(initialValues(skill.configFields, skill.config));
+    setLocalErrors({});
+  }, [actions.conflicts, skill.configFields, skill.config]);
   const errors = { ...actions.fieldErrors, ...localErrors };
   const editable = !view.readOnly;
   const provider = skill.requiredConnector?.provider;
@@ -102,6 +123,10 @@ export function SkillDetailSheet({
       case "uninstall":
         if (!window.confirm(`${tx(`Uninstall ${skill.name.en}?`, `إزالة ${skill.name.ar}؟`)} ${tx(...UNINSTALL_CONFIRM)}`)) return;
         await act({ kind: "uninstall" });
+        return;
+      case "turn_off":
+        if (!window.confirm(turnOffConfirmText(skill, tx))) return;
+        await act({ kind: "turn_off" });
         return;
       default:
         await act({ kind });
@@ -154,7 +179,11 @@ export function SkillDetailSheet({
 
         {attention && (
           <div role="alert" style={{ fontSize: 12.5, padding: 10, borderRadius: 8, border: "1px solid var(--bad)" }}>
-            {skill.attentionReason === "legacy_edited" ? tx(...LEGACY_EDITED_COPY) : (
+            {skill.attentionReason === "legacy_edited" ? (
+              <>
+                {tx(...LEGACY_EDITED_COPY)} {tx(...LEGACY_EDITED_LOCKED_COPY)}
+              </>
+            ) : (
               <>
                 {tx("Applying this skill to your agent failed.", "فشل تطبيق هذه المهارة على وكيلك.")}
                 {skill.lastError && (

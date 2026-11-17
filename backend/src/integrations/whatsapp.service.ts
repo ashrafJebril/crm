@@ -1486,9 +1486,11 @@ export class WhatsAppService {
     // message or the 200 Meta needs.
     // SP-20: the reply gate (emergency stop first); it never throws and a
     // failure to decide means no reply.
+    // An escalated thread waits for a person: no kewy-ai auto-reply.
     if (
       conv.aiEnabled &&
       !conv.aiPausedAt &&
+      !conv.escalated &&
       this.aiBridge.isConfigured() &&
       (!this.replyGate || (await this.replyGate.allows(workspaceId, { conversationId: conv.id, contactId: contact.id }, "meta_bridge")))
     ) {

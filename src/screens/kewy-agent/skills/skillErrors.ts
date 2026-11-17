@@ -7,6 +7,12 @@ export const LEGACY_EDITED_COPY: [string, string] = [
   "لا تزال تعليمات وكيلك تحتوي على نسخة قديمة معدّلة من نص هذه المهارة. احذفها من تعليمات الوكيل ثم حاول مرة أخرى.",
 ];
 
+/** Shown with LEGACY_EDITED_COPY in the detail sheet (review M1). */
+export const LEGACY_EDITED_LOCKED_COPY: [string, string] = [
+  "Turning it off and uninstalling are unavailable until the old text is removed from the agent prompt.",
+  "لا يمكن إيقافها أو إزالتها حتى تُحذف النسخة القديمة من تعليمات الوكيل.",
+];
+
 /**
  * Copy for every SP-22 error key (backend/src/skills/skill-errors.ts: the
  * route keys and the tool keys; skillErrors.test.ts pins the list).
