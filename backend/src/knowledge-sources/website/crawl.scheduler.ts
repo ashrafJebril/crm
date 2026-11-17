@@ -30,11 +30,11 @@ export class CrawlScheduler {
   }
 
   /** Start a run in the background if this process has room; never throws. */
-  kick(sourceId: string, workspaceId: string): boolean {
+  kick(sourceId: string, workspaceId: string, opts: { pageCap?: number } = {}): boolean {
     if (!this.hasRoom(sourceId, workspaceId)) return false;
     this.running.set(sourceId, workspaceId);
     void this.runner
-      .run(sourceId)
+      .run(sourceId, new Date(), opts)
       .catch(() => this.log.warn(`website source ${sourceId}: run crashed`))
       .finally(() => this.running.delete(sourceId));
     return true;

@@ -1090,3 +1090,48 @@ describe("SP-20 agent settings", () => {
     expect(await gate.decide("wsB", { conversationId: "cvB", contactId: "cB" })).toEqual({ reply: false, reason: "excluded" });
   });
 });
+
+// ─── SP-20: the "Try your agent" sandbox stays inside the member and workspace ──
+describe("SP-20 sandbox", () => {
+  const withKey = async <T,>(fn: () => Promise<T>) => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key-not-real";
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  };
+
+  it("sandbox thread of another member is never returned", async () => {
+    const { sandboxWorld } = await import("../agent/sandbox/sandbox-test-world");
+    const w = sandboxWorld();
+    await withKey(() => w.sandbox.send("ws1", "u1", "my private test"));
+    expect((await w.sandbox.get("ws1", "u1")).messages[0].text).toBe("my private test");
+    // Another member of the same workspace, and the same member in another workspace: nothing.
+    expect(await w.sandbox.get("ws1", "u2")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get("ws2", "u1")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
+    // Their reset never touches it, and their turn starts their own thread.
+    await w.sandbox.reset("ws1", "u2");
+    await withKey(() => w.sandbox.send("ws1", "u2", "hello"));
+    expect(w.prisma.db.agentSandboxThread.map((t: { userId: string }) => t.userId).sort()).toEqual(["u1", "u2"]);
+    expect((await w.sandbox.get("ws1", "u1")).turnCount).toBe(1);
+  });
+
+  it("sandbox reads only what the member's workspace holds", async () => {
+    const { sandboxWorld, toolUse } = await import("../agent/sandbox/sandbox-test-world");
+    const w = sandboxWorld({
+      replies: [
+        { stop_reason: "tool_use", content: [toolUse("t1", "get_contact", { id: "c-foreign" }), toolUse("t2", "search_contacts", { query: "Someone" })] },
+        { content: [{ type: "text", text: "not found" }] },
+      ],
+    });
+    await withKey(() => w.sandbox.send("ws1", "u1", "look up c-foreign"));
+    const results = w.ai.calls[1].messages[w.ai.calls[1].messages.length - 1].content as { tool_use_id: string; is_error?: boolean; content: string }[];
+    expect(results[0]).toMatchObject({ tool_use_id: "t1", is_error: true });
+    expect(JSON.parse(results[1].content)).toEqual([]); // the other workspace's "Someone else" is not found
+    expect(w.contacts.get).toHaveBeenCalledWith("ws1", "c-foreign");
+    expect(w.contacts.search).toHaveBeenCalledWith("ws1", "Someone");
+  });
+});

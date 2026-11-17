@@ -277,14 +277,30 @@ describe("permission map", () => {
       // Ruling 3: the existing toggle also writes the local stop; unchanged.
       "POST /ai/settings/toggle": "agent.update",
       "GET /ai/settings": "agent.view",
+      // Task 2: the sandbox (a turn costs money, ruling 9) and onboarding.
+      "GET /agent/sandbox": "agent.update",
+      "POST /agent/sandbox/messages": "agent.update",
+      "DELETE /agent/sandbox": "agent.update",
+      "GET /onboarding": "authenticated",
+      "PATCH /onboarding": "settings.update",
+      "POST /onboarding/website": "settings.update",
+      "POST /onboarding/learn": "settings.update",
+      "POST /onboarding/learn/apply": "settings.update",
+      // Ruling 11: register stays public (a per-IP limiter guards it).
+      "POST /auth/register": "public",
     };
     for (const [k, p] of Object.entries(sp20)) {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
     }
-    // Every declared /agent route is in the table (Task 1: the settings part).
-    expect(keys.filter((k) => / \/agent(\/|$)/.test(k)).sort()).toEqual(
-      ["GET /agent/settings", "PATCH /agent/settings", "POST /agent/settings/resync"].sort(),
+    // Every declared /agent and /onboarding route is in the table (the exact set).
+    expect(keys.filter((k) => / \/(agent|onboarding)(\/|$)/.test(k)).sort()).toEqual(
+      Object.keys(sp20)
+        .filter((k) => / \/(agent|onboarding)(\/|$)/.test(k))
+        .sort(),
     );
+    // Route order: learn/apply is its own path, never shadowed.
+    const ob = routes.filter((r) => r.key.includes(" /onboarding"));
+    expect(ob.map((r) => r.key)).toContain("POST /onboarding/learn/apply");
   });
 
   it("permission map covers SP-10 routes (booking part)", () => {

@@ -150,8 +150,12 @@ export class CrawlRunner {
     return r.count === 1 ? now : null;
   }
 
-  /** Claim and run one crawl. Null when it could not be claimed. */
-  async run(sourceId: string, now = new Date()): Promise<RunSummary | null> {
+  /**
+   * Claim and run one crawl. Null when it could not be claimed. SP-20:
+   * `opts.pageCap` (≤ WEBSITE_PAGE_CAP) lowers the page cap of this run only
+   * (onboarding's first read of a site).
+   */
+  async run(sourceId: string, now = new Date(), opts: { pageCap?: number } = {}): Promise<RunSummary | null> {
     const lease = await this.claim(sourceId, now);
     if (!lease) return null;
     const src = await this.prisma.knowledgeSource.findFirst({ where: { id: sourceId, kind: "website" } });
@@ -169,7 +173,8 @@ export class CrawlRunner {
     try {
       const robots = await this.readRobots(site);
       if (!robots) return await this.finishFailed(src, lease, "knowledge.site_unreachable", "robots_unreachable");
-      const { outcomes, complete } = await this.crawl(site, robots, lease);
+      const pageCap = Math.min(WEBSITE_PAGE_CAP, Math.max(1, Math.floor(opts.pageCap ?? WEBSITE_PAGE_CAP)));
+      const { outcomes, complete } = await this.crawl(site, robots, lease, pageCap);
       const read = outcomes.filter((o) => o.state === "synced");
       if (read.length === 0) return await this.finishFailed(src, lease, "knowledge.no_pages", "no_pages");
       return await this.apply(src, lease, outcomes, complete);
@@ -278,7 +283,7 @@ export class CrawlRunner {
    * Breadth-first crawl in memory. `complete` is false when the run budget
    * ran out: such a run counts no page as missing.
    */
-  private async crawl(site: Site, robots: RobotsRules, lease: Date): Promise<{ outcomes: PageOutcome[]; complete: boolean }> {
+  private async crawl(site: Site, robots: RobotsRules, lease: Date, pageCap = WEBSITE_PAGE_CAP): Promise<{ outcomes: PageOutcome[]; complete: boolean }> {
     const deadline = lease.getTime() + this.budgetMs;
     const outcomes = new Map<string, PageOutcome>();
     const queue: { url: URL; depth: number }[] = [{ url: site.start, depth: 0 }];
@@ -291,7 +296,7 @@ export class CrawlRunner {
       const key = urlKey(url);
       if (outcomes.has(key)) continue;
       if (Date.now() > deadline) return { outcomes: [...outcomes.values()], complete: false };
-      if (fetched >= WEBSITE_PAGE_CAP) {
+      if (fetched >= pageCap) {
         outcomes.set(key, { url, key, state: "capped", httpStatus: null });
         continue;
       }

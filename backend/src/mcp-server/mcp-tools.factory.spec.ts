@@ -130,4 +130,34 @@ describe("McpToolsFactory", () => {
     expect(appointments.list).toHaveBeenNthCalledWith(1, "ws-a", { limit: 50 });
     expect(appointments.list).toHaveBeenNthCalledWith(2, "ws-b", { limit: 50 });
   });
+
+  describe("SP-20 build mode", () => {
+    it("live (the default, and what the MCP route builds) is unchanged: writes reach their service", async () => {
+      appointments.create.mockResolvedValue({ id: "new" });
+      const live = factory.build("ws1", { mode: "live" });
+      expect(Object.keys(live)).toEqual(Object.keys(tools()));
+      await live.create_appointment.execute!(
+        { contactId: "c1", service: "Cut", startAt: "2026-11-22T10:00:00+03:00", durationMin: 30, status: "pending", source: "self-booking" } as never,
+        {} as never,
+      );
+      expect(appointments.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("sandbox: the same tools; every write is a mock and never reaches a service; reads run", async () => {
+      const sb = factory.build("ws1", { mode: "sandbox" });
+      expect(Object.keys(sb).sort()).toEqual(Object.keys(tools()).sort());
+      const out = await sb.create_appointment.execute!(
+        { contactId: "c1", service: "Cut", startAt: "2026-11-22T10:00:00+03:00", durationMin: 30, status: "pending", source: "self-booking" } as never,
+        {} as never,
+      );
+      expect(out).toMatchObject({ simulated: true, ok: true, tool: "create_appointment" });
+      for (const t of ["update_appointment", "cancel_appointment", "create_contact", "update_contact"]) {
+        expect(await sb[t].execute!({ id: "x", name: "n" } as never, {} as never)).toMatchObject({ simulated: true, tool: t });
+      }
+      for (const fn of [appointments.create, appointments.update, contacts.create, contacts.update]) expect(fn).not.toHaveBeenCalled();
+      contacts.search.mockResolvedValue([{ id: "c1" }]);
+      expect(await sb.search_contacts.execute!({ query: "Sa" } as never, {} as never)).toEqual([{ id: "c1" }]);
+      expect(contacts.search).toHaveBeenCalledWith("ws1", "Sa");
+    });
+  });
 });

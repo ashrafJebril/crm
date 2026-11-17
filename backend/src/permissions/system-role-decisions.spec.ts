@@ -589,11 +589,22 @@ describe("system-role decision table", () => {
   });
 
   describe("SP-20 agent routes", () => {
-    // Task 1: the settings part. Task 2 adds the sandbox and onboarding rows.
-    const READS = ["GET /agent/settings", "GET /ai/settings"];
-    const WRITES = ["PATCH /agent/settings", "POST /agent/settings/resync", "POST /ai/settings/toggle"];
+    // Settings (Task 1), the sandbox and onboarding (Task 2).
+    const READS = ["GET /agent/settings", "GET /ai/settings", "GET /onboarding"];
+    const WRITES = [
+      "PATCH /agent/settings",
+      "POST /agent/settings/resync",
+      "POST /ai/settings/toggle",
+      "GET /agent/sandbox",
+      "POST /agent/sandbox/messages",
+      "DELETE /agent/sandbox",
+      "PATCH /onboarding",
+      "POST /onboarding/website",
+      "POST /onboarding/learn",
+      "POST /onboarding/learn/apply",
+    ];
 
-    it("owner and admin configure and resync", () => {
+    it("owner and admin configure, resync, use the sandbox and run onboarding", () => {
       for (const role of ["owner", "admin"] as const) {
         for (const route of [...READS, ...WRITES]) expect({ role, route, ok: allowed(role, route) }).toEqual({ role, route, ok: true });
       }

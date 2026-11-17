@@ -259,6 +259,28 @@ describe("CrawlRunner", () => {
     expect(w.db.knowledgeChunk.some((c) => capped.some((p) => p.id === c.pageId))).toBe(false);
   });
 
+  it("SP-20: a run's page cap can be lowered (onboarding's first read), never raised", async () => {
+    const n = 30;
+    const pages: Record<string, { body: string } | { status: number }> = {
+      "https://shop.example/robots.txt": notFound,
+      "https://shop.example/sitemap.xml": notFound,
+      "https://shop.example/": { body: html("Home", "Welcome to the shop, open every day of the week.", Array.from({ length: n }, (_, i) => `/p${i}`)) },
+    };
+    for (let i = 0; i < n; i++) pages[`https://shop.example/p${i}`] = { body: html(`P${i}`, `Product page number ${i} with a long enough description.`) };
+    const net = fakeNet({ dns: SHOP, pages });
+    const w = crawlWorld(net.deps);
+    const src = website(w.db);
+    await w.runner.run(src.id, new Date(), { pageCap: 20 });
+    expect(pageUrls(net.urls())).toHaveLength(20);
+    expect(w.db.knowledgePage.filter((p) => p.state === "synced")).toHaveLength(20);
+
+    const net2 = fakeNet({ dns: SHOP, pages });
+    const w2 = crawlWorld(net2.deps);
+    const src2 = website(w2.db);
+    await w2.runner.run(src2.id, new Date(), { pageCap: 10_000 });
+    expect(pageUrls(net2.urls())).toHaveLength(Math.min(WEBSITE_PAGE_CAP, n + 1));
+  });
+
   it("a 5 000-URL sitemap completes with a bounded sample of capped rows and a count", async () => {
     const n = 5000;
     const locs = Array.from({ length: n }, (_, i) => `<url><loc>https://shop.example/s${i}</loc></url>`).join("");

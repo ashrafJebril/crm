@@ -62,6 +62,11 @@ const PROMPT_SECTIONS: ReadonlyArray<readonly [marker: string, section: string]>
   [KNOWLEDGE_MARKER, CRM_KNOWLEDGE_SECTION],
 ];
 
+/** SP-20: every CRM section, in order, as setup appends them (the sandbox's prompt when no l agent is linked). */
+export function crmPromptSections(): string {
+  return PROMPT_SECTIONS.map(([, section]) => section).join("\n\n");
+}
+
 interface LAgent {
   slug: string;
   live_version: number | null;
@@ -105,6 +110,22 @@ export class LAgentSetupService {
     private readonly mcp: LMcpService,
     private readonly tokens: McpTokenService,
   ) {}
+
+  /**
+   * SP-20: the agent's live prompt, read only (GET agents, GET prompts; never a
+   * write, never a message to the agent). Null when the workspace is not linked
+   * or l has no live prompt.
+   */
+  async readLivePrompt(workspaceId: string): Promise<string | null> {
+    const ws = await this.prisma.raw.workspace.findUnique({ where: { id: workspaceId }, select: { lWorkspaceId: true, lAgentSlug: true } });
+    if (!ws?.lWorkspaceId || !ws.lAgentSlug) return null;
+    const base = `/workspaces/${ws.lWorkspaceId}/agents`;
+    const agents = await this.client.request<LAgent[]>(base, { timeoutMs: L_CALL_TIMEOUT_MS });
+    const agent = agents.find((a) => a.slug === ws.lAgentSlug);
+    if (!agent) return null;
+    const prompts = await this.client.request<LPrompt[]>(`${base}/${ws.lAgentSlug}/prompts`, { timeoutMs: L_CALL_TIMEOUT_MS });
+    return prompts.find((p) => p.version === agent.live_version)?.content ?? null;
+  }
 
   /** Never throws: a failure here must not fail the link that triggered it. */
   async ensureQuietly(workspaceId: string): Promise<void> {
