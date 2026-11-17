@@ -43,6 +43,21 @@ export const SECTION_MAX_WAIT_MS = 5_000;
  * (P2024). Further sections queue in memory before taking a connection.
  */
 export const MAX_CONCURRENT_SECTIONS = 2;
+/** The bounds of `INSIGHTS_MAX_CONCURRENT_SECTIONS` (the pool is 3–5 connections). */
+export const MIN_CONCURRENT_SECTIONS_LIMIT = 1;
+export const MAX_CONCURRENT_SECTIONS_LIMIT = 4;
+
+/**
+ * The process-wide section limit: env `INSIGHTS_MAX_CONCURRENT_SECTIONS`
+ * (an integer), default MAX_CONCURRENT_SECTIONS, clamped to 1–4. Anything
+ * unparsable reads as the default.
+ */
+export function maxConcurrentSections(env: Record<string, string | undefined> = process.env): number {
+  const raw = env.INSIGHTS_MAX_CONCURRENT_SECTIONS?.trim();
+  const n = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return MAX_CONCURRENT_SECTIONS;
+  return Math.min(MAX_CONCURRENT_SECTIONS_LIMIT, Math.max(MIN_CONCURRENT_SECTIONS_LIMIT, Math.floor(n)));
+}
 /**
  * How long a section may wait in that queue. Past it, the section is
  * `unavailable` without ever taking a connection (a busy process degrades a

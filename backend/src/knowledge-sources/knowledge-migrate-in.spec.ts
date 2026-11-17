@@ -77,4 +77,47 @@ describe("knowledge migrate-in", () => {
     expect(w.db.knowledgeSource.some((s) => s.legacyRef === "kewy:h1")).toBe(false);
     expect(w.db.knowledgeSource.some((s) => s.title === "Haircut")).toBe(false);
   });
+
+  it("docs SP-21 published itself are never re-imported", async () => {
+    const w = setup();
+    // Sources this CRM already publishes to kewy-ai (and a tombstone still deleting one).
+    w.db.knowledgeSource.push(
+      { id: "own_content", workspaceId: A, kind: "content", status: "ready", title: "Business", body: "We are a salon.", upstream: { kewy: { docId: "p1" } }, legacyRef: null },
+      { id: "own_faq", workspaceId: A, kind: "faq", status: "ready", title: "Open on Friday?", question: "Open on Friday?", body: "Yes.", upstream: { kewy: { docId: "p3" } }, legacyRef: null },
+      { id: "own_tomb", workspaceId: A, kind: "tombstone", status: "deleted", title: "Deleted knowledge source", upstream: { kewy: { docId: "p4" } }, legacyRef: null },
+    );
+    const own = [
+      doc({ id: "p1", kind: "OTHER", title: "Business", body: "We are a salon." }),
+      doc({ id: "p3", kind: "FAQ", title: "Open on Friday?", body: "Yes." }),
+      doc({ id: "p4", kind: "POLICY", title: "Old policy", body: "Being deleted by the publisher right now." }),
+    ];
+    const legacy = await w.deps.kewyDocs(A);
+    w.deps.kewyDocs.mockImplementation(async (ws: string) => (ws === A ? [...legacy, ...own] : []));
+    const before = w.db.knowledgeSource.length;
+
+    const first = await migrateIn(w.deps, { workspaceIds: [A], dryRun: false });
+    expect(first).toMatchObject({ faq: 1, file: 1, guidelines: 2, publishedSkipped: 3 });
+    for (const id of ["p1", "p3", "p4"]) expect(w.db.knowledgeSource.some((s) => s.legacyRef === `kewy:${id}`)).toBe(false);
+    // Pre-existing legacy docs still migrate.
+    expect(w.db.knowledgeSource.find((s) => s.legacyRef === "kewy:k2")).toMatchObject({ kind: "file", upstream: { kewy: { docId: "k2" } } });
+    // No two sources share a kewy doc id.
+    const ids = w.db.knowledgeSource.map((s) => s.upstream?.kewy?.docId).filter(Boolean);
+    expect(new Set(ids).size).toBe(ids.length);
+    const after = w.db.knowledgeSource.length;
+    expect(after).toBeGreaterThan(before);
+
+    // Rerun: idempotent.
+    const second = await migrateIn(w.deps, { workspaceIds: [A], dryRun: false });
+    expect(second).toMatchObject({ faq: 0, file: 0, guidelines: 0, lDocuments: 0, publishedSkipped: 3 });
+    expect(w.db.knowledgeSource).toHaveLength(after);
+  });
+
+  it("a TONE doc the guidelines published is not appended back into them", async () => {
+    const w = setup();
+    w.db.knowledgeSource.push({ id: "own_g", workspaceId: A, kind: "guideline", status: "ready", title: "Guidelines", body: "Be brief.", upstream: { kewy: { docId: "p2" } }, legacyRef: null, version: 3 });
+    w.deps.kewyDocs.mockImplementation(async (ws: string) => (ws === A ? [doc({ id: "p2", kind: "TONE", title: "Guidelines", body: "Be brief." })] : []));
+    const r = await migrateIn(w.deps, { workspaceIds: [A], dryRun: false });
+    expect(r).toMatchObject({ guidelines: 0, publishedSkipped: 1 });
+    expect(w.db.knowledgeSource.find((s) => s.id === "own_g")).toMatchObject({ body: "Be brief.", version: 3, upstream: { kewy: { docId: "p2" } } });
+  });
 });

@@ -120,6 +120,21 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
         reason,
       );
     }
+    case "lifecycle.ticket_opened":
+    case "lifecycle.new_lead": {
+      const lead = n.title === "lifecycle.new_lead";
+      const num = typeof p.number === "number" || typeof p.number === "string" ? String(p.number) : undefined;
+      const contact = str(p.contactName);
+      const title = str(p.title);
+      const head = lead
+        ? num
+          ? tx(`New lead #${num}`, `عميل محتمل جديد رقم ${num}`)
+          : tx("New lead", "عميل محتمل جديد")
+        : num
+          ? tx(`New ticket #${num}`, `تذكرة جديدة رقم ${num}`)
+          : tx("New ticket", "تذكرة جديدة");
+      return out(contact ? `${head} · ${contact}` : head, title);
+    }
     case "import.failed":
       return out(tx("An import failed", "فشل الاستيراد"));
     case "mention.note": {
@@ -147,6 +162,8 @@ export function notificationText(tx: Tx, n: NotificationLike): { title: string; 
         return out(tx("New assignment", "إسناد جديد"), detail);
       case "mention":
         return out(tx("You were mentioned", "تمت الإشارة إليك"), detail);
+      case "lifecycle":
+        return out(tx("Automatic message alert", "تنبيه من الرسائل التلقائية"), detail);
     }
   }
   return { title: n.title };

@@ -144,7 +144,8 @@ describe("NotificationsService", () => {
   it("preferences default on", async () => {
     prisma.notificationPreference.findMany.mockResolvedValue([{ type: "mention", inApp: false, sound: true }]);
     const prefs = await svc.getPreferences("ws1", "u1");
-    expect(prefs).toHaveLength(7);
+    expect(prefs).toHaveLength(8); // SP-24 adds "lifecycle"
+    expect(prefs.find((p) => p.type === "lifecycle")).toEqual({ type: "lifecycle", inApp: true, sound: true });
     expect(prefs.find((p) => p.type === "assignment")).toEqual({ type: "assignment", inApp: true, sound: true });
     expect(prefs.find((p) => p.type === "mention")).toEqual({ type: "mention", inApp: false, sound: true });
     expect(prisma.notificationPreference.findMany.mock.calls[0][0].where).toEqual({ workspaceId: "ws1", userId: "u1" });

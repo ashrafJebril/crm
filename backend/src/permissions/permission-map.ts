@@ -548,6 +548,12 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /workflows/:id/test": "workflows.update",
   "GET /workflows/:id/runs": "workflows.view",
   "GET /workflows/:id/runs/:runId": "workflows.view",
+  // SP-24: Automatic messages (a focused view over system workflows).
+  "GET /lifecycle": "workflows.view",
+  "POST /lifecycle/:key/setup": "workflows.create",
+  "PATCH /lifecycle/:key": "workflows.update",
+  // The same permission as GET /templates, which already writes the reconcile.
+  "POST /lifecycle/sync": "templates.view",
 
   // ── Reports ───────────────────────────────────────────────────────────
   "GET /dashboard/summary": "reports.view",

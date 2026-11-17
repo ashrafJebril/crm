@@ -80,6 +80,13 @@ export const CAPPED_ROW_SAMPLE = 20;
 /** The apply transaction's limits (Prisma's interactive default is 5 s). */
 export const APPLY_TX_TIMEOUT_MS = 30_000;
 export const APPLY_TX_MAX_WAIT_MS = 10_000;
+/**
+ * Below this many characters of body text (the title excluded), a page is an
+ * `error` with reason PAGE_NO_TEXT: typically a JavaScript app shell whose
+ * text only appears in a browser.
+ */
+export const PAGE_MIN_BODY_CHARS = 20;
+export const PAGE_NO_TEXT = "knowledge.page_no_text" as const;
 /** Characters of text kept per page. */
 export const PAGE_TEXT_MAX = 200_000;
 const HTML_TYPES = ["text/html", "text/plain"];
@@ -99,6 +106,8 @@ interface PageOutcome {
   title?: string | null;
   text?: string;
   hash?: string;
+  /** A keyed reason for an `error` page (pages have no reason column; it is counted in `lastRun`). */
+  reason?: typeof PAGE_NO_TEXT;
 }
 
 export interface RunSummary {
@@ -110,11 +119,32 @@ export interface RunSummary {
   pagesNew: number;
   /** URLs past WEBSITE_PAGE_CAP (only a sample of them has a row). */
   pagesCapped: number;
+  /** Pages read whose body had no usable text (PAGE_NO_TEXT). */
+  pagesNoText: number;
+  /** Keyed reasons of `error` pages, counted. */
+  pageErrors?: Record<string, number>;
   failed: boolean;
   reason?: string;
 }
 
 class LeaseLost extends Error {}
+
+/** The HTML without its <title> element(s) (linear scan, no regex backtracking). */
+function withoutTitle(html: string): string {
+  const lower = html.toLowerCase();
+  let out = "";
+  let from = 0;
+  for (;;) {
+    const open = lower.indexOf("<title", from);
+    if (open < 0) break;
+    const close = lower.indexOf("</title", open);
+    if (close < 0) break;
+    const end = lower.indexOf(">", close);
+    out += html.slice(from, open);
+    from = end < 0 ? html.length : end + 1;
+  }
+  return out + html.slice(from);
+}
 
 @Injectable()
 export class CrawlRunner {
@@ -176,7 +206,11 @@ export class CrawlRunner {
       const pageCap = Math.min(WEBSITE_PAGE_CAP, Math.max(1, Math.floor(opts.pageCap ?? WEBSITE_PAGE_CAP)));
       const { outcomes, complete } = await this.crawl(site, robots, lease, pageCap);
       const read = outcomes.filter((o) => o.state === "synced");
-      if (read.length === 0) return await this.finishFailed(src, lease, "knowledge.no_pages", "no_pages");
+      if (read.length === 0) {
+        // Only app shells: say so, not a generic "no pages".
+        if (outcomes.some((o) => o.reason === PAGE_NO_TEXT)) return await this.finishFailed(src, lease, PAGE_NO_TEXT, "no_text");
+        return await this.finishFailed(src, lease, "knowledge.no_pages", "no_pages");
+      }
       return await this.apply(src, lease, outcomes, complete);
     } catch (e) {
       if (e instanceof LeaseLost) return null;
@@ -250,6 +284,7 @@ export class CrawlRunner {
       if (!sameOrigin(site, url) || seen.has(url.toString()) || !robotsAllows(robots, url.pathname + url.search)) continue;
       seen.add(url.toString());
       fetched += 1;
+      // robots.txt was the request before this one.
       await this.sleep(this.gap(robots));
       try {
         const res = await this.get(url, XML_TYPES, site);
@@ -304,7 +339,9 @@ export class CrawlRunner {
         outcomes.set(key, { url, key, state: "blocked", httpStatus: null });
         continue;
       }
-      if (fetched > 0) await this.sleep(this.gap(robots));
+      // Every page follows another request to the site (robots.txt at least,
+      // and any sitemap), so it always waits the full gap first (ruling 8).
+      await this.sleep(this.gap(robots));
       fetched += 1;
       const outcome = await this.readPage(site, url, key);
       outcomes.set(key, outcome.page);
@@ -332,6 +369,11 @@ export class CrawlRunner {
     const text = html ? htmlToText(res.body, PAGE_TEXT_MAX) : plainText(res.body, PAGE_TEXT_MAX);
     const links = html ? pageLinks(res.body, res.url) : [];
     if (!text.trim()) return { page: { url, key, state: "error", httpStatus: res.status }, links };
+    // htmlToText keeps the title, so a JavaScript-only page is not empty: measure the body alone.
+    const body = html ? htmlToText(withoutTitle(res.body), PAGE_TEXT_MAX) : text;
+    if (body.replace(/\s+/g, "").length < PAGE_MIN_BODY_CHARS) {
+      return { page: { url, key, state: "error", httpStatus: res.status, reason: PAGE_NO_TEXT }, links };
+    }
     return {
       page: {
         url: res.url,
@@ -363,8 +405,10 @@ export class CrawlRunner {
       pagesChanged: 0,
       pagesNew: 0,
       pagesCapped: outcomes.filter((o) => o.state === "capped").length,
+      pagesNoText: outcomes.filter((o) => o.reason === PAGE_NO_TEXT).length,
       failed: false,
     };
+    if (summary.pagesNoText) summary.pageErrors = { [PAGE_NO_TEXT]: summary.pagesNoText };
     const ws = src.workspaceId;
     let cappedCreated = 0;
     await this.prisma.$transaction(async (tx) => {
@@ -472,6 +516,7 @@ export class CrawlRunner {
       pagesChanged: 0,
       pagesNew: 0,
       pagesCapped: 0,
+      pagesNoText: 0,
       failed: true,
       reason,
     };

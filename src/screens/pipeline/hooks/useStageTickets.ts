@@ -18,7 +18,7 @@ export function useStageTickets(
   return useInfiniteQuery<TicketsListPage>({
     queryKey: enabled
       ? qk.stageTickets(pipelineId!, stageId!, filters)
-      : ["__disabled__"],
+      : ["__disabled__", "stageTickets"],
     queryFn: async ({ pageParam, signal }) => {
       const params = new URLSearchParams();
       params.set("pipelineId", pipelineId!);

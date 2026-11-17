@@ -1004,7 +1004,10 @@ model Workflow {
   id          String   @id @default(cuid())
   name        String
   status      String   @default("draft") // "draft" | "active"
-  triggerType String   // "contact_created" | "message_received" | "ticket_created" | "ticket_stage_changed" | "schedule" | "webhook"
+  /// "contact_created" | "message_received" | "ticket_created" | "ticket_stage_changed" | "schedule" | "webhook" |
+  /// "appointment_completed" | "sale_completed" | SP-24: "appointment_confirmed" | "appointment_cancelled" |
+  /// "appointment_reminder_due" | "ticket_resolved"
+  triggerType String
   triggerConfig Json   @default("{}")
   steps       Json     @default("{\"entry\": null, \"steps\": {}}")
   webhookSecret   String?
@@ -1015,11 +1018,33 @@ model Workflow {
 
   runs WorkflowRun[]
 
+  /// SP-24: "lifecycle.<key>" for a system workflow; null for a user workflow.
+  systemKey           String?
+  lifecycleDeliveries LifecycleDelivery[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([workspaceId, systemKey])
   @@index([workspaceId])
   @@index([workspaceId, triggerType, status])
+}
+
+/// SP-24: one row per lifecycle message occurrence actually started (the double-send claim).
+model LifecycleDelivery {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace @relation("WorkspaceLifecycleDeliveries", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workflowId    String
+  workflow      Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  entityKind    String // "appointment" | "ticket"
+  entityId      String // no FK: the booking/ticket may be deleted later; the claim must outlive it
+  occurrenceKey String
+  runId         String? // the WorkflowRun started (no FK: runs are pruned with the workflow)
+  createdAt     DateTime  @default(now())
+
+  @@unique([workflowId, entityId, occurrenceKey])
+  @@index([workspaceId, createdAt])
 }
 
 model WorkflowRun {
@@ -1252,6 +1277,8 @@ model Workspace {
   media             Media[]            @relation("WorkspaceMedia")
   workflows         Workflow[]         @relation("WorkspaceWorkflows")
   workflowRuns      WorkflowRun[]      @relation("WorkspaceWorkflowRuns")
+  /// SP-24 back-relation.
+  lifecycleDeliveries LifecycleDelivery[] @relation("WorkspaceLifecycleDeliveries")
 
   adsChatSessions       AdsChatSession[]       @relation("WorkspaceAdsChatSessions")
   adsChatMessages       AdsChatMessage[]       @relation("WorkspaceAdsChatMessages")

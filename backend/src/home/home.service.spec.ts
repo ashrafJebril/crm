@@ -231,7 +231,7 @@ describe("HomeService", () => {
     const r7 = await stranger.svc.home(WS, { userId: "stranger" }, NOW);
     expect(r7.needsPerson.waitingConversations.status).toBe("forbidden");
     expect(r7.needsPerson.lateFollowUps.status).toBe("forbidden");
-    expect(r7.day1).toEqual({ show: false, steps: [] });
+    expect(r7.day1).toEqual({ show: false, steps: [], canDismiss: true });
   });
 
   it("waiting conversations are unanswered, visible and need a person", async () => {
@@ -339,11 +339,19 @@ describe("HomeService", () => {
     const b = build({ member: { homeSeenAt: null, homeDay1DismissedAt: null } });
     const res = await b.svc.home(WS, { userId: ME }, NOW);
     expect(res.day1.show).toBe(true);
+    expect(res.day1.canDismiss).toBe(true);
     expect(res.day1.steps.find((s) => s.key === "add_knowledge")).toEqual({ key: "add_knowledge", done: false, href: "#/settings?tab=aiKnowledge" });
     const dismissed = build({ member: { homeSeenAt: null, homeDay1DismissedAt: new Date("2026-11-01T00:00:00Z") } });
     expect((await dismissed.svc.home(WS, { userId: ME }, NOW)).day1.show).toBe(false);
     expect(await b.svc.dismissDay1(WS, { userId: ME }, NOW)).toEqual({ dismissedAt: NOW.toISOString() });
     expect(b.prisma.workspaceMember.updateMany).toHaveBeenCalledWith({ where: { workspaceId: WS, userId: ME }, data: { homeDay1DismissedAt: NOW } });
+
+    // Super-admin / impersonation (bypass): dismissing would be a no-op, so the home says it can't.
+    const admin = build({ member: null });
+    const adminHome = await admin.svc.home(WS, { userId: "admin", bypass: true }, NOW);
+    expect(adminHome.day1.canDismiss).toBe(false);
+    expect(await admin.svc.dismissDay1(WS, { userId: "admin", bypass: true }, NOW)).toEqual({ dismissedAt: null });
+    expect(admin.prisma.workspaceMember.updateMany).not.toHaveBeenCalled();
   });
 
   it("home checks records in bulk", async () => {

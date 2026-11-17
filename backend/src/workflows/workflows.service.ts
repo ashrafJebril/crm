@@ -6,7 +6,15 @@ import { WorkflowDispatchService } from "./workflow-dispatch.service";
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { StepGraph, validateStepGraph } from "./workflow-steps";
-import { CreateWorkflowDto, TestWorkflowDto, UpdateWorkflowDto } from "./workflows.dto";
+import { CreateWorkflowDto, SYSTEM_ONLY_TRIGGER_TYPES, TestWorkflowDto, UpdateWorkflowDto } from "./workflows.dto";
+
+/** SP-24: a user workflow never takes a system-only trigger (also checked by the DTO). */
+function assertUserTrigger(triggerType: string | undefined) {
+  if (triggerType && (SYSTEM_ONLY_TRIGGER_TYPES as readonly string[]).includes(triggerType)) {
+    throw new BadRequestException(`triggerType "${triggerType}" is reserved for automatic messages`);
+  }
+}
+import { lifecycleError } from "../lifecycle/lifecycle-errors";
 
 const shape = (w: {
   id: string;
@@ -16,6 +24,7 @@ const shape = (w: {
   triggerConfig: unknown;
   steps: unknown;
   webhookSecret: string | null;
+  systemKey?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }) => ({
@@ -26,6 +35,8 @@ const shape = (w: {
   triggerConfig: w.triggerConfig,
   steps: w.steps,
   webhookSecret: w.webhookSecret,
+  /** SP-24: "lifecycle.<key>" for a system workflow (managed in Automatic messages). */
+  systemKey: w.systemKey ?? null,
   createdAt: w.createdAt,
   updatedAt: w.updatedAt,
 });
@@ -114,6 +125,7 @@ export class WorkflowsService {
   }
 
   async create(workspaceId: string, dto: CreateWorkflowDto) {
+    assertUserTrigger(dto.triggerType);
     let graph: StepGraph;
     try {
       graph = validateStepGraph(dto.steps ?? { entry: null, steps: {} }, { strict: false });
@@ -136,6 +148,9 @@ export class WorkflowsService {
 
   async update(workspaceId: string, id: string, dto: UpdateWorkflowDto) {
     const existing = await this.get(workspaceId, id);
+    // SP-24: a system workflow changes only through the lifecycle service.
+    if (existing.systemKey) throw lifecycleError("workflows.system_locked");
+    assertUserTrigger(dto.triggerType);
     let graph: StepGraph | undefined;
     if (dto.steps !== undefined) {
       try {
@@ -170,14 +185,30 @@ export class WorkflowsService {
   }
 
   async remove(workspaceId: string, id: string) {
-    await this.get(workspaceId, id);
+    const existing = await this.get(workspaceId, id);
+    if (existing.systemKey) throw lifecycleError("workflows.system_locked");
     await this.prisma.workflow.delete({ where: { id } });
     return { ok: true };
   }
 
+  /** `POST /workflows/:id/activate`. A system workflow is switched on only
+   *  through the lifecycle API (its enable gate): 409 workflows.system_locked. */
   async activate(workspaceId: string, id: string) {
     const row = await this.prisma.workflow.findFirst({ where: { id, workspaceId } });
     if (!row) throw new NotFoundException("Workflow not found");
+    if (row.systemKey) throw lifecycleError("workflows.system_locked");
+    return this.doActivate(id, row.steps);
+  }
+
+  /** SP-24, internal (the lifecycle service, after its enable gate). */
+  async activateSystem(workspaceId: string, id: string) {
+    const row = await this.prisma.workflow.findFirst({ where: { id, workspaceId } });
+    if (!row || !row.systemKey) throw new NotFoundException("Workflow not found");
+    return this.doActivate(id, row.steps);
+  }
+
+  private async doActivate(id: string, steps: unknown) {
+    const row = { steps };
     let graph: StepGraph;
     try {
       graph = validateStepGraph(row.steps);
@@ -189,15 +220,68 @@ export class WorkflowsService {
     return shape(updated);
   }
 
+  /** `POST /workflows/:id/deactivate`: user workflows only (409 for system rows). */
   async deactivate(workspaceId: string, id: string) {
-    await this.get(workspaceId, id);
+    const existing = await this.get(workspaceId, id);
+    if (existing.systemKey) throw lifecycleError("workflows.system_locked");
+    return this.doDeactivate(workspaceId, id, null);
+  }
+
+  /** SP-24, internal (the lifecycle toggle): switch off and cancel parked runs. */
+  async deactivateSystem(workspaceId: string, id: string) {
+    const existing = await this.get(workspaceId, id);
+    if (!existing.systemKey) throw new NotFoundException("Workflow not found");
+    return this.doDeactivate(workspaceId, id, existing.systemKey);
+  }
+
+  private async doDeactivate(workspaceId: string, id: string, systemKey: string | null) {
+    const existing = { systemKey };
     const updated = await this.prisma.workflow.update({ where: { id }, data: { status: "draft" } });
+    // SP-24: a system workflow switched off must not send later from a run
+    // parked by the payment lock.
+    if (existing.systemKey) {
+      await this.prisma.workflowRun.updateMany({
+        where: { workspaceId, workflowId: id, status: "waiting" },
+        data: { status: "cancelled", completedAt: new Date() },
+      });
+    }
     return shape(updated);
+  }
+
+  /**
+   * SP-24, internal (the lifecycle service only): create a system workflow
+   * as a draft, or rewrite its trigger, config, steps and name. Its status is
+   * changed only through activate / deactivate.
+   */
+  async upsertSystemWorkflow(
+    workspaceId: string,
+    systemKey: string,
+    data: { name: string; triggerType: string; triggerConfig: Record<string, unknown>; steps: unknown },
+  ) {
+    let graph: StepGraph;
+    try {
+      graph = validateStepGraph(data.steps);
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
+    const existing = await this.prisma.workflow.findFirst({ where: { workspaceId, systemKey } });
+    const fields = {
+      name: data.name,
+      triggerType: data.triggerType,
+      triggerConfig: data.triggerConfig as Prisma.InputJsonValue,
+      steps: graph as unknown as Prisma.InputJsonValue,
+    };
+    const row = existing
+      ? await this.prisma.workflow.update({ where: { id: existing.id }, data: fields })
+      : await this.prisma.workflow.create({ data: { workspaceId, systemKey, status: "draft", webhookSecret: null, ...fields } });
+    return shape(row);
   }
 
   async test(workspaceId: string, id: string, dto: TestWorkflowDto) {
     const row = await this.prisma.workflow.findFirst({ where: { id, workspaceId } });
     if (!row) throw new NotFoundException("Workflow not found");
+    // SP-24: a test run with any payload could send the real lifecycle template.
+    if (row.systemKey) throw lifecycleError("workflows.system_locked");
     const run = await this.dispatch.startRun(row, dto.payload ?? {}, true);
     return { runId: run.id };
   }

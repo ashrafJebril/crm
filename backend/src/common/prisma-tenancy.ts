@@ -32,6 +32,8 @@ const SCOPED_MODELS = new Set([
   "Tag",
   "Workflow",
   "WorkflowRun",
+  // SP-24
+  "LifecycleDelivery",
   "AdsChatSession",
   "AdsChatMessage",
   "AdsPendingAction",

@@ -21,10 +21,12 @@ import {
 } from "./dashboard/DashboardSkeletons";
 import { CHANNEL_LABEL } from "@/lib/types";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import type { HomeDto } from "@/lib/homeTypes";
 import { firstNameOf, greeting, homeSubtitle } from "./dashboard/greeting";
-import { showDay1 } from "./home/homeModel";
+import { canDismissDay1, showDay1 } from "./home/homeModel";
 import { WorkingHome } from "./home/WorkingHome";
+import { winRatePercent } from "./dashboard/winRate";
 import { Day1Home } from "./home/Day1Home";
 import type {
   Campaign,
@@ -181,6 +183,11 @@ function DashboardImpl() {
   // SP-11: the working home on top (or the Day-1 home while it shows).
   const { user, activeWorkspace } = useAuth();
   const homeQ = useFetch<HomeDto>("/home");
+  // SP-11: the Overview below the home reads three permission-gated endpoints.
+  const { can } = usePermissions();
+  const canSummary = can("reports.view");
+  const canTickets = can("tickets.view");
+  const canConv = can("conversations.view");
   const home = homeQ.data;
   const workspaceTz = home?.tz ?? activeWorkspace?.timezone ?? null;
   // Re-render the greeting every minute so it follows the part of the day.
@@ -193,14 +200,18 @@ function DashboardImpl() {
     data: summary,
     loading: summaryLoading,
     error: summaryError,
-  } = useFetch<DashboardSummary>("/dashboard/summary");
+  } = useFetch<DashboardSummary>(canSummary ? "/dashboard/summary" : null);
   const { data: ticketsSummary, loading: ticketsLoading } =
-    useFetch<TicketsDashboardSummary>("/tickets/dashboard/summary");
+    useFetch<TicketsDashboardSummary>(canTickets ? "/tickets/dashboard/summary" : null);
   const {
     data: conversations,
     loading: convLoading,
     error: convError,
-  } = useFetch<Conversation[]>("/conversations");
+  } = useFetch<Conversation[]>(canConv ? "/conversations" : null);
+  // Overview cards per permission (hidden, never a misleading 0); the
+  // five-card row keeps its widths when every card shows.
+  const cardCount = [canSummary, canSummary, canTickets, canSummary, canConv].filter(Boolean).length;
+  const cardColumns = cardCount === 5 ? "1.2fr 1fr 1fr 1fr 1fr" : `repeat(${Math.max(cardCount, 1)}, 1fr)`;
 
   // `loading` is true for background refetches too (the lists poll), so gate
   // the placeholders on "still waiting for the FIRST response" — otherwise
@@ -276,13 +287,17 @@ function DashboardImpl() {
 
       <div style={{ padding: "0 24px 24px", display: "grid", gap: 16 }}>
         {home && showDay1(home) ? (
-          <Day1Home steps={home.day1.steps} tx={tx} onDismissed={() => void homeQ.refetch()} />
+          <Day1Home steps={home.day1.steps} tx={tx} canDismiss={canDismissDay1(home)} onDismissed={() => void homeQ.refetch()} />
         ) : (
           <WorkingHome home={home} loading={homeQ.loading} tx={tx} lang={t.lang} />
         )}
 
-        <h2 style={{ fontSize: 15, margin: "8px 0 0" }}>{tx("Overview", "نظرة عامة")}</h2>
+        {(canSummary || canTickets || canConv) && (
+          <h2 style={{ fontSize: 15, margin: "8px 0 0" }}>{tx("Overview", "نظرة عامة")}</h2>
+        )}
+        {(canSummary || canTickets) && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          {canSummary && (
           <StatTile
             label={tx("Conversations", "المحادثات")}
             value={conversationsValue}
@@ -291,6 +306,8 @@ function DashboardImpl() {
             spark={totalSpark}
             loading={summaryPending}
           />
+          )}
+          {canSummary && (
           <StatTile
             label={tx("Unread", "غير مقروء")}
             value={summary?.counts.unread.toLocaleString() ?? "0"}
@@ -298,6 +315,8 @@ function DashboardImpl() {
             sub={tx("Across all channels", "عبر جميع القنوات")}
             loading={summaryPending}
           />
+          )}
+          {canTickets && (
           <StatTile
             label={tx("Pipeline value", "قيمة المبيعات")}
             value={
@@ -309,8 +328,11 @@ function DashboardImpl() {
             sub={tx("Open tickets", "تذاكر مفتوحة")}
             loading={ticketsPending}
           />
+          )}
         </div>
+        )}
 
+        {canSummary && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
           <div className="card">
             <div className="card-h">
@@ -353,8 +375,11 @@ function DashboardImpl() {
           </div>
 
         </div>
+        )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1fr", gap: 16 }}>
+        {cardCount > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: cardColumns, gap: 16 }}>
+          {canSummary && (
           <div className="card">
             <div className="card-h">
               <h3>{tx("Live activity", "النشاط المباشر")}</h3>
@@ -421,7 +446,9 @@ function DashboardImpl() {
               })}
             </div>
           </div>
+          )}
 
+          {canSummary && (
           <div className="card">
             <div className="card-h">
               <h3>{tx("Top intents", "أهم النوايا")}</h3>
@@ -475,7 +502,9 @@ function DashboardImpl() {
               )}
             </div>
           </div>
+          )}
 
+          {canTickets && (
           <div className="card">
             <div className="card-h">
               <h3>{tx("Pipeline performance", "أداء خط المبيعات")}</h3>
@@ -489,9 +518,8 @@ function DashboardImpl() {
                 const total = won + lost;
                 const wonPct = total > 0 ? (won / total) * 100 : 0;
                 const lostPct = total > 0 ? (lost / total) * 100 : 0;
-                const winRate = ticketsSummary
-                  ? Math.round(ticketsSummary.winRate * 100)
-                  : 0;
+                // Already a percent from the server (was shown as 5000%).
+                const winRate = winRatePercent(ticketsSummary);
                 const avgClose = ticketsSummary
                   ? Math.round(ticketsSummary.avgCloseHours)
                   : 0;
@@ -584,7 +612,9 @@ function DashboardImpl() {
               </button>
             </div>
           </div>
+          )}
 
+          {canSummary && (
           <div className="card">
             <div className="card-h">
               <h3>{tx("Active campaigns", "الحملات النشطة")}</h3>
@@ -662,7 +692,9 @@ function DashboardImpl() {
               )}
             </div>
           </div>
+          )}
 
+          {canConv && (
           <div className="card">
             <div className="card-h">
               <div>
@@ -778,7 +810,9 @@ function DashboardImpl() {
               )}
             </div>
           </div>
+          )}
         </div>
+        )}
       </div>
     </div>
   );

@@ -105,6 +105,16 @@ export async function seedInsightsWorld(prisma: PrismaClient, world: InsightsWor
     }
 
     for (const c of world.conversations) {
+      // Production's `conversation_reopen_on_inbound` trigger flips a closed or
+      // pending_customer conversation back to "human" when a customer message
+      // newer than `statusChangedAt` (or with it null) is inserted. A fixture
+      // conversation whose status is set means "it was closed after its last
+      // message", so stamp statusChangedAt just after that message.
+      const status = c.status ?? "human";
+      const lastAt = world.messages
+        .filter((m) => m.conversationId === c.id)
+        .reduce<number | null>((acc, m) => (acc === null || m.createdAt.getTime() > acc ? m.createdAt.getTime() : acc), null);
+      const statusChangedAt = status !== "human" ? new Date((lastAt ?? conversationCreatedAt(c).getTime()) + 60_000) : null;
       await prisma.conversation.create({
         data: {
           id: remember(c.id),
@@ -117,7 +127,8 @@ export async function seedInsightsWorld(prisma: PrismaClient, world: InsightsWor
           lastAt: "now",
           lastFrom: "them",
           preview: "",
-          status: c.status ?? "human",
+          status,
+          statusChangedAt,
           intent: "",
           confidence: 0,
           escalated: c.escalated ?? false,

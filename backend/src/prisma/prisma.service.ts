@@ -63,6 +63,8 @@ export class PrismaService implements OnModuleDestroy {
   get tag() { return this.client.tag; }
   get workflow() { return this.client.workflow; }
   get workflowRun() { return this.client.workflowRun; }
+  /** SP-24: the lifecycle once-per-occurrence claim. */
+  get lifecycleDelivery() { return this.client.lifecycleDelivery; }
   get adsChatSession() { return this.client.adsChatSession; }
   get adsChatMessage() { return this.client.adsChatMessage; }
   get adsPendingAction() { return this.client.adsPendingAction; }

@@ -531,21 +531,21 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 14. **Size.** The roadmap says L. The plan has 3 build tasks plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision below before Task 1 starts. The migration `20261118120000_members_security` needs explicit user approval before it runs.*
-- **R1** (email port over Resend REST, default `off` with a copy-link fallback for invites only; D3): _pending_
-- **R2** (7-day invites, rotate on resend, 5 sends max): _pending_
-- **R3** (hand-written RFC 6238, no `otplib`; `qrcode` frontend dependency; D9): _pending_
-- **R4** (`User.sessionVersion` in the JWT, 30 s cache): _pending_
-- **R5** (reset only for local-password users; Kewy keeps its own): _pending_
-- **R6** (no-workspace page for removed/invited users; register still auto-creates): _pending_
-- **R7** (open work = conversations, tickets, follow-ups, owned contacts → one recipient; bookings shown, not moved): _pending_
-- **R8** (audit `targetKind/targetId`, `members.manage` to read, unlimited retention): _pending_
-- **R9** (SSO logins skip TOTP): _pending_
-- **R10** (slug lookup: unknown 404, non-member `{member:false}`): _pending_
-- **R11** (stop storing the plaintext password; impersonation blocks for remove and 2FA reset): _pending_
-- **R12** (base on the SP-11 ship commit; Task 1 owns the schema; migration order SP-26 → SP-29): _pending_
-- **R13** (verification on the production DB with throwaway workspaces and an email stub; migration needs explicit user approval): _pending_
-- **R14** (size L; 3 build tasks + verification): _pending_
+*Decided 2026-11-17 by the controller: R1–R14 accepted as proposed (R1 with the user decision: Resend). Note on R4: the 30 s sessionVersion cache means a revoked session can last up to 30 s on another instance; accepted for SP-26, revisit if instant revocation is required. Base commit is recorded in the ledger. The migration `20261118120000_members_security` needs explicit user approval before it runs.*
+- **R1** (email port over Resend REST, default `off` with a copy-link fallback for invites only; D3): accepted
+- **R2** (7-day invites, rotate on resend, 5 sends max): accepted
+- **R3** (hand-written RFC 6238, no `otplib`; `qrcode` frontend dependency; D9): accepted
+- **R4** (`User.sessionVersion` in the JWT, 30 s cache): accepted
+- **R5** (reset only for local-password users; Kewy keeps its own): accepted
+- **R6** (no-workspace page for removed/invited users; register still auto-creates): accepted
+- **R7** (open work = conversations, tickets, follow-ups, owned contacts → one recipient; bookings shown, not moved): accepted
+- **R8** (audit `targetKind/targetId`, `members.manage` to read, unlimited retention): accepted
+- **R9** (SSO logins skip TOTP): accepted
+- **R10** (slug lookup: unknown 404, non-member `{member:false}`): accepted
+- **R11** (stop storing the plaintext password; impersonation blocks for remove and 2FA reset): accepted
+- **R12** (base on the SP-11 ship commit; Task 1 owns the schema; migration order SP-26 → SP-29): accepted
+- **R13** (verification on the production DB with throwaway workspaces and an email stub; migration needs explicit user approval): accepted
+- **R14** (size L; 3 build tasks + verification): accepted
 
 ---
 

@@ -31,8 +31,9 @@ import type { EventEmitter2 } from "@nestjs/event-emitter";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { HjzAppointmentSyncService } from "../hjz-sync/hjz-appointment-sync.service";
 import { WORKFLOW_TRIGGER_EVENT, type WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { appointmentPayload, cancelledKey, confirmedKey } from "../lifecycle/lifecycle-payload";
 import { bookingError } from "./booking-errors";
-import { SERVICE_DURATION_MAX } from "./booking-constants";
+import { BOOKING_TX_MAX_WAIT_MS, BOOKING_TX_TIMEOUT_MS, SERVICE_DURATION_MAX } from "./booking-constants";
 import { lockResource, lockService } from "./booking-locks";
 import { assertTransition, isOpenStatus } from "./booking-status";
 import { blockingBookings, BookingsService } from "./bookings.service";
@@ -146,8 +147,40 @@ export class BookingWriter {
       return tx.appointment.create({ data });
     });
     void this.hjzSync?.changed(row.id);
+    // SP-24: created as confirmed → "booking confirmed" (after commit).
+    if (row.status === "confirmed") await this.emitLifecycle(workspaceId, "appointment_confirmed", row);
     const [out] = await this.read.annotate(workspaceId, [row]);
     return out;
+  }
+
+  /**
+   * SP-24 lifecycle triggers, after commit, never throwing: the payload
+   * carries the booking texts in the workspace timezone and the occurrence
+   * key (the dispatch sends at most once per booking and start time).
+   */
+  private async emitLifecycle(
+    workspaceId: string,
+    triggerType: "appointment_confirmed" | "appointment_cancelled",
+    appt: Appointment,
+  ): Promise<void> {
+    if (!this.events) return;
+    try {
+      const [ws, contact] = await Promise.all([
+        this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } }),
+        this.prisma.contact.findFirst({
+          where: { id: appt.contactId, workspaceId },
+          select: { id: true, name: true, firstName: true, phone: true },
+        }),
+      ]);
+      const key = triggerType === "appointment_confirmed" ? confirmedKey(appt.startAt) : cancelledKey(appt.startAt);
+      this.events.emit(WORKFLOW_TRIGGER_EVENT, {
+        workspaceId,
+        triggerType,
+        payload: appointmentPayload(appt, contact, ws?.timezone, key),
+      } satisfies WorkflowTriggerEvent);
+    } catch {
+      // A lifecycle message must never fail a booking write.
+    }
   }
 
   /**
@@ -274,6 +307,14 @@ export class BookingWriter {
     });
     const { contact, ...plain } = row as Appointment & { contact: { id: string; name: string; phone: string | null } };
     void this.hjzSync?.changed(plain.id);
+    // SP-24: transitions into confirmed / cancelled (an edit that keeps the
+    // status sends nothing).
+    if (existing.status !== "confirmed" && plain.status === "confirmed") {
+      await this.emitLifecycle(workspaceId, "appointment_confirmed", plain as Appointment);
+    }
+    if (existing.status !== "cancelled" && plain.status === "cancelled") {
+      await this.emitLifecycle(workspaceId, "appointment_cancelled", plain as Appointment);
+    }
     // Only the transition into "completed" counts, so editing a finished
     // booking never re-sends a thank-you.
     if (existing.status !== "completed" && plain.status === "completed") {
@@ -300,12 +341,21 @@ export class BookingWriter {
   // ── steps ────────────────────────────────────────────────────────────
 
   private async inTx<T>(serviceId: string | null, resourceId: string | null, fn: (tx: Tx) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(async (tx) => {
-      // Lock order: service, then resource (booking-locks.ts).
-      if (serviceId) await lockService(tx, serviceId);
-      if (resourceId) await lockResource(tx, resourceId);
-      return fn(tx);
-    });
+    try {
+      return await this.prisma.$transaction(
+        async (tx) => {
+          // Lock order: service, then resource (booking-locks.ts).
+          if (serviceId) await lockService(tx, serviceId);
+          if (resourceId) await lockResource(tx, resourceId);
+          return fn(tx);
+        },
+        { timeout: BOOKING_TX_TIMEOUT_MS, maxWait: BOOKING_TX_MAX_WAIT_MS },
+      );
+    } catch (e) {
+      // Queued too long on the lock (or for a connection): rolled back, never a 500.
+      if (isTransactionTimeout(e)) throw bookingError("bookings.busy");
+      throw e;
+    }
   }
 
   private async findService(workspaceId: string, id: string): Promise<Service> {
@@ -365,4 +415,17 @@ export class BookingWriter {
     const [current] = await this.read.annotate(workspaceId, [row]);
     return bookingError("bookings.version_conflict", { current });
   }
+}
+
+/**
+ * Prisma's interactive-transaction timeouts: P2028 ("Transaction API error":
+ * the transaction expired, was already closed by its timeout, or could not
+ * start within maxWait). Anything else is not ours to rename.
+ */
+export function isTransactionTimeout(e: unknown): boolean {
+  const err = e as { code?: unknown; message?: unknown } | null;
+  if (!err || typeof err !== "object") return false;
+  if (err.code === "P2028") return true;
+  const msg = typeof err.message === "string" ? err.message : "";
+  return /timeout for this transaction|Transaction already closed|Unable to start a transaction in the given time/i.test(msg);
 }

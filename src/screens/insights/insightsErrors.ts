@@ -12,8 +12,8 @@ export const INSIGHTS_ERROR_COPY: Record<string, [en: string, ar: string]> = {
     "اختر فترة صحيحة لا تتجاوز 366 يومًا.",
   ],
   "insights.channel_not_found": [
-    "That WhatsApp number isn't available. Showing all numbers.",
-    "رقم واتساب هذا غير متاح. تُعرض جميع الأرقام.",
+    "That number isn't available. Choose another number.",
+    "هذا الرقم غير متاح. اختر رقمًا آخر.",
   ],
   "insights.pipeline_not_found": [
     "That pipeline isn't available. Choose another one.",

@@ -5,7 +5,7 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { isIP } from "node:net";
 import { PrismaService } from "../../prisma/prisma.service";
-import { checkedAddress, defaultDeps, fetchPublic, PublicFetchError, type PageFetchDeps } from "../../common/public-fetch";
+import { checkedAddress, testBase, defaultDeps, fetchPublic, PublicFetchError, type PageFetchDeps } from "../../common/public-fetch";
 import { CRAWL_UA, REFRESH_COOLDOWN_MS, SCHEDULES, WEBSITE_FETCH_TIMEOUT_MS, WEBSITE_MAX_SOURCES } from "../knowledge-constants";
 import { knowledgeError } from "../knowledge-errors";
 import { KnowledgeSourcesService } from "../knowledge-sources.service";
@@ -55,7 +55,8 @@ export class WebsitesService {
       throw knowledgeError("knowledge.url_blocked");
     }
     try {
-      await checkedAddress(url, this.fetchDeps);
+      // In test-base mode (never in production) the fetcher skips DNS; so does the check.
+      if (!testBase()) await checkedAddress(url, this.fetchDeps);
     } catch (e) {
       if (e instanceof PublicFetchError && e.code === "url_blocked") throw knowledgeError("knowledge.url_blocked");
       throw knowledgeError(wasHttp ? "knowledge.not_https" : "knowledge.url_invalid");

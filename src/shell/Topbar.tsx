@@ -15,14 +15,18 @@ interface TopbarProps {
 
 function TopbarImpl({ route }: TopbarProps) {
   const { t, setTweak } = useTweaks();
-  const { user, logout } = useAuth();
+  const { user, logout, activeWorkspace } = useAuth();
+  // The active workspace, never a hardcoded brand.
+  const workspaceName = activeWorkspace?.name?.trim() || (t.lang === "ar" ? "نشاطك التجاري" : "Your business");
   const isAr = t.lang === "ar";
   const title = TITLES[route][t.lang];
 
   return (
     <div className="topbar">
       <div className="crumbs">
-        <span>Samemha</span>
+        <span>
+          <bdi>{workspaceName}</bdi>
+        </span>
         <span className="sep">/</span>
         <span className="now">{title}</span>
       </div>

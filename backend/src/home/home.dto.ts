@@ -92,5 +92,7 @@ export interface HomeDto {
   today: HomeDay;
   tomorrow: HomeDay;
   away: Section<AwaySummary>;
-  day1: { show: boolean; steps: Day1Step[] };
+  /** `canDismiss` is false for a session without a member row (super-admin,
+   *  impersonation): `POST /home/day1/dismiss` would be a no-op for it. */
+  day1: { show: boolean; steps: Day1Step[]; canDismiss: boolean };
 }

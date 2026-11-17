@@ -21,11 +21,21 @@ export const PDF_TEXT_PER_PAGE = 200;
 
 export type PdfTextFn = (buffer: Buffer) => Promise<{ text: string; numpages: number }>;
 
+/**
+ * The bytes as an exact-length copy. A small Node Buffer (for instance from
+ * `fs.promises.readFile`) is often a view into a shared 8 KB pool with a
+ * non-zero `byteOffset`; pdf.js reads the underlying ArrayBuffer and then fails
+ * with "bad XRef entry". A copy owns its ArrayBuffer from offset 0.
+ */
+export function exactBytes(buffer: Uint8Array): Uint8Array {
+  return new Uint8Array(buffer);
+}
+
 /** `pdf-parse` loaded lazily from its library file (its index runs a self-test when required directly). */
 export const defaultPdfText: PdfTextFn = async (buffer) => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const pdf = require("pdf-parse/lib/pdf-parse.js") as (b: Buffer) => Promise<{ text: string; numpages: number }>;
-  const r = await pdf(buffer);
+  const pdf = require("pdf-parse/lib/pdf-parse.js") as (b: Uint8Array) => Promise<{ text: string; numpages: number }>;
+  const r = await pdf(exactBytes(buffer));
   return { text: r.text ?? "", numpages: r.numpages ?? 0 };
 };
 

@@ -11,6 +11,19 @@ interface DispatchableWorkflow {
   id: string;
   workspaceId: string;
   steps: unknown;
+  /** SP-24: set on a system (lifecycle) workflow. */
+  systemKey?: string | null;
+}
+
+/** SP-24: what a lifecycle occurrence is about (from the trigger payload). */
+export function occurrenceOf(payload: Record<string, unknown>): { entityKind: string; entityId: string; occurrenceKey: string } | null {
+  const occurrenceKey = typeof payload.occurrenceKey === "string" ? payload.occurrenceKey : null;
+  if (!occurrenceKey) return null;
+  const appt = payload.appointment as { id?: string } | undefined;
+  const ticket = payload.ticket as { id?: string } | undefined;
+  if (appt?.id) return { entityKind: "appointment", entityId: appt.id, occurrenceKey };
+  if (ticket?.id) return { entityKind: "ticket", entityId: ticket.id, occurrenceKey };
+  return null;
 }
 
 @Injectable()
@@ -29,8 +42,13 @@ export class WorkflowDispatchService {
       const workflows = await this.prisma.workflow.findMany({
         where: { workspaceId: evt.workspaceId, triggerType: evt.triggerType, status: "active" },
       });
+      // SP-24: one pipeline-kind lookup per event, shared by its workflows.
+      let kind: Promise<string | null> | null = null;
+      const pipelineKind = () => (kind ??= this.pipelineKindOf(evt.workspaceId, evt.payload));
       for (const wf of workflows) {
         if (!this.matchesTriggerConfig(wf, evt.payload)) continue;
+        const wantKind = (wf.triggerConfig as { pipelineKind?: unknown } | null)?.pipelineKind;
+        if (typeof wantKind === "string" && wantKind && (await pipelineKind()) !== wantKind) continue;
         await this.startTriggeredRun(wf, evt.payload);
       }
     } catch (e) {
@@ -50,7 +68,36 @@ export class WorkflowDispatchService {
     triggerPayload: Record<string, unknown>,
   ): Promise<{ id: string } | null> {
     if (await this.paymentLock.isLocked(workflow.workspaceId)) return null;
-    return this.startRun(workflow, triggerPayload, false);
+    // SP-24: a system workflow runs at most once per occurrence (a replayed
+    // event, two app instances, overlapping scheduler ticks). The claim is
+    // kept whatever the run does (ruling 7).
+    const occ = workflow.systemKey ? occurrenceOf(triggerPayload) : null;
+    if (occ) {
+      const { count } = await this.prisma.lifecycleDelivery.createMany({
+        data: [{ workspaceId: workflow.workspaceId, workflowId: workflow.id, ...occ }],
+        skipDuplicates: true,
+      });
+      if (count === 0) return null;
+    }
+    const run = await this.startRun(workflow, triggerPayload, false);
+    if (occ) {
+      await this.prisma.lifecycleDelivery
+        .updateMany({
+          where: { workflowId: workflow.id, entityId: occ.entityId, occurrenceKey: occ.occurrenceKey },
+          data: { runId: run.id },
+        })
+        .catch(() => undefined);
+    }
+    return run;
+  }
+
+  /** The pipeline kind of a ticket trigger (payload first, else one lookup). */
+  private async pipelineKindOf(workspaceId: string, payload: Record<string, unknown>): Promise<string | null> {
+    if (typeof payload.pipelineKind === "string") return payload.pipelineKind;
+    const pipelineId = (payload.ticket as { pipelineId?: string } | undefined)?.pipelineId;
+    if (!pipelineId) return null;
+    const p = await this.prisma.pipeline.findFirst({ where: { id: pipelineId, workspaceId }, select: { kind: true } });
+    return p?.kind ?? null;
   }
 
   async startRun(

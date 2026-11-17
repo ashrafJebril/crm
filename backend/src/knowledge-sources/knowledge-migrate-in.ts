@@ -12,6 +12,10 @@
  *        with no stored file, holding the text as chunks.
  *    Each keeps `upstream.kewy.docId`, so the publisher updates that same
  *    document instead of creating a duplicate.
+ *    A doc whose id is already some source's `upstream.kewy.docId` in the
+ *    workspace is SP-21's own published copy (or one a tombstone is still
+ *    deleting): it is skipped (`publishedSkipped`), else two sources would
+ *    share one doc and deleting either would delete it for both.
  *  - l documents → `file` sources with the status mirrored and no text (l
  *    does not give the text back; the UI asks for a re-upload to search them).
  *
@@ -48,6 +52,8 @@ export interface MigrateInCounts {
   existing: number;
   hjzSyncedSkipped: number;
   tooLongSkipped: number;
+  /** kewy-ai docs that are SP-21's own published copies. */
+  publishedSkipped: number;
 }
 
 const TITLE_MAX = 200;
@@ -55,7 +61,7 @@ const TITLE_MAX = 200;
 const READY_L = new Set(["ready", "processed", "completed", "indexed", "done"]);
 
 export async function migrateIn(deps: MigrateInDeps, opts: { workspaceIds: string[] | "all"; dryRun: boolean }): Promise<MigrateInCounts> {
-  const counts: MigrateInCounts = { workspaces: 0, faq: 0, file: 0, guidelines: 0, lDocuments: 0, existing: 0, hjzSyncedSkipped: 0, tooLongSkipped: 0 };
+  const counts: MigrateInCounts = { workspaces: 0, faq: 0, file: 0, guidelines: 0, lDocuments: 0, existing: 0, hjzSyncedSkipped: 0, tooLongSkipped: 0, publishedSkipped: 0 };
   const workspaces = await deps.db.workspace.findMany({
     where: opts.workspaceIds === "all" ? {} : { id: { in: opts.workspaceIds } },
     select: { id: true, lWorkspaceId: true, externalTenantId: true },
@@ -86,8 +92,20 @@ async function create(db: Db, data: Record<string, unknown>, text: string | null
   }
 }
 
+/** Every kewy-ai doc id a source of the workspace already holds (tombstones included). */
+async function heldDocIds(db: Db, workspaceId: string): Promise<Set<string>> {
+  const rows = await db.knowledgeSource.findMany({ where: { workspaceId }, select: { upstream: true } });
+  const ids = new Set<string>();
+  for (const r of rows) {
+    const id = (r.upstream as { kewy?: { docId?: unknown } } | null)?.kewy?.docId;
+    if (typeof id === "string" && id) ids.add(id);
+  }
+  return ids;
+}
+
 async function migrateKewy(deps: MigrateInDeps, workspaceId: string, dryRun: boolean, counts: MigrateInCounts) {
   const docs = await deps.kewyDocs!(workspaceId);
+  const held = await heldDocIds(deps.db, workspaceId);
   const tone: KewyKnowledgeDoc[] = [];
   for (const doc of docs) {
     if (!doc.editable || doc.sourceRef) {
@@ -101,6 +119,10 @@ async function migrateKewy(deps: MigrateInDeps, workspaceId: string, dryRun: boo
     const legacyRef = `kewy:${doc.id}`;
     if (await exists(deps.db, workspaceId, legacyRef)) {
       counts.existing += 1;
+      continue;
+    }
+    if (held.has(doc.id)) {
+      counts.publishedSkipped += 1;
       continue;
     }
     const upstream = { kewy: { docId: doc.id } };
@@ -133,16 +155,19 @@ async function migrateKewy(deps: MigrateInDeps, workspaceId: string, dryRun: boo
     }
     counts.file += 1;
   }
-  if (tone.length) await migrateTone(deps, workspaceId, tone, dryRun, counts);
+  if (tone.length) await migrateTone(deps, workspaceId, tone, held, dryRun, counts);
 }
 
 /** TONE docs are appended to the guidelines singleton, each once. */
-async function migrateTone(deps: MigrateInDeps, workspaceId: string, docs: KewyKnowledgeDoc[], dryRun: boolean, counts: MigrateInCounts) {
+async function migrateTone(deps: MigrateInDeps, workspaceId: string, docs: KewyKnowledgeDoc[], held: Set<string>, dryRun: boolean, counts: MigrateInCounts) {
   const row = await deps.db.knowledgeSource.findFirst({ where: { workspaceId, kind: "guideline" } });
   const upstream = (row?.upstream as { kewyTone?: string[]; kewy?: { docId: string } } | null) ?? {};
   const taken = new Set(upstream.kewyTone ?? []);
-  const fresh = docs.filter((d) => !taken.has(d.id));
-  counts.existing += docs.length - fresh.length;
+  const notTaken = docs.filter((d) => !taken.has(d.id));
+  counts.existing += docs.length - notTaken.length;
+  // The guidelines' own published TONE copy is never appended back into them.
+  const fresh = notTaken.filter((d) => !held.has(d.id));
+  counts.publishedSkipped += notTaken.length - fresh.length;
   if (!fresh.length) return;
   let body = String(row?.body ?? "").trim();
   const added: string[] = [];

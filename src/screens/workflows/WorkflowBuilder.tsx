@@ -22,6 +22,9 @@ import { useStageOptions } from "./config/StepConfigForms";
 import { ExecutionsTab } from "./ExecutionsTab";
 import type { WorkflowDraft } from "./templates";
 import { TestWorkflowModal } from "./TestWorkflowModal";
+import { LockedWorkflow } from "./LockedWorkflow";
+import { isSystemWorkflow } from "./systemWorkflow";
+import { isSystemLocked, lifecycleErrorText } from "@/screens/settings/lifecycle/lifecycleErrors";
 import "./workflows.css";
 
 const EMPTY_GRAPH: WorkflowStepGraph = { entry: null, steps: {} };
@@ -171,6 +174,9 @@ export function WorkflowBuilder({
   const activateMut = useMutation<string, Workflow>((wid) => api.post(`/workflows/${wid}/activate`));
   const deactivateMut = useMutation<string, Workflow>((wid) => api.post(`/workflows/${wid}/deactivate`));
 
+  /** A failed save/activate/pause: the system-workflow 409 gets its copy; other messages as before. */
+  const actionError = (e: unknown) => (isSystemLocked(e) ? lifecycleErrorText(e, tx) : (e as Error).message);
+
   /** Saves the draft; returns the workflow id, or null when saving failed. */
   async function save(opts: { quiet?: boolean } = {}): Promise<string | null> {
     setError(null);
@@ -199,7 +205,7 @@ export function WorkflowBuilder({
       if (!opts.quiet) toast(tx("Workflow saved", "تم حفظ الأتمتة"), "success");
       return res.id;
     } catch (e) {
-      setError((e as Error).message);
+      setError(actionError(e));
       return null;
     } finally {
       setBusy(false);
@@ -214,7 +220,7 @@ export function WorkflowBuilder({
       setStatus((await activateMut.mutate(wid)).status);
       toast(tx("Workflow is live", "الأتمتة تعمل الآن"), "success");
     } catch (e) {
-      setError((e as Error).message);
+      setError(actionError(e));
     } finally {
       setBusy(false);
     }
@@ -227,7 +233,7 @@ export function WorkflowBuilder({
       setStatus((await deactivateMut.mutate(id)).status);
       toast(tx("Workflow paused", "تم إيقاف الأتمتة"), "info");
     } catch (e) {
-      setError((e as Error).message);
+      setError(actionError(e));
     } finally {
       setBusy(false);
     }
@@ -283,6 +289,11 @@ export function WorkflowBuilder({
 
   if (workflowId && wfQ.loading && !wfQ.data) {
     return <div className="wf-builder muted" style={{ padding: 32 }}>{tx("Loading…", "جارٍ التحميل…")}</div>;
+  }
+
+  // SP-24: a system workflow is managed in Automatic messages (read-only here).
+  if (wfQ.data && isSystemWorkflow(wfQ.data)) {
+    return <LockedWorkflow wf={wfQ.data} tx={tx} lang={t.lang} onClose={onClose} />;
   }
 
   return (

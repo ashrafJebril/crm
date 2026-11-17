@@ -42,8 +42,15 @@ d("working home SQL against Postgres", () => {
     over: Record<string, unknown> = {},
   ) {
     const ct = await prisma.raw.contact.create({ data: { workspaceId, name: `Contact ${key}`, industry: "—", lifecycle: "customer", source: "whatsapp", lastSeen: "now" } });
+    // Production's `conversation_reopen_on_inbound` trigger reopens a closed /
+    // pending_customer conversation when a customer message newer than
+    // `statusChangedAt` (or with it null) is inserted. These fixtures mean "set
+    // to that status after the last message", so stamp it after the messages.
+    const status = (over.status as string | undefined) ?? "human";
+    const last = msgs.reduce<number | null>((acc, [, at]) => (acc === null || at.getTime() > acc ? at.getTime() : acc), null);
+    const statusChangedAt = status !== "human" ? new Date((last ?? NOW.getTime()) + 60_000) : null;
     const c = await prisma.raw.conversation.create({
-      data: { workspaceId, contactId: ct.id, assigneeId, channel: "whatsapp", lastAt: "now", lastFrom: "them", preview: "", status: "human", intent: "", confidence: 0, ...over },
+      data: { workspaceId, contactId: ct.id, assigneeId, channel: "whatsapp", lastAt: "now", lastFrom: "them", preview: "", status: "human", intent: "", confidence: 0, ...over, statusChangedAt },
     });
     ids[key] = c.id;
     ids[`contact-${key}`] = ct.id;
@@ -182,7 +189,7 @@ d("working home SQL against Postgres", () => {
 
   it("day-1 home shows until dismissed or set up", async () => {
     // Sami can only use the inbox step, and a staff reply exists.
-    expect((await home("sami")).day1).toEqual({ show: false, steps: [{ key: "first_reply", done: true, href: "#/inbox" }] });
+    expect((await home("sami")).day1).toEqual({ show: false, steps: [{ key: "first_reply", done: true, href: "#/inbox" }], canDismiss: true });
     const owner = await home("owner");
     expect(owner.day1.show).toBe(true);
     expect(owner.day1.steps.find((s) => s.key === "invite_team")?.done).toBe(true);

@@ -47,6 +47,11 @@ export function day1Progress(steps: Day1Step[]): { done: number; total: number; 
   return { done, total, pct: total ? Math.round((100 * done) / total) : 0 };
 }
 
+/** Dismiss only where the server can record it (not super-admin / impersonation). */
+export function canDismissDay1(h: HomeDto | null | undefined): boolean {
+  return !!h && h.day1.canDismiss !== false;
+}
+
 export function showDay1(h: HomeDto | null | undefined): boolean {
   return !!h && h.day1.show && h.day1.steps.length > 0;
 }

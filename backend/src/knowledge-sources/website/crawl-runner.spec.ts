@@ -1,4 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { crawlWorld, fakeNet, html, PUBLIC_IP, website, A } from "./crawl-test-world";
+import { CrawlRunner, PAGE_MIN_BODY_CHARS } from "./crawl-runner";
+import type { PageFetchDeps } from "../../common/public-fetch";
 import { APPLY_TX_MAX_WAIT_MS, APPLY_TX_TIMEOUT_MS, CAPPED_ROW_SAMPLE, MIN_REQUEST_GAP_MS, SITEMAP_URL_CAP } from "./crawl-runner";
 import { WEBSITE_PAGE_CAP } from "../knowledge-constants";
 
@@ -321,6 +324,80 @@ describe("CrawlRunner", () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const c of calls) expect(c[1]).toEqual({ timeout: APPLY_TX_TIMEOUT_MS, maxWait: APPLY_TX_MAX_WAIT_MS });
     expect(APPLY_TX_TIMEOUT_MS).toBeGreaterThan(5000);
+  });
+
+  it("every request to the site, robots.txt and sitemaps included, is at least the gap apart (fake clock)", async () => {
+    const net = fakeNet({
+      dns: SHOP,
+      pages: {
+        "https://shop.example/robots.txt": robots(["User-agent: *", "Allow: /", "Sitemap: https://shop.example/extra-sitemap.xml"].join("\n")),
+        "https://shop.example/sitemap.xml": { headers: { "content-type": "application/xml" }, body: "<urlset><url><loc>https://shop.example/a</loc></url></urlset>" },
+        "https://shop.example/extra-sitemap.xml": { headers: { "content-type": "application/xml" }, body: "<urlset><url><loc>https://shop.example/b</loc></url></urlset>" },
+        "https://shop.example/": { body: html("Home", "Welcome to the shop, open every day of the week.", ["/c"]) },
+        "https://shop.example/a": { body: html("A", "Page a has a long enough description of services.") },
+        "https://shop.example/b": { body: html("B", "Page b has a long enough description of services.") },
+        "https://shop.example/c": { body: html("C", "Page c has a long enough description of services.") },
+      },
+    });
+    let clock = 0;
+    const at: { url: string; t: number }[] = [];
+    const deps: PageFetchDeps = {
+      resolve: net.deps.resolve,
+      request: async (req) => {
+        at.push({ url: req.url.toString(), t: clock });
+        clock += 5; // a fast server
+        return net.deps.request(req);
+      },
+    };
+    const w = crawlWorld(deps);
+    const sleep = jest.fn(async (ms: number) => {
+      clock += ms;
+    });
+    const runner = new CrawlRunner(w.prisma as any, w.perm, w.notifications as any, deps, sleep, w.publisher);
+    const src = website(w.db);
+    expect(await runner.run(src.id)).toMatchObject({ failed: false, pagesRead: 4 });
+    expect(at.map((x) => x.url)).toEqual([
+      "https://shop.example/robots.txt",
+      "https://shop.example/sitemap.xml",
+      "https://shop.example/extra-sitemap.xml",
+      "https://shop.example/",
+      "https://shop.example/a",
+      "https://shop.example/b",
+      "https://shop.example/c",
+    ]);
+    for (let i = 1; i < at.length; i++) expect({ url: at[i].url, gap: at[i].t - at[i - 1].t >= MIN_REQUEST_GAP_MS }).toEqual({ url: at[i].url, gap: true });
+  });
+
+  it("a page whose only text is its title (a JavaScript app shell) is an error with a keyed reason", async () => {
+    const shell = `<html><head><title>Salon Booking App</title><script>window.app()</script></head><body><div id="root"></div><noscript>Enable JavaScript to use this site.</noscript></body></html>`;
+    const net = fakeNet({
+      dns: SHOP,
+      pages: {
+        "https://shop.example/robots.txt": notFound,
+        "https://shop.example/sitemap.xml": notFound,
+        "https://shop.example/": { body: html("Home", "Welcome to the shop, open every day of the week.", ["/app"]) },
+        "https://shop.example/app": { body: shell },
+      },
+    });
+    const w = crawlWorld(net.deps);
+    const src = website(w.db);
+    const summary = await w.runner.run(src.id);
+    expect(summary).toMatchObject({ failed: false, pagesRead: 1, pagesNoText: 1 });
+    const app = w.db.knowledgePage.find((p) => p.urlKey === "shop.example/app")!;
+    expect(app.state).toBe("error");
+    expect(w.db.knowledgeChunk.some((c) => c.pageId === app.id)).toBe(false);
+    expect(w.db.knowledgeSource[0].lastRun).toMatchObject({ pagesNoText: 1, pageErrors: { "knowledge.page_no_text": 1 } });
+    expect(PAGE_MIN_BODY_CHARS).toBeGreaterThan(0);
+
+    // A site that is only an app shell fails with that reason, not a generic one.
+    const only = fakeNet({
+      dns: SHOP,
+      pages: { "https://shop.example/robots.txt": notFound, "https://shop.example/sitemap.xml": notFound, "https://shop.example/": { body: shell } },
+    });
+    const w2 = crawlWorld(only.deps);
+    const src2 = website(w2.db);
+    expect(await w2.runner.run(src2.id)).toMatchObject({ failed: true, reason: "no_text" });
+    expect(w2.db.knowledgeSource[0]).toMatchObject({ error: "knowledge.page_no_text" });
   });
 
   it("failed source emits knowledge_source_failed", async () => {

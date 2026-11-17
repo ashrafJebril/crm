@@ -370,6 +370,23 @@ describe("permission map", () => {
     expect(catalog).toEqual(Object.keys(sp10).sort());
   });
 
+  it("permission map covers SP-24 routes", () => {
+    const sp24: Record<string, string> = {
+      "GET /lifecycle": "workflows.view",
+      "POST /lifecycle/:key/setup": "workflows.create",
+      "PATCH /lifecycle/:key": "workflows.update",
+      "POST /lifecycle/sync": "templates.view",
+    };
+    for (const [k, p] of Object.entries(sp24)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    expect(keys.filter((k) => / \/lifecycle(\/|$)/.test(k)).sort()).toEqual(Object.keys(sp24).sort());
+    // Route order: sync before :key.
+    const lc = routes.filter((r) => r.key.startsWith("POST /lifecycle/"));
+    const at = (k: string) => lc.findIndex((r) => r.key === k);
+    expect(at("POST /lifecycle/sync")).toBeLessThan(at("POST /lifecycle/:key/setup"));
+  });
+
   it("permission map covers SP-11 routes (home part)", () => {
     for (const k of ["GET /home", "POST /home/seen", "POST /home/day1/dismiss"]) {
       expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p: "authenticated" });

@@ -4,6 +4,7 @@ import { useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import type { Tx } from "@/lib/tx";
 import type { WorkflowTriggerType } from "@/lib/types";
+import { isSystemLocked, lifecycleErrorText } from "@/screens/settings/lifecycle/lifecycleErrors";
 
 /** Starter payloads shaped like what each trigger delivers as `trigger.*`. */
 const SAMPLE_PAYLOAD: Record<WorkflowTriggerType, Record<string, unknown>> = {
@@ -20,6 +21,55 @@ const SAMPLE_PAYLOAD: Record<WorkflowTriggerType, Record<string, unknown>> = {
   appointment_completed: {
     appointment: { id: "", contactId: "", service: "Haircut", serviceAr: "قص شعر", startAt: "", durationMin: 30 },
     contact: { id: "", name: "Lina", phone: "" },
+  },
+  appointment_confirmed: {
+    appointment: {
+      id: "",
+      contactId: "",
+      service: "Haircut",
+      serviceAr: "قص شعر",
+      startAt: "",
+      durationMin: 30,
+      dateTextEn: "Monday 12 January",
+      dateTextAr: "الاثنين 12 يناير",
+      timeTextEn: "10:30",
+      timeTextAr: "10:30",
+    },
+    contact: { id: "", name: "Lina Haddad", firstName: "Lina", phone: "" },
+  },
+  appointment_cancelled: {
+    appointment: {
+      id: "",
+      contactId: "",
+      service: "Haircut",
+      serviceAr: "قص شعر",
+      startAt: "",
+      durationMin: 30,
+      dateTextEn: "Monday 12 January",
+      dateTextAr: "الاثنين 12 يناير",
+      timeTextEn: "10:30",
+      timeTextAr: "10:30",
+    },
+    contact: { id: "", name: "Lina Haddad", firstName: "Lina", phone: "" },
+  },
+  appointment_reminder_due: {
+    appointment: {
+      id: "",
+      contactId: "",
+      service: "Haircut",
+      serviceAr: "قص شعر",
+      startAt: "",
+      durationMin: 30,
+      dateTextEn: "Monday 12 January",
+      dateTextAr: "الاثنين 12 يناير",
+      timeTextEn: "10:30",
+      timeTextAr: "10:30",
+    },
+    contact: { id: "", name: "Lina Haddad", firstName: "Lina", phone: "" },
+  },
+  ticket_resolved: {
+    ticket: { id: "", title: "Order not delivered", number: 1 },
+    contact: { id: "", name: "Lina Haddad", firstName: "Lina" },
   },
   sale_completed: {
     contact: { id: "", name: "Lina", phone: "" },
@@ -63,7 +113,7 @@ export function TestWorkflowModal({
       const payload = JSON.parse(payloadText);
       setResult(await testMut.mutate({ payload }));
     } catch (e) {
-      setError((e as Error).message);
+      setError(isSystemLocked(e) ? lifecycleErrorText(e, tx) : (e as Error).message);
     }
   }
 
