@@ -6,7 +6,7 @@ import type { Tx } from "@/lib/tx";
  * a Copy button. If the clipboard is unavailable (insecure context, denied),
  * the value is selected so it can be copied by hand.
  */
-export function ShownOnce({ value, tx, label }: { value: string; tx: Tx; label: string }) {
+export function ShownOnce({ value, tx, label, onCopied }: { value: string; tx: Tx; label: string; onCopied?: () => void }) {
   const ref = useRef<HTMLInputElement | null>(null);
   const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
 
@@ -15,6 +15,7 @@ export function ShownOnce({ value, tx, label }: { value: string; tx: Tx; label: 
       if (!navigator.clipboard) throw new Error("no clipboard");
       await navigator.clipboard.writeText(value);
       setState("copied");
+      onCopied?.();
     } catch {
       ref.current?.focus();
       ref.current?.select();
@@ -35,6 +36,8 @@ export function ShownOnce({ value, tx, label }: { value: string; tx: Tx; label: 
             aria-label={label}
             value={value}
             onFocus={(e) => e.currentTarget.select()}
+            // A manual copy (Ctrl+C / ⌘C or the context menu) counts too.
+            onCopy={() => onCopied?.()}
             style={{
               width: "100%",
               fontFamily: "var(--mono)",

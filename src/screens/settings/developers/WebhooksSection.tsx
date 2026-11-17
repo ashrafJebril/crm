@@ -19,6 +19,7 @@ import {
 } from "./apiModel";
 import { developerErrorText } from "./developerErrors";
 import { ShownOnce } from "./ShownOnce";
+import { SHOWN_ONCE_CLOSE_CONFIRM, guardedClose, modalDismissible } from "./shownOnceGuard";
 
 const MONO = { fontFamily: "var(--mono)", fontSize: 12 } as const;
 
@@ -39,7 +40,15 @@ interface Caps {
 export function WebhooksSection({ tx, lang, caps }: { tx: Tx; lang: "en" | "ar"; caps: Caps }) {
   const q = useFetch<{ items: WebhookEndpoint[] }>("/webhooks");
   const [dialog, setDialog] = useState<{ mode: "create" } | { mode: "edit"; ep: WebhookEndpoint } | null>(null);
-  const [secret, setSecret] = useState<{ value: string; rotated: boolean } | null>(null);
+  const [secret, setSecret] = useState<{ value: string; rotated: boolean; copied?: boolean } | null>(null);
+  // Review M1: an uncopied signing secret survives Escape and backdrop clicks; Done asks first.
+  const closeSecret = () =>
+    guardedClose(
+      { secretShown: secret !== null, copied: secret?.copied === true },
+      () => setSecret(null),
+      (m) => window.confirm(m),
+      tx(...SHOWN_ONCE_CLOSE_CONFIRM),
+    );
   const [log, setLog] = useState<WebhookEndpoint | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -210,10 +219,20 @@ export function WebhooksSection({ tx, lang, caps }: { tx: Tx; lang: "en" | "ar";
         />
       )}
       {secret && (
-        <Modal onClose={() => setSecret(null)} width={560} label={tx("Signing secret", "سر التوقيع")}>
+        <Modal
+          onClose={closeSecret}
+          dismissible={modalDismissible({ secretShown: true, copied: secret.copied === true })}
+          width={560}
+          label={tx("Signing secret", "سر التوقيع")}
+        >
           <div dir={lang === "ar" ? "rtl" : "ltr"} style={{ display: "grid", gap: 12 }}>
             <div style={{ fontSize: 15, fontWeight: 600 }}>{tx("Signing secret", "سر التوقيع")}</div>
-            <ShownOnce value={secret.value} tx={tx} label={tx("Signing secret", "سر التوقيع")} />
+            <ShownOnce
+              value={secret.value}
+              tx={tx}
+              label={tx("Signing secret", "سر التوقيع")}
+              onCopied={() => setSecret((s) => (s ? { ...s, copied: true } : s))}
+            />
             {secret.rotated && (
               <div className="muted" style={{ fontSize: 12 }}>
                 {tx(
@@ -223,7 +242,7 @@ export function WebhooksSection({ tx, lang, caps }: { tx: Tx; lang: "en" | "ar";
               </div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button type="button" className="btn primary" onClick={() => setSecret(null)}>
+              <button type="button" className="btn primary" onClick={closeSecret}>
                 {tx("Done", "تم")}
               </button>
             </div>

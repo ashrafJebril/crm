@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { makeTx } from "@/lib/tx";
@@ -11,6 +11,7 @@ import {
   deliveryStatusLabel,
   deliveryTone,
   emptyMatrix,
+  expiryInstant,
   keyStatus,
   lastErrorText,
   matrixToScopes,
@@ -20,6 +21,8 @@ import {
   emptyRow,
 } from "./apiModel";
 import { DEVELOPER_ERROR_COPY, developerErrorText } from "./developerErrors";
+import { UNDOCUMENTED_KEY_ROUTES } from "./undocumentedRoutes";
+import { SHOWN_ONCE_CLOSE_CONFIRM, closeDecision, guardedClose, modalDismissible } from "./shownOnceGuard";
 
 const en = makeTx("en");
 const ar = makeTx("ar");
@@ -142,6 +145,37 @@ describe("developers page", () => {
     }
   });
 
+  it("each documented scope level matches the route's real requirement", () => {
+    // read = view; write = create or update; delete = delete; admin = manage (api-key-scopes.ts ACTION_MAP).
+    const LEVEL: Record<string, string[]> = { read: ["view"], write: ["create", "update"], delete: ["delete"], admin: ["manage"] };
+    const rows = [...html.matchAll(/data-route="((?:GET|POST|PATCH|PUT|DELETE) \/[^"]+)"><td>.*?<\/td><td>([a-z_]+): ([a-z]+)<\/td>/g)];
+    const routes = [...html.matchAll(/data-route="/g)];
+    expect(rows.length).toBe(routes.length); // every row states "resource: level"
+    for (const [, r, resource, level] of rows) {
+      const [res, action] = (RULE(r!) ?? ".").split(".");
+      expect({ r, documented: `${resource}: ${level}`, ok: res === resource && (LEVEL[level!] ?? []).includes(action!) }).toEqual({
+        r,
+        documented: `${resource}: ${level}`,
+        ok: true,
+      });
+    }
+  });
+
+  it("every key-reachable route is documented or listed as undocumented with a reason", () => {
+    const documented = new Set([...html.matchAll(/data-route="((?:GET|POST|PATCH|PUT|DELETE) \/[^"]+)"/g)].map((m) => m[1]!));
+    const keyable = [...map.matchAll(/"((?:GET|POST|PATCH|PUT|DELETE) \/[^"]+)": "([a-z_]+)\.[a-z]+"/g)]
+      .filter((m) => (KEY_RESOURCES as readonly string[]).includes(m[2]!))
+      .map((m) => m[1]!);
+    const listed = UNDOCUMENTED_KEY_ROUTES.flatMap((g) => g.routes);
+    for (const g of UNDOCUMENTED_KEY_ROUTES) expect(g.reason.length).toBeGreaterThan(20);
+    // No duplicates, nothing both documented and listed, nothing stale.
+    expect(new Set(listed).size).toBe(listed.length);
+    expect(listed.filter((r) => documented.has(r))).toEqual([]);
+    expect(listed.filter((r) => !keyable.includes(r))).toEqual([]);
+    // Every key-reachable route is accounted for.
+    expect(keyable.filter((r) => !documented.has(r) && !listed.includes(r))).toEqual([]);
+  });
+
   it("every documented event exists, and every event is documented", () => {
     const events = [...html.matchAll(/data-event="([a-z_.]+)"/g)].map((m) => m[1]!);
     expect([...new Set(events)].sort()).toEqual([...WEBHOOK_EVENTS].sort());
@@ -157,3 +191,36 @@ describe("developers page", () => {
     expect(html).toMatch(/dir="ltr"|setAttribute\("dir"/);
   });
 });
+
+describe("SP-27 review fixes", () => {
+  it("a shown-once secret only closes freely after it was copied", () => {
+    const shown = { secretShown: true, copied: false };
+    expect(closeDecision({ ...shown, via: "escape" })).toBe("ignore");
+    expect(closeDecision({ ...shown, via: "backdrop" })).toBe("ignore");
+    expect(closeDecision({ ...shown, via: "button" })).toBe("confirm");
+    expect(closeDecision({ secretShown: true, copied: true, via: "escape" })).toBe("close");
+    expect(closeDecision({ secretShown: false, copied: false, via: "backdrop" })).toBe("close");
+    expect(modalDismissible(shown)).toBe(false);
+    expect(modalDismissible({ secretShown: true, copied: true })).toBe(true);
+
+    const close = vi.fn();
+    guardedClose(shown, close, () => false, "m");
+    expect(close).not.toHaveBeenCalled();
+    const ask = vi.fn(() => true);
+    guardedClose(shown, close, ask, makeTx("ar")(...SHOWN_ONCE_CLOSE_CONFIRM));
+    expect(ask).toHaveBeenCalledWith("لن تتمكن من رؤيته مرة أخرى. هل تريد الإغلاق؟");
+    expect(close).toHaveBeenCalledTimes(1);
+    const noAsk = vi.fn();
+    guardedClose({ secretShown: true, copied: true }, close, noAsk, "m");
+    expect(noAsk).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(makeTx("en")(...SHOWN_ONCE_CLOSE_CONFIRM)).toBe("You won't see this again. Close anyway?");
+  });
+
+  it("a key expiry day ends at 23:59:59 in the workspace timezone, not the browser's", () => {
+    expect(expiryInstant("2027-03-10", "Asia/Riyadh")).toBe("2027-03-10T20:59:59.000Z");
+    expect(expiryInstant("2027-03-10", "America/New_York")).toBe("2027-03-11T04:59:59.000Z");
+    expect(expiryInstant("2027-07-10", "America/New_York")).toBe("2027-07-11T03:59:59.000Z"); // daylight time
+  });
+});
+

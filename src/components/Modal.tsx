@@ -12,6 +12,9 @@ interface ModalProps {
   panelStyle?: CSSProperties;
   /** Higher stacking context for modals that open on top of another modal. */
   zIndex?: number;
+  /** False: Escape and a backdrop click do nothing (e.g. a secret shown once
+   *  and not yet copied); the screen's own buttons still close it. Default true. */
+  dismissible?: boolean;
 }
 
 /**
@@ -32,6 +35,7 @@ export function Modal({
   label,
   panelStyle,
   zIndex = 100,
+  dismissible = true,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -39,7 +43,7 @@ export function Modal({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        if (dismissible) onClose();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -49,13 +53,13 @@ export function Modal({
       window.removeEventListener("keydown", onKey);
       cancelAnimationFrame(id);
     };
-  }, [onClose]);
+  }, [onClose, dismissible]);
 
   return (
     <div
       role="presentation"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget && dismissible) onClose();
       }}
       style={{
         position: "fixed",

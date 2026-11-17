@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "@/api/client";
+import { useAuth } from "@/auth/context";
 import { useFetch } from "@/api/useFetch";
 import { Badge } from "@/components/Badge";
 import { Modal } from "@/components/Modal";
@@ -11,6 +12,7 @@ import {
   KEY_RESOURCES,
   actionLabel,
   emptyMatrix,
+  expiryInstant,
   keyStatus,
   keyStatusLabel,
   matrixToScopes,
@@ -23,6 +25,7 @@ import {
 } from "./apiModel";
 import { developerErrorText } from "./developerErrors";
 import { ShownOnce } from "./ShownOnce";
+import { SHOWN_ONCE_CLOSE_CONFIRM, guardedClose, modalDismissible } from "./shownOnceGuard";
 
 const MONO = { fontFamily: "var(--mono)", fontSize: 12 } as const;
 
@@ -174,6 +177,11 @@ function CreateApiKeyDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const { activeWorkspace } = useAuth();
+  // Review M1: an uncopied key survives Escape and backdrop clicks; Done asks first.
+  const guard = { secretShown: created !== null, copied };
+  const close = () => guardedClose(guard, onClose, (m) => window.confirm(m), tx(...SHOWN_ONCE_CLOSE_CONFIRM));
   const scopes = matrixToScopes(matrix);
   const valid = name.trim().length > 0 && name.trim().length <= 60 && Object.keys(scopes).length > 0;
 
@@ -182,7 +190,8 @@ function CreateApiKeyDialog({
     setError(null);
     try {
       const body: Record<string, unknown> = { name: name.trim(), scopes };
-      if (expiry) body.expiresAt = new Date(`${expiry}T23:59:59`).toISOString();
+      // End of the chosen day in the workspace timezone (review M3).
+      if (expiry) body.expiresAt = expiryInstant(expiry, activeWorkspace?.timezone);
       const res = await api.post<ApiKey & { key: string }>("/api-keys", body);
       setCreated(res.key);
       onCreated();
@@ -194,12 +203,12 @@ function CreateApiKeyDialog({
   };
 
   return (
-    <Modal onClose={onClose} width={620} label={tx("Create API key", "إنشاء مفتاح API")}>
+    <Modal onClose={close} dismissible={modalDismissible(guard)} width={620} label={tx("Create API key", "إنشاء مفتاح API")}>
       <div dir={lang === "ar" ? "rtl" : "ltr"} style={{ display: "grid", gap: 14 }}>
         <div style={{ fontSize: 15, fontWeight: 600 }}>{tx("Create API key", "إنشاء مفتاح API")}</div>
         {created ? (
           <>
-            <ShownOnce value={created} tx={tx} label={tx("API key", "مفتاح API")} />
+            <ShownOnce value={created} tx={tx} label={tx("API key", "مفتاح API")} onCopied={() => setCopied(true)} />
             <div className="muted" style={{ fontSize: 12 }}>
               {tx("Send it as", "أرسله بالشكل")}{" "}
               <bdi dir="ltr" style={MONO}>
@@ -207,7 +216,7 @@ function CreateApiKeyDialog({
               </bdi>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button type="button" className="btn primary" onClick={onClose}>
+              <button type="button" className="btn primary" onClick={close}>
                 {tx("Done", "تم")}
               </button>
             </div>

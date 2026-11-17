@@ -1,3 +1,4 @@
+import { instantOf, workspaceTz } from "@/screens/calendar/bookingTime";
 import type { ApiKey, KeyAction, KeyScopes, WebhookDelivery, WebhookEndpoint } from "@/lib/types";
 import type { Tx } from "@/lib/tx";
 
@@ -213,3 +214,13 @@ export function looksLikeHttpsUrl(raw: string): boolean {
     return false;
   }
 }
+
+/**
+ * SP-27 review M3: a key expiry picked as a day ends at 23:59:59 in the
+ * WORKSPACE timezone (not the browser's), as an ISO instant.
+ */
+export function expiryInstant(dateISO: string, tz: string | null | undefined): string {
+  const lastMinute = instantOf(dateISO, 23 * 60 + 59, workspaceTz(tz));
+  return new Date(lastMinute.getTime() + 59_000).toISOString();
+}
+
