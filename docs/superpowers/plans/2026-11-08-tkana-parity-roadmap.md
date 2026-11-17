@@ -349,8 +349,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 ### Phase 6: Account and business
 
 #### SP-26 Members, invites, handover, security. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-18-sp26-members-security.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-17; live-verified on production with a local email stub (100 pass; F1/F2 email masking fixed in f380140). Invitations always need the emailed token; plaintext password storage removed; TOTP 2FA, password reset and session revocation (HTTP and sockets, ~90 s across instances). **Pending (user):** Resend env (`EMAIL_PROVIDER`, `RESEND_API_KEY`, `EMAIL_FROM`, verified domain) and `TOKEN_ENC_KEY` on Fly; Kewy SSO/reset paths untested live. **Follow-up:** email verification at sign-up (invitee email squatting).
 - **Gaps:** email invitations (token, role travels with it) with pending/active filter, revoke, and an accept page; hand over open work when removing a member (preview + reassign); a page for users with no workspace; activation links by workspace slug; a team activity (audit) log; forgot/reset password; 2FA (TOTP); replace the mock Pending/Activity/2FA parts of `Team.tsx`.
 - **Read in Tkana:** `routes/settings.members*.ts(x)`, `components/settings/member-handover-dialog.tsx`, `routes/{accept-invite,select-org,org.activate}.ts(x)`.
 - **Data:** `Invitation {email, roleId, tokenHash, expiresAt, acceptedAt?, revokedAt?}`, `AuditLog {actorId, action, target, meta, createdAt}`, `User.totpSecretEnc?`, `PasswordReset {userId, tokenHash, expiresAt}`, `Workspace.slug @unique`.
