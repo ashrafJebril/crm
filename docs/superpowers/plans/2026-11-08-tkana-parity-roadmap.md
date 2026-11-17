@@ -303,8 +303,8 @@ Each sub-project lists: **Gaps** (what Tkana has), **Read in Tkana**, **Data**, 
 - **Acceptance:** `crawler respects robots.txt and same-origin`; `failed source emits knowledge_source_failed`; `typed doc rejects wrong template columns with row errors`.
 
 #### SP-20 Agent configuration, sandbox and onboarding. Size L
-- [ ] Detailed plan written
-- [ ] Shipped
+- [x] Detailed plan written (`docs/superpowers/plans/2026-11-17-sp20-agent-config-sandbox.md`)
+- [x] Shipped on `feat/tkana-parity`. Migration applied 2026-11-17; live-verified on production against local l, kewy-ai, Zernio, Anthropic and website stubs (88 pass; all four acceptance checks live; F2 email case and F3 agent tab fixed in face991). One reply gate with the emergency stop read on every decision; prompt writes serialised by an advisory lock. **Deploy order:** the merged code also reads SP-18/SP-22/SP-27 tables, so their migrations must be applied with (or before) the deploy. **Pending real-provider checks:** real l persona publish/re-sync, the real Claude path, real kewy-ai kill switch and bridge, real Zernio/Meta delivery.
 - **Gaps:** agent name EN/AR, greeting, tone; working-hours mode (always / within hours / outside hours) with a weekly schedule; customer tags excluded from auto-replies; a "Try your agent" sandbox (writes sandboxed, tool-call lines, "Answered from" sources); conversational onboarding (business name → setup chat that reads the website → "What I learned" card; skip/resume) plus a standalone signup page.
 - **Depends on:** SP-21 (website ingest).
 - **Read in Tkana:** `routes/{settings.agent,try-agent,setup,setup.business,setup.try,signup}.tsx`, `components/{try-agent,setup}/*`, `aida-learn-card.tsx`.
