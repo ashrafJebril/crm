@@ -32,7 +32,9 @@ export type RouteId =
   | "ads"
   | "admin"
   // SP-20: guided onboarding.
-  | "setup";
+  | "setup"
+  // SP-18: the member's "Ask Kewy" history.
+  | "copilot";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
 

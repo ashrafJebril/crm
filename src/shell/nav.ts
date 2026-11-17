@@ -69,4 +69,6 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
   // SP-20: reached from signup and the "Continue setup" cards, not the sidebar.
   setup:       { en: "Set up your agent", ar: "إعداد وكيلك" },
+  // SP-18: reached from the "Ask Kewy" drawer, not the sidebar.
+  copilot:     { en: "Ask Kewy history", ar: "سجل اسأل كيوي" },
 };

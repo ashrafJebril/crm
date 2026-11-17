@@ -15,6 +15,8 @@ import { refsForBody } from "./refs";
 import { MessageList } from "./MessageList";
 import { Composer, type ComposerHandle } from "./Composer";
 import { FOCUSABLE, RESUME_MAX_FAILURES, shouldCloseOnEscape, trapTarget } from "./drawerKeys";
+import { startersFor } from "./starters";
+import { usePermissions } from "@/auth/usePermissions";
 
 type SendInput = { text: string; refs: CopilotRef[]; attachments: CopilotAttachmentInfo[] };
 
@@ -32,7 +34,18 @@ type SendInput = { text: string; refs: CopilotRef[]; attachments: CopilotAttachm
  *    (while open and the tab is visible; at most 5 failed reads in a row).
  *  - Reset (New chat) and a workspace switch abort the stream in flight.
  */
-export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean; onClose: () => void; prompt: { text: string; n: number } | null }) {
+export default function CopilotDrawer({
+  open,
+  onClose,
+  prompt,
+  session,
+}: {
+  open: boolean;
+  onClose: () => void;
+  prompt: { text: string; n: number } | null;
+  /** A chat picked in the history page. */
+  session?: { id: string; n: number } | null;
+}) {
   const { t } = useTweaks();
   const lang = t.lang;
   const tx: Tx = makeTx(lang);
@@ -211,6 +224,27 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
     void send({ text: prompt.text, refs: [], attachments: [] });
   }, [prompt, send, resetChat]);
 
+  // A chat picked in the history: show it (unless a turn is streaming here).
+  const shown = useRef(0);
+  useEffect(() => {
+    if (!session || session.n === shown.current) return;
+    shown.current = session.n;
+    if (streaming.current || stateRef.current.sessionId === session.id) return;
+    skipResume.current = true;
+    resetChat();
+    void reload(session.id);
+  }, [session, resetChat, reload]);
+
+  const { can } = usePermissions();
+  // The page under the drawer (the record sheet can change it without a route change).
+  const [hash, setHash] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
+  useEffect(() => {
+    const on = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const starters = startersFor(pageContextOf(route, hash).page, can, lang);
+
   const onCard = (c: PendingCard) => dispatch({ type: "card", card: c });
   const onStale = () => state.sessionId && void reload(state.sessionId);
   // Retry the last message: the same text and references. Its attachments are already part of
@@ -248,6 +282,9 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
           <button type="button" className="btn ghost sm" onClick={resetChat}>
             {tx("New chat", "محادثة جديدة")}
           </button>
+          <a className="btn ghost sm" href="#/copilot" onClick={onClose}>
+            {tx("History", "السجل")}
+          </a>
           <button type="button" className="btn ghost icon sm" aria-label={tx("Close", "إغلاق")} onClick={onClose}>
             ×
           </button>
@@ -280,6 +317,15 @@ export default function CopilotDrawer({ open, onClose, prompt }: { open: boolean
         {state.items.length === 0 && !state.running ? (
           <div className="copilot-empty">
             <p>{tx("Ask about your customers, conversations, tickets, bookings or numbers. Kewy proposes changes; you approve them.", "اسأل عن عملائك أو محادثاتك أو تذاكرك أو حجوزاتك أو أرقامك. يقترح كيوي التغييرات وأنت توافق عليها.")}</p>
+            {starters.length > 0 && (
+              <div className="copilot-starters">
+                {starters.map((s) => (
+                  <button key={s} type="button" className="copilot-chip" onClick={() => void send({ text: s, refs: [], attachments: [] })}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
             <p className="copilot-hint">{tx("Ctrl+J (⌘J on Mac) opens and closes Kewy.", "Ctrl+J (أو ⌘J على ماك) يفتح كيوي ويغلقه.")}</p>
           </div>
         ) : (

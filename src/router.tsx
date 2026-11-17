@@ -23,6 +23,8 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   admin: lazy(() => import("@/screens/Admin")),
   // SP-20: guided onboarding (signup and the "Continue setup" cards link here).
   setup: lazy(() => import("@/screens/setup/SetupPage")),
+  // SP-18: the member's own copilot chats (reached from the drawer).
+  copilot: lazy(() => import("@/screens/copilot/CopilotHistory")),
 };
 
 export const VALID_ROUTES = new Set<RouteId>(Object.keys(screens) as RouteId[]);

@@ -831,4 +831,9 @@ input, textarea, select { font-family: inherit; }
 .copilot-count { font-size: 10px; color: var(--ink-3); }
 .copilot-count[data-over] { color: var(--bad, #c0392b); }
 .copilot-askbox { display: flex; gap: 6px; margin-block-end: 12px; }
+.copilot-starters { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 10px; }
+.copilot-starters .copilot-chip { font-size: 12px; padding-block: 4px; padding-inline: 10px; text-align: start; }
+.copilot-history { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.copilot-history-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding-block: 8px; padding-inline: 12px; background: var(--bg-1); }
+.copilot-history-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: 0; background: none; cursor: pointer; text-align: start; color: inherit; font: inherit; }
 .copilot-askbox input { flex: 1; min-width: 0; }

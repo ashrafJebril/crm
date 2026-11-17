@@ -84,8 +84,8 @@ export function useCopilotAvailable(): boolean {
   return q.data?.available === true;
 }
 
-/** Open the drawer from anywhere (Topbar button, Ctrl/Cmd+J, the insights ask box). */
+/** Open the drawer from anywhere (Topbar button, Ctrl/Cmd+J, the insights ask box, a chat in the history). */
 export const OPEN_COPILOT_EVENT = "aram:open-copilot";
-export function openCopilot(opts: { prompt?: string } = {}): void {
+export function openCopilot(opts: { prompt?: string; sessionId?: string } = {}): void {
   window.dispatchEvent(new CustomEvent(OPEN_COPILOT_EVENT, { detail: opts }));
 }

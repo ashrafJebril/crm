@@ -16,13 +16,15 @@ export function CopilotHost() {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [prompt, setPrompt] = useState<{ text: string; n: number } | null>(null);
+  const [session, setSession] = useState<{ id: string; n: number } | null>(null);
 
   useEffect(() => {
     const onOpen = (e: Event) => {
-      const p = (e as CustomEvent<{ prompt?: string }>).detail?.prompt;
+      const d = (e as CustomEvent<{ prompt?: string; sessionId?: string }>).detail ?? {};
       setOpen(true);
       setLoaded(true);
-      if (p) setPrompt((x) => ({ text: p, n: (x?.n ?? 0) + 1 }));
+      if (d.prompt) setPrompt((x) => ({ text: d.prompt!, n: (x?.n ?? 0) + 1 }));
+      if (d.sessionId) setSession((x) => ({ id: d.sessionId!, n: (x?.n ?? 0) + 1 }));
     };
     const onKey = (e: KeyboardEvent) => {
       // Not while typing in a field outside the drawer (the field keeps its own keys).
@@ -43,7 +45,7 @@ export function CopilotHost() {
   if (!available || !loaded) return null;
   return (
     <Suspense fallback={null}>
-      <CopilotDrawer open={open} onClose={() => setOpen(false)} prompt={prompt} />
+      <CopilotDrawer open={open} onClose={() => setOpen(false)} prompt={prompt} session={session} />
     </Suspense>
   );
 }
