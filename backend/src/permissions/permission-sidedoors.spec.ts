@@ -1390,6 +1390,52 @@ describe("SP-26 members side doors", () => {
   });
 });
 
+// SP-23: the connector activity card and the write-access rule.
+describe("SP-23 connectors: side doors", () => {
+  it("connector activity never includes arguments or customer data", async () => {
+    const { connectorsWorld, seedConnector, WS: CWS } = await import("../connectors/__fixtures__/connectors-world");
+    const w = connectorsWorld();
+    const c = seedConnector(w);
+    // Whatever a row might carry, only the listed keys leave the service.
+    w.db.connectorCall.push({
+      id: "c1",
+      workspaceId: CWS,
+      connectorId: c.id,
+      tool: "create_invitee",
+      kind: "write",
+      outcome: "ok",
+      errorCode: null,
+      durationMs: 9,
+      source: "agent",
+      at: new Date(),
+      arguments: { email: "customer@example.com" },
+      result: "secret customer data",
+    });
+    const a = await w.service.activity(CWS, c.id);
+    expect(Object.keys(a).sort()).toEqual(["calls", "counts7d"]);
+    for (const call of a.calls) expect(Object.keys(call).sort()).toEqual(["at", "errorCode", "kind", "outcome", "source", "tool"]);
+    for (const n of a.counts7d) expect(Object.keys(n).sort()).toEqual(["error", "ok", "refused", "tool"]);
+    expect(JSON.stringify(a)).not.toMatch(/customer@example\.com|secret customer data/);
+  });
+
+  it("write tool needs write access through the controller (connectors.update without manage → 403)", async () => {
+    const { connectorsWorld, seedConnector, tool, WS: CWS } = await import("../connectors/__fixtures__/connectors-world");
+    const { ConnectorsController } = await import("../connectors/connectors.controller");
+    const w = connectorsWorld();
+    const c = seedConnector(w, { tools: [tool("cancel_event", "write", "off")] });
+    const perms = (manage: boolean) => ({ viewerCan: jest.fn(async (_ws: string, _v: unknown, p: string) => p !== "connectors.manage" || manage) });
+    const updater = new ConnectorsController(w.service, perms(false) as never, {} as never);
+    const err = await updater
+      .patchTools(CWS, { userId: "u" }, c.id, { version: 0, tools: [{ name: "cancel_event", access: "write" }] })
+      .catch((e: any) => e);
+    expect(err.getStatus()).toBe(403);
+    expect(err.getResponse()).toMatchObject({ message: "connectors.write_access_requires_manage" });
+    const admin = new ConnectorsController(w.service, perms(true) as never, {} as never);
+    const ok = await admin.patchTools(CWS, { userId: "u" }, c.id, { version: 0, tools: [{ name: "cancel_event", access: "write" }] });
+    expect(ok.tools[0]).toMatchObject({ access: "write", exposed: true });
+  });
+});
+
 // SP-27: an API key acts as its creator: the creator's visibility, and never
 // more than the creator's role or the key's scopes.
 describe("SP-27 api keys: side doors", () => {

@@ -512,6 +512,22 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /integrations/l/mcp-servers": "connectors.view",
   "POST /integrations/l/mcp-servers": "connectors.create",
   "DELETE /integrations/l/mcp-servers/:serverId": "connectors.delete",
+  // SP-23: the connectors gallery. Switching a WRITE tool on additionally
+  // needs connectors.manage (checked in the service, ruling 11). The proxy is
+  // public behind its own bearer guard (ConnectorProxyGuard).
+  "GET /connectors": "connectors.view",
+  "GET /connectors/:id": "connectors.view",
+  // Task 2: OAuth. The callback is public: the signed single-use state and a
+  // connectors.create re-check guard it.
+  "GET /connectors/oauth/start": "connectors.create",
+  "GET /connectors/oauth/callback": "public",
+  "POST /connectors/custom": "connectors.manage",
+  "PATCH /connectors/:id/tools": "connectors.update",
+  "POST /connectors/:id/rescan": "connectors.update",
+  "PUT /connectors/:id/agent": "connectors.update",
+  "GET /connectors/:id/activity": "connectors.view",
+  "DELETE /connectors/:id": "connectors.delete",
+  "POST /mcp/connectors/:connectorId": "public",
   "POST /integrations/l/mcp-servers/:serverId/binding": "connectors.update",
   "DELETE /integrations/l/mcp-servers/:serverId/binding": "connectors.update",
   "POST /integrations/l/mcp-servers/:serverId/test": "connectors.update",

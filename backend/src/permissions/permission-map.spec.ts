@@ -387,6 +387,26 @@ describe("permission map", () => {
     expect(ROUTE_PERMISSIONS["POST /mcp/v1"]).toBe("public");
   });
 
+  it("permission map covers SP-23 routes", () => {
+    const sp23: Record<string, string> = {
+      "GET /connectors": "connectors.view",
+      "GET /connectors/:id": "connectors.view",
+      "GET /connectors/oauth/start": "connectors.create",
+      "GET /connectors/oauth/callback": "public",
+      "POST /connectors/custom": "connectors.manage",
+      "PATCH /connectors/:id/tools": "connectors.update",
+      "POST /connectors/:id/rescan": "connectors.update",
+      "PUT /connectors/:id/agent": "connectors.update",
+      "GET /connectors/:id/activity": "connectors.view",
+      "DELETE /connectors/:id": "connectors.delete",
+      "POST /mcp/connectors/:connectorId": "public",
+    };
+    for (const [k, p] of Object.entries(sp23)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    expect(keys.filter((k) => / \/connectors(\/|$)| \/mcp\/connectors\//.test(k)).sort()).toEqual(Object.keys(sp23).sort());
+  });
+
   it("permission map covers SP-24 routes", () => {
     const sp24: Record<string, string> = {
       "GET /lifecycle": "workflows.view",

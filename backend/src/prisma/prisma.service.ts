@@ -108,6 +108,12 @@ export class PrismaService implements OnModuleDestroy {
   // SP-22: the skills ledger and the agent's tool-call log (tenant-scoped).
   get skillInstall() { return this.client.skillInstall; }
   get agentToolCall() { return this.client.agentToolCall; }
+  // SP-23: connectors (tenant-scoped; the proxy and the schedulers run
+  // without a context and name workspaceId or a unique key explicitly).
+  get connector() { return this.client.connector; }
+  get connectorCall() { return this.client.connectorCall; }
+  get connectorSyncLink() { return this.client.connectorSyncLink; }
+  get connectorSyncRun() { return this.client.connectorSyncRun; }
   // SP-27: in the tenancy list (defence in depth). AuthGuard's lookup by hash
   // is a findUnique before any workspace context exists; every other query
   // names workspaceId explicitly.

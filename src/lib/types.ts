@@ -2095,6 +2095,71 @@ export type CopilotEvent =
   | { event: "done"; data: { messageId: string; usage?: { inputTokens: number; outputTokens: number } } }
   | { event: "error"; data: { code: string } };
 
+// ─── SP-23 connectors gallery (mirror of backend/src/connectors DTOs) ─────────
+
+export type ConnectorStatus = "pending" | "active" | "needs_reconnect" | "disconnected";
+export type ConnectorToolAccess = "off" | "read" | "write";
+
+export interface ConnectorSummary {
+  id: string;
+  provider: string;
+  name: string;
+  status: ConnectorStatus;
+  statusReason: string | null;
+  accountLabel: string | null;
+  agentBound: boolean;
+  toolCounts: { on: number; total: number };
+  connectedAt: string | null;
+  calls7d: number;
+}
+
+export interface ConnectorCard {
+  provider: string;
+  name: { en: string; ar: string };
+  description: { en: string; ar: string };
+  authKind: "oauth" | "headers" | "none" | null;
+  available: boolean;
+  unavailableReason: "not_configured" | "coming_soon" | null;
+  connectors: ConnectorSummary[];
+}
+
+export interface ConnectorTool {
+  name: string;
+  title: string | null;
+  description: string;
+  kind: "read" | "write";
+  access: ConnectorToolAccess;
+  exposed: boolean;
+  removed: boolean;
+  /** Why a re-scan switched it off for safety. */
+  flag: "reclassified" | "description_changed" | "schema_changed" | null;
+  /** Custom connectors: the owner marked it read-only. */
+  ownerRead: boolean;
+}
+
+export interface ConnectorDetail extends ConnectorSummary {
+  serverHost: string;
+  tools: ConnectorTool[];
+  toolsScannedAt: string | null;
+  sync: unknown[];
+  usedBySkills: { key: string; name: { en: string; ar: string } }[];
+  version: number;
+  /** Custom connectors: header names; values are always "••••" (write-only). */
+  headers: { name: string; value: string }[];
+}
+
+export interface ConnectorActivity {
+  calls: { tool: string; kind: string; outcome: "ok" | "error" | "refused"; errorCode: string | null; source: string; at: string }[];
+  counts7d: { tool: string; ok: number; error: number; refused: number }[];
+}
+
+export interface ConnectorRescanResult {
+  detail: ConnectorDetail;
+  added: string[];
+  removed: string[];
+  changed: string[];
+}
+
 // ─── SP-27 API keys and webhooks (mirror of backend api-keys / webhooks DTOs) ──
 
 export type KeyAction = "read" | "write" | "delete" | "admin";

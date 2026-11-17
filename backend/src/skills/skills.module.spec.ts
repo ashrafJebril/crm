@@ -4,7 +4,9 @@ import { SkillsService } from "./skills.service";
 import { AgentPromptService } from "./agent-prompt.service";
 import { AgentToolCallRecorder } from "./agent-tool-call.recorder";
 import { AgentToolCallPruneScheduler } from "./agent-tool-call-prune.scheduler";
-import { CONNECTOR_PRESENCE, NeverConnected } from "./connector-presence";
+import { CONNECTOR_PRESENCE } from "./connector-presence";
+import { ConnectorPresenceModule } from "../connectors/connector-presence.module";
+import { ConnectorPresenceService } from "../connectors/connector-presence.service";
 import { SkillsController } from "./skills.controller";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { McpServerModule } from "../mcp-server/mcp-server.module";
@@ -23,13 +25,16 @@ const meta = (key: string, target: object) => Reflect.getMetadata(key, target) a
 const params = (cls: object) => Reflect.getMetadata("design:paramtypes", cls) as unknown[];
 
 describe("SP-22 module wiring", () => {
-  it("SkillsModule serves the routes, binds NeverConnected and exports what the MCP server needs", () => {
+  it("SkillsModule serves the routes, binds the real connector presence (SP-23) and exports what the MCP server needs", () => {
     expect(meta(MODULE_METADATA.CONTROLLERS, SkillsModule)).toEqual([SkillsController]);
     expect(meta(MODULE_METADATA.IMPORTS, SkillsModule)).toContain(IntegrationsModule);
     const providers = meta(MODULE_METADATA.PROVIDERS, SkillsModule);
     for (const p of [SkillsService, AgentPromptService, AgentToolCallRecorder, AgentToolCallPruneScheduler]) expect(providers).toContain(p);
-    expect(providers).toContainEqual({ provide: CONNECTOR_PRESENCE, useClass: NeverConnected });
-    expect(meta(MODULE_METADATA.EXPORTS, SkillsModule)).toEqual(expect.arrayContaining([SkillsService, AgentToolCallRecorder, CONNECTOR_PRESENCE]));
+    // SP-23: the presence comes from the leaf ConnectorPresenceModule (no cycle).
+    expect(meta(MODULE_METADATA.IMPORTS, SkillsModule)).toContain(ConnectorPresenceModule);
+    expect(meta(MODULE_METADATA.IMPORTS, ConnectorPresenceModule) ?? []).toEqual([]);
+    expect(meta(MODULE_METADATA.PROVIDERS, ConnectorPresenceModule)).toContainEqual({ provide: CONNECTOR_PRESENCE, useExisting: ConnectorPresenceService });
+    expect(meta(MODULE_METADATA.EXPORTS, SkillsModule)).toEqual(expect.arrayContaining([SkillsService, AgentToolCallRecorder, ConnectorPresenceModule]));
   });
 
   it("the MCP server reads the enabled skills and gets the new tools' services", () => {

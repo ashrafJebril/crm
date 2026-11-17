@@ -95,6 +95,8 @@ import { AgentReplyGate } from "../agent/agent-reply-gate";
     LKnowledgeService,
     // SP-20: the sandbox (Task 2) shows the gate decision.
     AgentReplyGate,
+    // SP-23: connectors register their proxy as an l MCP server.
+    LMcpService,
   ],
 })
 export class IntegrationsModule {}

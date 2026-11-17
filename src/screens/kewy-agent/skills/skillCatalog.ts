@@ -24,8 +24,8 @@ export const PROVIDER_NAME: Record<string, string> = {
   custom: "MCP",
 };
 
-/** SP-23 builds the connectors screen; until then the link is hidden. */
-export const CONNECTORS_HREF: string | null = null;
+/** SP-23: the connectors tab ("Connect Calendly first" links here). */
+export const CONNECTORS_HREF: string | null = "#/agent?tab=connectors";
 
 /** Mirrors the server's SAFE_TAG_RE (skill-config.ts): letters, digits, space, - _ . */
 export const SAFE_TAG_RE = /^[\p{L}\p{M}\p{N} ._-]+$/u;

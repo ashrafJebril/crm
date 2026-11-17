@@ -475,6 +475,34 @@ const DEFAULTS: Record<string, () => Row> = {
   // SP-22
   skillInstall: () => ({ status: "enabled", config: {}, needsConfig: false, lastAppliedAt: null, lastError: null, installedById: null, version: 0 }),
   agentToolCall: () => ({ skillKey: null, errorCode: null, at: new Date() }),
+  // SP-23: connectors.
+  connector: () => ({
+    status: "pending",
+    statusReason: null,
+    tokenEnc: null,
+    tokenExpiresAt: null,
+    tokenVersion: 0,
+    refreshFailures: 0,
+    lastRefreshAt: null,
+    headersEnc: null,
+    oauthClientEnc: null,
+    oauthMeta: null,
+    oauthPendingEnc: null,
+    oauthPendingExpiresAt: null,
+    tools: [],
+    toolsScannedAt: null,
+    accountLabel: null,
+    lServerId: null,
+    agentBound: false,
+    proxyTokenPrefix: null,
+    proxyTokenHash: null,
+    sync: {},
+    connectedById: null,
+    connectedAt: null,
+    disconnectedAt: null,
+    version: 0,
+  }),
+  connectorCall: () => ({ errorCode: null, source: "agent", at: new Date() }),
   // SP-27: API keys and webhooks.
   apiKey: () => ({ expiresAt: null, lastUsedAt: null, revokedAt: null }),
   webhookEndpoint: () => ({
@@ -538,6 +566,8 @@ const NULLABLE_UNIQUES: Record<string, Array<[string, string[]]>> = {
   knowledgeSource: [["KnowledgeSource_workspaceId_legacyRef_key", ["workspaceId", "legacyRef"]]],
   // SP-24: @@unique([workspaceId, systemKey]) (user workflows have NULL).
   workflow: [["Workflow_workspaceId_systemKey_key", ["workspaceId", "systemKey"]]],
+  // SP-23: Connector.proxyTokenPrefix is unique (NULL until provisioned).
+  connector: [["Connector_proxyTokenPrefix_key", ["proxyTokenPrefix"]]],
 };
 const keyPart = (v: any) => (v instanceof Date ? v.getTime() : v);
 function sp15Clash(model: string, rows: Row[], row: Row): string | null {
@@ -1011,6 +1041,11 @@ export function makeFakePrisma(seed: Partial<Tables> = {}) {
     // SP-22: the skills ledger and the tool-call log.
     skillInstall: model("skillInstall"),
     agentToolCall: model("agentToolCall"),
+    // SP-23: connectors.
+    connector: model("connector"),
+    connectorCall: model("connectorCall"),
+    connectorSyncLink: model("connectorSyncLink"),
+    connectorSyncRun: model("connectorSyncRun"),
     auditLog: model("auditLog"),
     passwordReset: model("passwordReset"),
     // SP-27: API keys and webhooks.
