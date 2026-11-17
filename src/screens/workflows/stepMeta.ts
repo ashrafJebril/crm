@@ -135,6 +135,32 @@ export const TRIGGER_META: Record<WorkflowTriggerType, Meta> = {
     descEn: "Runs when a sale is fully paid in HJZ, for customers who are in the CRM.",
     descAr: "يعمل عند دفع عملية بيع بالكامل في HJZ، للعملاء الموجودين في النظام.",
   },
+  // SP-24 lifecycle events.
+  appointment_confirmed: {
+    en: "Booking confirmed",
+    ar: "تأكيد الحجز",
+    descEn: "Runs when a booking is confirmed (once per booking time).",
+    descAr: "يعمل عند تأكيد الحجز (مرة لكل موعد).",
+  },
+  appointment_cancelled: {
+    en: "Booking cancelled",
+    ar: "إلغاء الحجز",
+    descEn: "Runs when a booking is cancelled.",
+    descAr: "يعمل عند إلغاء الحجز.",
+  },
+  ticket_resolved: {
+    en: "Ticket resolved",
+    ar: "حل التذكرة",
+    descEn: "Runs when a ticket moves into a won final stage.",
+    descAr: "يعمل عند انتقال التذكرة إلى مرحلة نهائية ناجحة.",
+  },
+  // System workflows only (Automatic messages); never offered in the builder.
+  appointment_reminder_due: {
+    en: "Booking reminder",
+    ar: "تذكير بالحجز",
+    descEn: "Runs before a booking starts. Managed in Automatic messages.",
+    descAr: "يعمل قبل بدء الحجز. يُدار من الرسائل التلقائية.",
+  },
 };
 
 export const TRIGGER_ORDER: WorkflowTriggerType[] = [
@@ -142,7 +168,10 @@ export const TRIGGER_ORDER: WorkflowTriggerType[] = [
   "message_received",
   "ticket_created",
   "ticket_stage_changed",
+  "appointment_confirmed",
+  "appointment_cancelled",
   "appointment_completed",
+  "ticket_resolved",
   "sale_completed",
   "schedule",
   "webhook",
@@ -158,6 +187,9 @@ export const NO_CONVERSATION_TRIGGERS: WorkflowTriggerType[] = [
   "webhook",
   "appointment_completed",
   "sale_completed",
+  "appointment_confirmed",
+  "appointment_cancelled",
+  "appointment_reminder_due",
 ];
 
 export interface WorkflowVariable {
@@ -197,6 +229,42 @@ const TRIGGER_VARIABLES: Record<WorkflowTriggerType, Array<{ path: string; label
     { path: "trigger.sale.paid", label: ["Amount paid", "المبلغ المدفوع"] },
     { path: "trigger.sale.currency", label: ["Currency", "العملة"] },
     { path: "trigger.sale.branch", label: ["Branch", "الفرع"] },
+  ],
+  appointment_confirmed: [
+    { path: "trigger.contact.name", label: ["Contact name", "اسم جهة الاتصال"] },
+    { path: "trigger.contact.firstName", label: ["Contact first name", "الاسم الأول لجهة الاتصال"] },
+    { path: "trigger.appointment.service", label: ["Service", "الخدمة"] },
+    { path: "trigger.appointment.serviceAr", label: ["Service (Arabic)", "الخدمة (عربي)"] },
+    { path: "trigger.appointment.dateTextEn", label: ["Date (English)", "التاريخ (إنجليزي)"] },
+    { path: "trigger.appointment.dateTextAr", label: ["Date (Arabic)", "التاريخ (عربي)"] },
+    { path: "trigger.appointment.timeTextEn", label: ["Time (English)", "الوقت (إنجليزي)"] },
+    { path: "trigger.appointment.timeTextAr", label: ["Time (Arabic)", "الوقت (عربي)"] },
+  ],
+  appointment_cancelled: [
+    { path: "trigger.contact.name", label: ["Contact name", "اسم جهة الاتصال"] },
+    { path: "trigger.contact.firstName", label: ["Contact first name", "الاسم الأول لجهة الاتصال"] },
+    { path: "trigger.appointment.service", label: ["Service", "الخدمة"] },
+    { path: "trigger.appointment.serviceAr", label: ["Service (Arabic)", "الخدمة (عربي)"] },
+    { path: "trigger.appointment.dateTextEn", label: ["Date (English)", "التاريخ (إنجليزي)"] },
+    { path: "trigger.appointment.dateTextAr", label: ["Date (Arabic)", "التاريخ (عربي)"] },
+    { path: "trigger.appointment.timeTextEn", label: ["Time (English)", "الوقت (إنجليزي)"] },
+    { path: "trigger.appointment.timeTextAr", label: ["Time (Arabic)", "الوقت (عربي)"] },
+  ],
+  appointment_reminder_due: [
+    { path: "trigger.contact.name", label: ["Contact name", "اسم جهة الاتصال"] },
+    { path: "trigger.contact.firstName", label: ["Contact first name", "الاسم الأول لجهة الاتصال"] },
+    { path: "trigger.appointment.service", label: ["Service", "الخدمة"] },
+    { path: "trigger.appointment.serviceAr", label: ["Service (Arabic)", "الخدمة (عربي)"] },
+    { path: "trigger.appointment.dateTextEn", label: ["Date (English)", "التاريخ (إنجليزي)"] },
+    { path: "trigger.appointment.dateTextAr", label: ["Date (Arabic)", "التاريخ (عربي)"] },
+    { path: "trigger.appointment.timeTextEn", label: ["Time (English)", "الوقت (إنجليزي)"] },
+    { path: "trigger.appointment.timeTextAr", label: ["Time (Arabic)", "الوقت (عربي)"] },
+  ],
+  ticket_resolved: [
+    { path: "trigger.ticket.title", label: ["Ticket title", "عنوان التذكرة"] },
+    { path: "trigger.ticket.number", label: ["Ticket number", "رقم التذكرة"] },
+    { path: "trigger.contact.name", label: ["Contact name", "اسم جهة الاتصال"] },
+    { path: "trigger.contact.firstName", label: ["Contact first name", "الاسم الأول لجهة الاتصال"] },
   ],
   schedule: [],
   webhook: [],
@@ -370,6 +438,13 @@ export function summarizeTrigger(
       return tx("Any service", "أي خدمة");
     case "sale_completed":
       return tx("Paid sales from HJZ", "المبيعات المدفوعة من HJZ");
+    case "appointment_confirmed":
+    case "appointment_cancelled":
+      return tx("Any service", "أي خدمة");
+    case "appointment_reminder_due":
+      return tx("Before each booking", "قبل كل حجز");
+    case "ticket_resolved":
+      return tx("Any pipeline", "أي مسار");
   }
 }
 

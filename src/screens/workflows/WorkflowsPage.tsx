@@ -1,5 +1,5 @@
 // src/screens/workflows/WorkflowsPage.tsx
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { useFetch } from "@/api/useFetch";
@@ -9,9 +9,10 @@ import { IconPlus } from "@/icons";
 import type { Pipeline, Workflow, WorkflowStepGraph, WorkflowStepType } from "@/lib/types";
 import { WorkflowBuilder, newStepId } from "./WorkflowBuilder";
 import { orderedStepIds } from "./graph";
-import { STEP_META, TRIGGER_META } from "./stepMeta";
+import { TRIGGER_META } from "./stepMeta";
 import { StepIcon } from "./StepNode";
 import { instantiateTemplate, WORKFLOW_TEMPLATES, type WorkflowDraft, type WorkflowTemplate } from "./templates";
+import { AUTOMATIC_MESSAGES_HREF, MANAGED_BADGE, isSystemWorkflow, newWorkflowTrigger, stepLabel, withoutNewParams } from "./systemWorkflow";
 import "./workflows.css";
 
 const MAX_CHAIN_ICONS = 7;
@@ -30,7 +31,7 @@ function StepChain({ graph, tx }: { graph: WorkflowStepGraph; tx: Tx }) {
       {order.slice(0, MAX_CHAIN_ICONS).map((sid) => {
         const type: WorkflowStepType = graph.steps[sid].type;
         return (
-          <span key={sid} title={tx(STEP_META[type].en, STEP_META[type].ar)}>
+          <span key={sid} title={tx(...stepLabel(type))}>
             <StepIcon type={type} />
           </span>
         );
@@ -56,16 +57,42 @@ function WorkflowCard({ wf, onOpen, lang }: { wf: Workflow; onOpen: () => void; 
   const tx = makeTx(lang);
   const graph = wf.steps ?? { entry: null, steps: {} };
   const count = orderedStepIds(graph).length;
+  const system = isSystemWorkflow(wf);
   return (
     <button type="button" className="wf-card" onClick={onOpen}>
       <div className="wf-card-top">
         <h3>{wf.name || tx("Untitled workflow", "أتمتة بلا عنوان")}</h3>
         <span className={`badge ${wf.status === "active" ? "ok" : ""}`.trim()}>
-          {wf.status === "active" ? tx("Active", "نشطة") : tx("Draft", "مسودة")}
+          {wf.status === "active" ? tx("Active", "نشطة") : system ? tx("Off", "متوقفة") : tx("Draft", "مسودة")}
         </span>
       </div>
+      {system && <span className="badge accent" style={{ justifySelf: "start" }}>{tx(MANAGED_BADGE[0], MANAGED_BADGE[1])}</span>}
       <TriggerLine type={wf.triggerType} tx={tx} />
-      <StepChain graph={graph} tx={tx} />
+      {system ? (
+        <span className="wf-hint">
+          {tx("Change it in", "عدّلها من")}{" "}
+          <span
+            role="link"
+            tabIndex={0}
+            style={{ color: "var(--accent)", textDecoration: "underline" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.location.hash = AUTOMATIC_MESSAGES_HREF;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.stopPropagation();
+                e.preventDefault();
+                window.location.hash = AUTOMATIC_MESSAGES_HREF;
+              }
+            }}
+          >
+            {tx("Automatic messages", "الرسائل التلقائية")}
+          </span>
+        </span>
+      ) : (
+        <StepChain graph={graph} tx={tx} />
+      )}
       <div className="wf-card-foot">
         <span>{count === 1 ? tx("1 step", "خطوة واحدة") : tx(`${count} steps`, `${count} خطوات`)}</span>
         <span>
@@ -103,6 +130,24 @@ function WorkflowsPageImpl() {
   const pipelinesQ = useFetch<Pipeline[]>("/pipelines");
   const workflows = data ?? [];
   const [open, setOpen] = useState<Open | null>(null);
+
+  // "Custom automations" (Settings → Automatic messages): `?new=1&trigger=<type>`
+  // opens a new user workflow with that trigger, once.
+  useEffect(() => {
+    const read = () => {
+      const trigger = newWorkflowTrigger(window.location.hash);
+      if (!trigger) return;
+      window.history.replaceState(null, "", withoutNewParams(window.location.hash));
+      if (!can("workflows.create")) return;
+      setOpen({
+        kind: "template",
+        template: { draft: { name: "", triggerType: trigger, triggerConfig: {}, graph: { entry: null, steps: {} } }, needsStage: false },
+      });
+    };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, [can]);
 
   if (open !== null) {
     return (

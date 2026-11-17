@@ -12,6 +12,8 @@ const TYPES: Array<{ type: string; en: string; ar: string }> = [
   { type: "knowledge_source_failed", en: "Knowledge source failures", ar: "إخفاق مصادر المعرفة" },
   { type: "campaign_finished", en: "Campaigns finished", ar: "انتهاء الحملات" },
   { type: "import_finished", en: "Imports finished", ar: "اكتمال الاستيراد" },
+  // SP-24: in-app alerts from Automatic messages (new ticket, new lead).
+  { type: "lifecycle", en: "Automatic message alerts", ar: "تنبيهات الرسائل التلقائية" },
 ];
 
 type Prefs = Record<string, { inApp: boolean; sound: boolean }>;
