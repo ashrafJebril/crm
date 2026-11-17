@@ -18,6 +18,7 @@ export const AGENT_ERROR_STATUS = {
   "onboarding.done": 409,
   "onboarding.no_website": 409,
   "onboarding.not_learned": 409,
+  "onboarding.not_stuck": 409, // takeover/reset only when the starter left or 24 h passed with no step
   "agent.hours_invalid": 422, // {day, reason}
   "agent.hours_empty": 422,
   "agent.sandbox_rate": 429, // {retryAfterSeconds}

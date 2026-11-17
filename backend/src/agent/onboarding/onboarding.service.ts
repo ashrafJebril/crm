@@ -31,7 +31,7 @@ import { agentError } from "../agent-errors";
 import { AgentSettingsService } from "../agent-settings.service";
 import type { LearnCard } from "./learn-schema";
 import { descriptionNodes, runLearn, type LearnPage } from "./learn";
-import { assertDriver, readState, transition, type OnboardingAction, type OnboardingState } from "./onboarding-state";
+import { assertDriver, isStuck, readState, rescue, transition, type OnboardingAction, type OnboardingState } from "./onboarding-state";
 
 export interface OnboardingDto {
   status: OnboardingStatus;
@@ -40,6 +40,10 @@ export interface OnboardingDto {
   websiteUrl: string | null;
   website: { sourceId: string; status: string; pagesSynced: number } | null;
   learned: LearnCard | null;
+  /** Applying the card's hours would switch the agent to working-hours mode (`within`); the UI says so. */
+  hoursApplyEnablesWorkingHours: boolean;
+  /** In progress but its starter left or nothing moved for 24 h: a settings.manage member may take over or reset. */
+  stuck: boolean;
   canManage: boolean;
 }
 
@@ -85,12 +89,22 @@ export class OnboardingService {
     });
   }
 
+  private async isMember(workspaceId: string, userId: string | null): Promise<boolean> {
+    if (!userId) return false;
+    const m = await this.prisma.workspaceMember.findFirst({ where: { workspaceId, userId }, select: { userId: true } });
+    return !!m;
+  }
+
   private async can(workspaceId: string, viewer: Viewer, permission: string): Promise<boolean> {
     return this.perm.viewerCan(workspaceId, viewer, permission);
   }
 
   async get(workspaceId: string, viewer: Viewer): Promise<OnboardingDto> {
     const [state, canManage] = await Promise.all([this.state(workspaceId), this.can(workspaceId, viewer, "settings.update")]);
+    const hoursMode = state?.card?.hours
+      ? ((await this.prisma.agentSettings.findUnique({ where: { workspaceId }, select: { hoursMode: true } }))?.hoursMode ?? "always")
+      : "always";
+    const stuck = state?.status === "in_progress" ? isStuck(state, new Date(), await this.isMember(workspaceId, state.startedBy)) : false;
     let website: OnboardingDto["website"] = null;
     if (state?.websiteSourceId) {
       const src = await this.prisma.knowledgeSource.findFirst({
@@ -109,6 +123,8 @@ export class OnboardingService {
       websiteUrl: state?.websiteUrl ?? null,
       website,
       learned: state?.card ?? null,
+      hoursApplyEnablesWorkingHours: !!state?.card?.hours && hoursMode !== "within",
+      stuck,
       canManage,
     };
   }
@@ -119,6 +135,15 @@ export class OnboardingService {
     body: { action: OnboardingAction; step?: unknown; businessName?: unknown },
     now = new Date(),
   ): Promise<OnboardingDto> {
+    if (body.action === "takeover" || body.action === "reset") {
+      // Review: a stuck onboarding (starter left, or 24 h with no step) can be rescued by settings.manage.
+      if (!(await this.can(workspaceId, viewer, "settings.manage"))) throw new ForbiddenException();
+      const cur = await this.state(workspaceId);
+      const starterIsMember = await this.isMember(workspaceId, cur?.startedBy ?? null);
+      const action = body.action;
+      await this.mutate(workspaceId, (s) => rescue(s, action, { userId: viewer.userId, now, starterIsMember }));
+      return this.get(workspaceId, viewer);
+    }
     const next = await this.mutate(workspaceId, (s) => transition(s, body.action, { userId: viewer.userId, now, step: body.step, businessName: body.businessName }));
     // The business name the owner typed names the workspace too.
     if (body.businessName !== undefined && next.businessName) {
@@ -130,6 +155,8 @@ export class OnboardingService {
   /** Create (or reuse) the SP-21 website source for the URL the owner typed, and start its first read. */
   async website(workspaceId: string, viewer: Viewer, body: { url?: unknown }, now = new Date()): Promise<OnboardingDto> {
     assertDriver(await this.state(workspaceId), viewer.userId);
+    // Review: creating a knowledge source needs knowledge.create, as Apply does.
+    if (!(await this.can(workspaceId, viewer, "knowledge.create"))) throw new ForbiddenException();
     let sourceId: string;
     let url: string;
     try {

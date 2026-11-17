@@ -36,7 +36,7 @@ describe("OnboardingController", () => {
     await expect(run(OnboardingWebsiteDto, { url: "https://a.example" })).resolves.toBeTruthy();
     await expect(run(ApplyLearnDto, { description: "append", faqs: [0, 2], hours: true })).resolves.toBeTruthy();
     for (const [m, body] of [
-      [PatchOnboardingDto, { action: "takeover" }],
+      [PatchOnboardingDto, { action: "hijack" }],
       [PatchOnboardingDto, { action: "start", startedBy: "u2" }],
       [OnboardingWebsiteDto, { url: "https://a.example", scope: "path" }],
       [ApplyLearnDto, { description: "rewrite" }],

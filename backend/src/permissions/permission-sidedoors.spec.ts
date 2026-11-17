@@ -1135,3 +1135,52 @@ describe("SP-20 sandbox", () => {
     expect(w.contacts.search).toHaveBeenCalledWith("ws1", "Someone");
   });
 });
+
+describe("SP-20 sandbox reads use the member's own access", () => {
+  const withKey = async <T,>(fn: () => Promise<T>) => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key-not-real";
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  };
+
+  it("a member without contacts.view gets no contact data in the sandbox; the same member reads bookings", async () => {
+    const { sandboxWorld, toolUse } = await import("../agent/sandbox/sandbox-test-world");
+    // A custom role: agent.update (may use the sandbox) and bookings.view, but not contacts.view.
+    const grants: Record<string, string[]> = { u1: ["agent.update", "bookings.view"] };
+    const perm = { viewerCan: jest.fn(async (_ws: string, v: { userId: string; bypass?: boolean }, p: string) => !!v.bypass || (grants[v.userId] ?? []).includes(p)) };
+    const w = sandboxWorld({
+      perm,
+      replies: [
+        { stop_reason: "tool_use", content: [toolUse("t1", "search_contacts", { query: "Sara" }), toolUse("t2", "get_contact", { id: "c1" }), toolUse("t3", "list_services", {})] },
+        { content: [{ type: "text", text: "ok" }] },
+      ],
+    });
+    const out = await withKey(() => w.sandbox.send("ws1", "u1", "who is Sara?"));
+    const results = w.ai.calls[1].messages[w.ai.calls[1].messages.length - 1].content as { tool_use_id: string; is_error?: boolean; content: string }[];
+    expect(results.map((r) => [r.tool_use_id, r.is_error === true])).toEqual([
+      ["t1", true],
+      ["t2", true],
+      ["t3", false],
+    ]);
+    expect(results[0].content).toContain("contacts.view");
+    expect(w.contacts.search).not.toHaveBeenCalled();
+    expect(w.contacts.get).not.toHaveBeenCalled();
+    expect(w.bookings.activeServices).toHaveBeenCalledWith("ws1");
+    expect(perm.viewerCan).toHaveBeenCalledWith("ws1", { userId: "u1", bypass: false }, "contacts.view");
+    expect(out.toolCalls.map((c) => [c.name, !!c.error])).toEqual([
+      ["search_contacts", true],
+      ["get_contact", true],
+      ["list_services", false],
+    ]);
+    // Writes stay simulated whatever the role: they never touch data.
+    grants.u1.push("contacts.view");
+    const w2 = sandboxWorld({ perm, replies: [{ stop_reason: "tool_use", content: [toolUse("t1", "search_contacts", { query: "Sara" })] }, { content: [{ type: "text", text: "ok" }] }] });
+    await withKey(() => w2.sandbox.send("ws1", "u1", "who is Sara?"));
+    expect(w2.contacts.search).toHaveBeenCalledWith("ws1", "Sara");
+  });
+});

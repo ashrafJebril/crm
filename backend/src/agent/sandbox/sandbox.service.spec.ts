@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { FALLBACK_BETA } from "../../ai/claude.service";
 import { SANDBOX_MAX_TURNS, SANDBOX_MESSAGE_MAX, SANDBOX_RATE } from "../agent-constants";
 import { PREVIEW_NOTICE } from "./sandbox-prompt";
-import { PREVIEW_REFUSAL_REPLY } from "./sandbox-text";
+import { PREVIEW_EMPTY_REPLY, PREVIEW_REFUSAL_REPLY } from "./sandbox-text";
 import { SIMULATED_NOTE } from "./sandbox-tools";
 import { counts, MEMBER, sandboxWorld, toolUse, withKey, WS } from "./sandbox-test-world";
 import { keepLastTurns, sourcesFrom } from "./sandbox.service";
@@ -314,6 +314,17 @@ describe("SandboxService", () => {
     expect(await w.sandbox.get(WS, MEMBER, new Date(Date.now() + 25 * 60 * 60 * 1000))).toEqual({ messages: [], turnCount: 0, expiresAt: null });
     await w.sandbox.reset(WS, MEMBER);
     expect(w.prisma.db.agentSandboxThread).toHaveLength(0);
+  });
+
+  it("an end_turn with no text returns the fixed bilingual No reply line", async () => {
+    const w = sandboxWorld({ replies: [{ content: [] }] });
+    const out = await withKey(() => w.sandbox.send(WS, MEMBER, "hi"));
+    expect(out).toMatchObject({ reply: PREVIEW_EMPTY_REPLY, replyKind: "empty" });
+    expect(PREVIEW_EMPTY_REPLY).toBe("No reply / لا يوجد رد");
+    const ok = sandboxWorld();
+    expect((await withKey(() => ok.sandbox.send(WS, MEMBER, "hi"))).replyKind).toBe("answer");
+    const refused = sandboxWorld({ replies: [{ stop_reason: "refusal", content: [] }] });
+    expect((await withKey(() => refused.sandbox.send(WS, MEMBER, "hi"))).replyKind).toBe("refusal");
   });
 
   it("the gate decision is shown, and the preview answers anyway", async () => {

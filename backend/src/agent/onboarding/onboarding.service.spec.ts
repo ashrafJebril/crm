@@ -17,6 +17,7 @@ const GRANTS: Record<string, string[]> = {
   uAdmin: ["settings.update", "knowledge.update", "knowledge.create", "agent.update"],
   uAgent: [],
   uNoKnowledge: ["settings.update"],
+  uManager: ["settings.update", "settings.manage", "knowledge.create"],
 };
 
 const LEARNED = {
@@ -89,6 +90,8 @@ describe("OnboardingService", () => {
       websiteUrl: null,
       website: null,
       learned: null,
+      hoursApplyEnablesWorkingHours: false,
+      stuck: false,
       canManage: true,
     });
     expect((await w.svc.get(A, AGENT)).canManage).toBe(false);
@@ -218,6 +221,56 @@ describe("OnboardingService", () => {
     expect(out.applied).toEqual({ content: "appended", faqsAdded: 1, faqsSkipped: 1, hours: false });
     const content = w.db.knowledgeSource.find((s: any) => s.kind === "content");
     expect(content.body.indexOf("Our own words.")).toBeLessThan(content.body.indexOf("About us (from our website)"));
+  });
+
+  it("adding the website needs knowledge.create, as Apply does", async () => {
+    const w = world();
+    const lim = { userId: "uNoKnowledge", bypass: false };
+    await w.svc.patch(A, lim, { action: "start", businessName: "Salon Noor" });
+    await expect(w.svc.website(A, lim, { url: "https://salon.example/" })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(w.websites.create).not.toHaveBeenCalled();
+    expect((await w.svc.get(A, lim)).websiteUrl).toBeNull();
+  });
+
+  it("a stuck onboarding can be taken over or reset by settings.manage", async () => {
+    const w = world();
+    const MANAGER = { userId: "uManager", bypass: false };
+    w.db.workspaceMember.push({ id: "m-mgr", workspaceId: A, userId: "uManager", role: "admin" });
+    const t0 = new Date("2026-11-17T08:00:00Z");
+    await w.svc.patch(A, OWNER, { action: "start", businessName: "Salon Noor" }, t0);
+    // Not stuck yet: the starter is a member and it moved recently.
+    expect((await w.svc.get(A, MANAGER)).stuck).toBe(false);
+    const early = await w.svc.patch(A, MANAGER, { action: "takeover" }, new Date(t0.getTime() + 60_000)).catch((e) => e);
+    expect([(early as HttpException).getStatus(), keyOf(early)]).toEqual([409, "onboarding.not_stuck"]);
+    // Without settings.manage: 403, even when stuck.
+    await expect(w.svc.patch(A, ADMIN, { action: "takeover" }, new Date(t0.getTime() + 25 * 3600_000))).rejects.toBeInstanceOf(ForbiddenException);
+    // 24 h without a step: the manager takes over, everything kept.
+    const taken = await w.svc.patch(A, MANAGER, { action: "takeover" }, new Date(t0.getTime() + 25 * 3600_000));
+    expect(taken).toMatchObject({ status: "in_progress", businessName: "Salon Noor" });
+    expect(w.db.workspace[0].onboardingState.startedBy).toBe("uManager");
+    expect(keyOf(await w.svc.patch(A, OWNER, { action: "step", step: "try" }).catch((e) => e))).toBe("onboarding.not_owner");
+
+    // The starter left the workspace: stuck at once; reset starts over.
+    w.db.workspaceMember = w.db.workspaceMember.filter((m: any) => m.userId !== "uManager");
+    w.db.workspaceMember.push({ id: "m-mgr2", workspaceId: A, userId: "uOther2", role: "admin" });
+    GRANTS.uOther2 = ["settings.manage", "settings.update"];
+    const other = { userId: "uOther2", bypass: false };
+    expect((await w.svc.get(A, other)).stuck).toBe(true);
+    const reset = await w.svc.patch(A, other, { action: "reset" });
+    expect(reset).toMatchObject({ status: "not_started", step: "business", businessName: null, websiteUrl: null });
+    // And it can be started again.
+    expect(await w.svc.patch(A, other, { action: "start" })).toMatchObject({ status: "in_progress" });
+  });
+
+  it("the card says when applying hours turns on working-hours mode", async () => {
+    const w = world();
+    await toLearn(w);
+    expect((await withKey(() => w.svc.learn(A, OWNER))).hoursApplyEnablesWorkingHours).toBe(true);
+    await w.svc.apply(A, OWNER, { hours: true });
+    expect((await w.svc.get(A, OWNER)).hoursApplyEnablesWorkingHours).toBe(false); // already within
+    const noHours = world({ ...LEARNED, hours: undefined });
+    await toLearn(noHours);
+    expect((await withKey(() => noHours.svc.learn(A, OWNER))).hoursApplyEnablesWorkingHours).toBe(false);
   });
 
   it("apply checks the owner's permission for each part it writes", async () => {

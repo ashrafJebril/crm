@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Post } from "@nestjs/common";
 import { IsString } from "class-validator";
-import { CurrentUserId, CurrentWorkspace } from "../../common/current-workspace.decorator";
+import { CurrentUserId, CurrentViewer, CurrentWorkspace } from "../../common/current-workspace.decorator";
+import type { Viewer } from "../../permissions/visibility";
 import { SandboxService } from "./sandbox.service";
 
 /** Length and emptiness are checked in the service (400 `agent.message_invalid`). */
@@ -23,8 +24,8 @@ export class SandboxController {
   }
 
   @Post("messages")
-  send(@CurrentWorkspace() ws: string, @CurrentUserId() userId: string, @Body() dto: SandboxMessageDto) {
-    return this.svc.send(ws, userId, dto.message);
+  send(@CurrentWorkspace() ws: string, @CurrentViewer() viewer: Viewer, @Body() dto: SandboxMessageDto) {
+    return this.svc.send(ws, viewer.userId, dto.message, new Date(), { bypass: viewer.bypass });
   }
 
   @Delete()

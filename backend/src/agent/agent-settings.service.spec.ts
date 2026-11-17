@@ -254,6 +254,15 @@ describe("AgentSettingsService", () => {
     expect((await svc.get(WS)).publishState).toBe("failed");
   });
 
+  it("a pending publish left behind by a crash reads as failed after 10 minutes", async () => {
+    const { svc, prisma } = world({ linked: false });
+    await svc.get(WS);
+    const savedAt = new Date("2026-11-17T10:00:00Z");
+    Object.assign(prisma.db.agentSettings[0], { publishState: "pending", updatedAt: savedAt });
+    expect((await svc.get(WS, new Date(savedAt.getTime() + 9 * 60_000))).publishState).toBe("pending");
+    expect((await svc.get(WS, new Date(savedAt.getTime() + 11 * 60_000))).publishState).toBe("failed");
+  });
+
   it("shows who stopped the agent", async () => {
     const { svc, prisma } = world({ linked: false });
     await svc.get(WS);

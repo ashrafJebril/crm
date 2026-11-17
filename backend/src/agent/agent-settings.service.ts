@@ -47,7 +47,15 @@ type Row = {
   stoppedById: string | null;
   publishState: string;
   version: number;
+  updatedAt?: Date;
 };
+
+/**
+ * A publish still "pending" this long after the save that queued it was lost
+ * (a crash or restart mid-run): reads report it as "failed" so the page offers
+ * Re-sync (review).
+ */
+export const PUBLISH_PENDING_STALE_MS = 10 * 60 * 1000;
 
 const trimOrNull = (v: string | undefined | null): string | null => {
   const t = String(v ?? "").trim();
@@ -85,7 +93,7 @@ export class AgentSettingsService {
     })) as unknown as Row;
   }
 
-  async get(workspaceId: string): Promise<AgentSettingsDto> {
+  async get(workspaceId: string, now = new Date()): Promise<AgentSettingsDto> {
     let row = await this.row(workspaceId);
     const ids = row.excludedTagIds ?? [];
     const tags = ids.length
@@ -125,7 +133,9 @@ export class AgentSettingsService {
           }
         : null,
       timezone: ws?.timezone ?? "Asia/Riyadh",
-      publishState: row.publishState as PublishState,
+      publishState: (row.publishState === "pending" && row.updatedAt && now.getTime() - row.updatedAt.getTime() > PUBLISH_PENDING_STALE_MS
+        ? "failed"
+        : row.publishState) as PublishState,
       linked: Boolean(ws?.lWorkspaceId),
       version: row.version,
     };

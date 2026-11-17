@@ -100,7 +100,7 @@ export function toolUse(id: string, name: string, input: unknown) {
   return { type: "tool_use", id, name, input };
 }
 
-export function sandboxWorld(opts: { replies?: Reply[]; linked?: boolean; seed?: Record<string, unknown[]> } = {}) {
+export function sandboxWorld(opts: { replies?: Reply[]; linked?: boolean; seed?: Record<string, unknown[]>; perm?: unknown } = {}) {
   invalidateAgentGate();
   const prisma: any = makeFakePrisma({ ...seed(), ...(opts.seed ?? {}) } as never);
   if (opts.linked) Object.assign(prisma.db.workspace[0], { lWorkspaceId: "l-ws", lAgentSlug: "support" });
@@ -122,7 +122,7 @@ export function sandboxWorld(opts: { replies?: Reply[]; linked?: boolean; seed?:
   const realtime = { emitToWorkspace: jest.fn() };
   const events = { emit: jest.fn() };
   const gate = new AgentReplyGate(prisma);
-  const sandbox = new SandboxService(prisma, ai.claude, svc.factory, gate, lSetup);
+  const sandbox = new SandboxService(prisma, ai.claude, svc.factory, gate, lSetup, opts.perm as never);
   return { prisma, sandbox, ai, lClient, zernioClient, kewyBridge, realtime, events, gate, ...svc };
 }
 

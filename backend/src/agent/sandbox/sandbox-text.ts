@@ -10,4 +10,7 @@ export const GATE_REASON_TEXT: Record<string, string> = {
 };
 
 /** The fixed owner-facing reply when the model declines (stop_reason refusal). */
-export const PREVIEW_REFUSAL_REPLY = "The preview could not answer this";
+export const PREVIEW_REFUSAL_REPLY = "The preview could not answer this / لم تتمكن المعاينة من الإجابة على هذا";
+
+/** The fixed owner-facing reply when the model ends its turn with no text. */
+export const PREVIEW_EMPTY_REPLY = "No reply / لا يوجد رد";

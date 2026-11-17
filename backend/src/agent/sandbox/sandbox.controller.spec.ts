@@ -16,10 +16,10 @@ describe("SandboxController", () => {
     const svc = { get: jest.fn(async () => 1), send: jest.fn(async () => 2), reset: jest.fn(async () => 3) };
     const c = new SandboxController(svc as never);
     await c.get("ws1", "u1");
-    await c.send("ws1", "u1", { message: "hi" });
+    await c.send("ws1", { userId: "u1", bypass: false }, { message: "hi" });
     await c.reset("ws1", "u1");
     expect(svc.get).toHaveBeenCalledWith("ws1", "u1");
-    expect(svc.send).toHaveBeenCalledWith("ws1", "u1", "hi");
+    expect(svc.send).toHaveBeenCalledWith("ws1", "u1", "hi", expect.any(Date), { bypass: false });
     expect(svc.reset).toHaveBeenCalledWith("ws1", "u1");
   });
 

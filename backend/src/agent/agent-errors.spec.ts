@@ -15,6 +15,7 @@ describe("SP-20 agent errors", () => {
       "onboarding.done": 409,
       "onboarding.no_website": 409,
       "onboarding.not_learned": 409,
+      "onboarding.not_stuck": 409,
       "agent.hours_invalid": 422,
       "agent.hours_empty": 422,
       "agent.sandbox_rate": 429,
@@ -24,7 +25,7 @@ describe("SP-20 agent errors", () => {
       "agent.resync_failed": 502,
       "onboarding.ai_failed": 502,
     });
-    expect(AGENT_ERROR_KEYS).toHaveLength(20);
+    expect(AGENT_ERROR_KEYS).toHaveLength(21);
   });
 
   it("builds {statusCode, message: key, ...extra}", () => {

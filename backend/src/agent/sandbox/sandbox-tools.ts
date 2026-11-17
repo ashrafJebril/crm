@@ -37,6 +37,24 @@ export interface SimulatedResult {
   args: unknown;
 }
 
+/**
+ * The app permission each real read needs (review): the sandbox reads with
+ * the member's own access, the same permission the matching app screen
+ * needs. Conversation visibility (assigned-only) never applies because no
+ * sandbox read returns conversations or messages; a read tool added to
+ * SANDBOX_READ_TOOLS without a row here is refused.
+ */
+export const READ_TOOL_PERMISSIONS: Record<string, string> = {
+  list_appointments: "bookings.view",
+  get_appointment: "bookings.view",
+  list_services: "bookings.view",
+  find_slots: "bookings.view",
+  search_contacts: "contacts.view",
+  get_contact: "contacts.view",
+  list_photos: "agent.view",
+  search_knowledge: "knowledge.view",
+};
+
 export function isSandboxReadTool(id: string): boolean {
   return (SANDBOX_READ_TOOLS as readonly string[]).includes(id);
 }

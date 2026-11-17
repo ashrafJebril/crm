@@ -48,8 +48,10 @@ import { agentError } from "../agent-errors";
 import { AgentReplyGate } from "../agent-reply-gate";
 import { personaBlockText } from "../persona-block";
 import { composeSandboxSystem, turnNote } from "./sandbox-prompt";
-import { PREVIEW_REFUSAL_REPLY } from "./sandbox-text";
-import { displayArgs, isSandboxReadTool, toolDefinitions, type SandboxableTool } from "./sandbox-tools";
+import { PREVIEW_EMPTY_REPLY, PREVIEW_REFUSAL_REPLY } from "./sandbox-text";
+import { displayArgs, isSandboxReadTool, READ_TOOL_PERMISSIONS, toolDefinitions, type SandboxableTool } from "./sandbox-tools";
+import { PermissionService } from "../../permissions/permission.service";
+import type { Viewer } from "../../permissions/visibility";
 
 export const SANDBOX_MODEL_ENV = "AGENT_SANDBOX_MODEL";
 /** The live l prompt is re-read at most this often per workspace. */
@@ -92,6 +94,8 @@ export interface SandboxTurn {
 }
 export interface SandboxReplyDto {
   reply: string;
+  /** "answer"; or a fixed bilingual reply: "refusal" (the model declined) or "empty" (it ended with no text). */
+  replyKind: "answer" | "refusal" | "empty";
   toolCalls: SandboxToolCall[];
   sources: SandboxSource[];
   gate: { wouldReply: boolean; reason: string };
@@ -170,6 +174,8 @@ export class SandboxService {
     private readonly tools: McpToolsFactory,
     private readonly gate: AgentReplyGate,
     @Optional() private readonly agentSetup?: LAgentSetupService,
+    // Review: read tools run with the member's own permissions (global PermissionsModule; specs may omit it).
+    @Optional() private readonly perm?: PermissionService,
   ) {
     this.limiter = new SlidingWindowLimiter({ limit: SANDBOX_RATE.turns, windowMs: SANDBOX_RATE.windowMs });
   }
@@ -234,7 +240,8 @@ export class SandboxService {
 
   // ── one turn ──────────────────────────────────────────────────────────
 
-  async send(workspaceId: string, userId: string, rawMessage: unknown, now = new Date()): Promise<SandboxReplyDto> {
+  async send(workspaceId: string, userId: string, rawMessage: unknown, now = new Date(), opts: { bypass?: boolean } = {}): Promise<SandboxReplyDto> {
+    const viewer: Viewer = { userId, bypass: opts.bypass === true };
     const message = typeof rawMessage === "string" ? rawMessage.trim() : "";
     if (!message || message.length > SANDBOX_MESSAGE_MAX) throw agentError("agent.message_invalid", { max: SANDBOX_MESSAGE_MAX });
     const hit = this.limiter.hit(`${workspaceId}:${userId}`);
@@ -272,6 +279,7 @@ export class SandboxService {
     const toolCalls: SandboxToolCall[] = [];
     const sources = new Map<string, SandboxSource>();
     let reply: string | null = null;
+    let replyKind: SandboxReplyDto["replyKind"] = "answer";
     try {
       for (let i = 0; i < SANDBOX_MAX_ITERATIONS && reply === null; i++) {
         const remaining = deadline - Date.now();
@@ -294,6 +302,7 @@ export class SandboxService {
         // Check stop_reason before reading content.
         if (res.stop_reason === "refusal") {
           reply = PREVIEW_REFUSAL_REPLY;
+          replyKind = "refusal";
           break;
         }
         if (res.stop_reason === "max_tokens") throw new ClaudeFailure("ai_failed", "stop_reason max_tokens", false, "max_tokens");
@@ -302,7 +311,7 @@ export class SandboxService {
         if (res.stop_reason === "tool_use") {
           const uses = res.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
           const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
-          for (const use of uses) results.push(await this.runTool(tools, use, toolCalls, sources));
+          for (const use of uses) results.push(await this.runTool(workspaceId, viewer, tools, use, toolCalls, sources));
           messages.push({ role: "user", content: results });
           continue;
         }
@@ -311,6 +320,11 @@ export class SandboxService {
           .map((b) => b.text)
           .join("\n")
           .trim();
+        if (!reply) {
+          // An end_turn with no text: a fixed bilingual line, never an empty bubble.
+          reply = PREVIEW_EMPTY_REPLY;
+          replyKind = "empty";
+        }
       }
       if (reply === null) throw new ClaudeFailure("ai_failed", "sandbox iteration limit");
     } catch (e) {
@@ -340,10 +354,12 @@ export class SandboxService {
       create: { workspaceId, userId, ...data },
       update: data,
     });
-    return { reply, toolCalls, sources: sourceList, gate, turnCount: countTurns(nextTurns) };
+    return { reply, replyKind, toolCalls, sources: sourceList, gate, turnCount: countTurns(nextTurns) };
   }
 
   private async runTool(
+    workspaceId: string,
+    viewer: Viewer,
     tools: Record<string, SandboxableTool>,
     use: Anthropic.Beta.BetaToolUseBlock,
     calls: SandboxToolCall[],
@@ -359,6 +375,13 @@ export class SandboxService {
       return fail("Tool call limit reached for this preview turn. Answer with what you have.", { name: use.name, simulated });
     }
     if (!tool?.execute) return fail(`Unknown tool: ${use.name}`, { name: use.name, simulated });
+    // Review: a real read runs only with the member's own permission for that data, as in the app
+    // (a read tool with no mapped permission is refused: deny by default here too).
+    if (!simulated) {
+      const needed = READ_TOOL_PERMISSIONS[use.name];
+      const allowed = needed ? !this.perm || (await this.perm.viewerCan(workspaceId, viewer, needed)) : false;
+      if (!allowed) return fail(`Not allowed: your role cannot read this data (${needed ?? "unmapped tool"}).`, { name: use.name, simulated });
+    }
     // Inputs are parsed as JSON (never matched as strings) and validated with the tool's own schema.
     let input: unknown = use.input;
     if (typeof input === "string") {

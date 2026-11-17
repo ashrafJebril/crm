@@ -12,6 +12,9 @@
  *             needs a business name, "learn" needs a website.
  *  - finish : in_progress (starter only) → done (final: every later action is
  *             409 onboarding.done).
+ *  - takeover / reset (`rescue`): a member with settings.manage takes over or
+ *             resets an onboarding whose starter left or that has not moved
+ *             for 24 h (review); `transition` refuses them.
  */
 import { BUSINESS_NAME_MAX, ONBOARDING_STEPS, type OnboardingStatus, type OnboardingStep } from "../agent-constants";
 import { agentError } from "../agent-errors";
@@ -30,8 +33,52 @@ export interface OnboardingState {
   card?: LearnCard | null;
 }
 
-export const ONBOARDING_ACTIONS = ["start", "skip", "resume", "step", "finish"] as const;
+export const ONBOARDING_ACTIONS = ["start", "skip", "resume", "step", "finish", "takeover", "reset"] as const;
 export type OnboardingAction = (typeof ONBOARDING_ACTIONS)[number];
+export type RescueAction = "takeover" | "reset";
+
+/** An in-progress onboarding with no step for this long may be taken over or reset. */
+export const ONBOARDING_STALE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Stuck: in progress, and its starter is no longer a member or nothing has
+ * moved for ONBOARDING_STALE_MS.
+ */
+export function isStuck(state: OnboardingState | null, now: Date, starterIsMember: boolean): boolean {
+  if (state?.status !== "in_progress") return false;
+  if (!state.startedBy || !starterIsMember) return true;
+  return now.getTime() - Date.parse(state.updatedAt) > ONBOARDING_STALE_MS;
+}
+
+/**
+ * `takeover` (the caller becomes the starter, everything kept) and `reset`
+ * (back to not_started, nothing kept). The caller must hold `settings.manage`
+ * (checked by the service). The starter may always do either; anyone else
+ * only when the onboarding is stuck (409 `onboarding.not_stuck`).
+ */
+export function rescue(
+  state: OnboardingState | null,
+  action: RescueAction,
+  input: { userId: string; now: Date; starterIsMember: boolean },
+): OnboardingState {
+  if (state?.status === "done") throw agentError("onboarding.done");
+  if (!state || state.status !== "in_progress") throw agentError("onboarding.step_invalid");
+  const own = state.startedBy === input.userId;
+  if (!own && !isStuck(state, input.now, input.starterIsMember)) throw agentError("onboarding.not_stuck");
+  const updatedAt = input.now.toISOString();
+  if (action === "takeover") return { ...state, startedBy: input.userId, updatedAt };
+  return {
+    status: "not_started",
+    step: "business",
+    businessName: null,
+    websiteUrl: null,
+    websiteSourceId: null,
+    learnedAt: null,
+    startedBy: null,
+    updatedAt,
+    card: null,
+  };
+}
 
 const STATUSES = new Set(["not_started", "in_progress", "skipped", "done"]);
 
