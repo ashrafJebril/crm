@@ -26,6 +26,16 @@ function fakeL(initial = "You are support.") {
   return { state, client };
 }
 
+/** The unscoped client LAgentSetupService uses for its prompt lock. */
+function rawClient(linked: boolean) {
+  const raw: Record<string, unknown> = {
+    workspace: { findUnique: jest.fn(async () => ({ lWorkspaceId: linked ? "l-ws" : null })) },
+    $executeRaw: jest.fn(async () => 0),
+  };
+  raw.$transaction = jest.fn(async (fn: (tx: unknown) => unknown) => fn(raw));
+  return raw;
+}
+
 function world(opts: { linked?: boolean; prompt?: string } = {}) {
   const linked = opts.linked ?? true;
   const prisma = makeFakePrisma({
@@ -39,7 +49,7 @@ function world(opts: { linked?: boolean; prompt?: string } = {}) {
   });
   const l = fakeL(opts.prompt);
   const setup = new LAgentSetupService(
-    { raw: { workspace: { findUnique: jest.fn(async () => ({ lWorkspaceId: linked ? "l-ws" : null })) } } } as never,
+    { raw: rawClient(linked) } as never,
     l.client as never,
     { resolveSlug: jest.fn(async () => "support") } as never,
     {
@@ -165,8 +175,11 @@ describe("AgentSettingsService", () => {
   it("persona block published after save and never fails the save", async () => {
     const { svc, l, prisma } = world({ prompt: "You are support." });
     const saved = await svc.update(WS, { identity: { nameEn: "Salma", nameAr: "سلمى", tone: ["friendly"] }, version: 0 });
-    expect(saved.publishState).toBe("published");
+    // The save returns before publishing (it runs in the background).
+    expect(saved.publishState).toBe("pending");
     expect(saved.linked).toBe(true);
+    await svc.whenPublished(WS);
+    expect((await svc.get(WS)).publishState).toBe("published");
     // One prompt PUT carrying the block (and the missing CRM sections, once).
     expect(l.state.puts).toBe(1);
     expect(l.state.content).toContain("<!-- kewy-crm-persona:begin -->");
@@ -175,20 +188,45 @@ describe("AgentSettingsService", () => {
 
     // A save that does not change the persona writes nothing more.
     await svc.update(WS, { hours: { mode: "always" }, version: 1 });
+    await svc.whenPublished(WS);
     expect(l.state.puts).toBe(1);
 
     // l failing: the save still commits, publishState says "failed".
     l.state.fail = true;
     const failed = await svc.update(WS, { identity: { nameEn: "Noor" }, version: 2 });
-    expect(failed).toMatchObject({ nameEn: "Noor", version: 3, publishState: "failed" });
+    expect(failed).toMatchObject({ nameEn: "Noor", version: 3, publishState: "pending" });
+    await svc.whenPublished(WS);
+    expect((await svc.get(WS)).publishState).toBe("failed");
     expect(prisma.db.agentSettings[0].nameEn).toBe("Noor");
 
     // The next save retries and publishes.
     l.state.fail = false;
-    const ok = await svc.update(WS, { identity: { greeting: "Hello" }, version: 3 });
-    expect(ok.publishState).toBe("published");
+    await svc.update(WS, { identity: { greeting: "Hello" }, version: 3 });
+    await svc.whenPublished(WS);
+    expect((await svc.get(WS)).publishState).toBe("published");
     expect(l.state.content).toContain('Your name is "Noor"');
     expect(l.state.content.split("<!-- kewy-crm-persona:begin -->")).toHaveLength(2);
+  });
+
+  it("a slow agent platform never holds up the save, and a stale run never overwrites a newer save's state", async () => {
+    const { svc, l } = world({ prompt: "You are support." });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const inner = l.client.request.getMockImplementation()!;
+    l.client.request.mockImplementation(async (path: string, o?: { method?: string; body?: { content: string } }) => {
+      await gate;
+      return inner(path, o);
+    });
+    const first = await svc.update(WS, { identity: { nameEn: "Salma" }, version: 0 });
+    expect(first.publishState).toBe("pending"); // returned while l is still blocked
+    const second = await svc.update(WS, { identity: { nameEn: "Noor" }, version: 1 });
+    expect(second).toMatchObject({ nameEn: "Noor", publishState: "pending", version: 2 });
+    release();
+    await svc.whenPublished(WS);
+    // The first run (version 1) could not mark the row published under version 2; the second run did.
+    expect((await svc.get(WS)).publishState).toBe("published");
+    expect(l.state.content).toContain('Your name is "Noor"');
+    expect(l.state.content).not.toContain('Your name is "Salma"');
   });
 
   it("an unlinked workspace saves without publishing (publishState none)", async () => {
@@ -202,6 +240,7 @@ describe("AgentSettingsService", () => {
   it("resync appends missing CRM sections once and publishes the persona", async () => {
     const { svc, l } = world({ prompt: "Custom intro." });
     await svc.update(WS, { identity: { nameEn: "Salma" }, version: 0 });
+    await svc.whenPublished(WS);
     l.state.content = "Custom intro."; // the agent's prompt was reset upstream
     expect(await svc.resync(WS)).toEqual({ mcpServer: "already-present", prompt: "updated", persona: "updated" });
     expect(l.state.content.startsWith("Custom intro.")).toBe(true);
@@ -211,7 +250,7 @@ describe("AgentSettingsService", () => {
     expect(await svc.resync(WS)).toEqual({ mcpServer: "already-present", prompt: "already-present", persona: "already-present" });
     // A resync failure is reported (the owner pressed the button) and recorded.
     l.state.fail = true;
-    await expect(svc.resync(WS)).rejects.toThrow("l is down");
+    await expect(svc.resync(WS)).rejects.toMatchObject({ status: 502, response: { statusCode: 502, message: "agent.resync_failed" } });
     expect((await svc.get(WS)).publishState).toBe("failed");
   });
 

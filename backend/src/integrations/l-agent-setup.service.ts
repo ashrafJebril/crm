@@ -80,6 +80,11 @@ export interface AgentSetupResult {
 
 /** SP-20: the persona block name (`<!-- kewy-crm-persona:begin/end -->`). */
 export const PERSONA_BLOCK_NAME = "persona";
+/** SP-20 (review I2): each l call inside the prompt lock. */
+export const L_CALL_TIMEOUT_MS = 15_000;
+/** Waiting behind one other holder (up to 3 calls) plus our own 3 (agents, prompts, PUT), with room. */
+export const PROMPT_LOCK_TIMEOUT_MS = 2 * 3 * L_CALL_TIMEOUT_MS + 15_000;
+export const PROMPT_LOCK_MAX_WAIT_MS = 30_000;
 
 /**
  * Gives a workspace's Kewy AI agent access to this CRM, with no user action:
@@ -90,6 +95,8 @@ export const PERSONA_BLOCK_NAME = "persona";
 @Injectable()
 export class LAgentSetupService {
   private readonly logger = new Logger(LAgentSetupService.name);
+  /** SP-20: per-workspace chain of prompt read-modify-writes (see editPrompt). */
+  private readonly promptChains = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -161,18 +168,12 @@ export class LAgentSetupService {
   async writePromptBlock(workspaceId: string, name: string, text: string): Promise<"updated" | "unchanged" | "not-linked"> {
     const ws = await this.prisma.raw.workspace.findUnique({ where: { id: workspaceId }, select: { lWorkspaceId: true } });
     if (!ws?.lWorkspaceId) return "not-linked";
-    const lWorkspaceId = ws.lWorkspaceId;
-    const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
-    const base = `/workspaces/${lWorkspaceId}/agents`;
-    const agents = await this.client.request<LAgent[]>(base);
-    const agent = agents.find((a) => a.slug === slug);
-    const prompts = await this.client.request<LPrompt[]>(`${base}/${slug}/prompts`);
-    const current = prompts.find((p) => p.version === agent?.live_version)?.content ?? "";
-    const next = upsertBlock(current, name, text);
-    if (next.dangling) this.logger.warn(`prompt block ${name} for workspace ${workspaceId}: end marker missing, appended a fresh block`);
-    if (next.prompt === current) return "unchanged";
-    await this.client.request(`${base}/${slug}/prompt`, { method: "PUT", body: { content: next.prompt } });
-    return "updated";
+    const { changed } = await this.editPrompt(workspaceId, ws.lWorkspaceId, (current) => {
+      const next = upsertBlock(current, name, text);
+      if (next.dangling) this.logger.warn(`prompt block ${name} for workspace ${workspaceId}: end marker missing, appended a fresh block`);
+      return next.prompt;
+    });
+    return changed ? "updated" : "unchanged";
   }
 
   private async ensurePrompt(
@@ -180,28 +181,71 @@ export class LAgentSetupService {
     lWorkspaceId: string,
     persona?: string,
   ): Promise<{ prompt: AgentSetupResult["prompt"]; persona?: AgentSetupResult["persona"] }> {
-    const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
-    const base = `/workspaces/${lWorkspaceId}/agents`;
-    const agents = await this.client.request<LAgent[]>(base);
-    const agent = agents.find((a) => a.slug === slug);
-    const prompts = await this.client.request<LPrompt[]>(`${base}/${slug}/prompts`);
-    const live = prompts.find((p) => p.version === agent?.live_version);
-    const current = live?.content ?? "";
-    const missing = PROMPT_SECTIONS.filter(([marker]) => !current.includes(marker)).map(([, section]) => section);
-    const withSections = missing.length === 0 ? current : [current.trimEnd(), ...missing].filter(Boolean).join("\n\n");
-    let content = withSections;
+    let prompt: AgentSetupResult["prompt"] = "already-present";
     let personaResult: AgentSetupResult["persona"];
-    if (persona !== undefined) {
+    await this.editPrompt(workspaceId, lWorkspaceId, (current) => {
+      const missing = PROMPT_SECTIONS.filter(([marker]) => !current.includes(marker)).map(([, section]) => section);
+      const withSections = missing.length === 0 ? current : [current.trimEnd(), ...missing].filter(Boolean).join("\n\n");
+      prompt = missing.length === 0 ? "already-present" : "updated";
+      if (persona === undefined) return withSections;
       const next = upsertBlock(withSections, PERSONA_BLOCK_NAME, persona);
       if (next.dangling) this.logger.warn(`prompt block ${PERSONA_BLOCK_NAME} for workspace ${workspaceId}: end marker missing, appended a fresh block`);
-      content = next.prompt;
-      personaResult = content === withSections ? "already-present" : "updated";
-    }
-    const prompt: AgentSetupResult["prompt"] = missing.length === 0 ? "already-present" : "updated";
-    if (content === current) return { prompt, persona: personaResult };
-
-    // One PUT carrying every missing section and the persona block.
-    await this.client.request(`${base}/${slug}/prompt`, { method: "PUT", body: { content } });
+      personaResult = next.prompt === withSections ? "already-present" : "updated";
+      // One PUT carrying every missing section and the persona block.
+      return next.prompt;
+    });
     return { prompt, persona: personaResult };
+  }
+
+  /**
+   * SP-20 (review I2): every read-modify-write of the live prompt (ensure's
+   * missing sections, the persona block, SP-21's guidelines block) runs here,
+   * one at a time per workspace:
+   *  - in this process, a per-workspace promise chain;
+   *  - across processes, `pg_advisory_xact_lock(hashtext('l-prompt:' || id))`
+   *    held in a transaction around the GET agents / GET prompts / PUT calls.
+   *
+   * Chosen over "re-read live_version before the PUT and retry once": that
+   * check still leaves a window between the re-read and the PUT, and it relies
+   * on l bumping `live_version` on every PUT, which its API does not promise.
+   * The lock is correct by construction. Its cost is one pooled connection held
+   * for the length of three l calls, on a rare owner action. Each call is
+   * capped at L_CALL_TIMEOUT_MS, and the transaction timeout is above their
+   * sum, so a hung l call cannot hold the lock past the transaction.
+   */
+  private async editPrompt(
+    workspaceId: string,
+    lWorkspaceId: string,
+    edit: (current: string) => string,
+  ): Promise<{ changed: boolean }> {
+    // The slug (stored after the first lookup) is not part of the read-modify-write.
+    const slug = await this.resolver.resolveSlug(workspaceId, lWorkspaceId);
+    const prev = this.promptChains.get(workspaceId) ?? Promise.resolve();
+    const run = prev
+      .catch(() => undefined)
+      .then(() =>
+        this.prisma.raw.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`l-prompt:${workspaceId}`}))`;
+            const base = `/workspaces/${lWorkspaceId}/agents`;
+            const agents = await this.client.request<LAgent[]>(base, { timeoutMs: L_CALL_TIMEOUT_MS });
+            const agent = agents.find((a) => a.slug === slug);
+            const prompts = await this.client.request<LPrompt[]>(`${base}/${slug}/prompts`, { timeoutMs: L_CALL_TIMEOUT_MS });
+            const current = prompts.find((p) => p.version === agent?.live_version)?.content ?? "";
+            const next = edit(current);
+            if (next === current) return { changed: false };
+            await this.client.request(`${base}/${slug}/prompt`, { method: "PUT", body: { content: next }, timeoutMs: L_CALL_TIMEOUT_MS });
+            return { changed: true };
+          },
+          { maxWait: PROMPT_LOCK_MAX_WAIT_MS, timeout: PROMPT_LOCK_TIMEOUT_MS },
+        ),
+      );
+    this.promptChains.set(workspaceId, run);
+    void run
+      .finally(() => {
+        if (this.promptChains.get(workspaceId) === run) this.promptChains.delete(workspaceId);
+      })
+      .catch(() => undefined);
+    return run;
   }
 }

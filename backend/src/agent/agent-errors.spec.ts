@@ -21,9 +21,10 @@ describe("SP-20 agent errors", () => {
       "agent.ai_unavailable": 503,
       "onboarding.ai_unavailable": 503,
       "agent.ai_failed": 502,
+      "agent.resync_failed": 502,
       "onboarding.ai_failed": 502,
     });
-    expect(AGENT_ERROR_KEYS).toHaveLength(19);
+    expect(AGENT_ERROR_KEYS).toHaveLength(20);
   });
 
   it("builds {statusCode, message: key, ...extra}", () => {

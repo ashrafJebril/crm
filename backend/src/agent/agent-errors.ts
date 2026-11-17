@@ -24,6 +24,7 @@ export const AGENT_ERROR_STATUS = {
   "agent.ai_unavailable": 503,
   "onboarding.ai_unavailable": 503,
   "agent.ai_failed": 502,
+  "agent.resync_failed": 502, // review: the agent platform refused or was unreachable on "Re-sync"
   "onboarding.ai_failed": 502,
 } as const;
 

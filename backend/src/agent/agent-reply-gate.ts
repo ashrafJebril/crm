@@ -61,9 +61,9 @@ export function contactTagNames(raw: unknown): string[] {
   }
 }
 
+/** Hours, tags and timezone, cached per process. The stop is never cached. */
 interface CachedSettings {
   at: number;
-  stoppedAt: Date | null;
   hoursMode: string;
   schedule: unknown;
   /** Current names of the excluded catalog tags (ids of deleted tags drop out). */
@@ -71,8 +71,10 @@ interface CachedSettings {
   tz: string;
 }
 
-/** Per-process cache, shared by every gate instance so a settings save or the
- *  emergency stop can clear it (`invalidateAgentGate`). */
+/** Per-process cache, shared by every gate instance so a settings save can
+ *  clear it (`invalidateAgentGate`). It never holds `stoppedAt`: the stop is
+ *  read on every decision, so a stop written by another process applies to
+ *  the next message (review I1). */
 const CACHE = new Map<string, CachedSettings>();
 
 /** Forget a workspace's cached settings: the next decision re-reads them. */
@@ -94,9 +96,11 @@ export class AgentReplyGate {
     workspaceId: string,
     ctx: { conversationId: string | null; contactId: string | null; now?: Date },
   ): Promise<GateDecision> {
+    // The stop is checked first, read fresh on every decision (one unique
+    // lookup), and needs nothing else.
+    const stop = await this.prisma.agentSettings.findUnique({ where: { workspaceId }, select: { stoppedAt: true } });
+    if (stop?.stoppedAt) return { reply: false, reason: "stopped" };
     const settings = await this.settings(workspaceId);
-    // The stop is checked first and needs nothing else.
-    if (settings.stoppedAt) return { reply: false, reason: "stopped" };
     const conversation = ctx.conversationId
       ? await this.prisma.conversation.findFirst({
           where: { id: ctx.conversationId, workspaceId },
@@ -115,7 +119,7 @@ export class AgentReplyGate {
       excluded = contactTagNames(contact?.tags).some((t) => names.has(t));
     }
     return agentReplyDecision({
-      stoppedAt: settings.stoppedAt,
+      stoppedAt: null,
       conversation: conversation ? { aiEnabled: Boolean(conversation.aiEnabled), aiPausedAt: conversation.aiPausedAt ?? null } : null,
       excluded,
       hoursMode: settings.hoursMode,
@@ -152,7 +156,7 @@ export class AgentReplyGate {
     const [row, ws] = await Promise.all([
       this.prisma.agentSettings.findUnique({
         where: { workspaceId },
-        select: { stoppedAt: true, hoursMode: true, schedule: true, excludedTagIds: true },
+        select: { hoursMode: true, schedule: true, excludedTagIds: true },
       }),
       this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } }),
     ]);
@@ -162,8 +166,7 @@ export class AgentReplyGate {
       : [];
     const next: CachedSettings = {
       at: Date.now(),
-      // No row = today's behaviour: always on, nothing excluded, not stopped.
-      stoppedAt: row?.stoppedAt ?? null,
+      // No row = today's behaviour: always on, nothing excluded.
       hoursMode: row?.hoursMode ?? "always",
       schedule: row?.schedule ?? null,
       excludedNames: tags.map((t) => t.name),

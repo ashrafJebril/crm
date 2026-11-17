@@ -10,8 +10,14 @@
  *  - After the commit, the persona block is published to the l prompt with
  *    `LAgentSetupService.ensure` (which also appends any missing CRM, photos,
  *    booking and knowledge sections: SP-17 ruling 10 carry-over, no bulk
- *    backfill). Publishing never fails the save: a failure sets
+ *    backfill). It runs in the background (review: the save returns with
+ *    `publishState: "pending"`) and never fails the save: a failure sets
  *    `publishState: "failed"` and the next save or "Re-sync" retries it.
+ *    Runs are serialized per workspace; a run records its outcome only while
+ *    the row still has the version it published, so a stale run never
+ *    overwrites the state of a newer save.
+ *  - "Re-sync" waits for its run and maps an l failure to 502
+ *    `agent.resync_failed` (no provider text).
  *  - Tag ids of tags deleted from the catalog are dropped on read and
  *    reported once in `droppedTagIds` (ruling 7).
  */
@@ -186,7 +192,7 @@ export class AgentSettingsService {
       throw agentError("agent.version_conflict", { current: now?.version ?? row.version });
     }
     invalidateAgentGate(workspaceId);
-    if (linked) await this.publishQuietly(workspaceId);
+    if (linked) void this.publishQuietly(workspaceId);
     return this.get(workspaceId);
   }
 
@@ -194,8 +200,19 @@ export class AgentSettingsService {
   async resync(workspaceId: string): Promise<AgentResyncDto> {
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { lWorkspaceId: true } });
     if (!ws?.lWorkspaceId || !this.agentSetup) return { mcpServer: "not_linked", prompt: "not_linked", persona: "not_linked" };
-    const out = await this.publish(workspaceId);
+    let out: Awaited<ReturnType<AgentSettingsService["publish"]>>;
+    try {
+      out = await this.publish(workspaceId);
+    } catch {
+      // Logged and recorded as publishState "failed" by publish().
+      throw agentError("agent.resync_failed");
+    }
     return { mcpServer: out.mcpServer, prompt: out.prompt, persona: out.persona ?? "already-present" };
+  }
+
+  /** Resolves when the publish runs queued so far for the workspace have settled (specs, shutdown). */
+  async whenPublished(workspaceId: string): Promise<void> {
+    await (this.publishing.get(workspaceId) ?? Promise.resolve()).catch(() => undefined);
   }
 
   /** Never throws: the save already committed. */
@@ -216,14 +233,14 @@ export class AgentSettingsService {
         const row = await this.row(workspaceId);
         try {
           const result = await this.agentSetup!.ensure(workspaceId, { persona: personaBlockText(row) });
-          await this.prisma.agentSettings.updateMany({ where: { workspaceId }, data: { publishState: "published" } });
+          await this.prisma.agentSettings.updateMany({ where: { workspaceId, version: row.version }, data: { publishState: "published" } });
           return result;
         } catch (err) {
           this.log.warn(
             `agent persona publish failed for workspace ${workspaceId}: ${err instanceof Error ? err.message : String(err)}`,
           );
           await this.prisma.agentSettings
-            .updateMany({ where: { workspaceId }, data: { publishState: "failed" } })
+            .updateMany({ where: { workspaceId, version: row.version }, data: { publishState: "failed" } })
             .catch(() => undefined);
           throw err;
         }

@@ -131,14 +131,36 @@ describe("AgentReplyGate", () => {
     expect(await gate.decide(WS, CTX)).toEqual({ reply: false, reason: "outside_hours" }); // NY Sun 02:00
   });
 
-  it("caches settings for 30 s per workspace; invalidation re-reads", async () => {
+  it("caches hours, tags and timezone for 30 s per workspace; the stop is read on every decision", async () => {
     const { prisma, gate } = world({});
+    const reads = () =>
+      (prisma.agentSettings.findUnique.mock.calls as [{ select: Record<string, boolean> }][]).map(([a]) => Object.keys(a.select).sort().join(","));
     await gate.decide(WS, CTX);
     await gate.decide(WS, CTX);
-    expect(prisma.agentSettings.findUnique).toHaveBeenCalledTimes(1);
+    expect(reads()).toEqual(["stoppedAt", "excludedTagIds,hoursMode,schedule", "stoppedAt"]);
+    expect(prisma.workspace.findUnique).toHaveBeenCalledTimes(1);
     invalidateAgentGate(WS);
     await gate.decide(WS, CTX);
-    expect(prisma.agentSettings.findUnique).toHaveBeenCalledTimes(2);
+    expect(reads()).toEqual(["stoppedAt", "excludedTagIds,hoursMode,schedule", "stoppedAt", "stoppedAt", "excludedTagIds,hoursMode,schedule"]);
+  });
+
+  it("a cached settings entry does not mask a stop written by another process", async () => {
+    const { prisma, gate } = world({ hoursMode: "always" });
+    expect(await gate.decide(WS, CTX)).toEqual({ reply: true, reason: "ok" }); // settings now cached
+    // Another instance writes the stop: nothing clears this process's cache.
+    prisma.db.agentSettings[0].stoppedAt = new Date();
+    expect(await gate.decide(WS, CTX)).toEqual({ reply: false, reason: "stopped" });
+    // And clearing it elsewhere applies at once too.
+    prisma.db.agentSettings[0].stoppedAt = null;
+    expect(await gate.decide(WS, CTX)).toEqual({ reply: true, reason: "ok" });
+  });
+
+  it("a failing stop read fails closed even with settings cached", async () => {
+    const { prisma, gate } = world({});
+    await gate.decide(WS, CTX);
+    prisma.agentSettings.findUnique.mockImplementation(() => Promise.reject(new Error("db down")));
+    jest.spyOn((gate as unknown as { log: { warn: () => void } }).log, "warn").mockImplementation(() => undefined);
+    expect(await gate.allows(WS, { conversationId: "cv1", contactId: "c1" }, "zernio_bridge")).toBe(false);
   });
 
   it("a conversation of another workspace is never answered", async () => {

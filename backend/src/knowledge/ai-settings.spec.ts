@@ -369,6 +369,29 @@ describe("AiSettingsService — the local emergency stop (SP-20)", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("enabling while kewy-ai fails clears the local stop and returns the upstream failure", async () => {
+    const { prisma, svc } = world();
+    stubFetch({ body: { aiEnabled: false, changed: true } });
+    await withConfig(() => svc.setEnabled(WS_A, { enabled: false, reason: "Holiday", userId: "u1" }));
+    expect(prisma.db.agentSettings[0].stoppedAt).toBeInstanceOf(Date);
+
+    stubFetch({ status: 500, body: { message: "upstream exploded at /srv/x.js:1" } });
+    let err: unknown;
+    await withConfig(async () => {
+      err = await svc.setEnabled(WS_A, { enabled: true, userId: "u1" }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+    });
+    // The owner sees kewy-ai's failure (our structured, scrubbed error)...
+    expect(err).toBeInstanceOf(HttpException);
+    expect(((err as HttpException).getResponse() as { code: string }).code).toBe("AI_ERROR");
+    // ...and the CRM-side stop is cleared: the l path replies again; kewy-ai keeps its own switch until retried.
+    expect(prisma.db.agentSettings[0]).toMatchObject({ stoppedAt: null, stoppedReason: null, stoppedById: null });
+    const gate = new AgentReplyGate(prisma as never);
+    expect(await gate.decide(WS_A, { conversationId: null, contactId: null })).toEqual({ reply: true, reason: "ok" });
+  });
+
   it("the reason rule still applies before anything is written", async () => {
     const { prisma, svc } = world();
     await expect(svc.setEnabled(WS_A, { enabled: false })).rejects.toBeInstanceOf(HttpException);
