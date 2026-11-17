@@ -474,21 +474,21 @@ Each item names the risk, then the recommended ruling. Items marked **(needs con
 14. **Size.** The roadmap says M. With an in-app OAuth server this is L: 4 build tasks plus verification. **(needs controller ruling)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision below before Task 1 starts. The migration `20261118130000_api_keys_webhooks` needs explicit user approval before it runs.*
-- **R1** (Tkana scope words mapped to catalogue actions): _pending_
-- **R2** (keys act as their creator; creator ∩ scopes; die with the creator): _pending_
-- **R3** (key resource allow-list): _pending_
-- **R4** (events v1: 5 existing + 2 new emits + ping; async listener after commit): _pending_
-- **R5** (test-only loopback escape, refused on Fly): _pending_
-- **R6** (minimal in-app OAuth 2.1 AS for MCP, or defer OAuth): _pending_
-- **R7** (owner-only AI-tools controls): _pending_
-- **R8** (OAuth MCP sessions use the member's own permissions, writes included): _pending_
-- **R9** (static bilingual developers page with a route-truth spec): _pending_
-- **R10** (impersonators cannot mint keys or webhooks): _pending_
-- **R11** (well-known routes excluded from the `/api` prefix; host check by the user): _pending_
-- **R12** (base on the SP-26 ship commit; Task 1 owns the schema): _pending_
-- **R13** (verification on the production DB with a loopback receiver; migration needs explicit user approval): _pending_
-- **R14** (size L; 4 build tasks + verification): _pending_
+*Decided 2026-11-17 by the controller: R1–R5, R9–R14 accepted as proposed. R6: OAuth deferred (user decision), so R7, R8 and R11 apply only as far as they concern API keys and webhooks; the OAuth task and its frontend part are skipped and the roadmap notes it. Base is the current feat/tkana-parity head with SP-26 merged (SHA in the ledger). The migration `20261118130000_api_keys_webhooks` needs explicit user approval before it runs.*
+- **R1** (Tkana scope words mapped to catalogue actions): accepted
+- **R2** (keys act as their creator; creator ∩ scopes; die with the creator): accepted
+- **R3** (key resource allow-list): accepted
+- **R4** (events v1: 5 existing + 2 new emits + ping; async listener after commit): accepted
+- **R5** (test-only loopback escape, refused on Fly): accepted
+- **R6** (minimal in-app OAuth 2.1 AS for MCP, or defer OAuth): deferred (user decision)
+- **R7** (owner-only AI-tools controls): accepted where it applies without OAuth
+- **R8** (OAuth MCP sessions use the member's own permissions, writes included): accepted where it applies without OAuth
+- **R9** (static bilingual developers page with a route-truth spec): accepted
+- **R10** (impersonators cannot mint keys or webhooks): accepted
+- **R11** (well-known routes excluded from the `/api` prefix; host check by the user): accepted where it applies without OAuth
+- **R12** (base on the SP-26 ship commit; Task 1 owns the schema): accepted
+- **R13** (verification on the production DB with a loopback receiver; migration needs explicit user approval): accepted
+- **R14** (size L; 4 build tasks + verification): accepted
 
 ---
 
