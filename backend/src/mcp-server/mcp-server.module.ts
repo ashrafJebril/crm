@@ -13,5 +13,7 @@ import { McpToolsFactory } from "./mcp-tools.factory";
   imports: [AppointmentsModule, BookingsModule, ContactsModule, IntegrationsModule, MediaModule, KnowledgeSourcesModule],
   controllers: [McpServerController],
   providers: [McpAuthGuard, McpToolsFactory],
+  // SP-20: the "Try your agent" sandbox builds the same tools in sandbox mode.
+  exports: [McpToolsFactory],
 })
 export class McpServerModule {}

@@ -65,11 +65,17 @@ describe("WebsitesService", () => {
     await expect(websites.check("https://shop.example/private")).resolves.toMatchObject({ robotsAllowed: false });
   });
 
+  it("SP-20: onboarding caps the first run", async () => {
+    const { websites, scheduler } = setup(shopNet());
+    const capped = await websites.create(A, "uOwner", { url: "https://shop.example/" }, { firstRunPageCap: 20 });
+    expect(scheduler.kick).toHaveBeenCalledWith(capped.id, A, { pageCap: 20 });
+  });
+
   it("create kicks the first run; limit and duplicates are refused", async () => {
     const { websites, scheduler, db } = setup(shopNet());
     const dto = await websites.create(A, "uOwner", { url: "https://www.shop.example/", schedule: "daily" });
     expect(dto).toMatchObject({ kind: "website", status: "queued", schedule: "daily", scope: "site", url: "https://www.shop.example/" });
-    expect(scheduler.kick).toHaveBeenCalledWith(dto.id, A);
+    expect(scheduler.kick).toHaveBeenCalledWith(dto.id, A, {});
     expect((await failure(websites.create(A, "uOwner", { url: "https://shop.example" }))).body.message).toBe("knowledge.website_exists");
     // Another scope of the same site is a different source.
     await expect(websites.create(A, "uOwner", { url: "https://shop.example/private", scope: "path" })).resolves.toMatchObject({ scope: "path" });

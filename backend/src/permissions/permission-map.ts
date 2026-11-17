@@ -452,6 +452,22 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "PATCH /knowledge/websites/:id": "knowledge.update",
   "POST /knowledge/websites/:id/refresh": "knowledge.update",
 
+  // ── SP-20 agent settings, sandbox and onboarding ──────────────────────
+  "GET /agent/settings": "agent.view",
+  "PATCH /agent/settings": "agent.update",
+  "POST /agent/settings/resync": "agent.update",
+  // A sandbox turn costs money (ruling 9): owners and admins by default.
+  "GET /agent/sandbox": "agent.update",
+  "POST /agent/sandbox/messages": "agent.update",
+  "DELETE /agent/sandbox": "agent.update",
+  // Every member may ask whether onboarding is shown; driving it is settings.update
+  // (Apply also checks knowledge.* and agent.update for the parts it writes).
+  "GET /onboarding": "authenticated",
+  "PATCH /onboarding": "settings.update",
+  "POST /onboarding/website": "settings.update",
+  "POST /onboarding/learn": "settings.update",
+  "POST /onboarding/learn/apply": "settings.update",
+
   // ── Connectors (MCP servers bound to the agent) ───────────────────────
   "GET /integrations/l/mcp-servers": "connectors.view",
   "POST /integrations/l/mcp-servers": "connectors.create",

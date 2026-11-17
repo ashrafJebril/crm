@@ -10,6 +10,8 @@ interface JoteckRequestOpts {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   formData?: FormData;
+  /** SP-20: abort the call after this many ms (a 502 like any unreachable call). */
+  timeoutMs?: number;
 }
 
 /**
@@ -49,7 +51,12 @@ export class LJoteckClient {
 
     let res: Response;
     try {
-      res = await fetch(url, { method: opts.method ?? "GET", headers, body });
+      res = await fetch(url, {
+        method: opts.method ?? "GET",
+        headers,
+        body,
+        ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
+      });
     } catch (err) {
       this.logger.warn(
         `Could not reach l platform at ${url}: ${err instanceof Error ? err.message : String(err)}`,

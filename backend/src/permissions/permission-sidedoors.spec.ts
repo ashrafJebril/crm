@@ -18,6 +18,8 @@ import { MediaService } from "../media/media.service";
 import { UpdateTicketDto } from "../tickets/tickets.dto";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
+import { AgentSettingsService } from "../agent/agent-settings.service";
+import { AgentReplyGate, invalidateAgentGate } from "../agent/agent-reply-gate";
 import { makeFakePrisma } from "../channels/test-prisma";
 import { AdSourcesService } from "../ad-attribution/ad-sources.service";
 import { createAudienceDb } from "../segments/audience-test-db";
@@ -1044,6 +1046,142 @@ describe("SP-21 knowledge files", () => {
     expect(locks.some((l: string) => l.includes("pg_advisory_xact_lock") && l.endsWith(`|media:${mediaId}`))).toBe(true);
     // And the library never lists it.
     expect((await w.media.listPage(kw.A, undefined, { kind: "all" })).items).toEqual([]);
+  });
+});
+
+// ─── SP-20: agent settings and the reply gate stay inside the workspace ──
+describe("SP-20 agent settings", () => {
+  const two = () =>
+    makeFakePrisma({
+      workspace: [
+        { id: "wsA", name: "A", slug: "a", timezone: "Asia/Riyadh", lWorkspaceId: null },
+        { id: "wsB", name: "B", slug: "b", timezone: "Asia/Riyadh", lWorkspaceId: null },
+      ],
+      tag: [
+        { id: "tagA", workspaceId: "wsA", name: "VIP", color: "red" },
+        { id: "tagB", workspaceId: "wsB", name: "VIP", color: "red" },
+      ],
+      contact: [{ id: "cB", workspaceId: "wsB", name: "B's customer", tags: JSON.stringify(["VIP"]) }],
+      conversation: [{ id: "cvB", workspaceId: "wsB", contactId: "cB", channel: "whatsapp", aiEnabled: true, aiPausedAt: null }],
+      agentSettings: [
+        { id: "asB", workspaceId: "wsB", nameEn: "B bot", tone: [], hoursMode: "always", excludedTagIds: ["tagB"], stoppedAt: null, version: 4, publishState: "none" },
+      ],
+    });
+
+  beforeEach(() => invalidateAgentGate());
+
+  it("a workspace reads and writes only its own row; another workspace's tag id is unknown", async () => {
+    const prisma = two();
+    const svc = new AgentSettingsService(prisma as never);
+    const a = await svc.get("wsA");
+    expect(a).toMatchObject({ nameEn: null, version: 0, excludedTags: [] });
+    await expect(svc.update("wsA", { audience: { excludedTagIds: ["tagB"] }, version: 0 })).rejects.toMatchObject({
+      response: { message: "agent.tag_unknown" },
+    });
+    await svc.update("wsA", { identity: { nameEn: "A bot" }, version: 0 });
+    const b = prisma.db.agentSettings.find((r: { workspaceId: string }) => r.workspaceId === "wsB");
+    expect(b).toMatchObject({ nameEn: "B bot", version: 4, excludedTagIds: ["tagB"] });
+  });
+
+  it("the gate never reads another workspace's conversation or contact", async () => {
+    const gate = new AgentReplyGate(two() as never);
+    // wsA asking about wsB's thread is never a reply, and wsB's exclusion is never wsA's.
+    expect(await gate.decide("wsA", { conversationId: "cvB", contactId: "cB" })).toEqual({ reply: false, reason: "conversation_off" });
+    expect(await gate.decide("wsB", { conversationId: "cvB", contactId: "cB" })).toEqual({ reply: false, reason: "excluded" });
+  });
+});
+
+// ─── SP-20: the "Try your agent" sandbox stays inside the member and workspace ──
+describe("SP-20 sandbox", () => {
+  const withKey = async <T,>(fn: () => Promise<T>) => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key-not-real";
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  };
+
+  it("sandbox thread of another member is never returned", async () => {
+    const { sandboxWorld } = await import("../agent/sandbox/sandbox-test-world");
+    const w = sandboxWorld();
+    await withKey(() => w.sandbox.send("ws1", "u1", "my private test"));
+    expect((await w.sandbox.get("ws1", "u1")).messages[0].text).toBe("my private test");
+    // Another member of the same workspace, and the same member in another workspace: nothing.
+    expect(await w.sandbox.get("ws1", "u2")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get("ws2", "u1")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
+    // Their reset never touches it, and their turn starts their own thread.
+    await w.sandbox.reset("ws1", "u2");
+    await withKey(() => w.sandbox.send("ws1", "u2", "hello"));
+    expect(w.prisma.db.agentSandboxThread.map((t: { userId: string }) => t.userId).sort()).toEqual(["u1", "u2"]);
+    expect((await w.sandbox.get("ws1", "u1")).turnCount).toBe(1);
+  });
+
+  it("sandbox reads only what the member's workspace holds", async () => {
+    const { sandboxWorld, toolUse } = await import("../agent/sandbox/sandbox-test-world");
+    const w = sandboxWorld({
+      replies: [
+        { stop_reason: "tool_use", content: [toolUse("t1", "get_contact", { id: "c-foreign" }), toolUse("t2", "search_contacts", { query: "Someone" })] },
+        { content: [{ type: "text", text: "not found" }] },
+      ],
+    });
+    await withKey(() => w.sandbox.send("ws1", "u1", "look up c-foreign"));
+    const results = w.ai.calls[1].messages[w.ai.calls[1].messages.length - 1].content as { tool_use_id: string; is_error?: boolean; content: string }[];
+    expect(results[0]).toMatchObject({ tool_use_id: "t1", is_error: true });
+    expect(JSON.parse(results[1].content)).toEqual([]); // the other workspace's "Someone else" is not found
+    expect(w.contacts.get).toHaveBeenCalledWith("ws1", "c-foreign");
+    expect(w.contacts.search).toHaveBeenCalledWith("ws1", "Someone");
+  });
+});
+
+describe("SP-20 sandbox reads use the member's own access", () => {
+  const withKey = async <T,>(fn: () => Promise<T>) => {
+    const prev = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key-not-real";
+    try {
+      return await fn();
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = prev;
+    }
+  };
+
+  it("a member without contacts.view gets no contact data in the sandbox; the same member reads bookings", async () => {
+    const { sandboxWorld, toolUse } = await import("../agent/sandbox/sandbox-test-world");
+    // A custom role: agent.update (may use the sandbox) and bookings.view, but not contacts.view.
+    const grants: Record<string, string[]> = { u1: ["agent.update", "bookings.view"] };
+    const perm = { viewerCan: jest.fn(async (_ws: string, v: { userId: string; bypass?: boolean }, p: string) => !!v.bypass || (grants[v.userId] ?? []).includes(p)) };
+    const w = sandboxWorld({
+      perm,
+      replies: [
+        { stop_reason: "tool_use", content: [toolUse("t1", "search_contacts", { query: "Sara" }), toolUse("t2", "get_contact", { id: "c1" }), toolUse("t3", "list_services", {})] },
+        { content: [{ type: "text", text: "ok" }] },
+      ],
+    });
+    const out = await withKey(() => w.sandbox.send("ws1", "u1", "who is Sara?"));
+    const results = w.ai.calls[1].messages[w.ai.calls[1].messages.length - 1].content as { tool_use_id: string; is_error?: boolean; content: string }[];
+    expect(results.map((r) => [r.tool_use_id, r.is_error === true])).toEqual([
+      ["t1", true],
+      ["t2", true],
+      ["t3", false],
+    ]);
+    expect(results[0].content).toContain("contacts.view");
+    expect(w.contacts.search).not.toHaveBeenCalled();
+    expect(w.contacts.get).not.toHaveBeenCalled();
+    expect(w.bookings.activeServices).toHaveBeenCalledWith("ws1");
+    expect(perm.viewerCan).toHaveBeenCalledWith("ws1", { userId: "u1", bypass: false }, "contacts.view");
+    expect(out.toolCalls.map((c) => [c.name, !!c.error])).toEqual([
+      ["search_contacts", true],
+      ["get_contact", true],
+      ["list_services", false],
+    ]);
+    // Writes stay simulated whatever the role: they never touch data.
+    grants.u1.push("contacts.view");
+    const w2 = sandboxWorld({ perm, replies: [{ stop_reason: "tool_use", content: [toolUse("t1", "search_contacts", { query: "Sara" })] }, { content: [{ type: "text", text: "ok" }] }] });
+    await withKey(() => w2.sandbox.send("ws1", "u1", "who is Sara?"));
+    expect(w2.contacts.search).toHaveBeenCalledWith("ws1", "Sara");
   });
 });
 

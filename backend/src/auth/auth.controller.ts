@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Patch, Post, Req } from "@nestjs/common";
-import type { Request } from "express";
+import { Body, Controller, Get, HttpException, Patch, Post, Req, Res } from "@nestjs/common";
+import type { Request, Response } from "express";
+import { SlidingWindowLimiter } from "../common/rate-limit";
 import { AuthService } from "./auth.service";
 import {
   ChangePasswordDto,
@@ -22,8 +23,14 @@ function clientIp(req: Request): string | undefined {
   return ip || undefined;
 }
 
+/** SP-20 (ruling 11): the public signup page makes register easy to find; 5 accounts per hour per IP. */
+export const REGISTER_LIMIT = { limit: 5, windowMs: 60 * 60 * 1000 } as const;
+
 @Controller("auth")
 export class AuthController {
+  /** Per process, like the SP-19 widget limiters. */
+  readonly registerLimiter = new SlidingWindowLimiter(REGISTER_LIMIT);
+
   constructor(private readonly auth: AuthService) {}
 
   @Public()
@@ -34,7 +41,12 @@ export class AuthController {
 
   @Public()
   @Post("register")
-  register(@Body() dto: RegisterDto) {
+  register(@Body() dto: RegisterDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const hit = this.registerLimiter.hit(clientIp(req) ?? "unknown");
+    if (!hit.ok) {
+      res.setHeader("Retry-After", String(hit.retryAfterSec));
+      throw new HttpException({ statusCode: 429, message: "auth.register_rate", retryAfterSeconds: hit.retryAfterSec }, 429);
+    }
     return this.auth.register(dto);
   }
 

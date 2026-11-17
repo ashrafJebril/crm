@@ -30,7 +30,9 @@ export type RouteId =
   | "settings"
   | "channels"
   | "ads"
-  | "admin";
+  | "admin"
+  // SP-20: guided onboarding.
+  | "setup";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
 
@@ -1759,4 +1761,96 @@ export interface LifecycleList {
   whatsappConnected: boolean;
   /** In server memory only: null after a restart until the next Sync. */
   lastSyncedAt: string | null;
+}
+
+// ─── SP-20 agent settings, sandbox and onboarding ───────────────────────────
+
+export type AgentHoursMode = "always" | "within" | "outside";
+export type AgentPublishState = "none" | "pending" | "published" | "failed";
+
+/** `GET /agent/settings` (backend/src/agent/agent-settings.dto.ts). */
+export interface AgentSettings {
+  nameEn: string | null;
+  nameAr: string | null;
+  greeting: string | null;
+  greetingAr: string | null;
+  tone: string[];
+  hoursMode: AgentHoursMode;
+  schedule: import("@/screens/calendar/schedule").WeeklySchedule | null;
+  excludedTags: { id: string; name: string }[];
+  droppedTagIds: string[];
+  stopped: { at: string; reason: string | null; by: { id: string; name: string } | null } | null;
+  timezone: string;
+  publishState: AgentPublishState;
+  linked: boolean;
+  version: number;
+}
+
+export interface AgentResync {
+  mcpServer: "created" | "already-present" | "not_linked";
+  prompt: "updated" | "already-present" | "not_linked";
+  persona: "updated" | "already-present" | "not_linked";
+}
+
+export interface SandboxToolCall {
+  name: string;
+  simulated: boolean;
+  args?: Record<string, string>;
+  error?: boolean;
+}
+export interface SandboxSource {
+  sourceId: string;
+  title: string;
+  url?: string;
+}
+export interface SandboxTurn {
+  role: "owner" | "agent";
+  text: string;
+  toolCalls?: SandboxToolCall[];
+  sources?: SandboxSource[];
+  at: string;
+}
+export interface SandboxReply {
+  reply: string;
+  replyKind: "answer" | "refusal" | "empty";
+  toolCalls: SandboxToolCall[];
+  sources: SandboxSource[];
+  gate: { wouldReply: boolean; reason: string };
+  turnCount: number;
+}
+export interface SandboxThread {
+  messages: SandboxTurn[];
+  turnCount: number;
+  expiresAt: string | null;
+}
+
+export interface LearnCard {
+  business: { name: string; descriptionEn?: string; descriptionAr?: string };
+  faqs: { question: string; answer: string }[];
+  services: { name: string; nameAr?: string; price?: number; currency?: string; durationMin?: number }[];
+  hours?: import("@/screens/calendar/schedule").WeeklySchedule;
+  sourcePages: string[];
+}
+
+export type OnboardingStatus = "not_started" | "in_progress" | "skipped" | "done";
+export type OnboardingStep = "business" | "website" | "learn" | "try" | "live";
+
+/** `GET /onboarding` (backend/src/agent/onboarding/onboarding.service.ts). */
+export interface OnboardingState {
+  status: OnboardingStatus;
+  step: OnboardingStep;
+  businessName: string | null;
+  websiteUrl: string | null;
+  website: { sourceId: string; status: string; pagesSynced: number } | null;
+  learned: LearnCard | null;
+  hoursApplyEnablesWorkingHours: boolean;
+  stuck: boolean;
+  /** The caller drives this onboarding (others see who does, read-only). */
+  isStarter: boolean;
+  startedByName: string | null;
+  canManage: boolean;
+}
+
+export interface LearnApplyResult {
+  applied: { content: "replaced" | "appended" | "written" | "skipped"; faqsAdded: number; faqsSkipped: number; hours: boolean };
 }

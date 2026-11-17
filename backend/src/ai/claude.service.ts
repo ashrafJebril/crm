@@ -184,11 +184,14 @@ export class ClaudeService {
   /**
    * One non-streaming beta Messages call with typed error mapping. Returns
    * the message whatever its stop reason; callers decide what they accept.
+   * SP-20: `opts.timeoutMs` caps this call (SDK timeout plus an abort
+   * signal; an abort maps to a transient `ai_failed`).
    */
-  async create(params: BetaParams, label = "claude call"): Promise<Anthropic.Beta.BetaMessage> {
+  async create(params: BetaParams, label = "claude call", opts: { timeoutMs?: number } = {}): Promise<Anthropic.Beta.BetaMessage> {
     const client = this.client();
+    const options = opts.timeoutMs ? { timeout: opts.timeoutMs, signal: AbortSignal.timeout(opts.timeoutMs) } : undefined;
     try {
-      return await client.beta.messages.create(params);
+      return await (options ? client.beta.messages.create(params, options) : client.beta.messages.create(params));
     } catch (e) {
       const f = mapClaudeError(e);
       this.log.warn(`${label} failed: ${f.detail || f.key}`);

@@ -1,4 +1,16 @@
 import { LAgentSetupService } from "./l-agent-setup.service";
+import { withAdvisoryLocks } from "../channels/test-prisma";
+
+/** The unscoped client the service uses: a workspace lookup plus interactive transactions with real advisory locks. */
+function rawClient(lWorkspaceId: string | null = "l-1") {
+  const raw: any = {
+    workspace: { findUnique: jest.fn().mockResolvedValue({ lWorkspaceId }) },
+    $executeRaw: jest.fn(async () => 0),
+    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(raw)),
+  };
+  const locks = withAdvisoryLocks(raw);
+  return { raw, locks };
+}
 
 describe("LAgentSetupService", () => {
   let svc: LAgentSetupService;
@@ -9,7 +21,7 @@ describe("LAgentSetupService", () => {
   let tokens: any;
 
   beforeEach(() => {
-    prisma = { raw: { workspace: { findUnique: jest.fn().mockResolvedValue({ lWorkspaceId: "l-1" }) } } };
+    prisma = { raw: rawClient().raw };
     client = { request: jest.fn() };
     resolver = { resolveSlug: jest.fn().mockResolvedValue("customer-support") };
     mcp = {
@@ -178,6 +190,112 @@ describe("LAgentSetupService", () => {
       expect(puts()).toHaveLength(1);
       prisma.raw.workspace.findUnique.mockResolvedValue({ lWorkspaceId: null });
       expect(await svc.writePromptBlock("ws-1", "guidelines", "x")).toBe("not-linked");
+    });
+  });
+
+  describe("SP-20 persona", () => {
+    const ALL = "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->\n<!-- kewy-crm-knowledge -->";
+    let content: string;
+    beforeEach(() => {
+      content = ALL;
+      client.request.mockImplementation(async (path: string, o?: { method?: string; body?: { content: string } }) => {
+        if (o?.method === "PUT") {
+          content = o.body!.content;
+          return undefined;
+        }
+        if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 1 }];
+        if (path.endsWith("/prompts")) return [{ version: 1, content }];
+        return undefined;
+      });
+    });
+    const puts = () => client.request.mock.calls.filter(([, o]: any[]) => o?.method === "PUT");
+
+    it("ensure with a persona writes the block in the same single PUT and reports it", async () => {
+      const r = await svc.ensure("ws-1", { persona: "Your name is \"Salma\"." });
+      expect(r).toEqual({ mcpServer: "created", prompt: "already-present", persona: "updated" });
+      expect(puts()).toHaveLength(1);
+      expect(content).toContain("<!-- kewy-crm-persona:begin -->\nYour name is \"Salma\".\n<!-- kewy-crm-persona:end -->");
+      expect(content.startsWith(ALL)).toBe(true);
+      // Same persona again: no PUT.
+      const again = await svc.ensure("ws-1", { persona: "Your name is \"Salma\"." });
+      expect(again.persona).toBe("already-present");
+      expect(puts()).toHaveLength(1);
+      // An empty persona removes the block, everything else kept.
+      expect((await svc.ensure("ws-1", { persona: "" })).persona).toBe("updated");
+      expect(content).toBe(ALL);
+    });
+
+    it("resync appends missing CRM sections once", async () => {
+      content = "You are support.";
+      const r = await svc.ensure("ws-1", { persona: "P" });
+      expect(r).toMatchObject({ prompt: "updated", persona: "updated" });
+      expect(puts()).toHaveLength(1);
+      for (const m of ["<!-- kewy-crm-tools -->", "<!-- kewy-crm-photos -->", "<!-- kewy-crm-booking-slots -->", "<!-- kewy-crm-knowledge -->", "<!-- kewy-crm-persona:begin -->"]) {
+        expect(content.split(m)).toHaveLength(2);
+      }
+      // A second resync changes nothing.
+      const again = await svc.ensure("ws-1", { persona: "P" });
+      expect(again).toMatchObject({ prompt: "already-present", persona: "already-present" });
+      expect(puts()).toHaveLength(1);
+    });
+
+    it("without a persona the result has no persona field (existing callers unchanged)", async () => {
+      expect(await svc.ensure("ws-1")).toEqual({ mcpServer: "created", prompt: "already-present" });
+    });
+  });
+
+  describe("SP-20 review I2: prompt writes are serialized", () => {
+    /** An l platform whose GET and PUT each yield, so unserialized writers interleave. */
+    function slowL(initial: string) {
+      const state = { content: initial, puts: 0 };
+      const tick = () => new Promise((r) => setImmediate(r));
+      const request = jest.fn(async (path: string, o?: { method?: string; body?: { content: string } }) => {
+        await tick();
+        if (o?.method === "PUT") {
+          await tick();
+          state.puts++;
+          state.content = o.body!.content;
+          return undefined;
+        }
+        if (path.endsWith("/agents")) return [{ slug: "customer-support", live_version: 1 }];
+        if (path.endsWith("/prompts")) return [{ version: 1, content: state.content }];
+        return undefined;
+      });
+      return { state, client: { request } };
+    }
+    const ALL = "x\n<!-- kewy-crm-tools -->\n<!-- kewy-crm-photos -->\n<!-- kewy-crm-booking-slots -->\n<!-- kewy-crm-knowledge -->";
+
+    it("two concurrent block writes (persona and guidelines) keep both blocks, in one process", async () => {
+      const l = slowL(ALL);
+      const one = new LAgentSetupService(prisma, l.client as never, resolver, mcp, tokens);
+      await Promise.all([one.ensure("ws-1", { persona: "PERSONA" }), one.writePromptBlock("ws-1", "guidelines", "GUIDELINES")]);
+      expect(l.state.content).toContain("<!-- kewy-crm-persona:begin -->\nPERSONA\n<!-- kewy-crm-persona:end -->");
+      expect(l.state.content).toContain("<!-- kewy-crm-guidelines:begin -->\nGUIDELINES\n<!-- kewy-crm-guidelines:end -->");
+      expect(l.state.puts).toBe(2);
+    });
+
+    it("two concurrent block writes keep both blocks across processes (advisory lock)", async () => {
+      // Two service instances stand for two processes: no shared in-process chain,
+      // only the Postgres advisory lock on 'l-prompt:<workspace>'.
+      const { raw, locks } = rawClient();
+      const l = slowL(ALL);
+      const a = new LAgentSetupService({ raw } as never, l.client as never, resolver, mcp, tokens);
+      const b = new LAgentSetupService({ raw } as never, l.client as never, resolver, mcp, tokens);
+      await Promise.all([a.ensure("ws-1", { persona: "PERSONA" }), b.writePromptBlock("ws-1", "guidelines", "GUIDELINES")]);
+      expect(l.state.content).toContain("PERSONA");
+      expect(l.state.content).toContain("GUIDELINES");
+      expect(locks.order).toEqual(["SELECT pg_advisory_xact_lock(hashtext(l-prompt:ws-1))", "SELECT pg_advisory_xact_lock(hashtext(l-prompt:ws-1))"]);
+      // Every l call inside the lock is time-capped.
+      for (const [, o] of l.client.request.mock.calls as [string, { timeoutMs?: number }?][]) expect(o?.timeoutMs).toBe(15_000);
+    });
+
+    it("without the lock the same interleaving loses a block (the test can tell)", async () => {
+      const l = slowL(ALL);
+      const bare: any = { workspace: { findUnique: jest.fn().mockResolvedValue({ lWorkspaceId: "l-1" }) }, $executeRaw: jest.fn(), $transaction: (fn: (tx: unknown) => unknown) => fn(bare) };
+      const a = new LAgentSetupService({ raw: bare } as never, l.client as never, resolver, mcp, tokens);
+      const b = new LAgentSetupService({ raw: bare } as never, l.client as never, resolver, mcp, tokens);
+      await Promise.all([a.writePromptBlock("ws-1", "persona", "PERSONA"), b.writePromptBlock("ws-1", "guidelines", "GUIDELINES")]);
+      expect(l.state.content.includes("PERSONA") && l.state.content.includes("GUIDELINES")).toBe(false);
     });
   });
 

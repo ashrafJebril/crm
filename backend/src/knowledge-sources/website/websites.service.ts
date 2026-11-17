@@ -111,8 +111,16 @@ export class WebsitesService {
     }
   }
 
-  /** Add a website source (≤ WEBSITE_MAX_SOURCES per workspace); its first run starts now. */
-  async create(workspaceId: string, userId: string | null, body: { url?: unknown; scope?: unknown; schedule?: unknown }): Promise<KnowledgeSourceDto> {
+  /**
+   * Add a website source (≤ WEBSITE_MAX_SOURCES per workspace); its first run
+   * starts now. SP-20: `opts.firstRunPageCap` caps that first run (onboarding).
+   */
+  async create(
+    workspaceId: string,
+    userId: string | null,
+    body: { url?: unknown; scope?: unknown; schedule?: unknown },
+    opts: { firstRunPageCap?: number } = {},
+  ): Promise<KnowledgeSourceDto> {
     const scope = (body.scope ?? "site") as WebsiteScope;
     if (scope !== "site" && scope !== "path") throw knowledgeError("knowledge.url_invalid", { field: "scope" });
     const schedule = body.schedule === undefined ? "weekly" : body.schedule;
@@ -141,7 +149,7 @@ export class WebsitesService {
       });
       return row.id;
     });
-    this.scheduler.kick(id, workspaceId);
+    this.scheduler.kick(id, workspaceId, opts.firstRunPageCap ? { pageCap: opts.firstRunPageCap } : {});
     return this.sources.get(workspaceId, id);
   }
 

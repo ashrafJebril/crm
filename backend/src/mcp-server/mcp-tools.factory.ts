@@ -8,6 +8,10 @@ import { ContactsService } from "../contacts/contacts.service";
 import { AGENT_PHOTO_LIMIT_DEFAULT, AGENT_PHOTO_LIMIT_MAX, MediaService } from "../media/media.service";
 import { KnowledgeSearchService, SEARCH_QUERY_MAX } from "../knowledge-sources/knowledge-search.service";
 import { SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX, TYPED_KINDS } from "../knowledge-sources/knowledge-constants";
+import { sandboxTools } from "../agent/sandbox/sandbox-tools";
+
+/** SP-20: `live` (the MCP HTTP route, unchanged) or `sandbox` (the "Try your agent" preview). */
+export type ToolsMode = "live" | "sandbox";
 
 /**
  * SP-21 (Review Focus 3): every search_knowledge result is the business's
@@ -85,7 +89,17 @@ export class McpToolsFactory {
     return this.knowledge;
   }
 
-  build(workspaceId: string): Record<string, Tool> {
+  /**
+   * SP-20: `opts.mode: "sandbox"` wraps every tool through the sandbox policy
+   * (deny by default on the tool id: only SANDBOX_READ_TOOLS run, everything
+   * else, including tools added later, returns a "NOT saved" mock).
+   */
+  build(workspaceId: string, opts: { mode?: ToolsMode } = {}): Record<string, Tool> {
+    const tools = this.buildLive(workspaceId);
+    return opts.mode === "sandbox" ? (sandboxTools(tools as never) as Record<string, Tool>) : tools;
+  }
+
+  private buildLive(workspaceId: string): Record<string, Tool> {
     return {
       list_appointments: createTool({
         id: "list_appointments",
