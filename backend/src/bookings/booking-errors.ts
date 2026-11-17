@@ -36,6 +36,10 @@ export const BOOKING_ERROR_STATUS = {
   "bookings.illegal_transition": 409, // {from, to, allowed}
   "bookings.closed": 409,
   SLOT_TAKEN: 409, // {conflict: {id, startAt, durationMin, status}}
+  // Live fix F1: the writer's transaction timed out waiting for the resource
+  // lock (P2028). Nothing was written; retryable. Not SLOT_TAKEN: the waiter
+  // may want a different time on the same resource.
+  "bookings.busy": 409,
 } as const;
 
 export type BookingErrorKey = keyof typeof BOOKING_ERROR_STATUS;

@@ -60,8 +60,12 @@ type Source = "paste" | "url" | "file";
 
 export function CatalogImportWizard({ tx, lang, tz, initialKind, onClose, onFinished }: Props) {
   const [jobId, setJobId] = useState<string | null>(null);
+  // The job the start call returned, shown until the job's own query answers
+  // (the query is still disabled when the start call resolves, so it can't be
+  // seeded through setData; live fix F2).
+  const [started, setStarted] = useState<CatalogImport | null>(null);
   const jobQ = useFetch<CatalogImport>(jobId ? `/catalog-imports/${jobId}` : null, { pollMs: (d) => pollMsFor(d) });
-  const job = jobId ? jobQ.data : null;
+  const job = jobId ? (jobQ.data?.id === jobId ? jobQ.data : started?.id === jobId ? started : null) : null;
   const step = stepFor(job ?? null);
   // The catalog changed once a run finishes: let the tab refresh (once per job).
   const finishedId = job && job.status === "done" ? job.id : null;
@@ -77,7 +81,7 @@ export function CatalogImportWizard({ tx, lang, tz, initialKind, onClose, onFini
           <h3 style={{ margin: 0, fontSize: 16, flex: 1 }}>{tx("Import services and staff", "استيراد الخدمات والموظفين")}</h3>
           <Steps step={step} tx={tx} />
         </div>
-        {step === "source" && <SourceStep tx={tx} initialKind={initialKind} onStarted={(j) => { setJobId(j.id); jobQ.setData(j); }} />}
+        {step === "source" && <SourceStep tx={tx} initialKind={initialKind} onStarted={(j) => { setStarted(j); setJobId(j.id); }} />}
         {step === "extracting" && job && <Working tx={tx} job={job} onCancel={async () => jobQ.setData(await cancelCatalogImport(job.id))} />}
         {step === "review" && job && <ReviewStep tx={tx} lang={lang} tz={tz} job={job} setJob={(j) => jobQ.setData(j)} />}
         {step === "running" && job && <Working tx={tx} job={job} onCancel={async () => jobQ.setData(await cancelCatalogImport(job.id))} />}

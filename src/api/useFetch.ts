@@ -40,6 +40,11 @@ export function resolvePollMs<T>(pollMs: PollMs<T> | undefined, data: T | undefi
   return typeof v === "number" && v > 0 ? v : false;
 }
 
+let disabledInstances = 0;
+
+/** The cache key of a disabled `useFetch` hook instance (never shared). */
+export const disabledQueryKey = (instance: number): QueryKey => ["__disabled__", instance];
+
 /** GET hook backed by React Query. Two components asking for the same URL
  *  share one in-flight request and one cache entry — no more duplicate GETs.
  *  Path = null disables the query. */
@@ -49,13 +54,19 @@ export function useFetch<T>(
 ): FetchState<T> {
   const enabled = opts.enabled !== false && path !== null;
   const queryClient = useQueryClient();
+  // One id per hook instance, for its disabled key (below).
+  const instanceRef = useRef<number | null>(null);
+  if (instanceRef.current === null) instanceRef.current = ++disabledInstances;
 
-  // Disabled hooks share a sentinel key. When the caller passes opts.key the
-  // queryKey includes it (so a bump creates a fresh entry — legacy
-  // invalidation pattern). When opts.key is omitted the key is just [path],
-  // letting mutations patch the cache without guessing a suffix.
+  // A disabled hook gets a key of its OWN: a shared sentinel let one caller's
+  // data leak into every other disabled hook (SP-10 live fix F2: the catalog
+  // wizard's job landed in the shell's not-connected `useFetch(null)` hooks,
+  // which iterated it and white-screened the app). When the caller passes
+  // opts.key the queryKey includes it (so a bump creates a fresh entry —
+  // legacy invalidation pattern). When opts.key is omitted the key is just
+  // [path], letting mutations patch the cache without guessing a suffix.
   const queryKey: QueryKey = !enabled
-    ? ["__disabled__"]
+    ? disabledQueryKey(instanceRef.current)
     : opts.key !== undefined
       ? [path, opts.key]
       : [path];
@@ -82,8 +93,13 @@ export function useFetch<T>(
     await q.refetch();
   }, [q]);
 
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const setData = useCallback(
     (updater: DataUpdater<T>) => {
+      // A disabled query has no cache entry worth writing: a no-op, so data
+      // set before the path is known can never land under a shared key.
+      if (!enabledRef.current) return;
       queryClient.setQueryData<T | null>(queryKeyRef.current, (prev) => {
         const p = (prev ?? null) as T | null;
         return typeof updater === "function"

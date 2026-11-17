@@ -107,6 +107,10 @@ export const BOOKING_ERROR_COPY: Record<string, CopyFn> = {
     "هذا الحجز مغلق، لذا لا يمكن تغيير وقته أو موظفه.",
   ],
   SLOT_TAKEN: () => ["That time was just taken. Pick another slot.", "تم حجز هذا الوقت للتو. اختر وقتًا آخر."],
+  "bookings.busy": () => [
+    "Several bookings are being saved for this staff member right now. Try again in a moment.",
+    "يتم حفظ عدة حجوزات لهذا الموظف الآن. حاول مرة أخرى بعد لحظات.",
+  ],
   // Catalog import (Task 3)
   "catalog_import.text_too_long": (x) => [
     `The text is too long (up to ${num(x.max, 200000).toLocaleString("en-US")} characters).`,
