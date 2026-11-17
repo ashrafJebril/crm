@@ -3,6 +3,8 @@
 // documents appear as knowledge sources. DRY RUN BY DEFAULT: it prints what it
 // would create and writes nothing. Rerunnable (keyed by legacyRef); never
 // deletes or changes anything upstream; HJZ-synced kewy-ai docs are skipped.
+// kewy-ai docs SP-21 published itself (their id is already a source's
+// upstream.kewy.docId) are skipped too, counted as publishedSkipped.
 //
 // It runs ONLY after the user's explicit approval (ruling 14), per workspace
 // or for all. Usage (from backend/):

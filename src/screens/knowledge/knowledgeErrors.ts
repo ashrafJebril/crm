@@ -103,6 +103,10 @@ export const KNOWLEDGE_ERROR_COPY: Record<string, CopyFn> = {
   "knowledge.pdf_too_long": () => ["This scanned PDF is too long to read. Split it into smaller files.", "ملف PDF الممسوح هذا طويل جدًا. قسّمه إلى ملفات أصغر."],
   "knowledge.site_unreachable": () => ["We couldn't reach this website or read its robots.txt.", "تعذّر الوصول إلى هذا الموقع أو قراءة ملف robots.txt الخاص به."],
   "knowledge.no_pages": () => ["We couldn't read any page of this website.", "تعذّرت قراءة أي صفحة من هذا الموقع."],
+  "knowledge.page_no_text": () => [
+    "This website's pages show their text only in a browser (JavaScript), so we couldn't read it. Add the content as a file or text instead.",
+    "تعرض صفحات هذا الموقع نصها داخل المتصفح فقط (JavaScript)، لذا تعذّرت قراءته. أضف المحتوى كملف أو نص بدلًا من ذلك.",
+  ],
 };
 
 /** The key of an ApiError body (`message`), or "". */

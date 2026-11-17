@@ -42,6 +42,7 @@ export const KNOWLEDGE_SOURCE_ERRORS = [
   "knowledge.pdf_too_long",
   "knowledge.site_unreachable",
   "knowledge.no_pages",
+  "knowledge.page_no_text",
 ] as const;
 export type KnowledgeSourceError = (typeof KNOWLEDGE_SOURCE_ERRORS)[number];
 

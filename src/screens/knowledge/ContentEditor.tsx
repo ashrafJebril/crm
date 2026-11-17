@@ -8,6 +8,7 @@ import type { KnowledgeSource } from "@/lib/types";
 import { putContent, sourcesPath, type SourceList } from "./knowledgeApi";
 import { errorKey, knowledgeErrorText } from "./knowledgeErrors";
 import { badLinks, knowledgeExtensions, safeLink, sanitizeDoc, upgradePastedLinks } from "./contentDoc";
+import { marksDirty, shouldLoadSaved } from "./contentEditorState";
 
 /**
  * SP-21 "About your business" (R10): TipTap with the allow-listed nodes only
@@ -35,7 +36,11 @@ export function ContentEditor({ tx, canEdit, onDirtyChange }: { tx: Tx; canEdit:
       // Pasted http links become https (only https and mailto links are kept).
       transformPastedHTML: upgradePastedLinks,
     },
-    onUpdate: () => {
+    // Only a document change is an edit: TipTap also emits "update" for
+    // setEditable(), which used to mark the editor dirty before the saved
+    // content arrived, so the first load was skipped (F6).
+    onUpdate: ({ transaction }) => {
+      if (!marksDirty(transaction)) return;
       setDirty(true);
       setSaved(false);
     },
@@ -57,13 +62,14 @@ export function ContentEditor({ tx, canEdit, onDirtyChange }: { tx: Tx; canEdit:
 
   // Load the saved document; a newer version never overwrites unsaved edits.
   useEffect(() => {
-    if (!editor || q.data === null) return;
-    if (loadedVersion.current === (source?.version ?? 0) || dirty) return;
+    if (!editor) return;
+    if (!shouldLoadSaved({ ready: q.data !== null, dirty, loadedVersion: loadedVersion.current, version: source?.version ?? 0 })) return;
     apply(source);
   }, [editor, q.data, source, dirty, apply]);
 
   useEffect(() => {
-    editor?.setEditable(canEdit);
+    // No update event: toggling editability is not an edit.
+    editor?.setEditable(canEdit, false);
   }, [editor, canEdit]);
 
   // Leaving the page with unsaved edits asks first.
