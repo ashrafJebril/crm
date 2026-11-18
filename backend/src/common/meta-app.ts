@@ -48,8 +48,11 @@ export function whatsappApp(): MetaAppCreds {
 export function metaWebhookSecrets(route: "whatsapp" | "meta"): string[] {
   const main = process.env.META_APP_SECRET;
   const wa = process.env.META_APP_SECRET_WA;
+  // Pages / Instagram accounts connected through the previous main app keep
+  // their webhook subscriptions on that app, which signs with its own secret.
+  const legacy = process.env.META_APP_SECRET_LEGACY;
   const ordered =
-    route === "meta" ? [main] : techProviderEnabled() ? [main, wa] : [wa, main];
+    route === "meta" ? [main, legacy] : techProviderEnabled() ? [main, wa] : [wa, main];
   return [...new Set(ordered.filter((s): s is string => !!s))];
 }
 
@@ -57,7 +60,11 @@ export function metaWebhookSecrets(route: "whatsapp" | "meta"): string[] {
 export function allMetaAppSecrets(): string[] {
   return [
     ...new Set(
-      [process.env.META_APP_SECRET, process.env.META_APP_SECRET_WA].filter(
+      [
+        process.env.META_APP_SECRET,
+        process.env.META_APP_SECRET_WA,
+        process.env.META_APP_SECRET_LEGACY,
+      ].filter(
         (s): s is string => !!s,
       ),
     ),

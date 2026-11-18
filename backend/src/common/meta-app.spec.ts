@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import {
+  allMetaAppSecrets,
   metaWebhookSecrets,
   parseSignedRequest,
   techProviderEnabled,
@@ -58,6 +59,14 @@ describe("meta-app config", () => {
     process.env.META_TECH_PROVIDER_ENABLED = "true";
     expect(metaWebhookSecrets("whatsapp")).toEqual(["main-secret", "wa-secret"]);
     expect(metaWebhookSecrets("meta")).toEqual(["main-secret"]);
+  });
+
+  it("also accepts the previous main app's secret on /webhooks/meta", () => {
+    process.env.META_APP_SECRET_LEGACY = "legacy-secret";
+    expect(metaWebhookSecrets("meta")).toEqual(["main-secret", "legacy-secret"]);
+    expect(metaWebhookSecrets("whatsapp")).toEqual(["wa-secret", "main-secret"]);
+    const signed = sign({ algorithm: "HMAC-SHA256", user_id: "u1" }, "legacy-secret");
+    expect(parseSignedRequest(signed, allMetaAppSecrets())?.user_id).toBe("u1");
   });
 
   it("drops unset and duplicate secrets", () => {
