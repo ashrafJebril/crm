@@ -11,6 +11,8 @@ import { ZernioService } from "./zernio.service";
 import { ZernioClient } from "./zernio.client";
 import { MetaWebhooksController } from "./meta-webhooks.controller";
 import { MetaWebhooksService } from "./meta-webhooks.service";
+import { MetaAppController } from "./meta-app.controller";
+import { MetaComplianceService } from "./meta-compliance.service";
 import { HjzWebhooksController } from "./hjz-webhooks.controller";
 import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { LWebhooksController } from "./l-webhooks.controller";
@@ -42,6 +44,7 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     WhatsAppController,
     ZernioController,
     MetaWebhooksController,
+    MetaAppController,
     HjzWebhooksController,
     LWebhooksController,
     LConfigController,
@@ -58,6 +61,7 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     ZernioService,
     ZernioClient,
     MetaWebhooksService,
+    MetaComplianceService,
     HjzWebhooksService,
     LWebhooksService,
     LAgentService,
