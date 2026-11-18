@@ -108,6 +108,28 @@ describe("WhatsAppService.embeddedSignupExchange", () => {
     const raw = JSON.parse((prisma.integration.create.mock.calls[0][0].data as unknown as { raw: string }).raw);
     expect(raw.registrationPin).toBeNull();
   });
+
+  it("coexistence skips /register and starts the contacts + history sync", async () => {
+    const { s, prisma } = svc([]);
+    const calls = mockGraph([
+      ...okGraph(),
+      [/\/PH1\/smb_app_data/, () => ({ body: { success: true } })],
+    ]);
+    const res = await s.embeddedSignupExchange("ws1", "code", "PH1", "WABA1", "U1", "coexistence");
+    expect(calls.some((c) => c.url.includes("/PH1/register"))).toBe(false);
+    const syncs = calls.filter((c) => c.url.includes("/PH1/smb_app_data")).map((c) => JSON.parse(String(c.init.body)).sync_type);
+    expect(syncs).toEqual(["smb_app_state_sync", "history"]);
+    const raw = JSON.parse((prisma.integration.create.mock.calls[0][0].data as unknown as { raw: string }).raw);
+    expect(raw).toMatchObject({ connectedVia: "coexistence", registrationPin: null });
+    expect(res).toMatchObject({ connected: true, coexistence: true, syncStarted: { contacts: true, history: true } });
+  });
+
+  it("coexistence still connects when the sync call fails", async () => {
+    const { s } = svc([]);
+    mockGraph([...okGraph(), [/smb_app_data/, () => ({ status: 400, body: { error: { message: "window closed" } } })]]);
+    const res = await s.embeddedSignupExchange("ws1", "code", "PH1", "WABA1", undefined, "coexistence");
+    expect(res).toMatchObject({ connected: true, syncStarted: { contacts: false, history: false } });
+  });
 });
 
 describe("WhatsAppService.verifyWebhook", () => {
@@ -127,5 +149,73 @@ describe("WhatsAppService.verifyWebhook", () => {
     const { s } = svc([{ id: "1", provider: "meta", platform: "whatsapp", workspaceId: "w", raw: JSON.stringify({ verifyToken: "aram-wa-x" }) }]);
     await expect(s.verifyWebhook("subscribe", "aram-wa-x", "chal")).resolves.toBe("chal");
     await expect(s.verifyWebhook("subscribe", "nope", "chal")).rejects.toThrow();
+  });
+});
+
+describe("WhatsAppService coexistence webhooks", () => {
+  function hookSvc() {
+    const messages: Array<{ from: string; body: string; metaMessageId: string | null }> = [];
+    const convUpdates: unknown[] = [];
+    const prisma = {
+      integration: {
+        findFirst: jest.fn(async () => ({ id: "i1", workspaceId: "ws1" })),
+        update: jest.fn(async () => ({})),
+      },
+      message: {
+        findFirst: jest.fn(async ({ where }: { where: { metaMessageId: string } }) =>
+          messages.find((m) => m.metaMessageId === where.metaMessageId) ?? null,
+        ),
+        create: jest.fn(async ({ data }: { data: (typeof messages)[number] }) => messages.push(data)),
+      },
+      contact: { upsert: jest.fn(async () => ({ id: "c1" })) },
+      conversation: {
+        findFirst: jest.fn(async () => (messages.length ? { id: "conv1" } : null)),
+        create: jest.fn(async () => ({ id: "conv1" })),
+        update: jest.fn(async (a: unknown) => convUpdates.push(a)),
+      },
+    };
+    const pipeline = { onInboundMessage: jest.fn() };
+    const realtime = { emitToWorkspace: jest.fn() };
+    const s = new WhatsAppService(prisma as never, realtime as never, {} as never, pipeline as never, {} as never);
+    return { s, messages, prisma, pipeline, convUpdates };
+  }
+  const hook = (value: object) => ({
+    object: "whatsapp_business_account",
+    entry: [{ id: "WABA1", changes: [{ field: "x", value: { metadata: { phone_number_id: "PH1" }, ...value } }] }],
+  });
+
+  it("stores phone-sent echoes as our messages, once, without unread or pipeline", async () => {
+    const { s, messages, pipeline, convUpdates } = hookSvc();
+    const echo = { from: "962700", to: "962799", id: "wamid.E1", timestamp: "1700000000", type: "text", text: { body: "hi from phone" } };
+    await s.handleWebhook(hook({ message_echoes: [echo] }) as never);
+    await s.handleWebhook(hook({ message_echoes: [echo] }) as never);
+    expect(messages).toEqual([expect.objectContaining({ from: "human", body: "hi from phone", metaMessageId: "wamid.E1" })]);
+    expect(pipeline.onInboundMessage).not.toHaveBeenCalled();
+    expect(JSON.stringify(convUpdates)).not.toContain("increment");
+  });
+
+  it("imports history with the right side for each message", async () => {
+    const { s, messages } = hookSvc();
+    await s.handleWebhook(
+      hook({
+        history: [
+          {
+            threads: [
+              {
+                id: "962799",
+                messages: [
+                  { from: "962799", id: "wamid.H1", timestamp: "1", type: "text", text: { body: "question" } },
+                  { from: "962700", to: "962799", id: "wamid.H2", timestamp: "2", type: "text", text: { body: "answer" } },
+                ],
+              },
+            ],
+          },
+        ],
+      }) as never,
+    );
+    expect(messages.map((m) => [m.from, m.body])).toEqual([
+      ["them", "question"],
+      ["human", "answer"],
+    ]);
   });
 });

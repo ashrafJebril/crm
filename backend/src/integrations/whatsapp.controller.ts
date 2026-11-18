@@ -63,6 +63,7 @@ export class WhatsAppController {
       dto.phoneNumberId,
       dto.wabaId,
       dto.metaUserId,
+      dto.mode ?? "cloud",
     );
   }
 
