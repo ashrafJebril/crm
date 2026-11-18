@@ -24,8 +24,9 @@ server {
     add_header Content-Security-Policy "frame-ancestors ${FRAME_ANCESTORS}" always;
   }
 
-  # SPA fallback — client-side routes are not files on disk.
+  # SPA fallback — client-side routes are not files on disk. `$uri.html` serves
+  # the static legal pages at clean URLs (/privacy, /terms) for Meta App Review.
   location / {
-    try_files $uri $uri/ /index.html;
+    try_files $uri $uri.html $uri/ /index.html;
   }
 }
