@@ -355,7 +355,23 @@ export function Login() {
             </form>
           </>
         )}
+        <LegalLinks tx={tx} />
       </div>
+    </div>
+  );
+}
+
+// Static pages served by nginx (public/privacy.html, public/terms.html).
+function LegalLinks({ tx }: { tx: ReturnType<typeof makeTx> }) {
+  const link = { color: "var(--ink-3)", textDecoration: "none" } as const;
+  return (
+    <div style={{ marginTop: 20, display: "flex", justifyContent: "center", gap: 16, fontSize: 12 }}>
+      <a href="/privacy" target="_blank" rel="noopener" style={link}>
+        {tx("Privacy Policy", "سياسة الخصوصية")}
+      </a>
+      <a href="/terms" target="_blank" rel="noopener" style={link}>
+        {tx("Terms of Service", "شروط الخدمة")}
+      </a>
     </div>
   );
 }
