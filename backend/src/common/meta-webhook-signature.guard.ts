@@ -17,7 +17,8 @@ import { metaWebhookSecrets } from "./meta-app";
  * Secrets are resolved from the request path (see `metaWebhookSecrets`):
  *   /webhooks/whatsapp  → META_APP_SECRET_WA and META_APP_SECRET (either
  *                         may sign while legacy WA-app customers are live)
- *   /webhooks/meta      → META_APP_SECRET
+ *   /webhooks/meta      → META_APP_SECRET, then META_APP_SECRET_LEGACY (the
+ *                          previous main app, while its pages are still live)
  *
  * Requires `rawBody: true` on the Nest app (see main.ts) so `req.rawBody`
  * holds the exact bytes Meta signed. Fails closed if the secret is unset.
