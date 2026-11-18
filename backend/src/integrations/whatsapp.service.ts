@@ -29,8 +29,16 @@ interface WaPhoneInfo {
   verified_name?: string;
 }
 
+type WaMessage = NonNullable<WebhookEntryChangeValue["messages"]>[number];
+
 interface WebhookEntryChangeValue {
   messaging_product?: string;
+  // Coexistence: messages the business typed in the WhatsApp Business app.
+  message_echoes?: Array<WaMessage & { to: string }>;
+  // Coexistence: chat history imported right after onboarding.
+  history?: Array<{
+    threads?: Array<{ id: string; messages?: Array<WaMessage & { to?: string }> }>;
+  }>;
   metadata?: {
     display_phone_number?: string;
     phone_number_id: string;
@@ -141,6 +149,7 @@ export class WhatsAppService {
     phoneNumberId: string,
     wabaId: string,
     metaUserId?: string,
+    mode: "cloud" | "coexistence" = "cloud",
   ) {
     // Popup connect is a Tech Provider feature — refuse until Meta approves us
     // and the owner flips META_TECH_PROVIDER_ENABLED.
@@ -170,6 +179,21 @@ export class WhatsAppService {
     }
     const token = tokenRes.access_token;
 
+    // Coexistence: the number is already live on the WhatsApp Business app
+    // and Meta registers it during the popup. Calling /register would fail,
+    // and no PIN is ours to keep.
+    if (mode === "coexistence") {
+      const result = await this.connect(
+        workspaceId,
+        { phoneNumberId, wabaId, accessToken: token },
+        { connectedVia: "coexistence", metaUserId: metaUserId ?? null, registrationPin: null },
+      );
+      // Meta only allows these within 24h of onboarding. Contacts and chat
+      // history then arrive on the webhook (smb_app_state_sync / history).
+      const sync = await this.startCoexistenceSync(phoneNumberId, token);
+      return { ...result, phoneRegistered: true, coexistence: true, syncStarted: sync };
+    }
+
     // Register the number on the Cloud API. Required before it can send or
     // receive; a number that's already registered just errors and we move on.
     const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
@@ -191,6 +215,28 @@ export class WhatsAppService {
       phoneRegistered: registered.ok,
       phoneRegisterError: registered.ok ? undefined : registered.error,
     };
+  }
+
+  /** POST /{phone}/smb_app_data for contacts, then history. Best-effort. */
+  private async startCoexistenceSync(
+    phoneNumberId: string,
+    token: string,
+  ): Promise<{ contacts: boolean; history: boolean }> {
+    const run = async (sync_type: string) => {
+      try {
+        await this.graphPost(`/${phoneNumberId}/smb_app_data`, token, {
+          messaging_product: "whatsapp",
+          sync_type,
+        });
+        return true;
+      } catch (e) {
+        this.log.warn(`coexistence ${sync_type} failed for phone=${phoneNumberId}: ${(e as Error).message}`);
+        return false;
+      }
+    };
+    const contacts = await run("smb_app_state_sync");
+    const history = await run("history");
+    return { contacts, history };
   }
 
   /** POST /{phone-number-id}/register — best-effort, never fails the connect. */
@@ -919,6 +965,21 @@ export class WhatsAppService {
           );
           continue;
         }
+        // Coexistence: echoes of messages sent from the phone, and imported
+        // history. Stored without unread bumps, pipeline tickets or AI.
+        for (const echo of v.message_echoes ?? []) {
+          await this.ingestFromPhone(integ.workspaceId, echo.to, echo, "human", false);
+          processed += 1;
+        }
+        for (const chunk of v.history ?? []) {
+          for (const thread of chunk.threads ?? []) {
+            for (const m of thread.messages ?? []) {
+              await this.ingestFromPhone(integ.workspaceId, thread.id, m, m.from === thread.id ? "them" : "human", true);
+              processed += 1;
+            }
+          }
+        }
+
         const messages = v.messages ?? [];
         const profileByWaId = new Map<string, string | undefined>();
         for (const c of v.contacts ?? []) {
@@ -1056,6 +1117,78 @@ export class WhatsAppService {
     if (!meta) return "en";
     if (meta.startsWith("ar")) return "ar";
     return "en";
+  }
+
+  /**
+   * Store a coexistence message that didn't arrive as a normal inbound:
+   * an echo of what the business typed on the phone, or imported history.
+   * Deduped by wamid; never bumps unread, opens tickets or wakes the AI.
+   */
+  private async ingestFromPhone(
+    workspaceId: string,
+    customerWaId: string,
+    msg: WaMessage,
+    from: "them" | "human",
+    historical: boolean,
+  ) {
+    if (!customerWaId) return;
+    if (msg.id) {
+      const seen = await this.prisma.message.findFirst({
+        where: { workspaceId, metaMessageId: msg.id },
+        select: { id: true },
+      });
+      if (seen) return;
+    }
+    const contact = await this.prisma.contact.upsert({
+      where: {
+        workspaceId_externalSource_externalId: { workspaceId, externalSource: "whatsapp", externalId: customerWaId },
+      },
+      create: {
+        workspaceId,
+        name: `WhatsApp ${this.maskPhone(customerWaId)}`,
+        phone: `+${customerWaId}`,
+        industry: "whatsapp",
+        lifecycle: "lead",
+        source: "whatsapp",
+        lastSeen: historical ? "—" : "now",
+        externalSource: "whatsapp",
+        externalId: customerWaId,
+      },
+      update: {},
+    });
+    const body = this.extractBody(msg) || `[${msg.type} message]`;
+    let conv = await this.prisma.conversation.findFirst({
+      where: { workspaceId, contactId: contact.id, channel: "whatsapp" },
+    });
+    if (!conv) {
+      conv = await this.prisma.conversation.create({
+        data: {
+          workspaceId,
+          contactId: contact.id,
+          unread: 0,
+          pinned: false,
+          lastAt: historical ? "—" : "now",
+          lastFrom: from,
+          preview: body.slice(0, 140),
+          channel: "whatsapp",
+          status: "human",
+          intent: "—",
+          confidence: 0,
+        },
+      });
+    } else if (!historical) {
+      await this.prisma.conversation.update({
+        where: { id: conv.id },
+        data: { preview: body.slice(0, 140), lastAt: "now", lastFrom: from },
+      });
+    }
+    const ts = Number(msg.timestamp) * 1000;
+    const d = Number.isFinite(ts) ? new Date(ts) : new Date();
+    const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    await this.prisma.message.create({
+      data: { workspaceId, conversationId: conv.id, from, body, t, metaMessageId: msg.id ?? null },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: "whatsapp", conversationId: conv.id });
   }
 
   private async ingestInbound(

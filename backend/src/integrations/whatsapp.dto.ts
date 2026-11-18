@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, MinLength } from "class-validator";
+import { IsNotEmpty, IsOptional, IsString, MinLength, IsIn } from "class-validator";
 
 export class ConnectWhatsAppDto {
   // Meta-issued phone-number id (NOT the phone number itself). Found under
@@ -49,6 +49,12 @@ export class EmbeddedSignupDto {
   @IsOptional()
   @IsString()
   metaUserId?: string;
+
+  // "coexistence" = the number stays on the WhatsApp Business app on the
+  // phone (Meta's QR-code flow); "cloud" = a fresh Cloud API number.
+  @IsOptional()
+  @IsIn(["cloud", "coexistence"])
+  mode?: "cloud" | "coexistence";
 }
 
 export class ConnectByTokenDto {

@@ -43,6 +43,8 @@ function ensureFbInit(appId: string, version: string) {
   }
 }
 
+type SignupMode = "cloud" | "coexistence";
+
 interface Props {
   cfg: MetaConfig;
   tx: (en: string, ar: string) => string;
@@ -80,7 +82,7 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
     return signupRef.current;
   };
 
-  const finish = async (code: string | undefined, userID: string | undefined) => {
+  const finish = async (code: string | undefined, userID: string | undefined, mode: SignupMode) => {
     try {
       if (!code) {
         setError(null); // closed / cancelled the popup — not an error
@@ -108,6 +110,7 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
         code,
         phoneNumberId: ev.phoneNumberId,
         wabaId: ev.wabaId,
+        mode,
         ...(userID ? { metaUserId: userID } : {}),
       });
       onConnected();
@@ -118,7 +121,7 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
     }
   };
 
-  const onClick = () => {
+  const onClick = (mode: SignupMode) => {
     setError(null);
     signupRef.current = null;
     if (!window.FB || !cfg.appId || !cfg.waConfigId) {
@@ -130,23 +133,42 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
     // Must run synchronously inside the click handler or the popup is blocked.
     window.FB.login(
       (resp) => {
-        void finish(resp.authResponse?.code, resp.authResponse?.userID);
+        void finish(resp.authResponse?.code, resp.authResponse?.userID, mode);
       },
       {
         config_id: cfg.waConfigId,
         response_type: "code",
         override_default_response_type: true,
-        extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
+        // "whatsapp_business_app_onboarding" = coexistence: the customer scans
+        // a QR code in the WhatsApp Business app and keeps using it.
+        extras: {
+          setup: {},
+          featureType: mode === "coexistence" ? "whatsapp_business_app_onboarding" : "",
+          sessionInfoVersion: "3",
+        },
       },
     );
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <button type="button" className="btn primary" style={{ alignSelf: "flex-start" }} onClick={onClick} disabled={busy}>
-        <IconCheck w={12} />
-        {busy ? tx("Connecting…", "جارٍ الاتصال…") : tx("Connect with Meta", "اتصل عبر Meta")}
-      </button>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button type="button" className="btn primary" onClick={() => onClick("coexistence")} disabled={busy}>
+          <IconCheck w={12} />
+          {busy
+            ? tx("Connecting…", "جارٍ الاتصال…")
+            : tx("Connect my WhatsApp Business app", "ربط تطبيق واتساب للأعمال")}
+        </button>
+        <button type="button" className="btn" onClick={() => onClick("cloud")} disabled={busy}>
+          {tx("Use a new number", "استخدام رقم جديد")}
+        </button>
+      </div>
+      <div className="muted" style={{ fontSize: 11 }}>
+        {tx(
+          "Keep using the WhatsApp Business app on your phone — you'll scan a QR code to link it. Your last 6 months of chats are imported.",
+          "استمر في استخدام تطبيق واتساب للأعمال على هاتفك — ستمسح رمز QR لربطه. يتم استيراد محادثات آخر 6 أشهر.",
+        )}
+      </div>
       <ErrorRow message={error} />
       <div className="muted" style={{ fontSize: 11 }}>
         {tx("Or use an access token instead:", "أو استخدم رمز وصول بدلاً من ذلك:")}
