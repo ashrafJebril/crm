@@ -18,15 +18,28 @@ function walk(dir: string, ext: string, deep: boolean): string[] {
 }
 const load = (files: string[]) => Object.fromEntries(files.map((f) => ["/src/" + relative(SRC, f).split("\\").join("/"), readFileSync(f, "utf8")]));
 const CSS: Record<string, string> = load([...walk(resolve(SRC, "styles"), ".css", false), ...walk(resolve(SRC, "screens"), ".css", true)]);
-const TSX: Record<string, string> = load(walk(SRC, ".tsx", true));
+// Code: .tsx (inline <style>) and .ts/.tsx `matchMedia` strings; test files carry deliberate bad samples.
+const CODE: Record<string, string> = load([...walk(SRC, ".tsx", true), ...walk(SRC, ".ts", true)].filter((f) => !/\.test\.tsx?$/.test(f)));
 
-const MEDIA_WIDTH = /\((?:min|max)-width:\s*([\d.]+)px\)/g;
+// Every width in a media condition: `(min-width: Npx)`, `(max-width: Npx)`, and the
+// range syntax `(width < Npx)`, `(width >= Npx)`, `(Npx <= width)`.
+const WIDTH_PATTERNS = [
+  /\((?:min|max)-width:\s*([\d.]+)px\)/g,
+  /\bwidth\s*[<>]=?\s*([\d.]+)px/g,
+  /([\d.]+)px\s*[<>]=?\s*width\b/g,
+];
+
+function widthsOfCondition(cond: string): number[] {
+  const out: number[] = [];
+  for (const re of WIDTH_PATTERNS) for (const m of cond.matchAll(re)) out.push(Number(m[1]));
+  return out;
+}
 
 function widthsIn(src: string): number[] {
   const out: number[] = [];
-  for (const block of src.match(/@media[^{]*\{/g) ?? []) {
-    for (const m of block.matchAll(MEDIA_WIDTH)) out.push(Number(m[1]));
-  }
+  for (const block of src.match(/@media[^{]*\{/g) ?? []) out.push(...widthsOfCondition(block));
+  // matchMedia("(…)") / matchMedia(`(…)`) string literals.
+  for (const m of src.matchAll(/matchMedia\??\.?\(\s*(["'`])([^"'`]*)\1/g)) out.push(...widthsOfCondition(m[2]));
   return out;
 }
 
@@ -59,13 +72,22 @@ describe("each screen is verified at 390px width through the verify skill with n
     expect(BP).toEqual({ sm: 640, md: 768, lg: 1024, xl: 1280 });
     expect(Object.keys(CSS).length).toBeGreaterThan(2);
     const bad: string[] = [];
-    for (const [file, src] of [...Object.entries(CSS), ...Object.entries(TSX)]) {
+    for (const [file, src] of [...Object.entries(CSS), ...Object.entries(CODE)]) {
       for (const w of widthsIn(src)) if (!CSS_MEDIA_WIDTHS.includes(w)) bad.push(`${file}: ${w}px`);
     }
     expect(bad).toEqual([]);
     // The lint itself catches an off-scale width.
     expect(widthsIn("@media (max-width: 1100px) { .x { } }").every((w) => CSS_MEDIA_WIDTHS.includes(w))).toBe(false);
     expect(widthsIn("@media (max-width: 767.98px) { .x { } }")).toEqual([767.98]);
+    // Range syntax and matchMedia strings are linted too.
+    expect(widthsIn("@media (width < 1100px) { .x { } }")).toEqual([1100]);
+    expect(widthsIn("@media (width >= 768px) and (width < 1024px) { .x { } }")).toEqual([768, 1024]);
+    expect(widthsIn("@media (700px <= width) { .x { } }")).toEqual([700]);
+    expect(widthsIn('const q = window.matchMedia("(max-width: 720px)");')).toEqual([720]);
+    expect(widthsIn("window.matchMedia?.('(width < 1024px)')")).toEqual([1024]);
+    expect(widthsIn("window.matchMedia(`(min-width: 900px)`)")).toEqual([900]);
+    // A computed query has no literal to check.
+    expect(widthsIn("window.matchMedia(`(min-width: ${n}px)`)")).toEqual([]);
   });
 
   it("dialog rule exists for phones", () => {

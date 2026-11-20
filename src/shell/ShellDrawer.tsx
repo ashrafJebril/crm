@@ -35,6 +35,10 @@ export function ShellDrawer({ onClose, children }: { onClose: () => void; childr
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // An inner popover, list or a stacked dialog (the copilot drawer) took it.
+        if (e.defaultPrevented) return;
+        const active = document.activeElement;
+        if (active && active !== document.body && panelRef.current && !panelRef.current.contains(active)) return;
         e.preventDefault();
         onCloseRef.current();
         return;
