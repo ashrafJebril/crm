@@ -6,7 +6,7 @@ import { PAYMENT_OVERDUE } from "@/lib/paymentLock";
 import { makeTx } from "@/lib/tx";
 import { IconCheck, IconPlus, IconChevDown } from "@/icons";
 import { WorkspaceMark } from "./WorkspaceMark";
-import { confirmLeave } from "@/lib/leaveGuard";
+import { confirmLeave, restoreLeaveGuards } from "@/lib/leaveGuard";
 
 /**
  * Top-bar dropdown showing the active workspace name. Click to:
@@ -62,6 +62,8 @@ export function WorkspaceSwitcher() {
       setOpen(false);
       reset();
     } catch (e) {
+      // The switch did not happen: the unsaved edits are still on screen.
+      restoreLeaveGuards();
       setError(
         e instanceof ApiError && e.code === PAYMENT_OVERDUE
           ? tx(
@@ -87,6 +89,7 @@ export function WorkspaceSwitcher() {
       setOpen(false);
       reset();
     } catch (e) {
+      restoreLeaveGuards();
       setError(e instanceof Error ? e.message : "Create failed");
     } finally {
       setBusy(false);
@@ -99,6 +102,7 @@ export function WorkspaceSwitcher() {
     <div ref={rootRef} style={{ position: "relative" }}>
       <button
         type="button"
+        className="ws-switch"
         onClick={() => setOpen((v) => !v)}
         style={{
           fontSize: 12,

@@ -29,7 +29,29 @@
 
   --row-h: 40px;
   --pad: 14px;
+
+  /* SP-30 safe areas (notches, home indicator); 0 on desktop. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-start: env(safe-area-inset-left, 0px);
+  --safe-end: env(safe-area-inset-right, 0px);
 }
+[dir="rtl"] {
+  --safe-start: env(safe-area-inset-right, 0px);
+  --safe-end: env(safe-area-inset-left, 0px);
+}
+
+/* ─── SP-30 breakpoint scale (ruling 2) ────────────────────────────────────
+   One scale, defined in src/styles/breakpoints.ts:
+     sm 640 · md 768 · lg 1024 · xl 1280
+   CSS cannot read custom properties inside @media, so rules use the literal
+   values: (min-width: Npx) or (max-width: N − 0.02px), e.g. 767.98px.
+   responsive.test.ts fails on any other width.
+     phone   < 768        the sidebar is an off-canvas drawer
+     tablet  768–1023     icon rail (expandable); topbar search is an icon
+     desktop 1024–1279    icon rail (expandable)
+     wide    ≥ 1280       full sidebar (collapsible)
+   ───────────────────────────────────────────────────────────────────────── */
 
 /* ─── DARK (default) — HJZ-aligned warm-neutral palette ───────────────── */
 :root,

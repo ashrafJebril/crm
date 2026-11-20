@@ -1611,7 +1611,7 @@ function SocialImpl() {
         .post-card:hover { transform: translateY(-1px); border-color: var(--line); }
         .post-card[data-active="true"] { box-shadow: 0 0 0 1px var(--accent-ring) inset; }
         .like-btn:hover { color: var(--ink) !important; }
-        @media (max-width: 1100px) {
+        @media (max-width: 1023.98px) {
           .insights-panel { display: none; }
         }
       `}</style>

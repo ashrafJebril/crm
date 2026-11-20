@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { _resetLeaveGuards, confirmLeave, guardHashChange, navigateIfAllowed, pendingLeaveMessage, registerLeaveGuard } from "./leaveGuard";
+import { _resetLeaveGuards, confirmLeave, guardHashChange, navigateIfAllowed, pendingLeaveMessage, registerLeaveGuard, restoreLeaveGuards, screenKey } from "./leaveGuard";
 
 const MSG = "You have unsaved changes. Leave anyway?";
 
@@ -101,5 +101,45 @@ describe("leave guard: Back/Forward and typed URLs (hashchange)", () => {
     expect(guardHashChange({ stopImmediatePropagation: stop }, { ask, pushState: vi.fn() })).toBe("allowed");
     expect(ask).not.toHaveBeenCalled();
     expect(stop).not.toHaveBeenCalled();
+  });
+});
+
+describe("leave guard: SP-29 re-review follow-ups", () => {
+  it("N1: a failed workspace switch re-arms the guard; an unmounted screen is not re-armed", () => {
+    const off = registerLeaveGuard(() => MSG);
+    expect(confirmLeave(() => true)).toBe(true);
+    expect(pendingLeaveMessage()).toBeNull();
+    restoreLeaveGuards();
+    expect(pendingLeaveMessage()).toBe(MSG);
+    expect(confirmLeave(() => true)).toBe(true);
+    off(); // the screen unmounted after the switch
+    restoreLeaveGuards();
+    expect(pendingLeaveMessage()).toBeNull();
+  });
+
+  it("N1: a navigation that throws re-arms the guard", () => {
+    registerLeaveGuard(() => MSG);
+    expect(() =>
+      navigateIfAllowed(() => {
+        throw new Error("boom");
+      }, () => true),
+    ).toThrow("boom");
+    expect(pendingLeaveMessage()).toBe(MSG);
+  });
+
+  it("N2: same-screen hash params never prompt; a route or settings tab change does", () => {
+    expect(screenKey("http://x/#/settings")).toBe("settings|");
+    expect(screenKey("http://x/#/settings?tab=members&lang=ar")).toBe("settings|members");
+    registerLeaveGuard(() => MSG);
+    const ask = vi.fn(() => false);
+    const ev = (oldURL: string, newURL: string) => ({ oldURL, newURL, stopImmediatePropagation: vi.fn() });
+    const deps = { ask, pushState: vi.fn() };
+    expect(guardHashChange(ev("http://x/#/settings", "http://x/#/settings?record=contact:1"), deps)).toBe("allowed");
+    expect(guardHashChange(ev("http://x/#/settings", "http://x/#/settings?lang=ar"), deps)).toBe("allowed");
+    expect(guardHashChange(ev("http://x/#/settings?tab=profile", "http://x/#/settings?tab=profile&section=notifications"), deps)).toBe("allowed");
+    expect(ask).not.toHaveBeenCalled();
+    expect(guardHashChange(ev("http://x/#/settings", "http://x/#/settings?tab=members"), deps)).toBe("cancelled");
+    expect(guardHashChange(ev("http://x/#/settings", "http://x/#/inbox"), deps)).toBe("cancelled");
+    expect(ask).toHaveBeenCalledTimes(2);
   });
 });

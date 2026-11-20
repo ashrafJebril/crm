@@ -31,18 +31,24 @@ import { Activate } from "@/auth/Activate";
 import { NoWorkspace } from "@/auth/NoWorkspace";
 import { BillingBanner } from "@/shell/BillingBanner";
 import { PlanRequiredNotice } from "@/components/PlanRequiredNotice";
+import { ShellDrawer } from "@/shell/ShellDrawer";
+import { setDrawerOpen, useDrawerOpen, useShellMode } from "@/shell/shellState";
 
 export default function App() {
-  const { t, setTweak } = useTweaks();
+  const { t, setLang, applyWorkspaceLang } = useTweaks();
   const [route, setRoute] = useRoute();
-  const { status, paymentOverdue } = useAuth();
+  const { status, paymentOverdue, activeWorkspace } = useAuth();
   // SP-26: invite/reset/forgot/activate pages render before the auth gate.
   const publicPage = usePublicPage();
   // An emailed link's `?lang=` wins once over the stored language.
   useEffect(() => {
     const l = langParam(window.location.search);
-    if (l) setTweak("lang", l);
-  }, [setTweak]);
+    if (l) setLang(l);
+  }, [setLang]);
+  // SP-30 ruling 4: with no language chosen on this device, the workspace's `lang` applies.
+  useEffect(() => {
+    applyWorkspaceLang(activeWorkspace?.lang);
+  }, [activeWorkspace?.lang, applyWorkspaceLang]);
 
   if (status === "loading") {
     return (
@@ -97,20 +103,69 @@ export default function App() {
   return (
     <ToastProvider>
       <ZernioRedirectCapture />
-      <div className="app" data-collapsed={t.collapsed}>
-        <ImpersonationBanner />
-        <Sidebar route={route} setRoute={setRoute} />
-        <main className="main">
-          <Topbar route={route} />
-          <BillingBanner />
-          <ScreenSlot route={route} />
-        </main>
-        <RecordSheetHost />
-        <PlanRequiredNotice />
-        <CommandPalette />
-        <CopilotHost />
-      </div>
+      <AppShell route={route} setRoute={setRoute} />
     </ToastProvider>
+  );
+}
+
+/**
+ * SP-30 responsive shell: below md the sidebar lives in an off-canvas drawer
+ * (the main content is `inert` while it is open); from md to below xl it is
+ * an icon rail unless expanded; from xl it is full unless collapsed. The
+ * choice is remembered per device; Ctrl/Cmd+B toggles.
+ */
+function AppShell({ route, setRoute }: { route: RouteId; setRoute: (r: RouteId) => void }) {
+  const { mode, toggle } = useShellMode();
+  const drawerOpen = useDrawerOpen();
+  const showDrawer = mode === "drawer" && drawerOpen;
+  const mainRef = useRef<HTMLElement>(null);
+
+  // Close on route change, and when the viewport leaves the drawer range.
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [route]);
+  useEffect(() => {
+    if (mode !== "drawer") setDrawerOpen(false);
+  }, [mode]);
+
+  // React 18 has no `inert` prop: set the attribute directly.
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    if (showDrawer) el.setAttribute("inert", "");
+    else el.removeAttribute("inert");
+  }, [showDrawer]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggle]);
+
+  return (
+    <div className="app" data-collapsed={mode === "rail"} data-shell={mode}>
+      <ImpersonationBanner />
+      {mode !== "drawer" && <Sidebar route={route} setRoute={setRoute} mode={mode} onToggle={toggle} />}
+      <main className="main" ref={mainRef}>
+        <Topbar route={route} />
+        <BillingBanner />
+        <ScreenSlot route={route} />
+      </main>
+      {showDrawer && (
+        <ShellDrawer onClose={() => setDrawerOpen(false)}>
+          <Sidebar route={route} setRoute={setRoute} mode="drawer" onNavigate={() => setDrawerOpen(false)} />
+        </ShellDrawer>
+      )}
+      <RecordSheetHost />
+      <PlanRequiredNotice />
+      <CommandPalette />
+      <CopilotHost />
+    </div>
   );
 }
 
