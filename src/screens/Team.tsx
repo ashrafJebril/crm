@@ -3,6 +3,10 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import type { Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
+import { ResponsiveTable } from "@/components/ResponsiveTable";
+import { useViewport } from "@/lib/useViewport";
+import { BP } from "@/styles/breakpoints";
+import "@/styles/screens/team.css";
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import { useToast } from "@/components/Toast";
@@ -126,7 +130,7 @@ function InviteModal({ wsId, roles, tx, lang, onClose, onSent }: {
       style={{ position: "fixed", inset: 0, background: "oklch(0 0 0 / 0.5)", display: "grid", placeItems: "center", zIndex: 100, backdropFilter: "blur(2px)" }}
       onClick={onClose}
     >
-      <div className="card" style={{ width: 460, maxWidth: "calc(100vw - 32px)", padding: 20 }} onClick={(e) => e.stopPropagation()}>
+      <div className="card dialog" style={{ width: 460, maxWidth: "calc(100vw - 32px)", padding: 20 }} onClick={(e) => e.stopPropagation()}>
         <h3 style={{ margin: 0, fontSize: 16 }}>{tx("Invite a teammate", "ادعُ عضو فريق")}</h3>
         {link ? (
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
@@ -244,7 +248,7 @@ function PendingTab({ wsId, tx, lang, canCreate, canDelete }: { wsId: string; tx
         </div>
       )}
       {q.error && <div style={{ color: "var(--bad)", fontSize: 13 }}>{memberErrorText(new Error(q.error), tx)}</div>}
-      <div className="card">
+      <ResponsiveTable className="card" label={tx("Invitations", "الدعوات")}>
         <table className="tbl">
           <thead>
             <tr>
@@ -298,7 +302,7 @@ function PendingTab({ wsId, tx, lang, canCreate, canDelete }: { wsId: string; tx
             })}
           </tbody>
         </table>
-      </div>
+      </ResponsiveTable>
     </div>
   );
 }
@@ -439,6 +443,8 @@ function TeamImpl() {
   const canManage = can("members.manage");
   // Row actions: Remove and the 2FA reset are hidden while impersonating (M1).
   const actionsOf = (m: { twoFA: boolean }, self: boolean) => memberActions({ self, twoFA: m.twoFA, impersonating, can });
+  // SP-30: below sm the members are cards.
+  const asCards = useViewport().width < BP.sm;
 
   const [tab, setTab] = useState<Tab>("members");
   const [showInvite, setShowInvite] = useState(false);
@@ -470,7 +476,7 @@ function TeamImpl() {
   };
 
   return (
-    <div data-screen-label="Team" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div data-screen-label="Team" className="team-page">
       <PageHeader
         title={tx("Team", "الفريق")}
         subtitle={tx("Members, roles, and permissions for your workspace", "أعضاء الفريق، الأدوار، والصلاحيات")}
@@ -492,7 +498,7 @@ function TeamImpl() {
         }
       />
 
-      <div className="tabs">
+      <div className="tabs tabs-scroll">
         <div className={`tab ${tab === "members" ? "active" : ""}`} onClick={() => setTab("members")}>
           {tx("Members", "الأعضاء")} <span className="count">{team.length}</span>
         </div>
@@ -512,8 +518,8 @@ function TeamImpl() {
       </div>
 
       {tab === "members" && (
-        <div style={{ padding: 20, display: "grid", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+        <div className="team-body">
+          <div className="team-stats">
             <div className="stat">
               <div className="label">{tx("Members", "الأعضاء")}</div>
               <div className="value">{team.length}</div>
@@ -544,7 +550,60 @@ function TeamImpl() {
             </div>
           )}
 
-          {!loading && !error && (
+          {!loading && !error && asCards && (
+            <div className="team-cards" role="list" aria-label={tx("Members", "الأعضاء")}>
+              {team.map((m) => {
+                const self = m.id === user?.id;
+                const acts = actionsOf(m, self);
+                return (
+                  <div key={m.id} role="listitem" className="team-card">
+                    <div className="team-card-head">
+                      <span style={{ position: "relative", flex: "0 0 auto" }}>
+                        <Avatar name={m.name} color={m.color} />
+                        <span style={{ position: "absolute", insetInlineEnd: -1, bottom: -1, width: 9, height: 9, borderRadius: "50%", background: statusColor(m.status), border: "2px solid var(--bg-1)" }} />
+                      </span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontWeight: 500 }}>{m.name}</div>
+                        <div className="mono" style={{ fontSize: 11, color: "var(--ink-3)", overflowWrap: "anywhere" }}>
+                          <bdi dir="ltr">{m.email}</bdi>
+                        </div>
+                      </div>
+                      <Badge>{tx(m.roleName ?? m.role, m.roleNameAr || m.roleName || m.role)}</Badge>
+                    </div>
+                    <div className="team-card-meta">
+                      <span className="mono">{m.status}</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: m.twoFA ? "var(--ok)" : "var(--warn)" }}>
+                        {m.twoFA ? <IconCheckCircle w={13} /> : <IconAlert w={13} />}
+                        {m.twoFA ? tx("2-step on", "التحقق مفعّل") : tx("2-step off", "التحقق غير مفعّل")}
+                      </span>
+                      <span className="mono">{day(m.joinedAt, t.lang)}</span>
+                    </div>
+                    {acts.length ? (
+                      <div className="team-card-actions">
+                        {acts.includes("handover") && (
+                          <button className="btn sm ghost" onClick={() => setDialog({ member: m, mode: "handover" })}>
+                            {tx("Hand over work", "تسليم العمل")}
+                          </button>
+                        )}
+                        {acts.includes("reset2fa") && (
+                          <button className="btn sm ghost" onClick={() => void resetTwoFa(m)}>
+                            {tx("Reset 2FA", "إعادة تعيين التحقق")}
+                          </button>
+                        )}
+                        {acts.includes("remove") && (
+                          <button className="btn sm danger" onClick={() => setDialog({ member: m, mode: "remove" })}>
+                            {tx("Remove member", "إزالة العضو")}
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {!loading && !error && !asCards && (
             <div className="card">
               <table className="tbl">
                 <thead>

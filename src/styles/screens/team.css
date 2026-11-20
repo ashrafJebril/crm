@@ -1,0 +1,28 @@
+/* SP-30 team layout (ruling 7: layout only).
+   The page scrolls (it was clipped once the list outgrew the screen); the
+   member table becomes cards below sm; the invitations table scrolls inside
+   its own container. */
+
+.team-page { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; }
+.team-body { padding: 20px; display: grid; gap: 16px; }
+.team-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+.team-cards { display: grid; gap: 8px; }
+.team-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--bg-1);
+}
+.team-card-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.team-card-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--ink-2); }
+.team-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.team-card-actions .btn { min-block-size: 36px; }
+
+@media (max-width: 767.98px) {
+  .team-body { padding: 12px; gap: 12px; }
+  .team-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .team-stats .label { overflow-wrap: anywhere; }
+}

@@ -80,6 +80,7 @@ export function MediaPicker({ open, onClose, onPick }: Props) {
       }}
     >
       <div
+        className="dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "min(640px, 92vw)",

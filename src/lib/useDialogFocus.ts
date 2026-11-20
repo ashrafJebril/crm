@@ -44,6 +44,10 @@ export function useDialogFocus(
     const onKey = (e: KeyboardEvent) => {
       const panel = panelRef.current;
       if (!panel) return;
+      // A stacked modal (opened over this one, or the copilot drawer) owns the keys while focused.
+      const focused = document.activeElement;
+      const other = focused instanceof Element ? focused.closest('[aria-modal="true"]') : null;
+      if (other && other !== panel && !panel.contains(other)) return;
       if (e.key === "Escape") {
         if (e.defaultPrevented) return;
         const a = document.activeElement;

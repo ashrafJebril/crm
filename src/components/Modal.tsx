@@ -1,4 +1,5 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useDialogFocus } from "@/lib/useDialogFocus";
 
 interface ModalProps {
   onClose: () => void;
@@ -21,7 +22,7 @@ interface ModalProps {
  * Shared modal primitive. Replaces the fixed-overlay + stopPropagation +
  * Escape-handler scaffolding that was copy-pasted across ~13 screens. Handles:
  *  - click-outside to close (backdrop mousedown)
- *  - Escape to close
+ *  - Escape to close, Tab kept inside, focus returned on close (useDialogFocus)
  *  - focus moves into the panel on open
  *  - stops propagation so clicks inside don't close it
  *
@@ -38,26 +39,17 @@ export function Modal({
   dismissible = true,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (dismissible) onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    // Move focus into the panel so keyboard users aren't stranded on the body.
-    const id = requestAnimationFrame(() => panelRef.current?.focus());
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      cancelAnimationFrame(id);
-    };
-  }, [onClose, dismissible]);
+  // SP-30: the shared modal focus (useDialogFocus): focus moves to the panel,
+  // Tab stays inside, Escape closes (when dismissible), and focus returns to
+  // the opener on close.
+  useDialogFocus(panelRef, true, () => {
+    if (dismissible) onClose();
+  }, { initialFocus: panelRef });
 
   return (
     <div
       role="presentation"
+      className="dialog-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && dismissible) onClose();
       }}
@@ -74,6 +66,7 @@ export function Modal({
       <div
         ref={panelRef}
         role="dialog"
+        className="dialog"
         aria-modal="true"
         aria-label={label}
         tabIndex={-1}

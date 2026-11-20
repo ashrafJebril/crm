@@ -84,7 +84,7 @@ export function MemberHandoverDialog({ workspaceId, member, mode, candidates, tx
       style={{ position: "fixed", inset: 0, background: "oklch(0 0 0 / 0.5)", display: "grid", placeItems: "center", zIndex: 100 }}
       onClick={onClose}
     >
-      <div className="card" style={{ width: 480, maxWidth: "calc(100vw - 32px)", padding: 20, display: "grid", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+      <div className="card dialog" style={{ width: 480, maxWidth: "calc(100vw - 32px)", padding: 20, display: "grid", gap: 12, alignContent: "start" }} onClick={(e) => e.stopPropagation()}>
         <h3 style={{ margin: 0, fontSize: 16 }}>
           {mode === "remove"
             ? tx(`Remove ${member.name}`, `إزالة ${member.name}`)

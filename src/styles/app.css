@@ -798,17 +798,21 @@ input, textarea, select { font-family: inherit; }
   to { transform: none; opacity: 1; }
 }
 @media (max-width: 639.98px) {
-  /* SP-30: every dialog is a full-screen sheet on phones. */
+  /* SP-30: every dialog is a full-screen sheet on phones. The panels set
+     their desktop size inline, so the phone rule must win (!important). */
   .dialog {
-    inline-size: 100vw;
-    max-inline-size: 100vw;
-    block-size: 100vh;
-    block-size: 100dvh;
-    max-block-size: 100dvh;
-    border-radius: 0;
-    padding-block-start: var(--safe-top);
-    padding-block-end: var(--safe-bottom);
+    inline-size: 100vw !important;
+    max-inline-size: 100vw !important;
+    block-size: 100vh !important;
+    block-size: 100dvh !important;
+    max-block-size: 100dvh !important;
+    border-radius: 0 !important;
+    border-inline: 0 !important;
+    overflow-y: auto !important;
+    padding-block-start: calc(16px + var(--safe-top)) !important;
+    padding-block-end: calc(16px + var(--safe-bottom)) !important;
   }
+  .dialog-backdrop { padding: 0 !important; }
   .record-sheet {
     width: 100%;
     border-inline-start: 0;
@@ -964,4 +968,57 @@ input, textarea, select { font-family: inherit; }
   .page-header { padding: 14px 12px 10px; }
   .page-header-row { align-items: flex-start; gap: 10px; }
   .page-header-actions { gap: 6px; }
+}
+
+/* SP-30 shared: a tab bar that scrolls inside itself when it does not fit (below xl). */
+@media (max-width: 1279.98px) {
+  .tabs-scroll {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tabs-scroll::-webkit-scrollbar { display: none; }
+  .tabs-scroll > .tab { flex: 0 0 auto; white-space: nowrap; }
+}
+@media (max-width: 767.98px) {
+  .tabs-scroll { padding-inline: 8px !important; }
+}
+
+/* ─── SP-30 remaining-route sweep (390 px: no horizontal page scroll) ─────────
+   Layout only; desktop (lg and up) is unchanged. Inline styles are overridden
+   where the screens set them. */
+.social-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.05fr) minmax(420px, 1.4fr) 280px;
+  flex: 1;
+  min-height: 0;
+}
+.insights-panel { display: flex; }
+@media (max-width: 1023.98px) {
+  /* Social: the feed and the detail scroll sideways inside the grid and snap; insights hide. */
+  .social-grid {
+    grid-template-columns: minmax(min(360px, 100%), 1.05fr) minmax(min(420px, 100%), 1.4fr);
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+  }
+  .social-grid > * { scroll-snap-align: start; }
+  /* A clipped card (overflow: hidden) scrolls its table sideways instead. */
+  .scroll-x-narrow { overflow-x: auto !important; }
+  /* A single-column page grid must not grow to its widest child (stat tiles, tables). */
+  .sweep-body { grid-template-columns: minmax(0, 1fr); }
+  .sweep-body > * { min-width: 0; }
+  .stats-4 { min-width: 0; }
+  /* Templates: the list and the preview stack, and the area scrolls. */
+  .tpl-split { grid-template-columns: minmax(0, 1fr) !important; overflow-y: auto !important; padding: 12px !important; }
+}
+@media (max-width: 767.98px) {
+  .stats-4 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; min-width: 0; }
+  /* The single-column page grid around them must not grow to the tiles' width. */
+  .sweep-body { padding-inline: 12px !important; }
+  .sweep-search { flex: 1 1 160px; width: auto !important; min-width: 0; }
+  .sweep-wrap { flex-wrap: wrap; row-gap: 4px !important; }
+  /* A two-column card row stacks. */
+  .stack-narrow { grid-template-columns: minmax(0, 1fr) !important; }
+  .stack-narrow > * { min-width: 0; }
 }

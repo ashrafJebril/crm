@@ -137,10 +137,12 @@ export function FollowUpRow({ a, selected, onToggle, assigneeName, onChanged }: 
   const link = { all: "unset", cursor: "pointer", color: "var(--accent)" } as const;
 
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--line-soft)", flexWrap: "wrap" }}>
-      <input type="checkbox" checked={selected} onChange={onToggle} aria-label={tx("Select", "تحديد")} />
+    <div className="fu-row" style={{ borderBottom: "1px solid var(--line-soft)" }}>
+      <label className="fu-row-check">
+        <input type="checkbox" checked={selected} onChange={onToggle} aria-label={tx("Select", "تحديد")} />
+      </label>
       <span aria-hidden style={{ width: 20, textAlign: "center" }}>{kindGlyph[a.kind]}</span>
-      <div style={{ flex: "1 1 240px", minWidth: 0 }}>
+      <div className="fu-row-main">
         <div dir="auto" style={{ fontSize: 13, fontWeight: 500, overflowWrap: "anywhere" }}>{a.title}</div>
         <div style={{ fontSize: 11, color: "var(--ink-3)", display: "flex", gap: 8, flexWrap: "wrap", marginTop: 2 }}>
           <span>{kindLabel(tx, a.kind)}</span>
@@ -155,10 +157,10 @@ export function FollowUpRow({ a, selected, onToggle, assigneeName, onChanged }: 
           {assigneeName && <span dir="auto">{assigneeName}</span>}
         </div>
       </div>
-      <div className="mono" style={{ fontSize: 12, color: overdue ? "var(--bad)" : "var(--ink-2)", whiteSpace: "nowrap" }}>
+      <div className="mono fu-row-due" style={{ fontSize: 12, color: overdue ? "var(--bad)" : "var(--ink-2)" }}>
         {a.dueAt ? formatDue(a.dueAt, new Date(), tz, t.lang) : "—"}
       </div>
-      <div style={{ display: "flex", gap: 4 }}>
+      <div className="fu-row-actions">
         <button type="button" className="btn sm" disabled={!canUpdate} onClick={() => setAction("done")}>{tx("Done", "تم")}</button>
         <button type="button" className="btn sm" disabled={!canUpdate} onClick={() => setAction("reschedule")}>{tx("Reschedule", "إعادة الجدولة")}</button>
         <button type="button" className="btn sm ghost" disabled={!canUpdate} onClick={() => setAction("reassign")}>{tx("Reassign", "إعادة الإسناد")}</button>

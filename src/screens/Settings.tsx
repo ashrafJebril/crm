@@ -1,5 +1,6 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { navigateIfAllowed } from "@/lib/leaveGuard";
+import "@/styles/screens/settings.css";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
@@ -90,8 +91,17 @@ function SettingsImpl() {
     { id: "profile", label: "Profile", ar: "حسابي" },
   ];
 
+  // SP-30: when the tab bar scrolls (below xl), keep the active tab in view.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = tabsRef.current?.querySelector<HTMLElement>(".tab.active");
+    if (el && tabsRef.current && tabsRef.current.scrollWidth > tabsRef.current.clientWidth) {
+      el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }, [tab]);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div className="set-page">
       <PageHeader
         title={tx("Settings", "الإعدادات")}
         subtitle={
@@ -104,7 +114,7 @@ function SettingsImpl() {
         }
       />
 
-      <div className="tabs" style={{ padding: "0 24px" }}>
+      <div className="tabs tabs-scroll" ref={tabsRef} style={{ padding: "0 24px" }}>
         {tabs.map((tb) => (
           <button
             key={tb.id}
@@ -117,8 +127,8 @@ function SettingsImpl() {
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
-        <div style={{ maxWidth: tab === "pipelines" || tab === "automaticMessages" ? 860 : 720, margin: "0 auto" }}>
+      <div className="set-scroll">
+        <div className="set-pane" style={{ maxWidth: tab === "pipelines" || tab === "automaticMessages" ? 860 : 720 }}>
           {tab === "workspace" && <WorkspaceTab />}
           {tab === "modules" && <ModulesTab />}
           {tab === "members" && <MembersTab />}

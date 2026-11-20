@@ -1,0 +1,21 @@
+/* SP-30 home (dashboard) layout (ruling 7: layout only).
+   Below lg the cards stack in two columns, below md in one; the stat tiles
+   go to two columns on phones; charts take the full width. */
+
+.dash-page { overflow-y: auto; flex: 1; }
+.dash-body { padding: 0 24px 24px; display: grid; gap: 16px; }
+.dash-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.dash-charts { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.dash-cards { display: grid; gap: 16px; }
+
+@media (max-width: 1023.98px) {
+  .dash-body { grid-template-columns: minmax(0, 1fr); }
+  .dash-charts { grid-template-columns: minmax(0, 1fr); }
+  /* The inline template is computed from the visible cards. */
+  .dash-cards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+@media (max-width: 767.98px) {
+  .dash-body { padding: 0 12px 16px; gap: 12px; }
+  .dash-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .dash-cards { grid-template-columns: minmax(0, 1fr) !important; gap: 12px; }
+}

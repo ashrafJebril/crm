@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useRoute } from "@/router";
 import { PageHeader } from "@/components/PageHeader";
+import "@/styles/screens/dashboard.css";
 import { ContinueSetupCard } from "@/screens/setup/ContinueSetupCard";
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
@@ -267,7 +268,7 @@ function DashboardImpl() {
   const topIntents = summary?.topIntents ?? [];
 
   return (
-    <div style={{ overflowY: "auto", flex: 1 }}>
+    <div className="dash-page">
       <PageHeader
         title={greeting(now, workspaceTz, firstNameOf(user?.name), t.lang)}
         subtitle={homeSubtitle(activeWorkspace?.name, t.lang)}
@@ -275,7 +276,7 @@ function DashboardImpl() {
           <>
             <button className="btn">
               <IconCal w={14} />
-              {tx("Last 7 days", "آخر ٧ أيام")}
+              {tx("Last 7 days", "آخر 7 أيام")}
               <IconChevDown w={12} />
             </button>
             <button className="btn primary">
@@ -286,7 +287,7 @@ function DashboardImpl() {
         }
       />
 
-      <div style={{ padding: "0 24px 24px", display: "grid", gap: 16 }}>
+      <div className="dash-body">
         {/* SP-20: a skipped onboarding offers "Continue setup" here. */}
         <ContinueSetupCard tx={tx} />
         {home && showDay1(home) ? (
@@ -299,7 +300,7 @@ function DashboardImpl() {
           <h2 style={{ fontSize: 15, margin: "8px 0 0" }}>{tx("Overview", "نظرة عامة")}</h2>
         )}
         {(canSummary || canTickets) && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <div className="dash-stats">
           {canSummary && (
           <StatTile
             label={tx("Conversations", "المحادثات")}
@@ -336,11 +337,11 @@ function DashboardImpl() {
         )}
 
         {canSummary && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16 }}>
+        <div className="dash-charts">
           <div className="card">
             <div className="card-h">
               <div>
-                <h3>{tx("Conversations · last 7 days", "المحادثات · آخر ٧ أيام")}</h3>
+                <h3>{tx("Conversations · last 7 days", "المحادثات · آخر 7 أيام")}</h3>
                 <div className="sub">{tx("Total vs assigned", "الإجمالي مقابل المعيّنة")}</div>
               </div>
               <div style={{ display: "flex", gap: 14, fontSize: 12 }}>
@@ -381,7 +382,7 @@ function DashboardImpl() {
         )}
 
         {cardCount > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: cardColumns, gap: 16 }}>
+        <div className="dash-cards" style={{ gridTemplateColumns: cardColumns }}>
           {canSummary && (
           <div className="card">
             <div className="card-h">
