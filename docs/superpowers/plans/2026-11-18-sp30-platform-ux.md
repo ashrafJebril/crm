@@ -185,18 +185,18 @@ What we take and what we don't:
 11. **Size.** XL: 3 build tasks (shell and foundations; first wave; second wave and the remaining-route sweep) plus verification. **(needs controller ruling, minor)**
 
 ### Controller rulings
-*Pending. The controller fills in each decision below before Task 1 starts. SP-30 has no migration; Task 4's seeding of throwaway workspaces on the production DB needs explicit user approval.*
-- **R1** (keep `tx()`; `?lang=` only; D5): _pending_
-- **R2** (one breakpoint scale 640/768/1024/1280 with a lint test): _pending_
-- **R3** (phone layouts for the shell and first and second waves; no-horizontal-scroll for the rest; follow-ups listed): _pending_
-- **R4** (first-run language from the workspace `lang`; no server-side user language): _pending_
-- **R5** (public website out of scope; login link via env; D7): _pending_
-- **R6** (no migration; `20261118160000_platform_ux` reserved and unused): _pending_
-- **R7** (move only layout styles to per-screen CSS with desktop parity): _pending_
-- **R8** (pure vitest plus the verify skill; no jsdom): _pending_
-- **R9** (SP-30 last in Phase 6, base on the SP-29 ship commit, screen-by-screen commits): _pending_
-- **R10** (verification with a local build on the production DB in throwaway workspaces; seeding needs explicit user approval): _pending_
-- **R11** (size XL; 3 build tasks + verification): _pending_
+*Decided 2026-11-20 by the controller: R1–R11 accepted as proposed. R9: SP-29 has shipped to feat/tkana-parity (merge 88faa2c); base on 4d43fe3. SP-30 has no migration; Task 4 seeding of throwaway workspaces on the production DB still needs explicit user approval.*
+- **R1** (keep `tx()`; `?lang=` only; D5): accepted
+- **R2** (one breakpoint scale 640/768/1024/1280 with a lint test): accepted
+- **R3** (phone layouts for the shell and first and second waves; no-horizontal-scroll for the rest; follow-ups listed): accepted
+- **R4** (first-run language from the workspace `lang`; no server-side user language): accepted
+- **R5** (public website out of scope; login link via env; D7): accepted
+- **R6** (no migration; `20261118160000_platform_ux` reserved and unused): accepted
+- **R7** (move only layout styles to per-screen CSS with desktop parity): accepted
+- **R8** (pure vitest plus the verify skill; no jsdom): accepted
+- **R9** (SP-30 last in Phase 6, base on the SP-29 ship commit, screen-by-screen commits): accepted
+- **R10** (verification with a local build on the production DB in throwaway workspaces; seeding needs explicit user approval): accepted
+- **R11** (size XL; 3 build tasks + verification): accepted
 
 ---
 
