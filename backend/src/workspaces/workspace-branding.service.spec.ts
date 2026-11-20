@@ -279,6 +279,13 @@ describe("chat page and email branding", () => {
     });
     // No public base URL → no logo (an email cannot load a relative URL).
     expect(emailBrandOf(ws, "").logoUrl).toBeNull();
+    // https: only, except in development and test.
+    expect(emailBrandOf(ws, "http://api.kewy.example", "production").logoUrl).toBeNull();
+    expect(emailBrandOf(ws, "http://api.kewy.example", "").logoUrl).toBeNull(); // NODE_ENV unset
+    expect(emailBrandOf(ws, "http://localhost:4100", "development").logoUrl).toBe("http://localhost:4100/api/branding/ws1/logo/m1");
+    expect(emailBrandOf(ws, "http://localhost:4100", "test").logoUrl).toBe("http://localhost:4100/api/branding/ws1/logo/m1");
+    expect(emailBrandOf(ws, "https://api.kewy.example", "production").logoUrl).toBe("https://api.kewy.example/api/branding/ws1/logo/m1");
+    expect(emailBrandOf(ws, "ftp://api.kewy.example", "development").logoUrl).toBeNull();
     const prev = process.env.BACKEND_PUBLIC_URL;
     process.env.BACKEND_PUBLIC_URL = "https://api.kewy.example";
     try {
@@ -296,6 +303,17 @@ describe("chat page and email branding", () => {
       const bad = layout({ lang: "en", title: "x", bodyHtml: "", brand: { name: "n", color: "red;x", logoUrl: 'javascript:alert(1)' } });
       expect(bad).not.toContain("javascript:");
       expect(bad).not.toContain("red;x");
+      // The layout applies the same https rule (NODE_ENV is "test" under jest).
+      const prevEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = "production";
+        expect(layout({ lang: "en", title: "x", bodyHtml: "", brand: { name: "n", logoUrl: "http://api.kewy.example/x.png" } })).not.toContain("<img");
+        expect(layout({ lang: "en", title: "x", bodyHtml: "", brand: { name: "n", logoUrl: "https://api.kewy.example/x.png" } })).toContain('<img src="https://api.kewy.example/x.png"');
+        process.env.NODE_ENV = "development";
+        expect(layout({ lang: "en", title: "x", bodyHtml: "", brand: { name: "n", logoUrl: "http://localhost:4100/x.png" } })).toContain('<img src="http://localhost:4100/x.png"');
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+      }
     } finally {
       if (prev === undefined) delete process.env.BACKEND_PUBLIC_URL;
       else process.env.BACKEND_PUBLIC_URL = prev;

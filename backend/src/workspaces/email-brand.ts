@@ -16,15 +16,29 @@ export interface EmailBrand {
   ink: string | null;
 }
 
+/**
+ * An email logo URL, or null: absolute, with no quote, space or angle
+ * bracket, and https: only (a mail client may refuse or warn on http:).
+ * http: is accepted only when NODE_ENV is development or test (local mail
+ * catchers on a loopback backend).
+ */
+export function safeEmailLogoUrl(u: unknown, nodeEnv: string | undefined = process.env.NODE_ENV): string | null {
+  if (typeof u !== "string") return null;
+  if (/^https:\/\/[^\s"'<>]+$/i.test(u)) return u;
+  const dev = nodeEnv === "development" || nodeEnv === "test";
+  return dev && /^http:\/\/[^\s"'<>]+$/i.test(u) ? u : null;
+}
+
 export function emailBrandOf(
   ws: { id: string; name: string; logoMediaId?: string | null; brandColor?: string | null },
   base: string | undefined = process.env.BACKEND_PUBLIC_URL,
+  nodeEnv: string | undefined = process.env.NODE_ENV,
 ): EmailBrand {
   const root = String(base ?? "").trim().replace(/\/+$/, "");
   const color = safeBrandColor(ws.brandColor);
   return {
     name: ws.name,
-    logoUrl: ws.logoMediaId && /^https?:\/\/[^\s"'<>]+$/i.test(root) ? `${root}${logoPath(ws.id, ws.logoMediaId)}` : null,
+    logoUrl: ws.logoMediaId && root ? safeEmailLogoUrl(`${root}${logoPath(ws.id, ws.logoMediaId)}`, nodeEnv) : null,
     color,
     ink: color ? brandInk(color) : null,
   };

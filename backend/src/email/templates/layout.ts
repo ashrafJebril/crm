@@ -4,6 +4,7 @@
  *  (absolute http(s) URL, at most 120×40, alt = the workspace name), and the
  *  button's text in the higher-contrast ink. */
 import { brandInk, safeBrandColor } from "../../workspaces/brand-color";
+import { safeEmailLogoUrl } from "../../workspaces/email-brand";
 
 export type EmailLang = "ar" | "en";
 
@@ -19,8 +20,8 @@ export interface EmailBrand {
 /** The brand colour as `#rrggbb`, or null (anything else is ignored). */
 const colorOf = (brand?: EmailBrand) => safeBrandColor(brand?.color ?? null);
 const DEFAULT_COLOR = "#0f766e";
-/** Only an absolute http(s) URL with no quote, space or angle bracket. */
-const safeLogo = (u: unknown): string | null => (typeof u === "string" && /^https?:\/\/[^\s"'<>]+$/i.test(u) ? u : null);
+/** Only an absolute https: URL with no quote, space or angle bracket (http: in development and test only). */
+const safeLogo = (u: unknown): string | null => safeEmailLogoUrl(u);
 
 export function escapeHtml(s: string): string {
   return s
