@@ -1,4 +1,5 @@
 import { memo, useMemo } from "react";
+import { WorkspaceMark } from "./WorkspaceMark";
 import type { RouteId } from "@/lib/types";
 import { useTweaks } from "@/tweaks/context";
 import { useAuth } from "@/auth/context";
@@ -80,7 +81,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
 
       {!t.collapsed && activeWorkspace && (
         <div className="workspace" title="Switch workspace">
-          <div className="ws-mark" />
+          <WorkspaceMark name={activeWorkspace.name} logoUrl={activeWorkspace.logoUrl} brandColor={activeWorkspace.brandColor} size={28} />
           <div className="ws-info">
             <div className="ws-name">{activeWorkspace.name}</div>
             <div className="ws-tier">

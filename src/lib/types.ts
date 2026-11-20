@@ -1111,6 +1111,10 @@ export interface Workspace {
   lang: string;
   plan: string;
   role: WorkspaceRole;
+  /** SP-29: relative public URL of the current logo, or null. */
+  logoUrl?: string | null;
+  /** SP-29: `#rrggbb` or null (re-validated before any style uses it). */
+  brandColor?: string | null;
 }
 
 // ─── Admin portal (super-admin views) ─────────────────────────────────────

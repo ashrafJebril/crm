@@ -89,14 +89,14 @@ input, textarea, select { font-family: inherit; }
   cursor: pointer;
 }
 .workspace:hover { border-color: var(--line); }
-.workspace .ws-mark {
+.ws-mark {
   width: 28px; height: 28px;
   border-radius: 7px;
   background: linear-gradient(135deg, var(--accent), oklch(0.72 0.18 220));
   flex: 0 0 auto;
   position: relative;
 }
-.workspace .ws-mark::after {
+.ws-mark::after {
   content: ""; position: absolute; inset: 6px;
   background: var(--bg-elev); border-radius: 4px; opacity: 0.15;
 }

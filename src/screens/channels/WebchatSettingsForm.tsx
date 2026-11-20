@@ -179,6 +179,8 @@ export function WebchatSettingsForm({
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <LabeledField
           label={tx("Colour", "اللون")}
+          // SP-29: an empty channel colour falls back to the workspace brand colour.
+          hint={form.color.trim() === "" ? tx("Uses the workspace brand colour", "يستخدم لون العلامة التجارية لمساحة العمل") : undefined}
           error={errors.color || fieldErr("color") ? tx("Use a hex colour like #22AA88.", "استخدم لونًا سداسيًا مثل ‎#22AA88.") : null}
         >
           <div style={{ display: "flex", gap: 6 }}>
