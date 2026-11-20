@@ -976,9 +976,10 @@ function CampaignsImpl() {
         }
       />
 
-      <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
+      <div className="sweep-body" style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
         <WhatsAppGate connected={connected} tx={tx} />
         <div
+          className="stats-4"
           style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}
         >
           <MiniStat
@@ -1004,6 +1005,7 @@ function CampaignsImpl() {
         </div>
 
         <div
+          className="sweep-wrap"
           style={{
             display: "flex",
             gap: 8,
@@ -1046,6 +1048,7 @@ function CampaignsImpl() {
             placeholder={tx("Search campaigns…", "ابحث في الحملات…")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            className="sweep-search"
             style={{ ...INPUT_STYLE, width: 220 }}
           />
         </div>
@@ -1065,7 +1068,7 @@ function CampaignsImpl() {
           </div>
         )}
 
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card scroll-x-narrow" style={{ padding: 0, overflow: "hidden" }}>
           <table className="tbl">
             <thead>
               <tr>
@@ -1149,7 +1152,7 @@ function CampaignsImpl() {
                     <td className="mono">{(c.failed ?? 0).toLocaleString()}</td>
                     <td className="muted mono">
                       {when
-                        ? new Date(when).toLocaleString(t.lang === "ar" ? "ar" : "en", { dateStyle: "medium", timeStyle: "short" })
+                        ? new Date(when).toLocaleString(t.lang === "ar" ? "ar-u-nu-latn" : "en", { dateStyle: "medium", timeStyle: "short" })
                         : c.schedule}
                     </td>
                     <td>

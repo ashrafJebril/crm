@@ -81,14 +81,14 @@ function OverviewTab({ days, tx }: { days: 7 | 30; tx: Tx }) {
   );
 
   return (
-    <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
+    <div className="sweep-body" style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
       {(summaryQ.error || pipelineQ.error) && (
         <div style={{ padding: 10, fontSize: 12, color: "var(--bad)", border: "1px solid var(--line-soft)", borderRadius: 8 }}>
           {summaryQ.error ?? pipelineQ.error}
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+      <div className="stats-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
         <Stat label={tx("Contacts", "جهات الاتصال")} value={s ? s.counts.contacts.toLocaleString() : "…"} />
         <Stat
           label={tx("Conversations", "المحادثات")}
@@ -96,7 +96,7 @@ function OverviewTab({ days, tx }: { days: 7 | 30; tx: Tx }) {
           sub={s ? `${s.deltas.conversationsPct >= 0 ? "+" : ""}${s.deltas.conversationsPct}% ${tx("vs last week", "مقارنة بالأسبوع الماضي")}` : undefined}
         />
         <Stat
-          label={days === 7 ? tx("Messages (7d)", "الرسائل (٧ي)") : tx("Messages (30d)", "الرسائل (٣٠ي)")}
+          label={days === 7 ? tx("Messages (7d)", "الرسائل (7ي)") : tx("Messages (30d)", "الرسائل (30ي)")}
           value={s ? msgTotal.toLocaleString() : "…"}
         />
         <Stat label={tx("Unread", "غير المقروءة")} value={s ? s.counts.unread.toLocaleString() : "…"} />
@@ -135,7 +135,7 @@ function OverviewTab({ days, tx }: { days: 7 | 30; tx: Tx }) {
           <div className="card-h">
             <h3>{tx("Social performance", "الأداء الاجتماعي")}</h3>
             <span className="sub">
-              {days === 7 ? tx("Last 7 days", "آخر ٧ أيام") : tx("Last 30 days", "آخر ٣٠ يوم")}
+              {days === 7 ? tx("Last 7 days", "آخر 7 أيام") : tx("Last 30 days", "آخر 30 يوم")}
             </span>
           </div>
           <div style={{ padding: 18, display: "grid", gap: 14 }}>
@@ -213,7 +213,7 @@ function OverviewTab({ days, tx }: { days: 7 | 30; tx: Tx }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div className="stack-narrow" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="card">
           <div className="card-h"><h3>{tx("Conversations by channel", "المحادثات حسب القناة")}</h3></div>
           <div style={{ padding: 18, display: "flex", gap: 20, alignItems: "center" }}>
@@ -304,7 +304,7 @@ function AnalyticsImpl() {
                   className={`btn ${days === d ? "primary" : ""}`.trim()}
                   onClick={() => setDays(d)}
                 >
-                  {d === 7 ? tx("Last 7 days", "آخر ٧ أيام") : tx("Last 30 days", "آخر ٣٠ يوم")}
+                  {d === 7 ? tx("Last 7 days", "آخر 7 أيام") : tx("Last 30 days", "آخر 30 يوم")}
                 </button>
               ))}
             </div>

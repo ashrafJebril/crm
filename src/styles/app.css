@@ -985,17 +985,40 @@ input, textarea, select { font-family: inherit; }
   .tabs-scroll { padding-inline: 8px !important; }
 }
 
-/* SP-30 shared: a tab bar that scrolls inside itself when it does not fit (below xl). */
-@media (max-width: 1279.98px) {
-  .tabs-scroll {
-    flex-wrap: nowrap;
+/* ─── SP-30 remaining-route sweep (390 px: no horizontal page scroll) ─────────
+   Layout only; desktop (lg and up) is unchanged. Inline styles are overridden
+   where the screens set them. */
+.social-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.05fr) minmax(420px, 1.4fr) 280px;
+  flex: 1;
+  min-height: 0;
+}
+.insights-panel { display: flex; }
+@media (max-width: 1023.98px) {
+  /* Social: the feed and the detail scroll sideways inside the grid and snap; insights hide. */
+  .social-grid {
+    grid-template-columns: minmax(min(360px, 100%), 1.05fr) minmax(min(420px, 100%), 1.4fr);
     overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
+    scroll-snap-type: x mandatory;
   }
-  .tabs-scroll::-webkit-scrollbar { display: none; }
-  .tabs-scroll > .tab { flex: 0 0 auto; white-space: nowrap; }
+  .social-grid > * { scroll-snap-align: start; }
+  /* A clipped card (overflow: hidden) scrolls its table sideways instead. */
+  .scroll-x-narrow { overflow-x: auto !important; }
+  /* A single-column page grid must not grow to its widest child (stat tiles, tables). */
+  .sweep-body { grid-template-columns: minmax(0, 1fr); }
+  .sweep-body > * { min-width: 0; }
+  .stats-4 { min-width: 0; }
+  /* Templates: the list and the preview stack, and the area scrolls. */
+  .tpl-split { grid-template-columns: minmax(0, 1fr) !important; overflow-y: auto !important; padding: 12px !important; }
 }
 @media (max-width: 767.98px) {
-  .tabs-scroll { padding-inline: 8px !important; }
+  .stats-4 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; min-width: 0; }
+  /* The single-column page grid around them must not grow to the tiles' width. */
+  .sweep-body { padding-inline: 12px !important; }
+  .sweep-search { flex: 1 1 160px; width: auto !important; min-width: 0; }
+  .sweep-wrap { flex-wrap: wrap; row-gap: 4px !important; }
+  /* A two-column card row stacks. */
+  .stack-narrow { grid-template-columns: minmax(0, 1fr) !important; }
+  .stack-narrow > * { min-width: 0; }
 }

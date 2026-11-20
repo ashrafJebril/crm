@@ -455,6 +455,7 @@ function TemplatesImpl() {
 
       {tab === "library" && (
         <div
+          className="tpl-split"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 380px",
