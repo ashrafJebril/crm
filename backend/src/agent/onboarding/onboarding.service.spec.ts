@@ -248,7 +248,8 @@ describe("OnboardingService", () => {
     const w = world();
     const MANAGER = { userId: "uManager", bypass: false };
     w.db.workspaceMember.push({ id: "m-mgr", workspaceId: A, userId: "uManager", role: "admin" });
-    const t0 = new Date("2026-11-17T08:00:00Z");
+    // Relative to now: get() measures staleness against the real clock.
+    const t0 = new Date();
     await w.svc.patch(A, OWNER, { action: "start", businessName: "Salon Noor" }, t0);
     // Not stuck yet: the starter is a member and it moved recently.
     expect((await w.svc.get(A, MANAGER)).stuck).toBe(false);
