@@ -179,13 +179,8 @@ export function PipelineBoard({
       onDragCancel={() => setActiveTicket(null)}
     >
       <div
+        className="pl-board"
         style={{
-          display: "flex",
-          gap: 14,
-          padding: "16px 18px",
-          overflowX: "auto",
-          overflowY: "hidden",
-          height: "100%",
           background:
             "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--bg-1) 95%, var(--bg-2)) 0%, var(--bg-1) 70%)",
           scrollbarColor: "var(--line) transparent",
@@ -193,7 +188,7 @@ export function PipelineBoard({
         }}
       >
         {pipeline.stages.map((stage) => (
-          <div key={stage.id} style={{ height: "100%", flex: "0 0 auto" }}>
+          <div key={stage.id} className="pl-board-col">
             <StageColumn
               stage={stage}
               pipelineId={pipeline.id}

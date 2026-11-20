@@ -104,19 +104,14 @@ export function StageColumn({
   return (
     <div
       ref={setDroppableRef}
+      className="pl-stage"
       style={{
-        display: "flex",
-        flexDirection: "column",
         background: "var(--bg-1)",
         border: `1px solid ${isOver ? accent : "var(--line)"}`,
         boxShadow: isOver
           ? `0 0 0 3px color-mix(in srgb, ${accent} 25%, transparent), 0 4px 16px rgba(0,0,0,0.25)`
           : "0 1px 2px rgba(0,0,0,0.2)",
         borderRadius: 12,
-        minWidth: 300,
-        maxWidth: 320,
-        height: "100%",
-        overflow: "hidden",
         transition: "border-color 160ms, box-shadow 160ms",
       }}
     >

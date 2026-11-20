@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { usePipelines, usePipelineSummary } from "./hooks/usePipelineData";
 import { useTicketRealtime } from "./hooks/useTicketRealtime";
 import { PipelineHeader } from "./PipelineHeader";
+import "@/styles/screens/pipeline.css";
 import { PipelineBoard } from "./PipelineBoard";
 import { TicketDetailDrawer } from "./TicketDetailDrawer";
 import { useOpenParam } from "@/lib/useOpenParam";
@@ -179,7 +180,7 @@ export default function PipelinePage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="pl-page">
       <PipelineHeader
         lang={lang}
         pipelines={pipelines}
@@ -202,7 +203,7 @@ export default function PipelinePage() {
           setFilters(f);
         }}
       />
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div className="pl-body">
         {view === "table" ? (
           <PipelineTable
             tx={tx}

@@ -12,6 +12,10 @@ import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
+import { ResponsiveTable } from "@/components/ResponsiveTable";
+import { useViewport } from "@/lib/useViewport";
+import { BP } from "@/styles/breakpoints";
+import "@/styles/screens/contacts.css";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import { IconFilter, IconMore, IconPlus } from "@/icons";
@@ -115,8 +119,57 @@ function ContactsTable({
     else next.add(id);
     setSelected(next);
   };
+  // SP-30: below sm a card list (the table scrolls inside its own container above that).
+  const { width } = useViewport();
+  if (width < BP.sm) {
+    return (
+      <div className="ct-cards" role="list" aria-label={tx("Contacts", "جهات الاتصال")}>
+        {contacts.map((c) => (
+          <div
+            key={c.id}
+            role="listitem"
+            className="ct-card"
+            data-selected={selected.has(c.id) || undefined}
+            onClick={() => onOpenContact(c.id)}
+          >
+            <label className="ct-card-check" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                aria-label={tx(`Select ${c.name}`, `تحديد ${c.name}`)}
+                checked={selected.has(c.id)}
+                onChange={() => toggle(c.id)}
+              />
+            </label>
+            <Avatar name={c.name} color={String(150 + (c.id.charCodeAt(1) || 0) * 6)} />
+            <div className="ct-card-main">
+              <button
+                type="button"
+                className="ct-card-name"
+                style={{ background: "none", border: 0, padding: 0, color: "inherit", font: "inherit", fontWeight: 500, textAlign: "start", cursor: "pointer" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenContact(c.id);
+                }}
+              >
+                <bdi>{c.name}</bdi>
+              </button>
+              <div className="ct-card-meta">
+                <span className="mono" dir="ltr">{c.phone}</span>
+                <span>·</span>
+                <span className="mono">{c.lifecycle}</span>
+                {c.tags.slice(0, 2).map((tg) => (
+                  <Badge key={tg} kind={tagKind(tg)}>{tg}</Badge>
+                ))}
+                {c.tags.length > 2 ? <span>+{c.tags.length - 2}</span> : null}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+    <ResponsiveTable className="card" style={{ padding: 0 }} label={tx("Contacts table", "جدول جهات الاتصال")}>
       <table className="tbl">
         <thead>
           <tr>
@@ -223,7 +276,7 @@ function ContactsTable({
           onClose={() => setStepFor(null)}
         />
       )}
-    </div>
+    </ResponsiveTable>
   );
 }
 
@@ -739,14 +792,14 @@ function ContactsImpl() {
   };
 
   return (
-    <div style={{ overflowY: "auto", flex: 1 }}>
+    <div className="ct-page">
       <PageHeader
         title={tx("Contacts", "جهات الاتصال")}
         subtitle={
           statsQ.data
             ? tx(
                 `${statsQ.data.total.toLocaleString()} contacts · ${statsQ.data.leads.toLocaleString()} leads · ${statsQ.data.customers.toLocaleString()} customers`,
-                `${statsQ.data.total.toLocaleString("ar")} جهة · ${statsQ.data.leads.toLocaleString("ar")} عميل محتمل · ${statsQ.data.customers.toLocaleString("ar")} عميل`,
+                `${statsQ.data.total.toLocaleString("ar-u-nu-latn")} جهة · ${statsQ.data.leads.toLocaleString("ar-u-nu-latn")} عميل محتمل · ${statsQ.data.customers.toLocaleString("ar-u-nu-latn")} عميل`,
               )
             : tx("Loading…", "جارٍ التحميل…")
         }
@@ -815,7 +868,7 @@ function ContactsImpl() {
               {exporting
                 ? tx("Exporting…", "جارٍ التصدير…")
                 : selected.size > 0
-                  ? tx(`Export selected (${selected.size.toLocaleString()})`, `تصدير المحدد (${selected.size.toLocaleString("ar")})`)
+                  ? tx(`Export selected (${selected.size.toLocaleString()})`, `تصدير المحدد (${selected.size.toLocaleString("ar-u-nu-latn")})`)
                   : tx("Export", "تصدير")}
             </button>
             <button className="btn primary" onClick={() => setShowNew(true)} disabled={!can("contacts.create")} title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
@@ -826,7 +879,7 @@ function ContactsImpl() {
         }
       />
 
-      <div style={{ display: "flex", gap: 6, padding: "0 24px 10px" }}>
+      <div className="ct-tabs">
         {(
           [
             ["contacts", tx("Contacts", "جهات الاتصال")],
@@ -847,10 +900,10 @@ function ContactsImpl() {
       </div>
 
       {activeTab === "contacts" && (
-      <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
-        <div
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
-        >
+      <div className="ct-body">
+        <div className="ct-seg-row">
+          {/* Below sm the segment chips scroll in their own row. */}
+          <div className="ct-seg-chips">
           <SegmentChip
             label={tx("All", "الكل")}
             count={allCount}
@@ -871,7 +924,8 @@ function ContactsImpl() {
               onClick={() => setActiveSegmentId(s.id)}
             />
           ))}
-          <span style={{ flex: 1 }} />
+          </div>
+          <span className="ct-seg-spacer" style={{ flex: 1 }} />
           <button
             className="btn ghost sm"
             onClick={() => setActiveTab("audiences")}
@@ -883,7 +937,8 @@ function ContactsImpl() {
             placeholder={tx("Search contacts…", "ابحث…")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ ...INPUT_STYLE, width: 220 }}
+            className="ct-search"
+            style={INPUT_STYLE}
           />
         </div>
 
@@ -1098,7 +1153,7 @@ function ContactsImpl() {
               <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
                 {tx(
                   `${selected.size.toLocaleString()} contact(s) will be deleted, along with their conversations. Contacts with linked tickets or bookings are skipped unless you choose to delete them anyway.`,
-                  `سيتم حذف ${selected.size.toLocaleString("ar")} جهة مع محادثاتها. تُتخطى الجهات المرتبطة بتذاكر أو حجوزات ما لم تختر حذفها رغم ذلك.`,
+                  `سيتم حذف ${selected.size.toLocaleString("ar-u-nu-latn")} جهة مع محادثاتها. تُتخطى الجهات المرتبطة بتذاكر أو حجوزات ما لم تختر حذفها رغم ذلك.`,
                 )}
               </div>
             </>
@@ -1222,7 +1277,7 @@ function PipelineConfirmModal({ tx, count, pipelineName, busy, onCancel, onConfi
   // The pipeline name is user text: isolate it so its direction can't scramble the sentence.
   const [before, after] = tx(
     `Create ${count.toLocaleString()} tickets in {p}? Each new ticket can start automations.`,
-    `إنشاء ${count.toLocaleString("ar")} تذكرة في {p}؟ قد تبدأ كل تذكرة جديدة عمليات أتمتة.`,
+    `إنشاء ${count.toLocaleString("ar-u-nu-latn")} تذكرة في {p}؟ قد تبدأ كل تذكرة جديدة عمليات أتمتة.`,
   ).split("{p}");
   return (
     <Modal onClose={busy ? () => {} : onCancel} width={420} label={tx("Add to pipeline", "إضافة إلى مسار")}
