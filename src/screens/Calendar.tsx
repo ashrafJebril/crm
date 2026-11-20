@@ -1345,7 +1345,7 @@ function CalendarImpl() {
 
   // ─── Data ──────────────────────────────────────────────────────────────
   // A bounded range (≤ 92 days) with the service/staff filters, not the whole history.
-  const apptsQ = useFetch<Appointment[]>(canView ? appointmentsQuery(cal, tz, t.lang) : null);
+  const apptsQ = useFetch<Appointment[]>(canView ? appointmentsQuery({ ...cal, view }, tz, t.lang) : null);
   const servicesQ = useFetch<{ items: Service[] }>(canView ? "/services" : null);
   const staffQ = useFetch<{ items: StaffResource[] }>(canView ? "/staff" : null);
   const services = useMemo(() => servicesQ.data?.items ?? [], [servicesQ.data]);
@@ -1590,7 +1590,7 @@ function CalendarImpl() {
             label={tx("No-show rate", "نسبة عدم الحضور")}
             value={String(stats.noShowPct)}
             unit="%"
-            sub={tx("Last 7 days", "آخر ٧ أيام")}
+            sub={tx("Last 7 days", "آخر 7 أيام")}
             icon={<IconAlert w={12} />}
             tone={stats.noShowPct > 15 ? "bad" : "warn"}
           />

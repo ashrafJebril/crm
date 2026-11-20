@@ -23,7 +23,7 @@
   cursor: pointer;
   text-align: start;
 }
-.ct-card[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ct-card[data-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .ct-card-check { display: grid; place-items: center; inline-size: 40px; block-size: 40px; margin-inline-start: -8px; }
 .ct-card-main { min-width: 0; display: grid; gap: 2px; }
 .ct-card-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

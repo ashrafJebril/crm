@@ -55,13 +55,13 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
   const { width } = useViewport();
   const asCards = width < BP.sm;
   const canUpdate = usePermissions().can("tickets.update");
-  const num = (n: number) => n.toLocaleString(lang === "ar" ? "ar" : "en");
+  const num = (n: number) => n.toLocaleString(lang === "ar" ? "ar-u-nu-latn" : "en");
   const rows: Ticket[] = useMemo(() => q.data?.pages.flatMap((p) => p.items) ?? [], [q.data]);
   const total = q.data?.pages[0]?.total ?? 0;
   const stageById = useMemo(() => new Map(stages.map((s) => [s.id, s])), [stages]);
   const owner = useMemo(() => new Map(team.map((m) => [m.id, m.name])), [team]);
   const fmt = useMemo(
-    () => new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en-GB", { timeZone: tz, day: "numeric", month: "short", year: "numeric" }),
+    () => new Intl.DateTimeFormat(lang === "ar" ? "ar-u-nu-latn" : "en-GB", { timeZone: tz, day: "numeric", month: "short", year: "numeric" }),
     [lang, tz],
   );
   const date = (iso: string) => {
@@ -124,7 +124,7 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
             const stage = t.stage ?? stageById.get(t.stageId);
             const accent = stage ? stageColor[stage.color] ?? "var(--ink-3)" : "var(--ink-3)";
             return (
-              <div key={t.id} role="listitem" className="pl-card" aria-selected={selected.has(t.id)}>
+              <div key={t.id} role="listitem" className="pl-card" data-selected={selected.has(t.id) || undefined}>
                 {canUpdate ? (
                   <label className="pl-card-check">
                     <input

@@ -129,7 +129,7 @@ function ContactsTable({
             key={c.id}
             role="listitem"
             className="ct-card"
-            aria-selected={selected.has(c.id)}
+            data-selected={selected.has(c.id) || undefined}
             onClick={() => onOpenContact(c.id)}
           >
             <label className="ct-card-check" onClick={(e) => e.stopPropagation()}>
@@ -799,7 +799,7 @@ function ContactsImpl() {
           statsQ.data
             ? tx(
                 `${statsQ.data.total.toLocaleString()} contacts · ${statsQ.data.leads.toLocaleString()} leads · ${statsQ.data.customers.toLocaleString()} customers`,
-                `${statsQ.data.total.toLocaleString("ar")} جهة · ${statsQ.data.leads.toLocaleString("ar")} عميل محتمل · ${statsQ.data.customers.toLocaleString("ar")} عميل`,
+                `${statsQ.data.total.toLocaleString("ar-u-nu-latn")} جهة · ${statsQ.data.leads.toLocaleString("ar-u-nu-latn")} عميل محتمل · ${statsQ.data.customers.toLocaleString("ar-u-nu-latn")} عميل`,
               )
             : tx("Loading…", "جارٍ التحميل…")
         }
@@ -868,7 +868,7 @@ function ContactsImpl() {
               {exporting
                 ? tx("Exporting…", "جارٍ التصدير…")
                 : selected.size > 0
-                  ? tx(`Export selected (${selected.size.toLocaleString()})`, `تصدير المحدد (${selected.size.toLocaleString("ar")})`)
+                  ? tx(`Export selected (${selected.size.toLocaleString()})`, `تصدير المحدد (${selected.size.toLocaleString("ar-u-nu-latn")})`)
                   : tx("Export", "تصدير")}
             </button>
             <button className="btn primary" onClick={() => setShowNew(true)} disabled={!can("contacts.create")} title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
@@ -1153,7 +1153,7 @@ function ContactsImpl() {
               <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
                 {tx(
                   `${selected.size.toLocaleString()} contact(s) will be deleted, along with their conversations. Contacts with linked tickets or bookings are skipped unless you choose to delete them anyway.`,
-                  `سيتم حذف ${selected.size.toLocaleString("ar")} جهة مع محادثاتها. تُتخطى الجهات المرتبطة بتذاكر أو حجوزات ما لم تختر حذفها رغم ذلك.`,
+                  `سيتم حذف ${selected.size.toLocaleString("ar-u-nu-latn")} جهة مع محادثاتها. تُتخطى الجهات المرتبطة بتذاكر أو حجوزات ما لم تختر حذفها رغم ذلك.`,
                 )}
               </div>
             </>
@@ -1277,7 +1277,7 @@ function PipelineConfirmModal({ tx, count, pipelineName, busy, onCancel, onConfi
   // The pipeline name is user text: isolate it so its direction can't scramble the sentence.
   const [before, after] = tx(
     `Create ${count.toLocaleString()} tickets in {p}? Each new ticket can start automations.`,
-    `إنشاء ${count.toLocaleString("ar")} تذكرة في {p}؟ قد تبدأ كل تذكرة جديدة عمليات أتمتة.`,
+    `إنشاء ${count.toLocaleString("ar-u-nu-latn")} تذكرة في {p}؟ قد تبدأ كل تذكرة جديدة عمليات أتمتة.`,
   ).split("{p}");
   return (
     <Modal onClose={busy ? () => {} : onCancel} width={420} label={tx("Add to pipeline", "إضافة إلى مسار")}

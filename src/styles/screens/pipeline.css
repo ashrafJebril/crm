@@ -37,7 +37,7 @@
   background: var(--bg-1);
   min-block-size: 56px;
 }
-.pl-card[aria-selected="true"] { border-color: var(--accent); }
+.pl-card[data-selected="true"] { border-color: var(--accent); }
 .pl-card-check { display: grid; place-items: center; inline-size: 40px; block-size: 40px; flex: 0 0 auto; }
 .pl-card-main {
   flex: 1;
