@@ -458,6 +458,7 @@ function ProvisionedCredentialsModal({
       onClick={onClose}
     >
       <div
+        className="dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-1)",

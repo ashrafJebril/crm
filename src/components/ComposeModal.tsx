@@ -159,6 +159,7 @@ export function ComposeModal({ open, onClose, onPosted }: ComposeModalProps) {
       />
       <div
         role="dialog"
+        className="dialog"
         aria-label={tx("Compose new post", "إنشاء منشور")}
         style={{
           position: "fixed",

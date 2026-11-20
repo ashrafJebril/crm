@@ -1163,7 +1163,7 @@ function DraftEditor({
           rows={12}
           placeholder={tx(
             "Cancelling less than 24 hours before the appointment costs half the service price.",
-            "الإلغاء قبل أقل من ٢٤ ساعة من الموعد بيكلف نص سعر الخدمة.",
+            "الإلغاء قبل أقل من 24 ساعة من الموعد بيكلف نص سعر الخدمة.",
           )}
           style={{
             ...inputStyle,
@@ -1390,6 +1390,7 @@ function DeleteConfirm({
       onClick={onCancel}
     >
       <div
+        className="dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-1)",
