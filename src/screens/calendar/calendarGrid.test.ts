@@ -38,6 +38,16 @@ describe("the week grid draws exactly what it fetched (final review I1)", () => 
     }
   });
 
+  it.each(["en", "ar"] as const)("%s: the day view fetches every day of the stats week", (lang) => {
+    for (const date of dates) {
+      const { from, to } = rangeFor("day", date, "Asia/Riyadh", lang);
+      for (const d of viewDays("week", date, lang)) {
+        const inside = instantOf(d, 0, "Asia/Riyadh").getTime() >= new Date(from).getTime() && instantOf(addDays(d, 1), 0, "Asia/Riyadh").getTime() <= new Date(to).getTime();
+        expect({ lang, date, d, inside }).toEqual({ lang, date, d, inside: true });
+      }
+    }
+  });
+
   it("Arabic weeks start on Saturday, English on Monday; Sunday is never dropped", () => {
     expect(viewDays("week", "2026-11-15", "ar")).toEqual(["2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20"]);
     expect(viewDays("week", "2026-11-15", "en")).toEqual(["2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15"]);

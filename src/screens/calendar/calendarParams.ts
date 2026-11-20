@@ -75,14 +75,13 @@ export function viewDays(view: CalendarView, date: string, lang: Lang): string[]
  * The `from`/`to` instants for `GET /appointments` (≤ MAX_LIST_RANGE_DAYS).
  * The week-based views also cover a day each side, so the browser-zone week
  * grid never misses a booking near a boundary; the list looks 91 days ahead.
+ * The day view fetches the same week: the "This week" stats are always drawn
+ * from the whole week, whichever view is showing.
  */
 export function rangeFor(view: CalendarView, date: string, tz: string, lang: Lang): { from: string; to: string } {
   let startDate: string;
   let endDate: string;
-  if (view === "day") {
-    startDate = addDays(date, -1);
-    endDate = addDays(date, 2);
-  } else if (view === "list") {
+  if (view === "list") {
     startDate = weekStartOf(date, lang);
     endDate = addDays(startDate, MAX_LIST_RANGE_DAYS - 1);
   } else {

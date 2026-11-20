@@ -132,7 +132,7 @@ describe("calendar view, date and filters round-trip through the hash", () => {
     const list = rangeFor("list", "2026-11-17", "Asia/Riyadh", "en");
     expect((new Date(list.to).getTime() - new Date(list.from).getTime()) / 86_400_000).toBeLessThanOrEqual(92);
     expect(appointmentsQuery({ view: "day", date: "2026-11-17", service: "s1", staff: null }, "Asia/Riyadh", "en")).toBe(
-      "/appointments?from=2026-11-15T21%3A00%3A00.000Z&to=2026-11-18T21%3A00%3A00.000Z&limit=500&serviceId=s1",
+      "/appointments?from=2026-11-14T21%3A00%3A00.000Z&to=2026-11-23T21%3A00%3A00.000Z&limit=500&serviceId=s1",
     );
   });
 });
