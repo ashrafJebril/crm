@@ -77,7 +77,7 @@ export function WorkspaceTab() {
 
   const dirty = canEdit && isDirty(form, initial);
   const barState = saveBarState({ dirty, saving, error: saveError, savedAt, now: Date.now(), readOnly: !canEdit });
-  useLeaveGuard(dirty, tx("You have unsaved changes. Leave anyway?", "لديك تغييرات غير محفوظة. هل تريد المغادرة؟"), form);
+  useLeaveGuard(dirty, tx("You have unsaved changes. Leave anyway?", "لديك تغييرات غير محفوظة. هل تريد المغادرة؟"));
 
   const set = <K extends keyof GeneralForm>(k: K, v: GeneralForm[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -388,17 +388,19 @@ function LogoField({ workspace, canEdit, onChanged }: { workspace: Workspace; ca
  * While the form is dirty: a shared leave guard (lib/leaveGuard). Tabs,
  * routes and the workspace switcher ask it before changing state; the
  * capture-phase hashchange listener covers Back/Forward and typed URLs, and
- * the unload prompt covers a reload or a closed tab. `rev` re-arms the guard
- * after an accepted leave that did not unmount the form.
+ * the unload prompt covers a reload or a closed tab. Installed once per dirty
+ * period (not per keystroke); the message is read through a ref.
  */
-function useLeaveGuard(dirty: boolean, message: string, rev: unknown) {
+function useLeaveGuard(dirty: boolean, message: string) {
+  const messageRef = useRef(message);
+  messageRef.current = message;
   useEffect(() => {
     if (!dirty) return;
-    const off = registerLeaveGuard(() => message);
+    const off = registerLeaveGuard(() => messageRef.current);
     const offListeners = installLeaveListeners();
     return () => {
       off();
       offListeners();
     };
-  }, [dirty, message, rev]);
+  }, [dirty]);
 }
