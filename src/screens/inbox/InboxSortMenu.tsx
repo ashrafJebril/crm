@@ -23,6 +23,7 @@ export function InboxSortMenu({
       title={tx("Sort", "ترتيب")}
       ariaLabel={tx("Sort", "ترتيب")}
       role="menu"
+      sheetOnPhone
     >
       {(close) =>
         opts.map((o) => (

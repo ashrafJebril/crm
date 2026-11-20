@@ -17,7 +17,7 @@ function walk(dir: string, ext: string, deep: boolean): string[] {
   return out;
 }
 const load = (files: string[]) => Object.fromEntries(files.map((f) => ["/src/" + relative(SRC, f).split("\\").join("/"), readFileSync(f, "utf8")]));
-const CSS: Record<string, string> = load([...walk(resolve(SRC, "styles"), ".css", false), ...walk(resolve(SRC, "screens"), ".css", true)]);
+const CSS: Record<string, string> = load([...walk(resolve(SRC, "styles"), ".css", true), ...walk(resolve(SRC, "screens"), ".css", true)]);
 // Code: .tsx (inline <style>) and .ts/.tsx `matchMedia` strings; test files carry deliberate bad samples.
 const CODE: Record<string, string> = load([...walk(SRC, ".tsx", true), ...walk(SRC, ".ts", true)].filter((f) => !/\.test\.tsx?$/.test(f)));
 

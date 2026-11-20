@@ -226,6 +226,7 @@ export function InboxFilterMenu({
       ariaLabel={tx("Filter", "فلتر")}
       role="dialog"
       badge={activeFilterCount(filter)}
+      sheetOnPhone
     >
       {() => <Panel filter={filter} onChange={onChange} team={team} labels={labels} channels={channels} tx={tx} />}
     </Popover>

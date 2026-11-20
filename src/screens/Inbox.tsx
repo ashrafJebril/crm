@@ -20,6 +20,7 @@ import {
   IconSend,
   IconTemplate,
   IconX,
+  IconArrow,
 } from "@/icons";
 import { API_BASE, ApiError, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
@@ -74,6 +75,9 @@ import { LinkedItemsCard } from "./inbox/LinkedItemsCard";
 import { TopicsCard } from "./inbox/TopicsCard";
 import { TemplateSendDialog, type TemplateHeaderValue } from "./inbox/TemplateSendDialog";
 import { getHashParam, setHashParam } from "@/lib/hashState";
+import { useViewport } from "@/lib/useViewport";
+import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, detailsAsSheet, inboxPane } from "./inbox/inboxPane";
+import "@/styles/screens/inbox.css";
 
 
 /** Day label for thread separators: Today / Yesterday / a localized date.
@@ -892,12 +896,10 @@ function InboxList({
 
   return (
     <div
+      className="ix-list"
       style={{
-        display: "flex",
-        flexDirection: "column",
         borderInlineEnd: "1px solid var(--line-soft)",
         background: "var(--bg-1)",
-        minHeight: 0,
       }}
     >
       <div style={{ padding: "18px 16px 12px", borderBottom: "1px solid var(--line-soft)" }}>
@@ -925,13 +927,14 @@ function InboxList({
         <div
           role="group"
           aria-label={tx("View", "العرض")}
-          style={{ display: "flex", gap: 4, marginBottom: 10, flexWrap: "wrap", alignItems: "center" }}
+          className="ix-view-row"
+          style={{ gap: 4, marginBottom: 10, alignItems: "center" }}
         >
           {(["list", "table", "board"] as const).map((v) => (
             <button
               key={v}
               type="button"
-              className={`btn sm${view === v ? " primary" : ""}`}
+              className={`btn sm ix-view-btn${view === v ? " primary" : ""}`}
               aria-pressed={view === v}
               onClick={() => setView(v)}
             >
@@ -952,7 +955,8 @@ function InboxList({
           <div
             role="tablist"
             aria-label={tx("Numbers", "الأرقام")}
-            style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}
+            className="ix-pill-row"
+            style={{ gap: 5, marginTop: 12 }}
           >
             {numberTabList.map((tab) => (
               <button
@@ -969,7 +973,7 @@ function InboxList({
             ))}
           </div>
         )}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
+        <div className="ix-pill-row" style={{ gap: 5, marginTop: 12 }}>
           {filters.map((f) => (
             <button
               key={f.id}
@@ -982,7 +986,7 @@ function InboxList({
             </button>
           ))}
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+        <div className="ix-pill-row" style={{ gap: 5, marginTop: 8 }}>
           {FILTER_CHANNELS.map((ch) => {
             const active = channels.has(ch);
             return (
@@ -1001,7 +1005,7 @@ function InboxList({
           })}
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", paddingBlock: "6px 16px" }}>
+      <div className="ix-list-scroll" style={{ paddingBlock: "6px 16px" }}>
         {loading && (
           <div aria-label={tx("Loading conversations", "جارٍ تحميل المحادثات")}>
             {Array.from({ length: 6 }).map((_, i) => (
@@ -1473,14 +1477,12 @@ function ConversationPane({
       }}
     >
       <div
+        className="ix-conv-head"
         style={{
           minHeight: 64,
           padding: "10px 20px",
           borderBottom: "1px solid var(--line-soft)",
           background: "var(--bg-1)",
-          display: "flex",
-          alignItems: "center",
-          gap: 13,
         }}
       >
         <div style={{ position: "relative", flex: "0 0 auto" }}>
@@ -1496,7 +1498,7 @@ function ConversationPane({
             <ChannelMark channel={conv.channel} size={14} />
           </span>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="ix-conv-info">
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
             <span className="ix-display" style={{ fontWeight: 700, fontSize: 16.5 }}>
               {contact?.name}
@@ -1532,7 +1534,7 @@ function ConversationPane({
             <span>{contact?.industry}</span>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div className="ix-conv-actions">
           {canStitch && (
             <div
               role="group"
@@ -1606,13 +1608,8 @@ function ConversationPane({
           wasAtBottomRef.current =
             t.scrollHeight - t.scrollTop - t.clientHeight < 60;
         }}
+        className="ix-thread-scroll"
         style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "26px 30px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
           backgroundImage: "radial-gradient(circle, var(--line-soft) 1px, transparent 1px)",
           backgroundSize: "22px 22px",
           backgroundPosition: "0 0",
@@ -1702,7 +1699,7 @@ function ConversationPane({
         </div>
       </details>
 
-      <div style={{ padding: "12px 18px 16px", borderTop: "1px solid var(--line-soft)" }}>
+      <div className="ix-composer-bar" style={{ padding: "12px 18px 16px", borderTop: "1px solid var(--line-soft)" }}>
         {!waBlocked && saved.strip}
         {saved.slashMenu}
         <div className="ix-composer">
@@ -2530,6 +2527,67 @@ function InboxImpl() {
   );
   // Deep link from a notification: `#/inbox?open=<conversationId>`.
   useOpenParam("inbox", setActiveId);
+  // SP-30 phone pattern: one pane at a time (list → thread → details). The
+  // selection and the details pane are pushed into the hash (`c=`, `d=1`) so
+  // Back walks back through them; from md every pane is on screen.
+  const { layout } = useViewport();
+  const phone = layout === "phone";
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const pushedConv = useRef(false);
+  const pushedDetails = useRef(false);
+  const pushHash = (param: string, value: string | null) => {
+    const next = setHashParam(window.location.hash, param, value);
+    window.history.pushState(window.history.state, "", window.location.pathname + window.location.search + next);
+  };
+  const selectConversation = (id: string) => {
+    setActiveId(id);
+    setDetailsOpen(false);
+    if (phoneRef.current) {
+      const base = setHashParam(window.location.hash, PANE_DETAILS_PARAM, null);
+      const next = setHashParam(base, PANE_CONV_PARAM, id);
+      const url = window.location.pathname + window.location.search + next;
+      if (pushedConv.current) window.history.replaceState(window.history.state, "", url);
+      else window.history.pushState(window.history.state, "", url);
+      pushedConv.current = true;
+      pushedDetails.current = false;
+    }
+  };
+  const backToList = () => {
+    if (pushedConv.current) window.history.back();
+    else {
+      setActiveId(null);
+      setDetailsOpen(false);
+    }
+  };
+  const openDetails = () => {
+    setDetailsOpen(true);
+    if (phoneRef.current && !pushedDetails.current) {
+      pushHash(PANE_DETAILS_PARAM, "1");
+      pushedDetails.current = true;
+    }
+  };
+  const closeDetails = () => {
+    if (phoneRef.current && pushedDetails.current) window.history.back();
+    else setDetailsOpen(false);
+  };
+  useEffect(() => {
+    const onHash = () => {
+      const h = window.location.hash;
+      if (pushedDetails.current && !getHashParam(h, PANE_DETAILS_PARAM)) {
+        pushedDetails.current = false;
+        setDetailsOpen(false);
+      }
+      if (pushedConv.current && !getHashParam(h, PANE_CONV_PARAM)) {
+        pushedConv.current = false;
+        setActiveId(null);
+        setDetailsOpen(false);
+      }
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
   const [channels, setChannels] = useState<Set<ConvChannel>>(
@@ -2758,10 +2816,10 @@ function InboxImpl() {
 
   // Auto-select first conversation when list loads.
   useEffect(() => {
-    if (shouldAutoSelect(embedVisible, activeId, conversations)) {
+    if (!phone && shouldAutoSelect(embedVisible, activeId, conversations)) {
       setActiveId(conversations[0]!.id);
     }
-  }, [conversations, activeId, embedVisible]);
+  }, [conversations, activeId, embedVisible, phone]);
 
   // Auto-fade the "Ticket #N created" banner: visible for 2.4s, then fade,
   // then unmount entirely.
@@ -3212,29 +3270,43 @@ function InboxImpl() {
   const activeIsFb = active ? isFbConvId(active.id) : false;
   const activeIsIg = active ? isIgConvId(active.id) : false;
 
+  // On phones the list view is the only one (the table and board are wide).
+  const shownView = phone ? "list" : view;
+  const pane = inboxPane(layout, { selected: !!active, detailsOpen });
+  const sheet = detailsAsSheet(layout) && detailsOpen && !!active && shownView === "list";
+  // The tablet details sheet closes on Escape (unless an inner control took it).
+  useEffect(() => {
+    if (!sheet) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) setDetailsOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sheet]);
+  const threadBar =
+    active && shownView === "list" && layout !== "desktop" && layout !== "wide" ? (
+      <div className="ix-thread-bar">
+        {phone ? (
+          <button type="button" className="btn ghost sm" onClick={backToList}>
+            <span className="ix-back-icon" aria-hidden="true">
+              <IconArrow w={14} />
+            </span>
+            {tx("Back to conversations", "العودة إلى المحادثات")}
+          </button>
+        ) : null}
+        <span style={{ flex: 1 }} />
+        <button type="button" className="btn ghost sm" aria-expanded={detailsOpen} onClick={() => (detailsOpen ? closeDetails() : openDetails())}>
+          {tx("Details", "التفاصيل")}
+        </button>
+      </div>
+    ) : null;
+
   return (
-    <div
-      className="inbox-v2"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(300px, 348px) minmax(0, 1fr) minmax(300px, 336px)",
-        flex: 1,
-        minHeight: 0,
-        position: "relative",
-      }}
-    >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateRows: "auto 1fr",
-          // Single-column grids size their auto track to max-content, which
-          // let the pill rows push this column to ~760px and bleed under the
-          // thread pane. Pin the track to the grid area's own width.
-          gridTemplateColumns: "minmax(0, 1fr)",
-          minWidth: 0,
-          minHeight: 0,
-        }}
-      >
+    <div className="inbox-v2 ix-layout" data-pane={pane} data-details={sheet ? "open" : undefined}>
+      {/* Single-column grids size their auto track to max-content, which
+          let the pill rows push this column to ~760px and bleed under the
+          thread pane; .ix-col-list pins the track to the grid area's width. */}
+      <div className="ix-col-list">
         {ticketBanner ? (
           <div
             style={{
@@ -3275,8 +3347,8 @@ function InboxImpl() {
           toggleChannel={toggleChannel}
           allConvs={conversations}
           activeId={activeId}
-          setActiveId={setActiveId}
-          view={view}
+          setActiveId={selectConversation}
+          view={shownView}
           setView={setView}
           search={search}
           setSearch={setSearch}
@@ -3298,9 +3370,11 @@ function InboxImpl() {
           tx={tx}
         />
       </div>
-      {view === "table" || view === "board" ? (
-        <div style={{ gridColumn: "2 / -1", display: "flex", minWidth: 0, minHeight: 0, paddingBlockStart: 12 }}>
-          {view === "table" ? (
+      <div className="ix-col-thread">
+      {threadBar}
+      {shownView === "table" || shownView === "board" ? (
+        <div className="ix-wide-view">
+          {shownView === "table" ? (
             <InboxTable
               convs={visibleConvs}
               contactById={contactById}
@@ -3454,21 +3528,37 @@ function InboxImpl() {
           )}
         </div>
       )}
-      {view !== "list" ? null : active ? (
-        <ContactRightRail
-          conv={active}
-          contactById={contactById}
-          onContactsChanged={contactsQ.refetch}
-          tx={tx}
-        />
-      ) : (
-        <aside
-          style={{
-            borderInlineStart: "1px solid var(--line-soft)",
-            background: "var(--bg-1)",
-          }}
-        />
+      </div>
+      {shownView !== "list" ? null : (
+        <div className="ix-col-details" role={sheet ? "dialog" : undefined} aria-label={sheet ? tx("Details", "التفاصيل") : undefined}>
+          {active && (phone || sheet) ? (
+            <div className="ix-thread-bar ix-details-bar">
+              <button type="button" className="btn ghost sm" onClick={closeDetails}>
+                <span className="ix-back-icon" aria-hidden="true">
+                  <IconArrow w={14} />
+                </span>
+                {tx("Back", "رجوع")}
+              </button>
+            </div>
+          ) : null}
+          {active ? (
+            <ContactRightRail
+              conv={active}
+              contactById={contactById}
+              onContactsChanged={contactsQ.refetch}
+              tx={tx}
+            />
+          ) : (
+            <aside
+              style={{
+                borderInlineStart: "1px solid var(--line-soft)",
+                background: "var(--bg-1)",
+              }}
+            />
+          )}
+        </div>
       )}
+      {sheet ? <div className="ix-details-scrim" onClick={closeDetails} aria-hidden="true" /> : null}
       {showConvertModal && active && (
         <ConvertTicketModal
           conv={active}

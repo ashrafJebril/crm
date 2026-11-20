@@ -11,6 +11,7 @@ export function Popover({
   disabled,
   triggerClassName = "btn ghost icon sm",
   panelStyle,
+  sheetOnPhone = false,
   children,
 }: {
   trigger: ReactNode;
@@ -22,6 +23,8 @@ export function Popover({
   disabled?: boolean;
   triggerClassName?: string;
   panelStyle?: CSSProperties;
+  /** SP-30: below md the panel is a bottom sheet (the inbox filters and sort). */
+  sheetOnPhone?: boolean;
   children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -88,6 +91,7 @@ export function Popover({
           <div onClick={close} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
           <div
             ref={panelRef}
+            className={sheetOnPhone ? "ix-popover-sheet" : undefined}
             role={role}
             aria-label={ariaLabel}
             onKeyDown={(e) => {

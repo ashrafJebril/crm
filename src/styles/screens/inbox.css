@@ -1,0 +1,156 @@
+/* SP-30 inbox layout (ruling 7: layout only; colours stay inline / in app.css).
+   ≥ lg   three columns: list · thread · contact rail (unchanged desktop).
+   md–lg  list · thread; the contact rail opens as a sheet from the thread bar.
+   < md   one pane at a time (data-pane: list → thread → details), Back walks back. */
+
+.ix-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 348px) minmax(0, 1fr) minmax(300px, 336px);
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.ix-col-list {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+/* The thread and the contact rail are grid items of .ix-layout on wide screens. */
+.ix-col-thread,
+.ix-col-details { display: contents; }
+.ix-wide-view {
+  grid-column: 2 / -1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  padding-block-start: 12px;
+}
+.ix-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ix-list-scroll { flex: 1; overflow-y: auto; }
+.ix-view-row,
+.ix-pill-row { display: flex; flex-wrap: wrap; }
+
+/* The conversation header and the message scroller. */
+.ix-conv-head { display: flex; align-items: center; gap: 13px; }
+.ix-conv-info { flex: 1; min-width: 0; }
+.ix-conv-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ix-thread-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 26px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* Below lg the actions take their own row under the name. */
+@media (max-width: 1023.98px) {
+  .ix-conv-head { flex-wrap: wrap; }
+  .ix-conv-info { flex-basis: 0; }
+  .ix-conv-actions { flex-basis: 100%; justify-content: flex-start; }
+}
+
+.ix-thread-bar { display: none; }
+.ix-thread-bar {
+  align-items: center;
+  gap: 8px;
+  padding-block: 6px;
+  padding-inline: 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+.ix-thread-bar .btn { min-block-size: 36px; }
+.ix-back-icon { display: inline-flex; }
+.ix-back-icon svg { transform: scaleX(-1); }
+[dir="rtl"] .ix-back-icon svg { transform: none; }
+.ix-details-scrim { display: none; }
+
+/* ── md to lg: two columns, the contact rail as a sheet ── */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .ix-layout {
+    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .ix-col-list { grid-row: 1 / -1; }
+  .ix-col-thread > .ix-thread-bar { display: flex; grid-column: 2; grid-row: 1; }
+  .ix-col-thread > :not(.ix-thread-bar) { grid-column: 2; grid-row: 2; min-height: 0; }
+  .ix-col-thread > .ix-wide-view { grid-column: 2; grid-row: 1 / -1; }
+  .ix-col-details { display: none; }
+  .ix-layout[data-details="open"] .ix-col-details {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 0;
+    z-index: 80;
+    inline-size: min(360px, 92vw);
+    background: var(--bg-1);
+    box-shadow: var(--shadow-lg);
+    padding-block-start: var(--safe-top);
+    padding-block-end: var(--safe-bottom);
+  }
+  .ix-layout[data-details="open"] .ix-col-details > .ix-details-bar { display: flex; }
+  .ix-layout[data-details="open"] .ix-col-details > aside { flex: 1; min-height: 0; }
+  .ix-layout[data-details="open"] .ix-details-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 79;
+    background: rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* ── below md: one pane at a time ── */
+@media (max-width: 767.98px) {
+  .ix-layout { display: flex; flex-direction: column; }
+  .ix-col-list,
+  .ix-col-thread,
+  .ix-col-details { display: none; }
+  .ix-layout[data-pane="list"] .ix-col-list { display: grid; flex: 1; }
+  .ix-layout[data-pane="thread"] .ix-col-thread,
+  .ix-layout[data-pane="details"] .ix-col-details {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+  .ix-col-thread > :not(.ix-thread-bar) { flex: 1; min-height: 0; }
+  .ix-col-details > aside { flex: 1; min-height: 0; border-inline-start: 0 !important; }
+  .ix-thread-bar { display: flex; }
+  .ix-list { border-inline-end: 0 !important; }
+  .ix-conv-head { padding-inline: 12px !important; gap: 10px; }
+  .ix-thread-scroll { padding: 16px 12px; }
+  /* The table and board are wide: phones keep the list. */
+  .ix-view-btn { display: none; }
+  /* The pill rows and number tabs scroll inside their own row. */
+  .ix-pill-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-block-end: 2px;
+  }
+  .ix-pill-row::-webkit-scrollbar { display: none; }
+  .ix-pill-row > * { flex: 0 0 auto; }
+  /* The composer stays at the bottom, above the home indicator. */
+  .ix-composer-bar {
+    padding-inline: 12px !important;
+    padding-block-end: calc(12px + var(--safe-bottom)) !important;
+  }
+  /* The filter and sort menus are bottom sheets. */
+  .ix-popover-sheet {
+    position: fixed !important;
+    inset-inline: 0 !important;
+    inset-block-end: 0 !important;
+    top: auto !important;
+    min-width: 0 !important;
+    max-height: 80dvh !important;
+    border-radius: 14px 14px 0 0 !important;
+    padding-block-end: calc(12px + var(--safe-bottom)) !important;
+  }
+}
