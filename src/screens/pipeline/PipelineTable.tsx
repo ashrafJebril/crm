@@ -10,6 +10,9 @@ import { useTableTickets } from "./hooks/useBoardData";
 import type { Sort, SortKey } from "./boardQuery";
 import { ChannelChip, PriorityChip, SlaBadgeChip } from "./TicketBadges";
 import { categoryLabel } from "./ticketFields";
+import { ResponsiveTable } from "@/components/ResponsiveTable";
+import { useViewport } from "@/lib/useViewport";
+import { BP } from "@/styles/breakpoints";
 
 interface Props {
   tx: Tx;
@@ -48,6 +51,9 @@ const td: CSSProperties = { padding: "8px 10px", fontSize: 12.5, color: "var(--i
 
 export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort, onSort, selected, onToggle, onToggleAll, showSla = true }: Props) {
   const q = useTableTickets(pipelineId, qs);
+  // SP-30: below sm the rows are cards; above, the table scrolls inside its own container.
+  const { width } = useViewport();
+  const asCards = width < BP.sm;
   const canUpdate = usePermissions().can("tickets.update");
   const num = (n: number) => n.toLocaleString(lang === "ar" ? "ar" : "en");
   const rows: Ticket[] = useMemo(() => q.data?.pages.flatMap((p) => p.items) ?? [], [q.data]);
@@ -92,8 +98,72 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
       </div>
     );
 
+  const footer = (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", fontSize: 12.5, color: "var(--ink-3)" }} aria-live="polite">
+      <span>
+        {tx(`${num(rows.length)} of ${num(total)}`, `${num(rows.length)} من ${num(total)}`)}
+      </span>
+      {q.hasNextPage ? (
+        <button type="button" className="btn sm" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+          {q.isFetchingNextPage ? tx("Loading…", "جارٍ التحميل…") : tx("Load more", "تحميل المزيد")}
+        </button>
+      ) : null}
+    </div>
+  );
+
+  if (asCards) {
+    return (
+      <div className="pl-table pl-cards-wrap">
+        {rows.length === 0 ? (
+          <div style={{ textAlign: "center", color: "var(--ink-3)", padding: 32, fontSize: 12.5 }}>
+            {tx("No tickets match these filters", "لا توجد تذاكر تطابق هذه المرشحات")}
+          </div>
+        ) : null}
+        <div className="pl-cards" role="list" aria-label={tx("Tickets", "التذاكر")}>
+          {rows.map((t) => {
+            const stage = t.stage ?? stageById.get(t.stageId);
+            const accent = stage ? stageColor[stage.color] ?? "var(--ink-3)" : "var(--ink-3)";
+            return (
+              <div key={t.id} role="listitem" className="pl-card" aria-selected={selected.has(t.id)}>
+                {canUpdate ? (
+                  <label className="pl-card-check">
+                    <input
+                      type="checkbox"
+                      aria-label={tx(`Select ticket ${t.number}`, `تحديد التذكرة ${t.number}`)}
+                      checked={selected.has(t.id)}
+                      onChange={() => onToggle(t.id)}
+                    />
+                  </label>
+                ) : null}
+                <button type="button" className="pl-card-main" onClick={() => openRecord("ticket", t.id)}>
+                  <span className="pl-card-title" dir="auto">
+                    <span className="mono" style={{ color: "var(--ink-3)", fontWeight: 500 }}>
+                      <bdi>#{String(t.number).padStart(3, "0")}</bdi>
+                    </span>{" "}
+                    {t.title}
+                  </span>
+                  <span className="pl-card-meta">
+                    <span dir="auto">{t.contact?.name ?? "—"}</span>
+                    {stage ? (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: 999, background: accent }} />
+                        <span dir="auto">{lang === "ar" ? stage.labelAr : stage.label}</span>
+                      </span>
+                    ) : null}
+                    {t.value != null ? <span className="mono"><bdi>{`${num(t.value)} ${t.currency ?? "SAR"}`}</bdi></span> : null}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {footer}
+      </div>
+    );
+  }
+
   return (
-    <div style={{ height: "100%", overflow: "auto", padding: "0 18px 16px" }}>
+    <ResponsiveTable className="pl-table" label={tx("Tickets table", "جدول التذاكر")}>
       <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 1280 }}>
         <thead>
           <tr>
@@ -191,16 +261,7 @@ export function PipelineTable({ tx, lang, tz, pipelineId, stages, team, qs, sort
           })}
         </tbody>
       </table>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", fontSize: 12.5, color: "var(--ink-3)" }} aria-live="polite">
-        <span>
-          {tx(`${num(rows.length)} of ${num(total)}`, `${num(rows.length)} من ${num(total)}`)}
-        </span>
-        {q.hasNextPage ? (
-          <button type="button" className="btn sm" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
-            {q.isFetchingNextPage ? tx("Loading…", "جارٍ التحميل…") : tx("Load more", "تحميل المزيد")}
-          </button>
-        ) : null}
-      </div>
-    </div>
+      {footer}
+    </ResponsiveTable>
   );
 }
