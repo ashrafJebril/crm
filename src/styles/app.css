@@ -942,3 +942,22 @@ input, textarea, select { font-family: inherit; }
   .shell-drawer { animation: none; }
   .app { transition: none; }
 }
+
+/* ─── SP-30 shared: page header and responsive tables ─────────────────────── */
+.page-header { padding: 20px 24px 12px; }
+.page-header-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.page-header-actions { display: flex; gap: 8px; align-items: center; }
+.rtable { max-inline-size: 100%; overflow-x: auto; }
+.rtable--sticky-first th:first-child,
+.rtable--sticky-first td:first-child {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background: var(--bg-1);
+}
+@media (max-width: 767.98px) {
+  .page-header { padding: 14px 12px 10px; }
+  .page-header-row { flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+  .page-header-title { min-width: 0; }
+  .page-header-actions { flex-wrap: wrap; gap: 6px; }
+}

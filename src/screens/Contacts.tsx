@@ -12,6 +12,10 @@ import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
+import { ResponsiveTable } from "@/components/ResponsiveTable";
+import { useViewport } from "@/lib/useViewport";
+import { BP } from "@/styles/breakpoints";
+import "@/styles/screens/contacts.css";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import { IconFilter, IconMore, IconPlus } from "@/icons";
@@ -115,8 +119,57 @@ function ContactsTable({
     else next.add(id);
     setSelected(next);
   };
+  // SP-30: below sm a card list (the table scrolls inside its own container above that).
+  const { width } = useViewport();
+  if (width < BP.sm) {
+    return (
+      <div className="ct-cards" role="list" aria-label={tx("Contacts", "جهات الاتصال")}>
+        {contacts.map((c) => (
+          <div
+            key={c.id}
+            role="listitem"
+            className="ct-card"
+            aria-selected={selected.has(c.id)}
+            onClick={() => onOpenContact(c.id)}
+          >
+            <label className="ct-card-check" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                aria-label={tx(`Select ${c.name}`, `تحديد ${c.name}`)}
+                checked={selected.has(c.id)}
+                onChange={() => toggle(c.id)}
+              />
+            </label>
+            <Avatar name={c.name} color={String(150 + (c.id.charCodeAt(1) || 0) * 6)} />
+            <div className="ct-card-main">
+              <button
+                type="button"
+                className="ct-card-name"
+                style={{ background: "none", border: 0, padding: 0, color: "inherit", font: "inherit", fontWeight: 500, textAlign: "start", cursor: "pointer" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenContact(c.id);
+                }}
+              >
+                <bdi>{c.name}</bdi>
+              </button>
+              <div className="ct-card-meta">
+                <span className="mono" dir="ltr">{c.phone}</span>
+                <span>·</span>
+                <span className="mono">{c.lifecycle}</span>
+                {c.tags.slice(0, 2).map((tg) => (
+                  <Badge key={tg} kind={tagKind(tg)}>{tg}</Badge>
+                ))}
+                {c.tags.length > 2 ? <span>+{c.tags.length - 2}</span> : null}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+    <ResponsiveTable className="card" style={{ padding: 0 }} label={tx("Contacts table", "جدول جهات الاتصال")}>
       <table className="tbl">
         <thead>
           <tr>
@@ -223,7 +276,7 @@ function ContactsTable({
           onClose={() => setStepFor(null)}
         />
       )}
-    </div>
+    </ResponsiveTable>
   );
 }
 
@@ -739,7 +792,7 @@ function ContactsImpl() {
   };
 
   return (
-    <div style={{ overflowY: "auto", flex: 1 }}>
+    <div className="ct-page">
       <PageHeader
         title={tx("Contacts", "جهات الاتصال")}
         subtitle={
@@ -826,7 +879,7 @@ function ContactsImpl() {
         }
       />
 
-      <div style={{ display: "flex", gap: 6, padding: "0 24px 10px" }}>
+      <div className="ct-tabs">
         {(
           [
             ["contacts", tx("Contacts", "جهات الاتصال")],
@@ -847,10 +900,10 @@ function ContactsImpl() {
       </div>
 
       {activeTab === "contacts" && (
-      <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
-        <div
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
-        >
+      <div className="ct-body">
+        <div className="ct-seg-row">
+          {/* Below sm the segment chips scroll in their own row. */}
+          <div className="ct-seg-chips">
           <SegmentChip
             label={tx("All", "الكل")}
             count={allCount}
@@ -871,7 +924,8 @@ function ContactsImpl() {
               onClick={() => setActiveSegmentId(s.id)}
             />
           ))}
-          <span style={{ flex: 1 }} />
+          </div>
+          <span className="ct-seg-spacer" style={{ flex: 1 }} />
           <button
             className="btn ghost sm"
             onClick={() => setActiveTab("audiences")}
@@ -883,7 +937,8 @@ function ContactsImpl() {
             placeholder={tx("Search contacts…", "ابحث…")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ ...INPUT_STYLE, width: 220 }}
+            className="ct-search"
+            style={INPUT_STYLE}
           />
         </div>
 

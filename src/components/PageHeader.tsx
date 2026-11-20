@@ -9,7 +9,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, actions, breadcrumbs }: PageHeaderProps) {
   return (
-    <div style={{ padding: "20px 24px 12px" }}>
+    <div className="page-header">
       {breadcrumbs && (
         <div className="crumbs" style={{ marginBottom: 6 }}>
           {breadcrumbs.map((b, i) => (
@@ -20,15 +20,8 @@ export function PageHeader({ title, subtitle, actions, breadcrumbs }: PageHeader
           ))}
         </div>
       )}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-end",
-          justifyContent: "space-between",
-          gap: 16,
-        }}
-      >
-        <div>
+      <div className="page-header-row">
+        <div className="page-header-title">
           <h1
             style={{
               margin: 0,
@@ -43,7 +36,7 @@ export function PageHeader({ title, subtitle, actions, breadcrumbs }: PageHeader
             <p style={{ margin: "4px 0 0", color: "var(--ink-2)", fontSize: 13 }}>{subtitle}</p>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{actions}</div>
+        <div className="page-header-actions">{actions}</div>
       </div>
     </div>
   );
