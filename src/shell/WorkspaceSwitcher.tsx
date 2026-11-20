@@ -5,6 +5,8 @@ import { ApiError } from "@/api/client";
 import { PAYMENT_OVERDUE } from "@/lib/paymentLock";
 import { makeTx } from "@/lib/tx";
 import { IconCheck, IconPlus, IconChevDown } from "@/icons";
+import { WorkspaceMark } from "./WorkspaceMark";
+import { confirmLeave } from "@/lib/leaveGuard";
 
 /**
  * Top-bar dropdown showing the active workspace name. Click to:
@@ -51,6 +53,8 @@ export function WorkspaceSwitcher() {
       setOpen(false);
       return;
     }
+    // SP-29: unsaved general settings would be discarded by the switch.
+    if (!confirmLeave()) return;
     setBusy(true);
     setError(null);
     try {
@@ -74,6 +78,7 @@ export function WorkspaceSwitcher() {
   const onCreate = async () => {
     const name = newName.trim();
     if (!name) return;
+    if (!confirmLeave()) return;
     setBusy(true);
     setError(null);
     try {
@@ -113,6 +118,7 @@ export function WorkspaceSwitcher() {
         aria-haspopup="menu"
         aria-expanded={open}
       >
+        <WorkspaceMark name={activeWorkspace.name} logoUrl={activeWorkspace.logoUrl} brandColor={activeWorkspace.brandColor} size={18} />
         <span
           style={{
             whiteSpace: "nowrap",
@@ -189,6 +195,7 @@ export function WorkspaceSwitcher() {
                   if (!active) e.currentTarget.style.background = "transparent";
                 }}
               >
+                <WorkspaceMark name={w.name} logoUrl={w.logoUrl} brandColor={w.brandColor} size={24} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
                     style={{

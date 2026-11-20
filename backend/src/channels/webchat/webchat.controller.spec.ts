@@ -53,7 +53,7 @@ function build(seed: Record<string, unknown[]> = {}) {
       wc("W2", { status: "disconnected", isDefault: false }),
       wc("T1", { kind: "telegram", provider: "telegram", externalId: "1", isDefault: false }),
     ],
-    workspace: [{ id: "ws_secret_1", lang: "ar" }],
+    workspace: [{ id: "ws_secret_1", name: "Shop Co", lang: "ar", logoMediaId: null, brandColor: "#123456" }],
     ...seed,
   } as never);
   prisma.raw = prisma;
@@ -385,6 +385,8 @@ describe("public widget responses contain no secrets or workspace ids", () => {
       position: "start",
       askName: true,
       lang: "en",
+      // SP-29: the workspace brand (no logo here, so no workspace id; the channel colour wins).
+      brand: { name: "Shop Co", logoUrl: null, color: "#123456" },
     });
     const sent = await call(b, "send", { body: { body: "hi" } });
     const { visitorId, visitorToken } = sent.body as { visitorId: string; visitorToken: string };

@@ -8,6 +8,8 @@
  * ""), api (the API path prefix, "/api").
  *
  * - fetches GET {api}/widget/:id/config?parent= for greeting/colour/askName;
+ *   `color` is already resolved (channel, workspace brand, default); `brand`
+ *   adds the workspace logo (SP-29) when the page was rendered without it;
  * - keeps {visitorId, visitorToken} in localStorage["aramw:<id>"] (wrapped in
  *   try/catch, with an in-memory fallback for blocked storage);
  * - sends with POST {api}/widget/:id/messages and renders the reply; the
@@ -52,6 +54,7 @@ async function boot(){var r=await getJson(url("/config",{parent:parent}));
 if(!r.ok){say(err(r));input.disabled=true;sendBtn.disabled=true;return}
 var c=r.body||{};
 if(typeof c.color==="string"&&/^#[0-9a-fA-F]{6}$/.test(c.color))document.documentElement.style.setProperty("--wc",c.color);
+var br=c.brand;if(br&&typeof br.logoUrl==="string"&&/^\/api\/branding\/[^\/?#\s]+\/logo\/[^\/?#\s]+$/.test(br.logoUrl)&&!document.querySelector(".wc-logo")){var im=document.createElement("img");im.className="wc-logo";im.alt="";im.width=28;im.height=28;im.src=br.logoUrl;var hd=document.querySelector(".wc-head");if(hd)hd.insertBefore(im,hd.firstChild)}
 greeting=(lang==="ar"?c.greetingAr||c.greeting:c.greeting||c.greetingAr)||"";
 if(greeting)add({id:"greeting",from:"agent",body:greeting});
 if(c.askName&&!load())nameEl.hidden=false;

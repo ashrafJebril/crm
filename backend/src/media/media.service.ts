@@ -233,6 +233,8 @@ export class MediaService {
       knowledgeSources: { none: {} },
       // SP-18: copilot attachments are not library assets either.
       copilotAttachments: { none: {} },
+      // SP-29 (ruling 5): workspace logos and any other purpose-bound file stay out of the library.
+      purpose: null,
       ...(opts.approved !== undefined ? { approvedForAgent: opts.approved } : {}),
       ...mediaSearchWhere(opts.q),
     };
@@ -387,6 +389,8 @@ export class MediaService {
           {
             workspaceId,
             approvedForAgent: true,
+            // SP-29 (ruling 5): a workspace logo is never offered to the agent.
+            purpose: null,
             // Case-insensitive, like isAgentPhoto at send (review M2).
             OR: AGENT_PHOTO_MIMES.map((m) => ({ mimeType: { equals: m, mode: "insensitive" as const } })),
             sizeBytes: { lte: AGENT_PHOTO_MAX_BYTES },
@@ -497,14 +501,17 @@ export class MediaService {
     workspaceId: string,
     file: Express.Multer.File,
     uploadedById: string,
+    /** SP-29: a purpose-bound file (a workspace logo) with its own types and size cap. */
+    opts: { purpose?: string; allowedTypes?: readonly string[]; maxBytes?: number } = {},
   ) {
     if (!file) throw mediaError("media.no_file");
     try {
       // Validation lives inside the try so a rejected upload still hits the
       // finally below — multer's diskStorage has already written file.path
       // to tmpdir by the time we get here, and we must not leak it.
-      const cap = capOf(file.mimetype);
-      if (cap == null) throw mediaError("media.unsupported_type", { allowed: LIBRARY_MIME_TYPES });
+      const allowed = opts.allowedTypes ?? LIBRARY_MIME_TYPES;
+      const cap = opts.allowedTypes ? (opts.allowedTypes.includes(file.mimetype) ? (opts.maxBytes ?? null) : null) : capOf(file.mimetype);
+      if (cap == null) throw mediaError("media.unsupported_type", { allowed: [...allowed] });
       if (file.size > cap) throw mediaError("media.too_large", { limit: cap });
       // SP-13: never trust the declared type — the bytes must agree with it.
       const head = file.path
@@ -528,6 +535,7 @@ export class MediaService {
           storedPath: key,
           storageKind: this.storage.kind,
           uploadedById,
+          ...(opts.purpose ? { purpose: opts.purpose } : {}),
         },
       });
     } finally {
@@ -779,9 +787,11 @@ export class MediaService {
       // SP-18: a copilot attachment's file (the copilot deletes it with the
       // attachment). A count only: never another member's file names.
       const copilot = await tx.copilotAttachment.count({ where: { workspaceId, mediaId: row.id } });
-      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0 || copilot > 0) {
-        // `copilot` only when present: the existing body keeps its shape.
-        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge, ...(copilot ? { copilot } : {}) });
+      // SP-29: the workspace's current logo (only its own workspace can reference it).
+      const workspaces = await tx.workspace.findMany({ where: { id: workspaceId, logoMediaId: row.id }, select: { id: true } });
+      if (templates.length > 0 || campaigns.length > 0 || tickets.length > 0 || knowledge.length > 0 || copilot > 0 || workspaces.length > 0) {
+        // `copilot` and `workspaces` only when present: the existing body keeps its shape.
+        throw mediaError("media.in_use", { templates, campaigns, tickets, knowledge, ...(copilot ? { copilot } : {}), ...(workspaces.length ? { workspaces } : {}) });
       }
       await tx.media.delete({ where: { id: row.id } });
     });

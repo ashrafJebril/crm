@@ -5,6 +5,8 @@ export type WidgetLang = "en" | "ar";
 
 export interface ChatPageInput {
   channel: { id: string; displayName: string; config: unknown };
+  /** SP-29: the workspace logo (relative public URL) and the resolved chat colour. */
+  brand?: { logoUrl: string | null; color: string | null } | null;
   lang: WidgetLang;
   /** true = inside the loader's iframe; false = the hosted chat page link. */
   embed: boolean;
@@ -36,6 +38,7 @@ body{font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans Arabic"
 .wc{display:flex;flex-direction:column;height:100%;max-width:720px;margin-inline:auto;background:#fff}
 .wc-head{display:flex;align-items:center;gap:8px;padding:14px 16px;background:var(--wc);color:#fff}
 .wc-title{flex:1;margin:0;font-size:16px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-logo{width:28px;height:28px;object-fit:contain;border-radius:6px;background:#fff;flex:none}
 .wc-close{border:0;background:transparent;color:inherit;font-size:22px;line-height:1;cursor:pointer;padding:4px 8px}
 .wc-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
 .wc-msg{display:flex}.wc-msg p{margin:0;max-width:80%;padding:8px 12px;border-radius:14px;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -70,6 +73,13 @@ export function renderChatPage(input: ChatPageInput): { html: string; csp: strin
   const n = escapeHtml(nonce);
   const name = escapeHtml(channel.displayName || t.chat);
 
+  // SP-29: the colour reaches CSS only as a re-validated `#rrggbb`; the logo only as a same-origin
+  // /api/branding/… path (img-src 'self'), escaped, and only when the workspace has one.
+  const color = typeof input.brand?.color === "string" && /^#[0-9a-fA-F]{6}$/.test(input.brand.color) ? input.brand.color.toLowerCase() : null;
+  const logoUrl = typeof input.brand?.logoUrl === "string" && /^\/api\/branding\/[^/?#\s]+\/logo\/[^/?#\s]+$/.test(input.brand.logoUrl) ? input.brand.logoUrl : null;
+  const css = color ? CSS.replace(":root{--wc:#111827;", `:root{--wc:${color};`) : CSS;
+  const logo = logoUrl ? `<img class="wc-logo" src="${escapeHtml(logoUrl)}" alt="" width="28" height="28">` : "";
+
   const ancestors = embed ? frameAncestorsFor(allowedOriginsFrom(channel.config, opts)) : "'none'";
   const wsOrigin = apiOrigin.replace(/^http/, "ws");
   const csp = [
@@ -91,11 +101,11 @@ export function renderChatPage(input: ChatPageInput): { html: string; csp: strin
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
 <title>${name}</title>
-<style nonce="${n}">${CSS}</style>
+<style nonce="${n}">${css}</style>
 </head>
 <body data-channel="${escapeHtml(channel.id)}" data-lang="${lang}" data-embed="${embed ? "1" : "0"}" data-parent="${escapeHtml(embed ? input.parent ?? "" : "")}" data-api="${escapeHtml(apiBase)}">
 <div class="wc">
-<header class="wc-head"><h1 class="wc-title" dir="auto">${name}</h1><button id="wc-close" class="wc-close" type="button" aria-label="${escapeHtml(t.close)}" hidden>×</button></header>
+<header class="wc-head">${logo}<h1 class="wc-title" dir="auto">${name}</h1><button id="wc-close" class="wc-close" type="button" aria-label="${escapeHtml(t.close)}" hidden>×</button></header>
 <main id="wc-log" class="wc-log" aria-live="polite"></main>
 <p id="wc-status" class="wc-status" role="status"></p>
 <form id="wc-form" class="wc-form" autocomplete="off">

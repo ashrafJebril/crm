@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { navigateIfAllowed } from "@/lib/leaveGuard";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
@@ -62,9 +63,13 @@ function SettingsImpl() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  // SP-29: ask the leave guard (unsaved general settings) before the tab unmounts.
   const setTab = (next: Tab) => {
-    writeTab(next);
-    setTabState(next);
+    if (next === tab) return;
+    navigateIfAllowed(() => {
+      writeTab(next);
+      setTabState(next);
+    });
   };
 
   const tabs: Array<{ id: Tab; label: string; ar: string }> = [

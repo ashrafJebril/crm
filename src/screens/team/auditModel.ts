@@ -23,6 +23,8 @@ const LINES: Record<string, Line> = {
   "role.updated": (t) => [`updated the role ${t}`, `حدّث الدور ${t}`],
   "role.deleted": (t, e) => [`deleted the role ${t || str(e.meta?.name)}`, `حذف الدور ${t || str(e.meta?.name)}`],
   "workspace.settings_updated": () => ["updated the workspace settings", "حدّث إعدادات مساحة العمل"],
+  // SP-29: the logo was uploaded, replaced or removed.
+  "workspace.branding_updated": () => ["updated the workspace logo", "حدّث شعار مساحة العمل"],
   "security.2fa_enabled": () => ["turned on two-step verification", "فعّل التحقق بخطوتين"],
   "security.2fa_disabled": () => ["turned off two-step verification", "أوقف التحقق بخطوتين"],
   "security.2fa_reset_by_owner": (t) => [`reset two-step verification for ${t}`, `أعاد تعيين التحقق بخطوتين لـ ${t}`],

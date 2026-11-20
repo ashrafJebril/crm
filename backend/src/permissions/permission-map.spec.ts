@@ -486,6 +486,20 @@ describe("permission map", () => {
     expect(keys.filter((k) => /\/billing\/(checkout|subscription|portal|invoices|webhook|payment-method)/.test(k))).toEqual([]);
   });
 
+  it("permission map covers SP-29 routes", () => {
+    const sp29: Record<string, string> = {
+      "POST /workspaces/:id/logo": "settings.update",
+      "DELETE /workspaces/:id/logo": "settings.update",
+      "PATCH /workspaces/:id": "settings.update",
+      "GET /branding/:workspaceId/logo/:mediaId": "public",
+    };
+    for (const [k, p] of Object.entries(sp29)) {
+      expect({ k, declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ k, declared: true, p });
+    }
+    // The exact set of /branding routes.
+    expect(keys.filter((k) => / \/branding(\/|$)/.test(k))).toEqual(["GET /branding/:workspaceId/logo/:mediaId"]);
+  });
+
   it("permission map covers SP-27 routes", () => {
     const sp27: Record<string, string> = {
       "GET /api-keys": "api_keys.view",

@@ -33,6 +33,11 @@ export class UpdateWorkspaceDto {
   @IsOptional()
   lang?: string;
 
+  /** SP-29: `#rgb` / `#rrggbb` (stored lower-case `#rrggbb`); null clears. Checked in the service (400 workspaces.invalid_brand_color). */
+  @IsOptional()
+  @IsString()
+  brandColor?: string | null;
+
   // `plan` is deliberately absent: this endpoint is reachable by a workspace
   // owner, and an unvalidated plan field let them self-upgrade. Plan changes
   // belong to super-admins (/api/admin) or the Kewy admin console (/api/joteck).

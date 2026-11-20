@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { confirmLeave } from "@/lib/leaveGuard";
 import type { RouteId } from "@/lib/types";
 
 // Each screen is its own chunk — initial load only ships shell + Dashboard.
@@ -62,7 +63,10 @@ export function useRoute(): [RouteId, (r: RouteId) => void] {
   const setRoute = (r: RouteId) => {
     const h = window.location.hash;
     // Re-selecting the current route keeps its query (e.g. the inbox filter).
-    if (h !== `#/${r}` && !h.startsWith(`#/${r}?`)) window.location.hash = `#/${r}`;
+    const changes = h !== `#/${r}` && !h.startsWith(`#/${r}?`);
+    // SP-29: ask the leave guard before the current screen unmounts.
+    if (changes && !confirmLeave()) return;
+    if (changes) window.location.hash = `#/${r}`;
     setRouteState(r);
   };
 

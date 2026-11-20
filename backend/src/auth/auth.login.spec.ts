@@ -124,7 +124,8 @@ describe("AuthService.login — AUTH_SOURCE=local", () => {
     const res = await svc.login(dto, "1.2.3.4");
     expect(res.user.id).toBe("u1");
     expect(res.activeWorkspaceId).toBe("ws1");
-    expect(res.workspaces).toEqual([{ ...workspace, role: "owner" }]);
+    // SP-29: the workspace DTO carries its branding (none here).
+    expect(res.workspaces).toEqual([{ ...workspace, role: "owner", logoUrl: null, brandColor: null }]);
     expect(typeof res.token).toBe("string");
     expect(kewy.authenticate).not.toHaveBeenCalled();
     expect(kewySync.backfill).toHaveBeenCalledWith(expect.objectContaining({ id: "u1" }));

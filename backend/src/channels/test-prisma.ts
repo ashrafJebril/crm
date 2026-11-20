@@ -310,6 +310,8 @@ const DEFAULTS: Record<string, () => Row> = {
   template: () => ({ headerMediaId: null }),
   // SP-17: media details (only rows created through the double get these).
   media: () => ({
+    // SP-29: null = a library file.
+    purpose: null,
     uploadedById: null,
     publicToken: null,
     publicTokenExpiresAt: null,

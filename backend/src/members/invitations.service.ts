@@ -1,4 +1,5 @@
 import { emailWhere, normalizeEmail } from "../auth/email";
+import { layoutBrandOf } from "../workspaces/email-brand";
 import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Invitation, Prisma } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
@@ -300,7 +301,7 @@ export class InvitationsService {
     if (!this.email.enabled) return { invitation, link, emailSent: false };
     try {
       const [ws, inviter] = await Promise.all([
-        this.prisma.workspace.findUnique({ where: { id: inv.workspaceId }, select: { name: true } }),
+        this.prisma.workspace.findUnique({ where: { id: inv.workspaceId }, select: { id: true, name: true, logoMediaId: true, brandColor: true } }),
         inv.invitedById ? this.prisma.user.findUnique({ where: { id: inv.invitedById }, select: { name: true } }) : null,
       ]);
       const lang = emailLang(inv.lang);
@@ -313,6 +314,8 @@ export class InvitationsService {
           roleName: inv.role ? (lang === "ar" ? inv.role.nameAr : inv.role.name) : null,
           link,
           expiresAt: inv.expiresAt,
+          // SP-29: the workspace's logo and colour.
+          brand: layoutBrandOf(ws),
         }),
       );
       return { invitation, emailSent: true };

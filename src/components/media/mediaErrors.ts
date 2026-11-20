@@ -141,6 +141,13 @@ export const MEDIA_ERROR_COPY: Record<string, CopyFn> = {
 export function mediaKeyText(key: string, extra: unknown, tx: Tx): string | null {
   const x = isObject(extra) ? extra : {};
   if (key === "media.in_use") {
+    // SP-29: the workspace's current logo.
+    if (Array.isArray(x.workspaces) && x.workspaces.length) {
+      return tx(
+        "This file is your workspace logo, so it can't be deleted here. Change or remove the logo in General settings first.",
+        "هذا الملف هو شعار مساحة العمل، لذا لا يمكن حذفه من هنا. غيّر الشعار أو أزله من الإعدادات العامة أولًا.",
+      );
+    }
     const tpl = names(x.templates);
     const cmp = names(x.campaigns);
     const tkt = ticketRefs(x.tickets);

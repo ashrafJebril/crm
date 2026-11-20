@@ -58,6 +58,8 @@ interface AuthContextValue {
   /** True once any request was refused with PAYMENT_OVERDUE; cleared on logout. */
   paymentOverdue: boolean;
   sessionNotice: SessionNotice;
+  /** SP-29: re-read the workspaces (name, logo, colour) after a settings change, without a reload. */
+  refreshWorkspace: () => Promise<void>;
   /** Resolves with a challenge when two-step verification is on. */
   login: (email: string, password: string) => Promise<TwoFactorChallenge | void>;
   /** SP-26: the second step after a challenge. */
@@ -271,6 +273,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const refreshWorkspace = useCallback(async () => {
+    const wss = await api.get<Workspace[]>("/auth/workspaces");
+    setWorkspaces(wss);
+    const id = activeIdRef.current;
+    const next = wss.find((w) => w.id === id);
+    if (next) setActiveWorkspace(next);
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -288,8 +298,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       switchWorkspace,
       createWorkspace,
+      refreshWorkspace,
     }),
-    [user, workspaces, activeWorkspace, status, impersonating, paymentOverdue, sessionNotice, login, completeTwoFactor, adoptSession, adoptToken, register, logout, switchWorkspace, createWorkspace],
+    [user, workspaces, activeWorkspace, status, impersonating, paymentOverdue, sessionNotice, login, completeTwoFactor, adoptSession, adoptToken, register, logout, switchWorkspace, createWorkspace, refreshWorkspace],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
