@@ -45,6 +45,10 @@ import { workspaceTz, wallClock, addDays as addDaysISO } from "./calendar/bookin
 import type { Service, StaffResource } from "@/lib/types";
 import { useCalendarParams } from "./calendar/useCalendarParams";
 import { LIMIT_NOTICE, appointmentsQuery, hitListLimit, viewDays, type CalendarView } from "./calendar/calendarParams";
+import { calendarViewsFor, explicitCalendarView, resolveCalendarView } from "./calendar/calendarView";
+import { useViewport } from "@/lib/useViewport";
+import { getHashParam } from "@/lib/hashState";
+import "@/styles/screens/calendar.css";
 import {
   apptTop,
   bucketByDay,
@@ -329,11 +333,10 @@ function WeekView({
   );
 
   return (
-    <div className="card" style={{ overflow: "hidden" }}>
+    <div className="card cal-week">
       <div
+        className="cal-week-grid"
         style={{
-          display: "grid",
-          gridTemplateColumns: "60px repeat(7, 1fr)",
           borderBottom: "1px solid var(--line-soft)",
           background: "var(--bg-1)",
         }}
@@ -392,12 +395,10 @@ function WeekView({
       </div>
 
       <div
+        className="cal-week-grid cal-week-body"
         style={{
           position: "relative",
-          display: "grid",
-          gridTemplateColumns: "60px repeat(7, 1fr)",
           maxHeight: HOUR_PX * TOTAL_HOURS + 20,
-          overflowY: "auto",
         }}
       >
         {/* Hour gutter */}
@@ -709,7 +710,7 @@ function ListView({
       {groups.map(({ key, day, list }) => {
         const isPast = day < today;
         return (
-          <div key={key} className="card" style={{ overflow: "hidden" }}>
+          <div key={key} className="card cal-list-card">
             <div
               className="card-h"
               style={{
@@ -934,18 +935,11 @@ function SidePanel({
 
   return (
     <aside
+      className="cal-panel"
       style={{
-        position: "fixed",
-        top: 56,
-        bottom: 0,
-        insetInlineEnd: 0,
-        width: 380,
         background: "var(--bg-1)",
         borderInlineStart: "1px solid var(--line-soft)",
         boxShadow: "var(--shadow-lg)",
-        display: "flex",
-        flexDirection: "column",
-        zIndex: 8,
       }}
     >
       <div
@@ -1331,7 +1325,9 @@ function CalendarImpl() {
   const today = wallClock(new Date(), tz).dateISO;
   // SP-10: view, date and filters live in the hash (reload and Back restore them).
   const [cal, setCal] = useCalendarParams(today);
-  const view: ViewMode = cal.view;
+  // SP-30: phones open on the day view; an explicit view in the URL wins (not the week grid on a phone).
+  const { layout } = useViewport();
+  const view: ViewMode = resolveCalendarView(layout, explicitCalendarView(getHashParam(window.location.hash, "view")));
   const setView = (v: ViewMode) => setCal({ view: v });
   const canView = can("bookings.view");
   const canCreate = can("bookings.create");
@@ -1445,16 +1441,18 @@ function CalendarImpl() {
     { id: "week", label: tx("This week", "هذا الأسبوع") },
   ];
 
-  const tabs: Array<{ id: ViewMode; label: string; icon: ReactNode }> = [
+  const allTabs: Array<{ id: ViewMode; label: string; icon: ReactNode }> = [
     { id: "week", label: tx("Week", "أسبوع"), icon: <IconCal w={14} /> },
     { id: "list", label: tx("List", "قائمة"), icon: <IconUsers w={14} /> },
     { id: "day", label: tx("Day", "يوم"), icon: <IconClock w={14} /> },
     { id: "agenda", label: tx("Agenda", "الأجندة"), icon: <IconCal w={14} /> },
     { id: "board", label: tx("Board", "اللوحة"), icon: <IconUsers w={14} /> },
   ];
+  // The week grid is offered from md.
+  const tabs = allTabs.filter((tab) => calendarViewsFor(layout).includes(tab.id));
 
   return (
-    <div style={{ overflowY: "auto", flex: 1, position: "relative" }}>
+    <div className="cal-page">
       <PageHeader
         title={
           <span>
@@ -1575,13 +1573,7 @@ function CalendarImpl() {
         )}
 
         {/* Stats */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 12,
-          }}
-        >
+        <div className="cal-stats">
           <MiniStat
             label={tx("Today", "اليوم")}
             value={String(stats.todayCount)}
@@ -1613,7 +1605,7 @@ function CalendarImpl() {
             flexWrap: "wrap",
           }}
         >
-          <div className="tabs" style={{ padding: 0, border: 0 }}>
+          <div className="tabs cal-view-tabs" style={{ padding: 0, border: 0 }}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}

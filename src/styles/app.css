@@ -955,9 +955,13 @@ input, textarea, select { font-family: inherit; }
   z-index: 1;
   background: var(--bg-1);
 }
+@media (max-width: 1023.98px) {
+  .page-header-row { flex-wrap: wrap; }
+  .page-header-title { min-width: 0; }
+  .page-header-actions { flex-wrap: wrap; }
+}
 @media (max-width: 767.98px) {
   .page-header { padding: 14px 12px 10px; }
-  .page-header-row { flex-wrap: wrap; align-items: flex-start; gap: 10px; }
-  .page-header-title { min-width: 0; }
-  .page-header-actions { flex-wrap: wrap; gap: 6px; }
+  .page-header-row { align-items: flex-start; gap: 10px; }
+  .page-header-actions { gap: 6px; }
 }
