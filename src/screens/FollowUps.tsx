@@ -3,6 +3,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useFetch } from "@/api/useFetch";
 import { PageHeader } from "@/components/PageHeader";
+import "@/styles/screens/followups.css";
 import { KINDS, kindLabel, useInvalidateActivities, useTeam } from "@/components/activities/activityApi";
 import { usePermissions } from "@/auth/usePermissions";
 import { useTweaks } from "@/tweaks/context";
@@ -125,12 +126,12 @@ export default function FollowUps() {
   );
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", paddingBottom: 24 }}>
+    <div className="fu-page">
       <PageHeader
         title={tx("Follow-ups", "المتابعات")}
         subtitle={tx("Calls, meetings and tasks that need your attention", "المكالمات والاجتماعات والمهام التي تحتاج إلى اهتمامك")}
       />
-      <div style={{ padding: "0 24px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      <div className="fu-filters">
         {tab("mine", tx("Mine", "خاصتي"))}
         {tab("team", tx("Team", "الفريق"), !canTeam)}
         {scope === "team" && (
@@ -149,7 +150,7 @@ export default function FollowUps() {
         </select>
       </div>
 
-      <div style={{ padding: "12px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="fu-sections">
         {q.isPending ? (
           <div style={{ color: "var(--ink-3)", fontSize: 13 }}>{tx("Loading…", "جارٍ التحميل…")}</div>
         ) : q.isError ? (

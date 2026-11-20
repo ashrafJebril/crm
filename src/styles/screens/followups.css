@@ -1,0 +1,35 @@
+/* SP-30 follow-ups layout (ruling 7: layout only).
+   Each row wraps; below sm it is a card: select · title on the first line,
+   the due time under it, then the actions in their own wrapping row. */
+
+.fu-page { flex: 1; overflow-y: auto; padding-bottom: 24px; }
+.fu-filters { padding: 0 24px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fu-sections { padding: 12px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+.fu-row { display: flex; gap: 10px; align-items: center; padding: 10px 12px; flex-wrap: wrap; }
+.fu-row-check { display: inline-flex; align-items: center; }
+.fu-row-main { flex: 1 1 240px; min-width: 0; }
+.fu-row-due { white-space: nowrap; }
+.fu-row-actions { display: flex; gap: 4px; }
+
+@media (max-width: 767.98px) {
+  .fu-filters { padding: 0 12px; }
+  .fu-filters > select { flex: 1 1 140px; min-width: 0; }
+  .fu-sections { padding: 12px; gap: 12px; }
+}
+@media (max-width: 639.98px) {
+  .fu-row {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 4px 6px;
+    align-items: start;
+    padding: 10px 12px 12px 8px;
+    padding-inline: 4px 12px;
+  }
+  .fu-row-check { justify-content: center; inline-size: 40px; block-size: 40px; grid-row: 1; }
+  .fu-row > [aria-hidden] { display: none; }
+  .fu-row-main { grid-column: 2; padding-block-start: 10px; }
+  .fu-row-due { grid-column: 2; }
+  .fu-row-actions { grid-column: 1 / -1; flex-wrap: wrap; padding-inline-start: 6px; }
+  .fu-row-actions .btn { min-block-size: 36px; }
+}
