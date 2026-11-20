@@ -22,3 +22,28 @@ export function detailsAsSheet(layout: Layout): boolean {
 /** The hash params that carry the phone panes, so Back walks thread → list (and details → thread). */
 export const PANE_CONV_PARAM = "c";
 export const PANE_DETAILS_PARAM = "d";
+
+/** The history-state marker on the entries the phone panes push (Back is safe on them). */
+export const PANE_STATE_KEY = "ixPane";
+
+/**
+ * SP-30 review I1/M1: on a phone the hash is the source of truth for the
+ * panes. Given the hash after a navigation (Back/Forward, a link, a reload)
+ * returns the selection and details state to apply, or null to leave the
+ * state alone:
+ * - not a phone (rotated to md+): the selection stays as it is;
+ * - a deep link (`open=`) is being handled by the open-param hook, which
+ *   selects through the same path and writes `c=`;
+ * - otherwise `c=` is the open conversation (none → the list) and `d=1`
+ *   opens its details.
+ */
+export function paneFromHash(s: {
+  phone: boolean;
+  conv: string | null;
+  details: boolean;
+  open: string | null;
+}): { activeId: string | null; detailsOpen: boolean } | null {
+  if (!s.phone) return null;
+  if (s.open) return null;
+  return { activeId: s.conv || null, detailsOpen: !!s.conv && s.details };
+}

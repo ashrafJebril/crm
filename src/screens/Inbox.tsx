@@ -76,7 +76,8 @@ import { TopicsCard } from "./inbox/TopicsCard";
 import { TemplateSendDialog, type TemplateHeaderValue } from "./inbox/TemplateSendDialog";
 import { getHashParam, setHashParam } from "@/lib/hashState";
 import { useViewport } from "@/lib/useViewport";
-import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, detailsAsSheet, inboxPane } from "./inbox/inboxPane";
+import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
+import { useDialogFocus } from "@/lib/useDialogFocus";
 import "@/styles/screens/inbox.css";
 
 
@@ -1353,7 +1354,6 @@ function ConversationPane({
     };
     window.addEventListener(REPLY_DRAFT_EVENT, onOffer);
     return () => window.removeEventListener(REPLY_DRAFT_EVENT, onOffer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conv.id]);
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
@@ -1735,7 +1735,7 @@ function ConversationPane({
                 : waBlocked
                 ? tx(
                     "Pick a template above to message outside the 24h window.",
-                    "اختر قالبًا أعلاه للمراسلة خارج نافذة الـ٢٤ ساعة.",
+                    "اختر قالبًا أعلاه للمراسلة خارج نافذة الـ24 ساعة.",
                   )
                 : tx("Type a reply…", "اكتب ردًّا…")
             }
@@ -1788,13 +1788,13 @@ function ConversationPane({
                 <strong>
                   {tx(
                     "Outside the 24-hour window",
-                    "خارج نافذة الـ٢٤ ساعة",
+                    "خارج نافذة الـ24 ساعة",
                   )}
                 </strong>
                 <div style={{ color: "var(--ink-2)", fontSize: 11, marginTop: 2 }}>
                   {tx(
                     "WhatsApp only allows pre-approved templates after 24h since the last customer message.",
-                    "واتساب يسمح فقط بالقوالب المعتمدة بعد مرور ٢٤ ساعة على آخر رسالة من العميل.",
+                    "واتساب يسمح فقط بالقوالب المعتمدة بعد مرور 24 ساعة على آخر رسالة من العميل.",
                   )}
                 </div>
               </div>
@@ -2521,73 +2521,101 @@ function InboxImpl() {
     }
   };
   const [search, setSearch] = useState<string>("");
-  // A notification deep link is read synchronously so auto-select never overrides it.
-  const [activeId, setActiveId] = useState<string | null>(() =>
-    openParamForRoute(window.location.hash, "inbox"),
-  );
-  // Deep link from a notification: `#/inbox?open=<conversationId>`.
-  useOpenParam("inbox", setActiveId);
-  // SP-30 phone pattern: one pane at a time (list → thread → details). The
-  // selection and the details pane are pushed into the hash (`c=`, `d=1`) so
-  // Back walks back through them; from md every pane is on screen.
+  // SP-30 phone pattern: one pane at a time (list → thread → details). On a
+  // phone the hash is the source of truth: `c=<id>` is the open conversation
+  // and `d=1` its details (paneFromHash). Opening pushes a history entry
+  // marked in history.state, so Back walks back through the panes; a reload
+  // or shared link with `c=` opens that thread. From md every pane is on
+  // screen and the selection is ordinary state.
   const { layout } = useViewport();
   const phone = layout === "phone";
   const phoneRef = useRef(phone);
   phoneRef.current = phone;
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const pushedConv = useRef(false);
-  const pushedDetails = useRef(false);
-  const pushHash = (param: string, value: string | null) => {
-    const next = setHashParam(window.location.hash, param, value);
-    window.history.pushState(window.history.state, "", window.location.pathname + window.location.search + next);
+  const readPane = () => {
+    const h = window.location.hash;
+    return paneFromHash({
+      phone: phoneRef.current,
+      conv: getHashParam(h, PANE_CONV_PARAM),
+      details: getHashParam(h, PANE_DETAILS_PARAM) === "1",
+      open: openParamForRoute(h, "inbox"),
+    });
   };
+  // A notification deep link is read synchronously so auto-select never overrides it.
+  const [activeId, setActiveId] = useState<string | null>(
+    () => openParamForRoute(window.location.hash, "inbox") ?? readPane()?.activeId ?? null,
+  );
+  const [detailsOpen, setDetailsOpen] = useState(() => readPane()?.detailsOpen ?? false);
+  const paneUrl = (h: string) => window.location.pathname + window.location.search + h;
+  const paneState = (): Record<string, unknown> | null => {
+    const s: unknown = window.history.state;
+    return s && typeof s === "object" ? (s as Record<string, unknown>) : null;
+  };
+  const markedState = (pane: "conv" | "details") => ({ ...(paneState() ?? {}), [PANE_STATE_KEY]: pane });
   const selectConversation = (id: string) => {
     setActiveId(id);
     setDetailsOpen(false);
+    const h = window.location.hash;
+    const next = setHashParam(setHashParam(h, PANE_DETAILS_PARAM, null), PANE_CONV_PARAM, id);
     if (phoneRef.current) {
-      const base = setHashParam(window.location.hash, PANE_DETAILS_PARAM, null);
-      const next = setHashParam(base, PANE_CONV_PARAM, id);
-      const url = window.location.pathname + window.location.search + next;
-      if (pushedConv.current) window.history.replaceState(window.history.state, "", url);
-      else window.history.pushState(window.history.state, "", url);
-      pushedConv.current = true;
-      pushedDetails.current = false;
+      // From the list: a new entry (Back returns to the list); a thread already open: replaced.
+      if (getHashParam(h, PANE_CONV_PARAM)) window.history.replaceState(window.history.state, "", paneUrl(next));
+      else window.history.pushState(markedState("conv"), "", paneUrl(next));
+    } else if (getHashParam(h, PANE_CONV_PARAM)) {
+      // A `c=` left by the phone layout stays in step with the selection.
+      window.history.replaceState(window.history.state, "", paneUrl(next));
     }
   };
+  // Deep link from a notification: `#/inbox?open=<conversationId>`, selected
+  // through the same path so `c=` and the history stay in step.
+  useOpenParam("inbox", selectConversation);
   const backToList = () => {
-    if (pushedConv.current) window.history.back();
-    else {
-      setActiveId(null);
-      setDetailsOpen(false);
+    if (paneState()?.[PANE_STATE_KEY] === "conv") {
+      window.history.back();
+      return;
     }
+    // Opened by a reload or a shared link: there is no list entry to go back to.
+    const h = window.location.hash;
+    window.history.replaceState(window.history.state, "", paneUrl(setHashParam(setHashParam(h, PANE_DETAILS_PARAM, null), PANE_CONV_PARAM, null)));
+    setActiveId(null);
+    setDetailsOpen(false);
   };
   const openDetails = () => {
     setDetailsOpen(true);
-    if (phoneRef.current && !pushedDetails.current) {
-      pushHash(PANE_DETAILS_PARAM, "1");
-      pushedDetails.current = true;
+    const h = window.location.hash;
+    if (phoneRef.current && getHashParam(h, PANE_DETAILS_PARAM) !== "1") {
+      window.history.pushState(markedState("details"), "", paneUrl(setHashParam(h, PANE_DETAILS_PARAM, "1")));
     }
   };
   const closeDetails = () => {
-    if (phoneRef.current && pushedDetails.current) window.history.back();
-    else setDetailsOpen(false);
+    if (phoneRef.current && paneState()?.[PANE_STATE_KEY] === "details") {
+      window.history.back();
+      return;
+    }
+    if (phoneRef.current) {
+      window.history.replaceState(window.history.state, "", paneUrl(setHashParam(window.location.hash, PANE_DETAILS_PARAM, null)));
+    }
+    setDetailsOpen(false);
   };
+  // Back/Forward and links: the panes follow the hash (phones only).
   useEffect(() => {
     const onHash = () => {
-      const h = window.location.hash;
-      if (pushedDetails.current && !getHashParam(h, PANE_DETAILS_PARAM)) {
-        pushedDetails.current = false;
-        setDetailsOpen(false);
-      }
-      if (pushedConv.current && !getHashParam(h, PANE_CONV_PARAM)) {
-        pushedConv.current = false;
-        setActiveId(null);
-        setDetailsOpen(false);
-      }
+      const p = readPane();
+      if (!p) return;
+      setActiveId(p.activeId);
+      setDetailsOpen(p.detailsOpen);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
+    // readPane reads refs and the location only.
   }, []);
+  // Rotated or resized into the phone layout: show what the hash says (the list without `c=`).
+  useEffect(() => {
+    if (!phone) return;
+    const p = readPane();
+    if (!p) return;
+    setActiveId(p.activeId);
+    setDetailsOpen(p.detailsOpen);
+  }, [phone]);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
   const [channels, setChannels] = useState<Set<ConvChannel>>(
@@ -2856,7 +2884,6 @@ function InboxImpl() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   const toggleChannel = (ch: ConvChannel) => {
@@ -2881,7 +2908,6 @@ function InboxImpl() {
     if (filter.labelIds.some((id) => !known.has(id))) {
       setFilter({ ...filter, labelIds: filter.labelIds.filter((id) => known.has(id)) });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labelsQ.data, filter.labelIds]);
 
   const filterCtx = useMemo<FilterCtx>(
@@ -3274,15 +3300,9 @@ function InboxImpl() {
   const shownView = phone ? "list" : view;
   const pane = inboxPane(layout, { selected: !!active, detailsOpen });
   const sheet = detailsAsSheet(layout) && detailsOpen && !!active && shownView === "list";
-  // The tablet details sheet closes on Escape (unless an inner control took it).
-  useEffect(() => {
-    if (!sheet) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) setDetailsOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [sheet]);
+  // The tablet details sheet is a modal: focus moves in and stays, Escape closes, focus returns.
+  const detailsRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(detailsRef, sheet, closeDetails);
   const threadBar =
     active && shownView === "list" && layout !== "desktop" && layout !== "wide" ? (
       <div className="ix-thread-bar">
@@ -3530,7 +3550,13 @@ function InboxImpl() {
       )}
       </div>
       {shownView !== "list" ? null : (
-        <div className="ix-col-details" role={sheet ? "dialog" : undefined} aria-label={sheet ? tx("Details", "التفاصيل") : undefined}>
+        <div
+          ref={detailsRef}
+          className="ix-col-details"
+          role={sheet ? "dialog" : undefined}
+          aria-modal={sheet ? true : undefined}
+          aria-label={sheet ? tx("Details", "التفاصيل") : undefined}
+        >
           {active && (phone || sheet) ? (
             <div className="ix-thread-bar ix-details-bar">
               <button type="button" className="btn ghost sm" onClick={closeDetails}>
