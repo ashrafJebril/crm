@@ -6,6 +6,7 @@ import { PAYMENT_OVERDUE } from "@/lib/paymentLock";
 import { makeTx } from "@/lib/tx";
 import { IconCheck, IconPlus, IconChevDown } from "@/icons";
 import { WorkspaceMark } from "./WorkspaceMark";
+import { confirmLeave } from "@/lib/leaveGuard";
 
 /**
  * Top-bar dropdown showing the active workspace name. Click to:
@@ -52,6 +53,8 @@ export function WorkspaceSwitcher() {
       setOpen(false);
       return;
     }
+    // SP-29: unsaved general settings would be discarded by the switch.
+    if (!confirmLeave()) return;
     setBusy(true);
     setError(null);
     try {
@@ -75,6 +78,7 @@ export function WorkspaceSwitcher() {
   const onCreate = async () => {
     const name = newName.trim();
     if (!name) return;
+    if (!confirmLeave()) return;
     setBusy(true);
     setError(null);
     try {

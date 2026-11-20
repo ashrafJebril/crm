@@ -11,6 +11,7 @@ import { ErrorRow, Field, SaveBar, SettingsCard, inputStyle } from "./form";
 import { BRAND_COLOR_COPY, DEFAULT_CHAT_COLOR, LOGO_ACCEPT, SAVED_FLASH_MS, brandErrorText, logoCheckError, validateLogoFile } from "./brand";
 import { isDirty, patchOf, saveBarState, type GeneralForm } from "./saveBar";
 import { removeLogo, uploadLogo } from "./brandApi";
+import { installLeaveListeners, registerLeaveGuard } from "@/lib/leaveGuard";
 
 const COMMON_TIMEZONES = [
   "Asia/Riyadh",
@@ -44,7 +45,13 @@ export function WorkspaceTab() {
   const { activeWorkspace, refreshWorkspace } = useAuth();
   const canEdit = usePermissions().can("settings.update");
 
-  const initial = useMemo(() => formOf(activeWorkspace), [activeWorkspace]);
+  // After a save the saved values are the baseline even if the refresh fails
+  // (they hold until the workspace object itself changes).
+  const [savedBase, setSavedBase] = useState<{ ws: Workspace | null; form: GeneralForm } | null>(null);
+  const initial = useMemo(
+    () => (savedBase && savedBase.ws === activeWorkspace ? savedBase.form : formOf(activeWorkspace)),
+    [activeWorkspace, savedBase],
+  );
   const [form, setForm] = useState<GeneralForm>(initial);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -70,7 +77,7 @@ export function WorkspaceTab() {
 
   const dirty = canEdit && isDirty(form, initial);
   const barState = saveBarState({ dirty, saving, error: saveError, savedAt, now: Date.now(), readOnly: !canEdit });
-  useLeaveGuard(dirty, tx("You have unsaved changes. Leave anyway?", "لديك تغييرات غير محفوظة. هل تريد المغادرة؟"));
+  useLeaveGuard(dirty, tx("You have unsaved changes. Leave anyway?", "لديك تغييرات غير محفوظة. هل تريد المغادرة؟"), form);
 
   const set = <K extends keyof GeneralForm>(k: K, v: GeneralForm[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
@@ -92,8 +99,10 @@ export function WorkspaceTab() {
     setSaveError(null);
     try {
       await api.patch<Workspace>(`/workspaces/${activeWorkspace.id}`, patch);
-      // Show the normalised values, then pick up the saved workspace everywhere (no reload).
-      setForm((f) => ({ ...f, name: f.name.trim(), brandColor: colourCheck ?? "" }));
+      // Show the normalised values and make them the baseline, then pick up the saved workspace everywhere (no reload).
+      const saved: GeneralForm = { ...form, name: form.name.trim(), brandColor: colourCheck ?? "" };
+      setForm(saved);
+      setSavedBase({ ws: activeWorkspace, form: saved });
       await refreshWorkspace().catch(() => undefined);
       setSavedAt(Date.now());
     } catch (e) {
@@ -376,29 +385,20 @@ function LogoField({ workspace, canEdit, onChanged }: { workspace: Workspace; ca
 }
 
 /**
- * While the form is dirty: the browser's leave prompt on unload, and a
- * confirm before any in-app route change. Routes live in the hash, so a
- * capture-phase hashchange listener (it runs before the router's) restores
- * the previous URL and stops the event when the user stays.
+ * While the form is dirty: a shared leave guard (lib/leaveGuard). Tabs,
+ * routes and the workspace switcher ask it before changing state; the
+ * capture-phase hashchange listener covers Back/Forward and typed URLs, and
+ * the unload prompt covers a reload or a closed tab. `rev` re-arms the guard
+ * after an accepted leave that did not unmount the form.
  */
-function useLeaveGuard(dirty: boolean, message: string) {
+function useLeaveGuard(dirty: boolean, message: string, rev: unknown) {
   useEffect(() => {
     if (!dirty) return;
-    const onUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = message;
-      return message;
-    };
-    const onHash = (e: HashChangeEvent) => {
-      if (window.confirm(message)) return;
-      e.stopImmediatePropagation();
-      window.history.replaceState(window.history.state, "", e.oldURL);
-    };
-    window.addEventListener("beforeunload", onUnload);
-    window.addEventListener("hashchange", onHash, true);
+    const off = registerLeaveGuard(() => message);
+    const offListeners = installLeaveListeners();
     return () => {
-      window.removeEventListener("beforeunload", onUnload);
-      window.removeEventListener("hashchange", onHash, true);
+      off();
+      offListeners();
     };
-  }, [dirty, message]);
+  }, [dirty, message, rev]);
 }

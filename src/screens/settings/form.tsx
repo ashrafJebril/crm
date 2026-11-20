@@ -154,7 +154,6 @@ export function SaveBar({
     <div
       role="region"
       aria-label={labels.unsaved}
-      aria-live="polite"
       style={{
         position: "sticky",
         insetBlockEnd: 0,
@@ -175,7 +174,9 @@ export function SaveBar({
       }}
     >
       <div style={{ flex: "1 1 200px", minWidth: 0, display: "grid", gap: 2 }}>
-        <span style={{ fontWeight: 500, color: state === "error" ? "var(--bad)" : "var(--ink)" }}>{message}</span>
+        <span aria-live="polite" style={{ fontWeight: 500, color: state === "error" ? "var(--bad)" : "var(--ink)" }}>
+          {message}
+        </span>
         {state === "error" && error ? (
           <span className="muted" style={{ fontSize: 12 }}>
             {error}
