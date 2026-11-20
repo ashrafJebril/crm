@@ -21,6 +21,8 @@ import {
 } from "@/lib/permissions";
 import { arabicServerMessage, changedRoleFields } from "@/lib/roleErrors";
 import { inputStyle } from "./form";
+import { useViewport } from "@/lib/useViewport";
+import { BP } from "@/styles/breakpoints";
 
 export interface RoleRow {
   id: string;
@@ -52,21 +54,9 @@ export function roleErrorMessage(e: unknown, tx: TxFn): string {
   return tx("Request failed", "فشل الطلب");
 }
 
-/** True while the viewport is narrower than `px` (collapses the two-column grid). */
-function useNarrow(px: number): boolean {
-  const q = `(max-width: ${px - 1}px)`;
-  const [narrow, setNarrow] = useState(
-    () => typeof window !== "undefined" && window.matchMedia?.(q).matches === true,
-  );
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia(q);
-    const on = () => setNarrow(mq.matches);
-    on();
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, [q]);
-  return narrow;
+/** SP-30: below md the two-column roles grid collapses (the shared breakpoint scale, was a computed 720 px query). */
+function useNarrow(): boolean {
+  return useViewport().width < BP.md;
 }
 
 export function RolesTab() {
@@ -78,7 +68,7 @@ export function RolesTab() {
   const canUpdate = can("roles.update");
   const canDelete = can("roles.delete");
   const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
-  const narrow = useNarrow(720);
+  const narrow = useNarrow();
 
   const rolesQ = useFetch<RoleRow[]>(canView ? "/roles" : null);
   const roles = rolesQ.data ?? [];

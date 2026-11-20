@@ -965,3 +965,18 @@ input, textarea, select { font-family: inherit; }
   .page-header-row { align-items: flex-start; gap: 10px; }
   .page-header-actions { gap: 6px; }
 }
+
+/* SP-30 shared: a tab bar that scrolls inside itself when it does not fit (below xl). */
+@media (max-width: 1279.98px) {
+  .tabs-scroll {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .tabs-scroll::-webkit-scrollbar { display: none; }
+  .tabs-scroll > .tab { flex: 0 0 auto; white-space: nowrap; }
+}
+@media (max-width: 767.98px) {
+  .tabs-scroll { padding-inline: 8px !important; }
+}
