@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { confirmLeave } from "@/lib/leaveGuard";
+import { routeHash } from "@/lib/langParam";
 import type { RouteId } from "@/lib/types";
 
 // Each screen is its own chunk — initial load only ships shell + Dashboard.
@@ -66,7 +67,8 @@ export function useRoute(): [RouteId, (r: RouteId) => void] {
     const changes = h !== `#/${r}` && !h.startsWith(`#/${r}?`);
     // SP-29: ask the leave guard before the current screen unmounts.
     if (changes && !confirmLeave()) return;
-    if (changes) window.location.hash = `#/${r}`;
+    // SP-30: the new route drops the old query but keeps `?lang=`.
+    if (changes) window.location.hash = routeHash(r, h);
     setRouteState(r);
   };
 

@@ -8,7 +8,10 @@ export interface Tweaks {
   accent: Accent;
   density: Density;
   lang: Lang;
-  collapsed: boolean;
+  /** SP-30: the remembered rail/full choice on this device (null = the default for the width). */
+  sidebarCollapsed: boolean | null;
+  /** SP-30 ruling 4: the user picked a language on this device (else the workspace lang applies). */
+  langChosen: boolean;
   showAIPersonality: boolean;
 }
 

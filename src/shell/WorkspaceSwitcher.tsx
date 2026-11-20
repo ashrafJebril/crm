@@ -102,6 +102,7 @@ export function WorkspaceSwitcher() {
     <div ref={rootRef} style={{ position: "relative" }}>
       <button
         type="button"
+        className="ws-switch"
         onClick={() => setOpen((v) => !v)}
         style={{
           fontSize: 12,

@@ -6,6 +6,12 @@ import { BrandLogo } from "@/components/BrandLogo";
 import { memberErrorText } from "@/screens/team/memberErrors";
 import { TwoFactorStep } from "./TwoFactorStep";
 
+/** SP-30: the external public site (`VITE_PUBLIC_SITE_URL`), https only; unset → no link. */
+const PUBLIC_SITE_URL = ((): string | null => {
+  const v = String(import.meta.env.VITE_PUBLIC_SITE_URL ?? "").trim();
+  return /^https:\/\/[^\s"'<>]+$/i.test(v) ? v : null;
+})();
+
 type Mode = "login" | "signup";
 
 // When "Remember me" is checked we pre-fill the EMAIL next time. SP-26
@@ -369,6 +375,14 @@ export function Login() {
         <div style={{ marginTop: 16, fontSize: 13, textAlign: "center" }} className="muted">
           {tx("New here?", "جديد هنا؟")} <a href="#/signup">{tx("Create an account and set up your agent", "أنشئ حسابًا وأعدّ وكيلك")}</a>
         </div>
+        {/* SP-30 (D7, ruling 5): the public website lives elsewhere; linked when configured. */}
+        {PUBLIC_SITE_URL ? (
+          <div style={{ marginTop: 8, fontSize: 13, textAlign: "center" }} className="muted">
+            <a href={PUBLIC_SITE_URL} target="_blank" rel="noopener noreferrer">
+              {tx("Visit our website", "زُر موقعنا الإلكتروني")}
+            </a>
+          </div>
+        ) : null}
       </div>
     </div>
   );

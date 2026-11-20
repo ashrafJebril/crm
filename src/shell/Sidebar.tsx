@@ -9,15 +9,25 @@ import { NAV, isSection, type NavEntry } from "./nav";
 import { Avatar } from "@/components/Avatar";
 import { BrandLogo } from "@/components/BrandLogo";
 import { HjzLink } from "./HjzLink";
-import { IconBell, IconChevDown, IconSearch } from "@/icons";
+import { IconBell, IconChev, IconChevDown, IconSearch } from "@/icons";
+import { makeTx } from "@/lib/tx";
+import type { ShellMode } from "@/styles/breakpoints";
 
 interface SidebarProps {
   route: RouteId;
   setRoute: (r: RouteId) => void;
+  /** SP-30: drawer (below md), rail or full. */
+  mode: ShellMode;
+  /** Rail ⇄ full (not shown in the drawer). */
+  onToggle?: () => void;
+  /** Called after a nav item is chosen (the drawer closes). */
+  onNavigate?: () => void;
 }
 
-function SidebarImpl({ route, setRoute }: SidebarProps) {
+function SidebarImpl({ route, setRoute, mode, onToggle, onNavigate }: SidebarProps) {
   const { t } = useTweaks();
+  const tx = makeTx(t.lang);
+  const collapsed = mode === "rail";
   const { user, activeWorkspace } = useAuth();
   const isAr = t.lang === "ar";
   const { can } = usePermissions();
@@ -67,8 +77,8 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
     <aside className="side">
       <div className="side-brand">
         {/* The lockup carries the wordmark, so no separate name/subtitle. */}
-        <BrandLogo markOnly={t.collapsed} />
-        {!t.collapsed && (
+        <BrandLogo markOnly={collapsed} />
+        {!collapsed && (
           <button
             className="btn ghost icon sm"
             title="Search"
@@ -79,7 +89,7 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
         )}
       </div>
 
-      {!t.collapsed && activeWorkspace && (
+      {!collapsed && activeWorkspace && (
         <div className="workspace" title="Switch workspace">
           <WorkspaceMark name={activeWorkspace.name} logoUrl={activeWorkspace.logoUrl} brandColor={activeWorkspace.brandColor} size={28} />
           <div className="ws-info">
@@ -110,7 +120,10 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
               key={n.id}
               type="button"
               className={`nav-item ${active ? "active" : ""}`.trim()}
-              onClick={() => setRoute(n.id)}
+              onClick={() => {
+                setRoute(n.id);
+                onNavigate?.();
+              }}
               title={label}
             >
               <span className="nav-icon">
@@ -127,6 +140,23 @@ function SidebarImpl({ route, setRoute }: SidebarProps) {
           );
         })}
       </nav>
+
+      {mode !== "drawer" && onToggle ? (
+        <div className="side-toggle">
+          <button
+            type="button"
+            className="nav-item"
+            onClick={onToggle}
+            aria-label={collapsed ? tx("Expand sidebar", "توسيع الشريط الجانبي") : tx("Collapse sidebar", "طي الشريط الجانبي")}
+            title={`${collapsed ? tx("Expand sidebar", "توسيع الشريط الجانبي") : tx("Collapse sidebar", "طي الشريط الجانبي")} (Ctrl+B)`}
+          >
+            <span className="nav-icon side-toggle-icon" data-collapsed={collapsed}>
+              <IconChev w={16} />
+            </span>
+            <span className="nav-label">{tx("Collapse sidebar", "طي الشريط الجانبي")}</span>
+          </button>
+        </div>
+      ) : null}
 
       <HjzLink />
 

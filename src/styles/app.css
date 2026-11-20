@@ -19,6 +19,7 @@ input, textarea, select { font-family: inherit; }
   display: grid;
   grid-template-columns: var(--side-w, 240px) 1fr;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg);
   transition: grid-template-columns 0.18s ease;
 }
@@ -30,6 +31,62 @@ input, textarea, select { font-family: inherit; }
 }
 .app[data-embed="1"] > .main { flex: 1; min-height: 0; }
 [dir="rtl"] .app { direction: rtl; }
+
+/* ─── SP-30 responsive shell ──────────────────────────────────────────────
+   md+ keeps the grid (rail = data-collapsed); below md one column, and the
+   sidebar opens as a drawer from the topbar menu button. */
+@media (max-width: 767.98px) {
+  .app:not([data-embed="1"]) { grid-template-columns: minmax(0, 1fr); }
+}
+.shell-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(0, 0, 0, 0.45);
+}
+.shell-drawer {
+  --drawer-from: -100%;
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: 91;
+  inline-size: min(85vw, 300px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border-inline-end: 1px solid var(--line-soft);
+  box-shadow: var(--shadow-lg);
+  padding-block-start: var(--safe-top);
+  padding-block-end: var(--safe-bottom);
+  padding-inline-start: var(--safe-start);
+  animation: shell-drawer-in 200ms ease-out;
+}
+[dir="rtl"] .shell-drawer { --drawer-from: 100%; }
+@keyframes shell-drawer-in {
+  from { transform: translateX(var(--drawer-from)); }
+  to { transform: none; }
+}
+.shell-drawer > .side {
+  flex: 1;
+  min-block-size: 0;
+  border-inline-end: 0;
+}
+.shell-drawer-close {
+  position: absolute;
+  inset-block-start: calc(var(--safe-top) + 12px);
+  inset-inline-end: 8px;
+  z-index: 1;
+  inline-size: 40px;
+  block-size: 40px;
+}
+.shell-drawer .side-brand { padding-inline-end: 56px; }
+.shell-drawer .nav-item { min-block-size: 40px; }
+.side-toggle { border-top: 1px solid var(--line-soft); padding: 6px 8px; }
+.side-toggle-icon svg { transform: scaleX(-1); }
+.side-toggle-icon[data-collapsed="true"] svg { transform: none; }
+[dir="rtl"] .side-toggle-icon svg { transform: none; }
+[dir="rtl"] .side-toggle-icon[data-collapsed="true"] svg { transform: scaleX(-1); }
+.menu-btn { inline-size: 40px; block-size: 40px; flex: 0 0 auto; }
 
 /* ─── Sidebar ─────────────────────────────────────────────────────────── */
 .side {
@@ -210,12 +267,18 @@ input, textarea, select { font-family: inherit; }
   align-items: center;
   gap: 12px;
   padding: 0 20px;
+  padding-inline-start: max(20px, var(--safe-start));
+  padding-inline-end: max(20px, var(--safe-end));
+  min-inline-size: 0;
   background: var(--bg);
   position: sticky;
   top: 0;
   z-index: 5;
 }
-.crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.crumbs { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); min-inline-size: 0; white-space: nowrap; }
+.crumbs .now { overflow: hidden; text-overflow: ellipsis; }
+.topbar > :not(.crumbs):not(.grow) { flex-shrink: 0; }
+.topbar .search-btn { display: none; }
 .crumbs .sep { color: var(--ink-4); }
 .crumbs .now { color: var(--ink); font-weight: 500; }
 .topbar .grow { flex: 1; }
@@ -734,8 +797,24 @@ input, textarea, select { font-family: inherit; }
   from { transform: translateX(-24px); opacity: 0; }
   to { transform: none; opacity: 1; }
 }
-@media (max-width: 640px) {
-  .record-sheet { width: 100%; border-inline-start: 0; }
+@media (max-width: 639.98px) {
+  /* SP-30: every dialog is a full-screen sheet on phones. */
+  .dialog {
+    inline-size: 100vw;
+    max-inline-size: 100vw;
+    block-size: 100vh;
+    block-size: 100dvh;
+    max-block-size: 100dvh;
+    border-radius: 0;
+    padding-block-start: var(--safe-top);
+    padding-block-end: var(--safe-bottom);
+  }
+  .record-sheet {
+    width: 100%;
+    border-inline-start: 0;
+    padding-block-start: var(--safe-top);
+    padding-block-end: var(--safe-bottom);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .record-sheet { animation: none; }
@@ -782,7 +861,7 @@ input, textarea, select { font-family: inherit; }
   animation: record-sheet-in 180ms ease-out;
 }
 [dir="rtl"] .copilot-drawer { box-shadow: 12px 0 32px rgba(0, 0, 0, 0.3); animation-name: record-sheet-in-rtl; }
-@media (max-width: 640px) { .copilot-drawer { width: 100%; border-inline-start: 0; } }
+@media (max-width: 639.98px) { .copilot-drawer { width: 100%; border-inline-start: 0; } }
 @media (prefers-reduced-motion: reduce) { .copilot-drawer { animation: none; } }
 .copilot-head { display: flex; align-items: center; gap: 6px; padding-block: 10px; padding-inline: 14px; border-block-end: 1px solid var(--line-soft); }
 .copilot-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -837,3 +916,29 @@ input, textarea, select { font-family: inherit; }
 .copilot-history-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding-block: 8px; padding-inline: 12px; background: var(--bg-1); }
 .copilot-history-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: 0; background: none; cursor: pointer; text-align: start; color: inherit; font: inherit; }
 .copilot-askbox input { flex: 1; min-width: 0; }
+
+/* ─── SP-30 topbar: the search becomes an icon below lg; on phones the
+   lower-priority items drop their labels or hide so the bar never overflows. */
+@media (max-width: 1023.98px) {
+  .topbar .search { display: none; }
+  .topbar .search-btn { display: inline-flex; }
+}
+@media (max-width: 767.98px) {
+  .topbar { gap: 4px; padding-inline-start: max(8px, var(--safe-start)); padding-inline-end: max(8px, var(--safe-end)); }
+  .topbar .crumbs .crumb-ws,
+  .topbar .crumbs .sep,
+  .topbar .tb-user-meta,
+  .topbar .tb-avatar,
+  .topbar .tb-label { display: none; }
+  .topbar .tb-user { padding-inline-start: 0 !important; border-inline-start: 0 !important; margin-inline-start: 0 !important; }
+  .topbar .ws-switch { max-inline-size: 96px !important; }
+  .topbar .btn.icon, .topbar .search-btn { min-inline-size: 36px; min-block-size: 36px; }
+}
+@media (max-width: 639.98px) {
+  .topbar .tb-theme,
+  .topbar .tb-create { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shell-drawer { animation: none; }
+  .app { transition: none; }
+}
