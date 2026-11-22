@@ -85,6 +85,7 @@ import {
   markReadAndPatch, threadFor,
 } from "./inbox/inboxCache";
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
+import { isVideoType, messageBodyView } from "./inbox/messageMedia";
 import { useDialogFocus } from "@/lib/useDialogFocus";
 import {
   autoImportAttempted, emptyThreadCopy, emptyThreadView, historyImportPath, markAutoImportAttempted, shouldAutoImportHistory,
@@ -1130,6 +1131,9 @@ function Bubble({ m }: BubbleProps) {
   // of showing cryptic dots. (Live-diagnosed 2026-08-19: a sticker arrived as
   // "•••••••••" with attachments: [].)
   const isUnsupported = !m.attach && /^•+$/.test(m.body.trim());
+  // "[video]"/"[image]" placeholders: hidden when the media renders, an honest
+  // "couldn't be loaded" label when it never saved.
+  const bodyView = messageBodyView(m.body ?? "", Boolean(m.attach), tx);
   // Stored `t` strings are inconsistent across ingestion eras (some local,
   // some UTC — one thread showed 14:26 above 11:36). createdAt is the truth;
   // render it in the viewer's own timezone, falling back to `t` only for
@@ -1214,8 +1218,10 @@ function Bubble({ m }: BubbleProps) {
                 "🧩 رسالة غير مدعومة (ملصق أو استفتاء أو نحوه) — اعرضها في واتساب",
               )}
             </span>
+          ) : bodyView.missing ? (
+            <span style={{ fontStyle: "italic", color: "var(--ink-3)" }}>{bodyView.missing}</span>
           ) : (
-            m.body
+            bodyView.text
           )}
           {m.attach && <MessageAttachment value={m.attach} />}
         </div>
@@ -2096,6 +2102,7 @@ function InboxMediaImage({
   alt: string;
 }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [isVideo, setIsVideo] = useState<boolean>(false);
   const [zoomed, setZoomed] = useState<boolean>(false);
   useEffect(() => {
     let cancelled = false;
@@ -2105,6 +2112,7 @@ function InboxMediaImage({
       .then((b) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(b);
+        setIsVideo(isVideoType(b.type));
         setSrc(objectUrl);
       })
       .catch(() => {
@@ -2131,6 +2139,18 @@ function InboxMediaImage({
       >
         …
       </div>
+    );
+  }
+  if (isVideo) {
+    return (
+      <video
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        aria-label={alt}
+        style={{ maxWidth: 260, maxHeight: 320, borderRadius: 8, display: "block", background: "#000" }}
+      />
     );
   }
   return (
