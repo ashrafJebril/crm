@@ -204,3 +204,19 @@ export function previewPrefix(c: Pick<Conversation, "lastFrom">): "you" | "ai" |
   if (c.lastFrom === "ai") return "ai";
   return null;
 }
+
+/**
+ * The view after a hash change into the inbox (Back/Forward, a link):
+ * its `view=`; with no `view=` but an `open=` (a notification or record
+ * link) the current view stays; else the view of an old `f=` bucket; else
+ * null (the default view).
+ */
+export function viewAfterHashChange(
+  hash: { view: string | null; open: string | null; bucket: InboxBucket },
+  current: ViewId | null,
+): ViewId | null {
+  const v = parseView(hash.view);
+  if (v) return v;
+  if (hash.open) return current;
+  return hash.bucket !== "all" ? viewForBucket(hash.bucket) : null;
+}

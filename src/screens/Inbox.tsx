@@ -64,7 +64,7 @@ import { InboxSortMenu } from "./inbox/InboxSortMenu";
 import { InboxMoreMenu, InboxViewPicker, InboxViewsColumn, ViewIcons, avatarIcon, dotIcon, type ViewEntry, type ViewGroup } from "./inbox/InboxViewNav";
 import {
   AI_MEMBER, channelKindsToShow, defaultView, matchesView, parseView, previewPrefix, readStoredView, viewCounts,
-  viewForBucket, waitTime, writeStoredView, isViewAvailable, type ViewId,
+  viewForBucket, waitTime, writeStoredView, isViewAvailable, viewAfterHashChange, type ViewId,
 } from "./inbox/inboxViews";
 import { LabelChips } from "./inbox/LabelChips";
 import { AdAttributionCard, CtwaChip } from "./inbox/CtwaChip";
@@ -2377,6 +2377,9 @@ interface FbConv {
   unread: number;
   messageCount: number;
   updatedAt: string;
+  /** Inbox views: the newest message's sender and the customer's last message time (when the newest is theirs). */
+  lastFrom?: "them" | "page";
+  lastInboundAt?: string | null;
 }
 interface FbMsg {
   id: string;
@@ -2404,6 +2407,8 @@ interface IgConv {
   unread: number;
   messageCount: number;
   updatedAt: string;
+  lastFrom?: "them" | "page";
+  lastInboundAt?: string | null;
 }
 interface IgMsg {
   id: string;
@@ -2704,7 +2709,8 @@ function InboxImpl() {
           pinned: false,
           lastAt: fmtCompact(c.updatedAt),
           updatedAt: c.updatedAt,
-          lastFrom: "them",
+          lastFrom: c.lastFrom === "page" ? "human" : "them",
+          lastInboundAt: c.lastInboundAt ?? null,
           preview: c.snippet || "—",
           channel: "facebook",
           status: "human",
@@ -2723,7 +2729,8 @@ function InboxImpl() {
           pinned: false,
           lastAt: fmtCompact(c.updatedAt),
           updatedAt: c.updatedAt,
-          lastFrom: "them",
+          lastFrom: c.lastFrom === "page" ? "human" : "them",
+          lastInboundAt: c.lastInboundAt ?? null,
           preview: c.snippet || "—",
           channel: "instagram",
           status: "human",
@@ -2873,7 +2880,13 @@ function InboxImpl() {
     const on = () => {
       const h = window.location.hash;
       if (!/^#\/?inbox(\?|$)/.test(h)) return;
-      setExplicitView(viewFromHash(h));
+      // A notification / record link (open= without view=) keeps the current view.
+      setExplicitView((cur) =>
+        viewAfterHashChange(
+          { view: getHashParam(h, "view"), open: getHashParam(h, "open"), bucket: readFilterFromHash(h).bucket },
+          cur,
+        ),
+      );
     };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);

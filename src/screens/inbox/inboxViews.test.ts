@@ -3,7 +3,7 @@ import type { Conversation } from "../../lib/types";
 import { needsAttention, type FilterCtx, type InboxBucket } from "./inboxFilters";
 import {
   AI_MEMBER, MORE_VIEWS, PRIMARY_VIEWS, channelKindsToShow, defaultView, isViewAvailable, lastInboundTime, matchesView, parseView,
-  previewPrefix, readStoredView, viewCounts, viewForBucket, waitLabel, waitTime, writeStoredView, type ViewId,
+  previewPrefix, readStoredView, viewAfterHashChange, viewCounts, viewForBucket, waitLabel, waitTime, writeStoredView, type ViewId,
 } from "./inboxViews";
 
 const ctx: FilterCtx = { meId: "me", contactById: new Map(), isLive: (c) => c.id.startsWith("t_") };
@@ -164,5 +164,22 @@ describe("inbox rows: wait time and preview prefix", () => {
     expect(previewPrefix({ lastFrom: "human" })).toBe("you");
     expect(previewPrefix({ lastFrom: "ai" })).toBe("ai");
     expect(previewPrefix({ lastFrom: "them" })).toBeNull();
+  });
+});
+
+describe("inbox views: Back/Forward and links", () => {
+  it("view= wins; open= without view= keeps the current view; neither → the default", () => {
+    const h = (o: Partial<{ view: string | null; open: string | null; bucket: InboxBucket }>) => ({ view: null, open: null, bucket: "all" as InboxBucket, ...o });
+    expect(viewAfterHashChange(h({ view: "done" }), "needs-reply")).toBe("done");
+    expect(viewAfterHashChange(h({ view: "done", open: "cv1" }), "needs-reply")).toBe("done");
+    // A notification / record link: the list keeps its view.
+    expect(viewAfterHashChange(h({ open: "cv1" }), "channel:instagram")).toBe("channel:instagram");
+    expect(viewAfterHashChange(h({ open: "cv1" }), null)).toBeNull();
+    // An entry with neither: the default view (null).
+    expect(viewAfterHashChange(h({}), "channel:instagram")).toBeNull();
+    // An old f= status link still opens its view.
+    expect(viewAfterHashChange(h({ bucket: "spam" }), "open")).toBe("spam");
+    // A junk view= is ignored.
+    expect(viewAfterHashChange(h({ view: "<x>" }), "done")).toBeNull();
   });
 });
