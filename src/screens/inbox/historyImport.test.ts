@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeTx } from "../../lib/tx";
 import {
   autoImportAttempted,
+  emptyThreadCopy,
   emptyThreadView,
   historyImportPath,
   importingLabel,
   markAutoImportAttempted,
   resetAutoImportAttempts,
   shouldAutoImportHistory,
+  type EmptyThreadView,
+  type HistoryImportReason,
 } from "./historyImport";
 
 const base = {
@@ -57,25 +60,68 @@ describe("shouldAutoImportHistory", () => {
 });
 
 describe("emptyThreadView", () => {
+  const done = (over: { imported?: number; failed?: boolean; reason?: HistoryImportReason } = {}) =>
+    emptyThreadView({
+      isZernio: true,
+      status: { phase: "done", imported: over.imported ?? 0, failed: over.failed ?? false, reason: over.reason },
+      autoAttempted: true,
+    });
+
   it("a non-Zernio thread keeps the plain empty text", () => {
     expect(emptyThreadView({ isZernio: false, status: undefined, autoAttempted: false })).toBe("no-messages");
   });
 
-  it("a Zernio thread never shows the bare empty text", () => {
-    // Before the automatic attempt starts (same render it is decided in).
+  it("loading: before the automatic attempt starts and while it runs", () => {
     expect(emptyThreadView({ isZernio: true, status: undefined, autoAttempted: false })).toBe("importing");
     expect(emptyThreadView({ isZernio: true, status: { phase: "importing" }, autoAttempted: true })).toBe("importing");
-    for (const failed of [true, false]) {
-      expect(
-        emptyThreadView({
-          isZernio: true,
-          status: { phase: "done", imported: 0, failed, throttled: false },
-          autoAttempted: true,
-        }),
-      ).toBe("none-found");
+  });
+
+  it("each outcome has its own state (M2/M3)", () => {
+    expect(done({ failed: true })).toBe("failed");
+    expect(done()).toBe("none-found");
+    expect(done({ reason: "channel_unavailable" })).toBe("channel-off");
+    expect(done({ reason: "throttled" })).toBe("checking");
+    expect(done({ reason: "busy" })).toBe("checking");
+    expect(done({ reason: "rate_limited" })).toBe("rate-limited");
+    for (const reason of ["not_zernio", "no_external_id", "has_messages"] as const) {
+      expect(done({ reason })).toBe("no-messages");
     }
-    // Attempted earlier this session, outcome not in this Inbox's state: honest empty state.
+    // Attempted earlier this session, outcome not in this Inbox's state.
     expect(emptyThreadView({ isZernio: true, status: undefined, autoAttempted: true })).toBe("none-found");
+  });
+});
+
+describe("emptyThreadCopy", () => {
+  const en = makeTx("en");
+  const ar = makeTx("ar");
+  const views: EmptyThreadView[] = ["importing", "checking", "rate-limited", "failed", "channel-off", "none-found"];
+
+  it("the plain empty state has no special copy", () => {
+    expect(emptyThreadCopy("no-messages", "instagram", en)).toBeNull();
+  });
+
+  it("every state has distinct copy in both languages; Retry where trying again can help", () => {
+    for (const tx of [en, ar]) {
+      const texts = views.map((v) => emptyThreadCopy(v, "instagram", tx)!.text);
+      expect(new Set(texts).size).toBe(views.length);
+    }
+    expect(Object.fromEntries(views.map((v) => [v, emptyThreadCopy(v, "instagram", en)!.retry]))).toEqual({
+      importing: false,
+      checking: true,
+      "rate-limited": true,
+      failed: true,
+      "channel-off": false,
+      "none-found": true,
+    });
+    expect(emptyThreadCopy("failed", "instagram", en)!.text).toBe("Couldn’t load history.");
+    expect(emptyThreadCopy("checking", "instagram", en)!.text).toBe("Checking history…");
+    expect(emptyThreadCopy("none-found", "instagram", en)!.text).toBe("No message history found for this conversation.");
+  });
+
+  it("names the channel that is not connected", () => {
+    expect(emptyThreadCopy("channel-off", "instagram", en)!.text).toBe("The Instagram channel isn’t connected.");
+    expect(emptyThreadCopy("channel-off", "whatsapp", ar)!.text).toBe("قناة WhatsApp غير متصلة.");
+    expect(emptyThreadCopy("channel-off", null, en)!.text).toBe("This channel isn’t connected.");
   });
 });
 

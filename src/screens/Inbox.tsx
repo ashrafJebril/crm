@@ -87,7 +87,7 @@ import {
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
 import { useDialogFocus } from "@/lib/useDialogFocus";
 import {
-  autoImportAttempted, emptyThreadView, historyImportPath, importingLabel, markAutoImportAttempted, shouldAutoImportHistory,
+  autoImportAttempted, emptyThreadCopy, emptyThreadView, historyImportPath, markAutoImportAttempted, shouldAutoImportHistory,
   type EmptyThreadView, type HistoryImportResult, type HistoryImportStatus,
 } from "./inbox/historyImport";
 import "@/styles/screens/inbox.css";
@@ -358,8 +358,6 @@ interface ConversationPaneProps {
   messagesLoading: boolean;
   /** What an empty thread shows (a Zernio thread loads or reports its history). */
   emptyView: EmptyThreadView;
-  /** The last history import was refused as too soon after the previous one. */
-  historyThrottled: boolean;
   onRetryHistory: () => void;
   lang: Lang;
   tx: Tx;
@@ -1280,7 +1278,6 @@ function ConversationPane({
   onConversationChanged,
   messagesLoading,
   emptyView,
-  historyThrottled,
   onRetryHistory,
   lang,
   tx,
@@ -1608,23 +1605,23 @@ function ConversationPane({
             <MessageSkeleton side="right" />
             <MessageSkeleton side="left" />
           </div>
-        ) : messages.length === 0 && emptyView === "importing" ? (
-          <div className="ix-history-state" role="status" aria-live="polite">
-            <span className="ix-history-spinner" aria-hidden="true" />
-            {importingLabel(conv.channel, tx)}
-          </div>
-        ) : messages.length === 0 && emptyView === "none-found" ? (
-          <div className="ix-history-state" role="status" aria-live="polite">
-            <span>{tx("No message history found for this conversation.", "لم يُعثر على سجل رسائل لهذه المحادثة.")}</span>
-            {historyThrottled && (
-              <span className="ix-history-hint">
-                {tx("Checked a moment ago. Try again in a few minutes.", "تم التحقق قبل قليل. حاول مرة أخرى بعد بضع دقائق.")}
-              </span>
-            )}
-            <button type="button" className="btn sm" onClick={onRetryHistory}>
-              {tx("Retry", "إعادة المحاولة")}
-            </button>
-          </div>
+        ) : messages.length === 0 && emptyView !== "no-messages" ? (
+          (() => {
+            const copy = emptyThreadCopy(emptyView, conv.channel, tx);
+            return (
+              <div className="ix-history-state" role="status" aria-live="polite">
+                {(emptyView === "importing" || emptyView === "checking") && (
+                  <span className="ix-history-spinner" aria-hidden="true" />
+                )}
+                <span>{copy?.text}</span>
+                {copy?.retry && (
+                  <button type="button" className="btn sm" onClick={onRetryHistory}>
+                    {tx("Retry", "إعادة المحاولة")}
+                  </button>
+                )}
+              </div>
+            );
+          })()
         ) : messages.length === 0 ? (
           <div
             className="muted"
@@ -2893,9 +2890,9 @@ function InboxImpl() {
       let next: HistoryImportStatus;
       try {
         const r = await api.post<HistoryImportResult>(historyImportPath(id));
-        next = { phase: "done", imported: r?.imported ?? 0, failed: false, throttled: r?.reason === "throttled" };
+        next = { phase: "done", imported: r?.imported ?? 0, failed: false, reason: r?.reason };
       } catch {
-        next = { phase: "done", imported: 0, failed: true, throttled: false };
+        next = { phase: "done", imported: 0, failed: true };
       }
       // Refetch before leaving the loading state, so imported messages replace it directly.
       await invalidateConversationDetail(qc, id).catch(() => undefined);
@@ -3734,10 +3731,6 @@ function InboxImpl() {
             status: historyById[active.id],
             autoAttempted: autoImportAttempted(active.id),
           })}
-          historyThrottled={(() => {
-            const h = historyById[active.id];
-            return h?.phase === "done" && h.throttled;
-          })()}
           onRetryHistory={() => void runHistoryImport(active.id)}
           lang={t.lang}
           tx={tx}

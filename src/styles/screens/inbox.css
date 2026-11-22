@@ -304,7 +304,6 @@
   font-size: 12px;
   color: var(--ink-3);
 }
-.ix-history-hint { font-size: 11px; }
 .ix-history-spinner {
   inline-size: 8px;
   block-size: 8px;
