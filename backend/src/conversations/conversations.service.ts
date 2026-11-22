@@ -87,13 +87,16 @@ export class ConversationsService {
    * `channelId` and `channelProvider` (null when none resolves, e.g. `l`).
    */
   async list(workspaceId: string, viewer?: Viewer, filter: { channelIds?: string[] } = {}) {
-    const scope = await this.scope(workspaceId, viewer);
     const channelIds = (filter.channelIds ?? []).filter(Boolean);
-    await this.mirrorLegacyThrottled(workspaceId);
+    // Two waves of round trips instead of four: the viewer's scope and the
+    // (throttled) legacy-channel mirror are independent; then the rows, the
+    // channels and the message times all read in parallel. The mirror still
+    // finishes before anything reads channels or conversations.
+    const [scope] = await Promise.all([this.scope(workspaceId, viewer), this.mirrorLegacyThrottled(workspaceId)]);
     const where: Prisma.ConversationWhereInput = channelIds.length
       ? { AND: [{ workspaceId }, scope, { OR: [{ channelId: { in: channelIds } }, { channelId: null }] }] }
       : { workspaceId, ...scope };
-    const [rows, channels] = await Promise.all([
+    const [rows, channels, grouped] = await Promise.all([
       this.prisma.conversation.findMany({
         where,
         orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
@@ -102,6 +105,13 @@ export class ConversationsService {
       this.prisma.channel.findMany({
         where: { workspaceId },
         select: { id: true, workspaceId: true, kind: true, provider: true, status: true, isDefault: true, integrationId: true },
+      }),
+      // Per conversation and sender (filtered by the same conversation where,
+      // not by ids, so it need not wait for the rows): see below.
+      this.prisma.message.groupBy({
+        by: ["conversationId", "from"],
+        where: { workspaceId, conversation: { is: where } },
+        _max: { createdAt: true },
       }),
     ]);
     const wanted = new Set(channelIds);
@@ -120,22 +130,12 @@ export class ConversationsService {
     // `updatedAt` moves on read, assign, label and pin, so it can do neither.
     const lastInboundByConv = new Map<string, Date>();
     const lastMessageByConv = new Map<string, Date>();
-    if (convs.length > 0) {
-      const grouped = await this.prisma.message.groupBy({
-        by: ["conversationId", "from"],
-        where: {
-          workspaceId,
-          conversationId: { in: convs.map((c) => c.id) },
-        },
-        _max: { createdAt: true },
-      });
-      for (const g of grouped) {
-        const at = g._max.createdAt;
-        if (!at) continue;
-        if (g.from === "them") lastInboundByConv.set(g.conversationId, at);
-        const prev = lastMessageByConv.get(g.conversationId);
-        if (!prev || at > prev) lastMessageByConv.set(g.conversationId, at);
-      }
+    for (const g of grouped) {
+      const at = g._max.createdAt;
+      if (!at) continue;
+      if (g.from === "them") lastInboundByConv.set(g.conversationId, at);
+      const prev = lastMessageByConv.get(g.conversationId);
+      if (!prev || at > prev) lastMessageByConv.set(g.conversationId, at);
     }
 
     const WA_WINDOW_MS = 24 * 60 * 60 * 1000;

@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { REPLY_DRAFT_EVENT, takeReplyDraft } from "@/copilot/replyDraft";
 import { openParamForRoute, useOpenParam } from "@/lib/useOpenParam";
 import { InlineNote } from "@/components/InlineNote";
@@ -79,6 +79,8 @@ import { TopicsCard } from "./inbox/TopicsCard";
 import { TemplateSendDialog, type TemplateHeaderValue } from "./inbox/TemplateSendDialog";
 import { getHashParam, setHashParam } from "@/lib/hashState";
 import { useViewport } from "@/lib/useViewport";
+import { prefetchFetch } from "@/api/useFetch";
+import { DETAIL_STALE_MS, markReadAndPatch, threadFor } from "./inbox/inboxCache";
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
 import { useDialogFocus } from "@/lib/useDialogFocus";
 import "@/styles/screens/inbox.css";
@@ -303,6 +305,8 @@ interface InboxListProps {
   activeEntry: ViewEntry;
   onSelectView: (v: ViewId) => void;
   now: number;
+  /** Warm a conversation's detail (row hover / focus). */
+  onPrefetch: (id: string) => void;
   allConvs: Conversation[];
   activeId: string | null;
   setActiveId: (id: string) => void;
@@ -852,6 +856,7 @@ function InboxList({
   activeEntry,
   onSelectView,
   now,
+  onPrefetch,
   allConvs,
   activeId,
   setActiveId,
@@ -986,6 +991,8 @@ function InboxList({
               key={c.id}
               className={`conv-row ix-row ${activeId === c.id ? "active" : ""}`.trim()}
               onClick={() => setActiveId(c.id)}
+              onMouseEnter={() => onPrefetch(c.id)}
+              onFocus={() => onPrefetch(c.id)}
             >
               <div style={{ position: "relative", flex: "0 0 auto" }}>
                 <Avatar name={contact?.name} color="200" size="lg" />
@@ -2591,7 +2598,9 @@ function InboxImpl() {
   const convsPath = filter.channelIds.length
     ? `/conversations?${filter.channelIds.map((id) => `channelId=${encodeURIComponent(id)}`).join("&")}`
     : "/conversations";
-  const convsQ = useFetch<Conversation[]>(convsPath, { pollMs: 30000 });
+  // A refetch reuses a list fetch already in flight (switching quickly used to
+  // cancel and restart it: the "(canceled)" rows).
+  const convsQ = useFetch<Conversation[]>(convsPath, { pollMs: 30000, dedupeRefetch: true });
   // m4: list only (no limits / signup config), and only for channels.view.
   const canViewChannels = usePermissions().can("channels.view");
   const channelsQ = useChannelsList(canViewChannels);
@@ -2619,7 +2628,8 @@ function InboxImpl() {
     activeId && !isFbConvId(activeId) && !isIgConvId(activeId)
       ? `/conversations/${activeId}`
       : null,
-    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
+    // Fresh for DETAIL_STALE_MS: going back to a conversation shows it at once.
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000, staleMs: DETAIL_STALE_MS },
   );
 
   // Live Instagram (mirrors the FB pattern). The realtime push handles the
@@ -2825,15 +2835,17 @@ function InboxImpl() {
   useEffect(() => {
     if (!activeId) return;
     if (isFbConvId(activeId) || isIgConvId(activeId)) return;
+    // The list is not reloaded for this: its cached row is marked read in place.
     let cancelled = false;
-    api
-      .post<Conversation>(`/conversations/${activeId}/read`, {})
-      .then(() => {
-        if (!cancelled) convsQ.refetch();
-      })
-      .catch(() => {
-        // non-blocking; silently ignore
-      });
+    void markReadAndPatch(
+      activeId,
+      (path) => api.post<Conversation>(path, {}),
+      (fn) => {
+        if (!cancelled) convsQ.setData(fn);
+      },
+    ).catch(() => {
+      // non-blocking; silently ignore
+    });
     return () => {
       cancelled = true;
     };
@@ -2919,6 +2931,13 @@ function InboxImpl() {
     if (igConnected) s.add("instagram");
     return s;
   }, [channelList, fbConnected, igConnected]);
+  const prefetchDetail = useCallback(
+    (id: string) => {
+      if (isFbConvId(id) || isIgConvId(id) || id === activeId) return;
+      void prefetchFetch(qc, `/conversations/${id}`, { key: `${id}:${messageVersion}`, staleMs: DETAIL_STALE_MS }).catch(() => undefined);
+    },
+    [qc, messageVersion, activeId],
+  );
   // Wait times tick once a minute.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -3372,10 +3391,14 @@ function InboxImpl() {
     }
     // DB-backed conversation: same optimistic-append as the live paths, so a
     // just-sent reply shows instantly instead of after the ~2s send round trip.
-    if (!activeQ.data) return undefined;
+    // The loaded detail of THIS conversation, else its list row (header, name,
+    // channel at once; messages follow). A previous conversation's detail kept
+    // as a placeholder by the cache never shows under another id.
+    const thread = threadFor(activeId, activeQ.data, conversations.find((c) => c.id === activeId));
+    if (!thread) return undefined;
     return {
-      ...activeQ.data,
-      messages: appendPending(activeId, activeQ.data.messages ?? []),
+      ...thread,
+      messages: appendPending(activeId, (thread.messages ?? []) as Message[]),
     };
   }, [
     activeId,
@@ -3385,6 +3408,7 @@ function InboxImpl() {
     igMsgsQ.data,
     activeQ.data,
     pendingByConv,
+    conversations,
   ]);
 
   const activeContact = active ? contactById.get(active.contactId) : undefined;
@@ -3479,6 +3503,7 @@ function InboxImpl() {
           activeEntry={activeEntry}
           onSelectView={selectView}
           now={now}
+          onPrefetch={prefetchDetail}
           team={team}
           labels={labels}
           allConvs={conversations}
