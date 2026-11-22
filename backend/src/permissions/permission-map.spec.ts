@@ -500,6 +500,13 @@ describe("permission map", () => {
     expect(keys.filter((k) => / \/branding(\/|$)/.test(k))).toEqual(["GET /branding/:workspaceId/logo/:mediaId"]);
   });
 
+  it("the on-demand Zernio history import reads like a conversation (conversations.view)", () => {
+    const k = "POST /integrations/zernio/db-conversations/:id/import-history";
+    expect({ declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ declared: true, p: "conversations.view" });
+    // Same permission as reading the thread it fills.
+    expect(ROUTE_PERMISSIONS[k]).toBe(ROUTE_PERMISSIONS["GET /conversations/:id"]);
+  });
+
   it("permission map covers SP-27 routes", () => {
     const sp27: Record<string, string> = {
       "GET /api-keys": "api_keys.view",

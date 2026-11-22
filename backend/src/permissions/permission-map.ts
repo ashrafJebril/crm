@@ -220,6 +220,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /integrations/zernio/conversations": "conversations.view",
   "GET /integrations/zernio/conversations/:id/messages": "conversations.view",
   "POST /integrations/zernio/conversations/:id/send": "conversations.create",
+  // Imports a thread the viewer can already read (fills a history gap).
+  "POST /integrations/zernio/db-conversations/:id/import-history": "conversations.view",
   "POST /integrations/zernio/db-conversations/:id/send": "conversations.create",
   "POST /integrations/zernio/db-conversations/:id/send-template": "conversations.create",
   "GET /integrations/facebook/posts/:postId/comments": "conversations.view",

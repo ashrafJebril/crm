@@ -69,12 +69,22 @@ export function phoneFromParticipantId(
 
 /** How long a workspace's live Zernio account list is reused by status(). */
 const HEALTH_TTL_MS = 5 * 60_000;
+/** At most one on-demand history import per conversation in this window. */
+export const HISTORY_IMPORT_THROTTLE_MS = 10 * 60_000;
+/** Why an on-demand history import did nothing. */
+export type HistoryImportSkipReason =
+  | "no_external_id"
+  | "not_zernio"
+  | "channel_unavailable"
+  | "throttled";
 
 @Injectable()
 export class ZernioService {
   private readonly log = new Logger(ZernioService.name);
   /** profileId → Zernio's account list (null = Zernio unreachable), for status(). */
   private readonly healthCache = new Map<string, { at: number; accounts: ZernioAccount[] | null }>();
+  /** `${workspaceId}:${conversationId}` → when its on-demand history import last ran. */
+  private readonly historyImportAt = new Map<string, number>();
   /** SP-19: every inbound/outbound path resolves its Channel here. */
   private readonly channels: ChannelResolver;
   /** SP-12: per-recipient delivery state and reply attribution. */
@@ -1295,108 +1305,10 @@ export class ZernioService {
           });
         }
 
-        const zMsgs = await this.client.getMessages(zc.id, zc.accountId);
-        const existing = await this.prisma.message.findMany({
-          where: { workspaceId, conversationId: conv.id },
-          select: { metaMessageId: true, body: true, from: true, createdAt: true },
-        });
-        const byMeta = new Set(existing.map((m) => m.metaMessageId).filter(Boolean));
-
-        // Split into plain rows (batched in one createMany) and rows with an
-        // attachment to download (created individually).
-        const plain: Array<{
-          workspaceId: string; conversationId: string; from: string; body: string;
-          t: string; metaMessageId: string | null; createdAt: Date;
-          deliveryStatus: string | null;
-        }> = [];
-
-        for (const m of zMsgs) {
-          if (m.isDeleted) { counts.messagesSkipped++; continue; }
-          const mid = m.id ?? m._id ?? null;
-          if (mid && byMeta.has(mid)) { counts.messagesSkipped++; continue; }
-          const from = m.direction === "incoming" ? "them" : "human";
-          const attachment = m.attachments?.[0];
-          const body =
-            (m.message ?? m.text ?? m.body ?? "").trim() ||
-            (attachment ? `[${attachment.type ?? "attachment"}]` : "");
-          if (!body) { counts.messagesSkipped++; continue; }
-          const at = new Date(m.sentAt ?? m.createdAt ?? Date.now());
-          // Webhook-era rows carry Zernio-internal ids, so the id check above
-          // misses them — same author + same text within 2 minutes is a dupe.
-          const fuzzyDup = existing.some(
-            (e) =>
-              e.from === from &&
-              e.body === body &&
-              Math.abs(e.createdAt.getTime() - at.getTime()) < 120_000,
-          );
-          if (fuzzyDup) { counts.messagesSkipped++; continue; }
-
-          const t = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-          const row = {
-            workspaceId,
-            conversationId: conv.id,
-            from,
-            body,
-            t,
-            metaMessageId: mid,
-            createdAt: at,
-            deliveryStatus: m.deliveryStatus ?? null,
-          };
-
-          if (attachment?.url) {
-            let attach: string | null = null;
-            try {
-              const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
-              const media = await this.media.ingestBuffer({
-                workspaceId,
-                buffer,
-                mimeType: attachment.payload?.mimeType || mimeType || "image/jpeg",
-                fileName: `${channel}-${attachment.payload?.id ?? mid ?? "media"}`,
-              });
-              attach = media.id;
-              counts.attachmentsSaved++;
-            } catch (e) {
-              this.log.warn(`Backfill attachment failed: ${(e as Error).message}`);
-            }
-            await this.prisma.message.create({ data: { ...row, attach } });
-            counts.messagesInserted++;
-          } else {
-            plain.push(row);
-          }
-        }
-
-        if (plain.length > 0) {
-          await this.prisma.message.createMany({ data: plain });
-          counts.messagesInserted += plain.length;
-        }
-
-        // Refresh the thread summary from the newest message we now hold.
-        const latest = await this.prisma.message.findFirst({
-          where: { conversationId: conv.id },
-          orderBy: { createdAt: "desc" },
-        });
-        if (latest) {
-          await this.prisma.conversation.update({
-            where: { id: conv.id },
-            data: {
-              preview: latest.body.slice(0, 140),
-              lastFrom: latest.from,
-              lastAt: compactAge(latest.createdAt),
-              // Pin updatedAt to the real last-message time — the Inbox sorts
-              // on it, and letting @updatedAt auto-bump here would order the
-              // list by backfill-walk order instead of actual recency.
-              updatedAt: latest.createdAt,
-            },
-          });
-        } else {
-          // Nothing storable in this thread (e.g. a story mention with no
-          // text) — sink it to the bottom of the list instead of letting the
-          // backfill's own write time float it to the top.
-          await this.prisma.conversation.update({
-            where: { id: conv.id },
-            data: { updatedAt: new Date("2020-01-01T00:00:00Z") },
-          });
-        }
+        const r = await this.importConversationMessages(workspaceId, conv.id, zc.id, zc.accountId, channel);
+        counts.messagesInserted += r.inserted;
+        counts.messagesSkipped += r.skipped;
+        counts.attachmentsSaved += r.attachmentsSaved;
       } catch (e) {
         counts.errors.push(`${zc.platform}/${zc.id}: ${(e as Error).message}`);
       }
@@ -1404,6 +1316,202 @@ export class ZernioService {
 
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
     return counts;
+  }
+
+  /**
+   * Insert one Zernio conversation's history into our DB conversation, shared
+   * by the workspace-wide backfill and the on-demand per-conversation import.
+   * Idempotent: skips messages we already hold by metaMessageId, plus a
+   * same-author, same-text, within-2-minutes fuzzy match for webhook-era rows
+   * stored under Zernio's internal id scheme. Then refreshes the thread summary
+   * from the newest message (`refreshSummary: "if-inserted"` skips that when
+   * nothing new landed, so an empty import never rewrites the row).
+   */
+  async importConversationMessages(
+    workspaceId: string,
+    conversationId: string,
+    zernioConvId: string,
+    accountId: string,
+    channel: string,
+    opts: { refreshSummary?: "always" | "if-inserted" } = {},
+  ): Promise<{ inserted: number; skipped: number; attachmentsSaved: number }> {
+    const out = { inserted: 0, skipped: 0, attachmentsSaved: 0 };
+    const zMsgs = await this.client.getMessages(zernioConvId, accountId);
+    const existing = await this.prisma.message.findMany({
+      where: { workspaceId, conversationId },
+      select: { metaMessageId: true, body: true, from: true, createdAt: true },
+    });
+    const byMeta = new Set(existing.map((m) => m.metaMessageId).filter(Boolean));
+
+    // Split into plain rows (batched in one createMany) and rows with an
+    // attachment to download (created individually).
+    const plain: Array<{
+      workspaceId: string; conversationId: string; from: string; body: string;
+      t: string; metaMessageId: string | null; createdAt: Date;
+      deliveryStatus: string | null;
+    }> = [];
+
+    for (const m of zMsgs) {
+      if (m.isDeleted) { out.skipped++; continue; }
+      const mid = m.id ?? m._id ?? null;
+      if (mid && byMeta.has(mid)) { out.skipped++; continue; }
+      const from = m.direction === "incoming" ? "them" : "human";
+      const attachment = m.attachments?.[0];
+      const body =
+        (m.message ?? m.text ?? m.body ?? "").trim() ||
+        (attachment ? `[${attachment.type ?? "attachment"}]` : "");
+      if (!body) { out.skipped++; continue; }
+      const at = new Date(m.sentAt ?? m.createdAt ?? Date.now());
+      // Webhook-era rows carry Zernio-internal ids, so the id check above
+      // misses them — same author + same text within 2 minutes is a dupe.
+      const fuzzyDup = existing.some(
+        (e) =>
+          e.from === from &&
+          e.body === body &&
+          Math.abs(e.createdAt.getTime() - at.getTime()) < 120_000,
+      );
+      if (fuzzyDup) { out.skipped++; continue; }
+
+      const t = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+      const row = {
+        workspaceId,
+        conversationId,
+        from,
+        body,
+        t,
+        metaMessageId: mid,
+        createdAt: at,
+        deliveryStatus: m.deliveryStatus ?? null,
+      };
+
+      if (attachment?.url) {
+        let attach: string | null = null;
+        try {
+          const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
+          const media = await this.media.ingestBuffer({
+            workspaceId,
+            buffer,
+            mimeType: attachment.payload?.mimeType || mimeType || "image/jpeg",
+            fileName: `${channel}-${attachment.payload?.id ?? mid ?? "media"}`,
+          });
+          attach = media.id;
+          out.attachmentsSaved++;
+        } catch (e) {
+          this.log.warn(`History attachment failed: ${(e as Error).message}`);
+        }
+        await this.prisma.message.create({ data: { ...row, attach } });
+        out.inserted++;
+      } else {
+        plain.push(row);
+      }
+    }
+
+    if (plain.length > 0) {
+      await this.prisma.message.createMany({ data: plain });
+      out.inserted += plain.length;
+    }
+
+    // The on-demand import leaves a thread it added nothing to untouched.
+    if (opts.refreshSummary === "if-inserted" && out.inserted === 0) return out;
+
+    // Refresh the thread summary from the newest message we now hold.
+    const latest = await this.prisma.message.findFirst({
+      where: { conversationId },
+      orderBy: { createdAt: "desc" },
+    });
+    if (latest) {
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: {
+          preview: latest.body.slice(0, 140),
+          lastFrom: latest.from,
+          lastAt: compactAge(latest.createdAt),
+          // Pin updatedAt to the real last-message time — the Inbox sorts
+          // on it, and letting @updatedAt auto-bump here would order the
+          // list by backfill-walk order instead of actual recency.
+          updatedAt: latest.createdAt,
+        },
+      });
+    } else {
+      // Nothing storable in this thread (e.g. a story mention with no
+      // text) — sink it to the bottom of the list instead of letting the
+      // backfill's own write time float it to the top.
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { updatedAt: new Date("2020-01-01T00:00:00Z") },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * On-demand history import for ONE DB conversation (the Inbox calls it when
+   * a Zernio thread opens with no messages). The caller has already checked
+   * the viewer may see the conversation. Only a conversation on a Zernio
+   * channel with a Zernio conversation id (externalId) is imported; anything
+   * else answers `{ imported: 0, reason }` without calling Zernio. At most one
+   * import per conversation per HISTORY_IMPORT_THROTTLE_MS (in memory, per
+   * process); a repeat inside the window answers `reason: "throttled"`.
+   */
+  async importHistoryForConversation(
+    workspaceId: string,
+    conversationId: string,
+  ): Promise<{ imported: number; skipped: number; reason?: HistoryImportSkipReason }> {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      select: { id: true, channel: true, channelId: true, externalId: true },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+    if (!conv.externalId) return { imported: 0, skipped: 0, reason: "no_external_id" };
+
+    let accountId: string | null = null;
+    try {
+      const ch = await this.channels.forSend(workspaceId, conv);
+      const creds = await credentialsFor(this.prisma, ch);
+      if (creds.provider === "zernio" && creds.externalId) accountId = creds.externalId;
+    } catch {
+      // No connected channel: nothing to import from.
+      return { imported: 0, skipped: 0, reason: "channel_unavailable" };
+    }
+    if (!accountId) return { imported: 0, skipped: 0, reason: "not_zernio" };
+
+    const key = `${workspaceId}:${conv.id}`;
+    const now = Date.now();
+    const last = this.historyImportAt.get(key);
+    if (last !== undefined && now - last < HISTORY_IMPORT_THROTTLE_MS) {
+      return { imported: 0, skipped: 0, reason: "throttled" };
+    }
+    // Stamped before the call so a concurrent second request is throttled too.
+    this.historyImportAt.set(key, now);
+    if (this.historyImportAt.size > 5_000) {
+      for (const [k, at] of this.historyImportAt) {
+        if (now - at >= HISTORY_IMPORT_THROTTLE_MS) this.historyImportAt.delete(k);
+      }
+    }
+
+    let r: { inserted: number; skipped: number };
+    try {
+      r = await this.importConversationMessages(
+        workspaceId,
+        conv.id,
+        conv.externalId,
+        accountId,
+        conv.channel,
+        { refreshSummary: "if-inserted" },
+      );
+    } catch (e) {
+      // A failed call (Zernio down) did not import; a manual Retry may try again.
+      this.historyImportAt.delete(key);
+      throw e;
+    }
+    if (r.inserted > 0) {
+      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+        channel: conv.channel,
+        channelId: conv.channelId,
+        conversationId: conv.id,
+      });
+    }
+    return { imported: r.inserted, skipped: r.skipped };
   }
 
   // ─── Publishing ──────────────────────────────────────────────────────────
