@@ -25,6 +25,14 @@ describe("inbox pane by layout and selection", () => {
     expect(detailsAsSheet("desktop")).toBe(false);
     expect(detailsAsSheet("phone")).toBe(false);
   });
+
+  it("from xl the rail is a column only when the inbox area is at least xl wide (views column)", () => {
+    expect(detailsAsSheet("wide", 1200)).toBe(true); // 1440 viewport with the full sidebar
+    expect(detailsAsSheet("wide", 1279)).toBe(true);
+    expect(detailsAsSheet("wide", 1280)).toBe(false);
+    expect(detailsAsSheet("wide", 1680)).toBe(false); // 1920 with the full sidebar
+    expect(detailsAsSheet("desktop", 900)).toBe(false);
+  });
 });
 
 describe("inbox panes follow the hash on phones", () => {
