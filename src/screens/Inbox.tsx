@@ -79,8 +79,11 @@ import { TopicsCard } from "./inbox/TopicsCard";
 import { TemplateSendDialog, type TemplateHeaderValue } from "./inbox/TemplateSendDialog";
 import { getHashParam, setHashParam } from "@/lib/hashState";
 import { useViewport } from "@/lib/useViewport";
-import { prefetchFetch } from "@/api/useFetch";
-import { DETAIL_STALE_MS, markReadAndPatch, threadFor } from "./inbox/inboxCache";
+import { fetchQueryKey, prefetchFetch } from "@/api/useFetch";
+import {
+  DETAIL_STALE_MS, applyLocalReads, createRowPrefetcher, detailPath, invalidateConversationDetail, isDetailStale,
+  markReadAndPatch, threadFor,
+} from "./inbox/inboxCache";
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
 import { useDialogFocus } from "@/lib/useDialogFocus";
 import "@/styles/screens/inbox.css";
@@ -877,6 +880,9 @@ function InboxList({
 }: InboxListProps) {
   const teamById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
+  // Row prefetch: after a short hover (a sweep across rows fetches nothing), or on focus.
+  const prefetcher = useMemo(() => createRowPrefetcher(onPrefetch), [onPrefetch]);
+  useEffect(() => prefetcher.leave, [prefetcher]);
 
   // During the unified initial load the skeleton stands in for the rows —
   // rendering partial rows underneath would reintroduce per-channel pop-in.
@@ -991,8 +997,9 @@ function InboxList({
               key={c.id}
               className={`conv-row ix-row ${activeId === c.id ? "active" : ""}`.trim()}
               onClick={() => setActiveId(c.id)}
-              onMouseEnter={() => onPrefetch(c.id)}
-              onFocus={() => onPrefetch(c.id)}
+              onMouseEnter={() => prefetcher.enter(c.id)}
+              onMouseLeave={prefetcher.leave}
+              onFocus={() => prefetcher.focus(c.id)}
             >
               <div style={{ position: "relative", flex: "0 0 auto" }}>
                 <Avatar name={contact?.name} color="200" size="lg" />
@@ -2601,6 +2608,8 @@ function InboxImpl() {
   // A refetch reuses a list fetch already in flight (switching quickly used to
   // cancel and restart it: the "(canceled)" rows).
   const convsQ = useFetch<Conversation[]>(convsPath, { pollMs: 30000, dedupeRefetch: true });
+  /** Conversations read here, and when (applyLocalReads; marks expire after 60 s). */
+  const localReadsRef = useRef(new Map<string, number>());
   // m4: list only (no limits / signup config), and only for channels.view.
   const canViewChannels = usePermissions().can("channels.view");
   const channelsQ = useChannelsList(canViewChannels);
@@ -2686,6 +2695,8 @@ function InboxImpl() {
         (evt.channel === "facebook" && isFbConvId(activeId)) ||
         (evt.channel === "instagram" && isIgConvId(activeId));
       if (affectsActive) setMessageVersion((v) => v + 1);
+      // Any cached detail of that conversation (opened or prefetched earlier) is stale now.
+      if (evt.conversationId) void invalidateConversationDetail(qc, evt.conversationId);
       if (evt.channel === "facebook" && fbConnected) fbConvsQ.refetch();
       if (evt.channel === "instagram" && igConnected) igConvsQ.refetch();
       // channelId (SP-19) only scopes which number's list changed; every
@@ -2706,7 +2717,9 @@ function InboxImpl() {
     // all inbound and the backfill imported prior history. Drop FB/IG DB rows
     // only while the LEGACY Meta live paths are connected (rollback mode), so
     // the same thread can't appear twice.
-    const dbRows = (convsQ.data ?? []).filter(
+    // A list response that started before a read here must not bring the
+    // badge back (applyLocalReads: unless the customer wrote after the read).
+    const dbRows = applyLocalReads(convsQ.data ?? [], localReadsRef.current, Date.now()).filter(
       (c) =>
         !(fbConnected && c.channel === "facebook") &&
         !(igConnected && c.channel === "instagram"),
@@ -2830,6 +2843,15 @@ function InboxImpl() {
     return () => window.clearTimeout(removeTimer);
   }, [ticketBanner]);
 
+  // I1: opening a conversation whose cached detail is older than its list
+  // row's newest message (a missed realtime event) refetches it.
+  const activeRowLastMessageAt = conversations.find((c) => c.id === activeId)?.lastMessageAt ?? null;
+  useEffect(() => {
+    if (!activeId || isFbConvId(activeId) || isIgConvId(activeId)) return;
+    const cached = qc.getQueryData<ConversationDetail>(fetchQueryKey(detailPath(activeId), `${activeId}:${messageVersion}`));
+    if (isDetailStale(cached, { lastMessageAt: activeRowLastMessageAt })) void invalidateConversationDetail(qc, activeId);
+  }, [activeId, activeRowLastMessageAt, messageVersion, qc]);
+
   // Mark-as-read whenever the active conversation changes. Skip the legacy
   // live threads (FB "t_", IG "ig:") — those have no DB row to mark.
   useEffect(() => {
@@ -2837,10 +2859,12 @@ function InboxImpl() {
     if (isFbConvId(activeId) || isIgConvId(activeId)) return;
     // The list is not reloaded for this: its cached row is marked read in place.
     let cancelled = false;
+    const readId = activeId;
     void markReadAndPatch(
-      activeId,
+      readId,
       (path) => api.post<Conversation>(path, {}),
       (fn) => {
+        localReadsRef.current.set(readId, Date.now());
         if (!cancelled) convsQ.setData(fn);
       },
     ).catch(() => {

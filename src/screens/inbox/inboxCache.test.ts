@@ -87,3 +87,70 @@ describe("the list never cancels an identical fetch in flight (dedupeRefetch)", 
     }
   });
 });
+
+import { HOVER_PREFETCH_MS, LOCAL_READ_MS, applyLocalReads, createRowPrefetcher, detailPath, invalidateConversationDetail, isDetailStale } from "./inboxCache";
+
+describe("review fixes: stale details, hover intent, the read race", () => {
+  it("I1: B is cached, a message arrives for B while A is open, then opening B fetches again", async () => {
+    const qc = new QueryClient();
+    get.mockResolvedValue({ id: "b", messages: [{ createdAt: "2026-11-22T09:00:00Z" }] });
+    await prefetchFetch(qc, detailPath("b"), { key: "b:0", staleMs: DETAIL_STALE_MS });
+    expect(get).toHaveBeenCalledTimes(1);
+    // inbox.activity for B (A is the open one): every cached B detail is invalidated.
+    await invalidateConversationDetail(qc, "b");
+    get.mockResolvedValue({ id: "b", messages: [{ createdAt: "2026-11-22T09:00:00Z" }, { createdAt: "2026-11-22T09:05:00Z" }] });
+    const obs = new QueryObserver(qc, { queryKey: fetchQueryKey(detailPath("b"), "b:0"), queryFn: () => get(detailPath("b")), staleTime: DETAIL_STALE_MS });
+    const unsub = obs.subscribe(() => undefined);
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect((obs.getCurrentResult().data as { messages: unknown[] }).messages).toHaveLength(2));
+    unsub();
+    // The list itself is not touched by a detail invalidation.
+    expect(qc.getQueryState(fetchQueryKey("/conversations"))).toBeUndefined();
+  });
+
+  it("I1: a cached detail older than the row's lastMessageAt is stale", () => {
+    const detail = { messages: [{ createdAt: "2026-11-22T09:00:00Z" }, { createdAt: "2026-11-22T09:05:00Z" }] };
+    expect(isDetailStale(detail, { lastMessageAt: "2026-11-22T09:06:00Z" })).toBe(true);
+    expect(isDetailStale(detail, { lastMessageAt: "2026-11-22T09:05:00Z" })).toBe(false);
+    expect(isDetailStale(detail, { lastMessageAt: null })).toBe(false);
+    expect(isDetailStale(null, { lastMessageAt: "2026-11-22T09:06:00Z" })).toBe(false);
+    expect(isDetailStale({ messages: [] }, { lastMessageAt: "2026-11-22T09:06:00Z" })).toBe(true);
+  });
+
+  it("M1: sweeping across rows fires no prefetches; a 150 ms hover does; focus does at once", () => {
+    vi.useFakeTimers();
+    try {
+      const prefetch = vi.fn();
+      const p = createRowPrefetcher(prefetch);
+      for (const id of ["a", "b", "c", "d"]) {
+        p.enter(id);
+        vi.advanceTimersByTime(40);
+        p.leave();
+      }
+      vi.advanceTimersByTime(1000);
+      expect(prefetch).not.toHaveBeenCalled();
+      p.enter("e");
+      vi.advanceTimersByTime(HOVER_PREFETCH_MS);
+      expect(prefetch).toHaveBeenCalledWith("e");
+      p.focus("f");
+      expect(prefetch).toHaveBeenLastCalledWith("f");
+      expect(prefetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("M2: a list response that started before the read does not bring the badge back", () => {
+    const T = Date.parse("2026-11-22T10:00:00Z");
+    const reads = new Map([["a", T]]);
+    // The stale response: still unread, customer's last message before the read.
+    const stale = [mk({ id: "a", unread: 3, lastInboundAt: "2026-11-22T09:59:00Z" }), mk({ id: "b", unread: 2 })];
+    expect(applyLocalReads(stale, reads, T + 1000).map((c) => c.unread)).toEqual([0, 2]);
+    // The customer wrote after the read: the badge is real.
+    const fresh = [mk({ id: "a", unread: 1, lastInboundAt: "2026-11-22T10:00:05Z" })];
+    expect(applyLocalReads(fresh, reads, T + 6000)[0]!.unread).toBe(1);
+    // After 60 s the mark is dropped.
+    expect(applyLocalReads(stale, reads, T + LOCAL_READ_MS + 1)[0]!.unread).toBe(3);
+    expect(reads.size).toBe(0);
+  });
+});

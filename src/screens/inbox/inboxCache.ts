@@ -47,3 +47,101 @@ export function threadFor<D extends { id: string; messages?: unknown[] }>(
 
 /** A conversation's detail stays fresh this long, so going back to it is instant. */
 export const DETAIL_STALE_MS = 30_000;
+
+// ─── Review fixes ─────────────────────────────────────────────────────────
+
+/** The path of a conversation's detail (its cache entries are keyed under it). */
+export const detailPath = (id: string) => `/conversations/${id}`;
+
+/**
+ * A message landed in (or something changed on) a conversation: mark every
+ * cached detail of it stale, so the next open refetches even inside the fresh
+ * window. An open thread refetches at once.
+ */
+export function invalidateConversationDetail(
+  qc: { invalidateQueries: (f: { queryKey: readonly unknown[] }) => Promise<unknown> },
+  id: string,
+): Promise<unknown> {
+  return qc.invalidateQueries({ queryKey: [detailPath(id)] });
+}
+
+/**
+ * A cached detail is stale when the list row says a newer message exists
+ * than the newest one in the cache (a missed realtime event, another tab).
+ */
+export function isDetailStale(
+  detail: { messages?: Array<{ createdAt?: string | null }> } | null | undefined,
+  row: Pick<Conversation, "lastMessageAt"> | undefined,
+): boolean {
+  if (!detail || !row?.lastMessageAt) return false;
+  const rowAt = Date.parse(row.lastMessageAt);
+  if (!Number.isFinite(rowAt)) return false;
+  let newest = -Infinity;
+  for (const m of detail.messages ?? []) {
+    const t = m.createdAt ? Date.parse(m.createdAt) : NaN;
+    if (Number.isFinite(t) && t > newest) newest = t;
+  }
+  return rowAt > newest;
+}
+
+/** Hover intent before a detail is prefetched (sweeping across rows fetches nothing). */
+export const HOVER_PREFETCH_MS = 150;
+
+/**
+ * Row prefetch: on hover only after HOVER_PREFETCH_MS (cancelled on leave);
+ * on keyboard focus at once.
+ */
+export function createRowPrefetcher(
+  prefetch: (id: string) => void,
+  timers: { set: (fn: () => void, ms: number) => unknown; clear: (h: unknown) => void } = {
+    set: (fn, ms) => setTimeout(fn, ms),
+    clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  },
+) {
+  let pending: unknown = null;
+  const leave = () => {
+    if (pending !== null) timers.clear(pending);
+    pending = null;
+  };
+  return {
+    enter(id: string) {
+      leave();
+      pending = timers.set(() => {
+        pending = null;
+        prefetch(id);
+      }, HOVER_PREFETCH_MS);
+    },
+    leave,
+    focus(id: string) {
+      leave();
+      prefetch(id);
+    },
+  };
+}
+
+/** How long a "read here" mark overrides list responses. */
+export const LOCAL_READ_MS = 60_000;
+
+/**
+ * Conversations read here at time T: a list response that started before the
+ * read (and still says unread > 0) is shown as read, unless the customer wrote
+ * after T. Marks older than LOCAL_READ_MS are dropped (and pruned from `reads`).
+ */
+export function applyLocalReads<T extends Pick<Conversation, "id" | "unread" | "lastInboundAt">>(
+  list: T[],
+  reads: Map<string, number>,
+  now: number,
+): T[] {
+  for (const [id, at] of reads) if (now - at > LOCAL_READ_MS) reads.delete(id);
+  if (reads.size === 0) return list;
+  let changed = false;
+  const out = list.map((c) => {
+    const at = reads.get(c.id);
+    if (at === undefined || c.unread === 0) return c;
+    const inbound = c.lastInboundAt ? Date.parse(c.lastInboundAt) : NaN;
+    if (Number.isFinite(inbound) && inbound > at) return c;
+    changed = true;
+    return { ...c, unread: 0 };
+  });
+  return changed ? out : list;
+}
