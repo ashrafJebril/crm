@@ -118,6 +118,20 @@ const rank = (order: readonly string[], k: string) => {
   return i < 0 ? order.length : i;
 };
 
+/**
+ * Can this view still be shown? Base views always; a channel view while its
+ * kind is connected or has conversations; a member view while the member is
+ * on the team (the AI agent always).
+ */
+export function isViewAvailable(view: ViewId, ctx: { memberIds: readonly string[]; channelKinds: readonly string[] }): boolean {
+  if (view.startsWith("member:")) {
+    const id = view.slice(7);
+    return id === AI_MEMBER || ctx.memberIds.includes(id);
+  }
+  if (view.startsWith("channel:")) return ctx.channelKinds.includes(view.slice(8));
+  return BASE.has(view);
+}
+
 /** Default view: Needs reply when someone waits, else All open; a remembered choice wins. */
 export function defaultView(counts: Record<string, number>, stored: ViewId | null): ViewId {
   if (stored) return stored;
@@ -148,15 +162,29 @@ export function writeStoredView(storage: Pick<Storage, "setItem"> | null | undef
 export type WaitTone = "none" | "warn" | "bad";
 
 /**
- * How long a conversation has waited on us: since the last inbound message
- * (the last message is the customer's), for conversations still open to a
- * reply. null when it is not waiting. Over 30 min → warn, over 1 h → bad.
+ * The time of the customer's last message, or null when the list does not
+ * carry one. `lastInboundAt` is the only real timestamp: `updatedAt` moves on
+ * assign, read, label and pin, and `lastAt` is a display string ("now",
+ * "1m"), so it is used only if it happens to be an ISO timestamp.
+ */
+export function lastInboundTime(c: Pick<Conversation, "lastInboundAt" | "lastAt">): number | null {
+  const fromField = c.lastInboundAt ? Date.parse(c.lastInboundAt) : NaN;
+  if (Number.isFinite(fromField)) return fromField;
+  const fromLastAt = typeof c.lastAt === "string" && /^\d{4}-\d{2}-\d{2}T/.test(c.lastAt) ? Date.parse(c.lastAt) : NaN;
+  return Number.isFinite(fromLastAt) ? fromLastAt : null;
+}
+
+/**
+ * How long a conversation has waited on us: since the customer's last
+ * message, while the customer spoke last (an AI reply counts as answered, as
+ * in Needs reply) and the conversation is still open to a reply. null when it
+ * is not waiting or no inbound time is known. Over 30 min → warn, over 1 h → bad.
  */
 export function waitTime(c: Conversation, now: number): { minutes: number; label: string; tone: WaitTone } | null {
   if (c.lastFrom !== "them") return null;
   if (c.status === "resolved" || c.status === "closed" || c.status === "spam") return null;
-  const at = c.updatedAt ? Date.parse(c.updatedAt) : NaN;
-  if (!Number.isFinite(at)) return null;
+  const at = lastInboundTime(c);
+  if (at === null) return null;
   const minutes = Math.max(0, Math.floor((now - at) / 60000));
   const tone: WaitTone = minutes > 60 ? "bad" : minutes > 30 ? "warn" : "none";
   return { minutes, label: waitLabel(minutes), tone };

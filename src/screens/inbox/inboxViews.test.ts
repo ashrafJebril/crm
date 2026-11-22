@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Conversation } from "../../lib/types";
 import { needsAttention, type FilterCtx, type InboxBucket } from "./inboxFilters";
 import {
-  AI_MEMBER, MORE_VIEWS, PRIMARY_VIEWS, channelKindsToShow, defaultView, matchesView, parseView, previewPrefix,
-  readStoredView, viewCounts, viewForBucket, waitLabel, waitTime, writeStoredView, type ViewId,
+  AI_MEMBER, MORE_VIEWS, PRIMARY_VIEWS, channelKindsToShow, defaultView, isViewAvailable, lastInboundTime, matchesView, parseView,
+  previewPrefix, readStoredView, viewCounts, viewForBucket, waitLabel, waitTime, writeStoredView, type ViewId,
 } from "./inboxViews";
 
 const ctx: FilterCtx = { meId: "me", contactById: new Map(), isLive: (c) => c.id.startsWith("t_") };
@@ -90,6 +90,16 @@ describe("inbox views: parsing and the old chips", () => {
 });
 
 describe("inbox views: default and remembered choice", () => {
+  it("a remembered member or channel that is gone is not available", () => {
+    const ctxA = { memberIds: ["u1"], channelKinds: ["whatsapp"] };
+    expect(isViewAvailable("needs-reply", ctxA)).toBe(true);
+    expect(isViewAvailable("member:u1", ctxA)).toBe(true);
+    expect(isViewAvailable("member:u9", ctxA)).toBe(false);
+    expect(isViewAvailable(`member:${AI_MEMBER}`, ctxA)).toBe(true);
+    expect(isViewAvailable("channel:whatsapp", ctxA)).toBe(true);
+    expect(isViewAvailable("channel:instagram", ctxA)).toBe(false);
+  });
+
   it("Needs reply when someone waits, else All open; a stored choice wins", () => {
     expect(defaultView({ "needs-reply": 2 }, null)).toBe("needs-reply");
     expect(defaultView({ "needs-reply": 0 }, null)).toBe("open");
@@ -115,16 +125,31 @@ describe("inbox views: default and remembered choice", () => {
 
 describe("inbox rows: wait time and preview prefix", () => {
   it("waits since the last inbound message; warn over 30 min, bad over 1 h", () => {
-    expect(waitTime(mk({ updatedAt: ago(4) }), NOW)).toEqual({ minutes: 4, label: "4m", tone: "none" });
-    expect(waitTime(mk({ updatedAt: ago(30) }), NOW)?.tone).toBe("none");
-    expect(waitTime(mk({ updatedAt: ago(31) }), NOW)?.tone).toBe("warn");
-    expect(waitTime(mk({ updatedAt: ago(60) }), NOW)?.tone).toBe("warn");
-    expect(waitTime(mk({ updatedAt: ago(61) }), NOW)).toEqual({ minutes: 61, label: "1h", tone: "bad" });
-    // Not waiting on us: our reply was last, or the conversation is done.
-    expect(waitTime(mk({ lastFrom: "human" }), NOW)).toBeNull();
-    expect(waitTime(mk({ lastFrom: "ai" }), NOW)).toBeNull();
-    expect(waitTime(mk({ status: "resolved" }), NOW)).toBeNull();
-    expect(waitTime(mk({ updatedAt: undefined }), NOW)).toBeNull();
+    const w = (min: number) => waitTime(mk({ lastInboundAt: ago(min) }), NOW);
+    expect(w(4)).toEqual({ minutes: 4, label: "4m", tone: "none" });
+    expect(w(30)?.tone).toBe("none");
+    expect(w(31)?.tone).toBe("warn");
+    expect(w(60)?.tone).toBe("warn");
+    expect(w(61)).toEqual({ minutes: 61, label: "1h", tone: "bad" });
+    // Not waiting on us: our (or the AI's) reply was last, or the conversation is done.
+    expect(waitTime(mk({ lastInboundAt: ago(90), lastFrom: "human" }), NOW)).toBeNull();
+    expect(waitTime(mk({ lastInboundAt: ago(90), lastFrom: "ai" }), NOW)).toBeNull();
+    expect(waitTime(mk({ lastInboundAt: ago(90), status: "resolved" }), NOW)).toBeNull();
+  });
+
+  it("assigning or marking read does not reset the wait", () => {
+    // The customer wrote 3 h ago; an assign / read / label / pin just bumped updatedAt.
+    const before = mk({ lastInboundAt: ago(180), updatedAt: ago(180), unread: 2 });
+    const after = { ...before, updatedAt: ago(0), assigneeId: "me", unread: 0 };
+    expect(waitTime(before, NOW)).toEqual({ minutes: 180, label: "3h", tone: "bad" });
+    expect(waitTime(after, NOW)).toEqual(waitTime(before, NOW));
+  });
+
+  it("no inbound time known → no wait (updatedAt and display lastAt are never used)", () => {
+    expect(waitTime(mk({ updatedAt: ago(200), lastAt: "now" }), NOW)).toBeNull();
+    expect(waitTime(mk({ updatedAt: ago(200), lastAt: "1m" }), NOW)).toBeNull();
+    expect(lastInboundTime({ lastInboundAt: null, lastAt: ago(45) })).toBe(NOW - 45 * 60000);
+    expect(lastInboundTime({ lastInboundAt: "junk", lastAt: "10:20" })).toBeNull();
   });
 
   it("labels: minutes, hours, then days (Latin digits)", () => {
