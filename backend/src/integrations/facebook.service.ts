@@ -9,7 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret, encryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
-import { newestMessageInfo } from "./newest-message";
+import { newestMessageInfo, withExpansionFallback } from "./newest-message";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -531,9 +531,10 @@ export class FacebookService {
     const { token, pageId } = await this.requireToken(workspaceId);
     // `messages.limit(1){from,created_time}` is a field expansion of this same
     // request (no call per conversation): the newest message and its sender
-    // give the inbox's wait time and who spoke last.
-    const fields = "id,updated_time,snippet,unread_count,message_count,participants,messages.limit(1){from,created_time}";
-    const res = await this.graphGet<{
+    // give the inbox's wait time and who spoke last. If Graph refuses the
+    // expansion (a field or permission error), the plain list is fetched once
+    // and returned exactly as before, so the inbox never goes empty over it.
+    type FbConvList = {
       data: Array<{
         id: string;
         updated_time: string;
@@ -543,7 +544,15 @@ export class FacebookService {
         participants?: { data: Array<{ id: string; name?: string }> };
         messages?: { data?: Array<{ from?: { id?: string }; created_time?: string }> };
       }>;
-    }>(`/${pageId}/conversations?fields=${encodeURIComponent(fields)}&limit=${limit}`, token);
+    };
+    const base = "id,updated_time,snippet,unread_count,message_count,participants";
+    const list = (fields: string) =>
+      this.graphGet<FbConvList>(`/${pageId}/conversations?fields=${encodeURIComponent(fields)}&limit=${limit}`, token);
+    const { data: res, expanded } = await withExpansionFallback(
+      () => list(`${base},messages.limit(1){from,created_time}`),
+      () => list(base),
+      (e) => this.log.warn(`conversations: newest-message expansion refused, listing without it (${(e as Error).message})`),
+    );
 
     const rows = res.data ?? [];
 
@@ -595,7 +604,7 @@ export class FacebookService {
         unread: c.unread_count ?? 0,
         messageCount: c.message_count ?? 0,
         updatedAt: c.updated_time,
-        ...newestMessageInfo(c.messages?.data?.[0], pageId),
+        ...(expanded ? newestMessageInfo(c.messages?.data?.[0], pageId) : {}),
       };
     });
   }
