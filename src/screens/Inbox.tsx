@@ -64,7 +64,7 @@ import { InboxSortMenu } from "./inbox/InboxSortMenu";
 import { InboxMoreMenu, InboxViewPicker, InboxViewsColumn, ViewIcons, avatarIcon, dotIcon, type ViewEntry, type ViewGroup } from "./inbox/InboxViewNav";
 import {
   AI_MEMBER, channelKindsToShow, defaultView, matchesView, parseView, previewPrefix, readStoredView, viewCounts,
-  viewForBucket, waitTime, writeStoredView, isViewAvailable, viewAfterHashChange, type ViewId,
+  viewForBucket, waitTime, writeStoredView, availableViewOrNull, viewAfterHashChange, type ViewId,
 } from "./inbox/inboxViews";
 import { LabelChips } from "./inbox/LabelChips";
 import { AdAttributionCard, CtwaChip } from "./inbox/CtwaChip";
@@ -2954,12 +2954,26 @@ function InboxImpl() {
   // The default settles once the list, the team and the channels have loaded,
   // so a remembered member or channel that is gone falls back to it.
   const viewsReady = !initialLoading && !teamQ.loading && !channelsQ.loading;
+  // Views a member or channel can still be shown for: the team, and the
+  // connected kinds plus any kind in the (unfiltered) list.
+  const viewCtx = useMemo(() => {
+    const kinds = new Set<string>(connectedKinds);
+    for (const c of conversations) kinds.add(c.channel);
+    return { memberIds: team.map((m) => m.id), channelKinds: [...kinds] };
+  }, [connectedKinds, conversations, team]);
   useEffect(() => {
     if (settledDefault || !viewsReady) return;
-    const kinds = channelKindsToShow(CHANNELS, connectedKinds, counts);
-    const stored = storedView && isViewAvailable(storedView, { memberIds: team.map((m) => m.id), channelKinds: kinds }) ? storedView : null;
-    setSettledDefault(defaultView(counts, stored));
-  }, [settledDefault, viewsReady, counts, storedView, connectedKinds, team]);
+    setSettledDefault(defaultView(counts, availableViewOrNull(storedView, viewCtx)));
+  }, [settledDefault, viewsReady, counts, storedView, viewCtx]);
+  // A link naming a member who left or a channel that is gone falls back to the default view.
+  useEffect(() => {
+    if (!viewsReady || !explicitView || availableViewOrNull(explicitView, viewCtx)) return;
+    setExplicitView(null);
+    const next = setHashParam(window.location.hash, "view", null);
+    if (next !== window.location.hash) {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + next);
+    }
+  }, [viewsReady, explicitView, viewCtx]);
   const viewGroups = useMemo<ViewGroup[]>(() => {
     const primary: ViewEntry[] = [
       { id: "mine", label: tx("My inbox", "صندوقي"), count: counts.mine, icon: ViewIcons.mine },

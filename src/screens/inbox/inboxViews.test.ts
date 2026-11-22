@@ -3,7 +3,7 @@ import type { Conversation } from "../../lib/types";
 import { needsAttention, type FilterCtx, type InboxBucket } from "./inboxFilters";
 import {
   AI_MEMBER, MORE_VIEWS, PRIMARY_VIEWS, channelKindsToShow, defaultView, isViewAvailable, lastInboundTime, matchesView, parseView,
-  previewPrefix, readStoredView, viewAfterHashChange, viewCounts, viewForBucket, waitLabel, waitTime, writeStoredView, type ViewId,
+  previewPrefix, readStoredView, viewAfterHashChange, availableViewOrNull, viewCounts, viewForBucket, waitLabel, waitTime, writeStoredView, type ViewId,
 } from "./inboxViews";
 
 const ctx: FilterCtx = { meId: "me", contactById: new Map(), isLive: (c) => c.id.startsWith("t_") };
@@ -181,5 +181,18 @@ describe("inbox views: Back/Forward and links", () => {
     expect(viewAfterHashChange(h({ bucket: "spam" }), "open")).toBe("spam");
     // A junk view= is ignored.
     expect(viewAfterHashChange(h({ view: "<x>" }), "done")).toBeNull();
+  });
+});
+
+describe("inbox views: a linked view= is validated like a remembered one", () => {
+  it("view=member:<gone> and view=channel:<removed> fall back to the default (null); live ones stay", () => {
+    const ctxL = { memberIds: ["u1"], channelKinds: ["whatsapp", "instagram"] };
+    expect(availableViewOrNull("member:gone", ctxL)).toBeNull();
+    expect(availableViewOrNull("channel:telegram", ctxL)).toBeNull();
+    expect(availableViewOrNull("member:u1", ctxL)).toBe("member:u1");
+    expect(availableViewOrNull(`member:${AI_MEMBER}`, ctxL)).toBe(`member:${AI_MEMBER}`);
+    expect(availableViewOrNull("channel:instagram", ctxL)).toBe("channel:instagram");
+    expect(availableViewOrNull("done", ctxL)).toBe("done");
+    expect(availableViewOrNull(null, ctxL)).toBeNull();
   });
 });

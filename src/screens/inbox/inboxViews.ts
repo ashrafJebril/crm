@@ -220,3 +220,17 @@ export function viewAfterHashChange(
   if (hash.open) return current;
   return hash.bucket !== "all" ? viewForBucket(hash.bucket) : null;
 }
+
+/**
+ * A view named by a link (`view=`) or remembered, checked once the team and
+ * channels are known: kept when available, else null (the default view).
+ * `channelKinds` are the connected kinds plus the kinds of any listed
+ * conversation (not the filtered counts, so narrowing the filter menu never
+ * drops a channel view).
+ */
+export function availableViewOrNull(
+  view: ViewId | null,
+  ctx: { memberIds: readonly string[]; channelKinds: readonly string[] },
+): ViewId | null {
+  return view && isViewAvailable(view, ctx) ? view : null;
+}
