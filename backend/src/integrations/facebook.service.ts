@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret, encryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
+import { newestMessageInfo } from "./newest-message";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -528,7 +529,10 @@ export class FacebookService {
   // ─── Page Messenger conversations (DMs) ─────────────────────────────────
   async listConversations(workspaceId: string, limit = 25) {
     const { token, pageId } = await this.requireToken(workspaceId);
-    const fields = "id,updated_time,snippet,unread_count,message_count,participants";
+    // `messages.limit(1){from,created_time}` is a field expansion of this same
+    // request (no call per conversation): the newest message and its sender
+    // give the inbox's wait time and who spoke last.
+    const fields = "id,updated_time,snippet,unread_count,message_count,participants,messages.limit(1){from,created_time}";
     const res = await this.graphGet<{
       data: Array<{
         id: string;
@@ -537,6 +541,7 @@ export class FacebookService {
         unread_count?: number;
         message_count?: number;
         participants?: { data: Array<{ id: string; name?: string }> };
+        messages?: { data?: Array<{ from?: { id?: string }; created_time?: string }> };
       }>;
     }>(`/${pageId}/conversations?fields=${encodeURIComponent(fields)}&limit=${limit}`, token);
 
@@ -590,6 +595,7 @@ export class FacebookService {
         unread: c.unread_count ?? 0,
         messageCount: c.message_count ?? 0,
         updatedAt: c.updated_time,
+        ...newestMessageInfo(c.messages?.data?.[0], pageId),
       };
     });
   }
