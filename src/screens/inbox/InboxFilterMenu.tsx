@@ -3,7 +3,10 @@ import { useFetch } from "@/api/useFetch";
 import { usePermissions } from "@/auth/usePermissions";
 import { IconFilter } from "@/icons";
 import type { Tx } from "@/lib/tx";
-import type { AdSourceOption, ChannelDto, ConversationLabel, TagRow, TeamMember } from "@/lib/types";
+import { CHANNEL_LABEL, type AdSourceOption, type ChannelDto, type ConvChannel, type ConversationLabel, type TagRow, type TeamMember } from "@/lib/types";
+
+/** Inbox views: the old channel chips (several kinds at once). TikTok stays hidden until supported. */
+const KINDS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "webchat", "telegram", "l"];
 import { channelLabels } from "../channels/channelModel";
 import { activeFilterCount, EMPTY_FILTER, type InboxFilter } from "./inboxFilters";
 import { LABEL_COLOR_VAR } from "./LabelPicker";
@@ -85,6 +88,13 @@ function Panel({
           ))}
         </Group>
       )}
+      <Group title={tx("Channel", "القناة")}>
+        {KINDS.map((k) => (
+          <Check key={k} checked={filter.kinds.includes(k)} onChange={() => set({ kinds: toggle(filter.kinds, k) })}>
+            {CHANNEL_LABEL[k] ?? k}
+          </Check>
+        ))}
+      </Group>
       {channels.length > 0 && (
         <Group title={tx("Number", "الرقم")}>
           {channels.map((c) => (

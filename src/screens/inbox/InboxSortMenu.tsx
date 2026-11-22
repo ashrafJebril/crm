@@ -1,4 +1,3 @@
-import { IconMore } from "@/icons";
 import type { Tx } from "@/lib/tx";
 import type { InboxSort } from "./inboxFilters";
 import { Popover } from "./Popover";
@@ -13,15 +12,17 @@ export function InboxSortMenu({
   tx: Tx;
 }) {
   const opts: { id: InboxSort; label: string }[] = [
-    { id: "recent", label: tx("Recent", "الأحدث") },
-    { id: "oldest", label: tx("Oldest", "الأقدم") },
+    { id: "recent", label: tx("Newest", "الأحدث") },
+    { id: "oldest", label: tx("Oldest waiting", "الأقدم انتظارًا") },
     { id: "unread", label: tx("Unread first", "غير المقروءة أولاً") },
   ];
+  const current = opts.find((o) => o.id === sort) ?? opts[0]!;
   return (
     <Popover
-      trigger={<IconMore w={14} />}
+      trigger={`${current.label} ▾`}
+      triggerClassName="btn ghost sm ix-sort-btn"
       title={tx("Sort", "ترتيب")}
-      ariaLabel={tx("Sort", "ترتيب")}
+      ariaLabel={tx(`Sort: ${current.label}`, `الترتيب: ${current.label}`)}
       role="menu"
       sheetOnPhone
     >

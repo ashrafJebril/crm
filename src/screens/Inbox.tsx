@@ -47,8 +47,8 @@ import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
 import {
-  activeFilterCount, bucketCounts, type InboxView, EMPTY_FILTER, matchesFilter, needsAttention, sortConversations, numberTabs, type NumberTab,
-  type FilterCtx, type InboxBucket, type InboxFilter, type InboxSort,
+  activeFilterCount, type InboxView, EMPTY_FILTER, matchesFilter, sortConversations, numberTabs, type NumberTab,
+  type FilterCtx, type InboxFilter, type InboxSort,
 } from "./inbox/inboxFilters";
 import {
   readFilterFromHash, readNumberFromHash, readViewFromHash, writeFilterToHash, writeNumberToHash, writeViewToHash,
@@ -57,12 +57,15 @@ import { pickSendRoute, supportsTemplates } from "./inbox/sendRoute";
 import { invalidateChannels, useChannelsList } from "./channels/channelUi";
 import { useQueryClient } from "@tanstack/react-query";
 import { channelErrorText, sendErrorText } from "./channels/channelErrors";
-import { AddFilteredToGroup } from "./inbox/AddFilteredToGroup";
 import { InboxBoard } from "./inbox/InboxBoard";
 import { InboxTable } from "./inbox/InboxTable";
 import { InboxFilterMenu } from "./inbox/InboxFilterMenu";
 import { InboxSortMenu } from "./inbox/InboxSortMenu";
-import { TriageStrip } from "./inbox/TriageStrip";
+import { InboxMoreMenu, InboxViewPicker, InboxViewsColumn, ViewIcons, avatarIcon, dotIcon, type ViewEntry, type ViewGroup } from "./inbox/InboxViewNav";
+import {
+  AI_MEMBER, channelKindsToShow, defaultView, matchesView, parseView, previewPrefix, readStoredView, viewCounts,
+  viewForBucket, waitTime, writeStoredView, type ViewId,
+} from "./inbox/inboxViews";
 import { LabelChips } from "./inbox/LabelChips";
 import { AdAttributionCard, CtwaChip } from "./inbox/CtwaChip";
 import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
@@ -95,7 +98,7 @@ function dayLabel(
   const diffDays = Math.round((startOf(new Date()) - startOf(d)) / 86_400_000);
   if (diffDays === 0) return tx("Today", "اليوم");
   if (diffDays === 1) return tx("Yesterday", "أمس");
-  return d.toLocaleDateString(lang === "ar" ? "ar" : undefined, {
+  return d.toLocaleDateString(lang === "ar" ? "ar-u-nu-latn" : undefined, {
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -104,9 +107,6 @@ function dayLabel(
 type ConversationDetail = Conversation & { messages: Message[] };
 
 const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "telegram", "l"];
-/** Channels offered as filter toggles. TikTok is hidden until we support it;
- *  it stays in CHANNELS so the default filter never hides a conversation. */
-const FILTER_CHANNELS = CHANNELS.filter((ch) => ch !== "tiktok");
 
 /** Channel brand colors — used for the filter-pill dots and the solid channel
  *  tag in the thread header (per the Samemha Inbox v2 mock). */
@@ -296,12 +296,13 @@ interface InboxListProps {
   setFilter: (f: InboxFilter) => void;
   sort: InboxSort;
   setSort: (s: InboxSort) => void;
-  bucketCountMap: Record<InboxBucket, number>;
-  attention: Conversation[];
   team: TeamMember[];
   labels: ConversationLabel[];
-  channels: Set<ConvChannel>;
-  toggleChannel: (c: ConvChannel) => void;
+  /** Inbox views: the groups (column / picker), the active entry and the clock for wait times. */
+  viewGroups: ViewGroup[];
+  activeEntry: ViewEntry;
+  onSelectView: (v: ViewId) => void;
+  now: number;
   allConvs: Conversation[];
   activeId: string | null;
   setActiveId: (id: string) => void;
@@ -845,12 +846,12 @@ function InboxList({
   setFilter,
   sort,
   setSort,
-  bucketCountMap,
-  attention,
   team,
   labels,
-  channels,
-  toggleChannel,
+  viewGroups,
+  activeEntry,
+  onSelectView,
+  now,
   allConvs,
   activeId,
   setActiveId,
@@ -876,25 +877,6 @@ function InboxList({
   // rendering partial rows underneath would reintroduce per-channel pop-in.
   const q = search.trim().toLowerCase();
 
-  // Per-channel totals for the channel filter pills.
-  const channelCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const c of allConvs) m.set(c.channel, (m.get(c.channel) ?? 0) + 1);
-    return m;
-  }, [allConvs]);
-
-  const filters: { id: InboxBucket; label: string }[] = [
-    { id: "all", label: tx("All", "الكل") },
-    { id: "mine", label: tx("Mine", "مخصّصة لي") },
-    { id: "unassigned", label: tx("Unassigned", "غير معيّنة") },
-    { id: "unread", label: tx("Unread", "غير مقروءة") },
-    { id: "human", label: tx("Open", "مفتوحة") },
-    { id: "pending_customer", label: tx("Pending", "بانتظار العميل") },
-    { id: "resolved", label: tx("Resolved", "محلولة") },
-    { id: "closed", label: tx("Closed", "مغلقة") },
-    { id: "spam", label: tx("Spam", "مزعجة") },
-  ];
-
   return (
     <div
       className="ix-list"
@@ -903,47 +885,21 @@ function InboxList({
         background: "var(--bg-1)",
       }}
     >
-      <div style={{ padding: "18px 16px 12px", borderBottom: "1px solid var(--line-soft)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <div>
-            <h2 className="ix-display" style={{ margin: 0, fontSize: 18, fontWeight: 800, lineHeight: 1 }}>
-              {tx("Inbox", "الرسائل")}
-            </h2>
-            <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 }}>
-              {allConvs.length} {tx("conversations", "محادثة")}
-            </div>
+      <div className="ix-list-head">
+        <div className="ix-list-titlebar">
+          <h2 className="ix-display ix-list-title" dir="auto">
+            {activeEntry.label}
+          </h2>
+          {activeEntry.count !== undefined ? (
+            <span className={`ix-list-count${activeEntry.hot ? " hot" : ""}`}>{activeEntry.count}</span>
+          ) : null}
+          <div className="ix-list-picker">
+            <InboxViewPicker groups={viewGroups} active={activeEntry} onSelect={onSelectView} tx={tx} />
           </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} channels={numberChannels} tx={tx} />
-            <InboxSortMenu sort={sort} onChange={setSort} tx={tx} />
-          </div>
-        </div>
-        <div
-          role="group"
-          aria-label={tx("View", "العرض")}
-          className="ix-view-row"
-          style={{ gap: 4, marginBottom: 10, alignItems: "center" }}
-        >
-          {(["list", "table", "board"] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              className={`btn sm ix-view-btn${view === v ? " primary" : ""}`}
-              aria-pressed={view === v}
-              onClick={() => setView(v)}
-            >
-              {v === "list" ? tx("List", "قائمة") : v === "table" ? tx("Table", "جدول") : tx("Board", "لوحة")}
-            </button>
-          ))}
           <span style={{ flex: 1 }} />
-          <AddFilteredToGroup convs={visibleConvs} tx={tx} lang={tx("en", "ar") as Lang} />
+          <InboxSortMenu sort={sort} onChange={setSort} tx={tx} />
+          <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} channels={numberChannels} tx={tx} />
+          <InboxMoreMenu view={view} setView={setView} convs={visibleConvs} tx={tx} lang={tx("en", "ar") as Lang} />
         </div>
         <input
           className="ix-search"
@@ -957,7 +913,7 @@ function InboxList({
             role="tablist"
             aria-label={tx("Numbers", "الأرقام")}
             className="ix-pill-row"
-            style={{ gap: 5, marginTop: 12 }}
+            style={{ gap: 5, marginTop: 10 }}
           >
             {numberTabList.map((tab) => (
               <button
@@ -974,37 +930,6 @@ function InboxList({
             ))}
           </div>
         )}
-        <div className="ix-pill-row" style={{ gap: 5, marginTop: 12 }}>
-          {filters.map((f) => (
-            <button
-              key={f.id}
-              className={`ix-pill ${filter.bucket === f.id ? "active" : ""}`.trim()}
-              aria-pressed={filter.bucket === f.id}
-              onClick={() => setFilter({ ...filter, bucket: f.id })}
-            >
-              {f.label}
-              <span className="ct">{bucketCountMap[f.id]}</span>
-            </button>
-          ))}
-        </div>
-        <div className="ix-pill-row" style={{ gap: 5, marginTop: 8 }}>
-          {FILTER_CHANNELS.map((ch) => {
-            const active = channels.has(ch);
-            return (
-              <button
-                key={ch}
-                type="button"
-                className={`ix-ch ${active ? "active" : ""}`.trim()}
-                onClick={() => toggleChannel(ch)}
-                aria-pressed={active}
-              >
-                <span className="dot" style={{ background: CHANNEL_DOT[ch] }} />
-                {CHANNEL_LABEL[ch]}
-                <span style={{ opacity: 0.6 }}>{channelCounts.get(ch) ?? 0}</span>
-              </button>
-            );
-          })}
-        </div>
       </div>
       <div className="ix-list-scroll" style={{ paddingBlock: "6px 16px" }}>
         {loading && (
@@ -1036,23 +961,16 @@ function InboxList({
             <div>
               {allConvs.length === 0
                 ? tx("No conversations yet", "لا توجد محادثات بعد")
-                : tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")}
+                : activeFilterCount(filter) > 0
+                  ? tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")
+                  : tx("Nothing in this view.", "لا شيء في هذا العرض.")}
             </div>
-            {allConvs.length > 0 && (filter.bucket !== "all" || activeFilterCount(filter) > 0) && (
+            {allConvs.length > 0 && activeFilterCount(filter) > 0 && (
               <button className="btn sm" style={{ marginTop: 8 }} onClick={() => setFilter(EMPTY_FILTER)}>
                 {tx("Clear filters", "مسح عوامل التصفية")}
               </button>
             )}
           </div>
-        )}
-        {!loading && (
-          <TriageStrip
-            items={attention}
-            contactById={contactById}
-            activeId={activeId}
-            onSelect={setActiveId}
-            tx={tx}
-          />
         )}
         {!loading && visibleConvs.length === 0 && q && (
           <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
@@ -1061,6 +979,8 @@ function InboxList({
         )}
         {visibleConvs.map((c) => {
           const contact = contactById.get(c.contactId);
+          const wait = waitTime(c, now);
+          const prefix = previewPrefix(c);
           return (
             <div
               key={c.id}
@@ -1095,9 +1015,18 @@ function InboxList({
                   >
                     {contact?.name}
                   </span>
-                  <span style={{ fontSize: 10.5, color: "var(--ink-4)", flexShrink: 0 }}>
-                    {c.lastAt}
-                  </span>
+                  {wait ? (
+                    <span
+                      className={`ix-wait${wait.tone === "none" ? "" : ` ${wait.tone}`}`}
+                      title={tx(`Waiting ${wait.label}`, `ينتظر منذ ${wait.label}`)}
+                    >
+                      <bdi dir="ltr">{wait.label}</bdi>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 10.5, color: "var(--ink-4)", flexShrink: 0 }}>
+                      {c.lastAt}
+                    </span>
+                  )}
                 </div>
                 <div
                   dir="auto"
@@ -1112,7 +1041,9 @@ function InboxList({
                     textAlign: "start",
                   }}
                 >
-                  {c.lastFrom === "human" && <span style={{ color: "var(--accent)" }}>↳ </span>}
+                  {prefix ? (
+                    <span className="ix-pv-from">{prefix === "you" ? tx("You:", "أنت:") : tx("AI:", "الذكاء:")} </span>
+                  ) : null}
                   {c.preview}
                 </div>
                 {c.adSource && (
@@ -1146,12 +1077,13 @@ function InboxList({
                   {teamById.get(c.assigneeId)!.initials}
                 </span>
               )}
-              {(c.unread > 0 || c.escalated) && (
-                <span
-                  className="ix-unread-dot"
-                  style={c.escalated ? { background: "var(--warn)" } : undefined}
-                  title={c.escalated ? tx("Escalated", "مُصعَّدة") : tx("Unread", "غير مقروءة")}
-                />
+              {c.escalated && (
+                <span className="ix-unread-dot" style={{ background: "var(--warn)" }} title={tx("Escalated", "مُصعَّدة")} />
+              )}
+              {c.unread > 0 && (
+                <span className="ix-unread-badge" title={tx("Unread", "غير مقروءة")} aria-label={tx(`${c.unread} unread`, `${c.unread} غير مقروءة`)}>
+                  {c.unread > 99 ? "99+" : c.unread}
+                </span>
               )}
             </div>
           );
@@ -1404,6 +1336,8 @@ function ConversationPane({
   const messages: Message[] = conv.messages;
   // The stitched customer thread needs DB conversations; live FB/IG threads have no contact thread.
   const canStitch = !isLiveThreadId(conv.id) && !!conv.contactId;
+  // Inbox views: how long the customer has waited on us (header sub line).
+  const headerWait = waitTime(conv, Date.now());
   const showAll = threadView === "all" && canStitch;
   const saved = useSavedReplies({
     draft,
@@ -1500,7 +1434,7 @@ function ConversationPane({
         </div>
         <div className="ix-conv-info">
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-            <span className="ix-display" style={{ fontWeight: 700, fontSize: 16.5 }}>
+            <span className="ix-display ix-conv-name" style={{ fontWeight: 700, fontSize: 16.5 }}>
               {contact?.name}
             </span>
             <span
@@ -1521,10 +1455,10 @@ function ConversationPane({
             </span>
           </div>
           <div
+            className="ix-conv-sub"
             style={{
               fontSize: 12,
               color: "var(--ink-3)",
-              display: "flex",
               gap: 6,
               marginTop: 3,
             }}
@@ -1532,7 +1466,18 @@ function ConversationPane({
             <span>{contact?.phone}</span>
             <span>·</span>
             <span>{contact?.industry}</span>
+            {headerWait ? (
+              <>
+                <span>·</span>
+                <span className={`ix-wait${headerWait.tone === "none" ? "" : ` ${headerWait.tone}`}`}>
+                  {tx("waiting", "ينتظر منذ")} <bdi dir="ltr">{headerWait.label}</bdi>
+                </span>
+              </>
+            ) : null}
           </div>
+        </div>
+        <div className="ix-conv-primary">
+          <ConversationActions key={`p-${conv.id}`} conv={conv} lang={lang} onChanged={onConversationChanged} part="primary" />
         </div>
         <div className="ix-conv-actions">
           {canStitch && (
@@ -1571,7 +1516,7 @@ function ConversationPane({
             pausedAt={conv.aiPausedAt ?? null}
             lang={lang}
           />
-          <ConversationActions key={conv.id} conv={conv} lang={lang} onChanged={onConversationChanged} />
+          <ConversationActions key={conv.id} conv={conv} lang={lang} onChanged={onConversationChanged} part="secondary" />
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
@@ -2618,9 +2563,6 @@ function InboxImpl() {
   }, [phone]);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
-  const [channels, setChannels] = useState<Set<ConvChannel>>(
-    () => new Set<ConvChannel>(CHANNELS),
-  );
   const [messageVersion, setMessageVersion] = useState<number>(0);
   // Optimistic "pending" bubbles for messages we've just sent on FB/IG live
   // threads. Lets the new bubble appear instantly without forcing a refetch
@@ -2886,14 +2828,6 @@ function InboxImpl() {
     };
   }, [activeId]);
 
-  const toggleChannel = (ch: ConvChannel) => {
-    setChannels((prev) => {
-      const next = new Set(prev);
-      if (next.has(ch)) next.delete(ch);
-      else next.add(ch);
-      return next;
-    });
-  };
 
   const teamQ = useFetch<TeamMember[]>("/team");
   const labelsQ = useFetch<ConversationLabel[]>("/conversation-labels");
@@ -2914,16 +2848,114 @@ function InboxImpl() {
     () => ({ meId: user?.id ?? "", contactById, isLive: (c) => isLiveThreadId(c.id) }),
     [user?.id, contactById],
   );
-  const bucketCountMap = useMemo(() => bucketCounts(conversations, filterCtx), [conversations, filterCtx]);
-  const attention = useMemo(
-    () => conversations.filter((c) => needsAttention(c, filterCtx)),
-    [conversations, filterCtx],
+
+  // ─── Views column ─────────────────────────────────────────────────────
+  // The view lives in the hash (`view=`); an old `f=` bucket link opens the
+  // matching view. Without one: the remembered choice, else Needs reply when
+  // someone waits, else All open (decided once the list has loaded).
+  const viewStorage = useMemo(() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }, []);
+  const [explicitView, setExplicitView] = useState<ViewId | null>(() => {
+    const h = window.location.hash;
+    const fromHash = parseView(getHashParam(h, "view"));
+    if (fromHash) return fromHash;
+    const bucket = readFilterFromHash(h).bucket;
+    return bucket !== "all" ? viewForBucket(bucket) : null;
+  });
+  useEffect(() => {
+    const on = () => {
+      const v = parseView(getHashParam(window.location.hash, "view"));
+      if (v) setExplicitView(v);
+    };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const storedView = useMemo(() => readStoredView(viewStorage, user?.id ?? ""), [viewStorage, user?.id]);
+  const counts = useMemo(
+    () => viewCounts(conversations, filterCtx, CHANNELS, team.map((m) => m.id)),
+    [conversations, filterCtx, team],
   );
+  const [settledDefault, setSettledDefault] = useState<ViewId | null>(null);
+  useEffect(() => {
+    if (settledDefault || initialLoading) return;
+    setSettledDefault(defaultView(counts, storedView));
+  }, [settledDefault, initialLoading, counts, storedView]);
+  const activeView: ViewId = explicitView ?? settledDefault ?? storedView ?? "open";
+  const selectView = (v: ViewId) => {
+    setExplicitView(v);
+    writeStoredView(viewStorage, user?.id ?? "", v);
+    const next = setHashParam(window.location.hash, "view", v);
+    if (next !== window.location.hash) {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  const connectedKinds = useMemo(() => {
+    const s = new Set<string>();
+    for (const ch of channelList) if (ch.status === "active" || ch.status === "needs_attention") s.add(ch.kind);
+    if (fbConnected) s.add("facebook");
+    if (igConnected) s.add("instagram");
+    return s;
+  }, [channelList, fbConnected, igConnected]);
+  const viewGroups = useMemo<ViewGroup[]>(() => {
+    const primary: ViewEntry[] = [
+      { id: "mine", label: tx("My inbox", "صندوقي"), count: counts.mine, icon: ViewIcons.mine },
+      { id: "needs-reply", label: tx("Needs reply", "بانتظار الرد"), count: counts["needs-reply"], hot: (counts["needs-reply"] ?? 0) > 0, icon: ViewIcons.needsReply },
+      { id: "unassigned", label: tx("Unassigned", "غير معيّنة"), count: counts.unassigned, icon: ViewIcons.unassigned },
+      { id: "open", label: tx("All open", "كل المفتوحة"), count: counts.open, icon: ViewIcons.open },
+      { id: "done", label: tx("Done", "منتهية"), icon: ViewIcons.done },
+    ];
+    const kinds = channelKindsToShow(CHANNELS, connectedKinds, counts);
+    const channelsG: ViewEntry[] = kinds.map((k) => ({
+      id: `channel:${k}` as ViewId,
+      label: CHANNEL_LABEL[k as ConvChannel] ?? k,
+      count: counts[`channel:${k}`] ?? 0,
+      icon: dotIcon(CHANNEL_DOT[k as ConvChannel] ?? "var(--ink-3)"),
+    }));
+    const teamG: ViewEntry[] = [
+      ...team.map((m) => ({ id: `member:${m.id}` as ViewId, label: m.name, count: counts[`member:${m.id}`] ?? 0, icon: avatarIcon(m.initials) })),
+      { id: `member:${AI_MEMBER}` as ViewId, label: tx("AI agent", "وكيل الذكاء الاصطناعي"), count: counts[`member:${AI_MEMBER}`] ?? 0, icon: avatarIcon("AI", true) },
+    ];
+    const more: ViewEntry[] = [
+      { id: "unread", label: tx("Unread", "غير مقروءة"), count: counts.unread },
+      { id: "pending", label: tx("Pending customer", "بانتظار العميل"), count: counts.pending },
+      { id: "closed", label: tx("Closed", "مغلقة"), count: counts.closed },
+      { id: "spam", label: tx("Spam", "مزعجة"), count: counts.spam },
+      { id: "all", label: tx("All conversations", "كل المحادثات") },
+    ];
+    const groups: ViewGroup[] = [{ entries: primary }];
+    if (channelsG.length) groups.push({ title: tx("Channels", "القنوات"), entries: channelsG });
+    groups.push({ title: tx("Team", "الفريق"), entries: teamG });
+    groups.push({ title: tx("More", "المزيد"), entries: more });
+    return groups;
+  }, [counts, connectedKinds, team, tx]);
+  const activeEntry = useMemo<ViewEntry>(() => {
+    for (const g of viewGroups) for (const e of g.entries) if (e.id === activeView) return e;
+    // A view not in the column (e.g. a channel with nothing open, or a member who left).
+    const label = activeView.startsWith("channel:")
+      ? (CHANNEL_LABEL[activeView.slice(8) as ConvChannel] ?? activeView.slice(8))
+      : activeView.startsWith("member:")
+        ? tx("Teammate", "عضو الفريق")
+        : activeView;
+    return { id: activeView, label, count: counts[activeView] ?? 0 };
+  }, [viewGroups, activeView, counts, tx]);
+  // Wait times tick once a minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  // The view is the list's scope; the filter menu refines it (its bucket is not used any more).
+  const refine = useMemo<InboxFilter>(() => ({ ...filter, bucket: "all" }), [filter]);
 
   // Number tabs: counts over the list as filtered by everything but the tab.
   const tabBase = useMemo(
-    () => conversations.filter((c) => matchesFilter(c, filter, filterCtx, null) && (channels.size === 0 || channels.has(c.channel))),
-    [conversations, filter, filterCtx, channels],
+    () => conversations.filter((c) => matchesView(c, activeView, filterCtx) && matchesFilter(c, refine, filterCtx, null)),
+    [conversations, refine, filterCtx, activeView],
   );
   const numberTabList = useMemo(() => numberTabs(tabBase, channelList), [tabBase, channelList]);
   const numberChannels = useMemo(() => {
@@ -2940,13 +2972,11 @@ function InboxImpl() {
   // matchesFilter + sort over the merged DB/FB/IG list; name/preview search
   // is applied afterwards inside InboxList.
   const filtered = useMemo<Conversation[]>(() => {
-    const list = sortConversations(
-      conversations.filter((c) => matchesFilter(c, filter, filterCtx, activeTab)),
+    return sortConversations(
+      conversations.filter((c) => matchesView(c, activeView, filterCtx) && matchesFilter(c, refine, filterCtx, activeTab)),
       sort,
     );
-    if (channels.size === 0) return list;
-    return list.filter((c) => channels.has(c.channel));
-  }, [filter, sort, filterCtx, channels, conversations, activeTab]);
+  }, [refine, sort, filterCtx, conversations, activeTab, activeView]);
 
 
   // Search narrows the filtered list; every view (list/table/board) and
@@ -3299,12 +3329,26 @@ function InboxImpl() {
   // On phones the list view is the only one (the table and board are wide).
   const shownView = phone ? "list" : view;
   const pane = inboxPane(layout, { selected: !!active, detailsOpen });
-  const sheet = detailsAsSheet(layout) && detailsOpen && !!active && shownView === "list";
+  // From xl the contact rail is a column only when the inbox area is xl wide (the views column takes 210 px).
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const [inboxWidth, setInboxWidth] = useState<number>(() => Infinity);
+  useEffect(() => {
+    const el = layoutRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setInboxWidth(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const railSheet = detailsAsSheet(layout, inboxWidth);
+  const sheet = railSheet && detailsOpen && !!active && shownView === "list";
   // The tablet details sheet is a modal: focus moves in and stays, Escape closes, focus returns.
   const detailsRef = useRef<HTMLDivElement>(null);
   useDialogFocus(detailsRef, sheet, closeDetails);
   const threadBar =
-    active && shownView === "list" && layout !== "desktop" && layout !== "wide" ? (
+    active && shownView === "list" && (phone || railSheet) ? (
       <div className="ix-thread-bar">
         {phone ? (
           <button type="button" className="btn ghost sm" onClick={backToList}>
@@ -3322,7 +3366,14 @@ function InboxImpl() {
     ) : null;
 
   return (
-    <div className="inbox-v2 ix-layout" data-pane={pane} data-details={sheet ? "open" : undefined}>
+    <div
+      ref={layoutRef}
+      className="inbox-v2 ix-layout"
+      data-pane={pane}
+      data-rail={railSheet ? "sheet" : undefined}
+      data-details={sheet ? "open" : undefined}
+    >
+      <InboxViewsColumn groups={viewGroups} active={activeView} onSelect={selectView} tx={tx} />
       {/* Single-column grids size their auto track to max-content, which
           let the pill rows push this column to ~760px and bleed under the
           thread pane; .ix-col-list pins the track to the grid area's width. */}
@@ -3359,12 +3410,12 @@ function InboxImpl() {
           setFilter={setFilter}
           sort={sort}
           setSort={setSort}
-          bucketCountMap={bucketCountMap}
-          attention={attention}
+          viewGroups={viewGroups}
+          activeEntry={activeEntry}
+          onSelectView={selectView}
+          now={now}
           team={team}
           labels={labels}
-          channels={channels}
-          toggleChannel={toggleChannel}
           allConvs={conversations}
           activeId={activeId}
           setActiveId={selectConversation}
