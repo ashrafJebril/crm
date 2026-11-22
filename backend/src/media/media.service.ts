@@ -557,17 +557,24 @@ export class MediaService {
     buffer: Buffer;
     mimeType: string;
     fileName: string;
+    /**
+     * Inbound chat attachments may be videos (MP4/MOV). Opt-in so callers that
+     * expect an image (ad creatives, Telegram photos) keep refusing them.
+     */
+    allowVideo?: boolean;
   }) {
-    if (!ALLOWED_IMAGE.has(input.mimeType)) {
-      throw mediaError("media.unsupported_type", { allowed: [...ALLOWED_IMAGE] });
+    const allowed = input.allowVideo ? new Set([...ALLOWED_IMAGE, ...ALLOWED_VIDEO]) : ALLOWED_IMAGE;
+    if (!allowed.has(input.mimeType)) {
+      throw mediaError("media.unsupported_type", { allowed: [...allowed] });
     }
-    if (input.buffer.length > MAX_IMAGE_BYTES) throw mediaError("media.too_large", { limit: MAX_IMAGE_BYTES });
     // SP-13: sniff. Providers often send a fallback type ("image/jpeg" when
-    // they don't know), so a real image of another library image family is
-    // stored under its sniffed type; anything that is not an image is refused.
+    // they don't know), so a real file of another allowed family is stored
+    // under its sniffed type; anything else is refused.
     const family = sniffFamily(input.buffer.subarray(0, SNIFF_BYTES));
     const mimeType = family ? MIME_OF_FAMILY[family] : null;
-    if (!mimeType || !ALLOWED_IMAGE.has(mimeType)) throw mediaError("media.type_mismatch");
+    if (!mimeType || !allowed.has(mimeType)) throw mediaError("media.type_mismatch");
+    const limit = ALLOWED_VIDEO.has(mimeType) ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    if (input.buffer.length > limit) throw mediaError("media.too_large", { limit });
     const { key } = await this.storage.put({
       workspaceId: input.workspaceId,
       buffer: input.buffer,

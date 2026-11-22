@@ -251,6 +251,40 @@ describe("ingestBuffer sniffs inbound images", () => {
       limit: 20 * 1024 * 1024,
     });
   });
+
+  it("refuses a video unless the caller opts in", async () => {
+    const { svc, storage } = build();
+    const e = await errOf(svc.ingestBuffer({ workspaceId: "ws", buffer: MP4, mimeType: "video/mp4", fileName: "a" }));
+    expect(e.getResponse()).toMatchObject({ message: "media.unsupported_type" });
+    expect(storage.put).not.toHaveBeenCalled();
+  });
+
+  it("allowVideo stores a real MP4 under its sniffed type, even with an image fallback type", async () => {
+    const { svc, storage } = build();
+    const row = await svc.ingestBuffer({ workspaceId: "ws", buffer: MP4, mimeType: "image/jpeg", fileName: "a", allowVideo: true });
+    expect(row.mimeType).toBe("video/mp4");
+    expect(storage.put).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "video/mp4" }));
+  });
+
+  it("allowVideo still refuses bytes that are neither image nor video", async () => {
+    const { svc, storage } = build();
+    for (const buffer of [HTML, PDF]) {
+      const e = await errOf(svc.ingestBuffer({ workspaceId: "ws", buffer, mimeType: "video/mp4", fileName: "a", allowVideo: true }));
+      expect(e.getResponse()).toMatchObject({ message: "media.type_mismatch" });
+    }
+    expect(storage.put).not.toHaveBeenCalled();
+  });
+
+  it("allowVideo caps a video at the video limit and an image at the image limit", async () => {
+    const { svc } = build();
+    const bigImage = Buffer.concat([PNG, Buffer.alloc(20 * 1024 * 1024)]);
+    expect((await errOf(svc.ingestBuffer({ workspaceId: "ws", buffer: bigImage, mimeType: "image/png", fileName: "a", allowVideo: true }))).getResponse()).toMatchObject({
+      message: "media.too_large",
+      limit: 20 * 1024 * 1024,
+    });
+    const okVideo = Buffer.concat([MP4, Buffer.alloc(21 * 1024 * 1024)]);
+    expect((await svc.ingestBuffer({ workspaceId: "ws", buffer: okVideo, mimeType: "video/mp4", fileName: "a", allowVideo: true })).mimeType).toBe("video/mp4");
+  });
 });
 
 describe("media list filters by kind and pages by before", () => {

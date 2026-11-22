@@ -16,6 +16,7 @@ import { UsageService } from "../billing/usage.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
+import { inboundAttachmentMime } from "./inbound-attachment";
 import { agentImageDecision } from "../media/agent-photo";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
 import { accountHealth } from "./zernio-account-health";
@@ -1401,7 +1402,8 @@ export class ZernioService {
           const media = await this.media.ingestBuffer({
             workspaceId,
             buffer,
-            mimeType: attachment.payload?.mimeType || mimeType || "image/jpeg",
+            mimeType: inboundAttachmentMime(attachment.type, attachment.payload?.mimeType, mimeType),
+            allowVideo: true,
             fileName: `${channel}-${attachment.payload?.id ?? mid ?? "media"}`,
           });
           attach = media.id;
@@ -1799,7 +1801,8 @@ export class ZernioService {
         const media = await this.media.ingestBuffer({
           workspaceId,
           buffer,
-          mimeType: attachment.payload?.mimeType || mimeType || "image/jpeg",
+          mimeType: inboundAttachmentMime(attachment.type, attachment.payload?.mimeType, mimeType),
+          allowVideo: true,
           fileName: `${channel}-${attachment.payload?.id ?? Date.now()}`,
         });
         attachMediaId = media.id;
