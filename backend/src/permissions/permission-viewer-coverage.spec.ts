@@ -83,7 +83,7 @@ const HANDLERS: Array<[string, new (...a: any[]) => unknown, string[]]> = [
   ["contacts", ContactsController, ["summary", "timeline", "thread"]],
   ["tickets", TicketsController, ["createTicket", "createFromConversation", "undoStage"]],
   ["whatsapp", WhatsAppController, ["sendInConversation", "sendTemplateInConversation"]],
-  ["zernio", ZernioController, ["conversations", "messages", "send", "sendInDbConversation", "sendTemplateInDbConversation"]],
+  ["zernio", ZernioController, ["conversations", "messages", "send", "sendInDbConversation", "sendTemplateInDbConversation", "importHistory"]],
   ["facebook", FacebookController, ["listConversations", "listMessagesInConversation", "sendDirectMessage"]],
   ["instagram", InstagramController, ["listConversations", "listMessages", "sendDirectMessage", "send"]],
   ["workflows", WorkflowsController, ["listRuns", "getRun"]],

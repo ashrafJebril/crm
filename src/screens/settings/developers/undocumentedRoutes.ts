@@ -67,6 +67,7 @@ export const UNDOCUMENTED_KEY_ROUTES: { reason: string; routes: string[] }[] = [
       "GET /integrations/zernio/conversations",
       "GET /integrations/zernio/conversations/:id/messages",
       "POST /integrations/zernio/conversations/:id/send",
+      "POST /integrations/zernio/db-conversations/:id/import-history",
       "POST /integrations/zernio/db-conversations/:id/send",
       "POST /integrations/zernio/db-conversations/:id/send-template",
       "GET /integrations/facebook/posts/:postId/comments",

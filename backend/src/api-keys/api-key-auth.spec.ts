@@ -1,6 +1,6 @@
 import "reflect-metadata";
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Body, Controller, Get, INestApplication, Logger, Module, Post, ValidationPipe } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, INestApplication, Logger, Module, Post, ValidationPipe } from "@nestjs/common";
 import { APP_GUARD, APP_INTERCEPTOR, NestFactory } from "@nestjs/core";
 import { JwtModule, JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -56,6 +56,16 @@ class WorkspacesDouble {
   }
 }
 
+/** The Inbox-only Zernio history import (API keys are refused before any permission). */
+@Controller()
+class ZernioImportDouble {
+  @Post("integrations/zernio/db-conversations/:id/import-history")
+  @HttpCode(200)
+  importHistory() {
+    return { imported: 0, skipped: 0 };
+  }
+}
+
 const world = makeWorld();
 const prisma: any = world.prisma;
 prisma.db.apiKey = [];
@@ -66,7 +76,7 @@ const keys = new ApiKeysService(prisma, permissions, audit);
 
 @Module({
   imports: [JwtModule.register({ global: true, secret: SECRET })],
-  controllers: [ContactsDouble, AuthDouble, WorkspacesDouble, ApiKeysController],
+  controllers: [ContactsDouble, AuthDouble, WorkspacesDouble, ZernioImportDouble, ApiKeysController],
   providers: [
     { provide: PrismaService, useValue: prisma },
     { provide: PermissionService, useValue: permissions },
@@ -178,6 +188,16 @@ describe("API keys through the real guards", () => {
       const x = await call("GET", "/contacts", bad);
       expect({ bad, status: x.status, body: await x.json() }).toMatchObject({ bad, status: 401, body: { message: "api_keys.invalid" } });
     }
+  });
+
+  it("api key cannot call the Inbox-only history import, whatever its scopes; a session can", async () => {
+    const k = await mint(U.owner, { conversations: ["admin"] });
+    const path = "/integrations/zernio/db-conversations/cv1/import-history";
+    const r = await call("POST", path, k.key, {});
+    expect(r.status).toBe(403);
+    expect(await r.json()).toMatchObject({ message: "api_keys.route_not_allowed" });
+    const session = await jwt.signAsync({ sub: U.owner, email: "o@x", role: "owner", workspaceId: WS });
+    expect((await call("POST", path, session, {})).status).toBe(200);
   });
 
   it("api key cannot call auth or membership-exempt routes", async () => {

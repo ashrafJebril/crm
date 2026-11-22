@@ -426,6 +426,14 @@ describe("assigned-only conversation visibility: side doors", () => {
       expect(await new ZernioController(zs as never, {} as never, allPerm).conversations(WS, undefined, viewer)).toEqual([{ id: "x" }]);
       expect(await new ZernioController(zs as never, {} as never, perm).conversations(WS, undefined, { userId: ME, bypass: true })).toEqual([{ id: "x" }]);
     });
+    it("zernio import-history: a hidden conversation is 404 before any import; a visible one imports", async () => {
+      const zs = { importHistoryForConversation: jest.fn().mockResolvedValue({ imported: 2, skipped: 0 }) };
+      const c = new ZernioController(zs as never, {} as never, perm);
+      await expect(c.importHistory(WS, NONE, viewer)).rejects.toThrow(NotFoundException);
+      expect(zs.importHistoryForConversation).not.toHaveBeenCalled();
+      await expect(c.importHistory(WS, MINE, viewer)).resolves.toEqual({ imported: 2, skipped: 0 });
+      expect(zs.importHistoryForConversation).toHaveBeenCalledWith(WS, MINE);
+    });
     it("facebook: [] / 404 when assigned, passthrough for 'all'", async () => {
       const fb = { listConversations: jest.fn().mockResolvedValue([1]), listMessagesInConversation: jest.fn(), sendDirectMessage: jest.fn() };
       const c = new FacebookController(fb as never, {} as never, perm);
@@ -1496,6 +1504,8 @@ describe("SP-27 api keys: side doors", () => {
       [AuthController, AuthController.prototype.me],
       [WorkspacesController, WorkspacesController.prototype.create],
       [WorkspacesController, WorkspacesController.prototype.list],
+      // Inbox-only: the on-demand Zernio history import.
+      [ZernioController, ZernioController.prototype.importHistory],
     ] as const) {
       const err = await run(cls, handler);
       expect(err.getStatus?.()).toBe(403);

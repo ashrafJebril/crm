@@ -173,6 +173,21 @@ export class ZernioController {
     return this.zernio.backfillHistory(workspaceId);
   }
 
+  /** Import ONE conversation's Zernio history on demand (the Inbox calls it
+   *  when a Zernio thread opens empty). Idempotent and throttled per
+   *  conversation; same scope as GET /conversations/:id. */
+  @Post("integrations/zernio/db-conversations/:id/import-history")
+  @HttpCode(200)
+  async importHistory(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer?: Viewer,
+  ) {
+    // Hidden conversation -> 404 before Zernio is asked for anything.
+    await this.perm?.assertConversationVisible(workspaceId, id, viewer);
+    return this.zernio.importHistoryForConversation(workspaceId, id);
+  }
+
   @Post("integrations/zernio/db-conversations/:id/send")
   async sendInDbConversation(
     @CurrentWorkspace() workspaceId: string,

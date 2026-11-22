@@ -86,6 +86,10 @@ import {
 } from "./inbox/inboxCache";
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
 import { useDialogFocus } from "@/lib/useDialogFocus";
+import {
+  autoImportAttempted, emptyThreadCopy, emptyThreadView, historyImportPath, markAutoImportAttempted, shouldAutoImportHistory,
+  type EmptyThreadView, type HistoryImportResult, type HistoryImportStatus,
+} from "./inbox/historyImport";
 import "@/styles/screens/inbox.css";
 
 
@@ -352,6 +356,9 @@ interface ConversationPaneProps {
   onConvertToTicket: () => void;
   onConversationChanged: () => Promise<unknown>;
   messagesLoading: boolean;
+  /** What an empty thread shows (a Zernio thread loads or reports its history). */
+  emptyView: EmptyThreadView;
+  onRetryHistory: () => void;
   lang: Lang;
   tx: Tx;
 }
@@ -1270,6 +1277,8 @@ function ConversationPane({
   onConvertToTicket,
   onConversationChanged,
   messagesLoading,
+  emptyView,
+  onRetryHistory,
   lang,
   tx,
 }: ConversationPaneProps) {
@@ -1596,6 +1605,23 @@ function ConversationPane({
             <MessageSkeleton side="right" />
             <MessageSkeleton side="left" />
           </div>
+        ) : messages.length === 0 && emptyView !== "no-messages" ? (
+          (() => {
+            const copy = emptyThreadCopy(emptyView, conv.channel, tx);
+            return (
+              <div className="ix-history-state" role="status" aria-live="polite">
+                {(emptyView === "importing" || emptyView === "checking") && (
+                  <span className="ix-history-spinner" aria-hidden="true" />
+                )}
+                <span>{copy?.text}</span>
+                {copy?.retry && (
+                  <button type="button" className="btn sm" onClick={onRetryHistory}>
+                    {tx("Retry", "إعادة المحاولة")}
+                  </button>
+                )}
+              </div>
+            );
+          })()
         ) : messages.length === 0 ? (
           <div
             className="muted"
@@ -2852,6 +2878,45 @@ function InboxImpl() {
     if (isDetailStale(cached, { lastMessageAt: activeRowLastMessageAt })) void invalidateConversationDetail(qc, activeId);
   }, [activeId, activeRowLastMessageAt, messageVersion, qc]);
 
+  // A Zernio thread synced as a preview with no stored messages imports its
+  // history on open: once automatically per conversation per session, then
+  // only by the empty state's Retry. The detail is refetched afterwards.
+  const [historyById, setHistoryById] = useState<Record<string, HistoryImportStatus>>({});
+  const refetchListRef = useRef(convsQ.refetch);
+  refetchListRef.current = convsQ.refetch;
+  const runHistoryImport = useCallback(
+    async (id: string) => {
+      setHistoryById((p) => ({ ...p, [id]: { phase: "importing" } }));
+      let next: HistoryImportStatus;
+      try {
+        const r = await api.post<HistoryImportResult>(historyImportPath(id));
+        next = { phase: "done", imported: r?.imported ?? 0, failed: false, reason: r?.reason };
+      } catch {
+        next = { phase: "done", imported: 0, failed: true };
+      }
+      // Refetch before leaving the loading state, so imported messages replace it directly.
+      await invalidateConversationDetail(qc, id).catch(() => undefined);
+      if (next.phase === "done" && next.imported > 0) void refetchListRef.current();
+      setHistoryById((p) => ({ ...p, [id]: next }));
+    },
+    [qc],
+  );
+  const activeRowProvider = conversations.find((c) => c.id === activeId)?.channelProvider ?? null;
+  useEffect(() => {
+    if (
+      !activeId ||
+      !shouldAutoImportHistory({
+        activeId,
+        detail: activeQ.data,
+        rowProvider: activeRowProvider,
+        isLiveThread: isFbConvId(activeId) || isIgConvId(activeId),
+        attempted: autoImportAttempted,
+      })
+    ) return;
+    markAutoImportAttempted(activeId);
+    void runHistoryImport(activeId);
+  }, [activeId, activeQ.data, activeRowProvider, runHistoryImport]);
+
   // Mark-as-read whenever the active conversation changes. Skip the legacy
   // live threads (FB "t_", IG "ig:") — those have no DB row to mark.
   useEffect(() => {
@@ -3661,6 +3726,12 @@ function InboxImpl() {
                 ? igMsgsQ.loading
                 : activeQ.loading
           }
+          emptyView={emptyThreadView({
+            isZernio: !activeIsFb && !activeIsIg && (activeRowProvider ?? active.channelProvider) === "zernio",
+            status: historyById[active.id],
+            autoAttempted: autoImportAttempted(active.id),
+          })}
+          onRetryHistory={() => void runHistoryImport(active.id)}
           lang={t.lang}
           tx={tx}
         />

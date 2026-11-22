@@ -125,6 +125,9 @@ const VIEWER_SAFE_NON_GET = new Set([
   "POST /campaigns/preview",
   // SP-24: Sync is the template reconcile GET /templates already writes (templates.view).
   "POST /lifecycle/sync",
+  // Copies a thread's existing provider history into our DB so a viewer who may
+  // read the thread can see it; it adds no new content (conversations.view).
+  "POST /integrations/zernio/db-conversations/:id/import-history",
 ]);
 
 describe("system-role decision table", () => {
