@@ -60,9 +60,17 @@ export const avatarIcon = (initials: string, ai = false) => (
   </span>
 );
 
-function Entry({ e, active, onSelect }: { e: ViewEntry; active: boolean; onSelect: (v: ViewId) => void }) {
+/** A view entry: a link-like button in the column (aria-current), a radio menu item in the picker. */
+function Entry({ e, active, onSelect, menu = false }: { e: ViewEntry; active: boolean; onSelect: (v: ViewId) => void; menu?: boolean }) {
   return (
-    <button type="button" className={`ix-vi${active ? " on" : ""}`} aria-current={active ? "true" : undefined} onClick={() => onSelect(e.id)}>
+    <button
+      type="button"
+      className={`ix-vi${active ? " on" : ""}`}
+      role={menu ? "menuitemradio" : undefined}
+      aria-checked={menu ? active : undefined}
+      aria-current={!menu && active ? "true" : undefined}
+      onClick={() => onSelect(e.id)}
+    >
       {e.icon}
       <span className="ix-vi-label" dir="auto">
         {e.label}
@@ -126,6 +134,7 @@ export function InboxViewPicker({
               <Entry
                 key={e.id}
                 e={e}
+                menu
                 active={e.id === active.id}
                 onSelect={(v) => {
                   onSelect(v);

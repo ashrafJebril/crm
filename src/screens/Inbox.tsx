@@ -64,7 +64,7 @@ import { InboxSortMenu } from "./inbox/InboxSortMenu";
 import { InboxMoreMenu, InboxViewPicker, InboxViewsColumn, ViewIcons, avatarIcon, dotIcon, type ViewEntry, type ViewGroup } from "./inbox/InboxViewNav";
 import {
   AI_MEMBER, channelKindsToShow, defaultView, matchesView, parseView, previewPrefix, readStoredView, viewCounts,
-  viewForBucket, waitTime, writeStoredView, type ViewId,
+  viewForBucket, waitTime, writeStoredView, isViewAvailable, type ViewId,
 } from "./inbox/inboxViews";
 import { LabelChips } from "./inbox/LabelChips";
 import { AdAttributionCard, CtwaChip } from "./inbox/CtwaChip";
@@ -2860,33 +2860,34 @@ function InboxImpl() {
       return null;
     }
   }, []);
-  const [explicitView, setExplicitView] = useState<ViewId | null>(() => {
-    const h = window.location.hash;
+  /** The view a hash names: `view=`, or the view of an old `f=` bucket; null = the default view. */
+  const viewFromHash = (h: string): ViewId | null => {
     const fromHash = parseView(getHashParam(h, "view"));
     if (fromHash) return fromHash;
     const bucket = readFilterFromHash(h).bucket;
     return bucket !== "all" ? viewForBucket(bucket) : null;
-  });
+  };
+  const [explicitView, setExplicitView] = useState<ViewId | null>(() => viewFromHash(window.location.hash));
   useEffect(() => {
+    // Back/Forward or a link to an inbox entry: its view, or the default view when it names none.
     const on = () => {
-      const v = parseView(getHashParam(window.location.hash, "view"));
-      if (v) setExplicitView(v);
+      const h = window.location.hash;
+      if (!/^#\/?inbox(\?|$)/.test(h)) return;
+      setExplicitView(viewFromHash(h));
     };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
+    // viewFromHash reads only its argument.
   }, []);
   const storedView = useMemo(() => readStoredView(viewStorage, user?.id ?? ""), [viewStorage, user?.id]);
-  const counts = useMemo(
-    () => viewCounts(conversations, filterCtx, CHANNELS, team.map((m) => m.id)),
-    [conversations, filterCtx, team],
-  );
   const [settledDefault, setSettledDefault] = useState<ViewId | null>(null);
-  useEffect(() => {
-    if (settledDefault || initialLoading) return;
-    setSettledDefault(defaultView(counts, storedView));
-  }, [settledDefault, initialLoading, counts, storedView]);
-  const activeView: ViewId = explicitView ?? settledDefault ?? storedView ?? "open";
+  const activeView: ViewId = explicitView ?? settledDefault ?? "open";
+  // Table and Board show every conversation (the Board has Resolved and Closed
+  // columns): the view applies to the list only, and the header says "All conversations".
+  const listMode = phone || view === "list";
+  const scopeView: ViewId = listMode ? activeView : "all";
   const selectView = (v: ViewId) => {
+    if (!listMode) setView("list");
     setExplicitView(v);
     writeStoredView(viewStorage, user?.id ?? "", v);
     const next = setHashParam(window.location.hash, "view", v);
@@ -2901,6 +2902,51 @@ function InboxImpl() {
     if (igConnected) s.add("instagram");
     return s;
   }, [channelList, fbConnected, igConnected]);
+  // Wait times tick once a minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  // The view is the list's scope; the filter menu refines it (its bucket is not used any more).
+  const refine = useMemo<InboxFilter>(() => ({ ...filter, bucket: "all" }), [filter]);
+
+  // Number tabs: counts over the list as filtered by everything but the tab.
+  const tabBase = useMemo(
+    () => conversations.filter((c) => matchesView(c, scopeView, filterCtx) && matchesFilter(c, refine, filterCtx, null)),
+    [conversations, refine, filterCtx, scopeView],
+  );
+  const numberTabList = useMemo(() => numberTabs(tabBase, channelList), [tabBase, channelList]);
+  const numberChannels = useMemo(() => {
+    const ids = new Set(numberTabList.map((t) => t.id));
+    return channelList.filter((c) => ids.has(c.id));
+  }, [numberTabList, channelList]);
+  const numberLabels = useMemo(
+    () => new Map(numberTabList.flatMap((t) => (t.id ? [[t.id, t.label] as const] : []))),
+    [numberTabList],
+  );
+  // A hash `n=` for a number that no longer has a tab must not filter invisibly.
+  const activeTab = numberTabList.some((t) => t.id === numberTab) ? numberTab : null;
+
+  // View counts match the list: over the conversations after the filter menu
+  // and the number tab, before the view.
+  const countBase = useMemo(
+    () => conversations.filter((c) => matchesFilter(c, refine, filterCtx, activeTab)),
+    [conversations, refine, filterCtx, activeTab],
+  );
+  const counts = useMemo(
+    () => viewCounts(countBase, filterCtx, CHANNELS, team.map((m) => m.id)),
+    [countBase, filterCtx, team],
+  );
+  // The default settles once the list, the team and the channels have loaded,
+  // so a remembered member or channel that is gone falls back to it.
+  const viewsReady = !initialLoading && !teamQ.loading && !channelsQ.loading;
+  useEffect(() => {
+    if (settledDefault || !viewsReady) return;
+    const kinds = channelKindsToShow(CHANNELS, connectedKinds, counts);
+    const stored = storedView && isViewAvailable(storedView, { memberIds: team.map((m) => m.id), channelKinds: kinds }) ? storedView : null;
+    setSettledDefault(defaultView(counts, stored));
+  }, [settledDefault, viewsReady, counts, storedView, connectedKinds, team]);
   const viewGroups = useMemo<ViewGroup[]>(() => {
     const primary: ViewEntry[] = [
       { id: "mine", label: tx("My inbox", "صندوقي"), count: counts.mine, icon: ViewIcons.mine },
@@ -2934,49 +2980,24 @@ function InboxImpl() {
     return groups;
   }, [counts, connectedKinds, team, tx]);
   const activeEntry = useMemo<ViewEntry>(() => {
-    for (const g of viewGroups) for (const e of g.entries) if (e.id === activeView) return e;
+    for (const g of viewGroups) for (const e of g.entries) if (e.id === scopeView) return e;
     // A view not in the column (e.g. a channel with nothing open, or a member who left).
-    const label = activeView.startsWith("channel:")
-      ? (CHANNEL_LABEL[activeView.slice(8) as ConvChannel] ?? activeView.slice(8))
-      : activeView.startsWith("member:")
+    const label = scopeView.startsWith("channel:")
+      ? (CHANNEL_LABEL[scopeView.slice(8) as ConvChannel] ?? scopeView.slice(8))
+      : scopeView.startsWith("member:")
         ? tx("Teammate", "عضو الفريق")
-        : activeView;
-    return { id: activeView, label, count: counts[activeView] ?? 0 };
-  }, [viewGroups, activeView, counts, tx]);
-  // Wait times tick once a minute.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
-  // The view is the list's scope; the filter menu refines it (its bucket is not used any more).
-  const refine = useMemo<InboxFilter>(() => ({ ...filter, bucket: "all" }), [filter]);
-
-  // Number tabs: counts over the list as filtered by everything but the tab.
-  const tabBase = useMemo(
-    () => conversations.filter((c) => matchesView(c, activeView, filterCtx) && matchesFilter(c, refine, filterCtx, null)),
-    [conversations, refine, filterCtx, activeView],
-  );
-  const numberTabList = useMemo(() => numberTabs(tabBase, channelList), [tabBase, channelList]);
-  const numberChannels = useMemo(() => {
-    const ids = new Set(numberTabList.map((t) => t.id));
-    return channelList.filter((c) => ids.has(c.id));
-  }, [numberTabList, channelList]);
-  const numberLabels = useMemo(
-    () => new Map(numberTabList.flatMap((t) => (t.id ? [[t.id, t.label] as const] : []))),
-    [numberTabList],
-  );
-  // A hash `n=` for a number that no longer has a tab must not filter invisibly.
-  const activeTab = numberTabList.some((t) => t.id === numberTab) ? numberTab : null;
+        : scopeView;
+    return { id: scopeView, label, count: counts[scopeView] ?? 0 };
+  }, [viewGroups, scopeView, counts, tx]);
 
   // matchesFilter + sort over the merged DB/FB/IG list; name/preview search
   // is applied afterwards inside InboxList.
   const filtered = useMemo<Conversation[]>(() => {
     return sortConversations(
-      conversations.filter((c) => matchesView(c, activeView, filterCtx) && matchesFilter(c, refine, filterCtx, activeTab)),
+      conversations.filter((c) => matchesView(c, scopeView, filterCtx) && matchesFilter(c, refine, filterCtx, activeTab)),
       sort,
     );
-  }, [refine, sort, filterCtx, conversations, activeTab, activeView]);
+  }, [refine, sort, filterCtx, conversations, activeTab, scopeView]);
 
 
   // Search narrows the filtered list; every view (list/table/board) and
@@ -3373,7 +3394,7 @@ function InboxImpl() {
       data-rail={railSheet ? "sheet" : undefined}
       data-details={sheet ? "open" : undefined}
     >
-      <InboxViewsColumn groups={viewGroups} active={activeView} onSelect={selectView} tx={tx} />
+      <InboxViewsColumn groups={viewGroups} active={scopeView} onSelect={selectView} tx={tx} />
       {/* Single-column grids size their auto track to max-content, which
           let the pill rows push this column to ~760px and bleed under the
           thread pane; .ix-col-list pins the track to the grid area's width. */}
