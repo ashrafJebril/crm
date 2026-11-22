@@ -112,20 +112,18 @@ export class ConversationsService {
       })
       .filter((c) => wanted.size === 0 || (c.channelId !== null && wanted.has(c.channelId)));
 
-    // 24-hour customer-service window state for WhatsApp conversations only.
-    // Inbox uses it to flip the composer to a template picker when the window
-    // closes. Other channels have different (or no) restrictions — skip the
-    // extra query for them.
-    const waConvIds = convs
-      .filter((c) => c.channel === "whatsapp")
-      .map((c) => c.id);
+    // The time of each conversation's last customer message, for every
+    // channel, in one grouped query. The inbox shows "waiting for 2h" from it
+    // (`updatedAt` moves on assign, read, label and pin, so it cannot), and
+    // WhatsApp also derives its 24-hour customer-service window from it (the
+    // composer flips to a template picker when the window closes).
     const lastInboundByConv = new Map<string, Date>();
-    if (waConvIds.length > 0) {
+    if (convs.length > 0) {
       const grouped = await this.prisma.message.groupBy({
         by: ["conversationId"],
         where: {
           workspaceId,
-          conversationId: { in: waConvIds },
+          conversationId: { in: convs.map((c) => c.id) },
           from: "them",
         },
         _max: { createdAt: true },
@@ -138,13 +136,13 @@ export class ConversationsService {
     const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
     const now = Date.now();
     return convs.map(({ labels, adSource, ...rest }) => {
-      const c = { ...rest, labelIds: labels.map((l) => l.labelId), adSource: toAdSourceChip(adSource) };
+      const lastInboundAt = lastInboundByConv.get(rest.id) ?? null;
+      const c = { ...rest, labelIds: labels.map((l) => l.labelId), adSource: toAdSourceChip(adSource), lastInboundAt };
       if (c.channel !== "whatsapp") return c;
-      const lastInboundAt = lastInboundByConv.get(c.id) ?? null;
       const waWindowOpen = lastInboundAt
         ? now - lastInboundAt.getTime() < WA_WINDOW_MS
         : false;
-      return { ...c, lastInboundAt, waWindowOpen };
+      return { ...c, waWindowOpen };
     });
   }
 

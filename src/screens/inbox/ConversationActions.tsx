@@ -81,11 +81,18 @@ export function ConversationActions({
   conv,
   lang,
   onChanged,
+  part = "all",
 }: {
   conv: Conversation;
   lang: Lang;
   /** Refetch the conversation list and the active conversation. */
   onChanged: () => Promise<unknown> | void;
+  /**
+   * Inbox views: "primary" is the thread header's Assign menu and the
+   * Resolve (or Reopen) button; "secondary" is the rest (status, labels, pin,
+   * escalate). "all" is everything but Resolve, as before.
+   */
+  part?: "all" | "primary" | "secondary";
 }) {
   const tx = makeTx(lang);
   const { user } = useAuth();
@@ -99,7 +106,9 @@ export function ConversationActions({
     : live
       ? tx("Available for WhatsApp and synced threads", "متاح لواتساب والمحادثات المتزامنة")
       : undefined;
-  const teamQ = useFetch<TeamMember[]>(live ? null : "/team");
+  const showAssign = part !== "secondary";
+  const showRest = part !== "primary";
+  const teamQ = useFetch<TeamMember[]>(live || !showAssign ? null : "/team");
   const team = teamQ.data ?? [];
   const { patch: patchConv, busy, note, setNote, escalateError, setEscalateError } =
     useConversationPatch(tx, onChanged);
@@ -120,6 +129,7 @@ export function ConversationActions({
 
   return (
     <>
+      {showAssign && (
       <Menu label={assignLabel} disabled={blocked || busy} title={disabledTip}>
         {(close) => (
           <>
@@ -158,6 +168,21 @@ export function ConversationActions({
           </>
         )}
       </Menu>
+      )}
+      {part === "primary" && (
+        <span title={disabledTip} style={{ display: "inline-flex" }}>
+          <button
+            type="button"
+            className={reopen ? "btn" : "btn primary"}
+            disabled={blocked || busy}
+            onClick={() => void patch({ status: reopen ? "human" : "resolved" })}
+          >
+            {reopen ? tx("Reopen", "إعادة فتح") : tx("Resolve", "حل")}
+          </button>
+        </span>
+      )}
+      {showRest && (
+      <>
       <Menu label={statusLabel[conv.status] ?? conv.status} disabled={blocked || busy} title={disabledTip}>
         {(close) => (
           <>
@@ -246,6 +271,8 @@ export function ConversationActions({
           if (res === "ok") setEscalateOpen(false);
         }}
       />
+      </>
+      )}
       {note && (
         <span role="status" style={{ fontSize: 12, color: "var(--warn)", alignSelf: "center" }}>
           {note}

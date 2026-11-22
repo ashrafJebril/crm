@@ -22,11 +22,13 @@ export interface InboxFilter {
   adFilter: "any" | "none" | null;
   /** SP-15: specific ads (`Conversation.adSourceId`, any of). */
   adSourceIds: string[];
+  /** Inbox views: conversation channel kinds (whatsapp, instagram, …; any of) — the old channel chips. */
+  kinds: string[];
 }
 
 export const EMPTY_FILTER: InboxFilter = {
   bucket: "all", assigneeIds: [], labelIds: [], tags: [], lifecycles: [], channelIds: [], escalatedOnly: false,
-  adFilter: null, adSourceIds: [],
+  adFilter: null, adSourceIds: [], kinds: [],
 };
 
 export interface FilterCtx {
@@ -39,7 +41,7 @@ const BUCKETS: InboxBucket[] = [
   "all", "mine", "unassigned", "unread", "human", "pending_customer", "resolved", "closed", "spam",
 ];
 
-function inBucket(c: Conversation, b: InboxBucket, ctx: FilterCtx): boolean {
+export function inBucket(c: Conversation, b: InboxBucket, ctx: FilterCtx): boolean {
   switch (b) {
     case "all": return true;
     case "mine": return !ctx.isLive(c) && !!c.assigneeId && c.assigneeId === ctx.meId;
@@ -65,6 +67,7 @@ export function matchesFilter(
   if (!inBucket(c, f.bucket, ctx)) return false;
   if (numberTab && c.channelId !== numberTab) return false;
   if (f.channelIds.length && !(c.channelId && f.channelIds.includes(c.channelId))) return false;
+  if (f.kinds?.length && !f.kinds.includes(c.channel)) return false;
   if (f.assigneeIds.length && !(c.assigneeId && f.assigneeIds.includes(c.assigneeId))) return false;
   if (f.labelIds.length && !(c.labelIds ?? []).some((l) => f.labelIds.includes(l))) return false;
   if (f.escalatedOnly && !c.escalated) return false;
@@ -116,7 +119,7 @@ export function bucketCounts(list: Conversation[], ctx: FilterCtx): Record<Inbox
 export function activeFilterCount(f: InboxFilter): number {
   return (f.assigneeIds.length ? 1 : 0) + (f.labelIds.length ? 1 : 0) + (f.tags.length ? 1 : 0) +
     (f.lifecycles.length ? 1 : 0) + (f.channelIds.length ? 1 : 0) + (f.from || f.to ? 1 : 0) + (f.escalatedOnly ? 1 : 0) +
-    (f.adFilter || f.adSourceIds.length ? 1 : 0);
+    (f.adFilter || f.adSourceIds.length ? 1 : 0) + (f.kinds?.length ? 1 : 0);
 }
 
 export interface NumberTab {

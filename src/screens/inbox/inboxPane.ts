@@ -1,4 +1,4 @@
-import type { Layout } from "@/styles/breakpoints";
+import { BP, type Layout } from "@/styles/breakpoints";
 
 /**
  * SP-30 inbox phone pattern (pure). Below md one pane shows at a time:
@@ -14,9 +14,15 @@ export function inboxPane(layout: Layout, s: { selected: boolean; detailsOpen: b
   return s.detailsOpen ? "details" : "thread";
 }
 
-/** Between md and lg the contact rail is a sheet (opened from the thread) instead of a column. */
-export function detailsAsSheet(layout: Layout): boolean {
-  return layout === "tablet";
+/**
+ * The contact rail is a sheet (opened from the thread bar's "Details")
+ * instead of a column: between md and lg, and from xl while the inbox area
+ * itself is narrower than xl (the views column takes 210 px there, so a
+ * fourth column would squeeze the thread). Between lg and xl it stays a column.
+ */
+export function detailsAsSheet(layout: Layout, inboxWidth = Infinity): boolean {
+  if (layout === "tablet") return true;
+  return layout === "wide" && inboxWidth < BP.xl;
 }
 
 /** The hash params that carry the phone panes, so Back walks thread → list (and details → thread). */

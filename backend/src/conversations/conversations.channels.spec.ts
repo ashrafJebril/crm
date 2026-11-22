@@ -129,3 +129,54 @@ describe("POST /conversations/:id/send", () => {
     expect(sendText).not.toHaveBeenCalled();
   });
 });
+
+describe("inbox list: lastInboundAt for every channel (one grouped query)", () => {
+  const at = (iso: string) => new Date(iso);
+  const msg = (id: string, conversationId: string, from: string, iso: string) => ({
+    id, workspaceId: "ws1", conversationId, from, body: "x", createdAt: at(iso), t: "", agent: null,
+  });
+  const seed = () => ({
+    channel: [ch("W", { isDefault: true }), ch("C", { kind: "webchat", provider: "native" }), ch("T", { kind: "telegram", provider: "telegram" })],
+    conversation: [
+      conv("wa", { channelId: "W" }),
+      conv("web", { channel: "webchat", channelId: "C" }),
+      conv("tg", { channel: "telegram", channelId: "T" }),
+      conv("ig", { channel: "instagram" }),
+    ],
+    message: [
+      msg("m1", "wa", "them", "2026-11-22T08:00:00Z"),
+      msg("m2", "wa", "them", "2026-11-22T09:00:00Z"),
+      msg("m3", "wa", "human", "2026-11-22T09:30:00Z"),
+      msg("m4", "web", "them", "2026-11-22T07:00:00Z"),
+      msg("m5", "web", "ai", "2026-11-22T07:05:00Z"),
+      msg("m6", "tg", "human", "2026-11-22T06:00:00Z"),
+      msg("m7", "ig", "them", "2026-11-21T23:00:00Z"),
+    ],
+  });
+
+  it("is the newest customer message per conversation (null without one); the WhatsApp window stays WhatsApp-only", async () => {
+    const { svc, prisma } = build(seed());
+    const groupBy = jest.spyOn(prisma.message, "groupBy");
+    const rows = (await svc.list("ws1")) as Array<Record<string, unknown>>;
+    const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    expect((by.wa.lastInboundAt as Date).toISOString()).toBe("2026-11-22T09:00:00.000Z");
+    expect((by.web.lastInboundAt as Date).toISOString()).toBe("2026-11-22T07:00:00.000Z");
+    expect(by.tg.lastInboundAt).toBeNull();
+    expect((by.ig.lastInboundAt as Date).toISOString()).toBe("2026-11-21T23:00:00.000Z");
+    // JSON carries it as an ISO timestamp.
+    expect(JSON.parse(JSON.stringify(by.web)).lastInboundAt).toBe("2026-11-22T07:00:00.000Z");
+    expect(by.wa).toHaveProperty("waWindowOpen");
+    expect(by.web).not.toHaveProperty("waWindowOpen");
+    expect(by.ig).not.toHaveProperty("waWindowOpen");
+  });
+
+  it("an assign, read, label or pin (updatedAt) does not move it", async () => {
+    const s = seed();
+    s.conversation[1] = conv("web", { channel: "webchat", channelId: "C", updatedAt: new Date("2026-11-22T11:59:00Z"), assigneeId: "u1" });
+    const { svc } = build(s);
+    const rows = (await svc.list("ws1")) as Array<Record<string, unknown>>;
+    const web = rows.find((r) => r.id === "web")!;
+    expect((web.lastInboundAt as Date).toISOString()).toBe("2026-11-22T07:00:00.000Z");
+  });
+});
