@@ -9,7 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
-import { newestMessageInfo, withExpansionFallback } from "./newest-message";
+import { isoOrNull, newestMessageInfo, withExpansionFallback } from "./newest-message";
 import { sentByData } from "../conversations/message-sender";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
@@ -280,6 +280,8 @@ export class InstagramService {
         unread: c.unread_count ?? 0,
         messageCount: c.message_count ?? 0,
         updatedAt: c.updated_time ?? new Date().toISOString(),
+        // Graph's updated_time is the last message's time (the inbox "Newest" sort).
+        lastMessageAt: isoOrNull(c.updated_time),
         ...(expanded ? newestMessageInfo(c.messages?.data?.[0], igUserId) : {}),
       };
     });

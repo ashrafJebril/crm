@@ -3,6 +3,7 @@ import {
   keepPreviousData,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
 import { api, ApiError } from "./client";
@@ -30,6 +31,30 @@ interface FetchOpts<T> {
   // May be a function of the latest data, read on every tick, so the interval
   // follows what was just fetched with no render in between.
   pollMs?: PollMs<T>;
+  /** How long a fetched value counts as fresh (no refetch on remount / key return). Default 0. */
+  staleMs?: number;
+  /**
+   * `refetch()` reuses a fetch of the same key already in flight instead of
+   * cancelling it and starting an identical one (the "(canceled)" requests).
+   */
+  dedupeRefetch?: boolean;
+}
+
+/** The cache key `useFetch(path, { key })` uses (so callers can prefetch or patch the same entry). */
+export function fetchQueryKey(path: string, key?: string | number): QueryKey {
+  return key !== undefined ? [path, key] : [path];
+}
+
+/**
+ * Warm the cache entry `useFetch(path, { key, staleMs })` will read (e.g. a
+ * conversation on row hover). A fresh entry is not fetched again.
+ */
+export function prefetchFetch(queryClient: QueryClient, path: string, opts: { key?: string | number; staleMs?: number } = {}): Promise<void> {
+  return queryClient.prefetchQuery({
+    queryKey: fetchQueryKey(path, opts.key),
+    queryFn: ({ signal }) => api.get(path, signal),
+    staleTime: opts.staleMs ?? 0,
+  });
 }
 
 export type PollMs<T> = number | undefined | ((data: T | undefined) => number | null | undefined);
@@ -65,11 +90,7 @@ export function useFetch<T>(
   // opts.key the queryKey includes it (so a bump creates a fresh entry —
   // legacy invalidation pattern). When opts.key is omitted the key is just
   // [path], letting mutations patch the cache without guessing a suffix.
-  const queryKey: QueryKey = !enabled
-    ? disabledQueryKey(instanceRef.current)
-    : opts.key !== undefined
-      ? [path, opts.key]
-      : [path];
+  const queryKey: QueryKey = !enabled ? disabledQueryKey(instanceRef.current) : fetchQueryKey(path, opts.key);
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
 
@@ -82,6 +103,7 @@ export function useFetch<T>(
     enabled,
     refetchInterval: (query) => resolvePollMs(opts.pollMs, query.state.data),
     refetchIntervalInBackground: false,
+    staleTime: opts.staleMs ?? 0,
     // When a consumer bumps `opts.key` to invalidate, React Query treats the
     // new queryKey as a brand-new cache entry with no data. keepPreviousData
     // shows the last successful result while the new key fetches, so the UI
@@ -89,9 +111,10 @@ export function useFetch<T>(
     placeholderData: keepPreviousData,
   });
 
+  const dedupe = opts.dedupeRefetch === true;
   const refetch = useCallback(async () => {
-    await q.refetch();
-  }, [q]);
+    await q.refetch(dedupe ? { cancelRefetch: false } : undefined);
+  }, [q, dedupe]);
 
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;

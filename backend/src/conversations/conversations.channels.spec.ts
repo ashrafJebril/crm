@@ -180,3 +180,102 @@ describe("inbox list: lastInboundAt for every channel (one grouped query)", () =
     expect((web.lastInboundAt as Date).toISOString()).toBe("2026-11-22T07:00:00.000Z");
   });
 });
+
+describe("inbox list: lastMessageAt (newest message either way) from the same grouped query", () => {
+  const at = (iso: string) => new Date(iso);
+  const msg = (id: string, conversationId: string, from: string, iso: string) => ({
+    id, workspaceId: "ws1", conversationId, from, body: "x", createdAt: at(iso), t: "", agent: null,
+  });
+  const seed = () => ({
+    channel: [ch("W", { isDefault: true }), ch("C", { kind: "webchat", provider: "native" })],
+    conversation: [
+      conv("wa", { channelId: "W" }),
+      conv("web", { channel: "webchat", channelId: "C" }),
+      conv("empty", { channel: "webchat", channelId: "C" }),
+    ],
+    message: [
+      msg("m1", "wa", "them", "2026-11-22T09:00:00Z"),
+      msg("m2", "wa", "human", "2026-11-22T09:30:00Z"),
+      msg("m3", "web", "them", "2026-11-22T07:00:00Z"),
+      msg("m4", "web", "ai", "2026-11-22T07:05:00Z"),
+    ],
+  });
+
+  it("is the newest message in either direction (null without messages); one grouped query for both times", async () => {
+    const { svc, prisma } = build(seed());
+    const groupBy = jest.spyOn(prisma.message, "groupBy");
+    const rows = (await svc.list("ws1")) as Array<Record<string, unknown>>;
+    const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    expect((by.wa.lastMessageAt as Date).toISOString()).toBe("2026-11-22T09:30:00.000Z");
+    expect((by.wa.lastInboundAt as Date).toISOString()).toBe("2026-11-22T09:00:00.000Z");
+    expect((by.web.lastMessageAt as Date).toISOString()).toBe("2026-11-22T07:05:00.000Z");
+    expect((by.web.lastInboundAt as Date).toISOString()).toBe("2026-11-22T07:00:00.000Z");
+    expect(by.empty.lastMessageAt).toBeNull();
+    expect(by.empty.lastInboundAt).toBeNull();
+    expect(JSON.parse(JSON.stringify(by.wa)).lastMessageAt).toBe("2026-11-22T09:30:00.000Z");
+  });
+
+  it("an assign, read, label or pin (updatedAt) does not move it", async () => {
+    const s = seed();
+    s.conversation[0] = conv("wa", { channelId: "W", updatedAt: new Date("2026-11-22T11:59:00Z"), assigneeId: "u1", pinned: true });
+    const { svc } = build(s);
+    const rows = (await svc.list("ws1")) as Array<Record<string, unknown>>;
+    expect((rows.find((r) => r.id === "wa")!.lastMessageAt as Date).toISOString()).toBe("2026-11-22T09:30:00.000Z");
+  });
+});
+
+describe("inbox list round trips: two waves instead of four", () => {
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  };
+  const seed = () => ({
+    channel: [ch("W", { isDefault: true })],
+    conversation: [conv("wa", { channelId: "W" })],
+    message: [{ id: "m1", workspaceId: "ws1", conversationId: "wa", from: "them", body: "x", createdAt: new Date("2026-11-22T09:00:00Z"), t: "", agent: null }],
+  });
+
+  it("scope ∥ mirror, then rows ∥ channels ∥ message times; same results", async () => {
+    const { svc, prisma, perm } = build(seed());
+    let releaseScope!: (v: unknown) => void;
+    perm.conversationScope.mockImplementation(() => new Promise((r) => (releaseScope = r)) as never);
+    const mirror = jest.spyOn(prisma.integration, "findMany");
+    // The fake's methods are already jest.fn: keep the original implementation before gating it.
+    const findMock = prisma.conversation.findMany as unknown as jest.Mock;
+    const realFind = findMock.getMockImplementation()!;
+    let releaseRows!: () => void;
+    findMock.mockImplementation(async (a: unknown) => {
+      await new Promise<void>((r) => (releaseRows = r));
+      return realFind(a);
+    });
+    const groupBy = jest.spyOn(prisma.message, "groupBy");
+
+    const pending = svc.list("ws1");
+    await flush();
+    // Wave 1: the legacy mirror runs while the scope is still pending.
+    expect(mirror).toHaveBeenCalled();
+    expect(groupBy).not.toHaveBeenCalled();
+    releaseScope({});
+    await flush();
+    // Wave 2: the message times are read while the rows are still pending.
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    releaseRows();
+    const rows = (await pending) as Array<Record<string, unknown>>;
+    expect(rows.map((r) => r.id)).toEqual(["wa"]);
+    expect((rows[0].lastInboundAt as Date).toISOString()).toBe("2026-11-22T09:00:00.000Z");
+    expect((rows[0].lastMessageAt as Date).toISOString()).toBe("2026-11-22T09:00:00.000Z");
+  });
+
+  it("the message-times query is scoped like the rows (a hidden conversation's times are not read into the list)", async () => {
+    const s = seed();
+    s.conversation[0] = conv("wa", { channelId: "W", assigneeId: "me" });
+    s.conversation.push(conv("hidden", { channelId: "W", assigneeId: "other" }));
+    s.message.push({ id: "m2", workspaceId: "ws1", conversationId: "hidden", from: "them", body: "x", createdAt: new Date("2026-11-22T10:00:00Z"), t: "", agent: null });
+    const { svc, prisma } = build(s, { assigneeId: "me" });
+    const groupBy = jest.spyOn(prisma.message, "groupBy");
+    const rows = (await svc.list("ws1", { userId: "me" } as never)) as Array<Record<string, unknown>>;
+    expect(rows.map((r) => r.id)).toEqual(["wa"]);
+    const groups = (await groupBy.mock.results[0]!.value) as Array<{ conversationId: string }>;
+    expect(groups.map((g) => g.conversationId)).toEqual(["wa"]);
+  });
+});

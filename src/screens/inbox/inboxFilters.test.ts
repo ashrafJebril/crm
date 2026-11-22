@@ -2,7 +2,7 @@ process.env.TZ = "Asia/Dubai";
 import { describe, it, expect } from "vitest";
 import type { Conversation } from "../../lib/types";
 import {
-  EMPTY_FILTER, matchesFilter, sortConversations, needsAttention, bucketCounts, activeFilterCount, numberTabs,
+  EMPTY_FILTER, matchesFilter, sortConversations, keepAt, needsAttention, bucketCounts, activeFilterCount, numberTabs,
   type FilterCtx, type InboxFilter,
 } from "./inboxFilters";
 
@@ -64,9 +64,9 @@ describe("inboxFilters", () => {
   });
   it("pinned stays first in every sort", () => {
     const list = [
-      mk({ id: "new", updatedAt: "2026-11-05T00:00:00Z", unread: 5 }),
+      mk({ id: "new", updatedAt: "2026-11-05T00:00:00Z", lastInboundAt: "2026-11-05T00:00:00Z", unread: 5 }),
       mk({ id: "pin", pinned: true, updatedAt: "2026-11-01T00:00:00Z" }),
-      mk({ id: "old", updatedAt: "2026-11-02T00:00:00Z" }),
+      mk({ id: "old", updatedAt: "2026-11-02T00:00:00Z", lastInboundAt: "2026-11-02T00:00:00Z" }),
     ];
     const copy = [...list];
     for (const s of ["recent", "oldest", "unread"] as const) {
@@ -192,5 +192,56 @@ describe("matchesFilter keeps only conversations from the chosen ads", () => {
     expect(activeFilterCount(F({ adFilter: "any", adSourceIds: ["adA"] }))).toBe(1);
     expect(activeFilterCount(F({ adFilter: "none", escalatedOnly: true }))).toBe(2);
     expect(activeFilterCount(EMPTY_FILTER)).toBe(0);
+  });
+});
+
+describe("inbox order: by message times, stable", () => {
+  const H = (h: number) => `2026-11-22T${String(h).padStart(2, "0")}:00:00Z`;
+  const list = () => [
+    mk({ id: "a", lastMessageAt: H(9), lastInboundAt: H(8), updatedAt: H(9) }),
+    mk({ id: "b", lastMessageAt: H(11), lastInboundAt: H(11), updatedAt: H(11), unread: 2 }),
+    mk({ id: "c", lastMessageAt: H(10), lastInboundAt: null, updatedAt: H(10) }),
+    mk({ id: "d", lastMessageAt: H(7), lastInboundAt: H(6), updatedAt: H(7), unread: 1 }),
+  ];
+  const ids = (l: Conversation[]) => l.map((c) => c.id).join("");
+
+  it("Newest: the newest message first", () => {
+    expect(ids(sortConversations(list(), "recent"))).toBe("bcad");
+  });
+  it("Oldest waiting: the customer's last message, oldest first; none last", () => {
+    expect(ids(sortConversations(list(), "oldest"))).toBe("dabc");
+  });
+  it("Unread first: unread, then the newest message", () => {
+    expect(ids(sortConversations(list(), "unread"))).toBe("bdca");
+  });
+  it("updatedAt is only a fallback when lastMessageAt is missing; ties break on the id", () => {
+    const l = [mk({ id: "y", updatedAt: H(12) }), mk({ id: "x", lastMessageAt: H(10) }), mk({ id: "w", lastMessageAt: H(10) })];
+    expect(ids(sortConversations(l, "recent"))).toBe("ywx");
+  });
+
+  it("marking read, assigning or labelling does not change the order", () => {
+    const before = ids(sortConversations(list(), "recent"));
+    const touched = list().map((c) =>
+      c.id === "d" ? { ...c, unread: 0, assigneeId: "me", labelIds: ["l1"], updatedAt: H(23) } : c,
+    );
+    expect(ids(sortConversations(touched, "recent"))).toBe(before);
+    expect(ids(sortConversations(touched, "oldest"))).toBe(ids(sortConversations(list(), "oldest")));
+  });
+
+  it("the open conversation keeps its place while it stays open, even when another chat gets a message", () => {
+    const sorted = sortConversations(list(), "recent"); // b c a d
+    const openIndex = sorted.findIndex((c) => c.id === "a"); // 2
+    // A new message arrives in d: it jumps to the top.
+    const next = sortConversations(list().map((c) => (c.id === "d" ? { ...c, lastMessageAt: H(13) } : c)), "recent"); // d b c a
+    const kept = keepAt(next, "a", openIndex);
+    expect(kept.findIndex((c) => c.id === "a")).toBe(2);
+    expect(ids(kept)).toBe("dbac");
+    // Its own new message does not hoist it either.
+    const own = sortConversations(list().map((c) => (c.id === "a" ? { ...c, lastMessageAt: H(14) } : c)), "recent");
+    expect(keepAt(own, "a", openIndex).findIndex((c) => c.id === "a")).toBe(2);
+    // Not in the list, nothing open, or past the end: handled.
+    expect(ids(keepAt(next, "zz", 1))).toBe(ids(next));
+    expect(ids(keepAt(next, null, 1))).toBe(ids(next));
+    expect(keepAt(next, "a", 99).at(-1)!.id).toBe("a");
   });
 });

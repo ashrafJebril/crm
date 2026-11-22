@@ -52,3 +52,9 @@ export async function withExpansionFallback<T>(
     return { data: await plain(), expanded: false };
   }
 }
+
+/** A Graph time ("2026-11-22T09:30:00+0000") as an ISO timestamp, or null. */
+export function isoOrNull(t: string | undefined | null): string | null {
+  const ms = t ? Date.parse(t) : NaN;
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
