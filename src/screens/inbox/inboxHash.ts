@@ -30,6 +30,7 @@ export function decodeFilter(s: string | null | undefined): InboxFilter {
     escalatedOnly: o.escalatedOnly === true,
     adFilter: o.adFilter === "any" || o.adFilter === "none" ? o.adFilter : null,
     adSourceIds: strs(o.adSourceIds),
+    kinds: strs(o.kinds),
   };
 }
 
