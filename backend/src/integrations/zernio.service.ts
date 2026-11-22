@@ -71,12 +71,18 @@ export function phoneFromParticipantId(
 const HEALTH_TTL_MS = 5 * 60_000;
 /** At most one on-demand history import per conversation in this window. */
 export const HISTORY_IMPORT_THROTTLE_MS = 10 * 60_000;
+/** At most this many on-demand history imports per workspace per window. */
+export const HISTORY_IMPORT_RATE_MAX = 20;
+export const HISTORY_IMPORT_RATE_WINDOW_MS = 60_000;
 /** Why an on-demand history import did nothing. */
 export type HistoryImportSkipReason =
   | "no_external_id"
   | "not_zernio"
   | "channel_unavailable"
-  | "throttled";
+  | "throttled"
+  | "has_messages"
+  | "busy"
+  | "rate_limited";
 
 @Injectable()
 export class ZernioService {
@@ -85,6 +91,10 @@ export class ZernioService {
   private readonly healthCache = new Map<string, { at: number; accounts: ZernioAccount[] | null }>();
   /** `${workspaceId}:${conversationId}` → when its on-demand history import last ran. */
   private readonly historyImportAt = new Map<string, number>();
+  /** Workspaces with an on-demand history import in flight (one at a time each). */
+  private readonly historyImportBusy = new Set<string>();
+  /** workspaceId → start times of its recent on-demand imports (rate cap). */
+  private readonly historyImportRuns = new Map<string, number[]>();
   /** SP-19: every inbound/outbound path resolves its Channel here. */
   private readonly channels: ChannelResolver;
   /** SP-12: per-recipient delivery state and reply attribution. */
@@ -1448,21 +1458,32 @@ export class ZernioService {
    * On-demand history import for ONE DB conversation (the Inbox calls it when
    * a Zernio thread opens with no messages). The caller has already checked
    * the viewer may see the conversation. Only a conversation on a Zernio
-   * channel with a Zernio conversation id (externalId) is imported; anything
-   * else answers `{ imported: 0, reason }` without calling Zernio. At most one
-   * import per conversation per HISTORY_IMPORT_THROTTLE_MS (in memory, per
-   * process); a repeat inside the window answers `reason: "throttled"`.
+   * channel with a Zernio conversation id (externalId) and NO stored messages
+   * is imported; anything else answers `{ imported: 0, reason }` without
+   * calling Zernio.
+   *
+   * Limits (all in memory, per process):
+   *  - one import per conversation per HISTORY_IMPORT_THROTTLE_MS ("throttled");
+   *  - one import in flight per workspace ("busy");
+   *  - HISTORY_IMPORT_RATE_MAX imports per workspace per minute ("rate_limited").
+   *
+   * The "no stored messages" gate runs inside the workspace lock, so two
+   * concurrent imports of one conversation cannot both pass it and insert the
+   * history twice. That guard is per process only: two API instances could
+   * still race (the insert stays idempotent on a later run, but a same-moment
+   * double insert across instances is not prevented without a DB constraint).
    */
   async importHistoryForConversation(
     workspaceId: string,
     conversationId: string,
   ): Promise<{ imported: number; skipped: number; reason?: HistoryImportSkipReason }> {
+    const none = (reason: HistoryImportSkipReason) => ({ imported: 0, skipped: 0, reason });
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
       select: { id: true, channel: true, channelId: true, externalId: true },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
-    if (!conv.externalId) return { imported: 0, skipped: 0, reason: "no_external_id" };
+    if (!conv.externalId) return none("no_external_id");
 
     let accountId: string | null = null;
     try {
@@ -1471,47 +1492,64 @@ export class ZernioService {
       if (creds.provider === "zernio" && creds.externalId) accountId = creds.externalId;
     } catch {
       // No connected channel: nothing to import from.
-      return { imported: 0, skipped: 0, reason: "channel_unavailable" };
+      return none("channel_unavailable");
     }
-    if (!accountId) return { imported: 0, skipped: 0, reason: "not_zernio" };
+    if (!accountId) return none("not_zernio");
 
     const key = `${workspaceId}:${conv.id}`;
     const now = Date.now();
     const last = this.historyImportAt.get(key);
-    if (last !== undefined && now - last < HISTORY_IMPORT_THROTTLE_MS) {
-      return { imported: 0, skipped: 0, reason: "throttled" };
+    if (last !== undefined && now - last < HISTORY_IMPORT_THROTTLE_MS) return none("throttled");
+    // No await between this check and taking the lock: it is atomic in-process.
+    if (this.historyImportBusy.has(workspaceId)) return none("busy");
+    const recent = (this.historyImportRuns.get(workspaceId) ?? []).filter(
+      (at) => now - at < HISTORY_IMPORT_RATE_WINDOW_MS,
+    );
+    if (recent.length >= HISTORY_IMPORT_RATE_MAX) {
+      this.historyImportRuns.set(workspaceId, recent);
+      return none("rate_limited");
     }
-    // Stamped before the call so a concurrent second request is throttled too.
-    this.historyImportAt.set(key, now);
-    if (this.historyImportAt.size > 5_000) {
-      for (const [k, at] of this.historyImportAt) {
-        if (now - at >= HISTORY_IMPORT_THROTTLE_MS) this.historyImportAt.delete(k);
-      }
-    }
-
-    let r: { inserted: number; skipped: number };
+    this.historyImportBusy.add(workspaceId);
     try {
-      r = await this.importConversationMessages(
-        workspaceId,
-        conv.id,
-        conv.externalId,
-        accountId,
-        conv.channel,
-        { refreshSummary: "if-inserted" },
-      );
-    } catch (e) {
-      // A failed call (Zernio down) did not import; a manual Retry may try again.
-      this.historyImportAt.delete(key);
-      throw e;
+      // Inside the lock: a thread that already holds messages is never imported.
+      const held = await this.prisma.message.count({ where: { workspaceId, conversationId: conv.id } });
+      if (held > 0) return none("has_messages");
+
+      // Stamped before the call: a repeat inside the window is throttled.
+      this.historyImportAt.set(key, now);
+      this.historyImportRuns.set(workspaceId, [...recent, now]);
+      if (this.historyImportAt.size > 5_000) {
+        for (const [k, at] of this.historyImportAt) {
+          if (now - at >= HISTORY_IMPORT_THROTTLE_MS) this.historyImportAt.delete(k);
+        }
+      }
+
+      let r: { inserted: number; skipped: number };
+      try {
+        r = await this.importConversationMessages(
+          workspaceId,
+          conv.id,
+          conv.externalId,
+          accountId,
+          conv.channel,
+          { refreshSummary: "if-inserted" },
+        );
+      } catch (e) {
+        // A failed call (Zernio down) did not import; a manual Retry may try again.
+        this.historyImportAt.delete(key);
+        throw e;
+      }
+      if (r.inserted > 0) {
+        this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+          channel: conv.channel,
+          channelId: conv.channelId,
+          conversationId: conv.id,
+        });
+      }
+      return { imported: r.inserted, skipped: r.skipped };
+    } finally {
+      this.historyImportBusy.delete(workspaceId);
     }
-    if (r.inserted > 0) {
-      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
-        channel: conv.channel,
-        channelId: conv.channelId,
-        conversationId: conv.id,
-      });
-    }
-    return { imported: r.inserted, skipped: r.skipped };
   }
 
   // ─── Publishing ──────────────────────────────────────────────────────────

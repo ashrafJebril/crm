@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { MODULE_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { IS_PUBLIC_KEY } from "../auth/public.decorator";
-import { ROUTE_PERMISSIONS, routesOf } from "./permission-map";
+import { ROUTE_PERMISSIONS, apiKeyDenied, routesOf } from "./permission-map";
 import { REQUIRE_PERMISSION_KEY } from "./require-permission.decorator";
 import { ACTIONS, RESOURCES } from "./catalog";
 
@@ -505,6 +505,9 @@ describe("permission map", () => {
     expect({ declared: keys.includes(k), p: ROUTE_PERMISSIONS[k] }).toEqual({ declared: true, p: "conversations.view" });
     // Same permission as reading the thread it fills.
     expect(ROUTE_PERMISSIONS[k]).toBe(ROUTE_PERMISSIONS["GET /conversations/:id"]);
+    // Inbox-only: an API key never reaches it.
+    expect(apiKeyDenied(k)).toBe(true);
+    expect(apiKeyDenied("GET /conversations/:id")).toBe(false);
   });
 
   it("permission map covers SP-27 routes", () => {

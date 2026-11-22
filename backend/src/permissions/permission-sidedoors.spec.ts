@@ -1504,6 +1504,8 @@ describe("SP-27 api keys: side doors", () => {
       [AuthController, AuthController.prototype.me],
       [WorkspacesController, WorkspacesController.prototype.create],
       [WorkspacesController, WorkspacesController.prototype.list],
+      // Inbox-only: the on-demand Zernio history import.
+      [ZernioController, ZernioController.prototype.importHistory],
     ] as const) {
       const err = await run(cls, handler);
       expect(err.getStatus?.()).toBe(403);

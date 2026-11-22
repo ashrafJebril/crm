@@ -68,6 +68,17 @@ export function membershipExempt(key: string): boolean {
   return path.startsWith("/auth/") || path.startsWith("/admin/") || MEMBERSHIP_EXEMPT.has(key);
 }
 
+/** Routes an API key never reaches (403 `api_keys.route_not_allowed`),
+ *  whatever its scopes: Inbox-only actions that call a provider on demand. */
+const API_KEY_DENIED = new Set([
+  // Calls Zernio per conversation; throttled for the Inbox, not an integration API.
+  "POST /integrations/zernio/db-conversations/:id/import-history",
+]);
+
+export function apiKeyDenied(key: string): boolean {
+  return API_KEY_DENIED.has(key);
+}
+
 export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   // ── Own account / any signed-in user ──────────────────────────────────
   "GET /auth/me": "authenticated",
