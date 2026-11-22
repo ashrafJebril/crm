@@ -47,7 +47,7 @@ import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
 import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
 import {
-  activeFilterCount, type InboxView, EMPTY_FILTER, matchesFilter, sortConversations, numberTabs, type NumberTab,
+  activeFilterCount, type InboxView, EMPTY_FILTER, matchesFilter, sortConversations, keepAt, numberTabs, type NumberTab,
   type FilterCtx, type InboxFilter, type InboxSort,
 } from "./inbox/inboxFilters";
 import {
@@ -2380,6 +2380,7 @@ interface FbConv {
   /** Inbox views: the newest message's sender and the customer's last message time (when the newest is theirs). */
   lastFrom?: "them" | "page";
   lastInboundAt?: string | null;
+  lastMessageAt?: string | null;
 }
 interface FbMsg {
   id: string;
@@ -2409,6 +2410,7 @@ interface IgConv {
   updatedAt: string;
   lastFrom?: "them" | "page";
   lastInboundAt?: string | null;
+  lastMessageAt?: string | null;
 }
 interface IgMsg {
   id: string;
@@ -2711,6 +2713,7 @@ function InboxImpl() {
           updatedAt: c.updatedAt,
           lastFrom: c.lastFrom === "page" ? "human" : "them",
           lastInboundAt: c.lastInboundAt ?? null,
+          lastMessageAt: c.lastMessageAt ?? c.updatedAt,
           preview: c.snippet || "—",
           channel: "facebook",
           status: "human",
@@ -2731,6 +2734,7 @@ function InboxImpl() {
           updatedAt: c.updatedAt,
           lastFrom: c.lastFrom === "page" ? "human" : "them",
           lastInboundAt: c.lastInboundAt ?? null,
+          lastMessageAt: c.lastMessageAt ?? c.updatedAt,
           preview: c.snippet || "—",
           channel: "instagram",
           status: "human",
@@ -3029,15 +3033,28 @@ function InboxImpl() {
 
   // Search narrows the filtered list; every view (list/table/board) and
   // "Add to group" share this exact list.
+  // The open conversation keeps its place while it stays open (a new message
+  // elsewhere, or it being read, assigned or labelled, never moves it under the
+  // user); it is re-anchored when another one is opened or the view, sort,
+  // filters or search change.
+  const anchorRef = useRef<{ id: string | null; index: number | null; key: string }>({ id: null, index: null, key: "" });
   const visibleConvs = useMemo<Conversation[]>(() => {
     if (initialLoading) return [];
     const q = search.trim().toLowerCase();
-    if (!q) return filtered;
-    return filtered.filter((c) => {
-      const name = contactById.get(c.contactId)?.name ?? "";
-      return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
-    });
-  }, [filtered, search, contactById, initialLoading]);
+    const natural = !q
+      ? filtered
+      : filtered.filter((c) => {
+          const name = contactById.get(c.contactId)?.name ?? "";
+          return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
+        });
+    const key = `${scopeView}|${sort}|${JSON.stringify(refine)}|${activeTab ?? ""}|${q}`;
+    const a = anchorRef.current;
+    if (a.id !== activeId || a.key !== key || a.index === null) {
+      const at = activeId ? natural.findIndex((c) => c.id === activeId) : -1;
+      anchorRef.current = { id: activeId, index: at < 0 ? null : at, key };
+    }
+    return keepAt(natural, anchorRef.current.id, anchorRef.current.index);
+  }, [filtered, search, contactById, initialLoading, activeId, scopeView, sort, refine, activeTab]);
   const teamById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
 

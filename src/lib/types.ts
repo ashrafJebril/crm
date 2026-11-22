@@ -446,8 +446,10 @@ export interface Conversation {
   topics?: string[] | null;
   painPoints?: string[] | null;
   messages?: Message[];
-  // WhatsApp-only: backend populates these when channel === "whatsapp".
+  /** The customer's last message (every channel; the wait time, "Oldest waiting"). */
   lastInboundAt?: string | null;
+  /** The newest message either way (the "Newest" sort; `updatedAt` moves on read, assign, label and pin). */
+  lastMessageAt?: string | null;
   waWindowOpen?: boolean;
   /** SP-19: effective channel (null for l-agent threads) and its provider. */
   channelId?: string | null;

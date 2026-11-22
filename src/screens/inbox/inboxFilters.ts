@@ -93,16 +93,57 @@ export function matchesFilter(
   return true;
 }
 
-const ts = (c: Conversation) => (c.updatedAt ? Date.parse(c.updatedAt) || 0 : 0);
+const parse = (iso: string | null | undefined): number | null => {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+/** The newest message time; `updatedAt` only when the list has none (it moves on read, assign, label, pin). */
+const messageTime = (c: Conversation): number => parse(c.lastMessageAt) ?? parse(c.updatedAt) ?? 0;
 
+/**
+ * Pinned first, then:
+ * - "recent" (Newest): the newest message first;
+ * - "oldest" (Oldest waiting): the customer's last message, oldest first;
+ *   conversations without one go last;
+ * - "unread" (Unread first): unread ones first, then the newest message.
+ * Ties break on the id, so the order is stable.
+ */
 export function sortConversations(list: Conversation[], sort: InboxSort): Conversation[] {
   const cmp = (a: Conversation, b: Conversation) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    if (sort === "oldest") return ts(a) - ts(b);
-    if (sort === "unread" && a.unread !== b.unread) return b.unread - a.unread;
-    return ts(b) - ts(a);
+    if (sort === "oldest") {
+      const ia = parse(a.lastInboundAt);
+      const ib = parse(b.lastInboundAt);
+      if (ia === null || ib === null) {
+        if (ia !== ib) return ia === null ? 1 : -1;
+      } else if (ia !== ib) return ia - ib;
+    } else {
+      if (sort === "unread") {
+        const ua = a.unread > 0;
+        const ub = b.unread > 0;
+        if (ua !== ub) return ua ? -1 : 1;
+      }
+      const d = messageTime(b) - messageTime(a);
+      if (d !== 0) return d;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   };
   return [...list].sort(cmp);
+}
+
+/**
+ * Keep the open conversation where it was: `list` without it, with it put
+ * back at `index` (clamped). A new message elsewhere, or the open chat being
+ * read, assigned or labelled, then never moves it under the user.
+ */
+export function keepAt<T extends { id: string }>(list: T[], id: string | null, index: number | null): T[] {
+  if (!id || index === null) return list;
+  const at = list.findIndex((c) => c.id === id);
+  if (at < 0 || at === index) return list;
+  const rest = list.filter((c) => c.id !== id);
+  const out = [...rest];
+  out.splice(Math.max(0, Math.min(index, rest.length)), 0, list[at]!);
+  return out;
 }
 
 export function needsAttention(c: Conversation, ctx: FilterCtx): boolean {
