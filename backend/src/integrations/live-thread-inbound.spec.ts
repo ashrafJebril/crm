@@ -59,6 +59,8 @@ describe("Facebook live threads carry lastInboundAt from one list request", () =
     expect(graphGet).toHaveBeenCalledTimes(1);
     expect(decodeURIComponent(String(graphGet.mock.calls[0]![0]))).toContain("messages.limit(1){from,created_time}");
     expect(rows[0]).toMatchObject({ id: "t_1", lastFrom: "them", lastInboundAt: "2026-11-22T09:00:00.000Z" });
+    // Graph's updated_time is the last message's time: lastMessageAt (the "Newest" sort).
+    expect(rows[0]).toMatchObject({ lastMessageAt: "2026-11-22T10:00:00.000Z" });
     expect(rows[1]).toMatchObject({ id: "t_2", lastFrom: "page", lastInboundAt: null });
   });
 });
@@ -80,7 +82,7 @@ describe("Instagram live threads carry lastInboundAt from one list request", () 
     const rows = await svc.listConversations("ws1");
     expect(fetchJson).toHaveBeenCalledTimes(1);
     expect(decodeURIComponent(String(fetchJson.mock.calls[0]![0]))).toContain("messages.limit(1){from,created_time}");
-    expect(rows[0]).toMatchObject({ id: "ig:aWdfZ", lastFrom: "them", lastInboundAt: "2026-11-22T08:15:00.000Z" });
+    expect(rows[0]).toMatchObject({ id: "ig:aWdfZ", lastFrom: "them", lastInboundAt: "2026-11-22T08:15:00.000Z", lastMessageAt: "2026-11-22T10:00:00.000Z" });
   });
 });
 

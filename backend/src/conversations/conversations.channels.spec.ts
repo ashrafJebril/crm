@@ -180,3 +180,47 @@ describe("inbox list: lastInboundAt for every channel (one grouped query)", () =
     expect((web.lastInboundAt as Date).toISOString()).toBe("2026-11-22T07:00:00.000Z");
   });
 });
+
+describe("inbox list: lastMessageAt (newest message either way) from the same grouped query", () => {
+  const at = (iso: string) => new Date(iso);
+  const msg = (id: string, conversationId: string, from: string, iso: string) => ({
+    id, workspaceId: "ws1", conversationId, from, body: "x", createdAt: at(iso), t: "", agent: null,
+  });
+  const seed = () => ({
+    channel: [ch("W", { isDefault: true }), ch("C", { kind: "webchat", provider: "native" })],
+    conversation: [
+      conv("wa", { channelId: "W" }),
+      conv("web", { channel: "webchat", channelId: "C" }),
+      conv("empty", { channel: "webchat", channelId: "C" }),
+    ],
+    message: [
+      msg("m1", "wa", "them", "2026-11-22T09:00:00Z"),
+      msg("m2", "wa", "human", "2026-11-22T09:30:00Z"),
+      msg("m3", "web", "them", "2026-11-22T07:00:00Z"),
+      msg("m4", "web", "ai", "2026-11-22T07:05:00Z"),
+    ],
+  });
+
+  it("is the newest message in either direction (null without messages); one grouped query for both times", async () => {
+    const { svc, prisma } = build(seed());
+    const groupBy = jest.spyOn(prisma.message, "groupBy");
+    const rows = (await svc.list("ws1")) as Array<Record<string, unknown>>;
+    const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    expect((by.wa.lastMessageAt as Date).toISOString()).toBe("2026-11-22T09:30:00.000Z");
+    expect((by.wa.lastInboundAt as Date).toISOString()).toBe("2026-11-22T09:00:00.000Z");
+    expect((by.web.lastMessageAt as Date).toISOString()).toBe("2026-11-22T07:05:00.000Z");
+    expect((by.web.lastInboundAt as Date).toISOString()).toBe("2026-11-22T07:00:00.000Z");
+    expect(by.empty.lastMessageAt).toBeNull();
+    expect(by.empty.lastInboundAt).toBeNull();
+    expect(JSON.parse(JSON.stringify(by.wa)).lastMessageAt).toBe("2026-11-22T09:30:00.000Z");
+  });
+
+  it("an assign, read, label or pin (updatedAt) does not move it", async () => {
+    const s = seed();
+    s.conversation[0] = conv("wa", { channelId: "W", updatedAt: new Date("2026-11-22T11:59:00Z"), assigneeId: "u1", pinned: true });
+    const { svc } = build(s);
+    const rows = (await svc.list("ws1")) as Array<Record<string, unknown>>;
+    expect((rows.find((r) => r.id === "wa")!.lastMessageAt as Date).toISOString()).toBe("2026-11-22T09:30:00.000Z");
+  });
+});

@@ -112,24 +112,29 @@ export class ConversationsService {
       })
       .filter((c) => wanted.size === 0 || (c.channelId !== null && wanted.has(c.channelId)));
 
-    // The time of each conversation's last customer message, for every
-    // channel, in one grouped query. The inbox shows "waiting for 2h" from it
-    // (`updatedAt` moves on assign, read, label and pin, so it cannot), and
-    // WhatsApp also derives its 24-hour customer-service window from it (the
-    // composer flips to a template picker when the window closes).
+    // Per conversation, in one grouped query (by conversation and sender):
+    // - `lastInboundAt`, the customer's last message: the inbox's "waiting
+    //   for 2h" and "Oldest waiting" sort, and WhatsApp's 24-hour
+    //   customer-service window (the composer flips to a template picker);
+    // - `lastMessageAt`, the newest message either way: the "Newest" sort.
+    // `updatedAt` moves on read, assign, label and pin, so it can do neither.
     const lastInboundByConv = new Map<string, Date>();
+    const lastMessageByConv = new Map<string, Date>();
     if (convs.length > 0) {
       const grouped = await this.prisma.message.groupBy({
-        by: ["conversationId"],
+        by: ["conversationId", "from"],
         where: {
           workspaceId,
           conversationId: { in: convs.map((c) => c.id) },
-          from: "them",
         },
         _max: { createdAt: true },
       });
       for (const g of grouped) {
-        if (g._max.createdAt) lastInboundByConv.set(g.conversationId, g._max.createdAt);
+        const at = g._max.createdAt;
+        if (!at) continue;
+        if (g.from === "them") lastInboundByConv.set(g.conversationId, at);
+        const prev = lastMessageByConv.get(g.conversationId);
+        if (!prev || at > prev) lastMessageByConv.set(g.conversationId, at);
       }
     }
 
@@ -137,7 +142,8 @@ export class ConversationsService {
     const now = Date.now();
     return convs.map(({ labels, adSource, ...rest }) => {
       const lastInboundAt = lastInboundByConv.get(rest.id) ?? null;
-      const c = { ...rest, labelIds: labels.map((l) => l.labelId), adSource: toAdSourceChip(adSource), lastInboundAt };
+      const lastMessageAt = lastMessageByConv.get(rest.id) ?? null;
+      const c = { ...rest, labelIds: labels.map((l) => l.labelId), adSource: toAdSourceChip(adSource), lastInboundAt, lastMessageAt };
       if (c.channel !== "whatsapp") return c;
       const waWindowOpen = lastInboundAt
         ? now - lastInboundAt.getTime() < WA_WINDOW_MS
