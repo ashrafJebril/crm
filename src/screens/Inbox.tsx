@@ -86,6 +86,8 @@ import {
 } from "./inbox/inboxCache";
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
 import { isVideoType, messageBodyView } from "./inbox/messageMedia";
+import { FollowUpButton } from "./inbox/FollowUpButton";
+import { followUpContactId } from "./inbox/followUpGate";
 import { useDialogFocus } from "@/lib/useDialogFocus";
 import {
   autoImportAttempted, emptyThreadCopy, emptyThreadView, historyImportPath, markAutoImportAttempted, shouldAutoImportHistory,
@@ -1295,6 +1297,7 @@ function ConversationPane({
   const { can } = usePermissions();
   const canCompose = can("conversations.create");
   const canViewAds = can("reports.view");
+  const followUpFor = followUpContactId(conv, can("contacts.update"));
   const noPermCompose = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const [draft, setDraft] = useState<string>("");
   // SP-18 "Copy to reply box": a copilot draft for this conversation fills the composer (never sends).
@@ -1550,6 +1553,7 @@ function ConversationPane({
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
           </button>
+          {followUpFor && <FollowUpButton contactId={followUpFor} tx={tx} />}
           <ConversationTicketsPill
             conversationId={conv.id}
             lang={lang}
