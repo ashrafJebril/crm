@@ -6,6 +6,8 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient, ZernioWhatsAppTemplate } from "../integrations/zernio.client";
+import { MetaTemplatesClient } from "../integrations/meta-templates.client";
+import { decryptSecret } from "../common/token-crypto";
 
 /**
  * WhatsApp message templates.
@@ -61,6 +63,32 @@ export interface CreateTemplateInput {
   libraryTemplateName?: string;
 }
 
+/**
+ * Where a workspace's templates live: its Zernio WhatsApp account, or the WABA
+ * of a number connected directly to Meta. Both speak Meta's template model.
+ */
+interface TemplateBackend {
+  kind: "zernio" | "meta";
+  list(): Promise<ZernioWhatsAppTemplate[]>;
+  create(body: {
+    name: string;
+    category: "AUTHENTICATION" | "MARKETING" | "UTILITY";
+    language: string;
+    components?: Array<Record<string, unknown>>;
+    libraryTemplateName?: string;
+  }): Promise<{ id: string | null; status: string; language?: string }>;
+  update(
+    name: string,
+    metaTemplateId: string,
+    components: Array<Record<string, unknown>>,
+  ): Promise<{ status: string }>;
+  remove(name: string, metaTemplateId: string | null): Promise<void>;
+}
+
+const NOT_CONNECTED =
+  "WhatsApp is not connected — connect it in Settings → Integrations first. " +
+  "Meta has to approve every template, so there is no such thing as a local-only one.";
+
 /** Meta component pieces, flattened onto our columns. */
 interface ExtractedComponents {
   body: string | null;
@@ -77,6 +105,7 @@ export class TemplatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly client: ZernioClient,
+    private readonly meta: MetaTemplatesClient = new MetaTemplatesClient(),
   ) {}
 
   /**
@@ -92,12 +121,12 @@ export class TemplatesService {
       orderBy: { createdAt: "desc" },
     })) as unknown as TemplateRow[];
 
-    const accountId = await this.whatsappAccountId(workspaceId);
-    if (!accountId) return localRows.map((r) => this.unverified(r));
+    const backend = await this.backend(workspaceId);
+    if (!backend) return localRows.map((r) => this.unverified(r));
 
     let metaTemplates: ZernioWhatsAppTemplate[];
     try {
-      metaTemplates = await this.client.whatsappTemplates(accountId);
+      metaTemplates = await backend.list();
     } catch (e) {
       // An outage must not resurrect the fiction — fall back to what we can
       // honestly say, which is "confirmed before" or "local".
@@ -112,17 +141,12 @@ export class TemplatesService {
 
   /** Submit a template to Meta (custom) or import a pre-approved library one. */
   async create(workspaceId: string, input: CreateTemplateInput): Promise<TemplateRow> {
-    const accountId = await this.whatsappAccountId(workspaceId);
-    if (!accountId) {
-      throw new BadRequestException(
-        "WhatsApp is not connected via Zernio — connect it in Settings → Integrations first. " +
-          "Meta has to approve every template, so there is no such thing as a local-only one.",
-      );
-    }
+    const backend = await this.backend(workspaceId);
+    if (!backend) throw new BadRequestException(NOT_CONNECTED);
+    this.assertSupported(backend, input);
 
     const components = input.libraryTemplateName ? undefined : this.buildComponents(input);
-    const created = await this.client.createWhatsAppTemplate({
-      accountId,
+    const created = await backend.create({
       name: input.name,
       category: this.metaCategory(input.category),
       language: input.lang,
@@ -192,15 +216,14 @@ export class TemplatesService {
 
     let status = existing.status;
     if (touchesContent && existing.metaTemplateId) {
-      const accountId = await this.whatsappAccountId(workspaceId);
-      if (!accountId) {
-        throw new BadRequestException(
-          "WhatsApp is not connected via Zernio — cannot submit the edit to Meta",
-        );
+      const backend = await this.backend(workspaceId);
+      if (!backend) {
+        throw new BadRequestException("WhatsApp is not connected — cannot submit the edit to Meta");
       }
-      const updated = await this.client.updateWhatsAppTemplate(
-        accountId,
+      this.assertSupported(backend, merged);
+      const updated = await backend.update(
         existing.name,
+        existing.metaTemplateId,
         this.buildComponents(merged),
       );
       status = this.mapStatus(updated.status);
@@ -270,10 +293,10 @@ export class TemplatesService {
     if (!existing) throw new NotFoundException("Template not found");
 
     if (existing.metaTemplateId) {
-      const accountId = await this.whatsappAccountId(workspaceId);
-      if (accountId) {
+      const backend = await this.backend(workspaceId);
+      if (backend) {
         try {
-          await this.client.deleteWhatsAppTemplate(accountId, existing.name);
+          await backend.remove(existing.name, existing.metaTemplateId);
         } catch (e) {
           throw new BadRequestException(
             `Could not delete the template at Meta: ${(e as Error).message}`,
@@ -292,11 +315,15 @@ export class TemplatesService {
    * rejects it.
    */
   async lookupLibraryTemplate(workspaceId: string, name: string, language?: string) {
-    const accountId = await this.whatsappAccountId(workspaceId);
-    if (!accountId) {
-      throw new BadRequestException("WhatsApp is not connected via Zernio");
+    const integ = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "whatsapp" },
+    });
+    if (integ?.provider !== "zernio" || !integ.pageId) {
+      throw new BadRequestException(
+        "Meta's template library is only available for WhatsApp connected via Zernio",
+      );
     }
-    return this.client.whatsappLibraryTemplate(accountId, name, language);
+    return this.client.whatsappLibraryTemplate(integ.pageId, name, language);
   }
 
   // ─── Internals ───────────────────────────────────────────────────────────
@@ -382,11 +409,66 @@ export class TemplatesService {
     return { ...row, status: "local" };
   }
 
-  private async whatsappAccountId(workspaceId: string): Promise<string | null> {
+  /**
+   * The workspace's WhatsApp connection — Zernio or direct Meta. A workspace
+   * holds one WhatsApp integration (connecting one way refuses while the other
+   * exists), so the first row decides.
+   */
+  private async backend(workspaceId: string): Promise<TemplateBackend | null> {
     const integ = await this.prisma.integration.findFirst({
-      where: { workspaceId, provider: "zernio", platform: "whatsapp" },
+      where: { workspaceId, platform: "whatsapp" },
     });
-    return integ?.pageId ?? null;
+    if (!integ) return null;
+
+    if (integ.provider === "zernio") {
+      const accountId = integ.pageId;
+      if (!accountId) return null;
+      return {
+        kind: "zernio",
+        list: () => this.client.whatsappTemplates(accountId),
+        create: (body) => this.client.createWhatsAppTemplate({ accountId, ...body }),
+        update: (name, _id, components) =>
+          this.client.updateWhatsAppTemplate(accountId, name, components),
+        remove: (name) => this.client.deleteWhatsAppTemplate(accountId, name),
+      };
+    }
+
+    const token = decryptSecret(integ.accessToken ?? null);
+    const wabaId = this.wabaIdOf(integ.raw);
+    if (!token || !wabaId) return null;
+    const creds = { token, wabaId };
+    return {
+      kind: "meta",
+      list: () => this.meta.list(creds),
+      create: (body) => this.meta.create(creds, body),
+      update: (_name, id, components) => this.meta.update(creds, id, components),
+      remove: (name, id) => this.meta.remove(creds, name, id),
+    };
+  }
+
+  private wabaIdOf(raw: string | null | undefined): string | null {
+    try {
+      const parsed = raw ? (JSON.parse(raw) as { wabaId?: unknown }) : null;
+      return typeof parsed?.wabaId === "string" ? parsed.wabaId : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Zernio turns a media header's public URL into Meta's upload handle for us.
+   * On a direct connection Meta wants that handle (a resumable upload), which
+   * we don't do yet — refuse clearly instead of letting Meta 400 obscurely.
+   */
+  private assertSupported(backend: TemplateBackend, input: Partial<CreateTemplateInput>) {
+    if (backend.kind !== "meta") return;
+    if (input.libraryTemplateName) return;
+    const header = input.headerType?.toLowerCase();
+    if (header && header !== "text") {
+      throw new BadRequestException(
+        "Image, video and document headers aren't supported yet on a WhatsApp number connected directly to Meta. Use a text header or none.",
+      );
+    }
   }
 
   /** Match on name + base language so an "en" row links to Meta's "en_US". */
