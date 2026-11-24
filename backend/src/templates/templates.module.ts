@@ -25,6 +25,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { TemplatesService } from "./templates.service";
+import { MetaTemplatesClient } from "../integrations/meta-templates.client";
 
 const CATEGORIES = ["TRANSACTIONAL", "UTILITY", "MARKETING", "AUTHENTICATION"] as const;
 const HEADER_TYPES = ["text", "image", "video", "document"] as const;
@@ -165,6 +166,6 @@ class TemplatesController {
 @Module({
   imports: [IntegrationsModule],
   controllers: [TemplatesController],
-  providers: [TemplatesService],
+  providers: [TemplatesService, MetaTemplatesClient],
 })
 export class TemplatesModule {}

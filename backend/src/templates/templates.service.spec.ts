@@ -318,7 +318,7 @@ describe("TemplatesService.create — category translation", () => {
     // Meta retired TRANSACTIONAL and 400s on it, but our seed and older rows
     // still use it — including order_confirmed_v2 in the demo workspace.
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
     const client = {
@@ -347,7 +347,7 @@ describe("TemplatesService.create — category translation", () => {
 describe("TemplatesService.update — edits reach Meta", () => {
   const build = (row: Record<string, unknown>) => {
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findFirst: jest.fn().mockResolvedValue(row),
         update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...row, ...data })),
@@ -436,7 +436,7 @@ describe("TemplatesService.duplicate", () => {
 describe("TemplatesService.remove", () => {
   const build = (row: Record<string, unknown>, deleteFails = false) => {
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findFirst: jest.fn().mockResolvedValue(row),
         delete: jest.fn().mockResolvedValue({}),
@@ -514,7 +514,7 @@ describe("TemplatesService.list — write only on change", () => {
       buttons: null,
     };
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findMany: jest.fn().mockResolvedValue([stored]),
         update: jest.fn(),
@@ -547,7 +547,7 @@ describe("TemplatesService.list — write only on change", () => {
 
   it("writes when Meta's verdict has actually changed", async () => {
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findMany: jest.fn().mockResolvedValue([
           {
@@ -592,7 +592,7 @@ describe("TemplatesService.list — write only on change", () => {
 describe("TemplatesService.create — Zernio's lowercase component contract", () => {
   const build = () => {
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
     const client = {
@@ -669,7 +669,7 @@ describe("TemplatesService.create — Zernio's lowercase component contract", ()
 describe("TemplatesService.create — Meta requires sample values", () => {
   const build = () => {
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
     const client = {
@@ -768,7 +768,7 @@ describe("TemplatesService.create — Meta requires sample values", () => {
 describe("TemplatesService.list — surfaces Meta's rejection reason", () => {
   const build = (meta: Array<Record<string, unknown>>, local: Array<Record<string, unknown>> = []) => {
     const prisma = {
-      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findMany: jest.fn().mockResolvedValue(local),
         update: jest.fn().mockResolvedValue({}),
