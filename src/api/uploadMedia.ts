@@ -1,12 +1,13 @@
-import { API_BASE, tokenStore } from "./client";
+import { API_BASE, ApiError, tokenStore } from "./client";
 import type { Media } from "@/lib/types";
 
 /**
  * Upload one file to the media library and return the created row.
  *
- * Multipart, so it can't go through the JSON `api` client. Throws an Error
- * carrying the server's message when the server rejects the file (unsupported
- * type, too large) so callers can render it verbatim.
+ * Multipart, so it can't go through the JSON `api` client. Throws an
+ * `ApiError` carrying the server's key (`media.unsupported_type`,
+ * `media.too_large`, `media.type_mismatch`, …) and its body (`limit`,
+ * `allowed`), so callers word it with `mediaErrorText`.
  */
 export async function uploadMedia(file: File): Promise<Media> {
   const fd = new FormData();
@@ -19,13 +20,16 @@ export async function uploadMedia(file: File): Promise<Media> {
   });
   if (!resp.ok) {
     let msg = `Upload failed (${resp.status})`;
+    let body: unknown;
     try {
-      const j = (await resp.json()) as { message?: string };
-      if (j.message) msg = j.message;
+      body = await resp.json();
+      const m = (body as { message?: unknown }).message;
+      if (typeof m === "string" && m) msg = m;
+      else if (Array.isArray(m)) msg = m.join(", ");
     } catch {
       /* keep the generic message */
     }
-    throw new Error(msg);
+    throw new ApiError(msg, resp.status, undefined, body);
   }
   return (await resp.json()) as Media;
 }

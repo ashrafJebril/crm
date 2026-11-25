@@ -1,17 +1,20 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useStageTickets } from "./hooks/useStageTickets";
-import { TicketCard } from "./TicketCard";
+import { TicketCard, type LeadAction } from "./TicketCard";
+import { useNextSteps } from "@/components/activities/NextStepChip";
+import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { stageColor } from "./stageColors";
+import { isStaleTicket } from "./stale";
 import type { Ticket, TicketStage, Lang } from "@/lib/types";
 
 interface StageColumnProps {
   stage: TicketStage;
   pipelineId: string;
   lang: Lang;
-  ownerFilter?: string;
-  searchQuery: string;
+  /** Server filter query string (boardQuery.toQuery without sort). */
+  filterQs?: string;
   /** True once every sibling column has completed its first fetch. */
   boardReady: boolean;
   /** Fired exactly once when this column's first fetch settles. */
@@ -19,21 +22,35 @@ interface StageColumnProps {
   onCardClick: (ticket: Ticket) => void;
   onOpenConversation: (conversationId: string) => void;
   onOpenMoveMenu: (ticket: Ticket, anchorRect: DOMRect) => void;
+  /** Pipeline stale threshold in days (null = off). */
+  staleDays?: number | null;
+  /** Final review I1: SLA chips on support pipelines only. */
+  showSla?: boolean;
+  /** Moves are disabled for this viewer (agentCanMove=false, no pipelines.update). */
+  moveLocked?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onLeadAction?: (ticket: Ticket, action: LeadAction) => void;
 }
 
 export function StageColumn({
   stage,
   pipelineId,
   lang,
-  ownerFilter,
-  searchQuery,
+  filterQs,
   boardReady,
   onInitialLoaded,
   onCardClick,
   onOpenConversation,
   onOpenMoveMenu,
+  staleDays = null,
+  showSla = false,
+  moveLocked = false,
+  selectedIds,
+  onToggleSelect,
+  onLeadAction,
 }: StageColumnProps) {
-  const q = useStageTickets(pipelineId, stage.id, { ownerId: ownerFilter });
+  const q = useStageTickets(pipelineId, stage.id, { qs: filterQs });
 
   // Report up to the board the moment we settle our first fetch (success OR
   // error — either way the column has "finished loading" from the user's POV).
@@ -51,16 +68,12 @@ export function StageColumn({
     [q.data],
   );
 
-  const filtered = useMemo(() => {
-    if (!searchQuery) return allTickets;
-    const needle = searchQuery.toLowerCase();
-    return allTickets.filter(
-      (t) =>
-        t.title.toLowerCase().includes(needle) ||
-        t.contact?.name.toLowerCase().includes(needle) ||
-        String(t.number).includes(needle),
-    );
-  }, [allTickets, searchQuery]);
+  // Search and every other filter run on the server (same builder as the table view).
+  const filtered = allTickets;
+
+  // One batched next-step request per column.
+  const nextSteps = useNextSteps("ticketIds", useMemo(() => allTickets.map((t) => t.id), [allTickets]));
+  const [stepTicketId, setStepTicketId] = useState<string | null>(null);
 
   const { setNodeRef: setDroppableRef, isOver } = useDroppable({
     id: stage.id,
@@ -71,10 +84,12 @@ export function StageColumn({
   const rowVirtualizer = useVirtualizer({
     count: filtered.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 140,
+    estimateSize: () => 172,
     overscan: 6,
   });
 
+  // Re-evaluated whenever the list changes; stale is a day-scale threshold.
+  const nowTick = useMemo(() => Date.now(), [filtered]);
   const total = filtered.length;
   const label = lang === "ar" ? stage.labelAr : stage.label;
   const accent = stageColor[stage.color] ?? "var(--ink-3)";
@@ -89,19 +104,14 @@ export function StageColumn({
   return (
     <div
       ref={setDroppableRef}
+      className="pl-stage"
       style={{
-        display: "flex",
-        flexDirection: "column",
         background: "var(--bg-1)",
         border: `1px solid ${isOver ? accent : "var(--line)"}`,
         boxShadow: isOver
           ? `0 0 0 3px color-mix(in srgb, ${accent} 25%, transparent), 0 4px 16px rgba(0,0,0,0.25)`
           : "0 1px 2px rgba(0,0,0,0.2)",
         borderRadius: 12,
-        minWidth: 300,
-        maxWidth: 320,
-        height: "100%",
-        overflow: "hidden",
         transition: "border-color 160ms, box-shadow 160ms",
       }}
     >
@@ -273,12 +283,22 @@ export function StageColumn({
                     ticket={ticket}
                     lang={lang}
                     accent={accent}
+                    stale={isStaleTicket(ticket.enteredStageAt, staleDays, nowTick, stage.isTerminal)}
+                    stageIsTerminal={stage.isTerminal}
+                    showSla={showSla}
+                    moveLocked={moveLocked}
+                    selected={selectedIds?.has(ticket.id) ?? false}
+                    selectionActive={(selectedIds?.size ?? 0) > 0}
+                    onToggleSelect={onToggleSelect}
+                    onLeadAction={onLeadAction}
                     onClick={() => onCardClick(ticket)}
                     onOpenConversation={() =>
                       ticket.conversationId &&
                       onOpenConversation(ticket.conversationId)
                     }
                     onOpenMoveMenu={(rect) => onOpenMoveMenu(ticket, rect)}
+                    nextStep={nextSteps[ticket.id]}
+                    onNextStepClick={() => setStepTicketId(ticket.id)}
                   />
                 </div>
               );
@@ -314,6 +334,18 @@ export function StageColumn({
           </button>
         ) : null}
       </div>
+      {stepTicketId && (
+        <ActivityDialog
+          key={stepTicketId}
+          ticketId={stepTicketId}
+          activity={
+            nextSteps[stepTicketId]
+              ? { id: nextSteps[stepTicketId]!.activityId, kind: nextSteps[stepTicketId]!.kind, title: nextSteps[stepTicketId]!.title, notes: nextSteps[stepTicketId]!.notes, dueAt: nextSteps[stepTicketId]!.dueAt, doneAt: null, outcome: nextSteps[stepTicketId]!.outcome, assigneeId: nextSteps[stepTicketId]!.assigneeId }
+              : undefined
+          }
+          onClose={() => setStepTicketId(null)}
+        />
+      )}
     </div>
   );
 }

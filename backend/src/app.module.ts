@@ -9,17 +9,27 @@ import { KewyIdentityModule } from "./kewy-identity/kewy-identity.module";
 import { AuthModule } from "./auth/auth.module";
 import { HealthModule } from "./health/health.module";
 import { ContactsModule } from "./contacts/contacts.module";
+import { ImportsModule } from "./imports/imports.module";
+import { ActivitiesModule } from "./activities/activities.module";
 import { ConversationsModule } from "./conversations/conversations.module";
 import { AppointmentsModule } from "./appointments/appointments.module";
 import { TemplatesModule } from "./templates/templates.module";
 import { TeamModule } from "./team/team.module";
 import { CampaignsModule } from "./campaigns/campaigns.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
+import { InsightsModule } from "./insights/insights.module";
+import { HomeModule } from "./home/home.module";
+import { LifecycleModule } from "./lifecycle/lifecycle.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
+import { ChannelsCoreModule } from "./channels/channels-core.module";
+import { ChannelsModule } from "./channels/channels.module";
 import { TicketsModule } from "./tickets/tickets.module";
+import { PipelinesModule } from "./pipelines/pipelines.module";
 import { ResolutionModule } from "./resolution/resolution.module";
 import { WorkspacesModule } from "./workspaces/workspaces.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 import { NotesModule } from "./notes/notes.module";
+import { RecordsModule } from "./records/records.module";
 import { MediaModule } from "./media/media.module";
 import { SocialModule } from "./social/social.module";
 import { AdminModule } from "./admin/admin.module";
@@ -28,10 +38,31 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { SearchModule } from "./search/search.module";
 import { SegmentsModule } from "./segments/segments.module";
 import { TagsModule } from "./tags/tags.module";
+import { SavedRepliesModule } from "./saved-replies/saved-replies.module";
 import { WorkflowsModule } from "./workflows/workflows.module";
 import { McpServerModule } from "./mcp-server/mcp-server.module";
+import { SkillsModule } from "./skills/skills.module";
+import { ConnectorsModule } from "./connectors/connectors.module";
 import { AdsModule } from "./ads/ads.module";
+import { MetaAdsModule } from "./meta-ads/meta-ads.module";
 import { KnowledgeModule } from "./knowledge/knowledge.module";
+import { CustomFieldsModule } from "./custom-fields/custom-fields.module";
+import { PermissionsModule } from "./permissions/permissions.module";
+import { RolesModule } from "./roles/roles.module";
+import { ServicesModule } from "./services/services.module";
+import { StaffModule } from "./staff/staff.module";
+import { BookingsModule } from "./bookings/bookings.module";
+import { CatalogImportModule } from "./catalog-import/catalog-import.module";
+import { KnowledgeSourcesModule } from "./knowledge-sources/knowledge-sources.module";
+import { AgentModule } from "./agent/agent.module";
+import { CopilotModule } from "./copilot/copilot.module";
+
+import { EmailModule } from "./email/email.module";
+import { AuditModule } from "./audit/audit.module";
+import { AccountSecurityModule } from "./auth/account-security.module";
+import { MembersModule } from "./members/members.module";
+import { ApiKeysModule } from "./api-keys/api-keys.module";
+import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
   imports: [
@@ -40,24 +71,68 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
     PrismaModule,
     KewyIdentityModule,
     BillingModule,
+    // SP-26: global email port and audit log, then members (invitations, handover).
+    EmailModule,
+    AuditModule,
+    // SP-26 Task 2: session versions, password reset, TOTP (global).
+    AccountSecurityModule,
+    // SP-27: global; AuthGuard authenticates crm_ bearers through it.
+    ApiKeysModule,
+    MembersModule,
     AuthModule,
+    // PermissionGuard is an APP_GUARD registered in AuthModule (after AuthGuard).
+    PermissionsModule,
+    RolesModule,
     HealthModule,
     SegmentsModule,
     TagsModule,
+    SavedRepliesModule,
     ContactsModule,
+    ImportsModule,
+    ActivitiesModule,
     ConversationsModule,
     AppointmentsModule,
+    // SP-10: the bookings catalog.
+    ServicesModule,
+    StaffModule,
+    BookingsModule,
+    CatalogImportModule,
+    // SP-21: knowledge sources.
+    KnowledgeSourcesModule,
+    // SP-20: agent settings (the reply gate lives in IntegrationsModule).
+    AgentModule,
+    // SP-18: the in-app copilot ("Ask Kewy").
+    CopilotModule,
     TemplatesModule,
     TeamModule,
     CampaignsModule,
     DashboardModule,
+    // SP-11: support insights (sales and the working home join later).
+    InsightsModule,
+    // SP-11: the working home (Task 3).
+    HomeModule,
+    // SP-24: lifecycle messages (system workflows).
+    LifecycleModule,
+    // SP-19: global routing core (resolver, transports, inbound sink) before
+    // anything that sends or receives, then the /channels hub.
+    ChannelsCoreModule,
     IntegrationsModule,
+    ChannelsModule,
     McpServerModule,
+    // SP-22: the skills gallery (also imported by McpServerModule and AgentModule).
+    SkillsModule,
+    // SP-23: connectors gallery + the tool-switching MCP proxy (after SkillsModule).
+    ConnectorsModule,
     TicketsModule,
+    PipelinesModule,
     ResolutionModule,
     WorkflowsModule,
     WorkspacesModule,
     NotesModule,
+    RecordsModule,
+    NotificationsModule,
+    // SP-27: outgoing webhooks (outbox listener, dispatcher, retention).
+    WebhooksModule,
     MediaModule,
     SocialModule,
     AdminModule,
@@ -65,7 +140,9 @@ import { KnowledgeModule } from "./knowledge/knowledge.module";
     RealtimeModule,
     SearchModule,
     AdsModule,
+    MetaAdsModule,
     KnowledgeModule,
+    CustomFieldsModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: WorkspaceInterceptor },

@@ -2,7 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useCreateTicket, useCreateTicketFromConversation } from "./hooks/useTicketMutations";
 import { usePipelines } from "./hooks/usePipelineData";
 import { Modal } from "@/components/Modal";
-import type { Lang, Pipeline, TicketStage } from "@/lib/types";
+import { ApiError } from "@/api/client";
+import { makeTx } from "@/lib/tx";
+import { openRecord } from "@/lib/openRecord";
+import { ticketErrorText } from "./ticketErrors";
+import {
+  DEFAULT_TICKET_PRIORITY,
+  TICKET_CATEGORIES,
+  TICKET_PRIORITIES,
+  categoryLabel,
+  priorityLabel,
+} from "./ticketFields";
+import type { Lang, Pipeline, TicketCategory, TicketPriority, TicketStage } from "@/lib/types";
 
 interface BaseProps {
   lang: Lang;
@@ -40,6 +51,9 @@ export function NewTicketModal(props: Props) {
   const [title, setTitle] = useState(defaultTitle ?? "");
   const [value, setValue] = useState<string>("");
   const [description, setDescription] = useState<string>("");
+  // SP-09
+  const [priority, setPriority] = useState<TicketPriority>(DEFAULT_TICKET_PRIORITY);
+  const [category, setCategory] = useState<TicketCategory | "">("");
 
   useEffect(() => {
     if (!pipelineId && defaultPipeline) {
@@ -56,12 +70,16 @@ export function NewTicketModal(props: Props) {
     }
   }, [selectedPipeline, stageId]);
 
+  const tx = makeTx(lang);
+  const [error, setError] = useState<{ text: string; existingTicketId?: string } | null>(null);
+
   const submitting = create.isPending || createFromConv.isPending;
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pipelineId || !stageId || !title) return;
 
+    setError(null);
     const numericValue = value ? Number(value) : undefined;
     try {
       if (props.mode === "from-conversation") {
@@ -72,6 +90,8 @@ export function NewTicketModal(props: Props) {
           title,
           description: description || undefined,
           value: numericValue,
+          priority,
+          category: category || undefined,
         });
       } else {
         await create.mutateAsync({
@@ -82,13 +102,19 @@ export function NewTicketModal(props: Props) {
           title,
           description: description || undefined,
           value: numericValue,
+          priority,
+          category: category || undefined,
         });
       }
       localStorage.setItem(LAST_USED_KEY, pipelineId);
       onCreated?.();
       onClose();
-    } catch {
-      // Mutation already surfaces the error; UI stays open so user can retry
+    } catch (e) {
+      // Stay open so the user can retry; a 409 offers the card that already exists.
+      const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : "";
+      const body = e instanceof ApiError && e.body && typeof e.body === "object" ? (e.body as { ticketId?: unknown }) : null;
+      const existing = msg.includes("tickets.lead_exists") && typeof body?.ticketId === "string" ? body.ticketId : undefined;
+      setError({ text: ticketErrorText(e, tx), existingTicketId: existing });
     }
   };
 
@@ -161,6 +187,44 @@ export function NewTicketModal(props: Props) {
           style={inputStyle}
         />
 
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="new-ticket-priority" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              {tx("Priority", "الأولوية")}
+            </label>
+            <select
+              id="new-ticket-priority"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as TicketPriority)}
+              style={selectStyle}
+            >
+              {TICKET_PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {priorityLabel(tx, p)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            <label htmlFor="new-ticket-category" style={{ fontSize: 11, color: "var(--ink-3)" }}>
+              {tx("Category", "التصنيف")}
+            </label>
+            <select
+              id="new-ticket-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value as TicketCategory | "")}
+              style={selectStyle}
+            >
+              <option value="">{tx("Not set", "غير محدد")}</option>
+              {TICKET_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {categoryLabel(tx, c)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <label style={{ fontSize: 11, color: "var(--ink-3)" }}>
           {lang === "ar" ? "القيمة" : "Value"}
         </label>
@@ -182,6 +246,38 @@ export function NewTicketModal(props: Props) {
           onChange={(e) => setDescription(e.target.value)}
           style={{ ...inputStyle, resize: "vertical" }}
         />
+
+        {error ? (
+          <div
+            role="alert"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              padding: 10,
+              fontSize: 12,
+              color: "var(--danger, #c0392b)",
+              background: "var(--bg-2)",
+              borderRadius: "var(--r)",
+            }}
+          >
+            <span>{error.text}</span>
+            {error.existingTicketId ? (
+              <button
+                type="button"
+                style={btnSecondary}
+                onClick={() => {
+                  const id = error.existingTicketId as string;
+                  onClose();
+                  openRecord("ticket", id);
+                }}
+              >
+                {tx("Open existing card", "فتح البطاقة الحالية")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 6 }}>
           <button type="button" onClick={onClose} style={btnSecondary}>

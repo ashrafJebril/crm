@@ -9,30 +9,49 @@ import {
 } from "react";
 import { isEmbedded } from "@/embed/embed";
 import { storedSkin } from "@/embed/skin";
-import type { Tweaks } from "@/lib/types";
+import type { Lang, Tweaks } from "@/lib/types";
+import { firstRunLang, readLangParam, withLang } from "@/lib/langParam";
 
 const DEFAULTS: Tweaks = {
   theme: "dark",
   accent: "green",
   density: "regular",
   lang: "en",
-  collapsed: false,
+  sidebarCollapsed: null,
+  langChosen: false,
   showAIPersonality: true,
 };
 
 const STORAGE_KEY = "aram.tweaks.v1";
 
+const currentHash = () => (typeof window === "undefined" ? "" : window.location.hash);
+
 function load(): Tweaks {
   if (typeof localStorage === "undefined") return DEFAULTS;
+  let t = DEFAULTS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return withHostTheme(DEFAULTS);
-    // Always start with the sidebar expanded — the user opted out of the
-    // collapsed layout and the Tweaks UI that toggled it is hidden.
-    return withHostTheme({ ...DEFAULTS, ...JSON.parse(raw), collapsed: false });
+    if (raw) {
+      const stored = JSON.parse(raw) as Partial<Tweaks> & { collapsed?: unknown };
+      // SP-30: `collapsed` (forced off on every load before) is retired; the
+      // remembered choice is `sidebarCollapsed`. A record from before
+      // `langChosen` existed counts as a chosen language.
+      const { collapsed: _legacy, ...rest } = stored;
+      void _legacy;
+      t = {
+        ...DEFAULTS,
+        ...rest,
+        sidebarCollapsed: typeof rest.sidebarCollapsed === "boolean" ? rest.sidebarCollapsed : null,
+        langChosen: (stored.lang === "ar" || stored.lang === "en") && stored.langChosen !== false,
+      };
+    }
   } catch {
-    return DEFAULTS;
+    t = DEFAULTS;
   }
+  // SP-30 (D5): a link's `?lang=` wins over the stored language, and is stored.
+  const param = readLangParam(currentHash());
+  if (param) t = { ...t, lang: param, langChosen: true };
+  return withHostTheme(t);
 }
 
 // Embedded with a host skin: the host's mode wins, in memory only.
@@ -42,11 +61,25 @@ function withHostTheme(t: Tweaks): Tweaks {
   return mode ? { ...t, theme: mode } : t;
 }
 
+/** Keep `?lang=` in the address bar in step with the language (app routes only). */
+function writeLangParam(lang: Lang) {
+  if (typeof window === "undefined") return;
+  const h = window.location.hash;
+  if (!h.startsWith("#/")) return;
+  const next = withLang(h, lang);
+  // replaceState: no hashchange, no new history entry.
+  if (next !== h) window.history.replaceState(window.history.state, "", next);
+}
+
 type SetTweak = <K extends keyof Tweaks>(key: K, value: Tweaks[K]) => void;
 
 interface TweaksContextValue {
   t: Tweaks;
   setTweak: SetTweak;
+  /** The user's language choice: stored, marked as chosen, and written to `?lang=`. */
+  setLang: (lang: Lang) => void;
+  /** Ruling 4: with no language chosen on this device, follow the workspace's `lang`. */
+  applyWorkspaceLang: (workspaceLang: string | null | undefined) => void;
 }
 
 const TweaksContext = createContext<TweaksContextValue | null>(null);
@@ -82,11 +115,33 @@ export function TweaksProvider({ children }: { children: ReactNode }) {
     }
   }, [t]);
 
+  // SP-30: a `?lang=` arriving later (a pasted link, Back/Forward) applies and is stored.
+  useEffect(() => {
+    const onHash = () => {
+      const l = readLangParam(currentHash());
+      if (l) setT((prev) => (prev.lang === l && prev.langChosen ? prev : { ...prev, lang: l, langChosen: true }));
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   const setTweak = useCallback<SetTweak>((key, value) => {
     setT((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
   }, []);
 
-  const value = useMemo(() => ({ t, setTweak }), [t, setTweak]);
+  const setLang = useCallback((lang: Lang) => {
+    setT((prev) => (prev.lang === lang && prev.langChosen ? prev : { ...prev, lang, langChosen: true }));
+    writeLangParam(lang);
+  }, []);
+
+  const applyWorkspaceLang = useCallback((workspaceLang: string | null | undefined) => {
+    setT((prev) => {
+      const l = firstRunLang({ lang: prev.lang, langChosen: prev.langChosen }, workspaceLang);
+      return l && l !== prev.lang ? { ...prev, lang: l } : prev;
+    });
+  }, []);
+
+  const value = useMemo(() => ({ t, setTweak, setLang, applyWorkspaceLang }), [t, setTweak, setLang, applyWorkspaceLang]);
   return <TweaksContext.Provider value={value}>{children}</TweaksContext.Provider>;
 }
 

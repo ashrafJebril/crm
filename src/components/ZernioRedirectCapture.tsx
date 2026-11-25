@@ -4,6 +4,10 @@ import { api } from "@/api/client";
 import { makeTx } from "@/lib/tx";
 import { useTweaks } from "@/tweaks/context";
 import { useToast } from "./Toast";
+import { channelErrorText } from "@/screens/channels/channelErrors";
+import { takeZernioReconnect } from "@/screens/settings/ZernioCard";
+import { usePermissions } from "@/auth/usePermissions";
+import { zernioRedirectTarget } from "./zernioRedirect";
 
 interface SyncResult {
   connected: Array<{ platform: string; accountId: string; name: string | null }>;
@@ -25,7 +29,8 @@ const labelFor = (platform: string) =>
  * Captures Zernio's hosted-connect success redirect.
  *
  * After a customer authenticates a platform through Zernio, the browser returns
- * to our app at `…/#/settings?zernio=connected&platform=<p>`. Zernio knows about
+ * to our app at `…/#/channels?zernio=connected&platform=<p>` (older links:
+ * `#/settings?…`). Zernio knows about
  * the connection but our backend doesn't until we reconcile — so on load we
  * detect those params, POST /integrations/zernio/sync (upserts the connected
  * accounts against the current workspace), toast, then strip the params.
@@ -38,6 +43,8 @@ export function ZernioRedirectCapture() {
   const { toast } = useToast();
   const { t } = useTweaks();
   const qc = useQueryClient();
+  const { can, loading: permsLoading } = usePermissions();
+  const canViewChannels = can("channels.view");
   const done = useRef(false);
 
   useEffect(() => {
@@ -49,10 +56,20 @@ export function ZernioRedirectCapture() {
       qIndex >= 0 ? hash.slice(qIndex + 1) : window.location.search,
     );
     if (params.get("zernio") !== "connected") return;
+    // A hub landing needs the permissions first: the hub-vs-Settings decision (m4).
+    if (permsLoading && /^#\/?channels(\?|$)/.test(hash)) return;
     done.current = true;
 
     const tx = makeTx(t.lang);
     const platform = (params.get("platform") ?? "").toLowerCase();
+
+    // m4: members without channels.view can't open the hub; land them on
+    // Settings (where this redirect used to go) with the same params.
+    const rerouted = zernioRedirectTarget(hash, canViewChannels);
+    if (rerouted) window.location.hash = rerouted;
+    const finalHash = rerouted ?? hash;
+    // I1: the hub's Reconnect fell back to OAuth for this channel.
+    const reconnectId = takeZernioReconnect();
 
     api
       .post<SyncResult>("/integrations/zernio/sync")
@@ -62,10 +79,12 @@ export function ZernioRedirectCapture() {
         // "not connected" answer that React Query won't refetch on its own.
         // Dropping those entries is what makes the Settings cards flip to Live
         // on their own, instead of only after a manual page reload.
+        // The channels hub (SP-19) reads /channels*, which the sync mirrors too.
         void qc.invalidateQueries({
           predicate: (q) =>
             typeof q.queryKey[0] === "string" &&
-            (q.queryKey[0] as string).startsWith("/integrations"),
+            ((q.queryKey[0] as string).startsWith("/integrations") ||
+              (q.queryKey[0] as string).startsWith("/channels")),
         });
 
         // Zernio redirects back with `zernio=connected` even when the customer
@@ -94,11 +113,24 @@ export function ZernioRedirectCapture() {
           tx(`${name} connected${suffix} ✓`, `تم ربط ${name}${suffix} ✓`),
           "success",
         );
+
+        // The sync never revives a channel the user disconnected in the hub;
+        // the explicit reconnect does, now that Zernio has a fresh sign-in.
+        if (reconnectId) {
+          void api
+            .post(`/channels/${encodeURIComponent(reconnectId)}/reconnect`)
+            .then(() =>
+              qc.invalidateQueries({
+                predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/channels"),
+              }),
+            )
+            .catch((e) => toast(channelErrorText(e, tx), "error", e));
+        }
       })
       .catch((e) =>
         toast(
-          e instanceof Error
-            ? e.message
+          e instanceof Error && e.message
+            ? channelErrorText(e, tx)
             : tx(
                 "Couldn't record the Zernio connection",
                 "تعذّر تسجيل الاتصال عبر Zernio",
@@ -108,10 +140,11 @@ export function ZernioRedirectCapture() {
       )
       .finally(() => {
         // Drop the query from the hash so a refresh doesn't re-fire.
-        const cleanHash = qIndex >= 0 ? hash.slice(0, qIndex) : hash;
+        const q = finalHash.indexOf("?");
+        const cleanHash = q >= 0 ? finalHash.slice(0, q) : finalHash;
         window.history.replaceState(null, "", window.location.pathname + (cleanHash || ""));
       });
-  }, [toast, qc, t.lang]);
+  }, [toast, qc, t.lang, permsLoading, canViewChannels]);
 
   return null;
 }

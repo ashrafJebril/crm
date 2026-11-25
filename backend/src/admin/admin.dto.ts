@@ -9,6 +9,7 @@ import {
   ValidateBy,
   ValidationOptions,
 } from "class-validator";
+import { IsTimezone } from "../common/is-timezone";
 
 /** A bcrypt hash as produced by bcryptjs: `$2a$`/`$2b$`/`$2y$`, a 2-digit cost,
  *  `$`, then 53 chars of bcrypt base64 (22 salt + 31 hash). */
@@ -41,6 +42,7 @@ export class UpdateWorkspaceAdminDto {
 
   @IsString()
   @IsOptional()
+  @IsTimezone()
   timezone?: string;
 
   @IsString()
@@ -98,6 +100,7 @@ export class ProvisionClientDto {
 
   @IsOptional()
   @IsString()
+  @IsTimezone()
   timezone?: string;
 
   @IsOptional()

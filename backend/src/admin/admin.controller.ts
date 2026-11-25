@@ -37,6 +37,12 @@ export class AdminController {
     return this.svc.updateWorkspace(id, dto);
   }
 
+  /** SP-28 (R8): end a super-admin plan override (back to Kewy's plan). */
+  @Post("workspaces/:id/plan-override/clear")
+  clearPlanOverride(@Param("id") id: string) {
+    return this.svc.clearPlanOverride(id);
+  }
+
   @Post("workspaces/:id/suspend")
   suspendWorkspace(
     @Param("id") id: string,

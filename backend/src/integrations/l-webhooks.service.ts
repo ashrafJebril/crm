@@ -1,4 +1,5 @@
-import { ForbiddenException, Injectable, Logger } from "@nestjs/common";
+import { ForbiddenException, Injectable, Logger, Optional } from "@nestjs/common";
+import { UsageService } from "../billing/usage.service";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import type { LMessageWebhookDto } from "./l-webhooks.dto";
@@ -7,7 +8,10 @@ import type { LMessageWebhookDto } from "./l-webhooks.dto";
 export class LWebhooksService {
   private readonly logger = new Logger(LWebhooksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly usage?: UsageService,
+  ) {}
 
   verifySecret(provided: string | undefined): void {
     const expected = process.env.L_WEBHOOK_SECRET;
@@ -104,7 +108,7 @@ export class LWebhooksService {
     }
 
     // Create message record
-    await this.prisma.message.create({
+    const msg = await this.prisma.message.create({
       data: {
         conversationId: conversation.id,
         workspaceId: workspace.id,
@@ -118,6 +122,9 @@ export class LWebhooksService {
         attach: data.imageUrl ?? null,
       },
     });
+
+    // SP-28: meter the AI reply (once per message; never fails the webhook).
+    await this.usage?.record(workspace.id, { meter: "ai_reply", sourceKind: "message", sourceId: msg.id });
 
     this.logger.debug(
       `l message from agent ${data.agentId} → conversation ${data.conversationId} in workspace ${workspace.id}`,

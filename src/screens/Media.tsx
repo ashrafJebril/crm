@@ -2,10 +2,15 @@ import { memo, useEffect, useRef, useState } from "react";
 import { AuthorizedImage } from "@/components/AuthorizedImage";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { PageHeader } from "@/components/PageHeader";
 import { Modal } from "@/components/Modal";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { API_BASE, api, tokenStore } from "@/api/client";
+import { uploadMedia } from "@/api/uploadMedia";
+import { mediaErrorText } from "@/components/media/mediaErrors";
+import { AgentBadge, MediaDetailsDialog } from "@/components/media/MediaDetailsDialog";
+import { displayTitle } from "@/components/media/mediaDetails";
 import { IconPlus, IconTrash } from "@/icons";
 import type { Media } from "@/lib/types";
 
@@ -18,6 +23,12 @@ function formatBytes(n: number): string {
 function MediaImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
+  // DELETE /media/:id maps to conversations.update on the backend.
+  const { can } = usePermissions();
+  const canDeleteMedia = can("conversations.update");
+  // SP-17: PATCH /media/:id maps to knowledge.update; without it the dialog is read-only.
+  const canEditDetails = can("knowledge.update");
+  const [details, setDetails] = useState<Media | null>(null);
 
   const listQ = useFetch<Media[]>("/media");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -43,32 +54,10 @@ function MediaImpl() {
     setUploading(true);
     setUploadError(null);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      // We need a raw fetch here because the `api` helper sends JSON only.
-      const base = API_BASE;
-      const tok = tokenStore.get();
-      const resp = await fetch(`${base}/media/upload`, {
-        method: "POST",
-        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
-        body: form,
-      });
-      if (!resp.ok) {
-        const txt = await resp.text();
-        let msg = `Upload failed (${resp.status})`;
-        try {
-          const j = JSON.parse(txt) as { message?: string | string[] };
-          msg = Array.isArray(j.message)
-            ? j.message.join(", ")
-            : j.message ?? msg;
-        } catch {
-          /* keep generic */
-        }
-        throw new Error(msg);
-      }
+      await uploadMedia(file);
       listQ.refetch();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setUploadError(mediaErrorText(err, tx, tx("Upload failed", "فشل الرفع")));
     } finally {
       setUploading(false);
     }
@@ -86,9 +75,8 @@ function MediaImpl() {
       setConfirmTarget(null);
       listQ.refetch();
     } catch (err) {
-      setConfirmError(
-        err instanceof Error ? err.message : tx("Delete failed.", "فشل الحذف."),
-      );
+      // 409 media.in_use names the templates and campaigns that still use the file.
+      setConfirmError(mediaErrorText(err, tx, tx("Delete failed.", "فشل الحذف.")));
     }
   };
 
@@ -171,10 +159,26 @@ function MediaImpl() {
           }}
         >
           {items.map((m) => (
-            <MediaTile key={m.id} m={m} onDelete={() => requestDelete(m)} />
+            <MediaTile
+              key={m.id}
+              m={m}
+              canDelete={canDeleteMedia}
+              onDelete={() => requestDelete(m)}
+              onDetails={() => setDetails(m)}
+            />
           ))}
         </div>
       </div>
+
+      {details && (
+        <MediaDetailsDialog
+          media={details}
+          tx={tx}
+          canEdit={canEditDetails}
+          onClose={() => setDetails(null)}
+          onSaved={() => listQ.refetch()}
+        />
+      )}
 
       {confirmTarget && (
         <DeleteConfirmDialog
@@ -313,7 +317,17 @@ function DeleteConfirmDialog({
   );
 }
 
-function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
+function MediaTile({
+  m,
+  onDelete,
+  canDelete,
+  onDetails,
+}: {
+  m: Media;
+  onDelete: () => void;
+  canDelete: boolean;
+  onDetails: () => void;
+}) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
 
@@ -344,21 +358,27 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
         {m.mimeType.startsWith("video/") ? (
           <VideoTile url={previewUrl} token={tok} label={tx("Load video", "تحميل الفيديو")} />
         ) : (
-          <AuthorizedImage url={previewUrl} alt={m.fileName} token={tok} />
+          <AuthorizedImage url={previewUrl} alt={m.alt ?? m.fileName} token={tok} />
         )}
       </div>
       <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 500,
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-          title={m.fileName}
-        >
-          {m.fileName}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <div
+            dir="auto"
+            style={{
+              fontSize: 12,
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              flex: 1,
+              minWidth: 0,
+            }}
+            title={m.fileName}
+          >
+            {displayTitle(m)}
+          </div>
+          {m.approvedForAgent && <AgentBadge tx={tx} />}
         </div>
         <div
           className="mono"
@@ -371,12 +391,17 @@ function MediaTile({ m, onDelete }: { m: Media; onDelete: () => void }) {
           }}
         >
           <span>{formatBytes(m.sizeBytes)}</span>
+          <span style={{ flex: 1 }} />
+          <button type="button" className="btn ghost sm" onClick={onDetails} style={{ padding: "0 6px" }}>
+            {tx("Details", "التفاصيل")}
+          </button>
           <button
             type="button"
             className="btn ghost sm"
             onClick={onDelete}
+            disabled={!canDelete}
             aria-label={tx("Delete", "حذف")}
-            title={tx("Delete", "حذف")}
+            title={canDelete ? tx("Delete", "حذف") : tx(NO_PERMISSION_EN, NO_PERMISSION_AR)}
             style={{ padding: "0 6px", color: "var(--ink-3)" }}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = "var(--bad)";

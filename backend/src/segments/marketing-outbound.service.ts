@@ -2,6 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { hjzWebhookUrl, postToHjz } from "../hjz-sync/hjz-api";
 import { SegmentsService } from "./segments.service";
+import { readRules, type AudienceRules } from "./audience-rules";
+import { ruleSummary } from "./rule-summary";
 
 /** Segments the CRM owns and pushes to HJZ; "hjz" ones are HJZ's own mirrors. */
 const PUSHED_ORIGINS = new Set(["crm", "manual"]);
@@ -32,12 +34,16 @@ export class MarketingOutboundService {
       this.logger.debug(`segment ${segmentId} origin=${seg.origin} — hjz mirrors are never echoed back`);
       return false;
     }
-    const filter = seg.origin === "crm" ? this.segments.parseFilter(seg.filter) : {};
+    // SP-16 (ruling 16): a v2 audience is summarized from its rules; a legacy
+    // one from its filter, exactly as before.
+    const v2 = seg.origin === "crm" && readRules(seg).source === "rules";
+    const filter = v2 ? readRules(seg).tree : seg.origin === "crm" ? this.segments.parseFilter(seg.filter) : {};
     // Same audience resolution as the contacts list (filter for crm, members
-    // for manual), restricted to contacts linked to an hjz client.
+    // for manual), restricted to contacts linked to an hjz client who have not
+    // opted out of marketing.
     const audience = await this.segments.resolveContactWhere(workspaceId, seg.id);
     const contacts = await this.prisma.contact.findMany({
-      where: { AND: [audience, { hjzClientId: { not: null } }] },
+      where: { AND: [audience, { hjzClientId: { not: null } }, { marketingOptOut: false }] },
       select: { hjzClientId: true },
     });
     const hjzClientIds = contacts.map((c) => c.hjzClientId).filter((x): x is string => !!x);
@@ -109,7 +115,10 @@ export class MarketingOutboundService {
     }
   }
 
-  private summarizeFilter(f: Record<string, any>): string | null {
+  /** A legacy filter (unchanged) or, SP-16, a v2 rule tree (`ruleSummary`: English, at most 500 chars). */
+  summarizeFilter(input: Record<string, any> | AudienceRules): string | null {
+    if (input && (input as AudienceRules).v === 2 && Array.isArray((input as AudienceRules).rules)) return ruleSummary(input as AudienceRules);
+    const f = input as Record<string, any>;
     const parts: string[] = [];
     if (Array.isArray(f?.lifecycle) && f.lifecycle.length) parts.push(`lifecycle in [${(f.lifecycle as string[]).join(", ")}]`);
     if (Array.isArray(f?.source) && f.source.length)       parts.push(`source in [${(f.source as string[]).join(", ")}]`);

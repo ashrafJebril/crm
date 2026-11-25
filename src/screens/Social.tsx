@@ -691,15 +691,7 @@ function SocialImpl() {
       {view === "calendar" && <ContentCalendar refreshKey={scheduledRefresh} />}
 
       {view === "feed" && (
-      <div
-        className="social-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(360px, 1.05fr) minmax(420px, 1.4fr) 280px",
-          flex: 1,
-          minHeight: 0,
-        }}
-      >
+      <div className="social-grid">
         {/* ── Column 1: Feed ─────────────────────────────────────────── */}
         <div
           style={{
@@ -1436,7 +1428,6 @@ function SocialImpl() {
             borderInlineStart: "1px solid var(--line-soft)",
             background: "var(--bg-1)",
             overflowY: "auto",
-            display: "flex",
             flexDirection: "column",
             padding: 18,
             gap: 18,
@@ -1645,7 +1636,7 @@ function SocialImpl() {
         .post-card:hover { transform: translateY(-1px); border-color: var(--line); }
         .post-card[data-active="true"] { box-shadow: 0 0 0 1px var(--accent-ring) inset; }
         .like-btn:hover { color: var(--ink) !important; }
-        @media (max-width: 1100px) {
+        @media (max-width: 1023.98px) {
           .insights-panel { display: none; }
         }
       `}</style>

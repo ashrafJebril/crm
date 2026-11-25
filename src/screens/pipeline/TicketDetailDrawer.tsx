@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ActivityList } from "@/components/activities/ActivityList";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { qk } from "@/api/queryKeys";
@@ -9,12 +10,29 @@ import {
   useUpdateTicket,
 } from "./hooks/useTicketMutations";
 import { stageColor } from "./stageColors";
+import { useBulkTickets, useReopenTicket } from "./hooks/useBoardData";
+import { bulkResultText, ticketActionError } from "./boardQuery";
+import { useToast } from "@/components/Toast";
+import { ApiError } from "@/api/client";
+import { makeTx } from "@/lib/tx";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import type {
   Lang,
   TicketActivity,
+  TicketCategory,
   TicketDetail,
+  TicketPriority,
   TicketStage,
 } from "@/lib/types";
+import type { Tx } from "@/lib/tx";
+import { useWorkspaceTz } from "@/components/activities/activityApi";
+import { ChannelChip, PriorityChip, SlaBadgeChip } from "./TicketBadges";
+import { TicketAttachments } from "./TicketAttachments";
+import { TicketBookingCards } from "./TicketBookingCards";
+import { ResolveDialog } from "./ResolveDialog";
+import { TICKET_CATEGORIES, TICKET_PRIORITIES, categoryLabel, isCategory, priorityLabel, ticketPriority } from "./ticketFields";
+import { formatSlaDue, ticketSlaState } from "./ticketSla";
+import { ticketErrorText } from "./ticketErrors";
 
 interface Props {
   ticketId: string;
@@ -24,13 +42,27 @@ interface Props {
   onClose: () => void;
   onOpenConversation: (conversationId: string) => void;
 }
+interface ContentProps {
+  ticketId: string;
+  lang: Lang;
+  onClose: () => void;
+  /** After a delete is submitted; defaults to onClose. */
+  onDeleted?: () => void;
+  onOpenConversation: (conversationId: string) => void;
+  /** Inside the record sheet: the sheet frame supplies number, title and close. */
+  embedded?: boolean;
+}
 
-export function TicketDetailDrawer({
+/** The ticket detail body (header, contact, value, activity, notes, delete).
+ *  Shared by the Pipeline drawer and the universal record sheet. */
+export function TicketDetailContent({
   ticketId,
   lang,
   onClose,
+  onDeleted,
   onOpenConversation,
-}: Props) {
+  embedded,
+}: ContentProps) {
   const q = useQuery<TicketDetail>({
     queryKey: qk.ticket(ticketId),
     queryFn: ({ signal }) => api.get<TicketDetail>(`/tickets/${ticketId}`, signal),
@@ -39,10 +71,33 @@ export function TicketDetailDrawer({
   const addNote = useAddNote();
   const update = useUpdateTicket();
   const del = useDeleteTicket();
+  const { can } = usePermissions();
+  const canUpdate = can("tickets.update");
+  const canDelete = can("tickets.delete");
+  const noPerm = lang === "ar" ? NO_PERMISSION_AR : NO_PERMISSION_EN;
+  const tx = makeTx(lang);
+  const moveLocked = q.data?.pipeline?.agentCanMove === false && !can("pipelines.update");
+  const lockedTip = tx("Only managers can move cards in this pipeline", "يمكن للمديرين فقط نقل البطاقات في هذا المسار");
+  const { toast } = useToast();
+  const reopen = useReopenTicket();
+  const bulk = useBulkTickets(q.data?.pipelineId ?? "");
+  const errText = (e: unknown) =>
+    ticketActionError(tx, e instanceof ApiError ? e.message : e instanceof Error ? e.message : "");
 
   const [noteText, setNoteText] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const tz = useWorkspaceTz();
   const t = q.data;
+  const isSupport = t?.pipeline?.kind === "support";
+  const canResolve = !!t && canUpdate && !t.closedAt && !t.stage?.isTerminal && isSupport;
+  const saveField = (patch: { priority?: TicketPriority; category?: TicketCategory | null }) => {
+    if (!t) return;
+    update.mutate(
+      { id: t.id, patch },
+      { onError: (e) => toast(ticketErrorText(e, tx, tx("Couldn't save the change.", "تعذّر حفظ التغيير.")), "error", e) },
+    );
+  };
 
   // Quick lookup of stage label + color by stage key for activity entries.
   const stageByKey = useMemo(() => {
@@ -57,33 +112,7 @@ export function TicketDetailDrawer({
     : "var(--ink-3)";
 
   return (
-    <div
-      role="dialog"
-      aria-modal="false"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 90,
-        display: "flex",
-        justifyContent: lang === "ar" ? "flex-start" : "flex-end",
-        background: "rgba(0,0,0,0.35)",
-        backdropFilter: "blur(2px)",
-      }}
-    >
-      <aside
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(460px, 94vw)",
-          height: "100%",
-          background: "var(--bg-1)",
-          borderLeft: lang === "ar" ? 0 : "1px solid var(--line)",
-          borderRight: lang === "ar" ? "1px solid var(--line)" : 0,
-          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+    <>
         {q.isLoading ? (
           <div
             style={{
@@ -121,6 +150,7 @@ export function TicketDetailDrawer({
                   opacity: 0.85,
                 }}
               />
+              {!embedded && (<>
               <div
                 style={{
                   display: "flex",
@@ -138,11 +168,11 @@ export function TicketDetailDrawer({
                     fontWeight: 500,
                   }}
                 >
-                  #{String(t.number).padStart(3, "0")}
+                  <bdi>#{String(t.number).padStart(3, "0")}</bdi>
                 </div>
                 <button
                   onClick={onClose}
-                  aria-label="Close"
+                  aria-label={lang === "ar" ? "إغلاق" : "Close"}
                   style={{
                     background: "transparent",
                     border: 0,
@@ -178,6 +208,7 @@ export function TicketDetailDrawer({
               >
                 {t.title}
               </h2>
+              </>)}
 
               <div
                 style={{
@@ -185,11 +216,14 @@ export function TicketDetailDrawer({
                   alignItems: "center",
                   gap: 8,
                   marginTop: 10,
+                  flexWrap: "wrap",
                 }}
               >
                 {currentStage ? (
                   <StagePill stage={currentStage} lang={lang} />
                 ) : null}
+                <PriorityChip tx={tx} priority={t.priority} />
+                <ChannelChip tx={tx} channel={t.channel} />
                 {t.value != null ? (
                   <div
                     className="mono"
@@ -211,6 +245,9 @@ export function TicketDetailDrawer({
 
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ flex: 1, overflowY: "auto" }}>
+              {isSupport ? (
+                <SupportFields t={t} tx={tx} tz={tz} canUpdate={canUpdate} saving={update.isPending} onSave={saveField} showSla />
+              ) : null}
               <Section title={lang === "ar" ? "العميل" : "Contact"}>
                 <div
                   style={{
@@ -284,6 +321,8 @@ export function TicketDetailDrawer({
                 <input
                   type="number"
                   min="0"
+                  disabled={!canUpdate}
+                  title={canUpdate ? undefined : noPerm}
                   defaultValue={t.value ?? 0}
                   onBlur={(e) => {
                     const v = Number(e.target.value);
@@ -293,6 +332,30 @@ export function TicketDetailDrawer({
                   }}
                   style={input}
                 />
+              </Section>
+
+              {!isSupport ? (
+                <SupportFields t={t} tx={tx} tz={tz} canUpdate={canUpdate} saving={update.isPending} onSave={saveField} />
+              ) : null}
+
+              <Section title={tx("Files", "الملفات")}>
+                <TicketAttachments
+                  ticketId={t.id}
+                  tx={tx}
+                  tz={tz}
+                  canUpdate={canUpdate}
+                  hasConversation={!!t.conversationId}
+                />
+              </Section>
+
+              {can("bookings.view") && t.contactId ? (
+                <Section title={tx("Bookings", "الحجوزات")}>
+                  <TicketBookingCards ticketId={t.id} tx={tx} lang={lang} tz={tz} canUpdate={can("bookings.update")} />
+                </Section>
+              ) : null}
+
+              <Section title={lang === "ar" ? "المتابعات" : "Follow-ups"}>
+                <ActivityList ticketId={ticketId} />
               </Section>
 
               <Section title={lang === "ar" ? "النشاط" : "Activity"}>
@@ -306,6 +369,7 @@ export function TicketDetailDrawer({
               <Section title={lang === "ar" ? "إضافة ملاحظة" : "Add note"}>
                 <textarea
                   rows={3}
+                  disabled={!canUpdate}
                   value={noteText}
                   onChange={(e) => setNoteText(e.target.value)}
                   placeholder={
@@ -317,7 +381,8 @@ export function TicketDetailDrawer({
                 />
                 <button
                   type="button"
-                  disabled={!noteText.trim() || addNote.isPending}
+                  disabled={!canUpdate || !noteText.trim() || addNote.isPending}
+                  title={canUpdate ? undefined : noPerm}
                   onClick={async () => {
                     await addNote.mutateAsync({
                       ticketId: t.id,
@@ -366,6 +431,62 @@ export function TicketDetailDrawer({
                 gap: 8,
               }}
             >
+              {t.closedAt || t.pipeline?.kind === "leads" ? (
+                <div style={{ display: "flex", gap: 8, marginInlineEnd: "auto" }}>
+                  {t.closedAt ? (
+                    <button
+                      type="button"
+                      disabled={!canUpdate || moveLocked || reopen.isPending}
+                      title={!canUpdate ? noPerm : moveLocked ? lockedTip : undefined}
+                      onClick={() =>
+                        reopen.mutate(t.id, {
+                          onSuccess: () => toast(tx("Card reopened", "تمت إعادة فتح البطاقة"), "success"),
+                          onError: (e) => toast(errText(e), "error"),
+                        })
+                      }
+                      style={ghostBtn}
+                    >
+                      {tx("Reopen", "إعادة فتح")}
+                    </button>
+                  ) : t.pipeline?.kind === "leads" ? (
+                    <button
+                      type="button"
+                      disabled={!canUpdate || !can("contacts.update") || moveLocked || bulk.isPending}
+                      title={!(canUpdate && can("contacts.update")) ? noPerm : moveLocked ? lockedTip : undefined}
+                      onClick={() =>
+                        bulk.mutate(
+                          { ids: [t.id], op: "notALead" },
+                          {
+                            onSuccess: (r) => toast(bulkResultText(tx, r), r.affected > 0 ? "success" : "info"),
+                            onError: (e) => toast(errText(e), "error"),
+                          },
+                        )
+                      }
+                      style={ghostBtn}
+                    >
+                      {tx("Not a lead", "ليس عميلاً محتملاً")}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {canResolve ? (
+                <button
+                  type="button"
+                  disabled={moveLocked}
+                  title={moveLocked ? lockedTip : undefined}
+                  onClick={() => setResolving(true)}
+                  style={{
+                    ...ghostBtn,
+                    marginInlineEnd: "auto",
+                    color: "var(--ok, #10b981)",
+                    borderColor: "color-mix(in srgb, var(--ok, #10b981) 40%, var(--line))",
+                    fontWeight: 600,
+                  }}
+                >
+                  {tx("Resolve", "حل")}
+                </button>
+              ) : null}
+              {resolving ? <ResolveDialog ticketId={t.id} lang={lang} onClose={() => setResolving(false)} /> : null}
               {confirmDelete ? (
                 <>
                   <span
@@ -386,13 +507,18 @@ export function TicketDetailDrawer({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      del.mutate({
-                        id: t.id,
-                        pipelineId: t.pipelineId,
-                        stageId: t.stageId,
-                      });
-                      onClose();
+                    disabled={del.isPending}
+                    onClick={async () => {
+                      try {
+                        await del.mutateAsync({
+                          id: t.id,
+                          pipelineId: t.pipelineId,
+                          stageId: t.stageId,
+                        });
+                      } catch {
+                        return; // keep the panel open; the error shows below
+                      }
+                      (onDeleted ?? onClose)();
                     }}
                     style={{
                       ...ghostBtn,
@@ -404,11 +530,18 @@ export function TicketDetailDrawer({
                   >
                     {lang === "ar" ? "احذف" : "Delete"}
                   </button>
+                  {del.isError && (
+                    <span role="alert" style={{ fontSize: 11.5, color: "var(--bad, #ef4444)" }}>
+                      {lang === "ar" ? "تعذّر حذف التذكرة" : "Couldn't delete the ticket"}
+                    </span>
+                  )}
                 </>
               ) : (
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
+                  disabled={!canDelete}
+                  title={canDelete ? undefined : noPerm}
                   style={{
                     ...ghostBtn,
                     color: "var(--bad, #ef4444)",
@@ -431,12 +564,145 @@ export function TicketDetailDrawer({
             </div>
           </>
         )}
+    </>
+  );
+}
+
+export function TicketDetailDrawer({ ticketId, lang, onClose, onOpenConversation }: Props) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        display: "flex",
+        justifyContent: lang === "ar" ? "flex-start" : "flex-end",
+        background: "rgba(0,0,0,0.35)",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(460px, 94vw)",
+          height: "100%",
+          background: "var(--bg-1)",
+          borderLeft: lang === "ar" ? 0 : "1px solid var(--line)",
+          borderRight: lang === "ar" ? "1px solid var(--line)" : 0,
+          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <TicketDetailContent
+          ticketId={ticketId}
+          lang={lang}
+          onClose={onClose}
+          onOpenConversation={onOpenConversation}
+        />
       </aside>
     </div>
   );
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
+
+/** SP-09: priority and category (editable with tickets.update), the SLA line and the channel. */
+function SupportFields({
+  t,
+  tx,
+  tz,
+  canUpdate,
+  saving,
+  onSave,
+  showSla = false,
+}: {
+  t: TicketDetail;
+  tx: Tx;
+  tz: string;
+  canUpdate: boolean;
+  saving: boolean;
+  /** Final review I1: the SLA line on support pipelines only. */
+  showSla?: boolean;
+  onSave: (patch: { priority?: TicketPriority; category?: TicketCategory | null }) => void;
+}) {
+  const priority = ticketPriority(t.priority);
+  const category = isCategory(t.category) ? t.category : "";
+  const sla = ticketSlaState(t, t.stage?.isTerminal);
+  const label: React.CSSProperties = { fontSize: 11, color: "var(--ink-3)", minWidth: 72 };
+  const row: React.CSSProperties = { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" };
+  return (
+    <Section title={tx("Support", "الدعم")}>
+      <div style={row}>
+        <span style={label}>{tx("Priority", "الأولوية")}</span>
+        {canUpdate ? (
+          <select
+            aria-label={tx("Priority", "الأولوية")}
+            value={priority}
+            disabled={saving}
+            onChange={(e) => onSave({ priority: e.target.value as TicketPriority })}
+            style={{ ...input, width: "auto", paddingBlock: 4 }}
+          >
+            {TICKET_PRIORITIES.map((p) => (
+              <option key={p} value={p}>
+                {priorityLabel(tx, p)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <PriorityChip tx={tx} priority={priority} always />
+        )}
+      </div>
+      <div style={row}>
+        <span style={label}>{tx("Category", "التصنيف")}</span>
+        {canUpdate ? (
+          <select
+            aria-label={tx("Category", "التصنيف")}
+            value={category}
+            disabled={saving}
+            onChange={(e) => onSave({ category: (e.target.value || null) as TicketCategory | null })}
+            style={{ ...input, width: "auto", paddingBlock: 4 }}
+          >
+            <option value="">{tx("Not set", "غير محدد")}</option>
+            {TICKET_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {categoryLabel(tx, c)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span style={{ fontSize: 12.5, color: "var(--ink)" }}>{categoryLabel(tx, t.category) ?? "—"}</span>
+        )}
+      </div>
+      {showSla ? (
+        <div style={row}>
+          <span style={label}>{tx("SLA", "المهلة")}</span>
+          {sla === "finished" ? (
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{tx("Closed", "مغلقة")}</span>
+          ) : (
+            <>
+              <SlaBadgeChip tx={tx} tz={tz} ticket={t} stageIsTerminal={t.stage?.isTerminal} showNone showOnTrack={false} />
+              {t.slaDueAt ? (
+                <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                  {tx("Due", "تستحق")} <bdi>{formatSlaDue(t.slaDueAt, tz, tx)}</bdi>
+                </span>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+      {t.channel ? (
+        <div style={row}>
+          <span style={label}>{tx("Channel", "القناة")}</span>
+          <ChannelChip tx={tx} channel={t.channel} />
+        </div>
+      ) : null}
+    </Section>
+  );
+}
 
 function Section({
   title,

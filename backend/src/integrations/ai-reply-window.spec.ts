@@ -14,7 +14,7 @@ describe("AiReplyController — 24h window re-check", () => {
   const SECRET = "test-secret";
   const HOUR = 60 * 60 * 1000;
 
-  function build(opts: { lastInboundAgoMs: number | null; channel?: string; locked?: boolean }) {
+  function build(opts: { lastInboundAgoMs: number | null; channel?: string; locked?: boolean; provider?: string }) {
     const created: any[] = [];
     const sent: any[] = [];
     const prisma = {
@@ -53,16 +53,23 @@ describe("AiReplyController — 24h window re-check", () => {
     const realtime = { emitToWorkspace: jest.fn() } as any;
     const pipeline = { onOutboundReply: jest.fn(), onAiStageSuggestion: jest.fn() } as any;
     const bridge = { verifyInboundSignature: jest.fn(() => true) } as any;
+    const zernio = { sendInDbConversation: jest.fn() };
+    // SP-19: the transport follows the conversation's channel. No provider =
+    // no channel, which keeps the direct-Meta path these window tests assert.
+    const channels = {
+      effectiveChannel: jest.fn(async () => (opts.provider ? { id: "ch", provider: opts.provider } : null)),
+    };
     const ctrl = new AiReplyController(
       prisma,
       whatsapp,
       bridge,
       realtime,
       pipeline,
-      { sendInDbConversation: jest.fn() } as unknown as ZernioService,
+      zernio as unknown as ZernioService,
       { isLocked: jest.fn(async () => opts.locked === true) } as never,
+      channels as never,
     );
-    return { ctrl, created, sent, whatsapp };
+    return { ctrl, created, sent, whatsapp, zernio, channels, prisma };
   }
 
   function signed(body: unknown) {
@@ -155,6 +162,17 @@ describe("AiReplyController — 24h window re-check", () => {
     const { sig, req } = signed(p);
     await ctrl.reply(req, sig, p as never);
     expect(sent).toHaveLength(1);
+  });
+
+  it("picks the transport from the conversation's channel, not the workspace integration", async () => {
+    const { ctrl, sent, zernio, channels, prisma } = build({ lastInboundAgoMs: 2 * HOUR, provider: "zernio" });
+    const p = payload();
+    const { sig, req } = signed(p);
+    await ctrl.reply(req, sig, p as never);
+    expect(channels.effectiveChannel).toHaveBeenCalledWith(expect.objectContaining({ id: "c1", workspaceId: WS }));
+    expect(zernio.sendInDbConversation).toHaveBeenCalledWith(WS, "c1", "أهلا فيكي");
+    expect(sent).toHaveLength(0);
+    expect(prisma.integration.findFirst).not.toHaveBeenCalled();
   });
 
   it("shadow mode never reaches the window check at all", async () => {

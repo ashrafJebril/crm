@@ -20,7 +20,8 @@ export class WorkspaceInterceptor implements NestInterceptor {
     if (wsId && userId) {
       return new Observable((subscriber) => {
         let innerSub: Subscription | undefined;
-        workspaceContext.run({ workspaceId: wsId, userId }, () => {
+        const apiKeyId = req.user?.apiKeyId;
+        workspaceContext.run(apiKeyId ? { workspaceId: wsId, userId, apiKeyId } : { workspaceId: wsId, userId }, () => {
           innerSub = next.handle().subscribe({
             next: (v) => subscriber.next(v),
             error: (e) => subscriber.error(e),

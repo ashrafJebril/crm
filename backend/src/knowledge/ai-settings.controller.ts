@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Patch, Post } from "@nestjs/common";
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { Transform } from "class-transformer";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentUserId, CurrentWorkspace } from "../common/current-workspace.decorator";
 import { KEWY_AUTONOMY_MODES, type KewyAutonomyMode } from "./knowledge.client";
 import { AiSettingsService } from "./ai-settings.service";
 
@@ -47,8 +47,9 @@ export class AiSettingsController {
   /** The emergency stop. Off = the agent is never invoked; inbound messages are
    *  still stored upstream so a human can answer them. */
   @Post("toggle")
-  toggle(@CurrentWorkspace() workspaceId: string, @Body() dto: ToggleDto) {
-    return this.svc.setEnabled(workspaceId, { enabled: dto.enabled, reason: dto.reason });
+  toggle(@CurrentWorkspace() workspaceId: string, @CurrentUserId() userId: string, @Body() dto: ToggleDto) {
+    // SP-20: also writes the CRM-side stop (who and why) checked first by the reply gate.
+    return this.svc.setEnabled(workspaceId, { enabled: dto.enabled, reason: dto.reason, userId });
   }
 
   /** Delivery mode only — whether replies are sent or written as drafts. */

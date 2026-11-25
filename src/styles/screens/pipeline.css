@@ -1,0 +1,69 @@
+/* SP-30 pipeline layout (ruling 7: layout only).
+   The board scrolls horizontally inside its own container; on phones each
+   column is min(85vw, 300px) and snaps. The table scrolls inside its own
+   container; below sm the rows are cards. */
+
+.pl-page { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.pl-body { flex: 1; min-height: 0; min-width: 0; }
+
+.pl-board {
+  display: flex;
+  gap: 14px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+}
+.pl-board-col { height: 100%; flex: 0 0 auto; }
+.pl-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 300px;
+  max-width: 320px;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* The table container (ResponsiveTable) also scrolls vertically in the page body. */
+.pl-table { height: 100%; overflow: auto; padding: 0 18px 16px; }
+
+.pl-cards { display: grid; gap: 8px; padding-block-start: 8px; }
+.pl-card {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-1);
+  min-block-size: 56px;
+}
+.pl-card[data-selected="true"] { border-color: var(--accent); }
+.pl-card-check { display: grid; place-items: center; inline-size: 40px; block-size: 40px; flex: 0 0 auto; }
+.pl-card-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  padding-inline-start: 4px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.pl-card-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-card-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11.5px; color: var(--ink-3); }
+
+@media (max-width: 767.98px) {
+  .pl-board {
+    gap: 10px;
+    padding: 12px;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+  }
+  .pl-board-col { scroll-snap-align: start; }
+  .pl-stage { min-width: 0; max-width: none; inline-size: min(85vw, 300px); }
+  .pl-table { padding-inline: 12px; }
+}

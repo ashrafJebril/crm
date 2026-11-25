@@ -29,7 +29,7 @@ export class PipelineAutomationService {
 
   private async resolveStages(workspaceId: string) {
     const stages = await this.prisma.ticketStage.findMany({
-      where: { workspaceId, groupKey: { in: ["new", "contacted"] } },
+      where: { workspaceId, groupKey: { in: ["new", "contacted"] }, pipeline: { archivedAt: null } },
       orderBy: { order: "asc" },
     });
     const byPipeline = new Map<

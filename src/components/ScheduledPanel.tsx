@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { IconX } from "@/icons";
@@ -21,6 +22,8 @@ const ARM_TIMEOUT_MS = 5000;
 export function ScheduledPanel({ refreshKey }: { refreshKey: number }) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
+  // DELETE /social/scheduled/:id maps to campaigns.update on the backend.
+  const canCancel = usePermissions().can("campaigns.update");
   const q = useFetch<ScheduledPost[]>("/social/scheduled");
 
   useEffect(() => {
@@ -172,7 +175,8 @@ export function ScheduledPanel({ refreshKey }: { refreshKey: number }) {
                     ? tx("Confirm cancel", "تأكيد الإلغاء")
                     : tx("Cancel scheduled post", "إلغاء الجدولة")
                 }
-                disabled={cancellingId === p.id}
+                disabled={cancellingId === p.id || !canCancel}
+                title={canCancel ? undefined : tx(NO_PERMISSION_EN, NO_PERMISSION_AR)}
                 onBlur={() => {
                   if (armed) disarm();
                 }}

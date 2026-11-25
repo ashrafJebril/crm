@@ -12,7 +12,7 @@ interface LKnowledgeList {
   documents: LDocument[];
 }
 
-export function KnowledgeTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
+export function KnowledgeTab({ tx, canEdit, canDelete }: { tx: Tx; canEdit: boolean; canDelete: boolean }) {
   const listQ = useFetch<LKnowledgeList>("/integrations/l/knowledge");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -85,13 +85,13 @@ export function KnowledgeTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
             <th>{tx("Title", "العنوان")}</th>
             <th>{tx("Status", "الحالة")}</th>
             <th>{tx("Added", "أُضيف")}</th>
-            {canEdit && <th style={{ width: 80 }} aria-label="actions" />}
+            {canDelete && <th style={{ width: 80 }} aria-label="actions" />}
           </tr>
         </thead>
         <tbody>
           {docs.length === 0 && (
             <tr>
-              <td colSpan={canEdit ? 4 : 3} className="muted" style={{ textAlign: "center", padding: 24 }}>
+              <td colSpan={canDelete ? 4 : 3} className="muted" style={{ textAlign: "center", padding: 24 }}>
                 {tx("No documents yet.", "لا توجد مستندات بعد.")}
               </td>
             </tr>
@@ -107,7 +107,7 @@ export function KnowledgeTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                 {d.status === "failed" && <Badge kind="bad" dot>failed</Badge>}
               </td>
               <td className="mono muted">{new Date(d.created_at).toLocaleDateString()}</td>
-              {canEdit && (
+              {canDelete && (
                 <td>
                   <button type="button" className="btn ghost sm" onClick={() => onDelete(d.id)}>
                     {tx("Delete", "حذف")}

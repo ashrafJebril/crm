@@ -9,6 +9,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret } from "../common/token-crypto";
 import { MediaService } from "../media/media.service";
+import { isoOrNull, newestMessageInfo, withExpansionFallback } from "./newest-message";
+import { sentByData } from "../conversations/message-sender";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -209,10 +211,22 @@ export class InstagramService {
       unread_count?: number;
       message_count?: number;
       participants?: { data: Array<{ id: string; username?: string; name?: string }> };
+      messages?: { data?: Array<{ from?: { id?: string }; created_time?: string }> };
     }
-    const res = await this.fetchJson<{ data: IgConv[] }>(
-      `${GRAPH}/${pageId}/conversations?platform=instagram&fields=id,updated_time,snippet,unread_count,message_count,participants&limit=${limit}&access_token=${encodeURIComponent(token)}`,
-      { method: "GET" },
+    // `messages.limit(1){from,created_time}` is a field expansion of this same
+    // request (no call per conversation): the newest message and its sender.
+    // If Graph refuses it (a field or permission error), the plain list is
+    // fetched once and returned exactly as before.
+    const base = "id,updated_time,snippet,unread_count,message_count,participants";
+    const list = (fields: string) =>
+      this.fetchJson<{ data: IgConv[] }>(
+        `${GRAPH}/${pageId}/conversations?platform=instagram&fields=${encodeURIComponent(fields)}&limit=${limit}&access_token=${encodeURIComponent(token)}`,
+        { method: "GET" },
+      );
+    const { data: res, expanded } = await withExpansionFallback(
+      () => list(`${base},messages.limit(1){from,created_time}`),
+      () => list(base),
+      (e) => this.log.warn(`IG conversations: newest-message expansion refused, listing without it (${(e as Error).message})`),
     );
     const rows = res.data ?? [];
 
@@ -266,6 +280,9 @@ export class InstagramService {
         unread: c.unread_count ?? 0,
         messageCount: c.message_count ?? 0,
         updatedAt: c.updated_time ?? new Date().toISOString(),
+        // Graph's updated_time is the last message's time (the inbox "Newest" sort).
+        lastMessageAt: isoOrNull(c.updated_time),
+        ...(expanded ? newestMessageInfo(c.messages?.data?.[0], igUserId) : {}),
       };
     });
   }
@@ -569,6 +586,8 @@ export class InstagramService {
     conversationId: string,
     message: string,
     mediaId?: string,
+    /** SP-11: the member sending from the inbox (Message.sentById). */
+    actorId?: string,
   ) {
     const { token } = await this.requireToken(workspaceId);
 
@@ -636,6 +655,7 @@ export class InstagramService {
         body: previewBody,
         t,
         attach: mediaId ?? null,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions } from "@/auth/usePermissions";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
@@ -120,7 +121,15 @@ export function AiKnowledgeTab() {
   const tx = makeTx(t.lang);
   const { activeWorkspace } = useAuth();
 
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const { can } = usePermissions();
+  // Match the backend routes: saving a doc (add or edit) is POST /ai/knowledge/docs
+  // (knowledge.create); delete is knowledge.delete; sync/settings are knowledge.update.
+  const canEdit = can("knowledge.update");
+  // SP-21 (ruling 3): the document list is read-only here. Knowledge is managed
+  // on the Knowledge page (Kewy agent); the kill switch, autonomy and the HJZ
+  // sync switch stay on this tab.
+  const canCreateDoc = false as boolean;
+  const canDeleteDoc = false as boolean;
 
   const listQ = useFetch<{ docs: AiKnowledgeDoc[] }>("/ai/knowledge/docs");
   const statusQ = useFetch<{ configured: boolean }>("/ai/knowledge/status");
@@ -369,11 +378,15 @@ export function AiKnowledgeTab() {
             "أي شي بتكتبه هون، المساعد بيقدر يستخدمه لما يرد على الزباين على واتساب.",
           )}
           footer={
-            canEdit ? (
+            canCreateDoc ? (
               <button type="button" className="btn primary" onClick={() => setDraft(EMPTY_DRAFT)}>
                 {tx("Add knowledge", "أضف معلومة")}
               </button>
-            ) : null
+            ) : (
+              <a className="btn primary" href="#/agent">
+                {tx("Manage knowledge", "إدارة المعرفة")}
+              </a>
+            )
           }
         >
           {listQ.loading && docs.length === 0 ? (
@@ -389,7 +402,8 @@ export function AiKnowledgeTab() {
                   key={d.id}
                   tx={tx}
                   doc={d}
-                  canEdit={canEdit}
+                  canEdit={canCreateDoc}
+                  canDelete={canDeleteDoc}
                   onView={() => setViewing(d)}
                   onEdit={() => setDraft({ id: d.id, title: d.title, kind: d.kind, body: d.body })}
                   onDelete={() => setPendingDelete(d)}
@@ -403,7 +417,7 @@ export function AiKnowledgeTab() {
 
       {viewing && <ViewCard tx={tx} doc={viewing} onClose={() => setViewing(null)} />}
 
-      {!draft && canEdit && (
+      {!draft && canCreateDoc && (
         <FileDropCard
           tx={tx}
           onExtracted={(drafts) => {
@@ -545,7 +559,7 @@ export function AiKnowledgeTab() {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {syncedDocs.map((d) => (
-                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} onView={() => setViewing(d)} />
+                <DocRow key={d.id} tx={tx} doc={d} canEdit={false} canDelete={false} onView={() => setViewing(d)} />
               ))}
             </div>
           )}
@@ -897,6 +911,7 @@ function DocRow({
   tx,
   doc,
   canEdit,
+  canDelete,
   onView,
   onEdit,
   onDelete,
@@ -904,6 +919,7 @@ function DocRow({
   tx: Tx;
   doc: AiKnowledgeDoc;
   canEdit: boolean;
+  canDelete: boolean;
   onView?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -951,7 +967,7 @@ function DocRow({
           {tx("Edit", "تعديل")}
         </button>
       )}
-      {canEdit && onDelete && (
+      {canDelete && onDelete && (
         <button
           type="button"
           className="btn ghost sm"
@@ -1147,7 +1163,7 @@ function DraftEditor({
           rows={12}
           placeholder={tx(
             "Cancelling less than 24 hours before the appointment costs half the service price.",
-            "الإلغاء قبل أقل من ٢٤ ساعة من الموعد بيكلف نص سعر الخدمة.",
+            "الإلغاء قبل أقل من 24 ساعة من الموعد بيكلف نص سعر الخدمة.",
           )}
           style={{
             ...inputStyle,
@@ -1374,6 +1390,7 @@ function DeleteConfirm({
       onClick={onCancel}
     >
       <div
+        className="dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-1)",

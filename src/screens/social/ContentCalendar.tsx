@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
@@ -269,6 +270,9 @@ function PostDetailModal({
   const cancelMut = useMutation<{ id: string }, { ok: true }>(({ id }) => api.delete(`/social/scheduled/${id}`));
 
   const busy = rescheduleMut.loading || cancelMut.loading;
+  // Cancel and reschedule both hit /social/scheduled/:id (campaigns.update).
+  const canEditScheduled = usePermissions().can("campaigns.update");
+  const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
 
   return (
     <Modal onClose={busy ? () => {} : onClose} width={480} label="Post details" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -323,7 +327,8 @@ function PostDetailModal({
             <button
               type="button"
               className={armedCancel ? "btn sm danger" : "btn ghost"}
-              disabled={busy}
+              disabled={busy || !canEditScheduled}
+              title={canEditScheduled ? undefined : noPerm}
               onBlur={() => setArmedCancel(false)}
               onClick={() => {
                 if (!armedCancel) {
@@ -343,7 +348,8 @@ function PostDetailModal({
             <button
               type="button"
               className="btn primary"
-              disabled={!newTime || busy}
+              disabled={!newTime || busy || !canEditScheduled}
+              title={canEditScheduled ? undefined : noPerm}
               onClick={() => {
                 if (!newTime) return;
                 setError(null);

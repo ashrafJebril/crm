@@ -229,6 +229,7 @@ describe("connectCallbackProvider", () => {
     expect(f({ search: "?fb=connected", hash: "" })).toBe("facebook");
     expect(f({ search: "", hash: "#/settings?zernio=connected&platform=facebook" })).toBe("zernio");
     expect(f({ search: "", hash: "#settings?zernio=connected" })).toBe("zernio");
+    expect(f({ search: "", hash: "#/channels?zernio=connected&platform=whatsapp" })).toBe("zernio");
     expect(f({ search: "?fb=error", hash: "" })).toBeNull();
     expect(f({ search: "", hash: "#/dashboard?zernio=connected" })).toBeNull();
     expect(f({ search: "", hash: "#/settings" })).toBeNull();

@@ -42,6 +42,45 @@ describe("buildRecipients", () => {
   });
 });
 
+describe("buildRecipients churned casing", () => {
+  it("skips a legacy capitalised Churned contact", () => {
+    const { recipients, skipped } = buildRecipients([
+      { name: "Gone", phone: "962790000004", lifecycle: "Churned" },
+      { name: "Lina", phone: "962790000001", lifecycle: "lead" },
+    ]);
+    expect(recipients).toEqual([{ name: "Lina", phone: "+962790000001" }]);
+    expect(skipped.optedOut).toBe(1);
+  });
+});
+
+describe("buildRecipients marketing opt-out", () => {
+  it("opted-out contact is skipped by campaign send", () => {
+    const { recipients, skipped } = buildRecipients([
+      { name: "Lina", phone: "962790000001", lifecycle: "lead", marketingOptOut: true },
+      { name: "Omar", phone: "962790000002", lifecycle: "lead", marketingOptOut: false },
+    ]);
+    expect(recipients).toEqual([{ name: "Omar", phone: "+962790000002" }]);
+    expect(skipped.optedOut).toBe(1);
+  });
+
+  it("returns one skipped row per opted-out or phoneless member, none for duplicates (ruling 11)", () => {
+    const { recipients, skippedRows, skipped } = buildRecipients([
+      { id: "lina", name: "Lina", phone: "962790000001", lifecycle: "lead", marketingOptOut: true },
+      { id: "gone", name: "Gone", phone: null, lifecycle: "churned" },
+      { id: "sara", name: "Sara", phone: null, lifecycle: "lead" },
+      { id: "omar", name: "Omar", phone: "962790000002", lifecycle: "lead" },
+      { id: "twin", name: "Twin", phone: "+962790000002", lifecycle: "lead" },
+    ]);
+    expect(recipients).toEqual([{ contactId: "omar", name: "Omar", phone: "+962790000002" }]);
+    expect(skippedRows).toEqual([
+      { contactId: "lina", name: "Lina", phone: "+962790000001", reason: "opted_out" },
+      { contactId: "gone", name: "Gone", phone: null, reason: "opted_out" },
+      { contactId: "sara", name: "Sara", phone: null, reason: "no_phone" },
+    ]);
+    expect(skipped).toEqual({ noPhone: 1, optedOut: 2, duplicate: 1 });
+  });
+});
+
 describe("estimateMetaCost", () => {
   it("prices each number at its country's marketing rate", () => {
     const est = estimateMetaCost(["+962790000001", "+962790000002", "+966501234567", "+447911123456"]);

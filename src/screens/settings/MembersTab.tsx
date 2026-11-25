@@ -2,18 +2,24 @@ import { useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
+import type { RoleRow } from "./RolesTab";
+import { roleErrorMessage } from "./RolesTab";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Avatar } from "@/components/Avatar";
 import { Badge } from "@/components/Badge";
 import type { WorkspaceRole } from "@/lib/types";
+import { arabicServerMessage, roleOptionsFromTeam, type RoleOption } from "@/lib/roleErrors";
 import { ErrorRow, Field, SettingsCard, StatusToast, inputStyle } from "./form";
+import { MemberHandoverDialog } from "@/screens/team/MemberHandoverDialog";
 
 interface Member {
   id: string;
   userId: string;
   workspaceId: string;
   role: WorkspaceRole;
+  roleId?: string | null;
   createdAt: string;
   user: {
     id: string;
@@ -25,15 +31,41 @@ interface Member {
   };
 }
 
+interface TeamRow {
+  id: string;
+  roleId?: string | null;
+  roleName?: string;
+  roleNameAr?: string;
+}
+
 const ROLES: WorkspaceRole[] = ["owner", "admin", "agent", "viewer"];
 
 export function MembersTab() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { activeWorkspace, user } = useAuth();
+  const { activeWorkspace, user, impersonating } = useAuth();
 
   const wsId = activeWorkspace?.id;
-  const canEdit = activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin";
+  const { can } = usePermissions();
+  const canAdd = can("members.create");
+  const canEdit = can("members.update");
+  const canRemove = can("members.delete");
+  const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
+  // /roles needs roles.view; a members.update holder may lack it. Try /roles
+  // for either permission and, if the server refuses (403), fall back to the
+  // distinct roles currently in use, read from /team (ungated, resolved
+  // roleId + roleName/roleNameAr per member).
+  const rolesQ = useFetch<RoleRow[]>(can("roles.view") || canEdit ? "/roles" : null);
+  const teamQ = useFetch<TeamRow[]>(wsId ? "/team" : null);
+  const teamRows = teamQ.data ?? [];
+  const roleOptions: RoleOption[] = rolesQ.data ?? roleOptionsFromTeam(teamRows);
+  const loc = (m: string | null | undefined): string | null => {
+    if (!m) return null;
+    const ar = arabicServerMessage(m);
+    return ar ? tx(m, ar) : m;
+  };
+  const teamByUser = new Map(teamRows.map((r) => [r.id, r]));
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const listQ = useFetch<Member[]>(wsId ? `/workspaces/${wsId}/members` : null);
 
@@ -49,14 +81,16 @@ export function MembersTab() {
   >((input) => api.post<InviteResponse>(`/workspaces/${wsId}/invite`, input));
 
   const updateRoleMut = useMutation<
-    { userId: string; role: WorkspaceRole },
+    { userId: string; roleId: string },
     Member
   >((input) =>
     api.patch<Member>(`/workspaces/${wsId}/members/${input.userId}`, {
-      role: input.role,
+      roleId: input.roleId,
     }),
   );
 
+  // SP-26: removal goes through MemberHandoverDialog (open work must move).
+  const [removing, setRemoving] = useState<Member | null>(null);
   const removeMut = useMutation<{ userId: string }, { ok: true }>((input) =>
     api.delete<{ ok: true }>(`/workspaces/${wsId}/members/${input.userId}`),
   );
@@ -120,11 +154,18 @@ export function MembersTab() {
     }
   };
 
-  const onChangeRole = async (member: Member, role: WorkspaceRole) => {
-    if (role === member.role) return;
-    await updateRoleMut.mutate({ userId: member.userId, role });
+  const onChangeRole = async (member: Member, roleId: string) => {
+    if (roleId === (teamByUser.get(member.userId)?.roleId ?? member.roleId)) return;
+    setRoleError(null);
+    try {
+      await updateRoleMut.mutate({ userId: member.userId, roleId });
+      showStatus(tx(`Updated ${member.user.name}'s role.`, `تم تحديث الدور.`));
+    } catch (e) {
+      // e.g. last owner, "Cannot grant permissions you don't have"
+      setRoleError(roleErrorMessage(e, tx));
+    }
     listQ.refetch();
-    showStatus(tx(`Updated ${member.user.name}'s role.`, `تم تحديث الدور.`));
+    teamQ.refetch();
   };
 
   const onResetPwd = async (member: Member) => {
@@ -144,21 +185,7 @@ export function MembersTab() {
     }
   };
 
-  const onRemove = async (member: Member) => {
-    if (
-      !window.confirm(
-        tx(
-          `Remove ${member.user.name} from this workspace?`,
-          `إزالة ${member.user.name} من هذه المساحة؟`,
-        ),
-      )
-    ) {
-      return;
-    }
-    await removeMut.mutate({ userId: member.userId });
-    listQ.refetch();
-    showStatus(tx(`Removed ${member.user.name}.`, `تمت الإزالة.`));
-  };
+  const onRemove = (member: Member) => setRemoving(member);
 
   if (!activeWorkspace) {
     return (
@@ -172,7 +199,7 @@ export function MembersTab() {
 
   return (
     <>
-      {canEdit && (
+      {canAdd && (
         <SettingsCard
           title={tx("Add team member", "إضافة عضو")}
           description={tx(
@@ -255,7 +282,7 @@ export function MembersTab() {
               ))}
             </select>
           </Field>
-          <ErrorRow message={inviteMut.error} />
+          <ErrorRow message={loc(inviteMut.error)} />
         </SettingsCard>
       )}
 
@@ -282,6 +309,8 @@ export function MembersTab() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {members.map((m) => {
               const isMe = m.userId === user?.id;
+              const teamRow = teamByUser.get(m.userId);
+              const resolvedRoleId = teamRow?.roleId ?? "";
               return (
                 <div
                   key={m.id}
@@ -308,43 +337,64 @@ export function MembersTab() {
                   </div>
                   {canEdit && !isMe ? (
                     <select
-                      value={m.role}
-                      onChange={(e) => onChangeRole(m, e.target.value as WorkspaceRole)}
-                      disabled={updateRoleMut.loading}
-                      style={{ ...inputStyle, width: 120, height: 30 }}
+                      dir="auto"
+                      value={resolvedRoleId}
+                      onChange={(e) => onChangeRole(m, e.target.value)}
+                      disabled={updateRoleMut.loading || roleOptions.length === 0 || !resolvedRoleId}
+                      aria-label={tx("Role", "الدور")}
+                      style={{ ...inputStyle, width: 160, height: 30 }}
                     >
-                      {ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {r}
+                      {!roleOptions.some((r) => r.id === resolvedRoleId) && (
+                        <option value="">
+                          {t.lang === "ar" ? teamRow?.roleNameAr || m.role : teamRow?.roleName || m.role}
+                        </option>
+                      )}
+                      {roleOptions.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {t.lang === "ar" ? r.nameAr || r.name : r.name}
                         </option>
                       ))}
                     </select>
                   ) : (
-                    <Badge kind="accent">{m.role}</Badge>
+                    <Badge kind="accent">
+                      <span dir="auto">
+                        {t.lang === "ar"
+                          ? teamRow?.roleNameAr || teamRow?.roleName || m.role
+                          : teamRow?.roleName || m.role}
+                      </span>
+                    </Badge>
                   )}
-                  {canEdit && !isMe && (
+                  {!isMe && (
                     <>
                       <button
                         type="button"
                         className="btn ghost sm"
                         onClick={() => onResetPwd(m)}
-                        disabled={resetPwdMut.loading}
-                        title={tx(
-                          "Generate a new password for this member",
-                          "إنشاء كلمة مرور جديدة لهذا العضو",
-                        )}
+                        disabled={resetPwdMut.loading || !canEdit}
+                        title={
+                          canEdit
+                            ? tx(
+                                "Generate a new password for this member",
+                                "إنشاء كلمة مرور جديدة لهذا العضو",
+                              )
+                            : noPerm
+                        }
                       >
                         {tx("Reset password", "إعادة تعيين كلمة المرور")}
                       </button>
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        onClick={() => onRemove(m)}
-                        disabled={removeMut.loading}
-                        style={{ color: "var(--bad)" }}
-                      >
-                        {tx("Remove", "حذف")}
-                      </button>
+                      {/* Never while impersonating (SP-26 review M1). */}
+                      {!impersonating && (
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          onClick={() => onRemove(m)}
+                          disabled={removeMut.loading || !canRemove}
+                          title={canRemove ? undefined : noPerm}
+                          style={{ color: "var(--bad)" }}
+                        >
+                          {tx("Remove", "حذف")}
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -354,10 +404,28 @@ export function MembersTab() {
         )}
         <ErrorRow
           message={
-            listQ.error ?? updateRoleMut.error ?? removeMut.error ?? resetPwdMut.error
+            loc(listQ.error) ?? roleError ?? loc(removeMut.error) ?? loc(resetPwdMut.error)
           }
         />
       </SettingsCard>
+
+      {removing && wsId && (
+        <MemberHandoverDialog
+          workspaceId={wsId}
+          member={{ id: removing.userId, name: removing.user.name }}
+          mode="remove"
+          candidates={(listQ.data ?? []).map((m) => ({ id: m.userId, name: m.user.name }))}
+          tx={tx}
+          dir={t.lang === "ar" ? "rtl" : "ltr"}
+          onClose={() => setRemoving(null)}
+          onDone={() => {
+            const name = removing.user.name;
+            setRemoving(null);
+            listQ.refetch();
+            showStatus(tx(`Removed ${name}.`, `تمت إزالة ${name}.`));
+          }}
+        />
+      )}
 
       <StatusToast message={status} />
     </>
@@ -390,6 +458,7 @@ function ProvisionedCredentialsModal({
       onClick={onClose}
     >
       <div
+        className="dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-1)",

@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsOptional, IsString, MinLength, IsIn } from "class-validator";
+import { Type } from "class-transformer";
+import { IsArray, IsIn, IsNotEmpty, IsOptional, IsString, MinLength, ValidateNested } from "class-validator";
 
 export class ConnectWhatsAppDto {
   // Meta-issued phone-number id (NOT the phone number itself). Found under
@@ -73,6 +74,13 @@ export class SendWhatsAppDto {
   mediaId?: string;
 }
 
+/** Template header values: a library media id (IMAGE/VIDEO/DOCUMENT headers)
+ *  or {{n}} params (TEXT headers). */
+export class TemplateHeaderDto {
+  @IsOptional() @IsString() @IsNotEmpty() mediaId?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) params?: string[];
+}
+
 export class SendWhatsAppTemplateDto {
   // Meta template name (e.g. "order_shipped"). Must already be APPROVED on
   // the WABA — Meta rejects unknown / pending templates synchronously.
@@ -90,6 +98,12 @@ export class SendWhatsAppTemplateDto {
   // with no `{{1}}, {{2}}, …` placeholders.
   @IsOptional()
   variables?: string[];
+
+  // SP-31 header values (media from the library, or text params).
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TemplateHeaderDto)
+  header?: TemplateHeaderDto;
 }
 
 export class TestSendWhatsAppDto {

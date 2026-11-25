@@ -1,3 +1,4 @@
+import { normalizeEmail } from "./email";
 import {
   ForbiddenException,
   Injectable,
@@ -84,7 +85,7 @@ export class SsoService {
     });
 
     // 3. Upsert the mirrored User (keyed by hjz user id).
-    const safeEmail = (body.email ?? `hjz_${sub}@sso.local`).toLowerCase();
+    const safeEmail = normalizeEmail(body.email ?? `hjz_${sub}@sso.local`);
     const safeName = body.name ?? "HJZ User";
     const initials =
       safeName
@@ -126,6 +127,9 @@ export class SsoService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // SP-26: sessionVersion (a reset or 2FA change ends this session too).
+      // SSO logins never ask for TOTP (ruling 9).
+      sv: user.sessionVersion ?? 0,
       workspaceId: workspace.id,
     });
 

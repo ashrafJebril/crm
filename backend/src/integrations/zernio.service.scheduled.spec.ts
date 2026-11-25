@@ -162,7 +162,7 @@ describe("reschedulePost (PUT strategy)", () => {
  * the same Zernio scheduling behavior.
  */
 describe("ZernioService.publish schedule guard", () => {
-  let prisma: { integration: { findMany: jest.Mock } };
+  let prisma: { integration: { findMany: jest.Mock }; channel: { findMany: jest.Mock } };
   let media: { mintPublicToken: jest.Mock };
   let client: { createPost: jest.Mock };
   let svc: ZernioService;
@@ -174,6 +174,8 @@ describe("ZernioService.publish schedule guard", () => {
           { platform: "facebook", pageId: "acct1" },
         ]),
       },
+      // SP-19 m7: no channel disconnected in the hub.
+      channel: { findMany: jest.fn().mockResolvedValue([]) },
     };
     media = { mintPublicToken: jest.fn() };
     client = {

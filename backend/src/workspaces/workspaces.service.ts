@@ -1,13 +1,24 @@
+import { emailWhere, normalizeEmail } from "../auth/email";
+import { normalizeBrandColor, safeBrandColor } from "./brand-color";
+import { logoPath } from "./brand-constants";
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
-import { seedWorkspaceDefaults } from "./workspace-defaults";
+import { PermissionService, type Actor } from "../permissions/permission.service";
+import { sanitizePermissions, type PermissionsJson } from "../permissions/catalog";
+import { isEffectiveOwner } from "../permissions/member-role";
+import { SYSTEM_ROLES, isSystemRoleKey } from "../permissions/system-roles";
+import { seedWorkspaceDefaults, WORKSPACE_TX_OPTIONS } from "./workspace-defaults";
+import { AuditService } from "../audit/audit.service";
+import { HandoverService } from "../members/handover.service";
 import {
   AddMemberDto,
   CreateWorkspaceDto,
@@ -17,6 +28,18 @@ import {
   UpdateWorkspaceDto,
   WorkspaceRole,
 } from "./workspaces.dto";
+
+interface Target {
+  legacyRole: string;
+  roleId: string | null;
+  permissions: PermissionsJson;
+  visibility?: "all" | "assigned";
+}
+
+/** SP-29: the branding part of the workspace DTO (the logo's public URL; a safe colour). */
+export function brandFields(ws: { id: string; logoMediaId?: string | null; brandColor?: string | null }): { logoUrl: string | null; brandColor: string | null } {
+  return { logoUrl: ws.logoMediaId ? logoPath(ws.id, ws.logoMediaId) : null, brandColor: safeBrandColor(ws.brandColor) };
+}
 
 function initialsOf(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -38,6 +61,9 @@ export class WorkspacesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly kewySync: KewyIdentitySync,
+    private readonly permissions: PermissionService,
+    private readonly audit: AuditService,
+    private readonly handover: HandoverService,
   ) {}
 
   async listForUser(userId: string) {
@@ -57,13 +83,14 @@ export class WorkspacesService {
       lang: m.workspace.lang,
       plan: m.workspace.plan,
       role: m.role as WorkspaceRole,
+      ...brandFields(m.workspace),
     }));
   }
 
   async get(id: string) {
     const ws = await this.prisma.workspace.findUnique({ where: { id } });
     if (!ws) throw new NotFoundException("Workspace not found");
-    return ws;
+    return { ...ws, ...brandFields(ws) };
   }
 
   async create(dto: CreateWorkspaceDto, ownerUserId: string) {
@@ -76,28 +103,79 @@ export class WorkspacesService {
     }
     // Wrapped in a transaction so we never leave an orphaned Workspace if the
     // owner-membership insert fails (e.g. invalid userId FK).
-    return this.prisma.$transaction(async (tx) => {
-      const ws = await tx.workspace.create({
-        data: {
-          name: dto.name,
-          slug,
-          timezone: dto.timezone ?? "Asia/Riyadh",
-          lang: dto.lang ?? "ar",
-        },
-      });
-      await tx.workspaceMember.create({
-        data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
-      });
-      // Same defaults every workspace gets: sales pipeline + stages (which the
-      // inbound-message automation needs) and the starter/stage smart groups.
-      await seedWorkspaceDefaults(tx, ws.id);
-      return ws;
-    });
+    return this.prisma.$transaction(
+      (tx) => this.provision(tx, dto, slug, ownerUserId),
+      WORKSPACE_TX_OPTIONS,
+    );
   }
 
-  async update(id: string, dto: UpdateWorkspaceDto) {
+  /**
+   * Self-service signup: the new owner User, the Workspace, the owner
+   * membership and the seeded defaults are ONE transaction, so any failure
+   * leaves no user row behind and the visitor can simply retry.
+   */
+  async createWithNewOwner(
+    dto: CreateWorkspaceDto,
+    userData: Prisma.UserCreateInput,
+  ) {
+    const baseSlug = toSlug(dto.name);
+    let slug = baseSlug;
+    let suffix = 0;
+    while (await this.prisma.workspace.findUnique({ where: { slug } })) {
+      suffix += 1;
+      slug = `${baseSlug}-${suffix}`;
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({ data: userData });
+      const ws = await this.provision(tx, dto, slug, user.id);
+      // Mirror to Kewy last, inside the transaction: if it refuses (strict
+      // AUTH_SOURCE) the whole signup, user included, rolls back.
+      await this.kewySync.userCreated(user);
+      return { workspace: ws, user };
+    }, WORKSPACE_TX_OPTIONS);
+  }
+
+  private async provision(
+    tx: Parameters<Parameters<PrismaService["$transaction"]>[0]>[0],
+    dto: CreateWorkspaceDto,
+    slug: string,
+    ownerUserId: string,
+  ) {
+    const ws = await tx.workspace.create({
+      data: {
+        name: dto.name,
+        slug,
+        timezone: dto.timezone ?? "Asia/Riyadh",
+        lang: dto.lang ?? "ar",
+      },
+    });
+    await tx.workspaceMember.create({
+      data: { userId: ownerUserId, workspaceId: ws.id, role: "owner" },
+    });
+    // Same defaults every workspace gets: sales pipeline + stages (which the
+    // inbound-message automation needs) and the starter/stage smart groups.
+    await seedWorkspaceDefaults(tx, ws.id);
+    return ws;
+  }
+
+  async update(id: string, dto: UpdateWorkspaceDto, actor?: Actor) {
     await this.get(id);
-    return this.prisma.workspace.update({ where: { id }, data: dto });
+    // SP-29: the brand colour is validated and stored lower-case `#rrggbb`; null clears.
+    const data: Prisma.WorkspaceUpdateInput = { ...dto };
+    if (dto.brandColor !== undefined) data.brandColor = normalizeBrandColor(dto.brandColor);
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.workspace.update({ where: { id }, data });
+      // SP-26: which settings changed (names only; values may be long).
+      await this.audit.record(tx, {
+        workspaceId: id,
+        actorId: actor?.userId ?? null,
+        action: "workspace.settings_updated",
+        targetKind: "workspace",
+        targetId: id,
+        meta: { fields: Object.keys(dto).filter((k) => (dto as Record<string, unknown>)[k] !== undefined) },
+      });
+      return { ...updated, ...brandFields(updated) };
+    });
   }
 
   async requireMember(userId: string, workspaceId: string): Promise<WorkspaceRole> {
@@ -128,14 +206,26 @@ export class WorkspacesService {
     });
   }
 
-  async addMember(workspaceId: string, dto: AddMemberDto) {
+  async addMember(workspaceId: string, dto: AddMemberDto, actor: Actor) {
     const exists = await this.prisma.workspaceMember.findUnique({
       where: { userId_workspaceId: { userId: dto.userId, workspaceId } },
     });
     if (exists) throw new ConflictException("Already a member");
-    return this.prisma.workspaceMember.create({
-      data: { userId: dto.userId, workspaceId, role: dto.role },
+    const target = await this.resolveTarget(workspaceId, { role: dto.role });
+    await this.authorizeAssignment(workspaceId, actor, target);
+    const roleId = target.roleId;
+    const member = await this.prisma.workspaceMember.create({
+      data: { userId: dto.userId, workspaceId, role: dto.role, roleId },
     });
+    await this.audit.record(this.prisma, {
+      workspaceId,
+      actorId: actor.userId,
+      action: "member.added",
+      targetKind: "member",
+      targetId: dto.userId,
+      meta: { role: dto.role, roleId },
+    });
+    return member;
   }
 
   /**
@@ -148,10 +238,23 @@ export class WorkspacesService {
    * Returns `{ memberId, created, tempPassword? }` so the UI can show the
    * password once when a new account was provisioned.
    */
-  async inviteByEmail(workspaceId: string, dto: InviteByEmailDto) {
-    const email = dto.email.toLowerCase().trim();
-    let user = await this.prisma.user.findUnique({ where: { email } });
+  async inviteByEmail(workspaceId: string, dto: InviteByEmailDto, actor: Actor) {
+    // Authorize the role before provisioning anything.
+    const target = await this.resolveTarget(workspaceId, { role: dto.role });
+    await this.authorizeAssignment(workspaceId, actor, target);
+    const email = normalizeEmail(dto.email);
+    let user = await this.prisma.user.findFirst({ where: emailWhere(email) });
     let provisionedPassword: string | undefined;
+
+    if (user) {
+      // Refuse before any write: an existing member is never touched.
+      const exists = await this.prisma.workspaceMember.findUnique({
+        where: { userId_workspaceId: { userId: user.id, workspaceId } },
+      });
+      if (exists) throw new ConflictException("Already a member");
+    }
+    // An existing user's password is NEVER changed by an invite (the supplied
+    // password is ignored); it only applies to brand-new accounts below.
 
     if (!user) {
       // Create new user with the supplied name + password
@@ -177,36 +280,20 @@ export class WorkspacesService {
         this.prisma.user.delete({ where: { id: created.id } }),
       );
       provisionedPassword = dto.password;
-    } else if (dto.password) {
-      // User row already existed (e.g. previously removed-then-re-added). If
-      // they don't belong to any other workspace, treat this invite as a
-      // re-provision and apply the supplied password so the inviter's modal
-      // matches reality. Cross-tenant guard: if they're in another workspace,
-      // we can't safely reset — refuse to touch the password and just add the
-      // membership (caller can use the Reset password button if needed and
-      // the safety rail allows).
-      const otherMemberships = await this.prisma.workspaceMember.count({
-        where: { userId: user.id, workspaceId: { not: workspaceId } },
-      });
-      if (otherMemberships === 0) {
-        const hashed = await bcrypt.hash(dto.password, 10);
-        // Set by the inviter, not the user: crm-only in Kewy (see passwordReset).
-        await this.kewySync.passwordReset(user, hashed);
-        await this.prisma.user.update({
-          where: { id: user.id },
-          data: { password: hashed },
-        });
-        provisionedPassword = dto.password;
-      }
     }
 
-    const exists = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId: user.id, workspaceId } },
-    });
-    if (exists) throw new ConflictException("Already a member");
-
+    const roleId = target.roleId;
     const member = await this.prisma.workspaceMember.create({
-      data: { userId: user.id, workspaceId, role: dto.role },
+      data: { userId: user.id, workspaceId, role: dto.role, roleId },
+    });
+    // SP-26: never the password; only whether an account was created.
+    await this.audit.record(this.prisma, {
+      workspaceId,
+      actorId: actor.userId,
+      action: "member.added",
+      targetKind: "member",
+      targetId: user.id,
+      meta: { role: dto.role, roleId, email, accountCreated: provisionedPassword !== undefined },
     });
 
     return {
@@ -217,19 +304,144 @@ export class WorkspacesService {
     };
   }
 
+  /**
+   * The role a request asks for: a roleId (system or custom, must belong to
+   * this workspace) or a legacy system role string. `legacyRole` is what old
+   * code reads from WorkspaceMember.role: the system key, or "viewer" for a
+   * custom role (least privilege: if the custom role is later deleted and
+   * roleId is set null, the member falls back to viewer, never higher). The
+   * row check also guards against the tenancy extension rewriting
+   * workspaceId on the role query.
+   */
+  private async resolveTarget(
+    workspaceId: string,
+    dto: { role?: string; roleId?: string },
+  ): Promise<Target> {
+    if (dto.role && dto.roleId) throw new BadRequestException("Send role or roleId, not both");
+    if (dto.roleId) {
+      const role = await this.prisma.role.findFirst({ where: { id: dto.roleId, workspaceId } });
+      if (!role || role.workspaceId !== workspaceId) throw new NotFoundException("Role not found");
+      return {
+        legacyRole: role.isSystem && role.key ? role.key : "viewer",
+        roleId: role.id,
+        permissions: sanitizePermissions(role.permissions),
+        visibility: role.conversationVisibility === "assigned" ? "assigned" : "all",
+      };
+    }
+    if (dto.role) {
+      // Keep roleId in step with the legacy string (SP-25), so a stale system
+      // roleId can never outrank a demotion.
+      const row = await this.permissions.systemRoleRow(workspaceId, dto.role);
+      if (row) {
+        return {
+          legacyRole: dto.role,
+          roleId: row.id,
+          permissions: sanitizePermissions(row.permissions),
+          visibility: row.conversationVisibility === "assigned" ? "assigned" : "all",
+        };
+      }
+      // No row of THIS workspace (e.g. the lookup was rewritten to another
+      // tenant): check the grant against the built-in definition, never an
+      // empty permission set.
+      const key = dto.role.toLowerCase();
+      if (!isSystemRoleKey(key)) throw new BadRequestException("Unknown role");
+      return {
+        legacyRole: dto.role,
+        roleId: null,
+        permissions: SYSTEM_ROLES[key].permissions,
+        visibility: SYSTEM_ROLES[key].conversationVisibility,
+      };
+    }
+    throw new BadRequestException("role or roleId is required");
+  }
+
+  /** Only an owner may hand out the owner role, and nobody may hand out
+   *  permissions they do not hold themselves. */
+  private async authorizeAssignment(
+    workspaceId: string,
+    actor: Actor,
+    target: Target,
+  ) {
+    if (target.legacyRole === "owner") {
+      await this.permissions.assertOwner(workspaceId, actor, "Only an owner can assign the owner role");
+    }
+    await this.permissions.assertCanGrant(workspaceId, actor, target.permissions, target.visibility);
+  }
+
+  /** Member row of THIS workspace (explicit post-check: never trust a row
+   *  that came back for another workspace). */
+  private async findMember(db: Pick<PrismaService, "workspaceMember">, workspaceId: string, userId: string) {
+    const m = await db.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+      include: { roleRef: true },
+    });
+    if (!m || m.workspaceId !== workspaceId) throw new NotFoundException("Member not found");
+    return m;
+  }
+
   async updateMemberRole(
     workspaceId: string,
     userId: string,
     dto: UpdateMemberRoleDto,
+    actor: Actor,
   ) {
-    const m = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
+    // Last-owner check and write share one serializable transaction.
+    const updated = await this.serializable(() => this.prisma.$transaction(
+      async (tx) => {
+        const m = await this.findMember(tx, workspaceId, userId);
+        // Against the member's current role, before the change.
+        await this.permissions.assertCanActOn(workspaceId, actor, userId);
+        const target = await this.resolveTarget(workspaceId, dto);
+        await this.authorizeAssignment(workspaceId, actor, target);
+        if (isEffectiveOwner(m)) {
+          await this.permissions.assertOwner(workspaceId, actor, "Only an owner can change an owner's role");
+          if (target.legacyRole !== "owner") await this.assertAnotherOwner(tx, workspaceId, m.id);
+        }
+        const row = await tx.workspaceMember.update({
+          where: { id: m.id },
+          data: { role: target.legacyRole, roleId: target.roleId },
+        });
+        await this.audit.record(tx, {
+          workspaceId,
+          actorId: actor.userId,
+          action: "member.role_changed",
+          targetKind: "member",
+          targetId: userId,
+          meta: { from: { role: m.role, roleId: m.roleId }, to: { role: target.legacyRole, roleId: target.roleId } },
+        });
+        return row;
+      },
+      { isolationLevel: "Serializable" },
+    ));
+    this.permissions.invalidate(workspaceId, userId);
+    return updated;
+  }
+
+  /** Maps a Postgres serialization failure (Prisma P2034) to a retryable 409. */
+  private async serializable<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (e) {
+      if ((e as { code?: string })?.code === "P2034") {
+        throw new ConflictException("Another change happened at the same time — try again");
+      }
+      throw e;
+    }
+  }
+
+  /** The workspace must keep at least one member whose effective role is owner. */
+  private async assertAnotherOwner(
+    db: Pick<PrismaService, "workspaceMember">,
+    workspaceId: string,
+    exceptMemberId: string,
+  ) {
+    const others = await db.workspaceMember.findMany({
+      where: { workspaceId, id: { not: exceptMemberId } },
+      include: { roleRef: true },
     });
-    if (!m) throw new NotFoundException("Member not found");
-    return this.prisma.workspaceMember.update({
-      where: { id: m.id },
-      data: { role: dto.role },
-    });
+    if (!others.filter((o) => o.workspaceId === workspaceId).some((o) => isEffectiveOwner(o))) {
+      throw new BadRequestException("A workspace must keep at least one owner");
+    }
   }
 
   /**
@@ -244,13 +456,14 @@ export class WorkspacesService {
     workspaceId: string,
     userId: string,
     dto: ResetMemberPasswordDto,
-    options: { isSuperAdmin?: boolean } = {},
+    actor: Actor,
   ) {
-    const m = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-    });
-    if (!m) throw new NotFoundException("Member not found");
-    if (!options.isSuperAdmin) {
+    const m = await this.findMember(this.prisma, workspaceId, userId);
+    await this.permissions.assertCanActOn(workspaceId, actor, userId);
+    if (isEffectiveOwner(m)) {
+      await this.permissions.assertOwner(workspaceId, actor, "Only an owner can reset an owner's password");
+    }
+    if (!actor.isSuperAdmin) {
       const otherMemberships = await this.prisma.workspaceMember.count({
         where: { userId, workspaceId: { not: workspaceId } },
       });
@@ -265,7 +478,16 @@ export class WorkspacesService {
     const hashed = await bcrypt.hash(dto.password, 10);
     // Kewy first so a strict failure leaves the local password unchanged.
     await this.kewySync.passwordReset(user, hashed);
-    await this.prisma.user.update({ where: { id: userId }, data: { password: hashed } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { password: hashed } });
+      await this.audit.record(tx, {
+        workspaceId,
+        actorId: actor.userId,
+        action: "member.password_set_by_admin",
+        targetKind: "member",
+        targetId: userId,
+      });
+    });
     return {
       ok: true,
       user: { id: user.id, email: user.email, name: user.name },
@@ -273,14 +495,14 @@ export class WorkspacesService {
     };
   }
 
-  async removeMember(workspaceId: string, userId: string) {
-    const m = await this.prisma.workspaceMember.findUnique({
-      where: { userId_workspaceId: { userId, workspaceId } },
-    });
-    if (!m) throw new NotFoundException("Member not found");
-    // Only the membership goes; the crm User (and so its Kewy identity) stays.
-    // Kewy resolves tenants from workspaces, so there is nothing to sync here.
-    await this.prisma.workspaceMember.delete({ where: { id: m.id } });
-    return { ok: true };
+  /**
+   * SP-26: removal never orphans work. Delegates to
+   * HandoverService.removeWithHandover (one Serializable transaction: owner
+   * rules, open-work count, optional handover, delete, audit). Without
+   * `handoverTo`, a member holding open work is refused with 409
+   * members.handover_required.
+   */
+  async removeMember(workspaceId: string, userId: string, actor: Actor, handoverTo?: string) {
+    return this.handover.removeWithHandover(workspaceId, userId, actor, handoverTo);
   }
 }

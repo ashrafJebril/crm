@@ -1,0 +1,51 @@
+/* SP-30 contacts layout (ruling 7: layout only).
+   ≥ sm   the table, scrolling inside its own container (ResponsiveTable).
+   < sm   a card list; the segment chips scroll in their own row; the search fills the row. */
+
+.ct-page { overflow-y: auto; flex: 1; }
+.ct-tabs { display: flex; gap: 6px; padding: 0 24px 10px; }
+.ct-body { padding: 0 24px 24px; display: grid; gap: 14px; min-width: 0; }
+.ct-seg-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ct-seg-chips { display: contents; }
+.ct-search { width: 220px; }
+
+.ct-cards { display: grid; gap: 8px; }
+.ct-card {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-block-size: 56px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--bg-1);
+  cursor: pointer;
+  text-align: start;
+}
+.ct-card[data-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ct-card-check { display: grid; place-items: center; inline-size: 40px; block-size: 40px; margin-inline-start: -8px; }
+.ct-card-main { min-width: 0; display: grid; gap: 2px; }
+.ct-card-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-card-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--ink-3); min-width: 0; }
+
+@media (max-width: 767.98px) {
+  .ct-tabs { padding-inline: 12px; overflow-x: auto; scrollbar-width: none; }
+  .ct-tabs > * { flex: 0 0 auto; }
+  .ct-body { padding-inline: 12px; }
+}
+@media (max-width: 639.98px) {
+  .ct-seg-chips {
+    display: flex;
+    gap: 8px;
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-block-end: 2px;
+  }
+  .ct-seg-chips::-webkit-scrollbar { display: none; }
+  .ct-seg-chips > * { flex: 0 0 auto; }
+  .ct-seg-row > .ct-seg-spacer { display: none; }
+  .ct-search { flex: 1 1 160px; width: auto; min-width: 0; }
+}

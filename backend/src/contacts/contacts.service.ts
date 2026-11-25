@@ -1,15 +1,35 @@
 import { Prisma } from "@prisma/client";
-import { Injectable, NotFoundException, Optional } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
+import { isEmail } from "class-validator";
+import { effectiveNameParts, joinName, normalizeDigits, normalizeLifecycle, splitName } from "./contact-name";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
 import { CreateContactDto, UpdateContactDto } from "./contacts.dto";
 import { SegmentsService } from "../segments/segments.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
+import { buildContactWhere, type ContactListFilter } from "./contact-filter";
 import { HjzClientSyncService } from "../hjz-sync/hjz-client-sync.service";
+
+export const SELECT_ALL_CAP = 10_000;
 
 interface ContactRow {
   id: string;
   name: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  ownerId: string | null;
+  marketingOptOut: boolean;
+  notALead: boolean;
+  createdAt: Date;
   phone: string | null;
   industry: string;
   lifecycle: string;
@@ -34,6 +54,13 @@ function parseTags(raw: string): string[] {
 const shape = (c: ContactRow) => ({
   id: c.id,
   name: c.name,
+  // Derived when the stored parts are missing/stale (integration-created rows).
+  ...effectiveNameParts(c),
+  email: c.email ?? "",
+  ownerId: c.ownerId,
+  marketingOptOut: c.marketingOptOut,
+  notALead: c.notALead,
+  createdAt: c.createdAt,
   phone: c.phone ?? "",
   industry: c.industry,
   lifecycle: c.lifecycle,
@@ -51,6 +78,7 @@ export class ContactsService {
     private readonly segments: SegmentsService,
     @Optional() private readonly events?: EventEmitter2,
     @Optional() private readonly hjzSync?: HjzClientSyncService,
+    @Optional() private readonly perm?: PermissionService,
   ) {}
 
   async list(workspaceId: string, opts: { segmentId?: string } = {}) {
@@ -69,23 +97,15 @@ export class ContactsService {
   }
 
   /**
-   * One page of contacts for the Contacts table: optional segment, server-side
-   * search on name or phone, newest first. `list` stays for callers that need
-   * everyone (audience pickers, group editors).
+   * One page of contacts for the Contacts table: the full shared filter
+   * (segment, search on name/phone/email, lifecycle, tags, owner, pipeline,
+   * consent flags, custom fields), newest first. `list` stays for callers that
+   * need everyone (audience pickers, group editors).
    */
-  async listPage(
-    workspaceId: string,
-    opts: { segmentId?: string; q?: string; page: number; pageSize: number },
-  ) {
+  async listPage(workspaceId: string, opts: ContactListFilter & { page: number; pageSize: number }) {
     const pageSize = Math.min(Math.max(Math.trunc(opts.pageSize) || 50, 1), 200);
     const page = Math.max(Math.trunc(opts.page) || 1, 1);
-    const base: Prisma.ContactWhereInput = opts.segmentId
-      ? await this.segments.resolveContactWhere(workspaceId, opts.segmentId)
-      : { workspaceId };
-    const q = opts.q?.trim();
-    const where: Prisma.ContactWhereInput = q
-      ? { AND: [base, { OR: [{ name: { contains: q, mode: "insensitive" } }, { phone: { contains: q } }] }] }
-      : base;
+    const where = await buildContactWhere(workspaceId, opts, this.filterDeps());
     const [rows, total] = await Promise.all([
       this.prisma.contact.findMany({
         where,
@@ -103,6 +123,69 @@ export class ContactsService {
       pageSize,
       pageCount: Math.max(1, Math.ceil(total / pageSize)),
     };
+  }
+
+  private filterDeps() {
+    return { prisma: this.prisma, segments: this.segments };
+  }
+
+  /** Ids matching a filter for "select all N" — capped at SELECT_ALL_CAP. */
+  async listIds(workspaceId: string, filter: ContactListFilter) {
+    const where = await buildContactWhere(workspaceId, filter, this.filterDeps());
+    const [rows, total] = await Promise.all([
+      this.prisma.contact.findMany({
+        where,
+        select: { id: true },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: SELECT_ALL_CAP,
+      }),
+      this.prisma.contact.count({ where }),
+    ]);
+    return { ids: rows.map((r) => r.id), total, truncated: total > SELECT_ALL_CAP };
+  }
+
+  private async assertContact(workspaceId: string, id: string) {
+    const c = await this.prisma.contact.findFirst({ where: { id, workspaceId }, select: { id: true } });
+    if (!c) throw new NotFoundException("Contact not found");
+  }
+
+  private paging(opts: { page: number; pageSize: number }) {
+    const pageSize = Math.min(Math.max(Math.trunc(opts.pageSize) || 20, 1), 50);
+    const page = Math.max(Math.trunc(opts.page) || 1, 1);
+    return { page, pageSize, skip: (page - 1) * pageSize };
+  }
+
+  async pagedTickets(workspaceId: string, contactId: string, opts: { page: number; pageSize: number }) {
+    await this.assertContact(workspaceId, contactId);
+    const { page, pageSize, skip } = this.paging(opts);
+    const where = { contactId, workspaceId };
+    const [items, total] = await Promise.all([
+      this.prisma.ticket.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        include: { stage: true },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.ticket.count({ where }),
+    ]);
+    return { items, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
+  }
+
+  async pagedAppointments(workspaceId: string, contactId: string, opts: { page: number; pageSize: number }) {
+    await this.assertContact(workspaceId, contactId);
+    const { page, pageSize, skip } = this.paging(opts);
+    const where = { contactId, workspaceId };
+    const [items, total] = await Promise.all([
+      this.prisma.appointment.findMany({
+        where,
+        orderBy: [{ startAt: "desc" }, { id: "desc" }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.appointment.count({ where }),
+    ]);
+    return { items, total, page, pageSize, pageCount: Math.max(1, Math.ceil(total / pageSize)) };
   }
 
   /** Real numbers for the Contacts header. */
@@ -151,13 +234,15 @@ export class ContactsService {
    * Aggregated contact profile for the contacts drawer — stats + recent
    * activity in one round-trip so the drawer doesn't fire 4 separate GETs.
    */
-  async summary(workspaceId: string, id: string) {
+  async summary(workspaceId: string, id: string, viewer?: Viewer) {
     const contact = await this.get(workspaceId, id);
+    // Only conversations the member may see feed the drawer and its counts.
+    const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
 
     const [allConvs, allTicketsCount, recentTickets, totalMessages, totalNotes, totalAppointments] =
       await Promise.all([
         this.prisma.conversation.findMany({
-          where: { contactId: id, workspaceId },
+          where: { contactId: id, workspaceId, ...scope },
           orderBy: { updatedAt: "desc" },
         }),
         this.prisma.ticket.count({ where: { contactId: id, workspaceId } }),
@@ -168,7 +253,7 @@ export class ContactsService {
           include: { stage: true },
         }),
         this.prisma.message.count({
-          where: { workspaceId, conversation: { contactId: id } },
+          where: { workspaceId, conversation: { contactId: id, ...scope } },
         }),
         this.prisma.note.count({ where: { contactId: id, workspaceId } }),
         this.prisma.appointment.count({ where: { contactId: id, workspaceId } }),
@@ -211,14 +296,58 @@ export class ContactsService {
     };
   }
 
+  private async assertOwner(workspaceId: string, ownerId: string | null | undefined) {
+    if (typeof ownerId !== "string") return;
+    const member = await this.prisma.workspaceMember.findFirst({ where: { workspaceId, userId: ownerId } });
+    if (!member) throw new BadRequestException("owner is not a member");
+  }
+
+  private cleanEmail(email: string | null | undefined): string | null | undefined {
+    if (email === undefined || email === null) return email;
+    const e = email.trim().toLowerCase();
+    if (!e) return null;
+    if (!isEmail(e)) throw new BadRequestException("email must be an email");
+    return e;
+  }
+
+  /** Name/firstName/lastName stay in sync; '' counts as absent. */
+  private nameFields(
+    dto: { name?: string; firstName?: string; lastName?: string },
+    stored?: { name: string; firstName: string | null; lastName: string | null },
+  ): { name: string; firstName: string | null; lastName: string | null } | null {
+    if (dto.firstName !== undefined || dto.lastName !== undefined) {
+      const parts = stored ? effectiveNameParts(stored) : { firstName: null, lastName: null };
+      const first = dto.firstName ?? parts.firstName ?? "";
+      const last = dto.lastName ?? parts.lastName ?? "";
+      const name = joinName(first, last);
+      if (!name) throw new BadRequestException("name is required");
+      return { name, firstName: first.trim() || null, lastName: last.trim() || null };
+    }
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException("name is required");
+      const { firstName, lastName } = splitName(name);
+      return { name, firstName, lastName };
+    }
+    return null;
+  }
+
   async create(workspaceId: string, dto: CreateContactDto) {
+    const names = this.nameFields(dto);
+    if (!names) throw new BadRequestException("name is required");
+    const email = this.cleanEmail(dto.email);
+    await this.assertOwner(workspaceId, dto.ownerId);
     const row = await this.prisma.contact.create({
       data: {
         workspaceId,
-        name: dto.name,
-        phone: dto.phone ?? null,
+        ...names,
+        email: email ?? null,
+        ownerId: dto.ownerId ?? null,
+        marketingOptOut: dto.marketingOptOut ?? false,
+        notALead: dto.notALead ?? false,
+        phone: dto.phone != null ? normalizeDigits(dto.phone) : null,
         industry: dto.industry,
-        lifecycle: dto.lifecycle,
+        lifecycle: normalizeLifecycle(dto.lifecycle),
         source: dto.source,
         value: dto.value ?? null,
         lastSeen: dto.lastSeen ?? "just now",
@@ -238,19 +367,39 @@ export class ContactsService {
   }
 
   async update(workspaceId: string, id: string, dto: UpdateContactDto) {
-    await this.get(workspaceId, id);
+    const stored = await this.prisma.contact.findFirst({ where: { id, workspaceId } });
+    if (!stored) throw new NotFoundException("Contact not found");
+    const names = this.nameFields(dto, stored);
+    const email = this.cleanEmail(dto.email);
+    await this.assertOwner(workspaceId, dto.ownerId);
     const row = await this.prisma.contact.update({
       where: { id },
       data: {
         ...dto,
+        ...(names ?? {}),
+        lifecycle: normalizeLifecycle(dto.lifecycle),
+        email,
+        phone: dto.phone != null ? normalizeDigits(dto.phone) : dto.phone,
         tags: dto.tags !== undefined ? JSON.stringify(dto.tags) : undefined,
       },
     });
     return shape(row);
   }
 
-  async remove(workspaceId: string, id: string) {
+  async remove(workspaceId: string, id: string, force = false) {
     await this.get(workspaceId, id);
+    if (!force) {
+      const [tickets, appointments] = await Promise.all([
+        this.prisma.ticket.count({ where: { contactId: id, workspaceId } }),
+        this.prisma.appointment.count({ where: { contactId: id, workspaceId } }),
+      ]);
+      if (tickets > 0 || appointments > 0) {
+        throw new ConflictException({
+          message: "Contact has linked records",
+          linked: { tickets, appointments },
+        });
+      }
+    }
     await this.prisma.contact.delete({ where: { id } });
     return { ok: true };
   }

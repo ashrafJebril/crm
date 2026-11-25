@@ -3,6 +3,7 @@ import {
   keepPreviousData,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
 import { api, ApiError } from "./client";
@@ -13,42 +14,83 @@ interface FetchState<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
   /** Patch the cached value without a network round-trip. Use for optimistic
    *  mutations — e.g. move a card to a new column instantly, then reconcile
    *  with the server response in the background. */
   setData: (updater: DataUpdater<T>) => void;
 }
 
-interface FetchOpts {
+interface FetchOpts<T> {
   enabled?: boolean;
   // Bumping `key` forces re-fetch (use after a mutation invalidates cache).
   key?: string | number;
   // When set, refetch every N milliseconds. Polling pauses while the document
   // is hidden (background tab) to avoid burning quota — handled natively by
   // React Query's refetchIntervalInBackground:false.
-  pollMs?: number;
+  // May be a function of the latest data, read on every tick, so the interval
+  // follows what was just fetched with no render in between.
+  pollMs?: PollMs<T>;
+  /** How long a fetched value counts as fresh (no refetch on remount / key return). Default 0. */
+  staleMs?: number;
+  /**
+   * `refetch()` reuses a fetch of the same key already in flight instead of
+   * cancelling it and starting an identical one (the "(canceled)" requests).
+   */
+  dedupeRefetch?: boolean;
 }
+
+/** The cache key `useFetch(path, { key })` uses (so callers can prefetch or patch the same entry). */
+export function fetchQueryKey(path: string, key?: string | number): QueryKey {
+  return key !== undefined ? [path, key] : [path];
+}
+
+/**
+ * Warm the cache entry `useFetch(path, { key, staleMs })` will read (e.g. a
+ * conversation on row hover). A fresh entry is not fetched again.
+ */
+export function prefetchFetch(queryClient: QueryClient, path: string, opts: { key?: string | number; staleMs?: number } = {}): Promise<void> {
+  return queryClient.prefetchQuery({
+    queryKey: fetchQueryKey(path, opts.key),
+    queryFn: ({ signal }) => api.get(path, signal),
+    staleTime: opts.staleMs ?? 0,
+  });
+}
+
+export type PollMs<T> = number | undefined | ((data: T | undefined) => number | null | undefined);
+
+/** The effective refetch interval: a positive number, else false (no polling). */
+export function resolvePollMs<T>(pollMs: PollMs<T> | undefined, data: T | undefined): number | false {
+  const v = typeof pollMs === "function" ? pollMs(data) : pollMs;
+  return typeof v === "number" && v > 0 ? v : false;
+}
+
+let disabledInstances = 0;
+
+/** The cache key of a disabled `useFetch` hook instance (never shared). */
+export const disabledQueryKey = (instance: number): QueryKey => ["__disabled__", instance];
 
 /** GET hook backed by React Query. Two components asking for the same URL
  *  share one in-flight request and one cache entry — no more duplicate GETs.
  *  Path = null disables the query. */
 export function useFetch<T>(
   path: string | null,
-  opts: FetchOpts = {},
+  opts: FetchOpts<T> = {},
 ): FetchState<T> {
   const enabled = opts.enabled !== false && path !== null;
   const queryClient = useQueryClient();
+  // One id per hook instance, for its disabled key (below).
+  const instanceRef = useRef<number | null>(null);
+  if (instanceRef.current === null) instanceRef.current = ++disabledInstances;
 
-  // Disabled hooks share a sentinel key. When the caller passes opts.key the
-  // queryKey includes it (so a bump creates a fresh entry — legacy
-  // invalidation pattern). When opts.key is omitted the key is just [path],
-  // letting mutations patch the cache without guessing a suffix.
-  const queryKey: QueryKey = !enabled
-    ? ["__disabled__"]
-    : opts.key !== undefined
-      ? [path, opts.key]
-      : [path];
+  // A disabled hook gets a key of its OWN: a shared sentinel let one caller's
+  // data leak into every other disabled hook (SP-10 live fix F2: the catalog
+  // wizard's job landed in the shell's not-connected `useFetch(null)` hooks,
+  // which iterated it and white-screened the app). When the caller passes
+  // opts.key the queryKey includes it (so a bump creates a fresh entry —
+  // legacy invalidation pattern). When opts.key is omitted the key is just
+  // [path], letting mutations patch the cache without guessing a suffix.
+  const queryKey: QueryKey = !enabled ? disabledQueryKey(instanceRef.current) : fetchQueryKey(path, opts.key);
   const queryKeyRef = useRef(queryKey);
   queryKeyRef.current = queryKey;
 
@@ -59,9 +101,9 @@ export function useFetch<T>(
       return api.get<T>(path, signal);
     },
     enabled,
-    refetchInterval:
-      opts.pollMs && opts.pollMs > 0 ? opts.pollMs : false,
+    refetchInterval: (query) => resolvePollMs(opts.pollMs, query.state.data),
     refetchIntervalInBackground: false,
+    staleTime: opts.staleMs ?? 0,
     // When a consumer bumps `opts.key` to invalidate, React Query treats the
     // new queryKey as a brand-new cache entry with no data. keepPreviousData
     // shows the last successful result while the new key fetches, so the UI
@@ -69,12 +111,18 @@ export function useFetch<T>(
     placeholderData: keepPreviousData,
   });
 
-  const refetch = useCallback(() => {
-    void q.refetch();
-  }, [q]);
+  const dedupe = opts.dedupeRefetch === true;
+  const refetch = useCallback(async () => {
+    await q.refetch(dedupe ? { cancelRefetch: false } : undefined);
+  }, [q, dedupe]);
 
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const setData = useCallback(
     (updater: DataUpdater<T>) => {
+      // A disabled query has no cache entry worth writing: a no-op, so data
+      // set before the path is known can never land under a shared key.
+      if (!enabledRef.current) return;
       queryClient.setQueryData<T | null>(queryKeyRef.current, (prev) => {
         const p = (prev ?? null) as T | null;
         return typeof updater === "function"

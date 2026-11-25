@@ -1,8 +1,12 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { REPLY_DRAFT_EVENT, takeReplyDraft } from "@/copilot/replyDraft";
+import { openParamForRoute, useOpenParam } from "@/lib/useOpenParam";
+import { InlineNote } from "@/components/InlineNote";
+import { mergeByTime } from "@/lib/mentions";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { Avatar } from "@/components/Avatar";
-import { Badge, type BadgeKind } from "@/components/Badge";
+import { type BadgeKind } from "@/components/Badge";
 import { ResolutionBadge } from "./inbox/ResolutionBadge";
 import { Modal } from "@/components/Modal";
 import { ConvRowSkeleton, MessageSkeleton } from "@/components/Skeleton";
@@ -11,39 +15,86 @@ import {
   IconAttach,
   IconBook,
   IconCheck,
-  IconFilter,
   IconMore,
   IconPhone,
   IconSend,
   IconTemplate,
   IconX,
+  IconArrow,
 } from "@/icons";
-import { API_BASE, api, tokenStore } from "@/api/client";
+import { API_BASE, ApiError, api, tokenStore } from "@/api/client";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { uploadMedia } from "@/api/uploadMedia";
+import { mediaErrorText } from "@/components/media/mediaErrors";
 import { useRealtime } from "@/api/useRealtime";
 import { useAuth } from "@/auth/context";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import {
   CHANNEL_LABEL,
   type Contact,
+  type ConversationLabel,
+  type TeamMember,
+  type Note,
   type ConvChannel,
   type Conversation,
   type Lang,
   type Message,
   type Pipeline,
-  type StageColor,
   type Ticket,
   type TicketStage,
-  type TicketsListPage,
 } from "@/lib/types";
 import { ConversationTicketsPill } from "./inbox/ConversationTicketsPill";
 import { ConversationAiToggle } from "./inbox/ConversationAiToggle";
+import { ConversationActions, isLiveThreadId } from "./inbox/ConversationActions";
+import {
+  activeFilterCount, type InboxView, EMPTY_FILTER, matchesFilter, sortConversations, keepAt, numberTabs, type NumberTab,
+  type FilterCtx, type InboxFilter, type InboxSort,
+} from "./inbox/inboxFilters";
+import {
+  readFilterFromHash, readNumberFromHash, readViewFromHash, writeFilterToHash, writeNumberToHash, writeViewToHash,
+} from "./inbox/inboxHash";
+import { pickSendRoute, supportsTemplates } from "./inbox/sendRoute";
+import { invalidateChannels, useChannelsList } from "./channels/channelUi";
+import { useQueryClient } from "@tanstack/react-query";
+import { channelErrorText, sendErrorText } from "./channels/channelErrors";
+import { InboxBoard } from "./inbox/InboxBoard";
+import { InboxTable } from "./inbox/InboxTable";
+import { InboxFilterMenu } from "./inbox/InboxFilterMenu";
+import { InboxSortMenu } from "./inbox/InboxSortMenu";
+import { InboxMoreMenu, InboxViewPicker, InboxViewsColumn, ViewIcons, avatarIcon, dotIcon, type ViewEntry, type ViewGroup } from "./inbox/InboxViewNav";
+import {
+  AI_MEMBER, channelKindsToShow, defaultView, matchesView, parseView, previewPrefix, readStoredView, viewCounts,
+  viewForBucket, waitTime, writeStoredView, availableViewOrNull, viewAfterHashChange, type ViewId,
+} from "./inbox/inboxViews";
+import { LabelChips } from "./inbox/LabelChips";
+import { AdAttributionCard, CtwaChip } from "./inbox/CtwaChip";
 import { shouldAutoSelect, useEmbedVisible } from "@/embed/visibility";
 import { AddToPipelineButton } from "./inbox/AddToPipelineButton";
 import { MediaPicker } from "@/components/MediaPicker";
-import type { Media } from "@/lib/types";
+import type { ChannelDto, Media } from "@/lib/types";
+import { CustomerThread } from "./inbox/thread/CustomerThread";
+import { useSavedReplies } from "./inbox/SavedRepliesPicker";
+import { LinkedItemsCard } from "./inbox/LinkedItemsCard";
+import { TopicsCard } from "./inbox/TopicsCard";
+import { TemplateSendDialog, type TemplateHeaderValue } from "./inbox/TemplateSendDialog";
+import { getHashParam, setHashParam } from "@/lib/hashState";
+import { useViewport } from "@/lib/useViewport";
+import { fetchQueryKey, prefetchFetch } from "@/api/useFetch";
+import {
+  DETAIL_STALE_MS, applyLocalReads, createRowPrefetcher, detailPath, invalidateConversationDetail, isDetailStale,
+  markReadAndPatch, threadFor,
+} from "./inbox/inboxCache";
+import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
+import { isVideoType, messageBodyView } from "./inbox/messageMedia";
+import { FollowUpButton } from "./inbox/FollowUpButton";
+import { followUpContactId } from "./inbox/followUpGate";
+import { useDialogFocus } from "@/lib/useDialogFocus";
+import {
+  autoImportAttempted, emptyThreadCopy, emptyThreadView, historyImportPath, markAutoImportAttempted, shouldAutoImportHistory,
+  type EmptyThreadView, type HistoryImportResult, type HistoryImportStatus,
+} from "./inbox/historyImport";
+import "@/styles/screens/inbox.css";
 
-type FilterId = "all" | "human" | "unread" | "closed" | "spam";
 
 /** Day label for thread separators: Today / Yesterday / a localized date.
  *  Threads span days (a recovered complaint sat a week), so per-message
@@ -59,7 +110,7 @@ function dayLabel(
   const diffDays = Math.round((startOf(new Date()) - startOf(d)) / 86_400_000);
   if (diffDays === 0) return tx("Today", "اليوم");
   if (diffDays === 1) return tx("Yesterday", "أمس");
-  return d.toLocaleDateString(lang === "ar" ? "ar" : undefined, {
+  return d.toLocaleDateString(lang === "ar" ? "ar-u-nu-latn" : undefined, {
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -67,10 +118,7 @@ function dayLabel(
 }
 type ConversationDetail = Conversation & { messages: Message[] };
 
-const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "l"];
-/** Channels offered as filter toggles. TikTok is hidden until we support it;
- *  it stays in CHANNELS so the default filter never hides a conversation. */
-const FILTER_CHANNELS = CHANNELS.filter((ch) => ch !== "tiktok");
+const CHANNELS: ConvChannel[] = ["whatsapp", "instagram", "facebook", "tiktok", "webchat", "telegram", "l"];
 
 /** Channel brand colors — used for the filter-pill dots and the solid channel
  *  tag in the thread header (per the Samemha Inbox v2 mock). */
@@ -80,6 +128,7 @@ const CHANNEL_DOT: Record<ConvChannel, string> = {
   facebook: "#4267b2",
   tiktok: "#7a7a7a",
   webchat: "#5A8FD4",
+  telegram: "#229ED9",
   l: "#8b5cf6",
 };
 
@@ -166,6 +215,14 @@ function WebIcon({ size = 10 }: GlyphProps) {
   );
 }
 
+function TgIcon({ size = 10 }: GlyphProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M21 4 3 11l5.5 2L10 19l3-3.5 4.5 3.3L21 4z" fill="#fff" />
+    </svg>
+  );
+}
+
 function TtIcon({ size = 10 }: GlyphProps) {
   return (
     <svg
@@ -203,6 +260,7 @@ const CHANNEL_BG: Record<ConvChannel, string> = {
   facebook: "#1877F2",
   tiktok: "#000000",
   webchat: "var(--info)",
+  telegram: "#229ED9",
   l: "#8b5cf6",
 };
 
@@ -223,7 +281,9 @@ function ChannelMark({
           ? FbIcon
           : channel === "tiktok"
             ? TtIcon
-            : WebIcon;
+            : channel === "telegram"
+              ? TgIcon
+              : WebIcon;
   return (
     <span
       title={CHANNEL_LABEL[channel]}
@@ -243,22 +303,32 @@ function ChannelMark({
   );
 }
 
-interface FilterDef {
-  id: FilterId;
-  label: string;
-  count: number;
-  kind?: "human";
-}
-
 interface InboxListProps {
-  filter: FilterId;
-  setFilter: (f: FilterId) => void;
-  channels: Set<ConvChannel>;
-  toggleChannel: (c: ConvChannel) => void;
-  convs: Conversation[];
+  filter: InboxFilter;
+  setFilter: (f: InboxFilter) => void;
+  sort: InboxSort;
+  setSort: (s: InboxSort) => void;
+  team: TeamMember[];
+  labels: ConversationLabel[];
+  /** Inbox views: the groups (column / picker), the active entry and the clock for wait times. */
+  viewGroups: ViewGroup[];
+  activeEntry: ViewEntry;
+  onSelectView: (v: ViewId) => void;
+  now: number;
+  /** Warm a conversation's detail (row hover / focus). */
+  onPrefetch: (id: string) => void;
   allConvs: Conversation[];
   activeId: string | null;
   setActiveId: (id: string) => void;
+  view: InboxView;
+  setView: (v: InboxView) => void;
+  search: string;
+  setSearch: (s: string) => void;
+  visibleConvs: Conversation[];
+  numberTabList: NumberTab[];
+  numberTab: string | null;
+  setNumberTab: (id: string | null) => void;
+  numberChannels: ChannelDto[];
   contactById: Map<string, Contact>;
   loading: boolean;
   error: string | null;
@@ -274,11 +344,24 @@ interface ConversationPaneProps {
     name: string,
     language: string,
     variables: string[],
+    header?: TemplateHeaderValue,
   ) => Promise<void>;
+  /** "conv" = this conversation only, "all" = the customer's stitched thread (`?tv=all`). */
+  threadView: "conv" | "all";
+  onThreadView: (v: "conv" | "all") => void;
   sending: boolean;
   sendError: string | null;
+  /** SP-19: the conversation's channel, and whether its kind has several numbers. */
+  channel: ChannelDto | null;
+  multiNumber: boolean;
+  /** I1: the channel's label among the number tabs (tells apart numbers sharing a name). */
+  numberLabel?: string | null;
   onConvertToTicket: () => void;
+  onConversationChanged: () => Promise<unknown>;
   messagesLoading: boolean;
+  /** What an empty thread shows (a Zernio thread loads or reports its history). */
+  emptyView: EmptyThreadView;
+  onRetryHistory: () => void;
   lang: Lang;
   tx: Tx;
 }
@@ -510,16 +593,6 @@ const ticketLabelStyle: CSSProperties = {
   display: "block",
 };
 
-const STAGE_BADGE_KIND: Record<StageColor, BadgeKind> = {
-  ink: "",
-  info: "info",
-  ok: "ok",
-  warn: "warn",
-  bad: "bad",
-  accent: "accent",
-  human: "human",
-};
-
 interface ConvertTicketModalProps {
   conv: ConversationDetail;
   contact: Contact | undefined;
@@ -602,7 +675,7 @@ function ConvertTicketModal({
         name: contact.name,
         phone: contact.phone || "—",
         industry: "facebook",
-        lifecycle: "Lead",
+        lifecycle: "lead",
         source: "Facebook DM",
         tags: ["Facebook"],
         lastSeen: contact.lastSeen,
@@ -781,102 +854,6 @@ function ConvertTicketModal({
   );
 }
 
-interface ContactTicketsProps {
-  contactId: string;
-  tx: Tx;
-}
-
-function ContactTickets({ contactId, tx }: ContactTicketsProps) {
-  const ticketsQ = useFetch<TicketsListPage>(`/tickets?contactId=${contactId}`);
-  // Don't render the section on error.
-  if (ticketsQ.error) return null;
-
-  const tickets = ticketsQ.data?.items ?? [];
-
-  return (
-    <div>
-      <SectionLabel>{tx("Tickets", "التذاكر")}</SectionLabel>
-      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-        {ticketsQ.loading && tickets.length === 0 && (
-          <div
-            className="mono"
-            style={{ fontSize: 11, color: "var(--ink-3)", opacity: 0.7 }}
-          >
-            {tx("loading…", "جارٍ التحميل…")}
-          </div>
-        )}
-        {!ticketsQ.loading && tickets.length === 0 && (
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 10,
-              background: "var(--bg-2)",
-              border: "1px dashed var(--line-soft)",
-              fontSize: 12,
-              color: "var(--ink-3)",
-              textAlign: "center",
-            }}
-          >
-            {tx("No tickets yet", "لا توجد تذاكر")}
-          </div>
-        )}
-        {tickets.map((t) => {
-          const stageColor: StageColor = t.stage?.color ?? "ink";
-          const kind: BadgeKind = STAGE_BADGE_KIND[stageColor] ?? "";
-          return (
-            <div
-              key={t.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--line-soft)",
-                background: "var(--bg-2)",
-              }}
-            >
-              <span
-                className="mono"
-                style={{ fontSize: 11, color: "var(--ink-3)", flex: "0 0 auto" }}
-              >
-                #{t.number}
-              </span>
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 12,
-                  color: "var(--ink-1)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                title={t.title}
-              >
-                {t.title}
-              </span>
-              {t.stage && (
-                <Badge kind={kind} dot>
-                  {t.stage.label}
-                </Badge>
-              )}
-              {typeof t.value === "number" && (
-                <span
-                  className="mono"
-                  style={{ fontSize: 11, color: "var(--ink-2)", flex: "0 0 auto" }}
-                >
-                  {t.currency} {t.value.toLocaleString()}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 interface BubbleProps {
   m: Message;
 }
@@ -884,92 +861,66 @@ interface BubbleProps {
 function InboxList({
   filter,
   setFilter,
-  channels,
-  toggleChannel,
-  convs,
+  sort,
+  setSort,
+  team,
+  labels,
+  viewGroups,
+  activeEntry,
+  onSelectView,
+  now,
+  onPrefetch,
   allConvs,
   activeId,
   setActiveId,
+  view,
+  setView,
+  search,
+  setSearch,
+  visibleConvs,
+  numberTabList,
+  numberTab,
+  setNumberTab,
+  numberChannels,
   contactById,
   loading,
   error,
   onRetry,
   tx,
 }: InboxListProps) {
-  // Count all six buckets in a single pass, memoized on the conversation list.
-  // Previously this ran six full allConvs.filter() scans on every render — and
-  // InboxList re-renders on every 30s poll and realtime bump.
-  const counts = useMemo(() => {
-    let human = 0, unread = 0, closed = 0, spam = 0;
-    for (const c of allConvs) {
-      if (c.status === "human") human++;
-      else if (c.status === "closed") closed++;
-      else if (c.status === "spam") spam++;
-      if (c.unread > 0) unread++;
-    }
-    return { all: allConvs.length, human, unread, closed, spam };
-  }, [allConvs]);
+  const teamById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
+  const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
+  // Row prefetch: after a short hover (a sweep across rows fetches nothing), or on focus.
+  const prefetcher = useMemo(() => createRowPrefetcher(onPrefetch), [onPrefetch]);
+  useEffect(() => prefetcher.leave, [prefetcher]);
 
   // During the unified initial load the skeleton stands in for the rows —
   // rendering partial rows underneath would reintroduce per-channel pop-in.
-  const [search, setSearch] = useState<string>("");
   const q = search.trim().toLowerCase();
-  const visibleConvs = (loading ? [] : convs).filter((c) => {
-    if (!q) return true;
-    const name = contactById.get(c.contactId)?.name ?? "";
-    return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
-  });
-
-  // Per-channel totals for the channel filter pills.
-  const channelCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const c of allConvs) m.set(c.channel, (m.get(c.channel) ?? 0) + 1);
-    return m;
-  }, [allConvs]);
-
-  const filters: FilterDef[] = [
-    { id: "all", label: tx("All", "الكل"), count: counts.all },
-    { id: "human", label: tx("Assigned", "معيّنة"), count: counts.human, kind: "human" },
-    { id: "unread", label: tx("Unread", "غير مقروءة"), count: counts.unread },
-    { id: "closed", label: tx("Closed", "مغلقة"), count: counts.closed },
-    { id: "spam", label: tx("Spam", "مزعجة"), count: counts.spam },
-  ];
 
   return (
     <div
+      className="ix-list"
       style={{
-        display: "flex",
-        flexDirection: "column",
         borderInlineEnd: "1px solid var(--line-soft)",
         background: "var(--bg-1)",
-        minHeight: 0,
       }}
     >
-      <div style={{ padding: "18px 16px 12px", borderBottom: "1px solid var(--line-soft)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 12,
-          }}
-        >
-          <div>
-            <h2 className="ix-display" style={{ margin: 0, fontSize: 18, fontWeight: 800, lineHeight: 1 }}>
-              {tx("Inbox", "الرسائل")}
-            </h2>
-            <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 }}>
-              {counts.all} {tx("conversations", "محادثة")}
-            </div>
+      <div className="ix-list-head">
+        <div className="ix-list-titlebar">
+          <h2 className="ix-display ix-list-title" dir="auto">
+            {activeEntry.label}
+          </h2>
+          {activeEntry.count !== undefined ? (
+            <span className={`ix-list-count${activeEntry.hot ? " hot" : ""}`}>{activeEntry.count}</span>
+          ) : null}
+          <div className="ix-list-picker">
+            <InboxViewPicker groups={viewGroups} active={activeEntry} onSelect={onSelectView} tx={tx} />
           </div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <button className="btn ghost icon sm" title={tx("Filter", "فلتر")}>
-              <IconFilter w={14} />
-            </button>
-            <button className="btn ghost icon sm" title={tx("Sort", "ترتيب")}>
-              <IconMore w={14} />
-            </button>
-          </div>
+          <span style={{ flex: 1 }} />
+          <InboxSortMenu sort={sort} onChange={setSort} tx={tx} />
+          <InboxFilterMenu filter={filter} onChange={setFilter} team={team} labels={labels} channels={numberChannels} tx={tx} />
+          <InboxMoreMenu view={view} setView={setView} convs={visibleConvs} tx={tx} lang={tx("en", "ar") as Lang} />
         </div>
         <input
           className="ix-search"
@@ -978,38 +929,30 @@ function InboxList({
           placeholder={tx("Search conversations…", "ابحث في المحادثات…")}
           aria-label={tx("Search conversations", "ابحث في المحادثات")}
         />
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 12 }}>
-          {filters.map((f) => (
-            <button
-              key={f.id}
-              className={`ix-pill ${filter === f.id ? "active" : ""}`.trim()}
-              onClick={() => setFilter(f.id)}
-            >
-              {f.label}
-              <span className="ct">{f.count}</span>
-            </button>
-          ))}
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
-          {FILTER_CHANNELS.map((ch) => {
-            const active = channels.has(ch);
-            return (
+        {numberTabList.length > 0 && (
+          <div
+            role="tablist"
+            aria-label={tx("Numbers", "الأرقام")}
+            className="ix-pill-row"
+            style={{ gap: 5, marginTop: 10 }}
+          >
+            {numberTabList.map((tab) => (
               <button
-                key={ch}
+                key={tab.id ?? "all"}
                 type="button"
-                className={`ix-ch ${active ? "active" : ""}`.trim()}
-                onClick={() => toggleChannel(ch)}
-                aria-pressed={active}
+                role="tab"
+                aria-selected={numberTab === tab.id}
+                className={`ix-pill ${numberTab === tab.id ? "active" : ""}`.trim()}
+                onClick={() => setNumberTab(tab.id)}
               >
-                <span className="dot" style={{ background: CHANNEL_DOT[ch] }} />
-                {CHANNEL_LABEL[ch]}
-                <span style={{ opacity: 0.6 }}>{channelCounts.get(ch) ?? 0}</span>
+                <span dir="auto">{tab.id === null ? tx("All numbers", "كل الأرقام") : tab.label}</span>
+                <span className="ct">{tab.count}</span>
               </button>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
-      <div style={{ flex: 1, overflowY: "auto", paddingBlock: "6px 16px" }}>
+      <div className="ix-list-scroll" style={{ paddingBlock: "6px 16px" }}>
         {loading && (
           <div aria-label={tx("Loading conversations", "جارٍ تحميل المحادثات")}>
             {Array.from({ length: 6 }).map((_, i) => (
@@ -1034,6 +977,22 @@ function InboxList({
             </button>
           </div>
         )}
+        {!loading && !error && visibleConvs.length === 0 && !q && (
+          <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
+            <div>
+              {allConvs.length === 0
+                ? tx("No conversations yet", "لا توجد محادثات بعد")
+                : activeFilterCount(filter) > 0
+                  ? tx("No conversations match these filters.", "لا توجد محادثات تطابق عوامل التصفية.")
+                  : tx("Nothing in this view.", "لا شيء في هذا العرض.")}
+            </div>
+            {allConvs.length > 0 && activeFilterCount(filter) > 0 && (
+              <button className="btn sm" style={{ marginTop: 8 }} onClick={() => setFilter(EMPTY_FILTER)}>
+                {tx("Clear filters", "مسح عوامل التصفية")}
+              </button>
+            )}
+          </div>
+        )}
         {!loading && visibleConvs.length === 0 && q && (
           <div style={{ padding: "18px 16px", fontSize: 12, color: "var(--ink-3)" }}>
             {tx("No conversations match your search.", "لا توجد محادثات مطابقة لبحثك.")}
@@ -1041,11 +1000,16 @@ function InboxList({
         )}
         {visibleConvs.map((c) => {
           const contact = contactById.get(c.contactId);
+          const wait = waitTime(c, now);
+          const prefix = previewPrefix(c);
           return (
             <div
               key={c.id}
               className={`conv-row ix-row ${activeId === c.id ? "active" : ""}`.trim()}
               onClick={() => setActiveId(c.id)}
+              onMouseEnter={() => prefetcher.enter(c.id)}
+              onMouseLeave={prefetcher.leave}
+              onFocus={() => prefetcher.focus(c.id)}
             >
               <div style={{ position: "relative", flex: "0 0 auto" }}>
                 <Avatar name={contact?.name} color="200" size="lg" />
@@ -1075,9 +1039,18 @@ function InboxList({
                   >
                     {contact?.name}
                   </span>
-                  <span style={{ fontSize: 10.5, color: "var(--ink-4)", flexShrink: 0 }}>
-                    {c.lastAt}
-                  </span>
+                  {wait ? (
+                    <span
+                      className={`ix-wait${wait.tone === "none" ? "" : ` ${wait.tone}`}`}
+                      title={tx(`Waiting ${wait.label}`, `ينتظر منذ ${wait.label}`)}
+                    >
+                      <bdi dir="ltr">{wait.label}</bdi>
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 10.5, color: "var(--ink-4)", flexShrink: 0 }}>
+                      {c.lastAt}
+                    </span>
+                  )}
                 </div>
                 <div
                   dir="auto"
@@ -1092,16 +1065,49 @@ function InboxList({
                     textAlign: "start",
                   }}
                 >
-                  {c.lastFrom === "human" && <span style={{ color: "var(--accent)" }}>↳ </span>}
+                  {prefix ? (
+                    <span className="ix-pv-from">{prefix === "you" ? tx("You:", "أنت:") : tx("AI:", "الذكاء:")} </span>
+                  ) : null}
                   {c.preview}
                 </div>
+                {c.adSource && (
+                  <div style={{ marginTop: 4, minWidth: 0, display: "flex" }}>
+                    <CtwaChip ad={c.adSource} tx={tx} />
+                  </div>
+                )}
+                {(c.labelIds?.length ?? 0) > 0 && (
+                  <div style={{ marginTop: 4 }}>
+                    <LabelChips labelIds={c.labelIds ?? []} labelById={labelById} />
+                  </div>
+                )}
               </div>
-              {(c.unread > 0 || c.escalated) && (
+              {c.assigneeId && teamById.get(c.assigneeId) && (
                 <span
-                  className="ix-unread-dot"
-                  style={c.escalated ? { background: "var(--warn)" } : undefined}
-                  title={c.escalated ? tx("Escalated", "مُصعَّدة") : tx("Unread", "غير مقروءة")}
-                />
+                  title={teamById.get(c.assigneeId)!.name}
+                  aria-label={teamById.get(c.assigneeId)!.name}
+                  style={{
+                    flex: "0 0 auto",
+                    width: 22,
+                    height: 22,
+                    borderRadius: 99,
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: 9.5,
+                    fontWeight: 700,
+                    background: "var(--bg-3)",
+                    color: "var(--ink-2)",
+                  }}
+                >
+                  {teamById.get(c.assigneeId)!.initials}
+                </span>
+              )}
+              {c.escalated && (
+                <span className="ix-unread-dot" style={{ background: "var(--warn)" }} title={tx("Escalated", "مُصعَّدة")} />
+              )}
+              {c.unread > 0 && (
+                <span className="ix-unread-badge" title={tx("Unread", "غير مقروءة")} aria-label={tx(`${c.unread} unread`, `${c.unread} غير مقروءة`)}>
+                  {c.unread > 99 ? "99+" : c.unread}
+                </span>
               )}
             </div>
           );
@@ -1127,6 +1133,9 @@ function Bubble({ m }: BubbleProps) {
   // of showing cryptic dots. (Live-diagnosed 2026-08-19: a sticker arrived as
   // "•••••••••" with attachments: [].)
   const isUnsupported = !m.attach && /^•+$/.test(m.body.trim());
+  // "[video]"/"[image]" placeholders: hidden when the media renders, an honest
+  // "couldn't be loaded" label when it never saved.
+  const bodyView = messageBodyView(m.body ?? "", Boolean(m.attach), tx);
   // Stored `t` strings are inconsistent across ingestion eras (some local,
   // some UTC — one thread showed 14:26 above 11:36). createdAt is the truth;
   // render it in the viewer's own timezone, falling back to `t` only for
@@ -1211,11 +1220,40 @@ function Bubble({ m }: BubbleProps) {
                 "🧩 رسالة غير مدعومة (ملصق أو استفتاء أو نحوه) — اعرضها في واتساب",
               )}
             </span>
+          ) : bodyView.missing ? (
+            <span style={{ fontStyle: "italic", color: "var(--ink-3)" }}>{bodyView.missing}</span>
           ) : (
-            m.body
+            bodyView.text
           )}
           {m.attach && <MessageAttachment value={m.attach} />}
         </div>
+        {m.reaction && (
+          <div
+            title={tx("Customer reaction", "تفاعل العميل")}
+            aria-label={tx(`Customer reacted ${m.reaction}`, `تفاعل العميل ${m.reaction}`)}
+            style={{
+              display: "flex",
+              justifyContent: isOut ? "flex-end" : "flex-start",
+              marginTop: -8,
+              paddingInline: 10,
+              position: "relative",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 14,
+                lineHeight: 1,
+                padding: "2px 6px",
+                borderRadius: 999,
+                background: "var(--bg-elev)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--ix-shadow)",
+              }}
+            >
+              {m.reaction}
+            </span>
+          </div>
+        )}
         <div
           style={{
             fontSize: 10.5,
@@ -1237,16 +1275,50 @@ function ConversationPane({
   contactById,
   onSend,
   onSendTemplate,
+  threadView,
+  onThreadView,
   sending,
   sendError,
+  channel,
+  multiNumber,
+  numberLabel,
   onConvertToTicket,
+  onConversationChanged,
   messagesLoading,
+  emptyView,
+  onRetryHistory,
   lang,
   tx,
 }: ConversationPaneProps) {
   const contact = contactById.get(conv.contactId);
   const { user } = useAuth();
+  // Every send path (text, media, template) is POST .../messages|send|send-template,
+  // all mapped to conversations.create on the backend.
+  const { can } = usePermissions();
+  const canCompose = can("conversations.create");
+  const canViewAds = can("reports.view");
+  const followUpFor = followUpContactId(conv, can("contacts.update"));
+  const noPermCompose = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const [draft, setDraft] = useState<string>("");
+  // SP-18 "Copy to reply box": a copilot draft for this conversation fills the composer (never sends).
+  const draftNow = useRef(draft);
+  draftNow.current = draft;
+  useEffect(() => {
+    const take = () => {
+      const text = takeReplyDraft(conv.id);
+      if (text === null) return;
+      // Never silently replace what the member is typing.
+      const cur = draftNow.current.trim();
+      if (cur && cur !== text.trim() && !window.confirm(tx("Replace the text in the reply box with Kewy's draft?", "هل تريد استبدال النص في مربع الرد بمسودة كيوي؟"))) return;
+      setDraft(text);
+    };
+    take();
+    const onOffer = (e: Event) => {
+      if ((e as CustomEvent<{ conversationId?: string }>).detail?.conversationId === conv.id) take();
+    };
+    window.addEventListener(REPLY_DRAFT_EVENT, onOffer);
+    return () => window.removeEventListener(REPLY_DRAFT_EVENT, onOffer);
+  }, [conv.id]);
   const [attachedMedia, setAttachedMedia] = useState<Media | null>(null);
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState<boolean>(false);
@@ -1261,7 +1333,7 @@ function ConversationPane({
     try {
       setAttachedMedia(await uploadMedia(file));
     } catch (e) {
-      setAttachError(e instanceof Error ? e.message : "Upload failed");
+      setAttachError(mediaErrorText(e, tx, tx("Upload failed", "فشل الرفع")));
     } finally {
       setAttachUploading(false);
     }
@@ -1274,6 +1346,13 @@ function ConversationPane({
   const isWhatsApp = conv.channel === "whatsapp";
   const waWindowOpen = conv.waWindowOpen !== false;
   const waBlocked = isWhatsApp && !waWindowOpen;
+  // SP-19: a disconnected channel keeps its history but cannot send.
+  const channelDown = channel?.status === "disconnected";
+  const numberName = numberLabel || (channel ? channel.displayName || channel.phoneNumber || "" : "");
+  const channelDownText = tx(
+    "This channel is disconnected. Reconnect it to send replies.",
+    "هذه القناة مفصولة. أعد ربطها لإرسال الردود.",
+  );
 
   // Auto-scroll the thread to the latest message — but only when the user is
   // already near the bottom. Standard chat UX: if they've scrolled up to
@@ -1287,8 +1366,36 @@ function ConversationPane({
   // the real ones came back empty — demo scaffolding that rendered on top of
   // live customer conversations and read as though the AI had answered them.
   const messages: Message[] = conv.messages;
+  // The stitched customer thread needs DB conversations; live FB/IG threads have no contact thread.
+  const canStitch = !isLiveThreadId(conv.id) && !!conv.contactId;
+  // Inbox views: how long the customer has waited on us (header sub line).
+  const headerWait = waitTime(conv, Date.now());
+  const showAll = threadView === "all" && canStitch;
+  const saved = useSavedReplies({
+    draft,
+    setDraft,
+    lang,
+    tx,
+    disabled: !canCompose || waBlocked || channelDown,
+  });
+
+  // Internal notes for this thread, shown inline between the messages. Same URL
+  // as the NotesPanel composer below, so React Query shares the cache and a new
+  // note appears here after the panel's refetch.
+  const threadNotesQ = useFetch<Note[]>(
+    conv.id ? `/notes?conversationId=${encodeURIComponent(conv.id)}` : null,
+  );
+  const teamQ = useFetch<TeamMember[]>("/team");
+  const authorName = (id: string | null) =>
+    id ? (teamQ.data ?? []).find((m) => m.id === id)?.name : undefined;
+  const threadNotes = useMemo(
+    () => (threadNotesQ.data ?? []).flatMap((n) => [n, ...(n.replies ?? [])]),
+    [threadNotesQ.data],
+  );
+  const timeline = useMemo(() => mergeByTime(messages, threadNotes), [messages, threadNotes]);
 
   const handleSend = () => {
+    if (!canCompose) return;
     const body = draft.trim();
     // Allow sending if there's text OR an image attachment.
     if (!body && !attachedMedia) return;
@@ -1336,14 +1443,12 @@ function ConversationPane({
       }}
     >
       <div
+        className="ix-conv-head"
         style={{
           minHeight: 64,
           padding: "10px 20px",
           borderBottom: "1px solid var(--line-soft)",
           background: "var(--bg-1)",
-          display: "flex",
-          alignItems: "center",
-          gap: 13,
         }}
       >
         <div style={{ position: "relative", flex: "0 0 auto" }}>
@@ -1359,9 +1464,9 @@ function ConversationPane({
             <ChannelMark channel={conv.channel} size={14} />
           </span>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="ix-conv-info">
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-            <span className="ix-display" style={{ fontWeight: 700, fontSize: 16.5 }}>
+            <span className="ix-display ix-conv-name" style={{ fontWeight: 700, fontSize: 16.5 }}>
               {contact?.name}
             </span>
             <span
@@ -1370,6 +1475,11 @@ function ConversationPane({
             >
               {CHANNEL_LABEL[conv.channel]}
             </span>
+            {multiNumber && numberName && (
+              <span className="ix-chpill" dir="auto" style={{ background: "var(--bg-elev)", color: "var(--ink-2)", border: "1px solid var(--line-soft)" }}>
+                {numberName}
+              </span>
+            )}
             <ResolutionBadge conv={conv} lang={lang} />
             <span className="ix-online">
               <span className="dot" />
@@ -1377,10 +1487,10 @@ function ConversationPane({
             </span>
           </div>
           <div
+            className="ix-conv-sub"
             style={{
               fontSize: 12,
               color: "var(--ink-3)",
-              display: "flex",
               gap: 6,
               marginTop: 3,
             }}
@@ -1388,24 +1498,67 @@ function ConversationPane({
             <span>{contact?.phone}</span>
             <span>·</span>
             <span>{contact?.industry}</span>
+            {headerWait ? (
+              <>
+                <span>·</span>
+                <span className={`ix-wait${headerWait.tone === "none" ? "" : ` ${headerWait.tone}`}`}>
+                  {tx("waiting", "ينتظر منذ")} <bdi dir="ltr">{headerWait.label}</bdi>
+                </span>
+              </>
+            ) : null}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div className="ix-conv-primary">
+          <ConversationActions key={`p-${conv.id}`} conv={conv} lang={lang} onChanged={onConversationChanged} part="primary" />
+        </div>
+        <div className="ix-conv-actions">
+          {canStitch && (
+            <div
+              role="group"
+              aria-label={tx("Thread view", "عرض المحادثة")}
+              style={{ display: "inline-flex", border: "1px solid var(--line)", borderRadius: 8, overflow: "hidden" }}
+            >
+              {(
+                [
+                  ["conv", tx("This conversation", "هذه المحادثة")],
+                  ["all", tx("All conversations", "كل المحادثات")],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  className="btn sm"
+                  aria-pressed={(showAll ? "all" : "conv") === v}
+                  onClick={() => onThreadView(v)}
+                  style={{
+                    borderRadius: 0,
+                    border: 0,
+                    background: (showAll ? "all" : "conv") === v ? "var(--accent-soft)" : "transparent",
+                    color: (showAll ? "all" : "conv") === v ? "var(--accent)" : undefined,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <ConversationAiToggle
             conversationId={conv.id}
             enabled={conv.aiEnabled ?? false}
             pausedAt={conv.aiPausedAt ?? null}
             lang={lang}
           />
+          <ConversationActions key={conv.id} conv={conv} lang={lang} onChanged={onConversationChanged} part="secondary" />
           <button className="btn" onClick={onConvertToTicket}>
             <IconCheck w={13} />
             {tx("Convert to ticket", "إلى تذكرة")}
           </button>
+          {followUpFor && <FollowUpButton contactId={followUpFor} tx={tx} />}
           <ConversationTicketsPill
             conversationId={conv.id}
             lang={lang}
             onClick={(t) => {
-              window.location.hash = `#/pipeline?openTicket=${encodeURIComponent(t.id)}`;
+              window.location.hash = `#/pipeline?open=${encodeURIComponent(t.id)}`;
             }}
           />
           <AddToPipelineButton
@@ -1420,6 +1573,9 @@ function ConversationPane({
           </button>
         </div>
       </div>
+      {conv.adSource && (
+        <AdAttributionCard ad={conv.adSource} referredAt={conv.adReferredAt} canOpen={canViewAds} tx={tx} lang={lang} />
+      )}
 
       <div
         ref={scrollerRef}
@@ -1430,19 +1586,25 @@ function ConversationPane({
           wasAtBottomRef.current =
             t.scrollHeight - t.scrollTop - t.clientHeight < 60;
         }}
+        className="ix-thread-scroll"
         style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "26px 30px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
           backgroundImage: "radial-gradient(circle, var(--line-soft) 1px, transparent 1px)",
           backgroundSize: "22px 22px",
           backgroundPosition: "0 0",
         }}
       >
-        {messagesLoading && messages.length === 0 ? (
+        {showAll ? (
+          <CustomerThread
+            contactId={conv.contactId}
+            lang={lang}
+            tx={tx}
+            scrollerRef={scrollerRef}
+            refreshToken={`${conv.updatedAt ?? ""}|${messages.length}`}
+            renderMessage={(m) => <Bubble m={m} />}
+            dayLabel={(iso) => dayLabel(iso, lang, tx)}
+            onChanged={() => void onConversationChanged()}
+          />
+        ) : messagesLoading && messages.length === 0 ? (
           <div
             aria-label={tx("Loading messages", "جارٍ تحميل الرسائل")}
             style={{ display: "flex", flexDirection: "column", gap: 4, paddingTop: 8 }}
@@ -1453,6 +1615,23 @@ function ConversationPane({
             <MessageSkeleton side="right" />
             <MessageSkeleton side="left" />
           </div>
+        ) : messages.length === 0 && emptyView !== "no-messages" ? (
+          (() => {
+            const copy = emptyThreadCopy(emptyView, conv.channel, tx);
+            return (
+              <div className="ix-history-state" role="status" aria-live="polite">
+                {(emptyView === "importing" || emptyView === "checking") && (
+                  <span className="ix-history-spinner" aria-hidden="true" />
+                )}
+                <span>{copy?.text}</span>
+                {copy?.retry && (
+                  <button type="button" className="btn sm" onClick={onRetryHistory}>
+                    {tx("Retry", "إعادة المحاولة")}
+                  </button>
+                )}
+              </div>
+            );
+          })()
         ) : messages.length === 0 ? (
           <div
             className="muted"
@@ -1461,18 +1640,29 @@ function ConversationPane({
             {tx("No messages in this thread yet.", "لا توجد رسائل في هذه المحادثة بعد.")}
           </div>
         ) : (
-          messages.map((m, i) => {
+          timeline.map((m, i) => {
             const label = m.createdAt ? dayLabel(m.createdAt, lang, tx) : "";
-            const prev = i > 0 ? messages[i - 1] : null;
+            const prev = i > 0 ? timeline[i - 1] : null;
             const prevLabel = prev?.createdAt ? dayLabel(prev.createdAt, lang, tx) : "";
+            const isNote = "authorUserId" in m;
             return (
-              <Fragment key={`${conv.id}-${i}`}>
+              <Fragment key={isNote ? `note-${m.id}` : `msg-${m.metaMessageId ?? `${m.createdAt ?? ""}|${m.from}|${i}`}`}>
                 {label && label !== prevLabel && (
                   <div className="day-divider">
                     <span>{label}</span>
                   </div>
                 )}
-                <Bubble m={m} />
+                {isNote ? (
+                  <InlineNote
+                    note={m}
+                    isOwn={!!user && m.authorUserId === (user as { id?: string }).id}
+                    authorName={authorName(m.authorUserId)}
+                    label={tx("Internal note", "ملاحظة داخلية")}
+                    timeLabel={m.createdAt ? new Date(m.createdAt).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" }) : ""}
+                  />
+                ) : (
+                  <Bubble m={m} />
+                )}
               </Fragment>
             );
           })
@@ -1504,32 +1694,16 @@ function ConversationPane({
         </div>
       </details>
 
-      <div style={{ padding: "12px 18px 16px", borderTop: "1px solid var(--line-soft)" }}>
-        {!waBlocked && (
-          <div style={{ display: "flex", gap: 7, marginBottom: 10, flexWrap: "wrap" }}>
-            {[
-              tx("Ahlan! How can we help?", "أهلاً وسهلاً"),
-              tx("Your order is on its way", "الطلب بطريقه اليك"),
-              tx("Thanks for reaching out", "شكراً لتواصلك معنا"),
-            ].map((qr) => (
-              <button
-                key={qr}
-                type="button"
-                className="ix-quick"
-                dir="auto"
-                onClick={() => setDraft((d) => (d ? d : qr))}
-              >
-                {qr}
-              </button>
-            ))}
-          </div>
-        )}
+      <div className="ix-composer-bar" style={{ padding: "12px 18px 16px", borderTop: "1px solid var(--line-soft)" }}>
+        {!waBlocked && saved.strip}
+        {saved.slashMenu}
         <div className="ix-composer">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (waBlocked) return;
+              if (waBlocked || !canCompose) return;
+              if (saved.onKeyDown(e)) return;
               // Enter sends, Shift+Enter inserts a newline (standard chat UX).
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -1537,7 +1711,7 @@ function ConversationPane({
               }
             }}
             onPaste={(e) => {
-              if (waBlocked) return;
+              if (waBlocked || !canCompose) return;
               // Screenshots and copied images arrive as clipboard FILES; upload
               // straight to the attachment slot. Anything else (text, HTML)
               // falls through to the browser's normal paste.
@@ -1548,12 +1722,15 @@ function ConversationPane({
               e.preventDefault();
               void attachDirect(img);
             }}
-            disabled={waBlocked}
+            disabled={waBlocked || !canCompose}
+            title={canCompose ? undefined : noPermCompose}
             placeholder={
-              waBlocked
+              !canCompose
+                ? noPermCompose
+                : waBlocked
                 ? tx(
                     "Pick a template above to message outside the 24h window.",
-                    "اختر قالبًا أعلاه للمراسلة خارج نافذة الـ٢٤ ساعة.",
+                    "اختر قالبًا أعلاه للمراسلة خارج نافذة الـ24 ساعة.",
                   )
                 : tx("Type a reply…", "اكتب ردًّا…")
             }
@@ -1569,6 +1746,11 @@ function ConversationPane({
               fontFamily: "inherit",
             }}
           />
+          {channelDown && (
+            <div role="status" style={{ fontSize: 12, color: "var(--warn)", marginTop: 4 }}>
+              {channelDownText}
+            </div>
+          )}
           {sendError && (
             <div
               style={{
@@ -1601,13 +1783,13 @@ function ConversationPane({
                 <strong>
                   {tx(
                     "Outside the 24-hour window",
-                    "خارج نافذة الـ٢٤ ساعة",
+                    "خارج نافذة الـ24 ساعة",
                   )}
                 </strong>
                 <div style={{ color: "var(--ink-2)", fontSize: 11, marginTop: 2 }}>
                   {tx(
                     "WhatsApp only allows pre-approved templates after 24h since the last customer message.",
-                    "واتساب يسمح فقط بالقوالب المعتمدة بعد مرور ٢٤ ساعة على آخر رسالة من العميل.",
+                    "واتساب يسمح فقط بالقوالب المعتمدة بعد مرور 24 ساعة على آخر رسالة من العميل.",
                   )}
                 </div>
               </div>
@@ -1615,6 +1797,8 @@ function ConversationPane({
                 type="button"
                 className="btn primary sm"
                 onClick={() => setTemplatePickerOpen(true)}
+                disabled={!canCompose}
+                title={canCompose ? undefined : noPermCompose}
               >
                 {tx("Use template", "استخدم قالبًا")}
               </button>
@@ -1674,7 +1858,8 @@ function ConversationPane({
               type="button"
               className="btn ghost icon sm"
               onClick={() => setPickerOpen(true)}
-              title={tx("Attach image", "إرفاق صورة")}
+              disabled={!canCompose}
+              title={canCompose ? tx("Attach image", "إرفاق صورة") : noPermCompose}
               aria-label={tx("Attach image", "إرفاق صورة")}
               style={{
                 color: attachedMedia ? "var(--accent)" : undefined,
@@ -1682,13 +1867,22 @@ function ConversationPane({
             >
               <IconAttach w={14} />
             </button>
-            <button className="btn ghost icon sm">
-              <IconTemplate w={14} />
-            </button>
+            {supportsTemplates(conv) && (
+              <button className="btn ghost icon sm" aria-label={tx("Template", "قالب")}>
+                <IconTemplate w={14} />
+              </button>
+            )}
             <span
               className="muted mono"
               style={{ fontSize: 11, marginInlineStart: "auto" }}
             >
+              {multiNumber && numberName && (
+                <>
+                  {tx("Replying from", "الرد من")}{" "}
+                  <strong dir="auto" style={{ color: "var(--ink-1)" }}>{numberName}</strong>
+                  {" · "}
+                </>
+              )}
               {tx("Replying as", "يرد بصفة")}:{" "}
               <strong style={{ color: "var(--ink-1)" }}>
                 {user?.name ?? tx("you", "أنت")}
@@ -1697,9 +1891,12 @@ function ConversationPane({
             <button
               className="btn primary"
               onClick={handleSend}
+              title={canCompose ? undefined : noPermCompose}
               disabled={
+                !canCompose ||
                 sending ||
                 waBlocked ||
+                channelDown ||
                 (draft.trim().length === 0 && !attachedMedia)
               }
               aria-busy={sending}
@@ -1742,11 +1939,11 @@ function ConversationPane({
       />
 
       {isWhatsApp && (
-        <WhatsAppTemplatePicker
+        <TemplateSendDialog
           open={templatePickerOpen}
           onClose={() => setTemplatePickerOpen(false)}
-          onSend={async (name, language, variables) => {
-            await onSendTemplate(name, language, variables);
+          onSend={async (name, language, variables, header) => {
+            await onSendTemplate(name, language, variables, header);
             setTemplatePickerOpen(false);
           }}
         />
@@ -1909,6 +2106,7 @@ function InboxMediaImage({
   alt: string;
 }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [isVideo, setIsVideo] = useState<boolean>(false);
   const [zoomed, setZoomed] = useState<boolean>(false);
   useEffect(() => {
     let cancelled = false;
@@ -1918,6 +2116,7 @@ function InboxMediaImage({
       .then((b) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(b);
+        setIsVideo(isVideoType(b.type));
         setSrc(objectUrl);
       })
       .catch(() => {
@@ -1946,6 +2145,18 @@ function InboxMediaImage({
       </div>
     );
   }
+  if (isVideo) {
+    return (
+      <video
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        aria-label={alt}
+        style={{ maxWidth: 260, maxHeight: 320, borderRadius: 8, display: "block", background: "#000" }}
+      />
+    );
+  }
   return (
     <>
       <img
@@ -1962,367 +2173,6 @@ function InboxMediaImage({
       />
       {zoomed && <Lightbox src={src} onClose={() => setZoomed(false)} />}
     </>
-  );
-}
-
-interface ApprovedTemplate {
-  id: string;
-  name: string;
-  lang: string;
-  category: string;
-  status: string;
-  body?: string | null;
-}
-
-/**
- * Modal that lists APPROVED WhatsApp templates and lets the operator fill the
- * BODY component's {{1}}, {{2}}, … placeholders before sending. Only templates
- * with status === "approved" can actually be delivered; we filter the list
- * accordingly so the user can't pick a pending/rejected one and get a Meta
- * error at send time.
- */
-function WhatsAppTemplatePicker({
-  open,
-  onClose,
-  onSend,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSend: (name: string, language: string, variables: string[]) => Promise<void>;
-}) {
-  const { t } = useTweaks();
-  const tx = makeTx(t.lang);
-  const listQ = useFetch<ApprovedTemplate[]>(open ? "/templates" : null);
-  const items = (listQ.data ?? []).filter((tpl) => tpl.status === "approved");
-
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [vars, setVars] = useState<string[]>([]);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const selected = items.find((tpl) => tpl.id === selectedId) ?? null;
-
-  // Parse {{1}}, {{2}}, … placeholders out of the body so we know how many
-  // variable inputs to show. Returns the highest index seen.
-  const variableCount = useMemo(() => {
-    if (!selected?.body) return 0;
-    const matches = selected.body.matchAll(/\{\{(\d+)\}\}/g);
-    let max = 0;
-    for (const m of matches) {
-      const n = parseInt(m[1], 10);
-      if (n > max) max = n;
-    }
-    return max;
-  }, [selected]);
-
-  useEffect(() => {
-    // Reset variable inputs when a different template is picked.
-    setVars(Array.from({ length: variableCount }, () => ""));
-    setError(null);
-  }, [selectedId, variableCount]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !sending) onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, sending, onClose]);
-
-  // Live preview of what the customer will see, with variables substituted.
-  //
-  // MUST stay ABOVE the `if (!open)` early return below. It used to sit further
-  // down next to the render, so a closed picker ran 20 hooks and an open one ran
-  // 21 — React threw "Rendered more hooks than during the previous render" and
-  // tore down the whole Inbox the moment you clicked Use template.
-  const preview = useMemo(() => {
-    if (!selected?.body) return "";
-    return selected.body.replace(/\{\{(\d+)\}\}/g, (_, idx) => {
-      const i = parseInt(idx, 10) - 1;
-      const v = vars[i]?.trim();
-      return v || `{{${idx}}}`;
-    });
-  }, [selected, vars]);
-
-  if (!open) return null;
-
-  const canSend =
-    selected !== null &&
-    !sending &&
-    vars.slice(0, variableCount).every((v) => v.trim().length > 0);
-
-  const handleSend = async () => {
-    if (!selected) return;
-    setSending(true);
-    setError(null);
-    try {
-      await onSend(
-        selected.name,
-        selected.lang,
-        vars.slice(0, variableCount).map((v) => v.trim()),
-      );
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Send failed");
-    } finally {
-      setSending(false);
-    }
-  };
-
-
-  return (
-    <Modal
-      onClose={sending ? () => {} : onClose}
-      width={640}
-      label={tx("Send a WhatsApp template", "أرسل قالب واتساب")}
-      panelStyle={{
-        padding: 0,
-        maxHeight: "min(640px, 88vh)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
-        <div
-          style={{
-            padding: "14px 16px",
-            borderBottom: "1px solid var(--line-soft)",
-          }}
-        >
-          <h3 style={{ margin: 0, fontSize: 15 }}>
-            {tx("Send a WhatsApp template", "أرسل قالب واتساب")}
-          </h3>
-          <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 4 }}>
-            {tx(
-              "Templates must be APPROVED by Meta. Submit new ones from the Templates screen.",
-              "يجب أن تكون القوالب معتمدة من Meta. أضف قوالب جديدة من شاشة القوالب.",
-            )}
-          </div>
-        </div>
-
-        <div
-          style={{
-            flex: 1,
-            display: "grid",
-            gridTemplateColumns: "minmax(180px, 220px) 1fr",
-            minHeight: 0,
-          }}
-        >
-          {/* Template list */}
-          <div
-            style={{
-              borderInlineEnd: "1px solid var(--line-soft)",
-              overflowY: "auto",
-              padding: 8,
-            }}
-          >
-            {listQ.loading && items.length === 0 ? (
-              <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
-                {tx("loading…", "جارٍ التحميل…")}
-              </div>
-            ) : items.length === 0 ? (
-              <div className="mono muted" style={{ fontSize: 11, padding: 8 }}>
-                {tx(
-                  "No Meta-approved templates yet. Create one on the Templates screen — Meta has to approve it before it can be sent.",
-                  "لا توجد قوالب معتمدة من Meta بعد. أنشئ قالبًا من شاشة القوالب — يجب أن تعتمده Meta قبل الإرسال.",
-                )}
-              </div>
-            ) : (
-              items.map((tpl) => {
-                const isActive = selectedId === tpl.id;
-                return (
-                  <button
-                    key={tpl.id}
-                    type="button"
-                    onClick={() => setSelectedId(tpl.id)}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "start",
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      background: isActive ? "var(--accent-soft)" : "transparent",
-                      border: isActive
-                        ? "1px solid var(--accent-ring)"
-                        : "1px solid transparent",
-                      cursor: "pointer",
-                      marginBottom: 2,
-                      fontFamily: "inherit",
-                      color: "var(--ink)",
-                    }}
-                  >
-                    <div style={{ fontSize: 12, fontWeight: 500 }}>
-                      {tpl.name}
-                    </div>
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color: "var(--ink-3)",
-                        marginTop: 2,
-                      }}
-                    >
-                      {tpl.lang.toUpperCase()} · {tpl.category.toLowerCase()}
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-
-          {/* Preview + variables */}
-          <div style={{ overflowY: "auto", padding: 16 }}>
-            {!selected ? (
-              <div
-                className="mono muted"
-                style={{ fontSize: 12, opacity: 0.7 }}
-              >
-                {tx(
-                  "Pick a template on the left.",
-                  "اختر قالبًا من القائمة.",
-                )}
-              </div>
-            ) : (
-              <>
-                <div
-                  className="mono"
-                  style={{
-                    fontSize: 10,
-                    color: "var(--ink-3)",
-                    textTransform: "uppercase",
-                    letterSpacing: 0.06,
-                  }}
-                >
-                  {tx("Preview", "معاينة")}
-                </div>
-                <div
-                  style={{
-                    marginTop: 6,
-                    padding: 10,
-                    background: "var(--bg-2)",
-                    border: "1px solid var(--line-soft)",
-                    borderRadius: 8,
-                    fontSize: 13,
-                    lineHeight: 1.5,
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  {preview || (
-                    <span className="muted">
-                      {tx("(empty body)", "(بدون نص)")}
-                    </span>
-                  )}
-                </div>
-
-                {variableCount > 0 && (
-                  <>
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: 10,
-                        color: "var(--ink-3)",
-                        textTransform: "uppercase",
-                        letterSpacing: 0.06,
-                        marginTop: 16,
-                      }}
-                    >
-                      {tx("Variables", "المتغيرات")}
-                    </div>
-                    <div
-                      style={{
-                        marginTop: 6,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      {Array.from({ length: variableCount }, (_, i) => (
-                        <label
-                          key={i}
-                          style={{ display: "flex", flexDirection: "column", gap: 2 }}
-                        >
-                          <span
-                            className="mono"
-                            style={{ fontSize: 10, color: "var(--ink-3)" }}
-                          >
-                            {`{{${i + 1}}}`}
-                          </span>
-                          <input
-                            value={vars[i] ?? ""}
-                            onChange={(e) => {
-                              const next = [...vars];
-                              next[i] = e.target.value;
-                              setVars(next);
-                            }}
-                            placeholder={tx(
-                              `Value for {{${i + 1}}}`,
-                              `قيمة {{${i + 1}}}`,
-                            )}
-                            style={{
-                              height: 30,
-                              padding: "0 10px",
-                              background: "var(--bg-1)",
-                              border: "1px solid var(--line)",
-                              borderRadius: 6,
-                              color: "var(--ink)",
-                              fontSize: 13,
-                              outline: "none",
-                              fontFamily: "inherit",
-                            }}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {error && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: "8px 10px",
-                      borderRadius: 6,
-                      background: "color-mix(in oklch, var(--bad) 10%, transparent)",
-                      color: "var(--bad)",
-                      fontSize: 12,
-                      border: "1px solid color-mix(in oklch, var(--bad) 30%, transparent)",
-                    }}
-                  >
-                    {error}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        <div
-          style={{
-            padding: "10px 14px",
-            borderTop: "1px solid var(--line-soft)",
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-          }}
-        >
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={onClose}
-            disabled={sending}
-          >
-            {tx("Cancel", "إلغاء")}
-          </button>
-          <button
-            type="button"
-            className="btn primary"
-            onClick={handleSend}
-            disabled={!canSend}
-          >
-            {sending ? tx("Sending…", "جارٍ الإرسال…") : tx("Send template", "إرسال القالب")}
-          </button>
-        </div>
-    </Modal>
   );
 }
 
@@ -2449,6 +2299,8 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
 
 function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactRightRailProps) {
   const contact = contactById.get(conv.contactId);
+  const { t: tweaks } = useTweaks();
+  const lang = tweaks.lang;
 
   const lifecycleStages: string[] = [
     tx("Lead", "عميل محتمل"),
@@ -2530,8 +2382,10 @@ function ContactRightRail({ conv, contactById, onContactsChanged, tx }: ContactR
       </div>
 
       {contact && contact.industry !== "facebook-dm" && (
-        <ContactTickets contactId={contact.id} tx={tx} />
+        <LinkedItemsCard contactId={contact.id} lang={lang} tx={tx} />
       )}
+
+      <TopicsCard topics={conv.topics} painPoints={conv.painPoints} tx={tx} />
 
       <div>
         <SectionLabel>{tx("Internal notes", "ملاحظات داخلية")}</SectionLabel>
@@ -2587,6 +2441,10 @@ interface FbConv {
   unread: number;
   messageCount: number;
   updatedAt: string;
+  /** Inbox views: the newest message's sender and the customer's last message time (when the newest is theirs). */
+  lastFrom?: "them" | "page";
+  lastInboundAt?: string | null;
+  lastMessageAt?: string | null;
 }
 interface FbMsg {
   id: string;
@@ -2614,6 +2472,9 @@ interface IgConv {
   unread: number;
   messageCount: number;
   updatedAt: string;
+  lastFrom?: "them" | "page";
+  lastInboundAt?: string | null;
+  lastMessageAt?: string | null;
 }
 interface IgMsg {
   id: string;
@@ -2623,16 +2484,156 @@ interface IgMsg {
   at: string;
 }
 
+/** 409 channels.disconnected / not_connected: the channel's state changed under us. */
+const isChannelStateError = (e: unknown): boolean =>
+  e instanceof ApiError && e.status === 409 &&
+  [e.message, e.code].some((k) => k === "channels.disconnected" || k === "channels.not_connected");
+
 function InboxImpl() {
+  const qc = useQueryClient();
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const [filter, setFilter] = useState<FilterId>("all");
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const [filter, setFilterState] = useState<InboxFilter>(() =>
+    readFilterFromHash(window.location.hash),
+  );
+  const [sort, setSort] = useState<InboxSort>("recent");
+  // Active number tab (channel id) lives in the hash as `n=`; null = All numbers.
+  const [numberTab, setNumberTabState] = useState<string | null>(() =>
+    readNumberFromHash(window.location.hash),
+  );
+  const setNumberTab = (id: string | null) => {
+    setNumberTabState(id);
+    const next = writeNumberToHash(window.location.hash, id);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  // Persist the filter in the hash query without triggering hash navigation.
+  const setFilter = (f: InboxFilter) => {
+    setFilterState(f);
+    const next = writeFilterToHash(window.location.hash, f);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  const [view, setViewState] = useState<InboxView>(() => readViewFromHash(window.location.hash));
+  const setView = (v: InboxView) => {
+    setViewState(v);
+    const next = writeViewToHash(window.location.hash, v);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  // "This conversation" vs the customer's stitched thread; kept in the hash as `?tv=all`.
+  const [threadView, setThreadViewState] = useState<"conv" | "all">(() =>
+    getHashParam(window.location.hash, "tv") === "all" ? "all" : "conv",
+  );
+  const setThreadView = (v: "conv" | "all") => {
+    setThreadViewState(v);
+    const next = setHashParam(window.location.hash, "tv", v === "all" ? "all" : null);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  const [search, setSearch] = useState<string>("");
+  // SP-30 phone pattern: one pane at a time (list → thread → details). On a
+  // phone the hash is the source of truth: `c=<id>` is the open conversation
+  // and `d=1` its details (paneFromHash). Opening pushes a history entry
+  // marked in history.state, so Back walks back through the panes; a reload
+  // or shared link with `c=` opens that thread. From md every pane is on
+  // screen and the selection is ordinary state.
+  const { layout } = useViewport();
+  const phone = layout === "phone";
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
+  const readPane = () => {
+    const h = window.location.hash;
+    return paneFromHash({
+      phone: phoneRef.current,
+      conv: getHashParam(h, PANE_CONV_PARAM),
+      details: getHashParam(h, PANE_DETAILS_PARAM) === "1",
+      open: openParamForRoute(h, "inbox"),
+    });
+  };
+  // A notification deep link is read synchronously so auto-select never overrides it.
+  const [activeId, setActiveId] = useState<string | null>(
+    () => openParamForRoute(window.location.hash, "inbox") ?? readPane()?.activeId ?? null,
+  );
+  const [detailsOpen, setDetailsOpen] = useState(() => readPane()?.detailsOpen ?? false);
+  const paneUrl = (h: string) => window.location.pathname + window.location.search + h;
+  const paneState = (): Record<string, unknown> | null => {
+    const s: unknown = window.history.state;
+    return s && typeof s === "object" ? (s as Record<string, unknown>) : null;
+  };
+  const markedState = (pane: "conv" | "details") => ({ ...(paneState() ?? {}), [PANE_STATE_KEY]: pane });
+  const selectConversation = (id: string) => {
+    setActiveId(id);
+    setDetailsOpen(false);
+    const h = window.location.hash;
+    const next = setHashParam(setHashParam(h, PANE_DETAILS_PARAM, null), PANE_CONV_PARAM, id);
+    if (phoneRef.current) {
+      // From the list: a new entry (Back returns to the list); a thread already open: replaced.
+      if (getHashParam(h, PANE_CONV_PARAM)) window.history.replaceState(window.history.state, "", paneUrl(next));
+      else window.history.pushState(markedState("conv"), "", paneUrl(next));
+    } else if (getHashParam(h, PANE_CONV_PARAM)) {
+      // A `c=` left by the phone layout stays in step with the selection.
+      window.history.replaceState(window.history.state, "", paneUrl(next));
+    }
+  };
+  // Deep link from a notification: `#/inbox?open=<conversationId>`, selected
+  // through the same path so `c=` and the history stay in step.
+  useOpenParam("inbox", selectConversation);
+  const backToList = () => {
+    if (paneState()?.[PANE_STATE_KEY] === "conv") {
+      window.history.back();
+      return;
+    }
+    // Opened by a reload or a shared link: there is no list entry to go back to.
+    const h = window.location.hash;
+    window.history.replaceState(window.history.state, "", paneUrl(setHashParam(setHashParam(h, PANE_DETAILS_PARAM, null), PANE_CONV_PARAM, null)));
+    setActiveId(null);
+    setDetailsOpen(false);
+  };
+  const openDetails = () => {
+    setDetailsOpen(true);
+    const h = window.location.hash;
+    if (phoneRef.current && getHashParam(h, PANE_DETAILS_PARAM) !== "1") {
+      window.history.pushState(markedState("details"), "", paneUrl(setHashParam(h, PANE_DETAILS_PARAM, "1")));
+    }
+  };
+  const closeDetails = () => {
+    if (phoneRef.current && paneState()?.[PANE_STATE_KEY] === "details") {
+      window.history.back();
+      return;
+    }
+    if (phoneRef.current) {
+      window.history.replaceState(window.history.state, "", paneUrl(setHashParam(window.location.hash, PANE_DETAILS_PARAM, null)));
+    }
+    setDetailsOpen(false);
+  };
+  // Back/Forward and links: the panes follow the hash (phones only).
+  useEffect(() => {
+    const onHash = () => {
+      const p = readPane();
+      if (!p) return;
+      setActiveId(p.activeId);
+      setDetailsOpen(p.detailsOpen);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+    // readPane reads refs and the location only.
+  }, []);
+  // Rotated or resized into the phone layout: show what the hash says (the list without `c=`).
+  useEffect(() => {
+    if (!phone) return;
+    const p = readPane();
+    if (!p) return;
+    setActiveId(p.activeId);
+    setDetailsOpen(p.detailsOpen);
+  }, [phone]);
   // A hidden (preloaded) embed must not auto-select or mark anything read.
   const embedVisible = useEmbedVisible();
-  const [channels, setChannels] = useState<Set<ConvChannel>>(
-    () => new Set<ConvChannel>(CHANNELS),
-  );
   const [messageVersion, setMessageVersion] = useState<number>(0);
   // Optimistic "pending" bubbles for messages we've just sent on FB/IG live
   // threads. Lets the new bubble appear instantly without forcing a refetch
@@ -2649,7 +2650,21 @@ function InboxImpl() {
   // ─── Data ──────────────────────────────────────────────────────────────
   // Realtime push (socket.io) keeps the inbox in sync; the polls below are a
   // slow safety net for missed events (network blip, server restart).
-  const convsQ = useFetch<Conversation[]>("/conversations", { pollMs: 30000 });
+  // The Number filter narrows server-side via repeatable ?channelId=; the tab
+  // is applied client-side so every tab keeps its count.
+  const convsPath = filter.channelIds.length
+    ? `/conversations?${filter.channelIds.map((id) => `channelId=${encodeURIComponent(id)}`).join("&")}`
+    : "/conversations";
+  // A refetch reuses a list fetch already in flight (switching quickly used to
+  // cancel and restart it: the "(canceled)" rows).
+  const convsQ = useFetch<Conversation[]>(convsPath, { pollMs: 30000, dedupeRefetch: true });
+  /** Conversations read here, and when (applyLocalReads; marks expire after 60 s). */
+  const localReadsRef = useRef(new Map<string, number>());
+  // m4: list only (no limits / signup config), and only for channels.view.
+  const canViewChannels = usePermissions().can("channels.view");
+  const channelsQ = useChannelsList(canViewChannels);
+  const channelList = channelsQ.data ?? [];
+  const channelById = useMemo(() => new Map(channelList.map((c) => [c.id, c])), [channelList]);
   const contactsQ = useFetch<Contact[]>("/contacts");
 
   // Live Facebook Messenger: only fetch when integration is connected.
@@ -2672,7 +2687,8 @@ function InboxImpl() {
     activeId && !isFbConvId(activeId) && !isIgConvId(activeId)
       ? `/conversations/${activeId}`
       : null,
-    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000 },
+    // Fresh for DETAIL_STALE_MS: going back to a conversation shows it at once.
+    { key: `${activeId ?? "none"}:${messageVersion}`, pollMs: 30000, staleMs: DETAIL_STALE_MS },
   );
 
   // Live Instagram (mirrors the FB pattern). The realtime push handles the
@@ -2719,7 +2735,7 @@ function InboxImpl() {
   // changes (WhatsApp webhook, Meta webhook, REST send/update). Each event
   // refetches the affected list and bumps `messageVersion` so the active
   // thread re-queries. activeId/conversationId routing keeps refetches scoped.
-  useRealtime<{ channel: string; conversationId?: string }>(
+  useRealtime<{ channel: string; conversationId?: string; channelId?: string | null }>(
     "inbox.activity",
     (evt) => {
       // All channels are DB-backed, so the event's conversationId is our own
@@ -2729,9 +2745,14 @@ function InboxImpl() {
         (evt.channel === "facebook" && isFbConvId(activeId)) ||
         (evt.channel === "instagram" && isIgConvId(activeId));
       if (affectsActive) setMessageVersion((v) => v + 1);
+      // Any cached detail of that conversation (opened or prefetched earlier) is stale now.
+      if (evt.conversationId) void invalidateConversationDetail(qc, evt.conversationId);
       if (evt.channel === "facebook" && fbConnected) fbConvsQ.refetch();
       if (evt.channel === "instagram" && igConnected) igConvsQ.refetch();
+      // channelId (SP-19) only scopes which number's list changed; every
+      // list the viewer can see is one query, so a single refetch covers it.
       convsQ.refetch();
+      if (evt.channelId && !channelById.has(evt.channelId)) channelsQ.refetch();
     },
   );
 
@@ -2746,7 +2767,9 @@ function InboxImpl() {
     // all inbound and the backfill imported prior history. Drop FB/IG DB rows
     // only while the LEGACY Meta live paths are connected (rollback mode), so
     // the same thread can't appear twice.
-    const dbRows = (convsQ.data ?? []).filter(
+    // A list response that started before a read here must not bring the
+    // badge back (applyLocalReads: unless the customer wrote after the read).
+    const dbRows = applyLocalReads(convsQ.data ?? [], localReadsRef.current, Date.now()).filter(
       (c) =>
         !(fbConnected && c.channel === "facebook") &&
         !(igConnected && c.channel === "instagram"),
@@ -2760,7 +2783,10 @@ function InboxImpl() {
           unread: c.unread,
           pinned: false,
           lastAt: fmtCompact(c.updatedAt),
-          lastFrom: "them",
+          updatedAt: c.updatedAt,
+          lastFrom: c.lastFrom === "page" ? "human" : "them",
+          lastInboundAt: c.lastInboundAt ?? null,
+          lastMessageAt: c.lastMessageAt ?? c.updatedAt,
           preview: c.snippet || "—",
           channel: "facebook",
           status: "human",
@@ -2778,7 +2804,10 @@ function InboxImpl() {
           unread: c.unread,
           pinned: false,
           lastAt: fmtCompact(c.updatedAt),
-          lastFrom: "them",
+          updatedAt: c.updatedAt,
+          lastFrom: c.lastFrom === "page" ? "human" : "them",
+          lastInboundAt: c.lastInboundAt ?? null,
+          lastMessageAt: c.lastMessageAt ?? c.updatedAt,
           preview: c.snippet || "—",
           channel: "instagram",
           status: "human",
@@ -2813,7 +2842,7 @@ function InboxImpl() {
         phone: "—",
         tags: ["Facebook"],
         industry: "facebook-dm",
-        lifecycle: "Lead",
+        lifecycle: "lead",
         lastSeen: fmtCompact(fc.updatedAt),
         source: "Facebook DM",
         convs: 1,
@@ -2829,7 +2858,7 @@ function InboxImpl() {
         phone: "—",
         tags: ["Instagram"],
         industry: "instagram-dm",
-        lifecycle: "Lead",
+        lifecycle: "lead",
         lastSeen: fmtCompact(ic.updatedAt),
         source: "Instagram DM",
         convs: 1,
@@ -2841,10 +2870,10 @@ function InboxImpl() {
 
   // Auto-select first conversation when list loads.
   useEffect(() => {
-    if (shouldAutoSelect(embedVisible, activeId, conversations)) {
+    if (!phone && shouldAutoSelect(embedVisible, activeId, conversations)) {
       setActiveId(conversations[0]!.id);
     }
-  }, [conversations, activeId, embedVisible]);
+  }, [conversations, activeId, embedVisible, phone]);
 
   // Auto-fade the "Ticket #N created" banner: visible for 2.4s, then fade,
   // then unmount entirely.
@@ -2864,58 +2893,302 @@ function InboxImpl() {
     return () => window.clearTimeout(removeTimer);
   }, [ticketBanner]);
 
+  // I1: opening a conversation whose cached detail is older than its list
+  // row's newest message (a missed realtime event) refetches it.
+  const activeRowLastMessageAt = conversations.find((c) => c.id === activeId)?.lastMessageAt ?? null;
+  useEffect(() => {
+    if (!activeId || isFbConvId(activeId) || isIgConvId(activeId)) return;
+    const cached = qc.getQueryData<ConversationDetail>(fetchQueryKey(detailPath(activeId), `${activeId}:${messageVersion}`));
+    if (isDetailStale(cached, { lastMessageAt: activeRowLastMessageAt })) void invalidateConversationDetail(qc, activeId);
+  }, [activeId, activeRowLastMessageAt, messageVersion, qc]);
+
+  // A Zernio thread synced as a preview with no stored messages imports its
+  // history on open: once automatically per conversation per session, then
+  // only by the empty state's Retry. The detail is refetched afterwards.
+  const [historyById, setHistoryById] = useState<Record<string, HistoryImportStatus>>({});
+  const refetchListRef = useRef(convsQ.refetch);
+  refetchListRef.current = convsQ.refetch;
+  const runHistoryImport = useCallback(
+    async (id: string) => {
+      setHistoryById((p) => ({ ...p, [id]: { phase: "importing" } }));
+      let next: HistoryImportStatus;
+      try {
+        const r = await api.post<HistoryImportResult>(historyImportPath(id));
+        next = { phase: "done", imported: r?.imported ?? 0, failed: false, reason: r?.reason };
+      } catch {
+        next = { phase: "done", imported: 0, failed: true };
+      }
+      // Refetch before leaving the loading state, so imported messages replace it directly.
+      await invalidateConversationDetail(qc, id).catch(() => undefined);
+      if (next.phase === "done" && next.imported > 0) void refetchListRef.current();
+      setHistoryById((p) => ({ ...p, [id]: next }));
+    },
+    [qc],
+  );
+  const activeRowProvider = conversations.find((c) => c.id === activeId)?.channelProvider ?? null;
+  useEffect(() => {
+    if (
+      !activeId ||
+      !shouldAutoImportHistory({
+        activeId,
+        detail: activeQ.data,
+        rowProvider: activeRowProvider,
+        isLiveThread: isFbConvId(activeId) || isIgConvId(activeId),
+        attempted: autoImportAttempted,
+      })
+    ) return;
+    markAutoImportAttempted(activeId);
+    void runHistoryImport(activeId);
+  }, [activeId, activeQ.data, activeRowProvider, runHistoryImport]);
+
   // Mark-as-read whenever the active conversation changes. Skip the legacy
   // live threads (FB "t_", IG "ig:") — those have no DB row to mark.
   useEffect(() => {
     if (!activeId) return;
     if (isFbConvId(activeId) || isIgConvId(activeId)) return;
+    // The list is not reloaded for this: its cached row is marked read in place.
     let cancelled = false;
-    api
-      .post<Conversation>(`/conversations/${activeId}/read`, {})
-      .then(() => {
-        if (!cancelled) convsQ.refetch();
-      })
-      .catch(() => {
-        // non-blocking; silently ignore
-      });
+    const readId = activeId;
+    void markReadAndPatch(
+      readId,
+      (path) => api.post<Conversation>(path, {}),
+      (fn) => {
+        localReadsRef.current.set(readId, Date.now());
+        if (!cancelled) convsQ.setData(fn);
+      },
+    ).catch(() => {
+      // non-blocking; silently ignore
+    });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  const toggleChannel = (ch: ConvChannel) => {
-    setChannels((prev) => {
-      const next = new Set(prev);
-      if (next.has(ch)) next.delete(ch);
-      else next.add(ch);
-      return next;
-    });
-  };
 
-  const filtered = useMemo<Conversation[]>(() => {
-    let list: Conversation[];
-    switch (filter) {
-      case "human":
-        list = conversations.filter((c) => c.status === "human");
-        break;
-      case "closed":
-        list = conversations.filter((c) => c.status === "closed");
-        break;
-      case "spam":
-        list = conversations.filter((c) => c.status === "spam");
-        break;
-      case "unread":
-        list = conversations.filter((c) => c.unread > 0);
-        break;
-      case "all":
-      default:
-        list = conversations;
-        break;
+  const teamQ = useFetch<TeamMember[]>("/team");
+  const labelsQ = useFetch<ConversationLabel[]>("/conversation-labels");
+  const team = teamQ.data ?? [];
+  const labels = labelsQ.data ?? [];
+
+  // Drop label ids from a stale ?f= hash (label deleted since) once labels have
+  // loaded, so a dead label can't filter the whole inbox out.
+  useEffect(() => {
+    if (!labelsQ.data) return;
+    const known = new Set(labelsQ.data.map((l) => l.id));
+    if (filter.labelIds.some((id) => !known.has(id))) {
+      setFilter({ ...filter, labelIds: filter.labelIds.filter((id) => known.has(id)) });
     }
-    if (channels.size === 0) return list;
-    return list.filter((c) => channels.has(c.channel));
-  }, [filter, channels, conversations]);
+  }, [labelsQ.data, filter.labelIds]);
+
+  const filterCtx = useMemo<FilterCtx>(
+    () => ({ meId: user?.id ?? "", contactById, isLive: (c) => isLiveThreadId(c.id) }),
+    [user?.id, contactById],
+  );
+
+  // ─── Views column ─────────────────────────────────────────────────────
+  // The view lives in the hash (`view=`); an old `f=` bucket link opens the
+  // matching view. Without one: the remembered choice, else Needs reply when
+  // someone waits, else All open (decided once the list has loaded).
+  const viewStorage = useMemo(() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }, []);
+  /** The view a hash names: `view=`, or the view of an old `f=` bucket; null = the default view. */
+  const viewFromHash = (h: string): ViewId | null => {
+    const fromHash = parseView(getHashParam(h, "view"));
+    if (fromHash) return fromHash;
+    const bucket = readFilterFromHash(h).bucket;
+    return bucket !== "all" ? viewForBucket(bucket) : null;
+  };
+  const [explicitView, setExplicitView] = useState<ViewId | null>(() => viewFromHash(window.location.hash));
+  useEffect(() => {
+    // Back/Forward or a link to an inbox entry: its view, or the default view when it names none.
+    const on = () => {
+      const h = window.location.hash;
+      if (!/^#\/?inbox(\?|$)/.test(h)) return;
+      // A notification / record link (open= without view=) keeps the current view.
+      setExplicitView((cur) =>
+        viewAfterHashChange(
+          { view: getHashParam(h, "view"), open: getHashParam(h, "open"), bucket: readFilterFromHash(h).bucket },
+          cur,
+        ),
+      );
+    };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+    // viewFromHash reads only its argument.
+  }, []);
+  const storedView = useMemo(() => readStoredView(viewStorage, user?.id ?? ""), [viewStorage, user?.id]);
+  const [settledDefault, setSettledDefault] = useState<ViewId | null>(null);
+  const activeView: ViewId = explicitView ?? settledDefault ?? "open";
+  // Table and Board show every conversation (the Board has Resolved and Closed
+  // columns): the view applies to the list only, and the header says "All conversations".
+  const listMode = phone || view === "list";
+  const scopeView: ViewId = listMode ? activeView : "all";
+  const selectView = (v: ViewId) => {
+    if (!listMode) setView("list");
+    setExplicitView(v);
+    writeStoredView(viewStorage, user?.id ?? "", v);
+    const next = setHashParam(window.location.hash, "view", v);
+    if (next !== window.location.hash) {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  const connectedKinds = useMemo(() => {
+    const s = new Set<string>();
+    for (const ch of channelList) if (ch.status === "active" || ch.status === "needs_attention") s.add(ch.kind);
+    if (fbConnected) s.add("facebook");
+    if (igConnected) s.add("instagram");
+    return s;
+  }, [channelList, fbConnected, igConnected]);
+  const prefetchDetail = useCallback(
+    (id: string) => {
+      if (isFbConvId(id) || isIgConvId(id) || id === activeId) return;
+      void prefetchFetch(qc, `/conversations/${id}`, { key: `${id}:${messageVersion}`, staleMs: DETAIL_STALE_MS }).catch(() => undefined);
+    },
+    [qc, messageVersion, activeId],
+  );
+  // Wait times tick once a minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  // The view is the list's scope; the filter menu refines it (its bucket is not used any more).
+  const refine = useMemo<InboxFilter>(() => ({ ...filter, bucket: "all" }), [filter]);
+
+  // Number tabs: counts over the list as filtered by everything but the tab.
+  const tabBase = useMemo(
+    () => conversations.filter((c) => matchesView(c, scopeView, filterCtx) && matchesFilter(c, refine, filterCtx, null)),
+    [conversations, refine, filterCtx, scopeView],
+  );
+  const numberTabList = useMemo(() => numberTabs(tabBase, channelList), [tabBase, channelList]);
+  const numberChannels = useMemo(() => {
+    const ids = new Set(numberTabList.map((t) => t.id));
+    return channelList.filter((c) => ids.has(c.id));
+  }, [numberTabList, channelList]);
+  const numberLabels = useMemo(
+    () => new Map(numberTabList.flatMap((t) => (t.id ? [[t.id, t.label] as const] : []))),
+    [numberTabList],
+  );
+  // A hash `n=` for a number that no longer has a tab must not filter invisibly.
+  const activeTab = numberTabList.some((t) => t.id === numberTab) ? numberTab : null;
+
+  // View counts match the list: over the conversations after the filter menu
+  // and the number tab, before the view.
+  const countBase = useMemo(
+    () => conversations.filter((c) => matchesFilter(c, refine, filterCtx, activeTab)),
+    [conversations, refine, filterCtx, activeTab],
+  );
+  const counts = useMemo(
+    () => viewCounts(countBase, filterCtx, CHANNELS, team.map((m) => m.id)),
+    [countBase, filterCtx, team],
+  );
+  // The default settles once the list, the team and the channels have loaded,
+  // so a remembered member or channel that is gone falls back to it.
+  const viewsReady = !initialLoading && !teamQ.loading && !channelsQ.loading;
+  // Views a member or channel can still be shown for: the team, and the
+  // connected kinds plus any kind in the (unfiltered) list.
+  const viewCtx = useMemo(() => {
+    const kinds = new Set<string>(connectedKinds);
+    for (const c of conversations) kinds.add(c.channel);
+    return { memberIds: team.map((m) => m.id), channelKinds: [...kinds] };
+  }, [connectedKinds, conversations, team]);
+  useEffect(() => {
+    if (settledDefault || !viewsReady) return;
+    setSettledDefault(defaultView(counts, availableViewOrNull(storedView, viewCtx)));
+  }, [settledDefault, viewsReady, counts, storedView, viewCtx]);
+  // A link naming a member who left or a channel that is gone falls back to the default view.
+  useEffect(() => {
+    if (!viewsReady || !explicitView || availableViewOrNull(explicitView, viewCtx)) return;
+    setExplicitView(null);
+    const next = setHashParam(window.location.hash, "view", null);
+    if (next !== window.location.hash) {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search + next);
+    }
+  }, [viewsReady, explicitView, viewCtx]);
+  const viewGroups = useMemo<ViewGroup[]>(() => {
+    const primary: ViewEntry[] = [
+      { id: "mine", label: tx("My inbox", "صندوقي"), count: counts.mine, icon: ViewIcons.mine },
+      { id: "needs-reply", label: tx("Needs reply", "بانتظار الرد"), count: counts["needs-reply"], hot: (counts["needs-reply"] ?? 0) > 0, icon: ViewIcons.needsReply },
+      { id: "unassigned", label: tx("Unassigned", "غير معيّنة"), count: counts.unassigned, icon: ViewIcons.unassigned },
+      { id: "open", label: tx("All open", "كل المفتوحة"), count: counts.open, icon: ViewIcons.open },
+      { id: "done", label: tx("Done", "منتهية"), icon: ViewIcons.done },
+    ];
+    const kinds = channelKindsToShow(CHANNELS, connectedKinds, counts);
+    const channelsG: ViewEntry[] = kinds.map((k) => ({
+      id: `channel:${k}` as ViewId,
+      label: CHANNEL_LABEL[k as ConvChannel] ?? k,
+      count: counts[`channel:${k}`] ?? 0,
+      icon: dotIcon(CHANNEL_DOT[k as ConvChannel] ?? "var(--ink-3)"),
+    }));
+    const teamG: ViewEntry[] = [
+      ...team.map((m) => ({ id: `member:${m.id}` as ViewId, label: m.name, count: counts[`member:${m.id}`] ?? 0, icon: avatarIcon(m.initials) })),
+      { id: `member:${AI_MEMBER}` as ViewId, label: tx("AI agent", "وكيل الذكاء الاصطناعي"), count: counts[`member:${AI_MEMBER}`] ?? 0, icon: avatarIcon("AI", true) },
+    ];
+    const more: ViewEntry[] = [
+      { id: "unread", label: tx("Unread", "غير مقروءة"), count: counts.unread },
+      { id: "pending", label: tx("Pending customer", "بانتظار العميل"), count: counts.pending },
+      { id: "closed", label: tx("Closed", "مغلقة"), count: counts.closed },
+      { id: "spam", label: tx("Spam", "مزعجة"), count: counts.spam },
+      { id: "all", label: tx("All conversations", "كل المحادثات") },
+    ];
+    const groups: ViewGroup[] = [{ entries: primary }];
+    if (channelsG.length) groups.push({ title: tx("Channels", "القنوات"), entries: channelsG });
+    groups.push({ title: tx("Team", "الفريق"), entries: teamG });
+    groups.push({ title: tx("More", "المزيد"), entries: more });
+    return groups;
+  }, [counts, connectedKinds, team, tx]);
+  const activeEntry = useMemo<ViewEntry>(() => {
+    for (const g of viewGroups) for (const e of g.entries) if (e.id === scopeView) return e;
+    // A view not in the column (e.g. a channel with nothing open, or a member who left).
+    const label = scopeView.startsWith("channel:")
+      ? (CHANNEL_LABEL[scopeView.slice(8) as ConvChannel] ?? scopeView.slice(8))
+      : scopeView.startsWith("member:")
+        ? tx("Teammate", "عضو الفريق")
+        : scopeView;
+    return { id: scopeView, label, count: counts[scopeView] ?? 0 };
+  }, [viewGroups, scopeView, counts, tx]);
+
+  // matchesFilter + sort over the merged DB/FB/IG list; name/preview search
+  // is applied afterwards inside InboxList.
+  const filtered = useMemo<Conversation[]>(() => {
+    return sortConversations(
+      conversations.filter((c) => matchesView(c, scopeView, filterCtx) && matchesFilter(c, refine, filterCtx, activeTab)),
+      sort,
+    );
+  }, [refine, sort, filterCtx, conversations, activeTab, scopeView]);
+
+
+  // Search narrows the filtered list; every view (list/table/board) and
+  // "Add to group" share this exact list.
+  // The open conversation keeps its place while it stays open (a new message
+  // elsewhere, or it being read, assigned or labelled, never moves it under the
+  // user); it is re-anchored when another one is opened or the view, sort,
+  // filters or search change.
+  const anchorRef = useRef<{ id: string | null; index: number | null; key: string }>({ id: null, index: null, key: "" });
+  const visibleConvs = useMemo<Conversation[]>(() => {
+    if (initialLoading) return [];
+    const q = search.trim().toLowerCase();
+    const natural = !q
+      ? filtered
+      : filtered.filter((c) => {
+          const name = contactById.get(c.contactId)?.name ?? "";
+          return name.toLowerCase().includes(q) || c.preview.toLowerCase().includes(q);
+        });
+    const key = `${scopeView}|${sort}|${JSON.stringify(refine)}|${activeTab ?? ""}|${q}`;
+    const a = anchorRef.current;
+    if (a.id !== activeId || a.key !== key || a.index === null) {
+      const at = activeId ? natural.findIndex((c) => c.id === activeId) : -1;
+      anchorRef.current = { id: activeId, index: at < 0 ? null : at, key };
+    }
+    return keepAt(natural, anchorRef.current.id, anchorRef.current.index);
+  }, [filtered, search, contactById, initialLoading, activeId, scopeView, sort, refine, activeTab]);
+  const teamById = useMemo(() => new Map(team.map((m) => [m.id, m])), [team]);
+  const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
 
   // ─── Mutations ────────────────────────────────────────────────────────
   interface SendInput {
@@ -2996,6 +3269,7 @@ function InboxImpl() {
       name: string;
       language: string;
       variables: string[];
+      header?: TemplateHeaderValue;
     },
     { ok: true; wamid?: string }
   >((input) =>
@@ -3005,6 +3279,7 @@ function InboxImpl() {
         name: input.name,
         language: input.language,
         variables: input.variables,
+        header: input.header,
       },
     ),
   );
@@ -3019,6 +3294,7 @@ function InboxImpl() {
       name: string;
       language: string;
       variables: string[];
+      header?: TemplateHeaderValue;
     },
     { ok: true; id?: string | null }
   >((input) =>
@@ -3026,6 +3302,7 @@ function InboxImpl() {
       name: input.name,
       language: input.language,
       variables: input.variables,
+      header: input.header,
     }),
   );
 
@@ -3054,7 +3331,40 @@ function InboxImpl() {
   const zernioOwnsConvChannel = (convId: string): boolean => {
     const conv = (convsQ.data ?? []).find((c) => c.id === convId);
     if (!conv) return false;
-    return (zernioStatusQ.data?.accounts ?? []).some((a) => a.platform === conv.channel);
+    return pickSendRoute(conv, zernioPlatformGuess(conv)) === "zernio";
+  };
+  // Only the fallback for rows without a channelProvider.
+  const zernioPlatformGuess = (conv: Conversation): boolean =>
+    (zernioStatusQ.data?.accounts ?? []).some((a) => a.platform === conv.channel);
+
+  // Telegram / web chat: POST /conversations/:id/send, errors localized.
+  const [nativeSend, setNativeSend] = useState<{ loading: boolean; error: string | null }>({
+    loading: false,
+    error: null,
+  });
+  const sendNative = async (conversationId: string, body: string) => {
+    setNativeSend({ loading: true, error: null });
+    try {
+      await api.post(`/conversations/${conversationId}/send`, { body });
+      setNativeSend({ loading: false, error: null });
+    } catch (e) {
+      setNativeSend({ loading: false, error: channelErrorText(e, tx) });
+      if (isChannelStateError(e)) {
+        invalidateChannels(qc);
+        void convsQ.refetch();
+      }
+      throw e;
+    }
+  };
+
+  // m1: Zernio / Meta sends refresh the channel list and threads when the
+  // channel's state changed under us (409 channels.disconnected / not_connected).
+  const refreshOnChannelState = (e: unknown): never => {
+    if (isChannelStateError(e)) {
+      invalidateChannels(qc);
+      void convsQ.refetch();
+    }
+    throw e;
   };
 
   const handleSend = async (body: string, mediaId?: string): Promise<void> => {
@@ -3080,16 +3390,18 @@ function InboxImpl() {
     // through Zernio — the legacy Meta services no longer hold a usable token
     // for them, since Zernio's sync replaced those Integration rows.
     const conv = (convsQ.data ?? []).find((c) => c.id === activeId);
-    const zernioOwnsChannel = zernioOwnsConvChannel(activeId);
+    const route = conv ? pickSendRoute(conv, zernioPlatformGuess(conv)) : "legacy";
     // DB-backed sends round-trip Zernio + the remote DB (~2s) — show the
     // bubble immediately, same as the live-thread paths above.
     if (conv && body) addPending(activeId, body);
-    if (conv && zernioOwnsChannel) {
-      await sendZernioDbMessage.mutate({ conversationId: activeId, body, mediaId });
-    } else if (conv?.channel === "instagram") {
+    if (conv && route === "native") {
+      await sendNative(activeId, body);
+    } else if (conv && route === "zernio") {
+      await sendZernioDbMessage.mutate({ conversationId: activeId, body, mediaId }).catch(refreshOnChannelState);
+    } else if (conv && route === "meta_ig") {
       await sendIgMessage.mutate({ conversationId: activeId, body, mediaId });
-    } else if (conv?.channel === "whatsapp") {
-      await sendWaMessage.mutate({ conversationId: activeId, body, mediaId });
+    } else if (conv && route === "meta_wa") {
+      await sendWaMessage.mutate({ conversationId: activeId, body, mediaId }).catch(refreshOnChannelState);
     } else {
       // Fallback: just write to DB (web chat, etc.)
       await sendMessage.mutate({ conversationId: activeId, body });
@@ -3100,6 +3412,10 @@ function InboxImpl() {
     setMessageVersion((n) => n + 1);
     convsQ.refetch();
   };
+
+  // The detail payload may predate SP-19 fields; the list row is authoritative.
+  const activeChannelId =
+    conversations.find((c) => c.id === activeId)?.channelId ?? null;
 
   // Compute the active conversation: either the internal /conversations/:id
   // result, or a synthetic one assembled from live Facebook DMs.
@@ -3135,6 +3451,7 @@ function InboxImpl() {
       const serverMsgs: Message[] = (fbMsgsQ.data ?? []).map((m) => ({
         from: m.from === "page" ? "human" : "them",
         t: fmtCompact(m.at),
+        createdAt: m.at,
         body: m.body || (m.attachmentUrl ? "📎 attachment" : ""),
         agent: m.from === "page" ? undefined : undefined,
         attach: m.attachmentUrl,
@@ -3146,6 +3463,7 @@ function InboxImpl() {
         unread: fbConv.unread,
         pinned: false,
         lastAt: fmtCompact(fbConv.updatedAt),
+        updatedAt: fbConv.updatedAt,
         lastFrom: "them",
         preview: fbConv.snippet || "—",
         channel: "facebook",
@@ -3162,6 +3480,7 @@ function InboxImpl() {
       const serverMsgs: Message[] = (igMsgsQ.data ?? []).map((m) => ({
         from: m.from === "page" ? "human" : "them",
         t: fmtCompact(m.at),
+        createdAt: m.at,
         body: m.body || "📎 attachment",
         agent: undefined,
       }));
@@ -3172,6 +3491,7 @@ function InboxImpl() {
         unread: igConv.unread,
         pinned: false,
         lastAt: fmtCompact(igConv.updatedAt),
+        updatedAt: igConv.updatedAt,
         lastFrom: "them",
         preview: igConv.snippet || "—",
         channel: "instagram",
@@ -3184,10 +3504,14 @@ function InboxImpl() {
     }
     // DB-backed conversation: same optimistic-append as the live paths, so a
     // just-sent reply shows instantly instead of after the ~2s send round trip.
-    if (!activeQ.data) return undefined;
+    // The loaded detail of THIS conversation, else its list row (header, name,
+    // channel at once; messages follow). A previous conversation's detail kept
+    // as a placeholder by the cache never shows under another id.
+    const thread = threadFor(activeId, activeQ.data, conversations.find((c) => c.id === activeId));
+    if (!thread) return undefined;
     return {
-      ...activeQ.data,
-      messages: appendPending(activeId, activeQ.data.messages ?? []),
+      ...thread,
+      messages: appendPending(activeId, (thread.messages ?? []) as Message[]),
     };
   }, [
     activeId,
@@ -3197,35 +3521,65 @@ function InboxImpl() {
     igMsgsQ.data,
     activeQ.data,
     pendingByConv,
+    conversations,
   ]);
 
   const activeContact = active ? contactById.get(active.contactId) : undefined;
   const activeIsFb = active ? isFbConvId(active.id) : false;
   const activeIsIg = active ? isIgConvId(active.id) : false;
 
+  // On phones the list view is the only one (the table and board are wide).
+  const shownView = phone ? "list" : view;
+  const pane = inboxPane(layout, { selected: !!active, detailsOpen });
+  // From xl the contact rail is a column only when the inbox area is xl wide (the views column takes 210 px).
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const [inboxWidth, setInboxWidth] = useState<number>(() => Infinity);
+  useEffect(() => {
+    const el = layoutRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setInboxWidth(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const railSheet = detailsAsSheet(layout, inboxWidth);
+  const sheet = railSheet && detailsOpen && !!active && shownView === "list";
+  // The tablet details sheet is a modal: focus moves in and stays, Escape closes, focus returns.
+  const detailsRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(detailsRef, sheet, closeDetails);
+  const threadBar =
+    active && shownView === "list" && (phone || railSheet) ? (
+      <div className="ix-thread-bar">
+        {phone ? (
+          <button type="button" className="btn ghost sm" onClick={backToList}>
+            <span className="ix-back-icon" aria-hidden="true">
+              <IconArrow w={14} />
+            </span>
+            {tx("Back to conversations", "العودة إلى المحادثات")}
+          </button>
+        ) : null}
+        <span style={{ flex: 1 }} />
+        <button type="button" className="btn ghost sm" aria-expanded={detailsOpen} onClick={() => (detailsOpen ? closeDetails() : openDetails())}>
+          {tx("Details", "التفاصيل")}
+        </button>
+      </div>
+    ) : null;
+
   return (
     <div
-      className="inbox-v2"
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(300px, 348px) minmax(0, 1fr) minmax(300px, 336px)",
-        flex: 1,
-        minHeight: 0,
-        position: "relative",
-      }}
+      ref={layoutRef}
+      className="inbox-v2 ix-layout"
+      data-pane={pane}
+      data-rail={railSheet ? "sheet" : undefined}
+      data-details={sheet ? "open" : undefined}
     >
-      <div
-        style={{
-          display: "grid",
-          gridTemplateRows: "auto 1fr",
-          // Single-column grids size their auto track to max-content, which
-          // let the pill rows push this column to ~760px and bleed under the
-          // thread pane. Pin the track to the grid area's own width.
-          gridTemplateColumns: "minmax(0, 1fr)",
-          minWidth: 0,
-          minHeight: 0,
-        }}
-      >
+      <InboxViewsColumn groups={viewGroups} active={scopeView} onSelect={selectView} tx={tx} />
+      {/* Single-column grids size their auto track to max-content, which
+          let the pill rows push this column to ~760px and bleed under the
+          thread pane; .ix-col-list pins the track to the grid area's width. */}
+      <div className="ix-col-list">
         {ticketBanner ? (
           <div
             style={{
@@ -3256,12 +3610,27 @@ function InboxImpl() {
         <InboxList
           filter={filter}
           setFilter={setFilter}
-          channels={channels}
-          toggleChannel={toggleChannel}
-          convs={filtered}
+          sort={sort}
+          setSort={setSort}
+          viewGroups={viewGroups}
+          activeEntry={activeEntry}
+          onSelectView={selectView}
+          now={now}
+          onPrefetch={prefetchDetail}
+          team={team}
+          labels={labels}
           allConvs={conversations}
           activeId={activeId}
-          setActiveId={setActiveId}
+          setActiveId={selectConversation}
+          view={shownView}
+          setView={setView}
+          search={search}
+          setSearch={setSearch}
+          visibleConvs={visibleConvs}
+          numberTabList={numberTabList}
+          numberTab={activeTab}
+          setNumberTab={setNumberTab}
+          numberChannels={numberChannels}
           contactById={contactById}
           loading={initialLoading}
           error={convsQ.error ?? fbConvsQ.error ?? igConvsQ.error}
@@ -3275,30 +3644,72 @@ function InboxImpl() {
           tx={tx}
         />
       </div>
-      {active ? (
+      <div className="ix-col-thread">
+      {threadBar}
+      {shownView === "table" || shownView === "board" ? (
+        <div className="ix-wide-view">
+          {shownView === "table" ? (
+            <InboxTable
+              convs={visibleConvs}
+              contactById={contactById}
+              teamById={teamById}
+              labelById={labelById}
+              activeId={activeId}
+              onOpen={(id) => {
+                setActiveId(id);
+                setView("list");
+              }}
+              lang={t.lang}
+              tx={tx}
+              noConversations={conversations.length === 0}
+            />
+          ) : (
+            <InboxBoard
+              convs={visibleConvs}
+              contactById={contactById}
+              teamById={teamById}
+              labelById={labelById}
+              onOpen={(id) => {
+                setActiveId(id);
+                setView("list");
+              }}
+              onChanged={() => Promise.all([convsQ.refetch(), activeQ.refetch()])}
+              tx={tx}
+            />
+          )}
+        </div>
+      ) : active ? (
         <ConversationPane
           conv={active}
           contactById={contactById}
           onSend={handleSend}
-          onSendTemplate={async (name, language, variables) => {
+          threadView={threadView}
+          onThreadView={setThreadView}
+          onSendTemplate={async (name, language, variables, header) => {
             if (!activeId) return;
             // Same transport routing as handleSend: Zernio-owned WhatsApp goes
             // through Zernio, which carries templates on its normal send
             // endpoint. Only a direct Meta connection uses the Cloud API path.
             if (zernioOwnsConvChannel(activeId)) {
-              await sendZernioDbTemplate.mutate({
-                conversationId: activeId,
-                name,
-                language,
-                variables,
-              });
+              await sendZernioDbTemplate
+                .mutate({
+                  conversationId: activeId,
+                  name,
+                  language,
+                  variables,
+                  header,
+                })
+                .catch(refreshOnChannelState);
             } else {
-              await sendWaTemplate.mutate({
-                conversationId: activeId,
-                name,
-                language,
-                variables,
-              });
+              await sendWaTemplate
+                .mutate({
+                  conversationId: activeId,
+                  name,
+                  language,
+                  variables,
+                  header,
+                })
+                .catch(refreshOnChannelState);
             }
             // messageVersion bump refetches the thread via the new queryKey.
             setMessageVersion((n) => n + 1);
@@ -3312,19 +3723,26 @@ function InboxImpl() {
             sendZernioDbMessage.loading ||
             sendWaMessage.loading ||
             sendWaTemplate.loading ||
-            sendZernioDbTemplate.loading
+            sendZernioDbTemplate.loading ||
+            nativeSend.loading
           }
-          sendError={
+          channel={activeChannelId ? (channelById.get(activeChannelId) ?? null) : null}
+          multiNumber={!!activeChannelId && numberChannels.some((c) => c.id === activeChannelId)}
+          numberLabel={activeChannelId ? (numberLabels.get(activeChannelId) ?? null) : null}
+          sendError={sendErrorText(
             sendMessage.error ??
-            sendFbMessage.error ??
-            sendIgMessage.error ??
-            sendIgLiveMessage.error ??
-            sendZernioDbMessage.error ??
-            sendWaMessage.error ??
-            sendWaTemplate.error ??
-            sendZernioDbTemplate.error
-          }
+              sendFbMessage.error ??
+              sendIgMessage.error ??
+              sendIgLiveMessage.error ??
+              sendZernioDbMessage.error ??
+              sendWaMessage.error ??
+              sendWaTemplate.error ??
+              sendZernioDbTemplate.error ??
+              nativeSend.error,
+            tx,
+          )}
           onConvertToTicket={() => setShowConvertModal(true)}
+          onConversationChanged={() => Promise.all([convsQ.refetch(), activeQ.refetch()])}
           messagesLoading={
             activeIsFb
               ? fbMsgsQ.loading
@@ -3332,6 +3750,12 @@ function InboxImpl() {
                 ? igMsgsQ.loading
                 : activeQ.loading
           }
+          emptyView={emptyThreadView({
+            isZernio: !activeIsFb && !activeIsIg && (activeRowProvider ?? active.channelProvider) === "zernio",
+            status: historyById[active.id],
+            autoAttempted: autoImportAttempted(active.id),
+          })}
+          onRetryHistory={() => void runHistoryImport(active.id)}
           lang={t.lang}
           tx={tx}
         />
@@ -3384,21 +3808,43 @@ function InboxImpl() {
           )}
         </div>
       )}
-      {active ? (
-        <ContactRightRail
-          conv={active}
-          contactById={contactById}
-          onContactsChanged={contactsQ.refetch}
-          tx={tx}
-        />
-      ) : (
-        <aside
-          style={{
-            borderInlineStart: "1px solid var(--line-soft)",
-            background: "var(--bg-1)",
-          }}
-        />
+      </div>
+      {shownView !== "list" ? null : (
+        <div
+          ref={detailsRef}
+          className="ix-col-details"
+          role={sheet ? "dialog" : undefined}
+          aria-modal={sheet ? true : undefined}
+          aria-label={sheet ? tx("Details", "التفاصيل") : undefined}
+        >
+          {active && (phone || sheet) ? (
+            <div className="ix-thread-bar ix-details-bar">
+              <button type="button" className="btn ghost sm" onClick={closeDetails}>
+                <span className="ix-back-icon" aria-hidden="true">
+                  <IconArrow w={14} />
+                </span>
+                {tx("Back", "رجوع")}
+              </button>
+            </div>
+          ) : null}
+          {active ? (
+            <ContactRightRail
+              conv={active}
+              contactById={contactById}
+              onContactsChanged={contactsQ.refetch}
+              tx={tx}
+            />
+          ) : (
+            <aside
+              style={{
+                borderInlineStart: "1px solid var(--line-soft)",
+                background: "var(--bg-1)",
+              }}
+            />
+          )}
+        </div>
       )}
+      {sheet ? <div className="ix-details-scrim" onClick={closeDetails} aria-hidden="true" /> : null}
       {showConvertModal && active && (
         <ConvertTicketModal
           conv={active}

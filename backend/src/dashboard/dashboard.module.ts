@@ -1,6 +1,10 @@
-import { Controller, Get, Module, Query } from "@nestjs/common";
+import { Controller, Get, Module, Optional, Query } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
+import { conversationScopeSql } from "../insights/insights-scope";
 
 /** Only 7 and 30 are supported; anything else falls back to 7. */
 export function resolveDays(q?: string): 7 | 30 {
@@ -53,16 +57,32 @@ interface ActivityRow {
   at: string;         // ISO timestamp
 }
 
+/** Conversation scope as a raw-SQL fragment (SP-11 moved it to the insights
+ *  plumbing; behaviour unchanged). */
+const sqlScope = conversationScopeSql;
+
 @Controller("dashboard")
-class DashboardController {
-  constructor(private readonly prisma: PrismaService) {}
+export class DashboardController {
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly perm?: PermissionService,
+  ) {}
 
   @Get("summary")
-  async summary(@CurrentWorkspace() workspaceId: string, @Query("days") daysQ?: string) {
+  async summary(@CurrentWorkspace() workspaceId: string, @Query("days") daysQ?: string, @CurrentViewer() viewer?: Viewer) {
     const n = resolveDays(daysQ);
+    // Members only see counts/activity from conversations they may see.
+    const scope = this.perm ? await this.perm.conversationScope(workspaceId, viewer) : {};
+    const messageScope = Object.keys(scope).length ? { conversation: scope } : {};
     const sinceN = startOfDayUtc(n - 1); // start of the chart window
     const since7 = startOfDayUtc(6);     // start of the 7-day window (deltas)
     const since14 = startOfDayUtc(13);   // for week-over-week deltas
+
+    const convScopeSql = sqlScope(scope, "c");
+    const msgScopeSql =
+      Object.keys(scope).length === 0
+        ? Prisma.empty
+        : Prisma.sql`AND m."conversationId" IN (SELECT c."id" FROM "Conversation" c WHERE c."workspaceId" = ${workspaceId} ${sqlScope(scope, "c")})`;
 
     const [
       contacts,
@@ -86,13 +106,13 @@ class DashboardController {
       channelsRaw,
     ] = await Promise.all([
       this.prisma.contact.count({ where: { workspaceId } }),
-      this.prisma.conversation.count({ where: { workspaceId } }),
+      this.prisma.conversation.count({ where: { workspaceId, ...scope } }),
       this.prisma.appointment.count({ where: { workspaceId } }),
       this.prisma.campaign.count({ where: { workspaceId } }),
       this.prisma.template.count({ where: { workspaceId } }),
-      this.prisma.conversation.count({ where: { workspaceId, escalated: true } }),
+      this.prisma.conversation.count({ where: { workspaceId, escalated: true, ...scope } }),
       this.prisma.conversation.aggregate({
-        where: { workspaceId },
+        where: { workspaceId, ...scope },
         _sum: { unread: true },
       }),
       this.prisma.campaign.findMany({
@@ -100,12 +120,13 @@ class DashboardController {
         take: 3,
       }),
       this.prisma.conversation.count({
-        where: { workspaceId, createdAt: { gte: since7 } },
+        where: { workspaceId, createdAt: { gte: since7 }, ...scope },
       }),
       this.prisma.conversation.count({
         where: {
           workspaceId,
           createdAt: { gte: since14, lt: since7 },
+          ...scope,
         },
       }),
       this.prisma.$queryRaw<
@@ -118,6 +139,7 @@ class DashboardController {
         FROM "Message" m
         WHERE m."workspaceId" = ${workspaceId}
           AND m."createdAt" >= ${sinceN}
+          ${msgScopeSql}
         GROUP BY 1
         ORDER BY 1
       `,
@@ -128,12 +150,13 @@ class DashboardController {
           AND c."intent" IS NOT NULL
           AND c."intent" <> ''
           AND c."intent" <> '—'
+          ${convScopeSql}
         GROUP BY c."intent"
         ORDER BY count DESC
         LIMIT 6
       `,
       this.prisma.message.findMany({
-        where: { workspaceId },
+        where: { workspaceId, ...messageScope },
         orderBy: { createdAt: "desc" },
         take: 10,
         include: {
@@ -142,7 +165,7 @@ class DashboardController {
       }),
       this.prisma.conversation.groupBy({
         by: ["channel"],
-        where: { workspaceId },
+        where: { workspaceId, ...scope },
         _count: { _all: true },
       }),
     ]);

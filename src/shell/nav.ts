@@ -3,7 +3,7 @@ import type { RouteId } from "@/lib/types";
 import {
   IconHome, IconInbox, IconCampaign, IconUsers,
   IconChart, IconTemplate, IconTeam, IconCog, IconCal, IconGlobe,
-  IconLayers, IconBolt, IconAttach, IconBot, IconFlow,
+  IconCheckCircle, IconLayers, IconBolt, IconAttach, IconBot, IconFlow, IconRadar,
 } from "@/icons";
 
 interface NavItem {
@@ -30,15 +30,19 @@ export const NAV: NavEntry[] = [
   { id: "calendar",    label: "Calendar",    ar: "التقويم",       Icon: IconCal },
   { id: "social",      label: "Social",      ar: "السوشيال",      Icon: IconGlobe },
   { id: "campaigns",   label: "Campaigns",   ar: "الحملات",       Icon: IconCampaign },
+  // SP-15: click-to-WhatsApp ads (reports.view).
+  { id: "ads",         label: "Ads",         ar: "الإعلانات",     Icon: IconChart },
   { id: "pipeline",    label: "Pipeline",    ar: "خط الأنابيب",   Icon: IconLayers },
   { id: "workflows",   label: "Workflows",   ar: "الأتمتة",       Icon: IconFlow },
   { id: "contacts",    label: "Contacts",    ar: "جهات الاتصال",  Icon: IconUsers },
+  { id: "followups",   label: "Follow-ups",  ar: "المتابعات",     Icon: IconCheckCircle },
   { id: "analytics",   label: "Analytics",   ar: "التحليلات",     Icon: IconChart },
   { section: "Manage" },
   { id: "templates",   label: "Templates",   ar: "القوالب",       Icon: IconTemplate },
   { id: "media",       label: "Media",       ar: "الوسائط",        Icon: IconAttach },
   { id: "team",        label: "Team",        ar: "الفريق",        Icon: IconTeam },
   { id: "agent",       label: "Kewy AI",     ar: "كيوي الذكاء",    Icon: IconBot },
+  { id: "channels",    label: "Channels",    ar: "القنوات",       Icon: IconRadar },
   { id: "settings",    label: "Settings",    ar: "الإعدادات",     Icon: IconCog },
   { section: "Kewy ops" },
   { id: "admin",       label: "Admin portal", ar: "بوابة الإدارة",  Icon: IconBolt, superAdminOnly: true },
@@ -53,11 +57,18 @@ export const TITLES: Record<RouteId, { en: string; ar: string }> = {
   pipeline:    { en: "Sales pipeline",  ar: "مسار المبيعات" },
   workflows:   { en: "Workflows",       ar: "الأتمتة" },
   contacts:    { en: "Contacts",        ar: "جهات الاتصال" },
+  followups:   { en: "Follow-ups",      ar: "المتابعات" },
   analytics:   { en: "Analytics",       ar: "التحليلات" },
   templates:   { en: "Templates",       ar: "القوالب" },
   media:       { en: "Media library",   ar: "مكتبة الوسائط" },
   team:        { en: "Team",            ar: "الفريق" },
   agent:       { en: "Kewy AI agent",   ar: "وكيل كيوي الذكاء" },
   settings:    { en: "Settings",        ar: "الإعدادات" },
+  channels:    { en: "Channels",        ar: "القنوات" },
+  ads:         { en: "Ads",             ar: "الإعلانات" },
   admin:       { en: "Kewy admin portal", ar: "بوابة إدارة كيوي" },
+  // SP-20: reached from signup and the "Continue setup" cards, not the sidebar.
+  setup:       { en: "Set up your agent", ar: "إعداد وكيلك" },
+  // SP-18: reached from the "Ask Kewy" drawer, not the sidebar.
+  copilot:     { en: "Ask Kewy history", ar: "سجل اسأل كيوي" },
 };

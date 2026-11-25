@@ -1,40 +1,103 @@
 import { useState } from "react";
-import type { TagRow } from "@/lib/types";
+import type { Lang, TagReferences, TagRow } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
 import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
+import { usePermissions, NO_PERMISSION_AR, NO_PERMISSION_EN } from "@/auth/usePermissions";
 import { IconPlus, IconTrash } from "@/icons";
+import { useToast } from "@/components/Toast";
+import { TagDeleteDialog } from "./audiences/DeleteDialogs";
+import { audienceErrorText, isForbidden, tagDeleteStateFromRefs, type TagDeleteState } from "./audiences/audienceErrors";
 
 const HUES = ["0", "30", "60", "90", "120", "150", "180", "210", "240", "270", "300", "330"];
 
 interface TagsTabProps {
   tx: (en: string, ar: string) => string;
+  lang?: Lang;
   onCatalogChanged: () => void;
 }
 
 /** The tag catalog: colored chips with usage counts, inline rename, recolor,
  *  delete-with-impact. Contacts keep tag NAMES; this manages the metadata. */
-export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
+export function TagsTab({ tx, lang = "en", onCatalogChanged }: TagsTabProps) {
+  // Tag delete and merge both map to contacts.update on the backend.
+  const canTagWrite = usePermissions().can("contacts.update");
+  const noPerm = tx(NO_PERMISSION_EN, NO_PERMISSION_AR);
   const tagsQ = useFetch<TagRow[]>("/tags");
   const [newName, setNewName] = useState("");
   const [editing, setEditing] = useState<string | null>(null); // tag id
   const [editName, setEditName] = useState("");
   const [colorFor, setColorFor] = useState<TagRow | null>(null);
-  const [deleting, setDeleting] = useState<TagRow | null>(null);
+  // SP-16: delete first reads GET /tags/:id/references, so smart audiences that use the tag are listed before anything changes.
+  const [deleting, setDeleting] = useState<{ tag: TagRow; state: TagDeleteState } | null>(null);
+  const [checking, setChecking] = useState<string | null>(null);
+  const { toast } = useToast();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [merging, setMerging] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState("");
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+  const [mergeResult, setMergeResult] = useState<string | null>(null);
 
   const createMut = useMutation<{ name: string }, TagRow>((input) => api.post("/tags", input));
   const updateMut = useMutation<{ id: string; name?: string; color?: string }, { tag: TagRow; contactsUpdated: number }>(
     ({ id, ...body }) => api.patch(`/tags/${id}`, body),
   );
-  const deleteMut = useMutation<{ id: string }, { ok: true; contactsUpdated: number }>(({ id }) =>
-    api.delete(`/tags/${id}`),
-  );
+  const startDelete = async (t: TagRow) => {
+    setChecking(t.id);
+    try {
+      const refs = await api.get<TagReferences>(`/tags/${encodeURIComponent(t.id)}/references`);
+      setDeleting({ tag: t, state: tagDeleteStateFromRefs(refs) });
+    } catch (e) {
+      toast(isForbidden(e) ? noPerm : audienceErrorText(e, tx), "error");
+    } finally {
+      setChecking(null);
+    }
+  };
 
   const refresh = () => {
     tagsQ.refetch();
     onCatalogChanged();
   };
   const rows = tagsQ.data ?? [];
+  const sources = rows.filter((t) => picked.has(t.id));
+  const target = rows.find((t) => t.id === mergeTarget);
+  const togglePick = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const closeMerge = () => {
+    setMerging(false);
+    setMergeTarget("");
+    setMergeError(null);
+  };
+  const doMerge = async () => {
+    if (!target || sources.length === 0) return;
+    setMergeBusy(true);
+    setMergeError(null);
+    try {
+      const r = await api.post<{ contactsUpdated: number; segmentsUpdated: number; removed: number }>("/tags/merge", {
+        fromIds: sources.map((t) => t.id),
+        intoId: target.id,
+      });
+      setPicked(new Set());
+      closeMerge();
+      setMergeResult(
+        tx(
+          `Merged ${r.removed} tag(s) into "${target.name}" · ${r.contactsUpdated} contact(s), ${r.segmentsUpdated} audience(s) updated.`,
+          `تم دمج ${r.removed} وسم في "${target.name}" · تحديث ${r.contactsUpdated} جهة و${r.segmentsUpdated} جمهور.`,
+        ),
+      );
+      refresh();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : tx("Merge failed.", "فشل الدمج."));
+    } finally {
+      setMergeBusy(false);
+    }
+  };
 
   return (
     <div style={{ padding: "0 24px 24px", display: "grid", gap: 12, maxWidth: 720 }}>
@@ -67,6 +130,20 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
           <IconPlus w={13} /> {tx("Add tag", "إضافة وسم")}
         </button>
       </div>
+      {mergeResult && (
+        <div role="status" style={{ fontSize: 12, color: "var(--accent)" }}>{mergeResult}</div>
+      )}
+      {picked.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+          <span>{picked.size} {tx("selected", "محدد")}</span>
+          <button type="button" className="btn sm" disabled={!canTagWrite} title={canTagWrite ? undefined : noPerm} onClick={() => { setMergeResult(null); setMerging(true); }}>
+            {tx("Merge into…", "دمج في…")}
+          </button>
+          <button type="button" className="btn ghost sm" onClick={() => setPicked(new Set())}>
+            {tx("Clear", "مسح")}
+          </button>
+        </div>
+      )}
       {(createMut.error || updateMut.error || tagsQ.error) && (
         <div style={{ fontSize: 12, color: "var(--bad)" }}>
           {createMut.error ?? updateMut.error ?? tx("Couldn't load tags.", "تعذر تحميل الوسوم.")}
@@ -81,6 +158,12 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
         )}
         {rows.map((t) => (
           <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderBottom: "1px solid var(--line-soft)" }}>
+            <input
+              type="checkbox"
+              aria-label={tx(`Select tag ${t.name}`, `تحديد الوسم ${t.name}`)}
+              checked={picked.has(t.id)}
+              onChange={() => togglePick(t.id)}
+            />
             <button
               type="button"
               aria-label={tx("Change color", "تغيير اللون")}
@@ -114,13 +197,13 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
                 title={tx("Click to rename", "انقر لإعادة التسمية")}
                 style={{ flex: 1, textAlign: "start", background: "transparent", border: 0, cursor: "text", fontSize: 13.5, color: "var(--ink)", padding: 0 }}
               >
-                {t.name}
+                <span dir="auto">{t.name}</span>
               </button>
             )}
             <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)", fontVariantNumeric: "tabular-nums" }}>
               {t.usageCount} {tx("contacts", "جهة")}
             </span>
-            <button type="button" className="btn ghost icon sm" aria-label={tx("Delete tag", "حذف الوسم")} onClick={() => setDeleting(t)}>
+            <button type="button" className="btn ghost icon sm" aria-label={tx("Delete tag", "حذف الوسم")} disabled={!canTagWrite || checking === t.id} title={canTagWrite ? undefined : noPerm} onClick={() => void startDelete(t)}>
               <IconTrash w={13} />
             </button>
           </div>
@@ -128,14 +211,14 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
       </div>
 
       {colorFor && (
-        <Modal onClose={() => setColorFor(null)} width={300} label="Tag color" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Modal onClose={() => setColorFor(null)} width={300} label={tx("Tag color", "لون الوسم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <h3 style={{ margin: 0, fontSize: 14 }}>{colorFor.name}</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {HUES.map((h) => (
               <button
                 key={h}
                 type="button"
-                aria-label={`hue ${h}`}
+                aria-label={tx(`Colour ${h}`, `اللون ${h}`)}
                 onClick={() => {
                   void updateMut.mutate({ id: colorFor.id, color: h }).then(() => {
                     setColorFor(null);
@@ -149,36 +232,59 @@ export function TagsTab({ tx, onCatalogChanged }: TagsTabProps) {
         </Modal>
       )}
 
-      {deleting && (
-        <Modal onClose={deleteMut.loading ? () => {} : () => setDeleting(null)} width={380} label="Delete tag" panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Delete this tag?", "حذف هذا الوسم؟")}</h3>
-          <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
-            {tx(
-              `"${deleting.name}" will be removed from ${deleting.usageCount} contact(s). This cannot be undone.`,
-              `سيُزال "${deleting.name}" من ${deleting.usageCount} جهة اتصال. لا يمكن التراجع.`,
-            )}
+      {merging && (
+        <Modal onClose={mergeBusy ? () => {} : closeMerge} width={420} label={tx("Merge tags", "دمج الوسوم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Merge tags", "دمج الوسوم")}</h3>
+          <div style={{ fontSize: 13, color: "var(--ink-2)" }}>
+            {tx("Merge these tags:", "دمج هذه الوسوم:")}{" "}
+            {sources.map((t, i) => (
+              <span key={t.id} dir="auto" style={{ fontWeight: 600 }}>{i > 0 ? tx(", ", "، ") : ""}{t.name} ({t.usageCount})</span>
+            ))}
           </div>
-          {deleteMut.error && <div style={{ fontSize: 12, color: "var(--bad)" }}>{deleteMut.error}</div>}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" className="btn ghost" onClick={() => setDeleting(null)} disabled={deleteMut.loading}>
-              {tx("Cancel", "إلغاء")}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              style={{ background: "var(--bad)", color: "white", borderColor: "transparent" }}
-              disabled={deleteMut.loading}
-              onClick={() => {
-                void deleteMut.mutate({ id: deleting.id }).then(() => {
-                  setDeleting(null);
-                  refresh();
-                }).catch(() => {});
-              }}
+          <label className="mono" style={{ fontSize: 11, textTransform: "uppercase", color: "var(--ink-3)", display: "grid", gap: 4 }}>
+            {tx("Into", "في")}
+            <select
+              dir="auto"
+              value={mergeTarget}
+              onChange={(e) => setMergeTarget(e.target.value)}
+              style={{ height: 32, borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg-1)", color: "var(--ink)", padding: "0 8px", fontSize: 13 }}
             >
-              <IconTrash w={13} /> {deleteMut.loading ? tx("Deleting…", "جارٍ الحذف…") : tx("Delete", "حذف")}
+              <option value="">{tx("Choose a tag…", "اختر وسمًا…")}</option>
+              {rows.filter((t) => !picked.has(t.id)).map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </label>
+          {target && (
+            <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+              {tx(
+                `Up to ${sources.reduce((n, t) => n + t.usageCount, 0)} contact(s) will be re-tagged "${target.name}", saved audiences are updated, and the ${sources.length} merged tag(s) are removed. This cannot be undone.`,
+                `ستُوسَم حتى ${sources.reduce((n, t) => n + t.usageCount, 0)} جهة بالوسم "${target.name}"، وتُحدَّث الجماهير المحفوظة، ويُحذف ${sources.length} وسم مدموج. لا يمكن التراجع.`,
+              )}
+            </div>
+          )}
+          {mergeError && <div role="alert" style={{ fontSize: 12, color: "var(--bad)" }}>{mergeError}</div>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn ghost" onClick={closeMerge} disabled={mergeBusy}>{tx("Cancel", "إلغاء")}</button>
+            <button type="button" className="btn primary" disabled={!target || mergeBusy} onClick={() => void doMerge()}>
+              {mergeBusy ? tx("Merging…", "جارٍ الدمج…") : tx("Merge", "دمج")}
             </button>
           </div>
         </Modal>
+      )}
+
+      {deleting && (
+        <TagDeleteDialog
+          tx={tx}
+          lang={lang}
+          tag={deleting.tag}
+          initial={deleting.state}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setDeleting(null);
+            refresh();
+          }}
+        />
       )}
     </div>
   );

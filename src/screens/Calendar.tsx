@@ -11,7 +11,6 @@ import { makeTx, type Tx } from "@/lib/tx";
 import { useRoute } from "@/router";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
-import { Modal } from "@/components/Modal";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import {
   IconAlert,
@@ -29,14 +28,50 @@ import {
   IconUsers,
   IconX,
 } from "@/icons";
-import { api } from "@/api/client";
-import { useFetch, useMutation } from "@/api/useFetch";
+import { useFetch } from "@/api/useFetch";
 import type {
   Appointment,
   AppointmentStatus,
   Contact,
   TeamMember,
 } from "@/lib/types";
+import { usePermissions } from "@/auth/usePermissions";
+import { useAuth } from "@/auth/context";
+import { ServicesTab } from "./calendar/ServicesTab";
+import { StaffTab } from "./calendar/StaffTab";
+import { useCatalogParams } from "./calendar/useCatalogParams";
+import type { CalendarTab } from "./calendar/catalogParams";
+import { workspaceTz, wallClock, addDays as addDaysISO } from "./calendar/bookingTime";
+import type { Service, StaffResource } from "@/lib/types";
+import { useCalendarParams } from "./calendar/useCalendarParams";
+import { LIMIT_NOTICE, appointmentsQuery, hitListLimit, viewDays, type CalendarView } from "./calendar/calendarParams";
+import { calendarViewsFor, explicitCalendarView, resolveCalendarView } from "./calendar/calendarView";
+import { useViewport } from "@/lib/useViewport";
+import { getHashParam } from "@/lib/hashState";
+import "@/styles/screens/calendar.css";
+import {
+  apptTop,
+  bucketByDay,
+  dateShort,
+  dayLabel,
+  dayNumber,
+  dayOfAppt,
+  groupByDay,
+  rangeLabel,
+  timeOf,
+  weekStats,
+  weekdayShort,
+} from "./calendar/calendarGrid";
+import { BookingsBoard } from "./calendar/BookingsBoard";
+import { AgendaView } from "./calendar/AgendaView";
+import { BookingDialog } from "./calendar/BookingDialog";
+import { RescheduleDialog } from "./calendar/RescheduleDialog";
+import { ServiceFilter, StaffFilter } from "./calendar/ServiceFilter";
+import { BookingSearch } from "./calendar/BookingSearch";
+import { BookingBadges } from "./calendar/BookingBadges";
+import { MOVE_WORDS, allowedFrom, isOpenStatus } from "./calendar/bookingStatus";
+import { bookingErrorText } from "./calendar/bookingErrors";
+import { updateBooking } from "./calendar/bookingApi";
 
 interface TeamApiMember extends TeamMember {
   status?: "online" | "away" | "offline";
@@ -48,7 +83,7 @@ interface TeamApiMember extends TeamMember {
 /* Constants                                                                */
 /* ─────────────────────────────────────────────────────────────────────── */
 
-type ViewMode = "week" | "list" | "day";
+type ViewMode = CalendarView;
 type FilterId = "all" | "confirmed" | "pending" | "today" | "week";
 
 const DAY_START_HOUR = 8;
@@ -69,95 +104,14 @@ const SOURCE_KIND: Record<Appointment["source"], BadgeKind> = {
   "self-booking": "info",
 };
 
-const inputStyle: CSSProperties = {
-  width: "100%",
-  background: "var(--bg-2)",
-  border: "1px solid var(--line)",
-  borderRadius: "var(--r)",
-  padding: "8px 12px",
-  color: "var(--ink)",
-  fontSize: 13,
-  marginTop: 6,
-  outline: "none",
-};
-
-const labelStyle: CSSProperties = {
-  fontSize: 11,
-  textTransform: "uppercase",
-  color: "var(--ink-3)",
-  fontFamily: "var(--font-mono)",
-  marginTop: 12,
-  display: "block",
-};
-
 /* ─────────────────────────────────────────────────────────────────────── */
 /* Date helpers                                                             */
 /* ─────────────────────────────────────────────────────────────────────── */
 
-function startOfWeek(d: Date): Date {
-  const out = new Date(d);
-  const day = out.getDay();
-  const offset = day === 0 ? -6 : 1 - day;
-  out.setDate(out.getDate() + offset);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
-
-function startOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
-
-function addDays(d: Date, n: number): Date {
-  const out = new Date(d);
-  out.setDate(out.getDate() + n);
-  return out;
-}
-
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function fmtTime(d: Date, lang: "en" | "ar"): string {
-  return d.toLocaleTimeString(lang === "ar" ? "ar-EG" : "en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
-function fmtDateShort(d: Date, lang: "en" | "ar"): string {
-  return d.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function fmtDayLabel(d: Date, lang: "en" | "ar"): string {
-  return d.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function fmtRange(start: Date, end: Date, lang: "en" | "ar"): string {
-  const a = start.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-    month: "short",
-    day: "numeric",
-  });
-  const b = end.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-    month: "short",
-    day: "numeric",
-  });
-  return `${a} – ${b}`;
-}
+// SP-10 final review I1/I2: days are workspace-local "YYYY-MM-DD" strings
+// from the same viewDays the fetch uses; times and day buckets come from the
+// workspace zone (calendar/calendarGrid.ts), never the browser's.
+const fmtTime = (instant: Date | string, tz: string) => timeOf(instant, tz);
 
 /* ─────────────────────────────────────────────────────────────────────── */
 /* Stat tile (local — same shape as Dashboard)                              */
@@ -208,6 +162,7 @@ interface ApptCardProps {
   contactById: Map<string, Contact>;
   tx: Tx;
   lang: "en" | "ar";
+  tz: string;
   onOpen: (id: string) => void;
   active: boolean;
 }
@@ -261,13 +216,11 @@ function statusVisual(s: AppointmentStatus): {
   }
 }
 
-function ApptCard({ appt, contactById, lang, onOpen, active }: ApptCardProps) {
+function ApptCard({ appt, contactById, lang, tz, onOpen, active }: ApptCardProps) {
   const v = statusVisual(appt.status);
   const contact = contactById.get(appt.contactId);
-  const start = new Date(appt.startAt);
-  const minutesFromTop =
-    (start.getHours() - DAY_START_HOUR) * 60 + start.getMinutes();
-  const top = Math.max(0, (minutesFromTop / 60) * HOUR_PX);
+  // Position in the workspace zone (I2).
+  const top = apptTop(appt.startAt, tz, DAY_START_HOUR, HOUR_PX);
   const height = Math.max(28, (appt.durationMin / 60) * HOUR_PX - 4);
   const service = lang === "ar" ? appt.serviceAr : appt.service;
 
@@ -284,7 +237,8 @@ function ApptCard({ appt, contactById, lang, onOpen, active }: ApptCardProps) {
         height,
         background: v.bg,
         border: `1px solid ${v.border}`,
-        borderInlineStart: `3px solid ${v.bar}`,
+        borderInlineStart: `3px solid ${appt.conflict ? "var(--bad)" : v.bar}`,
+        outline: appt.fit === "outside_hours" || appt.fit === "off_day" ? "1px dashed var(--warn)" : undefined,
         borderRadius: 8,
         padding: "6px 8px",
         textAlign: "start",
@@ -310,7 +264,7 @@ function ApptCard({ appt, contactById, lang, onOpen, active }: ApptCardProps) {
         }}
       >
         <IconClock w={10} />
-        {fmtTime(start, lang)}
+        <bdi>{fmtTime(appt.startAt, tz)}</bdi>
         <span style={{ marginInlineStart: "auto" }}>{appt.durationMin}m</span>
       </div>
       <div
@@ -347,7 +301,10 @@ function ApptCard({ appt, contactById, lang, onOpen, active }: ApptCardProps) {
 /* ─────────────────────────────────────────────────────────────────────── */
 
 interface WeekViewProps {
-  weekStart: Date;
+  /** The week's local days (viewDays: the same days the fetch covers). */
+  days: string[];
+  today: string;
+  tz: string;
   appts: Appointment[];
   contactById: Map<string, Contact>;
   tx: Tx;
@@ -357,7 +314,9 @@ interface WeekViewProps {
 }
 
 function WeekView({
-  weekStart,
+  days,
+  today,
+  tz,
   appts,
   contactById,
   tx,
@@ -365,31 +324,7 @@ function WeekView({
   onOpen,
   activeId,
 }: WeekViewProps) {
-  const days = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart],
-  );
-  const today = startOfDay(new Date());
-  const apptsByDay = useMemo(() => {
-    const map = new Map<number, Appointment[]>();
-    for (let i = 0; i < 7; i++) map.set(i, []);
-    for (const a of appts) {
-      const d = new Date(a.startAt);
-      for (let i = 0; i < 7; i++) {
-        if (sameDay(d, days[i]!)) {
-          map.get(i)!.push(a);
-          break;
-        }
-      }
-    }
-    for (const list of map.values()) {
-      list.sort(
-        (a, b) =>
-          new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-      );
-    }
-    return map;
-  }, [appts, days]);
+  const apptsByDay = useMemo(() => bucketByDay(appts, days, tz), [appts, days, tz]);
 
   const hours = useMemo(
     () =>
@@ -398,21 +333,20 @@ function WeekView({
   );
 
   return (
-    <div className="card" style={{ overflow: "hidden" }}>
+    <div className="card cal-week">
       <div
+        className="cal-week-grid"
         style={{
-          display: "grid",
-          gridTemplateColumns: "60px repeat(7, 1fr)",
           borderBottom: "1px solid var(--line-soft)",
           background: "var(--bg-1)",
         }}
       >
         <div />
         {days.map((d) => {
-          const isToday = sameDay(d, today);
+          const isToday = d === today;
           return (
             <div
-              key={d.toISOString()}
+              key={d}
               style={{
                 padding: "10px 12px",
                 borderInlineStart: "1px solid var(--line-soft)",
@@ -430,9 +364,7 @@ function WeekView({
                   color: isToday ? "var(--accent)" : "var(--ink-3)",
                 }}
               >
-                {d.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-                  weekday: "short",
-                })}
+                {weekdayShort(d, lang)}
               </div>
               <div
                 style={{
@@ -442,7 +374,7 @@ function WeekView({
                   letterSpacing: "-0.01em",
                 }}
               >
-                {d.getDate()}
+                <bdi>{dayNumber(d)}</bdi>
                 {isToday && (
                   <span
                     style={{
@@ -463,12 +395,10 @@ function WeekView({
       </div>
 
       <div
+        className="cal-week-grid cal-week-body"
         style={{
           position: "relative",
-          display: "grid",
-          gridTemplateColumns: "60px repeat(7, 1fr)",
           maxHeight: HOUR_PX * TOTAL_HOURS + 20,
-          overflowY: "auto",
         }}
       >
         {/* Hour gutter */}
@@ -492,11 +422,11 @@ function WeekView({
         </div>
 
         {/* 7 day columns */}
-        {days.map((d, idx) => {
-          const dayAppts = apptsByDay.get(idx) ?? [];
+        {days.map((d) => {
+          const dayAppts = apptsByDay.get(d) ?? [];
           return (
             <div
-              key={d.toISOString()}
+              key={d}
               style={{
                 position: "relative",
                 borderInlineStart: "1px solid var(--line-soft)",
@@ -518,6 +448,7 @@ function WeekView({
                   contactById={contactById}
                   tx={tx}
                   lang={lang}
+                  tz={tz}
                   onOpen={onOpen}
                   active={activeId === a.id}
                 />
@@ -535,15 +466,18 @@ function WeekView({
 /* ─────────────────────────────────────────────────────────────────────── */
 
 interface DayViewProps {
-  day: Date;
+  day: string;
+  /** The week strip: the same local days the week grid draws. */
+  days: string[];
+  today: string;
+  tz: string;
   appts: Appointment[];
   contactById: Map<string, Contact>;
   tx: Tx;
   lang: "en" | "ar";
   onOpen: (id: string) => void;
   activeId: string | null;
-  onPickDay: (d: Date) => void;
-  weekStart: Date;
+  onPickDay: (d: string) => void;
 }
 
 function DayView({
@@ -555,25 +489,16 @@ function DayView({
   onOpen,
   activeId,
   onPickDay,
-  weekStart,
+  days,
+  today,
+  tz,
 }: DayViewProps) {
-  const dayAppts = useMemo(
-    () =>
-      appts
-        .filter((a) => sameDay(new Date(a.startAt), day))
-        .sort(
-          (a, b) =>
-            new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-        ),
-    [appts, day],
-  );
+  const dayAppts = useMemo(() => bucketByDay(appts, [day], tz).get(day) ?? [], [appts, day, tz]);
   const hours = useMemo(
     () =>
       Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => DAY_START_HOUR + i),
     [],
   );
-  const today = startOfDay(new Date());
-
   return (
     <div className="card" style={{ overflow: "hidden" }}>
       <div
@@ -597,12 +522,12 @@ function DayView({
               letterSpacing: 0.08,
             }}
           >
-            {sameDay(day, today)
+            {day === today
               ? tx("Today", "اليوم")
               : tx("Selected day", "اليوم المحدد")}
           </div>
           <div style={{ fontSize: 18, fontWeight: 600 }}>
-            {fmtDayLabel(day, lang)}
+            {dayLabel(day, lang)}
           </div>
         </div>
         <div className="mono" style={{ color: "var(--ink-3)", fontSize: 12 }}>
@@ -621,13 +546,12 @@ function DayView({
           background: "var(--bg-1)",
         }}
       >
-        {Array.from({ length: 7 }, (_, i) => {
-          const d = addDays(weekStart, i);
-          const isActive = sameDay(d, day);
-          const isToday = sameDay(d, today);
+        {days.map((d) => {
+          const isActive = d === day;
+          const isToday = d === today;
           return (
             <button
-              key={d.toISOString()}
+              key={d}
               type="button"
               onClick={() => onPickDay(d)}
               className={`day-pill ${isActive ? "active" : ""}`.trim()}
@@ -652,12 +576,10 @@ function DayView({
                 className="mono"
                 style={{ fontSize: 10, color: isToday ? "var(--accent)" : "var(--ink-3)" }}
               >
-                {d.toLocaleDateString(lang === "ar" ? "ar-EG" : "en-US", {
-                  weekday: "short",
-                })}
+                {weekdayShort(d, lang)}
               </span>
               <span style={{ fontSize: 14, fontWeight: 600 }}>
-                {d.getDate()}
+                <bdi>{dayNumber(d)}</bdi>
               </span>
             </button>
           );
@@ -732,6 +654,7 @@ function DayView({
               contactById={contactById}
               tx={tx}
               lang={lang}
+              tz={tz}
               onOpen={onOpen}
               active={activeId === a.id}
             />
@@ -747,6 +670,8 @@ function DayView({
 /* ─────────────────────────────────────────────────────────────────────── */
 
 interface ListViewProps {
+  tz: string;
+  today: string;
   appts: Appointment[];
   contactById: Map<string, Contact>;
   team: TeamApiMember[];
@@ -764,27 +689,10 @@ function ListView({
   lang,
   onOpen,
   activeId,
+  tz,
+  today,
 }: ListViewProps) {
-  const now = new Date();
-  const groups = useMemo(() => {
-    const map = new Map<string, Appointment[]>();
-    const sorted = [...appts].sort(
-      (a, b) =>
-        new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
-    );
-    for (const a of sorted) {
-      const d = startOfDay(new Date(a.startAt));
-      const key = d.toISOString();
-      const list = map.get(key) ?? [];
-      list.push(a);
-      map.set(key, list);
-    }
-    return Array.from(map.entries()).map(([key, list]) => ({
-      key,
-      day: new Date(key),
-      list,
-    }));
-  }, [appts]);
+  const groups = useMemo(() => groupByDay(appts, tz).map((g) => ({ key: g.day, ...g })), [appts, tz]);
 
   if (groups.length === 0) {
     return (
@@ -800,9 +708,9 @@ function ListView({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {groups.map(({ key, day, list }) => {
-        const isPast = day.getTime() < startOfDay(now).getTime();
+        const isPast = day < today;
         return (
-          <div key={key} className="card" style={{ overflow: "hidden" }}>
+          <div key={key} className="card cal-list-card">
             <div
               className="card-h"
               style={{
@@ -810,7 +718,7 @@ function ListView({
               }}
             >
               <div>
-                <h3>{fmtDayLabel(day, lang)}</h3>
+                <h3>{dayLabel(day, lang)}</h3>
                 <div className="sub">
                   {list.length}{" "}
                   {tx("appointments", "موعد")}
@@ -822,7 +730,7 @@ function ListView({
                   )}
                 </div>
               </div>
-              {sameDay(day, now) && (
+              {day === today && (
                 <Badge kind="accent" dot>
                   {tx("today", "اليوم")}
                 </Badge>
@@ -843,7 +751,6 @@ function ListView({
               </thead>
               <tbody>
                 {list.map((a) => {
-                  const start = new Date(a.startAt);
                   const contact = contactById.get(a.contactId);
                   const staff = a.staffId
                     ? team.find((m) => m.id === a.staffId)
@@ -865,7 +772,7 @@ function ListView({
                           className="mono"
                           style={{ fontSize: 12, color: "var(--ink-1)" }}
                         >
-                          {fmtTime(start, lang)}
+                          <bdi>{fmtTime(a.startAt, tz)}</bdi>
                         </div>
                         <div
                           className="mono"
@@ -981,210 +888,12 @@ function sourceLabel(s: Appointment["source"], tx: Tx): string {
 /* New-appointment modal                                                    */
 /* ─────────────────────────────────────────────────────────────────────── */
 
-interface NewAppointmentModalProps {
-  contacts: Contact[];
-  onClose: () => void;
-  onCreate: (input: NewAppointmentInput) => Promise<void>;
-  saving: boolean;
-  error: string | null;
-  tx: Tx;
-}
-
-interface NewAppointmentInput {
-  contactId: string;
-  service: string;
-  serviceAr: string;
-  startAt: string; // ISO
-  durationMin: number;
-  status: AppointmentStatus;
-  source: Appointment["source"];
-}
-
-function defaultStartLocal(): string {
-  const d = new Date();
-  d.setMinutes(0, 0, 0);
-  d.setHours(d.getHours() + 1);
-  // datetime-local expects "YYYY-MM-DDTHH:MM"
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-function NewAppointmentModal({
-  contacts,
-  onClose,
-  onCreate,
-  saving,
-  error,
-  tx,
-}: NewAppointmentModalProps) {
-  const [contactId, setContactId] = useState<string>(contacts[0]?.id ?? "");
-  const [service, setService] = useState<string>("");
-  const [serviceAr, setServiceAr] = useState<string>("");
-  const [startAtLocal, setStartAtLocal] = useState<string>(defaultStartLocal);
-  const [durationMin, setDurationMin] = useState<number>(30);
-
-  // If contacts loaded after the modal mounted (or the previous selection was
-  // removed), default to the first contact so the form is submittable.
-  useEffect(() => {
-    if (contacts.length === 0) return;
-    if (!contactId || !contacts.some((c) => c.id === contactId)) {
-      setContactId(contacts[0].id);
-    }
-  }, [contacts, contactId]);
-
-  const canSubmit =
-    contactId.length > 0 &&
-    service.trim().length > 0 &&
-    startAtLocal.length > 0 &&
-    durationMin > 0 &&
-    !saving;
-
-  const handleSubmit = () => {
-    if (!canSubmit) return;
-    const iso = new Date(startAtLocal).toISOString();
-    onCreate({
-      contactId,
-      service: service.trim(),
-      serviceAr: serviceAr.trim() || service.trim(),
-      startAt: iso,
-      durationMin,
-      status: "confirmed",
-      source: "human",
-    })
-      .then(() => onClose())
-      .catch(() => {
-        // error surfaced via prop
-      });
-  };
-
-  return (
-    <Modal onClose={onClose} width={480} label="New appointment">
-        <h3 style={{ margin: 0, fontSize: 16 }}>
-          {tx("New appointment", "موعد جديد")}
-        </h3>
-        <p
-          style={{
-            margin: "4px 0 16px",
-            color: "var(--ink-2)",
-            fontSize: 13,
-          }}
-        >
-          {tx(
-            "Schedule a new booking for a contact.",
-            "احجز موعدًا جديدًا للعميل.",
-          )}
-        </p>
-
-        <label style={{ ...labelStyle, marginTop: 0 }}>
-          {tx("Contact", "العميل")}
-        </label>
-        <select
-          style={{ ...inputStyle, appearance: "none" }}
-          value={contactId}
-          onChange={(e) => setContactId(e.target.value)}
-        >
-          {contacts.length === 0 && (
-            <option value="">{tx("No contacts", "لا توجد جهات")}</option>
-          )}
-          {contacts.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name} — {c.phone}
-            </option>
-          ))}
-        </select>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div>
-            <label style={labelStyle}>{tx("Service (EN)", "الخدمة (EN)")}</label>
-            <input
-              style={inputStyle}
-              value={service}
-              onChange={(e) => setService(e.target.value)}
-              placeholder={tx("Property viewing", "Property viewing")}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>{tx("Service (AR)", "الخدمة (AR)")}</label>
-            <input
-              style={inputStyle}
-              value={serviceAr}
-              onChange={(e) => setServiceAr(e.target.value)}
-              placeholder="معاينة عقار"
-              dir="rtl"
-            />
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
-          <div>
-            <label style={labelStyle}>{tx("Start", "البداية")}</label>
-            <input
-              type="datetime-local"
-              style={inputStyle}
-              value={startAtLocal}
-              onChange={(e) => setStartAtLocal(e.target.value)}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>{tx("Duration (min)", "المدة (د)")}</label>
-            <input
-              type="number"
-              min={5}
-              step={5}
-              style={inputStyle}
-              value={durationMin}
-              onChange={(e) =>
-                setDurationMin(Math.max(5, Number(e.target.value) || 0))
-              }
-            />
-          </div>
-        </div>
-
-        {error && (
-          <div
-            style={{
-              marginTop: 12,
-              fontSize: 12,
-              color: "var(--bad)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            justifyContent: "flex-end",
-            marginTop: 20,
-          }}
-        >
-          <button className="btn ghost" onClick={onClose} disabled={saving}>
-            {tx("Cancel", "إلغاء")}
-          </button>
-          <button
-            className="btn primary"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-          >
-            <IconPlus w={14} />
-            {saving ? tx("Saving…", "جارٍ الحفظ…") : tx("Create", "إنشاء")}
-          </button>
-        </div>
-    </Modal>
-  );
-}
-
 /* ─────────────────────────────────────────────────────────────────────── */
 /* Side panel                                                               */
 /* ─────────────────────────────────────────────────────────────────────── */
 
 interface SidePanelProps {
+  tz: string;
   appt: Appointment;
   contactById: Map<string, Contact>;
   team: TeamApiMember[];
@@ -1195,6 +904,8 @@ interface SidePanelProps {
   onChangeStatus: (status: AppointmentStatus) => Promise<void>;
   statusUpdating: boolean;
   statusError: string | null;
+  canUpdate: boolean;
+  onReschedule: () => void;
 }
 
 function SidePanel({
@@ -1208,9 +919,13 @@ function SidePanel({
   onChangeStatus,
   statusUpdating,
   statusError,
+  canUpdate,
+  onReschedule,
+  tz,
 }: SidePanelProps) {
   const start = new Date(appt.startAt);
   const end = new Date(start.getTime() + appt.durationMin * 60_000);
+  const startDay = dayOfAppt(appt.startAt, tz);
   const contact = contactById.get(appt.contactId);
   const staff = appt.staffId
     ? team.find((m) => m.id === appt.staffId)
@@ -1220,18 +935,11 @@ function SidePanel({
 
   return (
     <aside
+      className="cal-panel"
       style={{
-        position: "fixed",
-        top: 56,
-        bottom: 0,
-        insetInlineEnd: 0,
-        width: 380,
         background: "var(--bg-1)",
         borderInlineStart: "1px solid var(--line-soft)",
         boxShadow: "var(--shadow-lg)",
-        display: "flex",
-        flexDirection: "column",
-        zIndex: 8,
       }}
     >
       <div
@@ -1292,6 +1000,7 @@ function SidePanel({
             <Badge kind={SOURCE_KIND[appt.source]}>
               {sourceLabel(appt.source, tx)}
             </Badge>
+            <BookingBadges appt={appt} tx={tx} />
             {appt.reminderSent && (
               <Badge kind="ok">
                 <IconCheck w={10} />
@@ -1335,13 +1044,13 @@ function SidePanel({
             </span>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 500 }}>
-                {fmtDayLabel(start, lang)}
+                {dayLabel(startDay, lang)}
               </div>
               <div
                 className="mono"
                 style={{ fontSize: 11, color: "var(--ink-3)" }}
               >
-                {fmtTime(start, lang)} – {fmtTime(end, lang)} · {appt.durationMin}{" "}
+                <bdi>{fmtTime(start, tz)} – {fmtTime(end, tz)}</bdi> · {appt.durationMin}{" "}
                 {tx("min", "د")}
               </div>
             </div>
@@ -1469,7 +1178,7 @@ function SidePanel({
                 {tx("Booking confirmed", "تم تأكيد الحجز")}
               </span>
               <span className="mono" style={{ fontSize: 10, color: "var(--ink-3)" }}>
-                {fmtDateShort(start, lang)}
+                {dateShort(startDay, lang)}
               </span>
             </li>
             {appt.reminderSent && (
@@ -1518,38 +1227,43 @@ function SidePanel({
               gap: 8,
             }}
           >
-            <button
-              className="btn"
-              onClick={() => {
-                onChangeStatus("completed").catch(() => {
-                  // surfaced via statusError
-                });
-              }}
-              disabled={statusUpdating || appt.status === "completed"}
-            >
-              <IconCheckCircle w={13} />
-              {tx("Mark complete", "إكمال")}
-            </button>
-            <button
-              className="btn"
-              onClick={() => {
-                onChangeStatus("cancelled").catch(() => {
-                  // surfaced via statusError
-                });
-              }}
-              disabled={statusUpdating || appt.status === "cancelled"}
-            >
-              <IconX w={13} />
-              {tx("Mark cancelled", "إلغاء")}
-            </button>
+            {canUpdate &&
+              allowedFrom(appt.status).map((to) => (
+                <button
+                  key={to}
+                  className="btn"
+                  onClick={() => {
+                    onChangeStatus(to).catch(() => {
+                      // surfaced via statusError
+                    });
+                  }}
+                  disabled={statusUpdating}
+                >
+                  {to === "completed" ? <IconCheckCircle w={13} /> : to === "cancelled" ? <IconX w={13} /> : null}
+                  {tx(...MOVE_WORDS[to])}
+                </button>
+              ))}
+            {canUpdate && isOpenStatus(appt.status) && (
+              <button className="btn" onClick={onReschedule} disabled={statusUpdating}>
+                <IconClock w={13} />
+                {tx("Reschedule", "إعادة الجدولة")}
+              </button>
+            )}
+            {(!canUpdate || !allowedFrom(appt.status).length) && (
+              <div className="muted" style={{ fontSize: 12, gridColumn: "1 / -1" }}>
+                {canUpdate
+                  ? tx("This booking is closed.", "هذا الحجز مغلق.")
+                  : tx("You can view this booking.", "يمكنك عرض هذا الحجز.")}
+              </div>
+            )}
           </div>
           {statusError && (
             <div
+              role="alert"
               style={{
                 marginTop: 8,
-                fontSize: 11,
+                fontSize: 12,
                 color: "var(--bad)",
-                fontFamily: "var(--font-mono)",
               }}
             >
               {statusError}
@@ -1605,19 +1319,39 @@ function CalendarImpl() {
   const tx = makeTx(t.lang);
   const [, setRoute] = useRoute();
 
-  const [view, setView] = useState<ViewMode>("week");
+  const { can } = usePermissions();
+  const { activeWorkspace } = useAuth();
+  const tz = workspaceTz(activeWorkspace?.timezone);
+  const today = wallClock(new Date(), tz).dateISO;
+  // SP-10: view, date and filters live in the hash (reload and Back restore them).
+  const [cal, setCal] = useCalendarParams(today);
+  // SP-30: phones open on the day view; an explicit view in the URL wins (not the week grid on a phone).
+  const { layout } = useViewport();
+  const view: ViewMode = resolveCalendarView(layout, explicitCalendarView(getHashParam(window.location.hash, "view")));
+  const setView = (v: ViewMode) => setCal({ view: v });
+  const canView = can("bookings.view");
+  const canCreate = can("bookings.create");
+  const canUpdate = can("bookings.update");
   const [filter, setFilter] = useState<FilterId>("all");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState<boolean>(false);
-  const [weekStart, setWeekStart] = useState<Date>(() =>
-    startOfWeek(new Date()),
-  );
-  const [selectedDay, setSelectedDay] = useState<Date>(() =>
-    startOfDay(new Date()),
-  );
+  const [rescheduling, setRescheduling] = useState<Appointment | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  // One source of truth for the week (I1): the same local days the fetch covers.
+  const selectedDay = cal.date;
+  const weekDays = useMemo(() => viewDays("week", cal.date, t.lang), [cal.date, t.lang]);
+  const setSelectedDay = (d: string) => setCal({ date: d });
 
   // ─── Data ──────────────────────────────────────────────────────────────
-  const apptsQ = useFetch<Appointment[]>("/appointments");
+  // A bounded range (≤ 92 days) with the service/staff filters, not the whole history.
+  const apptsQ = useFetch<Appointment[]>(canView ? appointmentsQuery({ ...cal, view }, tz, t.lang) : null);
+  const servicesQ = useFetch<{ items: Service[] }>(canView ? "/services" : null);
+  const staffQ = useFetch<{ items: StaffResource[] }>(canView ? "/staff" : null);
+  const services = useMemo(() => servicesQ.data?.items ?? [], [servicesQ.data]);
+  const staffList = useMemo(() => staffQ.data?.items ?? [], [staffQ.data]);
+  const serviceById = useMemo(() => new Map(services.map((x) => [x.id, x])), [services]);
+  const staffById = useMemo(() => new Map(staffList.map((x) => [x.id, x])), [staffList]);
   const contactsQ = useFetch<Contact[]>("/contacts");
   const teamQ = useFetch<TeamApiMember[]>("/team");
 
@@ -1638,87 +1372,53 @@ function CalendarImpl() {
   }, [contacts]);
 
   // ─── Mutations ────────────────────────────────────────────────────────
-  const createAppt = useMutation<NewAppointmentInput, Appointment>((input) =>
-    api.post<Appointment>("/appointments", input),
-  );
-
-  interface StatusUpdate {
-    id: string;
-    status: AppointmentStatus;
-  }
-  const updateStatus = useMutation<StatusUpdate, Appointment>((input) =>
-    api.patch<Appointment>(`/appointments/${input.id}`, {
-      status: input.status,
-    }),
-  );
-
-  const handleCreate = async (input: NewAppointmentInput): Promise<void> => {
-    await createAppt.mutate(input);
-    apptsQ.refetch();
-  };
-
-  const handleStatusChange = async (
-    status: AppointmentStatus,
-  ): Promise<void> => {
-    if (!activeId) return;
-    await updateStatus.mutate({ id: activeId, status });
-    apptsQ.refetch();
-  };
-
-  const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
-
-  const stats = useMemo(() => {
-    const today = startOfDay(new Date());
-    const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-    let todayCount = 0;
-    let weekCount = 0;
-    let completed = 0;
-    let noShow = 0;
-    for (const a of appointments) {
-      const d = new Date(a.startAt);
-      if (sameDay(d, today)) todayCount++;
-      if (weekDays.some((wd) => sameDay(wd, d))) weekCount++;
-      if (a.status === "completed") completed++;
-      if (a.status === "no-show") noShow++;
+  // Status moves follow the transition table and send the version the user
+  // saw; every refusal is shown as copy, never a raw key (review M2), and
+  // the list reloads so the panel shows the current row.
+  const handleStatusChange = async (status: AppointmentStatus): Promise<void> => {
+    const appt = appointments.find((a) => a.id === activeId);
+    if (!appt) return;
+    setStatusBusy(true);
+    setStatusError(null);
+    try {
+      await updateBooking(appt.id, { status, version: appt.version ?? 0 });
+    } catch (e) {
+      setStatusError(bookingErrorText(e, tx));
+    } finally {
+      setStatusBusy(false);
+      void apptsQ.refetch();
     }
-    const finished = completed + noShow || 1;
-    const noShowPct = Math.round((noShow / finished) * 100);
-    return { todayCount, weekCount, noShowPct };
-  }, [weekStart, appointments]);
+  };
+
+  const stats = useMemo(() => weekStats(appointments, weekDays, today, tz), [appointments, weekDays, today, tz]);
 
   const filtered = useMemo(() => {
-    const today = startOfDay(new Date());
-    const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    const week = new Set(weekDays);
     return appointments.filter((a) => {
-      const d = new Date(a.startAt);
       switch (filter) {
         case "confirmed":
           return a.status === "confirmed";
         case "pending":
           return a.status === "pending";
         case "today":
-          return sameDay(d, today);
+          return dayOfAppt(a.startAt, tz) === today;
         case "week":
-          return weekDays.some((wd) => sameDay(wd, d));
+          return week.has(dayOfAppt(a.startAt, tz));
         case "all":
         default:
           return true;
       }
     });
-  }, [filter, weekStart, appointments]);
+  }, [filter, weekDays, appointments, today, tz]);
 
   const visibleForView = useMemo(() => {
     if (view === "list") return filtered;
-    const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
     if (view === "week") {
-      return filtered.filter((a) =>
-        weekDays.some((wd) => sameDay(wd, new Date(a.startAt))),
-      );
+      const week = new Set(weekDays);
+      return filtered.filter((a) => week.has(dayOfAppt(a.startAt, tz)));
     }
-    return filtered.filter((a) =>
-      sameDay(new Date(a.startAt), selectedDay),
-    );
-  }, [filtered, view, weekStart, selectedDay]);
+    return filtered.filter((a) => dayOfAppt(a.startAt, tz) === selectedDay);
+  }, [filtered, view, weekDays, selectedDay, tz]);
 
   const activeAppt = useMemo(
     () => appointments.find((a) => a.id === activeId) ?? null,
@@ -1741,14 +1441,18 @@ function CalendarImpl() {
     { id: "week", label: tx("This week", "هذا الأسبوع") },
   ];
 
-  const tabs: Array<{ id: ViewMode; label: string; icon: ReactNode }> = [
+  const allTabs: Array<{ id: ViewMode; label: string; icon: ReactNode }> = [
     { id: "week", label: tx("Week", "أسبوع"), icon: <IconCal w={14} /> },
     { id: "list", label: tx("List", "قائمة"), icon: <IconUsers w={14} /> },
     { id: "day", label: tx("Day", "يوم"), icon: <IconClock w={14} /> },
+    { id: "agenda", label: tx("Agenda", "الأجندة"), icon: <IconCal w={14} /> },
+    { id: "board", label: tx("Board", "اللوحة"), icon: <IconUsers w={14} /> },
   ];
+  // The week grid is offered from md.
+  const tabs = allTabs.filter((tab) => calendarViewsFor(layout).includes(tab.id));
 
   return (
-    <div style={{ overflowY: "auto", flex: 1, position: "relative" }}>
+    <div className="cal-page">
       <PageHeader
         title={
           <span>
@@ -1785,11 +1489,7 @@ function CalendarImpl() {
             >
               <button
                 className="btn ghost icon sm"
-                onClick={() => {
-                  const next = addDays(weekStart, -7);
-                  setWeekStart(next);
-                  setSelectedDay(next);
-                }}
+                onClick={() => setCal({ date: addDaysISO(cal.date, view === "day" ? -1 : -7) })}
                 aria-label={tx("Previous week", "الأسبوع السابق")}
                 style={{ transform: t.lang === "ar" ? "scaleX(-1)" : undefined }}
               >
@@ -1804,15 +1504,11 @@ function CalendarImpl() {
                   whiteSpace: "nowrap",
                 }}
               >
-                {fmtRange(weekStart, weekEnd, t.lang)}
+                <bdi>{rangeLabel(weekDays[0], weekDays[6], t.lang)}</bdi>
               </div>
               <button
                 className="btn ghost icon sm"
-                onClick={() => {
-                  const next = addDays(weekStart, 7);
-                  setWeekStart(next);
-                  setSelectedDay(next);
-                }}
+                onClick={() => setCal({ date: addDaysISO(cal.date, view === "day" ? 1 : 7) })}
                 aria-label={tx("Next week", "الأسبوع التالي")}
                 style={{ transform: t.lang === "ar" ? "scaleX(-1)" : undefined }}
               >
@@ -1821,15 +1517,12 @@ function CalendarImpl() {
             </div>
             <button
               className="btn"
-              onClick={() => {
-                const m = startOfWeek(new Date());
-                setWeekStart(m);
-                setSelectedDay(startOfDay(new Date()));
-              }}
+              onClick={() => setCal({ date: today })}
             >
               {tx("Today", "اليوم")}
             </button>
-            <button className="btn primary" onClick={() => setShowNew(true)}>
+            {canView && <BookingSearch tx={tx} lang={t.lang} tz={tz} />}
+            <button className="btn primary" disabled={!canCreate} onClick={() => setShowNew(true)}>
               <IconPlus w={14} />
               {tx("New appointment", "موعد جديد")}
             </button>
@@ -1873,14 +1566,14 @@ function CalendarImpl() {
           </div>
         )}
 
+        {hitListLimit(appointments.length) && (
+          <div role="status" style={{ padding: "8px 12px", fontSize: 12, color: "var(--warn)", border: "1px solid var(--warn)", borderRadius: 8 }}>
+            {tx(...LIMIT_NOTICE)}
+          </div>
+        )}
+
         {/* Stats */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 12,
-          }}
-        >
+        <div className="cal-stats">
           <MiniStat
             label={tx("Today", "اليوم")}
             value={String(stats.todayCount)}
@@ -1890,14 +1583,14 @@ function CalendarImpl() {
           <MiniStat
             label={tx("This week", "هذا الأسبوع")}
             value={String(stats.weekCount)}
-            sub={fmtRange(weekStart, weekEnd, t.lang)}
+            sub={rangeLabel(weekDays[0], weekDays[6], t.lang)}
             icon={<IconCal w={12} />}
           />
           <MiniStat
             label={tx("No-show rate", "نسبة عدم الحضور")}
             value={String(stats.noShowPct)}
             unit="%"
-            sub={tx("Last 7 days", "آخر ٧ أيام")}
+            sub={tx("Last 7 days", "آخر 7 أيام")}
             icon={<IconAlert w={12} />}
             tone={stats.noShowPct > 15 ? "bad" : "warn"}
           />
@@ -1912,7 +1605,7 @@ function CalendarImpl() {
             flexWrap: "wrap",
           }}
         >
-          <div className="tabs" style={{ padding: 0, border: 0 }}>
+          <div className="tabs cal-view-tabs" style={{ padding: 0, border: 0 }}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -1925,6 +1618,12 @@ function CalendarImpl() {
             ))}
           </div>
           <div style={{ flex: 1 }} />
+          {canView && (
+            <>
+              <ServiceFilter services={services} value={cal.service} onChange={(id) => setCal({ service: id })} tx={tx} lang={t.lang} />
+              <StaffFilter staff={staffList} value={cal.staff} onChange={(id) => setCal({ staff: id })} tx={tx} lang={t.lang} />
+            </>
+          )}
           <div
             style={{
               display: "flex",
@@ -1947,7 +1646,9 @@ function CalendarImpl() {
         {/* Active view */}
         {view === "week" && (
           <WeekView
-            weekStart={weekStart}
+            days={weekDays}
+            today={today}
+            tz={tz}
             appts={visibleForView}
             contactById={contactById}
             tx={tx}
@@ -1958,6 +1659,8 @@ function CalendarImpl() {
         )}
         {view === "list" && (
           <ListView
+            tz={tz}
+            today={today}
             appts={visibleForView}
             contactById={contactById}
             team={team}
@@ -1965,6 +1668,33 @@ function CalendarImpl() {
             lang={t.lang}
             onOpen={setActiveId}
             activeId={activeId}
+          />
+        )}
+        {view === "agenda" && (
+          <AgendaView
+            appts={filtered}
+            days={viewDays("agenda", cal.date, t.lang)}
+            contactById={contactById}
+            staffById={staffById}
+            team={team}
+            tz={tz}
+            tx={tx}
+            lang={t.lang}
+            onOpen={setActiveId}
+          />
+        )}
+        {view === "board" && (
+          <BookingsBoard
+            appts={filtered.filter((a) => viewDays("board", cal.date, t.lang).includes(wallClock(new Date(a.startAt), tz).dateISO))}
+            contactById={contactById}
+            serviceById={serviceById}
+            staffById={staffById}
+            tz={tz}
+            tx={tx}
+            lang={t.lang}
+            canUpdate={canUpdate}
+            onOpen={setActiveId}
+            onChanged={() => void apptsQ.refetch()}
           />
         )}
         {view === "day" && (
@@ -1977,13 +1707,16 @@ function CalendarImpl() {
             onOpen={setActiveId}
             activeId={activeId}
             onPickDay={setSelectedDay}
-            weekStart={weekStart}
+            days={weekDays}
+            today={today}
+            tz={tz}
           />
         )}
       </div>
 
       {activeAppt && (
         <SidePanel
+          tz={tz}
           appt={activeAppt}
           contactById={contactById}
           team={team}
@@ -1995,19 +1728,42 @@ function CalendarImpl() {
             setRoute("inbox");
           }}
           onChangeStatus={handleStatusChange}
-          statusUpdating={updateStatus.loading}
-          statusError={updateStatus.error}
+          statusUpdating={statusBusy}
+          statusError={statusError}
+          canUpdate={canUpdate}
+          onReschedule={() => setRescheduling(activeAppt)}
         />
       )}
 
-      {showNew && (
-        <NewAppointmentModal
+      {showNew && canCreate && (
+        <BookingDialog
           contacts={contacts}
-          onClose={() => setShowNew(false)}
-          onCreate={handleCreate}
-          saving={createAppt.loading}
-          error={createAppt.error}
+          services={services}
+          staff={staffList}
+          tz={tz}
           tx={tx}
+          lang={t.lang}
+          date={cal.date < today ? today : cal.date}
+          onClose={() => setShowNew(false)}
+          onCreated={() => {
+            setShowNew(false);
+            void apptsQ.refetch();
+          }}
+        />
+      )}
+      {rescheduling && canUpdate && (
+        <RescheduleDialog
+          appt={rescheduling}
+          services={services}
+          staff={staffList}
+          tz={tz}
+          tx={tx}
+          lang={t.lang}
+          onClose={() => setRescheduling(null)}
+          onSaved={() => {
+            setRescheduling(null);
+            void apptsQ.refetch();
+          }}
         />
       )}
 
@@ -2029,5 +1785,67 @@ function CalendarImpl() {
   );
 }
 
-const Calendar = memo(CalendarImpl);
+/* ─────────────────────────────────────────────────────────────────────── */
+/* SP-10: Schedule | Services | Staff tabs (ruling 11)                      */
+/* ─────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The calendar route with its catalog tabs. The tab, search, layout and
+ * archived filter live in the hash (`#/calendar?tab=services&q=…`). Services
+ * and Staff are visible with bookings.view; their writes and the import
+ * wizard need bookings.manage. All times are in the workspace timezone.
+ */
+function CalendarScreen() {
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
+  const { can } = usePermissions();
+  const { activeWorkspace } = useAuth();
+  const [params, setParams] = useCatalogParams();
+  const canView = can("bookings.view");
+  const canManage = can("bookings.manage");
+  const tz = workspaceTz(activeWorkspace?.timezone);
+  const tab: CalendarTab = canView ? params.tab : "schedule";
+  const tabs: [CalendarTab, string][] = [
+    ["schedule", tx("Schedule", "المواعيد")],
+    ["services", tx("Services", "الخدمات")],
+    ["staff", tx("Staff", "الموظفون")],
+  ];
+  return (
+    <div>
+      {canView && (
+        <div className="tabs" role="tablist" aria-label={tx("Calendar sections", "أقسام التقويم")} style={{ padding: "12px 24px 0" }}>
+          {tabs.map(([id, label]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={tab === id}
+              className={`tab ${tab === id ? "active" : ""}`.trim()}
+              onClick={() => setParams({ tab: id })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {tab === "schedule" && <CalendarImpl />}
+      {tab === "services" && (
+        <ServicesTab tx={tx} lang={t.lang} tz={tz} canManage={canManage} params={params} setParams={setParams} />
+      )}
+      {tab === "staff" && (
+        <StaffTab tx={tx} lang={t.lang} tz={tz} canManage={canManage} params={params} setParams={setParams} />
+      )}
+      <style>{`
+        .cal-chip { display: inline-flex; align-items: center; gap: 5px;
+          height: 28px; padding: 0 12px; border-radius: 999px;
+          border: 1px solid var(--line-soft); background: var(--bg-1);
+          color: var(--ink-2); font-size: 12px; cursor: pointer; }
+        .cal-chip:hover { color: var(--ink); border-color: var(--line); }
+        .cal-chip.active { background: var(--accent-soft); color: var(--accent);
+          border-color: var(--accent-ring); }
+      `}</style>
+    </div>
+  );
+}
+
+const Calendar = memo(CalendarScreen);
 export default Calendar;

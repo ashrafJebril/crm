@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from "@nestjs/common";
-import { CurrentWorkspace } from "../common/current-workspace.decorator";
+import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.decorator";
+import type { Viewer } from "../permissions/visibility";
 import { CreateWorkflowDto, TestWorkflowDto, UpdateWorkflowDto } from "./workflows.dto";
 import { WorkflowsService } from "./workflows.service";
 
@@ -56,8 +57,12 @@ export class WorkflowsController {
   }
 
   @Get(":id/runs")
-  listRuns(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
-    return this.svc.listRuns(workspaceId, id);
+  listRuns(
+    @CurrentWorkspace() workspaceId: string,
+    @Param("id") id: string,
+    @CurrentViewer() viewer: Viewer,
+  ) {
+    return this.svc.listRuns(workspaceId, id, viewer);
   }
 
   @Get(":id/runs/:runId")
@@ -65,7 +70,8 @@ export class WorkflowsController {
     @CurrentWorkspace() workspaceId: string,
     @Param("id") id: string,
     @Param("runId") runId: string,
+    @CurrentViewer() viewer: Viewer,
   ) {
-    return this.svc.getRun(workspaceId, id, runId);
+    return this.svc.getRun(workspaceId, id, runId, viewer);
   }
 }

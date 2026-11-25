@@ -2,28 +2,57 @@ import { NotFoundException } from "@nestjs/common";
 import { McpToolsFactory } from "./mcp-tools.factory";
 import { AppointmentsService } from "../appointments/appointments.service";
 import { ContactsService } from "../contacts/contacts.service";
+import { MediaService } from "../media/media.service";
+import { BookingsService } from "../bookings/bookings.service";
+import { bookingError } from "../bookings/booking-errors";
 
 describe("McpToolsFactory", () => {
   let appointments: { list: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
   let contacts: { search: jest.Mock; get: jest.Mock; create: jest.Mock; update: jest.Mock };
+  let media: { listForAgent: jest.Mock };
+  let bookings: { activeServices: jest.Mock; availability: jest.Mock };
   let factory: McpToolsFactory;
 
   beforeEach(() => {
     appointments = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
     contacts = { search: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn() };
+    media = { listForAgent: jest.fn() };
+    bookings = { activeServices: jest.fn(), availability: jest.fn() };
     factory = new McpToolsFactory(
       appointments as unknown as AppointmentsService,
       contacts as unknown as ContactsService,
+      media as unknown as MediaService,
+      bookings as unknown as BookingsService,
+      {} as never, // SP-21: KnowledgeSearchService (search-knowledge.spec.ts covers search_knowledge)
     );
   });
 
   const tools = (workspaceId = "ws1") => factory.build(workspaceId);
 
-  it("exposes exactly the nine expected tools and no delete tool", () => {
+  it("exposes exactly the thirteen expected tools and no delete tool (SP-17 list_photos, SP-10 list_services and find_slots, SP-21 search_knowledge)", () => {
     expect(Object.keys(tools()).sort()).toEqual([
-      "cancel_appointment", "create_appointment", "create_contact", "get_appointment",
-      "get_contact", "list_appointments", "search_contacts", "update_appointment", "update_contact",
+      "cancel_appointment", "create_appointment", "create_contact", "find_slots", "get_appointment",
+      "get_contact", "list_appointments", "list_photos", "list_services", "search_contacts", "search_knowledge",
+      "update_appointment", "update_contact",
     ]);
+  });
+
+  it("SP-10: list_services and find_slots scope to the workspace", async () => {
+    bookings.activeServices.mockResolvedValue([{ id: "s1" }]);
+    bookings.availability.mockResolvedValue({ slots: [] });
+    expect(await tools("ws1").list_services.execute!({}, {} as never)).toEqual([{ id: "s1" }]);
+    expect(bookings.activeServices).toHaveBeenCalledWith("ws1");
+    await tools("ws1").find_slots.execute!({ serviceId: "s1", date: "2026-11-17" }, {} as never);
+    expect(bookings.availability).toHaveBeenCalledWith("ws1", { serviceId: "s1", date: "2026-11-17" });
+  });
+
+  it("SP-10: a booking error reaches the agent as its key plus its details (no internals)", async () => {
+    appointments.update.mockRejectedValue(
+      bookingError("bookings.illegal_transition", { from: "completed", to: "pending", allowed: [] }),
+    );
+    await expect(tools("ws1").update_appointment.execute!({ id: "a1", status: "pending" }, {} as never)).rejects.toThrow(
+      'bookings.illegal_transition {"from":"completed","to":"pending","allowed":[]}',
+    );
   });
 
   it("list_appointments scopes to the workspace and forwards filters", async () => {
@@ -100,5 +129,35 @@ describe("McpToolsFactory", () => {
     await tools("ws-b").list_appointments.execute!({}, {} as never);
     expect(appointments.list).toHaveBeenNthCalledWith(1, "ws-a", { limit: 50 });
     expect(appointments.list).toHaveBeenNthCalledWith(2, "ws-b", { limit: 50 });
+  });
+
+  describe("SP-20 build mode", () => {
+    it("live (the default, and what the MCP route builds) is unchanged: writes reach their service", async () => {
+      appointments.create.mockResolvedValue({ id: "new" });
+      const live = factory.build("ws1", { mode: "live" });
+      expect(Object.keys(live)).toEqual(Object.keys(tools()));
+      await live.create_appointment.execute!(
+        { contactId: "c1", service: "Cut", startAt: "2026-11-22T10:00:00+03:00", durationMin: 30, status: "pending", source: "self-booking" } as never,
+        {} as never,
+      );
+      expect(appointments.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("sandbox: the same tools; every write is a mock and never reaches a service; reads run", async () => {
+      const sb = factory.build("ws1", { mode: "sandbox" });
+      expect(Object.keys(sb).sort()).toEqual(Object.keys(tools()).sort());
+      const out = await sb.create_appointment.execute!(
+        { contactId: "c1", service: "Cut", startAt: "2026-11-22T10:00:00+03:00", durationMin: 30, status: "pending", source: "self-booking" } as never,
+        {} as never,
+      );
+      expect(out).toMatchObject({ simulated: true, ok: true, tool: "create_appointment" });
+      for (const t of ["update_appointment", "cancel_appointment", "create_contact", "update_contact"]) {
+        expect(await sb[t].execute!({ id: "x", name: "n" } as never, {} as never)).toMatchObject({ simulated: true, tool: t });
+      }
+      for (const fn of [appointments.create, appointments.update, contacts.create, contacts.update]) expect(fn).not.toHaveBeenCalled();
+      contacts.search.mockResolvedValue([{ id: "c1" }]);
+      expect(await sb.search_contacts.execute!({ query: "Sa" } as never, {} as never)).toEqual([{ id: "c1" }]);
+      expect(contacts.search).toHaveBeenCalledWith("ws1", "Sa");
+    });
   });
 });

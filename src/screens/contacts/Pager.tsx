@@ -14,6 +14,8 @@ export function Pager({
   onPage,
   onPageSize,
   busy,
+  pageSizes = PAGE_SIZES,
+  navLabel,
 }: {
   tx: Tx;
   page: number;
@@ -23,11 +25,15 @@ export function Pager({
   onPage: (p: number) => void;
   onPageSize: (n: number) => void;
   busy?: boolean;
+  /** Page-size choices; defaults to 25/50/100. */
+  pageSizes?: number[];
+  /** Accessible name for the nav landmark; defaults to the contacts label. */
+  navLabel?: string;
 }) {
   const r = rangeLabel(page, pageSize, total);
   return (
     <nav
-      aria-label={tx("Contacts pages", "صفحات جهات الاتصال")}
+      aria-label={navLabel ?? tx("Contacts pages", "صفحات جهات الاتصال")}
       style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 4px", fontSize: 12.5 }}
     >
       <span className="muted" aria-live="polite">
@@ -47,7 +53,7 @@ export function Pager({
           onChange={(e) => onPageSize(Number(e.target.value))}
           style={{ height: 28, borderRadius: 6, background: "var(--bg-1)", border: "1px solid var(--line-soft)", color: "var(--ink)" }}
         >
-          {PAGE_SIZES.map((n) => (
+          {pageSizes.map((n) => (
             <option key={n} value={n}>
               {n}
             </option>

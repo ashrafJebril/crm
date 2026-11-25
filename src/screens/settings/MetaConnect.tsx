@@ -4,20 +4,10 @@ import { useFetch } from "@/api/useFetch";
 import { IconCheck } from "@/icons";
 import { ErrorRow } from "./form";
 import { parseEmbeddedSignupMessage, type EmbeddedSignupEvent, type MetaConfig } from "./metaConnectLogic";
+import type { ChannelDto } from "@/lib/types";
 
-// Facebook JS SDK (script tag in index.html) — only the bits we use.
-declare global {
-  interface Window {
-    FB?: {
-      init: (opts: { appId: string; cookie?: boolean; xfbml?: boolean; version: string }) => void;
-      login: (
-        cb: (resp: { authResponse?: { code?: string; accessToken?: string; userID?: string } | null; status?: string }) => void,
-        opts: { config_id: string; response_type: string; override_default_response_type: boolean; extras?: object },
-      ) => void;
-    };
-    fbAsyncInit?: () => void;
-  }
-}
+// The Facebook JS SDK and its `window.FB` typing live in
+// channels/useEmbeddedSignup.ts, which loads the script.
 
 /** Tech Provider config for this workspace (switch, app id, login configs, Zernio flags). */
 export function useMetaConfig() {
@@ -48,7 +38,10 @@ type SignupMode = "cloud" | "coexistence";
 interface Props {
   cfg: MetaConfig;
   tx: (en: string, ar: string) => string;
-  onConnected: () => void;
+  onConnected: (c: ChannelDto) => void;
+  /** "coexistence" hides the Cloud API button (the channels hub has its own). */
+  only?: SignupMode;
+  disabled?: boolean;
 }
 
 /**
@@ -56,7 +49,7 @@ interface Props {
  * channels: the auth `code` (FB.login callback) and the WABA / phone ids
  * (a window `message` event). We wait for both, then let the backend finish.
  */
-export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
+export function WhatsAppPopupConnect({ cfg, tx, onConnected, only, disabled }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const signupRef = useRef<EmbeddedSignupEvent | null>(null);
@@ -106,14 +99,14 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
         );
         return;
       }
-      await api.post("/integrations/whatsapp/oauth/exchange", {
+      const channel = await api.post<ChannelDto>("/integrations/whatsapp/oauth/exchange", {
         code,
         phoneNumberId: ev.phoneNumberId,
         wabaId: ev.wabaId,
         mode,
         ...(userID ? { metaUserId: userID } : {}),
       });
-      onConnected();
+      onConnected(channel);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -153,15 +146,17 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button type="button" className="btn primary" onClick={() => onClick("coexistence")} disabled={busy}>
+        <button type="button" className="btn primary" onClick={() => onClick("coexistence")} disabled={busy || disabled}>
           <IconCheck w={12} />
           {busy
             ? tx("Connecting…", "جارٍ الاتصال…")
             : tx("Connect my WhatsApp Business app", "ربط تطبيق واتساب للأعمال")}
         </button>
-        <button type="button" className="btn" onClick={() => onClick("cloud")} disabled={busy}>
-          {tx("Use a new number", "استخدام رقم جديد")}
-        </button>
+        {only !== "coexistence" && (
+          <button type="button" className="btn" onClick={() => onClick("cloud")} disabled={busy || disabled}>
+            {tx("Use a new number", "استخدام رقم جديد")}
+          </button>
+        )}
       </div>
       <div className="muted" style={{ fontSize: 11 }}>
         {tx(
@@ -170,9 +165,6 @@ export function WhatsAppPopupConnect({ cfg, tx, onConnected }: Props) {
         )}
       </div>
       <ErrorRow message={error} />
-      <div className="muted" style={{ fontSize: 11 }}>
-        {tx("Or use an access token instead:", "أو استخدم رمز وصول بدلاً من ذلك:")}
-      </div>
     </div>
   );
 }

@@ -1,19 +1,45 @@
-import { Fragment, memo, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, memo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
-import { Badge } from "@/components/Badge";
+import { Badge, statusKind } from "@/components/Badge";
 import { PhonePreview } from "@/components/PhonePreview";
 import {
   IconCheck,
   IconChev,
   IconPlus,
 } from "@/icons";
-import type { Campaign, CampaignPreview, CampaignVariable, Segment, Template } from "@/lib/types";
-import { mappingComplete, placeholderCount, renderCampaignPreview } from "./campaigns/campaignVars";
+import type { Campaign, CampaignPreviewV2, CustomFieldDef, Segment, Template, VarMap } from "@/lib/types";
 import { useFetch, useMutation } from "@/api/useFetch";
+import { usePermissions } from "@/auth/usePermissions";
 import { api } from "@/api/client";
 import { useToast } from "@/components/Toast";
+import { WhatsAppGate, useWhatsAppConnection } from "@/components/WhatsAppGate";
+import { gatedTitle } from "@/components/whatsAppGateCopy";
+import { headerKind } from "@/components/media/mediaKinds";
+import { useHashParam } from "@/lib/useHashParam";
+import { InlineBar, MiniStat } from "./campaigns/ui";
+import { CampaignDetail } from "./campaigns/CampaignDetail";
+import { campaignErrorText, campaignKeyText, cancelErrorText, lastErrorText } from "./campaigns/campaignErrors";
+import { LAUNCH_POLL_MS, campaignStatusLabel, listMayCancel } from "./campaigns/campaignDetailModel";
+import {
+  defaultVarMap,
+  normalizeVarMap,
+  placeholderCount,
+  renderTemplate,
+  renderWithLabels,
+  templateUnsupported,
+  varMapComplete,
+} from "./campaigns/varMap";
+import { effectiveSelection, senderText, showSendFrom } from "./campaigns/senderModel";
+import { useCampaignPreview, useCustomFields, type PreviewBody } from "./campaigns/useCampaignPreview";
+import { SendFromField } from "./campaigns/SendFromField";
+import { VariableMappingField } from "./campaigns/VariableMappingField";
+import { HEADER_MEDIA_MAX_DAYS, HeaderMediaField } from "./campaigns/HeaderMediaField";
+import { ReviewSamples } from "./campaigns/ReviewSamples";
+import { audienceKind, audienceKindLabel, recipientsLabel, type AudienceKind } from "./campaigns/audienceCount";
+import { countLabel } from "./contacts/audiences/rulesModel";
+import { LaunchProgress } from "./campaigns/LaunchProgress";
 
 type View = "list" | "builder";
 type CampaignStatus = Campaign["status"];
@@ -52,50 +78,21 @@ function Field({ label, children }: FieldProps) {
   );
 }
 
-interface MiniStatProps {
-  label: string;
-  value: string;
-  sub: string;
-}
-
-function MiniStat({ label, value, sub }: MiniStatProps) {
+/** SP-16: "Smart" / "Group" / "Deleted audience" next to a campaign's audience. */
+function AudienceBadge({ kind, tx }: { kind: AudienceKind; tx: Tx }) {
+  const label = audienceKindLabel(kind, tx);
+  if (!label) return null;
   return (
-    <div className="stat" style={{ padding: 14 }}>
-      <div className="label">{label}</div>
-      <div className="value" style={{ fontSize: 22 }}>
-        {value}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{sub}</div>
-    </div>
-  );
-}
-
-interface InlineBarProps {
-  pct: number;
-  label: string;
-  color?: string;
-}
-
-function InlineBar({ pct, label, color = "var(--accent)" }: InlineBarProps) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 90 }}>
-      <div
-        style={{
-          flex: 1,
-          height: 4,
-          background: "var(--bg-2)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{ width: `${pct}%`, height: "100%", background: color, opacity: 0.7 }}
-        />
-      </div>
-      <span className="mono" style={{ fontSize: 11, color: "var(--ink-2)" }}>
-        {label}
-      </span>
-    </div>
+    <span
+      className="mono"
+      style={{
+        fontSize: 10, textTransform: "uppercase", padding: "1px 7px", borderRadius: 999, whiteSpace: "nowrap",
+        background: kind === "deleted" ? "color-mix(in oklab, var(--bad) 14%, var(--bg-2))" : kind === "smart" ? "var(--accent-soft)" : "var(--bg-2)",
+        color: kind === "deleted" ? "var(--bad)" : kind === "smart" ? "var(--accent)" : "var(--ink-2)",
+      }}
+    >
+      {label}
+    </span>
   );
 }
 
@@ -104,20 +101,24 @@ interface AudienceStepProps {
   segments: Segment[];
   segmentId: string | null;
   onSelect: (id: string | null) => void;
-  count: number;
+  /** SP-16: null when the audience was too large to count. */
+  count: number | null;
 }
 
 function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStepProps) {
-  const options: { id: string | null; label: string; count: number }[] = [
-    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: -1 },
-    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count })),
+  // SP-16: a segment count is null while unknown: "Counting…", or "Too large to count right now" when it timed out.
+  const options: { id: string | null; label: string; count: number | null; timedOut: boolean; skipped: boolean; smart: boolean; showCount: boolean }[] = [
+    { id: null, label: tx("All contacts", "كل جهات الاتصال"), count: null, timedOut: false, skipped: false, smart: false, showCount: false },
+    ...segments.map((s) => ({ id: s.id, label: s.name, count: s.count ?? null, timedOut: !!s.timedOut, skipped: !!s.skipped, smart: s.origin === "crm", showCount: true })),
   ];
+  const selected = segments.find((s) => s.id === segmentId);
+  const total = countLabel(count, count === null && !!selected?.timedOut, tx, count === null && !!selected?.skipped);
   return (
     <div className="card">
       <div className="card-h">
         <h3>{tx("Audience", "الجمهور")}</h3>
-        <span className="sub mono">
-          {count.toLocaleString()} {tx("contacts match", "جهة اتصال")}
+        <span className="sub mono" title={total.title}>
+          {total.short} {tx("contacts match", "جهة اتصال")}
         </span>
       </div>
       <div style={{ padding: 18, display: "grid", gap: 8 }}>
@@ -140,10 +141,11 @@ function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStep
                 onChange={() => onSelect(opt.id)}
                 style={{ accentColor: "var(--accent)" }}
               />
-              <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{opt.label}</span>
-              {opt.count >= 0 && (
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }}>
-                  {opt.count.toLocaleString()}
+              <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}><bdi dir="auto">{opt.label}</bdi></span>
+              {opt.smart && <AudienceBadge kind="smart" tx={tx} />}
+              {opt.showCount && (
+                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)" }} title={countLabel(opt.count, opt.timedOut, tx, opt.skipped).title}>
+                  {countLabel(opt.count, opt.timedOut, tx, opt.skipped).text}
                 </span>
               )}
             </label>
@@ -151,7 +153,7 @@ function AudienceStep({ tx, segments, segmentId, onSelect, count }: AudienceStep
         })}
         {segments.length === 0 && (
           <div className="mono muted" style={{ fontSize: 11 }}>
-            {tx("No segments yet — create them in Contacts.", "لا توجد شرائح بعد — أنشئها من جهات الاتصال.")}
+            {tx("No audiences yet — create them in Contacts → Audiences.", "لا توجد جماهير بعد — أنشئها من جهات الاتصال ← الجماهير.")}
           </div>
         )}
       </div>
@@ -164,25 +166,14 @@ interface MessageStepProps {
   templates: Template[];
   templateId: string | null;
   onSelect: (id: string | null) => void;
-  mapping: CampaignVariable[];
-  onMapping: (m: CampaignVariable[]) => void;
+  varMap: VarMap;
+  onVarMap: (m: VarMap) => void;
+  customDefs: CustomFieldDef[] | null;
+  missingByKey: CampaignPreviewV2["missingByKey"] | null;
+  header: ReactNode;
 }
 
-const fieldLabels = (tx: Tx): Record<CampaignVariable["field"], string> => ({
-  name: tx("Customer name", "اسم العميل"),
-  phone: tx("Customer phone", "هاتف العميل"),
-  custom: tx("Fixed text", "نص ثابت"),
-});
-
-function MessageStep({ tx, templates, templateId, onSelect, mapping, onMapping }: MessageStepProps) {
-  const selected = templates.find((t) => t.id === templateId) ?? null;
-  const count = placeholderCount(selected?.body);
-  const labels = fieldLabels(tx);
-  const setVar = (i: number, v: CampaignVariable) => {
-    const next = Array.from({ length: count }, (_, j) => mapping[j] ?? ({ field: "name" } as CampaignVariable));
-    next[i] = v;
-    onMapping(next);
-  };
+function MessageStep({ tx, templates, templateId, onSelect, varMap, onVarMap, customDefs, missingByKey, header }: MessageStepProps) {
   return (
     <div className="card">
       <div className="card-h">
@@ -193,65 +184,30 @@ function MessageStep({ tx, templates, templateId, onSelect, mapping, onMapping }
       </div>
       <div style={{ padding: 18, display: "grid", gap: 14 }}>
         <Field label={tx("Template", "القالب")}>
-          <select
-            style={INPUT_STYLE}
-            value={templateId ?? ""}
-            onChange={(e) => {
-              const id = e.target.value || null;
-              onSelect(id);
-              const t = templates.find((x) => x.id === id);
-              onMapping(Array.from({ length: placeholderCount(t?.body) }, () => ({ field: "name" }) as CampaignVariable));
-            }}
-          >
+          <select style={INPUT_STYLE} value={templateId ?? ""} onChange={(e) => onSelect(e.target.value || null)}>
             <option value="">{tx("Select a template…", "اختر قالبًا…")}</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id} disabled={t.status !== "approved"}>
-                {t.name} · {t.lang.toUpperCase()}
-                {t.status !== "approved" ? ` · ${tx("not approved yet", "غير معتمد بعد")}` : ""}
-              </option>
-            ))}
+            {templates.map((t) => {
+              const unsupported = templateUnsupported(t);
+              return (
+                <option key={t.id} value={t.id} disabled={t.status !== "approved" || unsupported}>
+                  {t.name} · {t.lang.toUpperCase()}
+                  {t.status === "paused"
+                    ? ` · ${tx("paused by Meta", "أوقفته Meta مؤقتًا")}`
+                    : t.status === "disabled"
+                      ? ` · ${tx("disabled by Meta", "عطّلته Meta")}`
+                      : t.status !== "approved"
+                        ? ` · ${tx("not approved yet", "غير معتمد بعد")}`
+                        : unsupported
+                          ? ` · ${tx("Not supported for campaigns yet", "غير مدعوم في الحملات بعد")}`
+                          : ""}
+                </option>
+              );
+            })}
           </select>
         </Field>
 
-        {Array.from({ length: count }, (_, i) => {
-          const v = mapping[i] ?? ({ field: "name" } as CampaignVariable);
-          return (
-            <Field key={i} label={`${tx("Variable", "المتغير")} {{${i + 1}}}`}>
-              <div style={{ display: "flex", gap: 8 }}>
-                <select
-                  style={{ ...INPUT_STYLE, width: 170 }}
-                  value={v.field}
-                  onChange={(e) => {
-                    const field = e.target.value as CampaignVariable["field"];
-                    setVar(i, field === "custom" ? { field, customValue: "" } : { field });
-                  }}
-                >
-                  {(["name", "phone", "custom"] as const).map((f) => (
-                    <option key={f} value={f}>
-                      {labels[f]}
-                    </option>
-                  ))}
-                </select>
-                {v.field === "custom" && (
-                  <input
-                    style={{ ...INPUT_STYLE, flex: 1 }}
-                    value={v.customValue}
-                    onChange={(e) => setVar(i, { field: "custom", customValue: e.target.value })}
-                    placeholder={tx("Same for everyone, e.g. 20%", "نفس القيمة للجميع، مثل 20%")}
-                  />
-                )}
-              </div>
-            </Field>
-          );
-        })}
-        {count > 0 && (
-          <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
-            {tx(
-              "Customer name and phone are filled in for each person. A contact without a name gets “Customer”.",
-              "يُملأ اسم العميل وهاتفه لكل شخص. جهة الاتصال بلا اسم تظهر كـ «Customer».",
-            )}
-          </div>
-        )}
+        <VariableMappingField tx={tx} value={varMap} onChange={onVarMap} customDefs={customDefs} missingByKey={missingByKey} />
+        {header}
 
         {templates.length > 0 && !templates.some((t) => t.status === "approved") && (
           <div style={{ fontSize: 12, color: "var(--warn)" }}>
@@ -279,6 +235,8 @@ interface ScheduleStepProps {
   onChoose: (c: ScheduleChoice) => void;
   when: string;
   onWhen: (v: string) => void;
+  /** A campaign with its own header file can be scheduled at most 6 days ahead (ruling 9). */
+  maxDays: number | null;
 }
 
 /** "YYYY-MM-DDTHH:mm" in local time, the format <input type="datetime-local"> uses. */
@@ -287,7 +245,7 @@ const toLocalInput = (d: Date) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-function ScheduleStep({ tx, choice, onChoose, when, onWhen }: ScheduleStepProps) {
+function ScheduleStep({ tx, choice, onChoose, when, onWhen, maxDays }: ScheduleStepProps) {
   const options = [
     { id: "now" as const, label: tx("Send now", "إرسال الآن"), sub: tx("Starts sending as soon as you confirm", "يبدأ الإرسال فور التأكيد") },
     { id: "later" as const, label: tx("Schedule for later", "جدولة لاحقاً"), sub: tx("Pick a date and time", "اختر التاريخ والوقت") },
@@ -326,9 +284,15 @@ function ScheduleStep({ tx, choice, onChoose, when, onWhen }: ScheduleStepProps)
               style={INPUT_STYLE}
               value={when}
               min={toLocalInput(new Date())}
+              max={maxDays ? toLocalInput(new Date(Date.now() + maxDays * 86_400_000)) : undefined}
               onChange={(e) => onWhen(e.target.value)}
             />
           </Field>
+        )}
+        {choice === "later" && maxDays && (
+          <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
+            {campaignKeyText("campaigns.header_media_schedule_too_far", { days: maxDays }, tx)}
+          </div>
         )}
         <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
           {tx(
@@ -344,28 +308,38 @@ function ScheduleStep({ tx, choice, onChoose, when, onWhen }: ScheduleStepProps)
 interface ReviewStepProps {
   tx: Tx;
   audienceLabel: string;
-  preview: CampaignPreview | null;
+  /** SP-16 (ruling 8): a smart audience is worked out when the campaign starts. */
+  smartAudience?: boolean;
+  preview: CampaignPreviewV2 | null;
   previewLoading: boolean;
+  previewError: string | null;
   template: Template | null;
   scheduleLabel: string;
+  senderLabel: string | null;
+  samples: ReactNode;
 }
 
-function ReviewStep({ tx, audienceLabel, preview, previewLoading, template, scheduleLabel }: ReviewStepProps) {
+function ReviewStep({ tx, audienceLabel, smartAudience, preview, previewLoading, previewError, template, scheduleLabel, senderLabel, samples }: ReviewStepProps) {
   const reach = preview
     ? `${preview.reachable.toLocaleString()} ${tx("of", "من")} ${preview.total.toLocaleString()} ${tx("contacts", "جهة")}`
     : previewLoading
       ? tx("Counting…", "جارٍ العد…")
       : "—";
-  const skipped = preview ? preview.skipped.noPhone + preview.skipped.optedOut + preview.skipped.duplicate : 0;
+  const sk = preview?.skipped;
+  const skipped = sk ? sk.noPhone + sk.optedOut + sk.duplicate + sk.missingValue : 0;
   const rows: [string, string][] = [
     [tx("Audience", "الجمهور"), audienceLabel],
     [tx("Will receive it", "سيستلمها"), reach],
     [tx("Template", "القالب"), template ? `${template.name} · ${template.lang.toUpperCase()}` : tx("None selected", "لم يُختر")],
+    ...(senderLabel ? ([[tx("Send from", "الإرسال من"), senderLabel]] as [string, string][]) : []),
     [tx("Schedule", "الموعد"), scheduleLabel],
   ];
   return (
     <div className="card">
-      <div className="card-h"><h3>{tx("Review", "مراجعة")}</h3></div>
+      <div className="card-h">
+        <h3>{tx("Review", "مراجعة")}</h3>
+        {previewLoading && preview && <span className="sub">{tx("Updating…", "جارٍ التحديث…")}</span>}
+      </div>
       <div style={{ padding: 18, display: "grid", gap: 10 }}>
         {rows.map(([k, v]) => (
           <div key={k} style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
@@ -373,22 +347,36 @@ function ReviewStep({ tx, audienceLabel, preview, previewLoading, template, sche
             <span style={{ fontWeight: 500, textAlign: "end" }}>{v}</span>
           </div>
         ))}
-        {preview && skipped > 0 && (
+        {smartAudience && (
+          <div style={{ fontSize: 12, color: "var(--ink-2)" }}>
+            {tx(
+              "Smart audience: members are worked out when the campaign starts",
+              "جمهور ذكي: يُحدَّد الأعضاء عند بدء الحملة",
+            )}
+          </div>
+        )}
+        {previewError && (
+          <div role="alert" style={{ fontSize: 12, color: "var(--bad)" }}>
+            {previewError}
+          </div>
+        )}
+        {sk && skipped > 0 && (
           <div style={{ fontSize: 12, color: "var(--ink-3)" }}>
             {tx(
-              `Left out: ${preview.skipped.noPhone} without a phone number with a country code, ${preview.skipped.optedOut} opted out, ${preview.skipped.duplicate} duplicate numbers.`,
-              `مستبعدون: ${preview.skipped.noPhone} بلا رقم برمز الدولة، ${preview.skipped.optedOut} ألغوا الاشتراك، ${preview.skipped.duplicate} أرقام مكررة.`,
+              `Left out: ${sk.noPhone} without a phone number with a country code, ${sk.optedOut} opted out, ${sk.duplicate} duplicate numbers, ${sk.missingValue} missing a value without a fallback.`,
+              `مستبعدون: ${sk.noPhone} بلا رقم برمز الدولة، ${sk.optedOut} ألغوا الاشتراك، ${sk.duplicate} أرقام مكررة، ${sk.missingValue} بلا قيمة ولا بديل.`,
             )}
           </div>
         )}
         {preview && preview.reachable === 0 && (
           <div style={{ fontSize: 12, color: "var(--warn)" }}>
             {tx(
-              "No one in this audience has a WhatsApp number with a country code, so the campaign can't be sent.",
-              "لا أحد في هذا الجمهور لديه رقم واتساب برمز الدولة، لذا لا يمكن إرسال الحملة.",
+              "No one in this audience can receive it (no WhatsApp number with a country code, opted out, or a missing value without a fallback), so the campaign can't be sent.",
+              "لا أحد في هذا الجمهور يمكنه استلامها (لا رقم واتساب برمز الدولة، أو ألغى الاشتراك، أو قيمة ناقصة بلا بديل)، لذا لا يمكن إرسال الحملة.",
             )}
           </div>
         )}
+        {samples}
         {preview && preview.reachable > 0 && (
           <div
             style={{
@@ -412,10 +400,20 @@ function ReviewStep({ tx, audienceLabel, preview, previewLoading, template, sche
   );
 }
 
+/** Draft PATCH/POST takes the varMap's shape only: slots whose fixed value is still empty are left out until filled. */
+function draftVarMap(map: VarMap): VarMap {
+  const out: VarMap = {};
+  for (const [slot, s] of Object.entries(normalizeVarMap(map))) {
+    if (s.source === "static" && !s.value) continue;
+    out[slot] = s;
+  }
+  return out;
+}
+
 interface CampaignBuilderProps {
   tx: Tx;
   onBack: () => void;
-  onDone: (message: string) => void;
+  onDone: (message: string, openId?: string) => void;
 }
 
 function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
@@ -429,11 +427,17 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
 
   const segmentsQ = useFetch<Segment[]>("/segments");
   const templatesQ = useFetch<Template[]>("/templates");
+  const { connected, senders } = useWhatsAppConnection();
+  const { defs: customDefs, labels: customLabels } = useCustomFields();
 
   const [name, setName] = useState("");
   const [segmentId, setSegmentId] = useState<string | null>(null); // null = all contacts
   const [templateId, setTemplateId] = useState<string | null>(null);
-  const [mapping, setMapping] = useState<CampaignVariable[]>([]);
+  const [varMap, setVarMap] = useState<VarMap>({});
+  // [] = the default number.
+  const [senderIds, setSenderIds] = useState<string[]>([]);
+  const [headerOverride, setHeaderOverride] = useState(false);
+  const [headerMediaId, setHeaderMediaId] = useState<string | null>(null);
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice>("now");
   const [when, setWhen] = useState(() => toLocalInput(new Date(Date.now() + 3_600_000)));
   // A failed launch keeps its saved draft, so retrying doesn't create a second one.
@@ -441,20 +445,46 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const previewQ = useFetch<CampaignPreview>(
-    step === 4 ? `/campaigns/preview${segmentId ? `?segmentId=${encodeURIComponent(segmentId)}` : ""}` : null,
-  );
-
   const segments = segmentsQ.data ?? [];
   const templates = (templatesQ.data ?? []).filter((t) => !!t.body);
   const selectedSegment = segments.find((s) => s.id === segmentId) ?? null;
-  const audienceCount = previewQ.data?.total ?? selectedSegment?.count ?? 0;
   const audienceLabel = selectedSegment ? selectedSegment.name : tx("All contacts", "كل جهات الاتصال");
   const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
   const varCount = placeholderCount(selectedTemplate?.body);
+  const hKind = headerKind(selectedTemplate);
+  const mediaKind = hKind && hKind !== "text" ? hKind : null;
+  const customKeys = customDefs ? new Set(customDefs.filter((d) => !d.archivedAt).map((d) => d.key)) : null;
+  const mapOk = varMapComplete(varMap, varCount, customKeys);
+  const useHeaderFile = !!mediaKind && headerOverride && !!headerMediaId;
 
-  const previewBody = selectedTemplate?.body
-    ? renderCampaignPreview(selectedTemplate.body, mapping)
+  // POST /campaigns/preview: debounced, never per keystroke (it reads each sender's templates live).
+  const previewBody: PreviewBody = {
+    ...(segmentId ? { segmentId } : {}),
+    ...(templateId ? { templateId } : {}),
+    ...(senderIds.length ? { senderChannelIds: senderIds } : {}),
+    ...(templateId && varCount > 0 && mapOk ? { varMap: normalizeVarMap(varMap) } : {}),
+    ...(useHeaderFile ? { headerMediaId: headerMediaId! } : {}),
+  };
+  const preview = useCampaignPreview(previewBody);
+  const pv = preview.data;
+  const errCtx = { senders: senders?.senders ?? [] };
+  // SP-16: a smart audience's cached count may be null (too large to count right now).
+  const audienceCount: number | null = pv?.total ?? (selectedSegment ? (selectedSegment.count ?? null) : 0);
+
+  const selectTemplate = (id: string | null) => {
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    setVarMap(defaultVarMap(placeholderCount(t?.body)));
+    setHeaderOverride(false);
+    setHeaderMediaId(null);
+  };
+
+  const body = selectedTemplate?.body ?? "";
+  const sample = preview.current ? pv?.samples.find((s) => !s.skippedFor) : undefined;
+  const previewBody_ = selectedTemplate?.body
+    ? sample
+      ? renderTemplate(body, sample.values)
+      : renderWithLabels(body, varMap, tx, customLabels)
     : tx("Select a template to preview it.", "اختر قالبًا للمعاينة.");
   let previewButtons: string[] = [];
   try {
@@ -463,7 +493,12 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
   } catch { previewButtons = []; }
 
   const whenDate = scheduleChoice === "later" ? new Date(when) : null;
-  const whenValid = !whenDate || (!Number.isNaN(whenDate.getTime()) && whenDate.getTime() > Date.now());
+  const maxDays = useHeaderFile ? HEADER_MEDIA_MAX_DAYS : null;
+  const whenValid =
+    !whenDate ||
+    (!Number.isNaN(whenDate.getTime()) &&
+      whenDate.getTime() > Date.now() &&
+      (!maxDays || whenDate.getTime() <= Date.now() + maxDays * 86_400_000));
   const scheduleLabel =
     scheduleChoice === "now"
       ? tx("Send now", "إرسال الآن")
@@ -471,21 +506,54 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         ? whenDate.toLocaleString()
         : tx("Pick a time", "اختر الوقت");
 
+  const sendersList = senders?.senders ?? [];
+  const pickerShown = !!senders && showSendFrom(sendersList, senderIds);
+  const chosen = effectiveSelection(senderIds, sendersList);
+  const senderLabel = senders
+    ? chosen
+        .map((id) => sendersList.find((s) => s.channelId === id))
+        .filter((s) => !!s)
+        .map((s) => senderText(s))
+        .join(", ") || null
+    : null;
+
+  const { can } = usePermissions();
+  const mayLaunch = can("campaigns.manage");
+  // saveDraft() PATCHes an existing draft (campaigns.update) or POSTs a new one (campaigns.create).
+  const mayDraft = draftId ? can("campaigns.update") : can("campaigns.create");
+  const noPerm = tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
+  const gate = gatedTitle(scheduleChoice === "now" ? "campaign.launch" : "campaign.schedule", connected === false || pv?.connected === false ? false : connected, tx);
   const canLaunch =
+    mayLaunch &&
+    mayDraft &&
+    !gate &&
     !!name.trim() &&
     selectedTemplate?.status === "approved" &&
-    mappingComplete(mapping, varCount) &&
+    !templateUnsupported(selectedTemplate) &&
+    mapOk &&
     whenValid &&
-    (previewQ.data?.reachable ?? 0) > 0;
+    (!mediaKind || !headerOverride || !!headerMediaId) &&
+    preview.current &&
+    !!pv &&
+    pv.connected &&
+    pv.reachable > 0 &&
+    pv.templateMissing.length === 0 &&
+    (pv.templateCheckFailed ?? []).length === 0 &&
+    (pv.templatePaused ?? []).length === 0 &&
+    pv.transport.kind !== "too_varied";
 
   const draftBody = () => ({
     name: name.trim(),
     audience: audienceLabel,
     channel: "Broadcast",
-    recipients: audienceCount,
+    // SP-16 (review m3): an unknown count is left out, never stored as 0 (a launch writes the planned count).
+    ...(audienceCount !== null ? { recipients: audienceCount } : {}),
     schedule: scheduleLabel,
     segmentId: segmentId ?? undefined,
     templateId: templateId ?? undefined,
+    senderChannelIds: senderIds,
+    varMap: varCount > 0 ? draftVarMap(varMap) : null,
+    headerMediaId: useHeaderFile ? headerMediaId : null,
   });
 
   async function saveDraft(): Promise<string> {
@@ -505,7 +573,7 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
       await saveDraft();
       onDone(tx("Draft saved", "تم حفظ المسودة"));
     } catch (e) {
-      setError((e as Error).message);
+      setError(campaignErrorText(e, tx, errCtx));
     } finally {
       setBusy(false);
     }
@@ -516,22 +584,29 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
     setError(null);
     try {
       const id = await saveDraft();
-      await api.post(`/campaigns/${id}/launch`, {
+      // 202: the campaign is `launching`; the background job plans and sends it (the varMap is stored on the draft).
+      await api.post<Campaign>(`/campaigns/${id}/launch`, {
         mode: scheduleChoice === "now" ? "now" : "schedule",
         scheduledAt: whenDate ? whenDate.toISOString() : undefined,
-        variables: mapping.slice(0, varCount),
       });
-      onDone(
-        scheduleChoice === "now"
-          ? tx("Campaign is sending", "بدأ إرسال الحملة")
-          : tx("Campaign scheduled", "تمت جدولة الحملة"),
-      );
+      onDone(tx("Preparing your campaign…", "جارٍ تجهيز حملتك…"), id);
     } catch (e) {
-      setError((e as Error).message);
+      setError(campaignErrorText(e, tx, errCtx));
     } finally {
       setBusy(false);
     }
   }
+
+  const headerField = mediaKind ? (
+    <HeaderMediaField
+      tx={tx}
+      kind={mediaKind}
+      value={headerMediaId}
+      onChange={setHeaderMediaId}
+      override={headerOverride}
+      onOverride={setHeaderOverride}
+    />
+  ) : null;
 
   return (
     <div style={{ overflowY: "auto", flex: 1 }}>
@@ -568,7 +643,13 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         </div>
       </div>
 
-      <div style={{ padding: "20px 24px 0", display: "flex", gap: 8 }}>
+      {(connected === false || pv?.connected === false) && (
+        <div style={{ padding: "16px 24px 0" }}>
+          <WhatsAppGate connected={false} tx={tx} />
+        </div>
+      )}
+
+      <div style={{ padding: "20px 24px 0", display: "flex", gap: 8, flexWrap: "wrap" }}>
         {steps.map((s, i) => {
           const done = step > s.id;
           const active = step === s.id;
@@ -616,35 +697,66 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
         style={{
           padding: 24,
           display: "grid",
-          gridTemplateColumns: "1fr 360px",
+          gridTemplateColumns: "minmax(0, 1fr) 360px",
           gap: 24,
         }}
       >
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
           {step === 1 && (
-            <AudienceStep tx={tx} segments={segments} segmentId={segmentId} onSelect={setSegmentId} count={audienceCount} />
+            <>
+              <AudienceStep tx={tx} segments={segments} segmentId={segmentId} onSelect={setSegmentId} count={audienceCount} />
+              {pickerShown && senders && (
+                <SendFromField
+                  tx={tx}
+                  senders={senders}
+                  value={senderIds}
+                  onChange={setSenderIds}
+                  audienceCount={pv && preview.current ? pv.reachable : null}
+                />
+              )}
+            </>
           )}
           {step === 2 && (
             <MessageStep
               tx={tx}
               templates={templates}
               templateId={templateId}
-              onSelect={setTemplateId}
-              mapping={mapping}
-              onMapping={setMapping}
+              onSelect={selectTemplate}
+              varMap={varMap}
+              onVarMap={setVarMap}
+              customDefs={customDefs}
+              missingByKey={pv?.missingByKey ?? null}
+              header={headerField}
             />
           )}
           {step === 3 && (
-            <ScheduleStep tx={tx} choice={scheduleChoice} onChoose={setScheduleChoice} when={when} onWhen={setWhen} />
+            <ScheduleStep tx={tx} choice={scheduleChoice} onChoose={setScheduleChoice} when={when} onWhen={setWhen} maxDays={maxDays} />
           )}
           {step === 4 && (
             <ReviewStep
               tx={tx}
               audienceLabel={audienceLabel}
-              preview={previewQ.data}
-              previewLoading={previewQ.loading}
+              smartAudience={selectedSegment?.origin === "crm"}
+              preview={pv}
+              previewLoading={preview.loading}
+              previewError={preview.error ? campaignErrorText(preview.error, tx, errCtx) : null}
               template={selectedTemplate}
               scheduleLabel={scheduleLabel}
+              senderLabel={pickerShown ? senderLabel : null}
+              samples={
+                pv && selectedTemplate ? (
+                  <ReviewSamples
+                    tx={tx}
+                    preview={pv}
+                    body={body}
+                    lang={selectedTemplate.lang}
+                    varMap={varMap}
+                    customLabels={customLabels}
+                    senders={sendersList}
+                    headerOverride={useHeaderFile}
+                  />
+                ) : null
+              }
             />
           )}
 
@@ -678,16 +790,25 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
             </button>
             {step === 4 ? (
               <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn" disabled={!name.trim() || busy} onClick={onSaveDraft}>
-                  {tx("Save draft", "حفظ مسودة")}
-                </button>
-                <button className="btn primary" disabled={!canLaunch || busy} onClick={onLaunch}>
-                  {busy
-                    ? tx("Working…", "جارٍ التنفيذ…")
-                    : scheduleChoice === "now"
-                      ? tx("Send campaign", "إرسال الحملة")
-                      : tx("Schedule campaign", "جدولة الحملة")}
-                </button>
+                {mayDraft && (
+                  <button className="btn" disabled={!name.trim() || busy} onClick={onSaveDraft}>
+                    {tx("Save draft", "حفظ مسودة")}
+                  </button>
+                )}
+                {mayLaunch && (
+                  <button
+                    className="btn primary"
+                    disabled={!canLaunch || busy}
+                    title={!mayDraft ? noPerm : (gate ?? undefined)}
+                    onClick={onLaunch}
+                  >
+                    {busy
+                      ? tx("Working…", "جارٍ التنفيذ…")
+                      : scheduleChoice === "now"
+                        ? tx("Send campaign", "إرسال الحملة")
+                        : tx("Schedule campaign", "جدولة الحملة")}
+                  </button>
+                )}
               </div>
             ) : (
               <button className="btn primary" onClick={() => setStep((s) => Math.min(4, s + 1))}>
@@ -698,7 +819,13 @@ function CampaignBuilder({ tx, onBack, onDone }: CampaignBuilderProps) {
           </div>
         </div>
 
-        <PhonePreview body={previewBody} buttons={previewButtons} tx={tx} />
+        <PhonePreview
+          body={previewBody_}
+          buttons={previewButtons}
+          tx={tx}
+          dir={selectedTemplate?.lang === "ar" ? "rtl" : "ltr"}
+          caption={sample ? tx(`Preview for ${sample.name?.trim() || "a contact"}`, `معاينة لـ ${sample.name?.trim() || "جهة اتصال"}`) : undefined}
+        />
       </div>
     </div>
   );
@@ -710,11 +837,18 @@ function CampaignsImpl() {
   const [view, setView] = useState<View>("list");
   const [tab, setTab] = useState<TabId>("all");
   const [query, setQuery] = useState("");
+  // SP-12: `#/campaigns?id=<id>` opens the report; Back (hash history) returns here.
+  const [openId, setOpenId] = useHashParam("id");
 
   const { toast } = useToast();
-  // Sending campaigns update every minute while the page is open.
-  const { data, loading, error, refetch } = useFetch<Campaign[]>("/campaigns", { pollMs: 60_000 });
+  // Sending campaigns update every minute while the page is open; every 5 s while one is launching.
+  const pollRef = useRef(60_000);
+  const { data, loading, error, refetch } = useFetch<Campaign[]>("/campaigns", { pollMs: pollRef.current });
+  // SP-16: the audience badge (smart / group / deleted) joins campaign.segmentId to the audience list.
+  const segmentsQ = useFetch<Segment[]>("/segments");
   const campaigns: Campaign[] = data ?? [];
+  pollRef.current = campaigns.some((c) => c.status === "launching") ? LAUNCH_POLL_MS : 60_000;
+  const { connected } = useWhatsAppConnection(view === "list" && !openId);
   const totals = campaigns.reduce(
     (a, c) => ({
       sent: a.sent + c.sent,
@@ -726,6 +860,8 @@ function CampaignsImpl() {
   );
   const rate = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 1000) / 10}%` : "—");
 
+  const { can } = usePermissions();
+  const noPerm = tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك");
   const cancelCampaign = useMutation<{ id: string }, Campaign>(({ id }) =>
     api.post<Campaign>(`/campaigns/${id}/cancel`),
   );
@@ -736,16 +872,24 @@ function CampaignsImpl() {
     api.delete<{ ok: true }>(`/campaigns/${id}`),
   );
 
-  const run = (p: Promise<unknown>, ok: string) =>
+  const run = (p: Promise<unknown>, ok: string, errText: (e: unknown) => string = (e) => campaignErrorText(e, tx)) =>
     p
       .then(() => {
         toast(ok, "success");
         refetch();
       })
-      .catch((e: Error) => toast(e.message, "error"));
+      .catch((e: unknown) => {
+        toast(errText(e), "error");
+        refetch();
+      });
 
+  // While launching, cancel is a request the background job finishes (it stays `launching` briefly).
   const handleCancel = (c: Campaign) =>
-    run(cancelCampaign.mutate({ id: c.id }), tx("Campaign cancelled", "تم إلغاء الحملة"));
+    run(
+      cancelCampaign.mutate({ id: c.id }),
+      c.status === "launching" ? tx("Cancelling the campaign…", "جارٍ إلغاء الحملة…") : tx("Campaign cancelled", "تم إلغاء الحملة"),
+      (e) => cancelErrorText(e, tx),
+    );
   const handleRefresh = (c: Campaign) =>
     run(refreshCampaign.mutate({ id: c.id }), tx("Stats updated", "تم تحديث الإحصاءات"));
   const handleDelete = (c: Campaign) =>
@@ -758,6 +902,9 @@ function CampaignsImpl() {
       label: tx("Running", "نشطة"),
       count: campaigns.filter((c) => c.status === "running").length,
     },
+    ...(campaigns.some((c) => c.status === "launching")
+      ? [{ id: "launching" as const, label: tx("Preparing", "قيد التحضير"), count: campaigns.filter((c) => c.status === "launching").length }]
+      : []),
     {
       id: "scheduled",
       label: tx("Scheduled", "مجدولة"),
@@ -778,6 +925,18 @@ function CampaignsImpl() {
     (c) => c.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
 
+  if (openId) {
+    return (
+      <CampaignDetail
+        id={openId}
+        onBack={() => {
+          setOpenId(null);
+          refetch();
+        }}
+      />
+    );
+  }
+
   if (view === "builder") {
     return (
       <CampaignBuilder
@@ -786,10 +945,12 @@ function CampaignsImpl() {
           setView("list");
           refetch();
         }}
-        onDone={(msg) => {
+        onDone={(msg, id) => {
           toast(msg, "success");
           setView("list");
           refetch();
+          // A launched campaign opens its report, which shows the launch progress.
+          if (id) setOpenId(id);
         }}
       />
     );
@@ -805,16 +966,20 @@ function CampaignsImpl() {
         )}
         actions={
           <>
-            <button className="btn primary" onClick={() => setView("builder")}>
-              <IconPlus w={13} />
-              {tx("New campaign", "حملة جديدة")}
-            </button>
+            {can("campaigns.create") && (
+              <button className="btn primary" onClick={() => setView("builder")}>
+                <IconPlus w={13} />
+                {tx("New campaign", "حملة جديدة")}
+              </button>
+            )}
           </>
         }
       />
 
-      <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
+      <div className="sweep-body" style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
+        <WhatsAppGate connected={connected} tx={tx} />
         <div
+          className="stats-4"
           style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}
         >
           <MiniStat
@@ -840,6 +1005,7 @@ function CampaignsImpl() {
         </div>
 
         <div
+          className="sweep-wrap"
           style={{
             display: "flex",
             gap: 8,
@@ -882,6 +1048,7 @@ function CampaignsImpl() {
             placeholder={tx("Search campaigns…", "ابحث في الحملات…")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            className="sweep-search"
             style={{ ...INPUT_STYLE, width: 220 }}
           />
         </div>
@@ -897,11 +1064,11 @@ function CampaignsImpl() {
               background: "var(--bg-1)",
             }}
           >
-            {error}
+            {campaignErrorText(new Error(error), tx)}
           </div>
         )}
 
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <div className="card scroll-x-narrow" style={{ padding: 0, overflow: "hidden" }}>
           <table className="tbl">
             <thead>
               <tr>
@@ -937,23 +1104,45 @@ function CampaignsImpl() {
                 const deliveredPct = pct(c.delivered);
                 const when = c.scheduledAt ?? c.launchedAt;
                 return (
-                  <tr key={c.id} style={{ cursor: "pointer" }}>
+                  <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => setOpenId(c.id)}>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{c.name}</div>
+                      <a
+                        href={`#/campaigns?id=${encodeURIComponent(c.id)}`}
+                        dir="auto"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpenId(c.id);
+                        }}
+                        style={{ fontWeight: 500, color: "inherit", textDecoration: "none" }}
+                      >
+                        {c.name}
+                      </a>
+                      {/* GET /campaigns carries `launch`; the list itself polls every 5 s while a row is launching. */}
+                      {c.status === "launching" && <LaunchProgress tx={tx} campaign={c} compact />}
                       {c.lastError && (
-                        <div style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>{c.lastError}</div>
+                        <div dir="auto" style={{ fontSize: 11, color: "var(--bad)", marginTop: 2, maxWidth: 320 }}>
+                          {lastErrorText(c.lastError, tx, listMayCancel(c))}
+                        </div>
                       )}
                       {!c.lastError && (c.skipped ?? 0) > 0 && (
                         <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 2 }}>
                           {tx(
-                            `${c.skipped} contacts left out (no number or opted out)`,
+                            `${c.skipped} ${c.skipped === 1 ? "contact" : "contacts"} left out (no number or opted out)`,
                             `${c.skipped} جهات مستبعدة (بلا رقم أو ألغت الاشتراك)`,
                           )}
                         </div>
                       )}
                     </td>
-                    <td className="muted">{c.audience}</td>
-                    <td className="mono">{c.recipients.toLocaleString()}</td>
+                    <td className="muted">
+                      <bdi dir="auto">{c.audience}</bdi>{" "}
+                      <AudienceBadge kind={audienceKind(c.segmentId, segmentsQ.data)} tx={tx} />
+                    </td>
+                    {(() => {
+                      // SP-16 final review M1: a draft or scheduled smart-audience campaign has no real count yet.
+                      const r = recipientsLabel(c, audienceKind(c.segmentId, segmentsQ.data), tx);
+                      return <td className="mono" title={r.title}>{r.text}</td>;
+                    })()}
                     <td>
                       <InlineBar pct={deliveredPct} label={`${deliveredPct}%`} color="var(--info)" />
                     </td>
@@ -963,40 +1152,32 @@ function CampaignsImpl() {
                     <td className="mono">{(c.failed ?? 0).toLocaleString()}</td>
                     <td className="muted mono">
                       {when
-                        ? new Date(when).toLocaleString(t.lang === "ar" ? "ar" : "en", { dateStyle: "medium", timeStyle: "short" })
+                        ? new Date(when).toLocaleString(t.lang === "ar" ? "ar-u-nu-latn" : "en", { dateStyle: "medium", timeStyle: "short" })
                         : c.schedule}
                     </td>
                     <td>
-                      {c.status === "running" && (
-                        <Badge kind="ok" dot>
-                          running
-                        </Badge>
-                      )}
-                      {c.status === "scheduled" && (
-                        <Badge kind="info" dot>
-                          scheduled
-                        </Badge>
-                      )}
-                      {c.status === "draft" && <Badge dot>draft</Badge>}
-                      {c.status === "completed" && <Badge dot>completed</Badge>}
-                      {c.status === "failed" && (
-                        <Badge kind="bad" dot>
-                          failed
-                        </Badge>
-                      )}
-                      {c.status === "cancelled" && <Badge dot>cancelled</Badge>}
-                      {c.status === "paused" && (
-                        <Badge kind="warn" dot>
-                          paused
-                        </Badge>
-                      )}
+                      <Badge kind={statusKind(c.status)} dot>
+                        {campaignStatusLabel(c.status, tx)}
+                      </Badge>
                     </td>
                     <td>
                       <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        {c.status !== "draft" && c.status !== "launching" && (
+                          <button
+                            className="btn ghost sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenId(c.id);
+                            }}
+                          >
+                            {tx("View report", "عرض التقرير")}
+                          </button>
+                        )}
                         {c.zernioBroadcastId && (
                           <button
                             className="btn ghost sm"
-                            disabled={refreshCampaign.loading}
+                            disabled={refreshCampaign.loading || !can("campaigns.update")}
+                            title={can("campaigns.update") ? undefined : noPerm}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleRefresh(c);
@@ -1005,10 +1186,10 @@ function CampaignsImpl() {
                             {tx("Refresh", "تحديث")}
                           </button>
                         )}
-                        {(c.status === "running" || c.status === "scheduled") && c.zernioBroadcastId && (
+                        {listMayCancel(c) && can("campaigns.manage") && (
                           <button
                             className="btn ghost sm danger"
-                            disabled={cancelCampaign.loading}
+                            disabled={cancelCampaign.loading || !!c.cancelRequestedAt}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleCancel(c);
@@ -1020,11 +1201,19 @@ function CampaignsImpl() {
                         <button
                           className="btn ghost sm"
                           title={
-                            c.status === "running" || c.status === "scheduled"
-                              ? tx("Cancel it first", "ألغِها أولاً")
-                              : undefined
+                            !can("campaigns.delete")
+                              ? noPerm
+                              : c.status === "running" || c.status === "scheduled" || c.status === "launching"
+                                ? tx("Cancel it first", "ألغِها أولاً")
+                                : undefined
                           }
-                          disabled={deleteCampaign.loading || c.status === "running" || c.status === "scheduled"}
+                          disabled={
+                            deleteCampaign.loading ||
+                            !can("campaigns.delete") ||
+                            c.status === "running" ||
+                            c.status === "scheduled" ||
+                            c.status === "launching"
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
                             handleDelete(c);

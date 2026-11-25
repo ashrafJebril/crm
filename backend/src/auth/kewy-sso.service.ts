@@ -1,3 +1,4 @@
+import { normalizeEmail } from "./email";
 import { isPaymentLocked } from "../billing/payment-lock";
 import { paymentOverdue } from "../billing/payment-lock.service";
 import {
@@ -132,7 +133,7 @@ export class KewySsoService {
       update: claims.name ? { name: safeName, initials: initialsOf(safeName) } : {},
       create: {
         kewyAccountId: claims.sub,
-        email: (claims.email ?? `kewy_${claims.sub}@sso.local`).toLowerCase(),
+        email: normalizeEmail(claims.email ?? `kewy_${claims.sub}@sso.local`),
         name: safeName,
         initials: initialsOf(safeName),
         role: "Agent",
@@ -158,6 +159,9 @@ export class KewySsoService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // SP-26: sessionVersion (a reset or 2FA change ends this session too).
+      // SSO logins never ask for TOTP (ruling 9).
+      sv: user.sessionVersion ?? 0,
       workspaceId: workspace.id,
       // isSuperAdmin is deliberately NOT set. Kewy asserts the role, so
       // honouring a super-admin claim would make a Kewy compromise a

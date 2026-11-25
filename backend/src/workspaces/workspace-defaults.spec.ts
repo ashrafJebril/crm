@@ -3,6 +3,7 @@ import {
   STARTER_SEGMENTS,
   seedWorkspaceDefaults,
   stageSegmentsFor,
+  WORKSPACE_TX_OPTIONS,
 } from "./workspace-defaults";
 
 /**
@@ -28,17 +29,21 @@ describe("seedWorkspaceDefaults", () => {
         findMany: jest
           .fn()
           .mockResolvedValue((existing.stageKeys ?? []).map((key) => ({ key }))),
-        create: jest.fn().mockImplementation((args: { data: { key: string } }) => {
-          created.stages.push(args.data.key);
+        createMany: jest.fn().mockImplementation((args: { data: Array<{ key: string }> }) => {
+          created.stages.push(...args.data.map((d) => d.key));
           return Promise.resolve({});
         }),
+      },
+      lostReason: {
+        count: jest.fn().mockResolvedValue(0),
+        createMany: jest.fn().mockResolvedValue({ count: 5 }),
       },
       segment: {
         findMany: jest
           .fn()
           .mockResolvedValue((existing.segmentNames ?? []).map((name) => ({ name }))),
-        create: jest.fn().mockImplementation((args: { data: { name: string } }) => {
-          created.segments.push(args.data.name);
+        createMany: jest.fn().mockImplementation((args: { data: Array<{ name: string }> }) => {
+          created.segments.push(...args.data.map((d) => d.name));
           return Promise.resolve({});
         }),
       },
@@ -63,11 +68,25 @@ describe("seedWorkspaceDefaults", () => {
     expect(res).toEqual({ pipelineId: "pl-new", stagesCreated: 6, segmentsCreated: 10 });
   });
 
+  it("produces the full default record set (counts) in bulk inserts", async () => {
+    const { db } = build();
+    await seedWorkspaceDefaults(db as never, "ws1");
+    expect(db.pipeline.create).toHaveBeenCalledTimes(1);
+    expect(db.ticketStage.createMany.mock.calls[0][0].data).toHaveLength(6);
+    expect(db.lostReason.createMany.mock.calls[0][0].data).toHaveLength(5);
+    expect(db.segment.createMany.mock.calls[0][0].data).toHaveLength(10);
+  });
+
+  it("transaction options carry the raised timeout", () => {
+    expect(WORKSPACE_TX_OPTIONS.timeout).toBeGreaterThanOrEqual(30_000);
+    expect(WORKSPACE_TX_OPTIONS.maxWait).toBeGreaterThanOrEqual(10_000);
+  });
+
   it("gives the automation the stage groupKeys it looks up", async () => {
     const { db } = build();
     await seedWorkspaceDefaults(db as never, "ws1");
-    const groupKeys = db.ticketStage.create.mock.calls.map(
-      (c: [{ data: { groupKey: string } }]) => c[0].data.groupKey,
+    const groupKeys = db.ticketStage.createMany.mock.calls.flatMap(
+      (c: [{ data: Array<{ groupKey: string }> }]) => c[0].data.map((d) => d.groupKey),
     );
     expect(groupKeys).toContain("new");
     expect(groupKeys).toContain("contacted");
@@ -76,12 +95,12 @@ describe("seedWorkspaceDefaults", () => {
   it("scopes every created row to the workspace", async () => {
     const { db } = build();
     await seedWorkspaceDefaults(db as never, "ws9");
-    for (const call of [
-      ...db.ticketStage.create.mock.calls,
-      ...db.segment.create.mock.calls,
-    ]) {
-      expect((call[0] as { data: { workspaceId: string } }).data.workspaceId).toBe("ws9");
-    }
+    const rows = [
+      ...db.ticketStage.createMany.mock.calls,
+      ...db.segment.createMany.mock.calls,
+    ].flatMap((c) => (c[0] as { data: Array<{ workspaceId: string }> }).data);
+    expect(rows).toHaveLength(16);
+    for (const row of rows) expect(row.workspaceId).toBe("ws9");
   });
 
   it("is idempotent — a fully set-up workspace gets nothing new", async () => {
@@ -120,5 +139,17 @@ describe("seedWorkspaceDefaults", () => {
     expect(won?.name).toBe("Won deals");
     expect(won?.nameAr).toBe("صفقات تم الفوز");
     expect(contacted?.name).toBe("Contacted");
+  });
+
+  it("seeds default lost reasons for the sales pipeline, and not when some exist", async () => {
+    const { db } = build();
+    await seedWorkspaceDefaults(db as never, "ws1");
+    const arg = db.lostReason.createMany.mock.calls[0][0];
+    expect(arg.data.length).toBeGreaterThanOrEqual(1);
+    expect(arg.data[0]).toMatchObject({ workspaceId: "ws1", pipelineId: "pl-new" });
+    const again = build();
+    again.db.lostReason.count.mockResolvedValue(3);
+    await seedWorkspaceDefaults(again.db as never, "ws1");
+    expect(again.db.lostReason.createMany).not.toHaveBeenCalled();
   });
 });

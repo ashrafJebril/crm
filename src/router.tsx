@@ -1,4 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
+import { confirmLeave } from "@/lib/leaveGuard";
+import { routeHash } from "@/lib/langParam";
 import type { RouteId } from "@/lib/types";
 
 // Each screen is its own chunk — initial load only ships shell + Dashboard.
@@ -11,13 +13,20 @@ const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> =
   pipeline: lazy(() => import("@/screens/pipeline/PipelinePage")),
   workflows: lazy(() => import("@/screens/workflows/WorkflowsPage")),
   contacts: lazy(() => import("@/screens/Contacts")),
+  followups: lazy(() => import("@/screens/FollowUps")),
   analytics: lazy(() => import("@/screens/Analytics")),
   templates: lazy(() => import("@/screens/Templates")),
   media: lazy(() => import("@/screens/Media")),
   team: lazy(() => import("@/screens/Team")),
   agent: lazy(() => import("@/screens/KewyAgent")),
   settings: lazy(() => import("@/screens/Settings")),
+  channels: lazy(() => import("@/screens/channels/ChannelsPage")),
+  ads: lazy(() => import("@/screens/ads/AdsPage")),
   admin: lazy(() => import("@/screens/Admin")),
+  // SP-20: guided onboarding (signup and the "Continue setup" cards link here).
+  setup: lazy(() => import("@/screens/setup/SetupPage")),
+  // SP-18: the member's own copilot chats (reached from the drawer).
+  copilot: lazy(() => import("@/screens/copilot/CopilotHistory")),
 };
 
 export const VALID_ROUTES = new Set<RouteId>(Object.keys(screens) as RouteId[]);
@@ -53,7 +62,13 @@ export function useRoute(): [RouteId, (r: RouteId) => void] {
   }, []);
 
   const setRoute = (r: RouteId) => {
-    if (window.location.hash !== `#/${r}`) window.location.hash = `#/${r}`;
+    const h = window.location.hash;
+    // Re-selecting the current route keeps its query (e.g. the inbox filter).
+    const changes = h !== `#/${r}` && !h.startsWith(`#/${r}?`);
+    // SP-29: ask the leave guard before the current screen unmounts.
+    if (changes && !confirmLeave()) return;
+    // SP-30: the new route drops the old query but keeps `?lang=`.
+    if (changes) window.location.hash = routeHash(r, h);
     setRouteState(r);
   };
 

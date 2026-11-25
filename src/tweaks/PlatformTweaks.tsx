@@ -53,7 +53,7 @@ const STYLES = `
 `;
 
 export function PlatformTweaks() {
-  const { t, setTweak } = useTweaks();
+  const { t, setTweak, setLang } = useTweaks();
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -117,14 +117,14 @@ export function PlatformTweaks() {
             label="Language"
             value={t.lang}
             options={["en", "ar"] as Lang[]}
-            onChange={(v) => setTweak("lang", v)}
+            onChange={(v) => setLang(v)}
           />
 
           <Section label="Layout" />
           <Switch
             label="Collapse sidebar"
-            value={t.collapsed}
-            onChange={(v) => setTweak("collapsed", v)}
+            value={t.sidebarCollapsed === true}
+            onChange={(v) => setTweak("sidebarCollapsed", v)}
           />
           <Switch
             label="Show AI personalities"
