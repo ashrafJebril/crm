@@ -6,17 +6,42 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import type { Viewer } from "../permissions/visibility";
+import { resolveTemplateHeader, type TemplateHeaderInput } from "./template-header";
+import { normalizeReaction } from "./message-reaction";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
-import { decryptSecret, encryptSecret } from "../common/token-crypto";
+import { decryptSecret } from "../common/token-crypto";
 import { techProviderEnabled, whatsappApp } from "../common/meta-app";
-import { randomInt } from "node:crypto";
+import { toChannelDto } from "../channels/channel-dto";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
 import { AiBridgeService } from "./ai-bridge.service";
 import type { ConnectWhatsAppDto } from "./whatsapp.dto";
+import { randomBytes, timingSafeEqual } from "crypto";
+import type { Channel } from "@prisma/client";
+import { ChannelResolver } from "../channels/channel-resolver.service";
+import { credentialsFor } from "../channels/channel-credentials";
+import { ensureDefaultPerKind, ensureLegacyChannels } from "../channels/legacy-mirror";
+import { INTEGRATION_REMOVED } from "../channels/zernio-mirror";
+import { channelError, type ChannelErrorKey } from "../channels/channel-errors";
+import { assertWhatsappCapacity } from "../channels/channel-limits";
+import { EmbeddedSignupService } from "../channels/whatsapp/embedded-signup.service";
+import { MetaGraphClient } from "../channels/whatsapp/meta-graph.client";
+import { addsWhatsappSlot, assertSecretsStorable, attachMetaNumber, NOT_META } from "../channels/whatsapp/meta-number";
+
+import { RecipientTrackerService } from "../campaigns/tracking/recipient-tracker.service";
+import { CampaignReplyAttributor } from "../campaigns/tracking/reply-attributor.service";
+import { AdReferralService } from "../ad-attribution/ad-referral.service";
+import { metaReplyParts } from "../campaigns/tracking/inbound-reply";
+import { providerFailure } from "../campaigns/tracking/failure-codes";
+import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
+import { normalizeTemplateQuality } from "../channels/health/health-model";
+import { sentByData } from "../conversations/message-sender";
+import { AgentReplyGate } from "../agent/agent-reply-gate";
 
 /** Internal connect input: popup connects don't use a per-row verify token. */
 type WaConnectInput = Omit<ConnectWhatsAppDto, "verifyToken"> & { verifyToken?: string };
@@ -56,24 +81,69 @@ interface WebhookEntryChangeValue {
     image?: { id: string; caption?: string; mime_type?: string };
     audio?: { id: string; mime_type?: string };
     document?: { id: string; filename?: string; mime_type?: string };
+    // type "reaction": the reacted message's wamid and the emoji ("" = removed).
+    reaction?: { message_id?: string; emoji?: string };
+    // type "button": a template quick-reply tap.
+    button?: { text?: string; payload?: string };
+    // type "interactive": an interactive button or list reply.
+    interactive?: {
+      type?: string;
+      button_reply?: { id?: string; title?: string };
+      list_reply?: { id?: string; title?: string; description?: string };
+    };
+    /** SP-15: present only on the first message after a click-to-WhatsApp ad. */
+    referral?: MetaReferral;
   }>;
   statuses?: Array<{
     id: string;
     status: "sent" | "delivered" | "read" | "failed";
     timestamp: string;
     recipient_id: string;
+    // On "failed": Meta's error(s).
+    errors?: Array<{ code?: number; title?: string; message?: string; error_data?: { details?: string } }>;
   }>;
+}
+
+/** SP-15: Meta's CTWA `referral` (webhooks reference, messages). Parsed defensively. */
+interface MetaReferral {
+  source_url?: string;
+  source_id?: string;
+  source_type?: string;
+  body?: string;
+  headline?: string;
+  media_type?: string;
+  image_url?: string;
+  video_url?: string;
+  thumbnail_url?: string;
+  ctwa_clid?: string;
+  welcome_message?: { text?: string };
 }
 
 // Meta sends a different `value` shape for template status updates than for
 // inbound messages — typed separately so the webhook handler can dispatch on
 // `change.field`.
 interface TemplateStatusValue {
-  event?: "APPROVED" | "REJECTED" | "FLAGGED" | "PAUSED" | "PENDING_DELETION" | "DISABLED" | string;
+  event?: "APPROVED" | "REJECTED" | "FLAGGED" | "PAUSED" | "PENDING_DELETION" | "DISABLED" | "REINSTATED" | string;
   message_template_id?: string | number;
   message_template_name?: string;
   message_template_language?: string;
   reason?: string;
+}
+
+/** SP-14: `message_template_quality_update` (Meta webhooks reference). */
+interface TemplateQualityValue {
+  previous_quality_score?: string;
+  new_quality_score?: string;
+  message_template_id?: string | number;
+  message_template_name?: string;
+  message_template_language?: string;
+}
+
+/** SP-14: `phone_number_quality_update` (Meta webhooks reference). A trigger only. */
+interface PhoneQualityValue {
+  display_phone_number?: string;
+  event?: string;
+  current_limit?: string;
 }
 
 interface WebhookPayload {
@@ -81,7 +151,7 @@ interface WebhookPayload {
   entry?: Array<{
     id: string;
     changes?: Array<{
-      value?: WebhookEntryChangeValue | TemplateStatusValue;
+      value?: WebhookEntryChangeValue | TemplateStatusValue | TemplateQualityValue | PhoneQualityValue;
       field?: string;
     }>;
   }>;
@@ -111,19 +181,69 @@ const LANG_TO_META: Record<"en" | "ar", string> = {
   ar: "ar",
 };
 
+/**
+ * How connect errors are reported. "legacy" keeps the English messages the
+ * old Settings card shows; "keys" (the channels hub, `POST
+ * /channels/whatsapp/manual`) throws `channels.*` keys the frontend maps
+ * through `tx`.
+ */
+export type ConnectErrorStyle = "legacy" | "keys";
+export interface ConnectOptions {
+  errorStyle?: ConnectErrorStyle;
+  /** How the number was connected ("coexistence", "embedded_signup", …). */
+  connectedVia?: string;
+  /** Meta's app-scoped user id, which the data-deletion callback matches on. */
+  metaUserId?: string | null;
+}
+
 @Injectable()
 export class WhatsAppService {
   private readonly log = new Logger(WhatsAppService.name);
+  /** SP-19: inbound routing and outbound credentials go through channels. */
+  private readonly channels: ChannelResolver;
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly media: MediaService,
     private readonly pipelineAutomation: PipelineAutomationService,
     private readonly aiBridge: AiBridgeService,
-  ) {}
+    // Provided by the global ChannelsCoreModule; hand-built specs get a
+    // resolver over the same Prisma double.
+    @Optional() channelResolver?: ChannelResolver,
+    // SP-19 T4: the embedded signup lives in channels/whatsapp; the old
+    // exchange route delegates to it.
+    @Optional() embeddedSignup?: EmbeddedSignupService,
+    // SP-12, from CampaignTrackingModule; hand-built specs get instances over
+    // the same Prisma double.
+    @Optional() tracker?: RecipientTrackerService,
+    @Optional() attributor?: CampaignReplyAttributor,
+    // SP-14: quality webhooks ask for a number health check (global ChannelsCoreModule).
+    @Optional() private readonly healthTrigger?: HealthCheckTrigger,
+    // SP-15, from AdAttributionModule; hand-built specs get one over the same Prisma double.
+    @Optional() adReferrals?: AdReferralService,
+    // SP-20: the kewy-ai bridge asks the reply gate first (IntegrationsModule
+    // provides it; hand-built specs that do not pass one keep today's rules).
+    @Optional() private readonly replyGate?: AgentReplyGate,
+  ) {
+    this.channels = channelResolver ?? new ChannelResolver(prisma);
+    this.tracker = tracker ?? new RecipientTrackerService(prisma);
+    this.attributor = attributor ?? new CampaignReplyAttributor(prisma, this.tracker);
+    this.adReferrals = adReferrals ?? new AdReferralService(prisma, media);
+    this.embeddedSignup = embeddedSignup ?? new EmbeddedSignupService(prisma, new MetaGraphClient(), realtime);
+  }
+  private readonly embeddedSignup: EmbeddedSignupService;
+  private readonly tracker: RecipientTrackerService;
+  private readonly attributor: CampaignReplyAttributor;
+  /** SP-15: click-to-WhatsApp referral capture. */
+  private readonly adReferrals: AdReferralService;
 
   // ─── Public REST API ───────────────────────────────────────────────────
-  async status(workspaceId: string) {
+  /**
+   * `verifyToken` is a webhook credential: only callers holding
+   * channels.update get it (the controller decides). Agents and viewers can
+   * read this route through channels.view (SP-19 R10).
+   */
+  async status(workspaceId: string, opts: { includeVerifyToken?: boolean } = {}) {
     const integ = await this.find(workspaceId);
     if (!integ) return { connected: false };
     const raw = this.parseRaw(integ.raw);
@@ -132,16 +252,21 @@ export class WhatsAppService {
       phoneNumberId: integ.pageId,
       displayPhoneNumber: raw.displayPhoneNumber ?? integ.pageName,
       wabaId: raw.wabaId,
-      verifyToken: raw.verifyToken,
+      ...(opts.includeVerifyToken ? { verifyToken: raw.verifyToken } : {}),
       expiresAt: integ.expiresAt,
       lastFetchedAt: integ.lastFetchedAt,
     };
   }
 
   /**
-   * Complete WhatsApp Embedded Signup: exchange the `code` returned by Meta's
-   * embedded signup popup for an access token, then store the credentials.
-   * The popup gives us phoneNumberId + wabaId out-of-band via window.message.
+   * The Tech Provider popup route (`POST /integrations/whatsapp/oauth/exchange`),
+   * off until META_TECH_PROVIDER_ENABLED is on. `cloud` delegates to
+   * `EmbeddedSignupService` (SP-19 T4: config check, plan limit, code
+   * exchange, WABA subscribe, register, channel-aware attach) and returns its
+   * ChannelDto; `coexistence` connects a number already live on the WhatsApp
+   * Business app, which Meta registers itself, and asks Meta for the contact
+   * and history sync. The popup's `phoneNumberId` + `wabaId` arrive
+   * out-of-band via window.message.
    */
   async embeddedSignupExchange(
     workspaceId: string,
@@ -156,65 +281,57 @@ export class WhatsAppService {
     if (!techProviderEnabled()) {
       throw new ForbiddenException("Connect with Meta is not enabled yet");
     }
-    const { appId, appSecret } = whatsappApp();
-    if (!appId || !appSecret) {
-      throw new BadRequestException("META_APP_ID / META_APP_SECRET not configured");
-    }
     await this.assertNotZernio(workspaceId);
 
-    // Embedded Signup codes are exchanged WITHOUT a redirect_uri (the popup
-    // flow has none). The result is a business-integration system-user token
-    // scoped to the WABA the customer just picked.
-    const tokenUrl =
-      `${GRAPH}/oauth/access_token?client_id=${appId}` +
-      `&client_secret=${appSecret}` +
-      `&code=${encodeURIComponent(code)}`;
-    const tokenRes = await this.fetchJson<{
-      access_token: string;
-      token_type?: string;
-      expires_in?: number;
-    }>(tokenUrl, { method: "GET" });
-    if (!tokenRes.access_token) {
-      throw new BadRequestException("Meta did not return an access token");
-    }
-    const token = tokenRes.access_token;
-
-    // Coexistence: the number is already live on the WhatsApp Business app
-    // and Meta registers it during the popup. Calling /register would fail,
-    // and no PIN is ours to keep.
     if (mode === "coexistence") {
+      const { appId, appSecret } = whatsappApp();
+      if (!appId || !appSecret) {
+        throw new BadRequestException("META_APP_ID / META_APP_SECRET not configured");
+      }
+      // Embedded Signup codes are exchanged WITHOUT a redirect_uri (the popup
+      // flow has none). The result is a business-integration system-user token
+      // scoped to the WABA the customer just picked.
+      const tokenUrl =
+        `${GRAPH}/oauth/access_token?client_id=${appId}` +
+        `&client_secret=${appSecret}` +
+        `&code=${encodeURIComponent(code)}`;
+      const tokenRes = await this.fetchJson<{ access_token: string }>(tokenUrl, { method: "GET" });
+      if (!tokenRes.access_token) {
+        throw new BadRequestException("Meta did not return an access token");
+      }
+      const token = tokenRes.access_token;
+
+      // Coexistence: the number is already live on the WhatsApp Business app
+      // and Meta registers it during the popup. Calling /register would fail,
+      // and no PIN is ours to keep.
       const result = await this.connect(
         workspaceId,
         { phoneNumberId, wabaId, accessToken: token },
-        { connectedVia: "coexistence", metaUserId: metaUserId ?? null, registrationPin: null },
+        { connectedVia: "coexistence", metaUserId: metaUserId ?? null },
       );
       // Meta only allows these within 24h of onboarding. Contacts and chat
       // history then arrive on the webhook (smb_app_state_sync / history).
       const sync = await this.startCoexistenceSync(phoneNumberId, token);
-      return { ...result, phoneRegistered: true, coexistence: true, syncStarted: sync };
+      // The channels hub expects the connected channel, like the cloud path.
+      const row = await this.prisma.channel.findFirst({ where: { id: result.channelId, workspaceId } });
+      return {
+        ...(row ? toChannelDto(row) : {}),
+        ...result,
+        phoneRegistered: true,
+        coexistence: true,
+        syncStarted: sync,
+      };
     }
 
-    // Register the number on the Cloud API. Required before it can send or
-    // receive; a number that's already registered just errors and we move on.
-    const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    const registered = await this.registerPhone(phoneNumberId, token, pin);
-
-    const result = await this.connect(
-      workspaceId,
-      { phoneNumberId, wabaId, accessToken: token },
-      {
-        connectedVia: "embedded_signup",
-        metaUserId: metaUserId ?? null,
-        // Only keep the PIN if WE set it; Meta requires it to re-register or
-        // migrate the number later.
-        registrationPin: registered.ok ? encryptSecret(pin) : null,
-      },
-    );
-    return {
-      ...result,
-      phoneRegistered: registered.ok,
-      phoneRegisterError: registered.ok ? undefined : registered.error,
-    };
+    // SP-19 T4: the Cloud API path is the signup service's (config check, plan
+    // limit, code exchange, WABA subscribe, register, channel-aware attach).
+    return this.embeddedSignup.signup(workspaceId, {
+      code,
+      phoneNumberId,
+      wabaId,
+      metaUserId: metaUserId ?? null,
+      signupEvent: phoneNumberId ? "FINISH" : "FINISH_ONLY_WABA",
+    });
   }
 
   /** POST /{phone}/smb_app_data for contacts, then history. Best-effort. */
@@ -237,28 +354,6 @@ export class WhatsAppService {
     const contacts = await run("smb_app_state_sync");
     const history = await run("history");
     return { contacts, history };
-  }
-
-  /** POST /{phone-number-id}/register — best-effort, never fails the connect. */
-  private async registerPhone(
-    phoneNumberId: string,
-    token: string,
-    pin: string,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    try {
-      const res = await this.graphPost<{ success?: boolean }>(
-        `/${phoneNumberId}/register`,
-        token,
-        { messaging_product: "whatsapp", pin },
-      );
-      return res?.success === false
-        ? { ok: false, error: "Register returned success=false" }
-        : { ok: true };
-    } catch (e) {
-      const msg = (e as Error).message;
-      this.log.warn(`register failed for phone=${phoneNumberId} (may already be registered): ${msg}`);
-      return { ok: false, error: msg };
-    }
   }
 
   /**
@@ -293,10 +388,16 @@ export class WhatsAppService {
    *      surface a picker, but the immediate save uses the first match.
    *   4. If nothing found → clear error pointing the customer to API Setup.
    */
-  async connectByToken(workspaceId: string, accessToken: string) {
-    const token = accessToken.trim();
+  async connectByToken(
+    workspaceId: string,
+    accessToken: string,
+    opts: ConnectOptions & { phoneNumberId?: string; add?: boolean } = {},
+  ) {
+    const bad = (key: ChannelErrorKey, english: string) =>
+      opts.errorStyle === "keys" ? channelError(key) : new BadRequestException(english);
+    const token = (accessToken ?? "").trim();
     if (!token || token.length < 20) {
-      throw new BadRequestException("Token looks too short to be a Meta access token");
+      throw bad("channels.meta_token_invalid", "Token looks too short to be a Meta access token");
     }
 
     // Step 1: prove the token is valid by hitting /me. We use the debug_token
@@ -309,12 +410,13 @@ export class WhatsAppService {
         token,
       );
     } catch (e) {
-      throw new BadRequestException(
+      throw bad(
+        "channels.meta_token_invalid",
         `Token rejected by Meta: ${(e as Error).message}. Make sure you copied the WhatsApp temporary access token from WhatsApp Manager → API Setup, not a Facebook user token.`,
       );
     }
     if (!me?.id) {
-      throw new BadRequestException("Token did not resolve to a Meta account");
+      throw bad("channels.meta_token_invalid", "Token did not resolve to a Meta account");
     }
 
     interface DiscoveredPhone {
@@ -361,7 +463,8 @@ export class WhatsAppService {
           { method: "GET" },
         );
         if (debugRes.data?.is_valid === false) {
-          throw new BadRequestException(
+          throw bad(
+            "channels.meta_token_invalid",
             "Meta rejected this token (debug_token reports it as invalid). Make sure you copied the freshly generated temporary access token.",
           );
         }
@@ -403,7 +506,8 @@ export class WhatsAppService {
     }
 
     if (wabaIds.size === 0) {
-      throw new BadRequestException(
+      throw bad(
+        "channels.meta_no_waba",
         "No WhatsApp Business Account found on this token. Open Meta's WhatsApp Manager, go to API Setup, and copy the temporary access token shown there.",
       );
     }
@@ -432,31 +536,77 @@ export class WhatsAppService {
       }
     }
     if (wabas.length === 0) {
-      throw new BadRequestException(
+      throw bad(
+        "channels.meta_no_waba",
         "Found WhatsApp Business Account ids on the token but couldn't fetch details. Token may be missing the required permissions.",
       );
     }
-    const waba = wabas[0];
-    const phone = waba.phone_numbers?.data?.[0];
-    if (!phone?.id) {
-      throw new BadRequestException(
-        `WhatsApp Business Account "${waba.name ?? waba.id}" has no registered phone number. Register a phone in Meta's WhatsApp Manager before connecting.`,
+
+    // SP-19 T4: which number this token connects.
+    //  - an explicit `phoneNumberId`: that one;
+    //  - otherwise a number this workspace already holds that the token can
+    //    reach (live first): the usual reason to paste a token is to refresh
+    //    an expired one, so it is refreshed in place and reactivated (I1);
+    //  - an explicit add (`add`, the hub's manual route): the first number the
+    //    workspace does not hold yet, else a held one;
+    //  - a workspace with no Meta number yet: the token's first number;
+    //  - otherwise nothing is added: 400 (keys: channels.meta_no_number).
+    const candidates = wabas.flatMap((w) =>
+      (w.phone_numbers?.data ?? []).filter((p) => p?.id).map((p) => ({ waba: w, phone: p })),
+    );
+    let pick: { waba: DiscoveredWaba; phone: DiscoveredPhone } | undefined;
+    if (opts.phoneNumberId) {
+      pick = candidates.find((c) => c.phone.id === opts.phoneNumberId);
+      if (!pick) {
+        throw bad("channels.meta_no_number", "This token cannot access the requested WhatsApp phone number.");
+      }
+    } else {
+      const rows = await this.prisma.channel.findMany({
+        where: { workspaceId, kind: "whatsapp", provider: { notIn: NOT_META } },
+        select: { externalId: true, status: true },
+      });
+      const held = new Set(rows.map((c) => c.externalId));
+      const live = new Set(rows.filter((c) => c.status !== "disconnected").map((c) => c.externalId));
+      const heldPick = candidates.find((c) => live.has(c.phone.id)) ?? candidates.find((c) => held.has(c.phone.id));
+      if (opts.add) {
+        pick = candidates.find((c) => !held.has(c.phone.id)) ?? heldPick;
+      } else if (heldPick) {
+        pick = heldPick;
+      } else if (held.size === 0) {
+        pick = candidates[0];
+      } else if (candidates.length) {
+        throw bad(
+          "channels.meta_no_number",
+          "This token cannot access the WhatsApp number connected to this workspace. To connect another number, use Add number in Channels.",
+        );
+      }
+    }
+    if (!pick) {
+      const first = wabas[0];
+      throw bad(
+        "channels.meta_no_number",
+        `WhatsApp Business Account "${first.name ?? first.id}" has no registered phone number. Register a phone in Meta's WhatsApp Manager before connecting.`,
       );
     }
+    const { waba, phone } = pick;
 
     // Generate a fresh verify token so webhooks can be wired later.
-    const verifyToken = `aram-wa-${Math.random().toString(36).slice(2, 10)}`;
+    const verifyToken = `aram-wa-${randomBytes(6).toString("hex")}`;
 
-    // Step 3: reuse the existing connect() path so token validation,
-    // webhook subscription, and Integration upsert all happen exactly the
-    // same way as the manual-paste flow.
-    const result = await this.connect(workspaceId, {
-      phoneNumberId: phone.id,
-      wabaId: waba.id,
-      accessToken: token,
-      verifyToken,
-      displayPhoneNumber: phone.display_phone_number,
-    });
+    // Step 3: reuse the connect() path so token validation, webhook
+    // subscription and the channel-aware attach happen exactly the same way
+    // as the manual-paste flow.
+    const result = await this.connect(
+      workspaceId,
+      {
+        phoneNumberId: phone.id,
+        wabaId: waba.id,
+        accessToken: token,
+        verifyToken,
+        displayPhoneNumber: phone.display_phone_number,
+      },
+      { errorStyle: opts.errorStyle },
+    );
 
     return {
       ...result,
@@ -476,18 +626,37 @@ export class WhatsAppService {
     };
   }
 
-  async connect(
-    workspaceId: string,
-    dto: WaConnectInput,
-    extraRaw: Record<string, unknown> = {},
-  ) {
-    await this.assertNotZernio(workspaceId);
+  /**
+   * Connect one Meta number (phone number id + WABA + token).
+   *
+   * SP-19 T4 (ruling 4): channel-aware and limit-checked. The first number
+   * becomes the legacy Integration as before, the same number again refreshes
+   * it in place, and a DIFFERENT number is added as its own channel (token in
+   * `secretsEnc`) instead of overwriting the first. A number that takes a new
+   * slot needs room under the plan limit (409 channels.limit_reached, checked
+   * before Meta is called). A Zernio number in the same workspace keeps its
+   * own channel — SP-19 rows never overwrite each other.
+   */
+  async connect(workspaceId: string, dto: WaConnectInput, opts: ConnectOptions = {}) {
+    await ensureLegacyChannels(this.prisma, workspaceId);
+    if (await addsWhatsappSlot(this.prisma, workspaceId, dto.phoneNumberId)) {
+      await assertWhatsappCapacity(this.prisma, workspaceId);
+    }
+    assertSecretsStorable();
+
     // Validate the credentials by fetching the phone-number record from Meta.
-    const info = await this.graphGet<WaPhoneInfo>(
-      `/${dto.phoneNumberId}?fields=id,display_phone_number,verified_name`,
-      dto.accessToken,
-    );
+    let info: WaPhoneInfo;
+    try {
+      info = await this.graphGet<WaPhoneInfo>(
+        `/${encodeURIComponent(dto.phoneNumberId)}?fields=id,display_phone_number,verified_name`,
+        dto.accessToken,
+      );
+    } catch (e) {
+      if (opts.errorStyle === "keys") throw channelError("channels.meta_token_invalid");
+      throw e;
+    }
     if (info?.id !== dto.phoneNumberId) {
+      if (opts.errorStyle === "keys") throw channelError("channels.meta_token_invalid");
       throw new BadRequestException("Token did not resolve to this phone-number id");
     }
     const displayName =
@@ -496,26 +665,30 @@ export class WhatsAppService {
       info.verified_name ??
       "WhatsApp number";
 
-    const data = {
-      platform: "whatsapp",
-      pageId: dto.phoneNumberId,
-      pageName: displayName,
-      accessToken: encryptSecret(dto.accessToken),
-      scopes: null,
-      expiresAt: null,
-      raw: JSON.stringify({
-        ...extraRaw,
-        wabaId: dto.wabaId,
-        verifyToken: dto.verifyToken,
-        displayPhoneNumber: info.display_phone_number ?? null,
-        verifiedName: info.verified_name ?? null,
-      }),
-    };
-
-    const existing = await this.find(workspaceId);
-    const row = existing
-      ? await this.prisma.integration.update({ where: { id: existing.id }, data })
-      : await this.prisma.integration.create({ data: { ...data, workspaceId } });
+    const { channel, legacy } = await attachMetaNumber(this.prisma, workspaceId, {
+      phoneNumberId: dto.phoneNumberId,
+      wabaId: dto.wabaId,
+      accessToken: dto.accessToken,
+      displayName,
+      displayPhoneNumber: info.display_phone_number ?? dto.displayPhoneNumber ?? null,
+      verifiedName: info.verified_name ?? null,
+      status: "active",
+      statusReason: null,
+      verification: null,
+      // A popup connect brings no verify token; the row still gets one (the
+      // app-level META_VERIFY_TOKEN answers the handshake either way).
+      verifyToken: dto.verifyToken ?? `aram-wa-${randomBytes(6).toString("hex")}`,
+      // Meta's data-deletion callback matches on `metaUserId` (R: compliance).
+      ...(opts.connectedVia || opts.metaUserId !== undefined
+        ? {
+            provenance: {
+              ...(opts.connectedVia ? { connectedVia: opts.connectedVia } : {}),
+              ...(opts.metaUserId !== undefined ? { metaUserId: opts.metaUserId } : {}),
+            },
+          }
+        : {}),
+    });
+    this.realtime.emitToWorkspace?.(workspaceId, "channels.updated", { channelId: channel.id });
 
     // Subscribe our Meta app to this WABA so webhooks actually fire. Without
     // this call the customer would see "connected" in tkana but inbound
@@ -526,10 +699,12 @@ export class WhatsAppService {
 
     return {
       connected: true,
-      phoneNumberId: row.pageId,
+      channelId: channel.id,
+      phoneNumberId: dto.phoneNumberId,
       displayPhoneNumber: displayName,
       wabaId: dto.wabaId,
-      verifyToken: dto.verifyToken,
+      // The Integration's webhook verify token; a channel-only number has none.
+      ...(legacy ? { verifyToken: dto.verifyToken } : {}),
       webhookSubscribed: subscribed.ok,
       webhookError: subscribed.ok ? undefined : subscribed.error,
     };
@@ -548,7 +723,14 @@ export class WhatsAppService {
         this.log.warn(`Unsubscribe failed (continuing delete): ${(e as Error).message}`);
       }
     }
+    // SP-19: the mirrored channel stops sending (soft: history stays). A
+    // later connect of the same number reactivates it.
+    await this.prisma.channel.updateMany({
+      where: { integrationId: integ.id, status: { not: "disconnected" } },
+      data: { status: "disconnected", statusReason: INTEGRATION_REMOVED, disconnectedAt: new Date(), isDefault: false },
+    });
     await this.prisma.integration.delete({ where: { id: integ.id } });
+    await ensureDefaultPerKind(this.prisma, workspaceId);
     return { ok: true };
   }
 
@@ -588,8 +770,32 @@ export class WhatsAppService {
   }
 
   // ─── Outbound sends ────────────────────────────────────────────────────
+  /** Test-send from the workspace's legacy number (Settings). Conversation
+   *  replies use the conversation's own channel (sendInConversation). */
   async sendText(workspaceId: string, toWaId: string, body: string) {
-    const { token, phoneNumberId } = await this.requireToken(workspaceId);
+    return this.postText(await this.requireToken(workspaceId), toWaId, body);
+  }
+
+  /**
+   * SP-19: the Meta credentials of the number a conversation belongs to.
+   * `channel.externalId` is the phone_number_id (an Integration-linked
+   * channel follows its Integration), the token is that channel's. A
+   * disconnected number is 409, never replaced by another one.
+   */
+  private async sendTarget(
+    workspaceId: string,
+    conv: { id: string; channel: string; channelId?: string | null },
+  ): Promise<{ token: string; phoneNumberId: string; channel: Channel }> {
+    const channel = await this.channels.forSend(workspaceId, conv);
+    const creds = await credentialsFor(this.prisma, channel);
+    if (creds.provider === "zernio" || !creds.accessToken || !creds.externalId) {
+      throw new NotFoundException("WhatsApp is not connected");
+    }
+    return { token: creds.accessToken, phoneNumberId: creds.externalId, channel };
+  }
+
+  private async postText(target: { token: string; phoneNumberId: string }, toWaId: string, body: string) {
+    const { token, phoneNumberId } = target;
     const url = `${GRAPH}/${phoneNumberId}/messages`;
     const payload = {
       messaging_product: "whatsapp",
@@ -609,13 +815,13 @@ export class WhatsAppService {
     return { wamid: res.messages?.[0]?.id ?? "", ok: true };
   }
 
-  async sendImage(
-    workspaceId: string,
+  private async postImage(
+    target: { token: string; phoneNumberId: string },
     toWaId: string,
     imageUrl: string,
     caption?: string,
   ) {
-    const { token, phoneNumberId } = await this.requireToken(workspaceId);
+    const { token, phoneNumberId } = target;
     const url = `${GRAPH}/${phoneNumberId}/messages`;
     // WA Cloud API accepts a public `link` here exactly like FB Messenger.
     // Caption is optional and goes inside the image object (NOT a separate
@@ -654,6 +860,8 @@ export class WhatsAppService {
     conversationId: string,
     body: string,
     mediaId?: string,
+    /** SP-11: the member sending from the inbox (Message.sentById); none for AI replies. */
+    actorId?: string,
   ) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
@@ -673,15 +881,16 @@ export class WhatsAppService {
       throw new BadRequestException("Message body or mediaId required");
     }
 
+    const target = await this.sendTarget(workspaceId, conv);
     const recipient = this.normalizeWaId(waId);
     const sent = mediaId
-      ? await this.sendImage(
-          workspaceId,
+      ? await this.postImage(
+          target,
           recipient,
           await this.media.resolveExternalUrl(workspaceId, mediaId, 60 * 60),
           body,
         )
-      : await this.sendText(workspaceId, recipient, body);
+      : await this.postText(target, recipient, body);
 
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -697,6 +906,7 @@ export class WhatsAppService {
         metaMessageId: sent.wamid || null,
         deliveryStatus: sent.wamid ? "sent" : null,
         deliveryStatusAt: sent.wamid ? new Date() : null,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({
@@ -710,6 +920,7 @@ export class WhatsAppService {
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "whatsapp",
+      channelId: target.channel.id,
       conversationId,
     });
     return sent;
@@ -737,8 +948,11 @@ export class WhatsAppService {
     name: string,
     language: string,
     variables: string[],
+    header?: TemplateHeaderInput,
+    viewer?: Viewer,
+    /** SP-11: the member sending from the inbox (Message.sentById); workflows pass none. */
+    actorId?: string,
   ) {
-    const { token, phoneNumberId } = await this.requireToken(workspaceId);
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, workspaceId },
       include: { contact: true },
@@ -753,12 +967,22 @@ export class WhatsAppService {
         "Contact has no WhatsApp id (externalId/phone) — cannot deliver",
       );
     }
+    // SP-19: the conversation's own number and token (templates are listed on
+    // the default number — R8; a missing template surfaces as Meta's error).
+    const target = await this.sendTarget(workspaceId, conv);
+    const { token, phoneNumberId } = target;
 
-    interface Component {
-      type: "body";
-      parameters: Array<{ type: "text"; text: string }>;
-    }
+    // Header first (Meta's component order); validated before anything is sent.
+    const resolvedHeader = await resolveTemplateHeader(
+      { prisma: this.prisma, media: this.media },
+      workspaceId,
+      name,
+      header,
+      { language, viewer },
+    );
+    type Component = { type: "header" | "body"; parameters: Array<Record<string, unknown>> };
     const components: Component[] = [];
+    if (resolvedHeader) components.push(resolvedHeader.component);
     if (variables.length > 0) {
       components.push({
         type: "body",
@@ -805,9 +1029,11 @@ export class WhatsAppService {
         from: "human",
         body: previewBody,
         t,
+        attach: resolvedHeader?.attach ?? null,
         metaMessageId: wamid || null,
         deliveryStatus: wamid ? "sent" : null,
         deliveryStatusAt: wamid ? new Date() : null,
+        ...sentByData(actorId),
       },
     });
     await this.prisma.conversation.update({
@@ -821,6 +1047,7 @@ export class WhatsAppService {
     });
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "whatsapp",
+      channelId: target.channel.id,
       conversationId,
     });
     return { wamid, ok: true };
@@ -920,16 +1147,22 @@ export class WhatsAppService {
    */
   async verifyWebhook(mode: string, token: string, challenge: string) {
     if (mode !== "subscribe") throw new BadRequestException("Bad mode");
-    // Single-app setup: one verify token from env, pasted once in the Meta
-    // dashboard. Per-row tokens below keep legacy setups working.
-    const envToken = process.env.META_VERIFY_TOKEN;
-    if (envToken && token === envToken) return challenge;
+    // SP-19: the app-level META_VERIFY_TOKEN also verifies, so the app's
+    // single callback works for numbers that have no Integration row.
+    const appToken = process.env.META_VERIFY_TOKEN;
+    if (appToken && token && WhatsAppService.sameSecret(token, appToken)) return challenge;
     const rows = await this.prisma.integration.findMany({
       where: { platform: "whatsapp" },
     });
-    const ok = rows.some((r) => this.parseRaw(r.raw).verifyToken === token);
+    const ok = !!token && rows.some((r) => this.parseRaw(r.raw).verifyToken === token);
     if (!ok) throw new BadRequestException("Verify token mismatch");
     return challenge;
+  }
+
+  private static sameSecret(a: string, b: string): boolean {
+    const x = Buffer.from(a);
+    const y = Buffer.from(b);
+    return x.length === y.length && timingSafeEqual(x, y);
   }
 
   async handleWebhook(payload: WebhookPayload) {
@@ -951,30 +1184,45 @@ export class WhatsAppService {
           processed += 1;
           continue;
         }
+        // SP-14 (ruling 12): quality events. They need the app to subscribe to
+        // these fields in the Meta App Dashboard (a user action). The payload
+        // is a trigger, never a source of health values.
+        if (change.field === "message_template_quality_update") {
+          await this.handleTemplateQualityUpdate(value as TemplateQualityValue, entry.id);
+          processed += 1;
+          continue;
+        }
+        if (change.field === "phone_number_quality_update") {
+          await this.handlePhoneQualityUpdate(value as PhoneQualityValue, entry.id);
+          processed += 1;
+          continue;
+        }
 
         // Inbound messages / delivery statuses (field: "messages").
         const v = value as WebhookEntryChangeValue;
         const phoneNumberId = v.metadata?.phone_number_id;
         if (!phoneNumberId) continue;
-        const integ = await this.prisma.integration.findFirst({
-          where: { platform: "whatsapp", pageId: phoneNumberId },
-        });
-        if (!integ) {
+        // SP-19: the number (phone_number_id) picks the Channel — and so the
+        // workspace and the thread. A legacy Integration with no Channel yet
+        // is mirrored on the fly, so nothing `main` connected is dropped.
+        const ch = await this.channels.forInbound("meta", phoneNumberId, "whatsapp");
+        if (!ch) {
           this.log.warn(
-            `Webhook for unknown phone_number_id=${phoneNumberId} — no integration matched`,
+            `Webhook for unknown phone_number_id=${phoneNumberId} — no channel matched`,
           );
           continue;
         }
+        const workspaceId = ch.workspaceId;
         // Coexistence: echoes of messages sent from the phone, and imported
         // history. Stored without unread bumps, pipeline tickets or AI.
         for (const echo of v.message_echoes ?? []) {
-          await this.ingestFromPhone(integ.workspaceId, echo.to, echo, "human", false);
+          await this.ingestFromPhone(ch, echo.to, echo, "human", false);
           processed += 1;
         }
         for (const chunk of v.history ?? []) {
           for (const thread of chunk.threads ?? []) {
             for (const m of thread.messages ?? []) {
-              await this.ingestFromPhone(integ.workspaceId, thread.id, m, m.from === thread.id ? "them" : "human", true);
+              await this.ingestFromPhone(ch, thread.id, m, m.from === thread.id ? "them" : "human", true);
               processed += 1;
             }
           }
@@ -986,9 +1234,15 @@ export class WhatsAppService {
           profileByWaId.set(c.wa_id, c.profile?.name);
         }
         for (const msg of messages) {
-          await this.ingestInbound(integ.workspaceId, msg, profileByWaId.get(msg.from));
+          if (msg.type === "reaction") {
+            await this.applyReaction(workspaceId, msg.reaction);
+            processed += 1;
+            continue;
+          }
+          await this.ingestInbound(workspaceId, ch, msg, profileByWaId.get(msg.from));
           processed += 1;
         }
+        if (messages.length > 0) await this.channels.touchInbound(ch.id);
         if (v.statuses?.length) {
           // Match each status update to the Message row by Meta's wamid
           // (stored in metaMessageId on outbound send). Statuses can arrive
@@ -997,7 +1251,7 @@ export class WhatsAppService {
           for (const s of v.statuses) {
             const at = new Date(Number(s.timestamp) * 1000);
             const updated = await this.prisma.message.updateMany({
-              where: { workspaceId: integ.workspaceId, metaMessageId: s.id },
+              where: { workspaceId, metaMessageId: s.id },
               data: {
                 deliveryStatus: s.status,
                 deliveryStatusAt: Number.isFinite(at.getTime()) ? at : new Date(),
@@ -1007,19 +1261,51 @@ export class WhatsAppService {
               // Nudge the Inbox so the new ✓/✓✓/blue ✓✓ shows up without a
               // manual refresh. Conversation lookup avoided to keep this
               // cheap on burst-status updates.
-              this.realtime.emitToWorkspace(integ.workspaceId, "inbox.activity", {
+              this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
                 channel: "whatsapp",
+                channelId: ch.id,
               });
             }
+            // SP-12: the same rule as Zernio for campaign recipient rows
+            // (monotonic, first timestamp wins). Meta numbers are not campaign
+            // senders yet (SP-19 ruling 6), so this is a no-op until SP-13.
+            // Never throws.
+            const err = s.status === "failed" ? s.errors?.[0] : undefined;
+            await this.tracker.applyProviderStatus({
+              workspaceId,
+              ids: [s.id],
+              kind: s.status,
+              at: Number.isFinite(at.getTime()) ? at : new Date(),
+              ...(s.status === "failed"
+                ? providerFailure(err?.title ?? err?.message, err?.code, err?.error_data?.details ?? err?.message)
+                : {}),
+            });
           }
         }
-        await this.prisma.integration.update({
-          where: { id: integ.id },
-          data: { lastFetchedAt: new Date() },
-        });
+        // `main` reads this on the legacy row; channel-only numbers have none.
+        if (ch.integrationId) {
+          await this.prisma.integration.update({
+            where: { id: ch.integrationId },
+            data: { lastFetchedAt: new Date() },
+          });
+        }
       }
     }
     return { ok: true, processed };
+  }
+
+  /** SP-31: a customer's emoji reaction to one of our (or their) messages. */
+  private async applyReaction(workspaceId: string, r: { message_id?: string; emoji?: string } | undefined) {
+    if (!r?.message_id) return;
+    const emoji = normalizeReaction(r.emoji);
+    if (emoji === undefined) return;
+    const updated = await this.prisma.message.updateMany({
+      where: { workspaceId, metaMessageId: r.message_id },
+      data: { reaction: emoji, reactionAt: emoji === null ? null : new Date() },
+    });
+    if (updated.count > 0) {
+      this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: "whatsapp" });
+    }
   }
 
   /**
@@ -1096,21 +1382,92 @@ export class WhatsAppService {
     return match?.workspaceId ?? null;
   }
 
+  /**
+   * SP-14 (ruling 9): Meta's template events → our status. FLAGGED is not a
+   * pause (Meta: a flagged template is still sendable), so it changes no
+   * status; DISABLED is its own status; REINSTATED is approved again.
+   */
   private mapTemplateEvent(event: string): string | null {
     switch (event) {
       case "APPROVED":
+      case "REINSTATED":
         return "approved";
       case "REJECTED":
         return "rejected";
-      case "FLAGGED":
       case "PAUSED":
-      case "DISABLED":
         return "paused";
+      case "DISABLED":
+        return "disabled";
       case "PENDING_DELETION":
         return "pending";
       default:
         return null;
     }
+  }
+
+  /**
+   * SP-14: `message_template_quality_update` sets `Template.quality` by
+   * `metaTemplateId` (globally unique at Meta, so no tenant can be crossed),
+   * with Meta's UNKNOWN stored as NOT_RATED. It then asks for a check of the
+   * WABA's Meta numbers (their snapshots hold the template list). An
+   * unrecognised score or id changes nothing.
+   */
+  private async handleTemplateQualityUpdate(value: TemplateQualityValue, wabaId?: string): Promise<void> {
+    const metaId = value.message_template_id != null ? String(value.message_template_id) : null;
+    const quality = normalizeTemplateQuality(value.new_quality_score);
+    if (metaId && quality) {
+      const res = await this.prisma.template.updateMany({ where: { metaTemplateId: metaId }, data: { quality } });
+      if (res.count === 0) this.log.debug(`Template quality update for an unknown template id=${metaId}`);
+    } else {
+      this.log.debug("Template quality update without an id or a known score; ignored");
+    }
+    if (wabaId) for (const ch of await this.metaChannelsOfWaba(wabaId)) this.healthTrigger?.request(ch.workspaceId, ch.id);
+  }
+
+  /**
+   * SP-14 (ruling 12): `phone_number_quality_update` asks for a check of the
+   * Meta channel it names: WABA = `entry.id`, number = `display_phone_number`
+   * (digits compared). The event's own values are never stored.
+   */
+  private async handlePhoneQualityUpdate(value: PhoneQualityValue, wabaId?: string): Promise<void> {
+    const digits = String(value.display_phone_number ?? "").replace(/\D/g, "");
+    if (!wabaId || !digits) {
+      this.log.debug("Phone quality update without a WABA or a number; ignored");
+      return;
+    }
+    const hits = (await this.metaChannelsOfWaba(wabaId)).filter((c) => String(c.phoneNumber ?? "").replace(/\D/g, "") === digits);
+    if (hits.length === 0) this.log.debug(`Phone quality update for a number no channel holds (waba=${wabaId})`);
+    for (const ch of hits) this.healthTrigger?.request(ch.workspaceId, ch.id);
+  }
+
+  /** Connected Meta WhatsApp channels of a WABA (`config.wabaId`, else the legacy `Integration.raw.wabaId`). */
+  private async metaChannelsOfWaba(wabaId: string): Promise<Array<{ id: string; workspaceId: string; phoneNumber: string | null }>> {
+    // Review m3: two scoped queries per event, whatever the number of Meta
+    // numbers. First the legacy Integrations of this WABA (`raw` is a JSON
+    // string: a `contains` pre-filter, confirmed by parsing)...
+    const integs = await this.prisma.integration.findMany({
+      where: { platform: "whatsapp", raw: { contains: wabaId } },
+      select: { id: true, raw: true },
+    });
+    const legacyIds = integs.filter((i) => this.parseRaw(i.raw ?? null).wabaId === wabaId).map((i) => i.id);
+    // ...then the channels whose config names the WABA, or that link one of those Integrations.
+    const rows = await this.prisma.channel.findMany({
+      where: {
+        kind: "whatsapp",
+        provider: "meta",
+        status: { not: "disconnected" },
+        OR: [{ config: { path: ["wabaId"], equals: wabaId } }, { integrationId: { in: legacyIds } }],
+      },
+      select: { id: true, workspaceId: true, phoneNumber: true, config: true, integrationId: true },
+    });
+    // `config.wabaId` wins over the legacy Integration, as in the health check's `wabaIdOf`.
+    return rows
+      .filter((r) => {
+        const cfg = r.config as Record<string, unknown> | null;
+        const own = cfg && typeof cfg === "object" && typeof cfg.wabaId === "string" && cfg.wabaId ? cfg.wabaId : null;
+        return own ? own === wabaId : !!r.integrationId && legacyIds.includes(r.integrationId);
+      })
+      .map((r) => ({ id: r.id, workspaceId: r.workspaceId, phoneNumber: r.phoneNumber ?? null }));
   }
 
   private metaLangToLocal(meta: string | undefined): string {
@@ -1125,12 +1482,13 @@ export class WhatsAppService {
    * Deduped by wamid; never bumps unread, opens tickets or wakes the AI.
    */
   private async ingestFromPhone(
-    workspaceId: string,
+    channel: Pick<Channel, "id" | "workspaceId">,
     customerWaId: string,
     msg: WaMessage,
     from: "them" | "human",
     historical: boolean,
   ) {
+    const workspaceId = channel.workspaceId;
     if (!customerWaId) return;
     if (msg.id) {
       const seen = await this.prisma.message.findFirst({
@@ -1157,14 +1515,19 @@ export class WhatsAppService {
       update: {},
     });
     const body = this.extractBody(msg) || `[${msg.type} message]`;
-    let conv = await this.prisma.conversation.findFirst({
-      where: { workspaceId, contactId: contact.id, channel: "whatsapp" },
+    // SP-19: (workspace, contact, channelId) — an echo or an imported message
+    // belongs on the same thread as a live message from this number, and the
+    // reply goes back out through it.
+    let conv = await this.channels.findOrAdoptConversation(workspaceId, contact.id, {
+      id: channel.id,
+      kind: "whatsapp",
     });
     if (!conv) {
       conv = await this.prisma.conversation.create({
         data: {
           workspaceId,
           contactId: contact.id,
+          channelId: channel.id,
           unread: 0,
           pinned: false,
           lastAt: historical ? "—" : "now",
@@ -1188,11 +1551,16 @@ export class WhatsAppService {
     await this.prisma.message.create({
       data: { workspaceId, conversationId: conv.id, from, body, t, metaMessageId: msg.id ?? null },
     });
-    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { channel: "whatsapp", conversationId: conv.id });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      channelId: channel.id,
+      conversationId: conv.id,
+    });
   }
 
   private async ingestInbound(
     workspaceId: string,
+    channel: Pick<Channel, "id">,
     msg: NonNullable<WebhookEntryChangeValue["messages"]>[number],
     profileName: string | undefined,
   ) {
@@ -1240,8 +1608,11 @@ export class WhatsAppService {
       },
     });
 
-    let conv = await this.prisma.conversation.findFirst({
-      where: { workspaceId, contactId: contact.id, channel: "whatsapp" },
+    // Conversation key (SP-19): (workspace, contact, channelId). A legacy
+    // null-channel thread is adopted only by the channel it resolves to.
+    let conv = await this.channels.findOrAdoptConversation(workspaceId, contact.id, {
+      id: channel.id,
+      kind: "whatsapp",
     });
     const body = this.extractBody(msg);
     const previewBase = body || `[${msg.type}]`;
@@ -1250,6 +1621,7 @@ export class WhatsAppService {
         data: {
           workspaceId,
           contactId: contact.id,
+          channelId: channel.id,
           unread: 1,
           pinned: false,
           lastAt: "now",
@@ -1276,7 +1648,7 @@ export class WhatsAppService {
     const ts = Number(msg.timestamp) * 1000;
     const d = Number.isFinite(ts) ? new Date(ts) : new Date();
     const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    await this.prisma.message.create({
+    const created = await this.prisma.message.create({
       data: {
         workspaceId,
         conversationId: conv.id,
@@ -1286,8 +1658,34 @@ export class WhatsAppService {
         metaMessageId: wamid ?? null,
       },
     });
+    // SP-12: a reply to a campaign sent from this number within 72 h,
+    // with the tapped button's payload. The attributor never throws.
+    const parts = metaReplyParts(msg);
+    await this.attributor.onInbound({
+      workspaceId,
+      channelId: channel.id,
+      contactId: contact.id,
+      phone: `+${waId}`,
+      text: parts.text || body || `[${msg.type} message]`,
+      buttonPayload: parts.buttonPayload,
+      inboundMessageId: created?.id ?? null,
+      at: d,
+    });
+    // SP-15: the click-to-WhatsApp referral, after the message row exists.
+    // Capture never throws (Review Focus 2).
+    if (msg.referral && created?.id) {
+      await this.adReferrals.captureMeta(msg.referral, {
+        workspaceId,
+        channelId: channel.id,
+        conversationId: conv.id,
+        contactId: contact.id,
+        messageId: created.id,
+        at: d,
+      });
+    }
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel: "whatsapp",
+      channelId: channel.id,
       conversationId: conv.id,
     });
 
@@ -1307,7 +1705,16 @@ export class WhatsAppService {
     // last and awaited only for its own bounded timeout: everything above is
     // already persisted, so a slow or dead AI service cannot cost us the
     // message or the 200 Meta needs.
-    if (conv.aiEnabled && !conv.aiPausedAt && this.aiBridge.isConfigured()) {
+    // SP-20: the reply gate (emergency stop first); it never throws and a
+    // failure to decide means no reply.
+    // An escalated thread waits for a person: no kewy-ai auto-reply.
+    if (
+      conv.aiEnabled &&
+      !conv.aiPausedAt &&
+      !conv.escalated &&
+      this.aiBridge.isConfigured() &&
+      (!this.replyGate || (await this.replyGate.allows(workspaceId, { conversationId: conv.id, contactId: contact.id }, "meta_bridge")))
+    ) {
       await this.aiBridge.notifyInbound({
         workspaceId,
         conversationId: conv.id,
@@ -1325,11 +1732,9 @@ export class WhatsAppService {
     }
   }
 
+  /** SP-12: a button or interactive reply shows the tapped text, not "[button message]". */
   private extractBody(msg: NonNullable<WebhookEntryChangeValue["messages"]>[number]): string {
-    if (msg.type === "text") return msg.text?.body ?? "";
-    if (msg.type === "image") return msg.image?.caption ?? "";
-    if (msg.type === "document") return msg.document?.filename ?? "";
-    return "";
+    return metaReplyParts(msg).text;
   }
 
   private maskPhone(waId: string): string {

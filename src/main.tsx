@@ -12,7 +12,22 @@ import { EmbedSignInFailed } from "@/embed/EmbedSignInFailed";
 import { applySkin, storedSkin } from "@/embed/skin";
 import { setEmbedVisible } from "@/embed/visibility";
 import { consumeEmbedFragment } from "@/embed/fragment";
+import { removeRememberedPassword } from "@/auth/publicRoutes";
+import { captureFromLocation } from "@/auth/publicPageStore";
 import "./styles/index.css";
+
+// SP-26 ruling 11: an old "remember me" kept the password in plaintext in
+// localStorage; remove any such value from this browser once, on boot.
+try {
+  removeRememberedPassword(typeof localStorage !== "undefined" ? localStorage : null);
+} catch {
+  /* storage blocked */
+}
+
+// SP-26: an emailed invite or reset link (/invite?token=…, /reset?token=…)
+// is read here and its token scrubbed from the address bar (replaceState)
+// before anything else sees the URL; it then lives only in memory.
+if (typeof window !== "undefined") captureFromLocation(window);
 
 // HJZ SSO landing — when /marketing/* opens this app via the launcher, the
 // minted tkana token is passed in the URL fragment (#token=...). Lift it into

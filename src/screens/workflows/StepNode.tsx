@@ -3,6 +3,7 @@ import type { Tx } from "@/lib/tx";
 import type { WorkflowStepType } from "@/lib/types";
 import { IconAlert, IconBolt, IconClock, IconRoute, IconSend, IconSparkles, IconTag, IconTemplate } from "@/icons";
 import { GROUP_LABEL, STEP_META, splitTemplate, type StepGroup } from "./stepMeta";
+import { stepGroup } from "./systemWorkflow";
 
 const TYPE_ICON: Record<WorkflowStepType, (p: { w?: number }) => ReactNode> = {
   send_whatsapp: IconSend,
@@ -15,8 +16,9 @@ const TYPE_ICON: Record<WorkflowStepType, (p: { w?: number }) => ReactNode> = {
 };
 
 export function StepIcon({ type, size }: { type: WorkflowStepType | "trigger"; size?: "lg" }) {
-  const tone: StepGroup | "trigger" = type === "trigger" ? "trigger" : STEP_META[type].group;
-  const Icon = type === "trigger" ? IconBolt : TYPE_ICON[type];
+  // Unknown types (e.g. a system workflow's notify_staff) get a neutral tone and icon.
+  const tone: StepGroup | "trigger" = type === "trigger" ? "trigger" : stepGroup(type);
+  const Icon = type === "trigger" ? IconBolt : (TYPE_ICON[type] ?? IconSend);
   return (
     <span className={`wf-ico wf-tone-${tone}${size ? ` ${size}` : ""}`} aria-hidden="true">
       <Icon w={size === "lg" ? 18 : 16} />

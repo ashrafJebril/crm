@@ -23,7 +23,7 @@ import { ZernioClient } from "./zernio.client";
  * guard: a commentId from another workspace's feed simply isn't found here.
  */
 describe("ZernioService comment ownership guard", () => {
-  let prisma: { workspace: { findUnique: jest.Mock }; integration: { findFirst: jest.Mock } };
+  let prisma: { workspace: { findUnique: jest.Mock }; integration: { findFirst: jest.Mock }; channel: { findFirst: jest.Mock } };
   let client: {
     listComments: jest.Mock;
     getPostComments: jest.Mock;
@@ -43,6 +43,8 @@ describe("ZernioService comment ownership guard", () => {
       integration: {
         findFirst: jest.fn().mockResolvedValue(null),
       },
+      // SP-19: no mirrored channel, so ownership falls back to the Integration row.
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     client = {
       listComments: jest
@@ -101,6 +103,17 @@ describe("ZernioService comment ownership guard", () => {
     const del = await svc.deleteComment(workspaceId, "c1");
     expect(client.deleteComment).toHaveBeenCalledWith("p1", "acc1", "c1");
     expect(del).toEqual({ ok: true });
+  });
+
+  it("accepts a second Zernio account that exists only as a channel (SP-19)", async () => {
+    prisma.channel.findFirst.mockResolvedValue({ kind: "whatsapp" });
+    await svc.replyToComment(workspaceId, "c1", "hi", "acc-second");
+    expect(prisma.channel.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { workspaceId, provider: "zernio", externalId: "acc-second" },
+      }),
+    );
+    expect(client.replyToComment).toHaveBeenCalledWith("p1", "acc-second", "hi", "c1");
   });
 
   it("uses the caller-supplied accountId (once verified) over the feed's resolved one", async () => {
@@ -244,7 +257,7 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
  * own feed.
  */
 describe("ZernioService.commentOnPost", () => {
-  let prisma: { workspace: { findUnique: jest.Mock }; integration: { findFirst: jest.Mock } };
+  let prisma: { workspace: { findUnique: jest.Mock }; integration: { findFirst: jest.Mock }; channel: { findFirst: jest.Mock } };
   let client: {
     listPosts: jest.Mock;
     replyToComment: jest.Mock;
@@ -259,6 +272,7 @@ describe("ZernioService.commentOnPost", () => {
       integration: {
         findFirst: jest.fn().mockResolvedValue({ id: "i1", pageId: "acc1" }),
       },
+      channel: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     client = {
       listPosts: jest.fn().mockResolvedValue([

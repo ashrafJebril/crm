@@ -1,7 +1,9 @@
+import { channelError } from "../../channels/channel-errors";
 import { SendWhatsappTemplateExecutor } from "./send-whatsapp-template.executor";
 
 describe("SendWhatsappTemplateExecutor", () => {
   let prisma: { conversation: { findFirst: jest.Mock }; integration: { findFirst: jest.Mock } };
+  let channels: { forConversationSend: jest.Mock };
   let zernio: { sendTemplateInDbConversation: jest.Mock };
   let meta: { sendTemplateInConversation: jest.Mock };
   let executor: SendWhatsappTemplateExecutor;
@@ -15,7 +17,9 @@ describe("SendWhatsappTemplateExecutor", () => {
     };
     zernio = { sendTemplateInDbConversation: jest.fn().mockResolvedValue({ ok: true, id: "z1" }) };
     meta = { sendTemplateInConversation: jest.fn().mockResolvedValue({ ok: true, wamid: "w1" }) };
-    executor = new SendWhatsappTemplateExecutor(prisma as never, zernio as never, meta as never);
+    // SP-19: the transport follows the conversation's own channel.
+    channels = { forConversationSend: jest.fn().mockResolvedValue({ id: "chA", provider: "zernio" }) };
+    executor = new SendWhatsappTemplateExecutor(prisma as never, zernio as never, meta as never, channels as never);
   });
 
   it("fills variables and sends into the trigger's conversation via Zernio", async () => {
@@ -57,8 +61,8 @@ describe("SendWhatsappTemplateExecutor", () => {
     expect(zernio.sendTemplateInDbConversation.mock.calls[0][1]).toBe("t-conv");
   });
 
-  it("sends through the Meta connection when WhatsApp isn't on Zernio", async () => {
-    prisma.integration.findFirst.mockResolvedValue({ provider: "meta" });
+  it("sends through the Meta connection when the conversation's channel isn't on Zernio", async () => {
+    channels.forConversationSend.mockResolvedValue({ id: "chB", provider: "meta" });
     const context = { trigger: { conversation: { id: "conv1", channel: "whatsapp" } }, steps: {} };
     const result = await executor.execute("ws1", { ...config, variables: [] }, context);
     expect(meta.sendTemplateInConversation).toHaveBeenCalledWith("ws1", "conv1", "receipt", "en", []);
@@ -72,9 +76,36 @@ describe("SendWhatsappTemplateExecutor", () => {
     await expect(executor.execute("ws1", config, context)).rejects.toThrow(/no WhatsApp chat/i);
   });
 
-  it("fails clearly when WhatsApp isn't connected", async () => {
-    prisma.integration.findFirst.mockResolvedValue(null);
+  it("picks the provider from the conversation's channel, not the workspace integration", async () => {
+    prisma.integration.findFirst.mockResolvedValue({ provider: "zernio" });
+    channels.forConversationSend.mockResolvedValue({ id: "chB", provider: "meta" });
+    const context = { trigger: { conversation: { id: "conv-b", channel: "whatsapp" } }, steps: {} };
+    await executor.execute("ws1", { ...config, variables: [] }, context);
+    expect(channels.forConversationSend).toHaveBeenCalledWith("ws1", "conv-b");
+    expect(meta.sendTemplateInConversation).toHaveBeenCalled();
+    expect(zernio.sendTemplateInDbConversation).not.toHaveBeenCalled();
+    expect(prisma.integration.findFirst).not.toHaveBeenCalled();
+  });
+
+  // SP-24 ruling 8 (SP-19 R9): forSend. A disconnected or unconnected number
+  // is a recorded skip, never a reroute and no longer a run failure.
+  it("disconnected number is skipped not rerouted", async () => {
+    channels.forConversationSend.mockRejectedValue(channelError("channels.disconnected", { channelId: "chB" }));
     const context = { trigger: { conversation: { id: "conv1", channel: "whatsapp" } }, steps: {} };
-    await expect(executor.execute("ws1", config, context)).rejects.toThrow(/not connected/i);
+    expect(await executor.execute("ws1", config, context)).toEqual({ skipped: true, reason: "channel_disconnected", conversationId: "conv1" });
+    expect(zernio.sendTemplateInDbConversation).not.toHaveBeenCalled();
+    expect(meta.sendTemplateInConversation).not.toHaveBeenCalled();
+  });
+
+  it("records a skip when WhatsApp isn't connected for the conversation", async () => {
+    channels.forConversationSend.mockRejectedValue(channelError("channels.not_connected"));
+    const context = { trigger: { conversation: { id: "conv1", channel: "whatsapp" } }, steps: {} };
+    expect(await executor.execute("ws1", config, context)).toMatchObject({ skipped: true, reason: "channel_disconnected" });
+  });
+
+  it("other errors still fail the step", async () => {
+    channels.forConversationSend.mockRejectedValue(new Error("db down"));
+    const context = { trigger: { conversation: { id: "conv1", channel: "whatsapp" } }, steps: {} };
+    await expect(executor.execute("ws1", config, context)).rejects.toThrow("db down");
   });
 });

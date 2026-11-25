@@ -25,6 +25,11 @@ function key(): Buffer | null {
   return crypto.createHash("sha256").update(k).digest();
 }
 
+/** True when TOKEN_ENC_KEY is usable, i.e. encryptSecret really encrypts. */
+export function isTokenEncryptionEnabled(): boolean {
+  return key() !== null;
+}
+
 export function encryptSecret(plain: string): string {
   const k = key();
   if (!k) return plain; // encryption disabled — behave exactly as before

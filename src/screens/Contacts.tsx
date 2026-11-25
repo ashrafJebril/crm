@@ -1,36 +1,48 @@
 import {
   memo,
   useEffect,
+  useRef,
   useMemo,
   useState,
   type CSSProperties,
   type DragEvent,
-  type FormEvent,
 } from "react";
+import { NextStepChip, useNextSteps } from "@/components/activities/NextStepChip";
+import { ActivityDialog } from "@/components/activities/ActivityDialog";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx, type Tx } from "@/lib/tx";
 import { PageHeader } from "@/components/PageHeader";
+import { ResponsiveTable } from "@/components/ResponsiveTable";
+import { useViewport } from "@/lib/useViewport";
+import { BP } from "@/styles/breakpoints";
+import "@/styles/screens/contacts.css";
 import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
-import {
-  IconArchive,
-  IconCampaign,
-  IconFilter,
-  IconMore,
-  IconPlus,
-  IconTag,
-} from "@/icons";
+import { IconFilter, IconMore, IconPlus } from "@/icons";
 import { api } from "@/api/client";
-import { useFetch, useMutation } from "@/api/useFetch";
+import { useFetch } from "@/api/useFetch";
+import { usePermissions } from "@/auth/usePermissions";
+import { getHashParam, setHashParam } from "@/lib/hashState";
+import { useOpenParam } from "@/lib/useOpenParam";
 import { Pager } from "./contacts/Pager";
 import { Modal } from "@/components/Modal";
-import type { Contact, Segment, TagRow } from "@/lib/types";
+import type { Contact, CustomFieldDef, Pipeline, Segment, TagRow, TeamMember } from "@/lib/types";
 import { ContactDetailDrawer } from "./contacts/ContactDetailDrawer";
-import { SegmentManager } from "./contacts/SegmentManager";
-import { GroupsTab } from "./contacts/GroupsTab";
+import { AudiencesTab } from "./contacts/AudiencesTab";
+import { contactsTabFromHash, withContactsTab, type ContactsTabId } from "./contacts/contactsTab";
+import { countLabel } from "./contacts/audiences/rulesModel";
 import { TagsTab } from "./contacts/TagsTab";
-
-type ContactsTabId = "contacts" | "groups" | "tags";
+import { FieldsTab } from "./contacts/FieldsTab";
+import { NewContactModal } from "./contacts/NewContactModal";
+import { ImportWizard, ImportChip } from "./contacts/import/ImportWizard";
+import { downloadContactsExport } from "./contacts/import/importApi";
+import { exportErrorText } from "./contacts/import/importMessages";
+import { ContactFilterBar } from "./contacts/ContactFilterBar";
+import { BulkBar, PIPELINE_BULK_CAP, type BulkAction } from "./contacts/BulkBar";
+import {
+  decodeContactFilter, encodeContactFilter, isEmptyFilter, isSelectAllCurrent, pruneFieldFilters, toQuery,
+  type ContactFilter,
+} from "./contacts/contactFilter";
 
 type View = "table" | "pipeline";
 
@@ -41,6 +53,14 @@ interface ContactsPage {
   page: number;
   pageSize: number;
   pageCount: number;
+}
+
+interface BulkResult {
+  affected: number;
+  created?: number;
+  skipped?: number;
+  blocked?: string[];
+  truncated?: boolean;
 }
 
 const INPUT_STYLE: CSSProperties = {
@@ -55,40 +75,13 @@ const INPUT_STYLE: CSSProperties = {
   fontFamily: "inherit",
 };
 
-const MODAL_INPUT_STYLE: CSSProperties = {
-  width: "100%",
-  background: "var(--bg-2)",
-  border: "1px solid var(--line)",
-  borderRadius: "var(--r)",
-  padding: "8px 12px",
-  color: "var(--ink)",
-  fontSize: 13,
-  marginTop: 6,
-  outline: "none",
-};
-
-const MODAL_LABEL_STYLE: CSSProperties = {
-  fontSize: 11,
-  textTransform: "uppercase",
-  color: "var(--ink-3)",
-  marginTop: 12,
-  display: "block",
-};
-
 interface ContactsTableProps {
   tx: Tx;
   contacts: Contact[];
   selected: Set<string>;
   setSelected: (next: Set<string>) => void;
-  onBulkDelete: () => void;
-  onBulkTag: () => void;
-  bulkDeleting: boolean;
   onOpenContact: (id: string) => void;
-  manualGroups: Segment[];
-  onAddToGroup: (segmentId: string) => void;
-  addToGroupError: string | null;
   tagColorByName: Map<string, string>;
-  lang: string;
 }
 
 function tagKind(tag: string): BadgeKind {
@@ -102,84 +95,91 @@ function ContactsTable({
   contacts,
   selected,
   setSelected,
-  onBulkDelete,
-  onBulkTag,
-  bulkDeleting,
   onOpenContact,
-  manualGroups,
-  onAddToGroup,
-  addToGroupError,
   tagColorByName,
-  lang,
 }: ContactsTableProps) {
-  const [groupPick, setGroupPick] = useState("");
+  const pageAll = contacts.length > 0 && contacts.every((c) => selected.has(c.id));
+  // One batched request for the whole page.
+  const nextSteps = useNextSteps("contactIds", useMemo(() => contacts.map((c) => c.id), [contacts]));
+  const { can: canDo } = usePermissions();
+  // A ticket-linked next step needs tickets.update; a contact-level one contacts.update.
+  const canEditStep = (id: string) => (nextSteps[id]?.ticketId ? canDo("tickets.update") : canDo("contacts.update"));
+  const [stepFor, setStepFor] = useState<string | null>(null);
+  const togglePage = () => {
+    const next = new Set(selected);
+    for (const c of contacts) {
+      if (pageAll) next.delete(c.id);
+      else next.add(c.id);
+    }
+    setSelected(next);
+  };
   const toggle = (id: string) => {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelected(next);
   };
+  // SP-30: below sm a card list (the table scrolls inside its own container above that).
+  const { width } = useViewport();
+  if (width < BP.sm) {
+    return (
+      <div className="ct-cards" role="list" aria-label={tx("Contacts", "جهات الاتصال")}>
+        {contacts.map((c) => (
+          <div
+            key={c.id}
+            role="listitem"
+            className="ct-card"
+            data-selected={selected.has(c.id) || undefined}
+            onClick={() => onOpenContact(c.id)}
+          >
+            <label className="ct-card-check" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                aria-label={tx(`Select ${c.name}`, `تحديد ${c.name}`)}
+                checked={selected.has(c.id)}
+                onChange={() => toggle(c.id)}
+              />
+            </label>
+            <Avatar name={c.name} color={String(150 + (c.id.charCodeAt(1) || 0) * 6)} />
+            <div className="ct-card-main">
+              <button
+                type="button"
+                className="ct-card-name"
+                style={{ background: "none", border: 0, padding: 0, color: "inherit", font: "inherit", fontWeight: 500, textAlign: "start", cursor: "pointer" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenContact(c.id);
+                }}
+              >
+                <bdi>{c.name}</bdi>
+              </button>
+              <div className="ct-card-meta">
+                <span className="mono" dir="ltr">{c.phone}</span>
+                <span>·</span>
+                <span className="mono">{c.lifecycle}</span>
+                {c.tags.slice(0, 2).map((tg) => (
+                  <Badge key={tg} kind={tagKind(tg)}>{tg}</Badge>
+                ))}
+                {c.tags.length > 2 ? <span>+{c.tags.length - 2}</span> : null}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-      {selected.size > 0 && (
-        <div
-          style={{
-            padding: "10px 14px",
-            borderBottom: "1px solid var(--line-soft)",
-            background: "var(--accent-soft)",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
-          <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 500 }}>
-            {selected.size} {tx("selected", "محدد")}
-          </span>
-          <span style={{ flex: 1 }} />
-          {addToGroupError && (
-            <span style={{ fontSize: 11, color: "var(--bad)" }}>{addToGroupError}</span>
-          )}
-          <button className="btn sm" onClick={onBulkTag}>
-            <IconTag w={12} />
-            {tx("Tag", "وسم")}
-          </button>
-          <select
-            value={groupPick}
-            onChange={(e) => {
-              const id = e.target.value;
-              setGroupPick("");
-              if (id) onAddToGroup(id);
-            }}
-            style={{ ...INPUT_STYLE, height: 28, width: 168 }}
-          >
-            <option value="">{tx("Add to group…", "أضف إلى مجموعة…")}</option>
-            {manualGroups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {lang === "ar" ? g.nameAr || g.name : g.name}
-              </option>
-            ))}
-          </select>
-          <button className="btn sm">
-            <IconCampaign w={12} />
-            {tx("Add to campaign", "حملة")}
-          </button>
-          <button
-            className="btn sm"
-            onClick={onBulkDelete}
-            disabled={bulkDeleting}
-          >
-            <IconArchive w={12} />
-            {bulkDeleting
-              ? tx("Deleting…", "جارٍ الحذف…")
-              : tx("Delete", "حذف")}
-          </button>
-        </div>
-      )}
+    <ResponsiveTable className="card" style={{ padding: 0 }} label={tx("Contacts table", "جدول جهات الاتصال")}>
       <table className="tbl">
         <thead>
           <tr>
             <th style={{ width: 30 }}>
-              <input type="checkbox" />
+              <input
+                type="checkbox"
+                aria-label={tx("Select all on this page", "تحديد كل الصفحة")}
+                checked={pageAll}
+                onChange={togglePage}
+              />
             </th>
             <th>{tx("Name", "الاسم")}</th>
             <th>{tx("Phone", "الهاتف")}</th>
@@ -188,6 +188,7 @@ function ContactsTable({
             <th>{tx("Source", "المصدر")}</th>
             <th>{tx("Convs", "محادثات")}</th>
             <th>{tx("Value", "القيمة")}</th>
+            <th>{tx("Next step", "الخطوة التالية")}</th>
             <th>{tx("Last seen", "آخر ظهور")}</th>
             <th></th>
           </tr>
@@ -254,6 +255,9 @@ function ContactsTable({
               <td className="muted">{c.source}</td>
               <td className="mono">{c.convs}</td>
               <td className="mono">{c.value}</td>
+              <td onClick={(e) => e.stopPropagation()} style={{ maxWidth: 220 }}>
+                <NextStepChip step={nextSteps[c.id]} canEdit={canEditStep(c.id)} onClick={() => setStepFor(c.id)} />
+              </td>
               <td className="mono muted">{c.lastSeen}</td>
               <td onClick={(e) => e.stopPropagation()}>
                 <button className="btn ghost icon sm">
@@ -264,7 +268,15 @@ function ContactsTable({
           ))}
         </tbody>
       </table>
-    </div>
+      {stepFor && (
+        <ActivityDialog
+          key={stepFor}
+          contactId={stepFor}
+          activity={nextSteps[stepFor] ? { id: nextSteps[stepFor]!.activityId, kind: nextSteps[stepFor]!.kind, title: nextSteps[stepFor]!.title, notes: nextSteps[stepFor]!.notes, dueAt: nextSteps[stepFor]!.dueAt, doneAt: null, outcome: nextSteps[stepFor]!.outcome, assigneeId: nextSteps[stepFor]!.assigneeId } : undefined}
+          onClose={() => setStepFor(null)}
+        />
+      )}
+    </ResponsiveTable>
   );
 }
 
@@ -501,214 +513,59 @@ function Pipeline({ tx, contacts }: PipelineProps) {
   );
 }
 
-interface NewContactInput {
-  name: string;
-  phone: string;
-  industry: string;
-  lifecycle: string;
-  source: string;
-  value?: string;
-  tags?: string[];
-}
-
-interface NewContactModalProps {
-  tx: Tx;
-  onClose: () => void;
-  onCreated: () => void;
-}
-
-function NewContactModal({ tx, onClose, onCreated }: NewContactModalProps) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [industry, setIndustry] = useState("");
-  const [lifecycle, setLifecycle] = useState("");
-  const [source, setSource] = useState("");
-  const [value, setValue] = useState("");
-  const [tags, setTags] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!name.trim() || !phone.trim()) {
-      setError(tx("Name and phone are required.", "الاسم والهاتف مطلوبان."));
-      return;
-    }
-    const body: NewContactInput = {
-      name: name.trim(),
-      phone: phone.trim(),
-      industry: industry.trim(),
-      lifecycle: lifecycle.trim(),
-      source: source.trim(),
-      ...(value.trim() ? { value: value.trim() } : {}),
-      tags: tags
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    };
-    setSubmitting(true);
-    setError(null);
-    const run = async () => {
-      try {
-        await api.post<Contact>("/contacts", body);
-        onCreated();
-        onClose();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Request failed");
-      } finally {
-        setSubmitting(false);
-      }
-    };
-    void run();
-  };
-
-  return (
-    <Modal onClose={onClose} width={460} label="New contact">
-      <form onSubmit={onSubmit}>
-        <h3 style={{ margin: 0, fontSize: 16 }}>
-          {tx("New contact", "جهة جديدة")}
-        </h3>
-        <p
-          style={{
-            margin: "4px 0 16px",
-            color: "var(--ink-2)",
-            fontSize: 13,
-          }}
-        >
-          {tx(
-            "Add a contact to your workspace.",
-            "أضف جهة اتصال إلى مساحة العمل.",
-          )}
-        </p>
-
-        <label className="mono" style={{ ...MODAL_LABEL_STYLE, marginTop: 0 }}>
-          {tx("Name", "الاسم")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Jane Doe"
-        />
-
-        <label className="mono" style={MODAL_LABEL_STYLE}>
-          {tx("Phone", "الهاتف")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="+966 50 000 0000"
-        />
-
-        <label className="mono" style={MODAL_LABEL_STYLE}>
-          {tx("Industry", "القطاع")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={industry}
-          onChange={(e) => setIndustry(e.target.value)}
-          placeholder="real-estate"
-        />
-
-        <label className="mono" style={MODAL_LABEL_STYLE}>
-          {tx("Lifecycle", "المرحلة")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={lifecycle}
-          onChange={(e) => setLifecycle(e.target.value)}
-          placeholder="Lead"
-        />
-
-        <label className="mono" style={MODAL_LABEL_STYLE}>
-          {tx("Source", "المصدر")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          placeholder="Website"
-        />
-
-        <label className="mono" style={MODAL_LABEL_STYLE}>
-          {tx("Value", "القيمة")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="SAR 0"
-        />
-
-        <label className="mono" style={MODAL_LABEL_STYLE}>
-          {tx("Tags (comma-separated)", "وسوم (بفواصل)")}
-        </label>
-        <input
-          className="input"
-          style={MODAL_INPUT_STYLE}
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          placeholder="VIP, Riyadh"
-        />
-
-        {error && (
-          <div
-            style={{
-              marginTop: 12,
-              color: "var(--bad)",
-              fontSize: 12,
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            justifyContent: "flex-end",
-            marginTop: 20,
-          }}
-        >
-          <button
-            type="button"
-            className="btn ghost"
-            onClick={onClose}
-            disabled={submitting}
-          >
-            {tx("Cancel", "إلغاء")}
-          </button>
-          <button type="submit" className="btn primary" disabled={submitting}>
-            <IconPlus w={13} />
-            {submitting ? tx("Saving…", "جارٍ الحفظ…") : tx("Create", "إنشاء")}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 function ContactsImpl() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const [activeTab, setActiveTab] = useState<ContactsTabId>("contacts");
+  // SP-16: the tab lives in the hash (`ct`); the old `ct=groups` link opens Audiences.
+  const [activeTab, setActiveTabState] = useState<ContactsTabId>(() => contactsTabFromHash(window.location.hash));
+  const setActiveTab = (tab: ContactsTabId) => {
+    setActiveTabState(tab);
+    const next = withContactsTab(window.location.hash, tab);
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  useEffect(() => {
+    const on = () => setActiveTabState(contactsTabFromHash(window.location.hash));
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
   const [view, setView] = useState<View>("table");
   const [selected, setSelected] = useState<Set<string>>(new Set<string>());
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importWatchId, setImportWatchId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const { can } = usePermissions();
+  const canManageFields = can("settings.manage");
+  const [filter, setFilterState] = useState<ContactFilter>(() =>
+    decodeContactFilter(getHashParam(window.location.hash, "cf")),
+  );
+  // Persist the filter in the hash query without triggering hash navigation.
+  const setFilter = (f: ContactFilter) => {
+    setFilterState(f);
+    const next = setHashParam(window.location.hash, "cf", isEmptyFilter(f) ? null : encodeContactFilter(f));
+    if (next !== window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + next);
+    }
+  };
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  // True when the selection came from "select all matching": the export then sends only the filter.
+  const [selectionIsAll, setSelectionIsAll] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<
+    null | { stage: "confirm" } | { stage: "blocked"; blocked: string[]; deleted: number }
+  >(null);
+  const [pipelineConfirm, setPipelineConfirm] = useState<Extract<BulkAction, { op: "addToPipeline" }> | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [openContactId, setOpenContactId] = useState<string | null>(null);
+  // Deep link from a notification: `#/contacts?open=<contactId>`.
+  useOpenParam("contacts", setOpenContactId);
 
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const [showSegmentManager, setShowSegmentManager] = useState(false);
   const [search, setSearch] = useState("");
 
   const [page, setPage] = useState(1);
@@ -719,12 +576,30 @@ function ContactsImpl() {
     const id = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => window.clearTimeout(id);
   }, [search]);
+  const filterExtras = { q: debouncedSearch, segmentId: activeSegmentId };
+  const filterQuery = toQuery(filter, filterExtras).toString();
   // Any change to what's being listed starts again from the first page.
-  useEffect(() => setPage(1), [activeSegmentId, debouncedSearch, pageSize]);
+  useEffect(() => setPage(1), [filterQuery, pageSize]);
+  const queryRef = useRef(filterQuery);
+  queryRef.current = filterQuery;
+  // Bumped on every selection change so a late select-all response can be discarded.
+  const selVersionRef = useRef(0);
+  /** The only way the selection changes: bumps the version so an in-flight select-all can't overwrite it. */
+  const setSelection = (next: Set<string>, nextTruncated = false, fromSelectAll = false) => {
+    selVersionRef.current++;
+    setSelected(next);
+    setTruncated(nextTruncated);
+    setSelectionIsAll(fromSelectAll);
+  };
+  // A selection (esp. "all matching") belongs to the listing it was made on.
+  useEffect(() => {
+    setSelection(new Set<string>());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterQuery]);
 
-  const pageParams = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-  if (activeSegmentId) pageParams.set("segmentId", activeSegmentId);
-  if (debouncedSearch) pageParams.set("q", debouncedSearch);
+  const pageParams = toQuery(filter, filterExtras);
+  pageParams.set("page", String(page));
+  pageParams.set("pageSize", String(pageSize));
   const {
     data,
     loading,
@@ -744,11 +619,25 @@ function ContactsImpl() {
     refetch: refetchSegments,
   } = useFetch<Segment[]>("/segments");
   const segments = segmentsData ?? [];
+  // A chip whose audience was deleted (Audiences tab) would 404 the listing: fall back to everyone.
+  useEffect(() => {
+    if (activeSegmentId && segmentsData && !segmentsData.some((s) => s.id === activeSegmentId)) setActiveSegmentId(null);
+  }, [segmentsData, activeSegmentId]);
   const manualGroups = useMemo(
     () => segments.filter((s) => s.origin === "manual"),
     [segments],
   );
 
+  const teamQ = useFetch<TeamMember[]>("/team");
+  const pipelinesQ = useFetch<Pipeline[]>("/pipelines");
+  const fieldDefsQ = useFetch<CustomFieldDef[]>("/custom-fields");
+  // A stale `cf` in the hash may reference deleted fields; the API would 404 on every load.
+  useEffect(() => {
+    if (!fieldDefsQ.data) return;
+    const pruned = pruneFieldFilters(filter, new Set(fieldDefsQ.data.filter((d) => !d.archivedAt).map((d) => d.id)));
+    if (pruned !== filter) setFilter(pruned);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldDefsQ.data, filter]);
   const tagsQ = useFetch<TagRow[]>("/tags");
   const tagColorByName = useMemo(
     () => new Map((tagsQ.data ?? []).map((t) => [t.name, t.color])),
@@ -756,58 +645,56 @@ function ContactsImpl() {
   );
 
   const allCount = statsQ.data?.total ?? 0;
-  // The group editor and segment manager pick from everyone, so only they
-  // load the full list, and only while open.
-  const fullQ = useFetch<Contact[]>(activeTab === "groups" || showSegmentManager ? "/contacts" : null);
-  const allContacts = fullQ.data ?? [];
-
   const refetch = () => {
     refetchPage();
     statsQ.refetch();
-    if (fullQ.data) fullQ.refetch();
   };
+
+  // A contact edited or deleted from the record sheet: refetch the list behind it.
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
+  useEffect(() => {
+    const onChanged = () => refetchRef.current();
+    window.addEventListener("record:changed", onChanged);
+    return () => window.removeEventListener("record:changed", onChanged);
+  }, []);
 
   const showStatus = (msg: string) => {
     setStatusMsg(msg);
     window.setTimeout(() => setStatusMsg(null), 2000);
   };
 
-  const [showBulkTag, setShowBulkTag] = useState(false);
+  const [bulkTagMode, setBulkTagMode] = useState<"add" | "remove" | null>(null);
   const [bulkTagging, setBulkTagging] = useState(false);
 
-  const onBulkTag = () => {
-    if (selected.size === 0) return;
-    setShowBulkTag(true);
-  };
-
   const applyBulkTags = (names: string[]) => {
-    if (selected.size === 0 || bulkTagging) return;
+    if (selected.size === 0 || bulkTagging || selectingAll || !bulkTagMode) return;
     if (names.length === 0) {
-      setShowBulkTag(false);
+      setBulkTagMode(null);
       return;
     }
+    const mode = bulkTagMode;
     setBulkTagging(true);
     const run = async () => {
       try {
         const ids = Array.from(selected);
-        await api.post<{ contactsUpdated: number }>("/tags/assign", {
-          contactIds: ids,
-          add: names,
-        });
-        setShowBulkTag(false);
-        setSelected(new Set<string>());
+        let removed = ids.length;
+        if (mode === "add") {
+          await api.post<{ contactsUpdated: number }>("/tags/assign", { contactIds: ids, add: names });
+        } else {
+          removed = (await api.post<BulkResult>("/contacts/bulk", { ids, op: "removeTags", names })).affected;
+        }
+        setBulkTagMode(null);
+        setSelection(new Set<string>());
         refetch();
         tagsQ.refetch();
         showStatus(
-          tx(
-            `Tagged ${ids.length} contact${ids.length === 1 ? "" : "s"}.`,
-            `تم وسم ${ids.length} جهة.`,
-          ),
+          mode === "add"
+            ? tx(`Tagged ${ids.length} contact${ids.length === 1 ? "" : "s"}.`, `تم وسم ${ids.length} جهة.`)
+            : tx(`Removed tags from ${removed} contact${removed === 1 ? "" : "s"}.`, `تمت إزالة الوسوم من ${removed} جهة.`),
         );
       } catch (err) {
-        showStatus(
-          err instanceof Error ? err.message : tx("Tag failed.", "فشل الوسم."),
-        );
+        showStatus(err instanceof Error ? err.message : tx("Tag failed.", "فشل الوسم."));
       } finally {
         setBulkTagging(false);
       }
@@ -815,62 +702,104 @@ function ContactsImpl() {
     void run();
   };
 
-  const addToGroup = useMutation<
-    { segmentId: string; contactIds: string[] },
-    { added: number }
-  >(({ segmentId, contactIds }) => api.post(`/segments/${segmentId}/members`, { contactIds }));
-
-  const handleAddToGroup = (segmentId: string) => {
-    if (selected.size === 0) return;
-    void addToGroup
-      .mutate({ segmentId, contactIds: Array.from(selected) })
-      .then((res) => {
-        setSelected(new Set<string>());
-        refetchSegments();
-        showStatus(
-          tx(`Added ${res.added} contact${res.added === 1 ? "" : "s"} to group.`, `تمت إضافة ${res.added} جهة إلى المجموعة.`),
-        );
-      })
-      .catch(() => {/* error surfaces via addToGroup.error; rendered in the bulk bar */});
+  const EXPORT_IDS_CAP = 10_000;
+  const runExport = () => {
+    if (exporting) return;
+    setExporting(true);
+    // The current filter, narrowed to the selection when rows are selected.
+    downloadContactsExport(filterQuery, Array.from(selected), selectionIsAll)
+      .catch((err) => showStatus(exportErrorText(err, tx)))
+      .finally(() => setExporting(false));
   };
 
-  const onBulkDelete = () => {
-    if (selected.size === 0 || bulkDeleting) return;
-    const ids = Array.from(selected);
-    setBulkDeleting(true);
-    const run = async () => {
-      try {
-        await Promise.all(
-          ids.map((id) => api.delete<{ ok: true }>(`/contacts/${id}`)),
-        );
-        setSelected(new Set<string>());
+  const selectAllMatching = () => {
+    if (selectingAll) return;
+    setSelectingAll(true);
+    setBulkError(null);
+    const start = { query: filterQuery, selectionVersion: selVersionRef.current };
+    api
+      .get<{ ids: string[]; total: number; truncated: boolean }>(`/contacts/ids?${filterQuery}`)
+      .then((r) => {
+        // Ignore a response for a listing/selection that has since changed.
+        if (!isSelectAllCurrent(start, { query: queryRef.current, selectionVersion: selVersionRef.current })) return;
+        setSelection(new Set(r.ids), r.truncated, true);
+      })
+      .catch((err) => setBulkError(err instanceof Error ? err.message : tx("Request failed", "فشل الطلب")))
+      .finally(() => setSelectingAll(false));
+  };
+
+  const handleBulkAction = (a: BulkAction) => {
+    if (selected.size === 0 || bulkBusy || selectingAll) return;
+    if (a.op === "removeTags") {
+      setBulkTagMode("remove");
+      return;
+    }
+    if (a.op === "addToPipeline") {
+      // Each new ticket can start automations: confirm first, and never above the cap.
+      if (selected.size > PIPELINE_BULK_CAP) return;
+      setPipelineConfirm(a);
+      return;
+    }
+    runBulkAction(a);
+  };
+
+  const runBulkAction = (a: BulkAction) => {
+    if (selected.size === 0 || bulkBusy || selectingAll) return;
+    setBulkBusy(true);
+    setBulkError(null);
+    api
+      .post<BulkResult>("/contacts/bulk", { ids: Array.from(selected), ...a })
+      .then((res) => {
+        setSelection(new Set<string>());
         refetch();
+        if (a.op === "addToGroup") refetchSegments();
         showStatus(
-          tx(
-            `Deleted ${ids.length} contact${ids.length === 1 ? "" : "s"}.`,
-            `تم حذف ${ids.length} جهة.`,
-          ),
+          a.op === "addToPipeline"
+            ? tx(`Added ${res.created ?? res.affected} · skipped ${res.skipped ?? 0}`, `تمت الإضافة ${res.created ?? res.affected} · تم تخطي ${res.skipped ?? 0}`)
+            : tx(`Updated ${res.affected} contact${res.affected === 1 ? "" : "s"}.`, `تم تحديث ${res.affected} جهة.`),
         );
-      } catch (err) {
-        showStatus(
-          err instanceof Error ? err.message : tx("Delete failed.", "فشل الحذف."),
-        );
-      } finally {
-        setBulkDeleting(false);
-      }
-    };
-    void run();
+      })
+      .catch((err) => setBulkError(err instanceof Error ? err.message : tx("Request failed", "فشل الطلب")))
+      .finally(() => {
+        setBulkBusy(false);
+        setPipelineConfirm(null);
+      });
+  };
+
+  const runDelete = (ids: string[], force: boolean) => {
+    if (ids.length === 0 || bulkDeleting || selectingAll) return;
+    setBulkDeleting(true);
+    setBulkError(null);
+    api
+      .post<BulkResult>("/contacts/bulk", { ids, op: "delete", ...(force ? { force: true } : {}) })
+      .then((res) => {
+        const blocked = res.blocked ?? [];
+        // Keep only the blocked contacts selected so "Delete anyway" can target them.
+        setSelection(new Set(blocked));
+        refetch();
+        if (blocked.length > 0) {
+          setDeleteDialog({ stage: "blocked", blocked, deleted: res.affected });
+        } else {
+          setDeleteDialog(null);
+          showStatus(tx(`Deleted ${res.affected} contact${res.affected === 1 ? "" : "s"}.`, `تم حذف ${res.affected} جهة.`));
+        }
+      })
+      .catch((err) => {
+        setDeleteDialog(null);
+        setBulkError(err instanceof Error ? err.message : tx("Delete failed.", "فشل الحذف."));
+      })
+      .finally(() => setBulkDeleting(false));
   };
 
   return (
-    <div style={{ overflowY: "auto", flex: 1 }}>
+    <div className="ct-page">
       <PageHeader
         title={tx("Contacts", "جهات الاتصال")}
         subtitle={
           statsQ.data
             ? tx(
                 `${statsQ.data.total.toLocaleString()} contacts · ${statsQ.data.leads.toLocaleString()} leads · ${statsQ.data.customers.toLocaleString()} customers`,
-                `${statsQ.data.total.toLocaleString("ar")} جهة · ${statsQ.data.leads.toLocaleString("ar")} محتمل · ${statsQ.data.customers.toLocaleString("ar")} عميل`,
+                `${statsQ.data.total.toLocaleString("ar-u-nu-latn")} جهة · ${statsQ.data.leads.toLocaleString("ar-u-nu-latn")} عميل محتمل · ${statsQ.data.customers.toLocaleString("ar-u-nu-latn")} عميل`,
               )
             : tx("Loading…", "جارٍ التحميل…")
         }
@@ -915,7 +844,34 @@ function ContactsImpl() {
                 {tx("Pipeline", "المسار")}
               </button>
             </div>
-            <button className="btn primary" onClick={() => setShowNew(true)}>
+            <ImportChip tx={tx} watchId={importWatchId} onFinished={() => { setImportWatchId(null); refetch(); }} />
+            <button
+              className="btn"
+              onClick={() => setShowImport(true)}
+              disabled={!can("contacts.create")}
+              title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}
+            >
+              {tx("Import", "استيراد")}
+            </button>
+            <button
+              className="btn"
+              onClick={runExport}
+              disabled={!can("contacts.manage") || exporting || selected.size > EXPORT_IDS_CAP}
+              title={
+                !can("contacts.manage")
+                  ? tx("Only owners and admins can export", "التصدير متاح للمالكين والمسؤولين فقط")
+                  : selected.size > EXPORT_IDS_CAP
+                    ? tx("Select at most 10,000 contacts to export", "حدد 10,000 جهة كحد أقصى للتصدير")
+                    : undefined
+              }
+            >
+              {exporting
+                ? tx("Exporting…", "جارٍ التصدير…")
+                : selected.size > 0
+                  ? tx(`Export selected (${selected.size.toLocaleString()})`, `تصدير المحدد (${selected.size.toLocaleString("ar-u-nu-latn")})`)
+                  : tx("Export", "تصدير")}
+            </button>
+            <button className="btn primary" onClick={() => setShowNew(true)} disabled={!can("contacts.create")} title={can("contacts.create") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
               <IconPlus w={13} />
               {tx("New contact", "جهة جديدة")}
             </button>
@@ -923,12 +879,13 @@ function ContactsImpl() {
         }
       />
 
-      <div style={{ display: "flex", gap: 6, padding: "0 24px 10px" }}>
+      <div className="ct-tabs">
         {(
           [
             ["contacts", tx("Contacts", "جهات الاتصال")],
-            ["groups", tx("Groups", "المجموعات")],
+            ["audiences", tx("Audiences", "الجماهير")],
             ["tags", tx("Tags", "الوسوم")],
+            ...(canManageFields ? ([["fields", tx("Fields", "الحقول")]] as const) : []),
           ] as const
         ).map(([id, label]) => (
           <button
@@ -943,13 +900,14 @@ function ContactsImpl() {
       </div>
 
       {activeTab === "contacts" && (
-      <div style={{ padding: "0 24px 24px", display: "grid", gap: 14 }}>
-        <div
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
-        >
+      <div className="ct-body">
+        <div className="ct-seg-row">
+          {/* Below sm the segment chips scroll in their own row. */}
+          <div className="ct-seg-chips">
           <SegmentChip
             label={tx("All", "الكل")}
             count={allCount}
+            tx={tx}
             active={activeSegmentId === null}
             onClick={() => setActiveSegmentId(null)}
           />
@@ -958,26 +916,42 @@ function ContactsImpl() {
               key={s.id}
               label={t.lang === "ar" ? s.nameAr || s.name : s.name}
               count={s.count}
+              timedOut={s.timedOut}
+              skipped={s.skipped}
+              tx={tx}
               active={activeSegmentId === s.id}
               color={s.color}
               onClick={() => setActiveSegmentId(s.id)}
             />
           ))}
-          <span style={{ flex: 1 }} />
+          </div>
+          <span className="ct-seg-spacer" style={{ flex: 1 }} />
           <button
             className="btn ghost sm"
-            onClick={() => setShowSegmentManager(true)}
+            onClick={() => setActiveTab("audiences")}
           >
             <IconFilter w={12} />
-            {tx("Manage segments", "إدارة الشرائح")}
+            {tx("Manage audiences", "إدارة الجماهير")}
           </button>
           <input
             placeholder={tx("Search contacts…", "ابحث…")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ ...INPUT_STYLE, width: 220 }}
+            className="ct-search"
+            style={INPUT_STYLE}
           />
         </div>
+
+        <ContactFilterBar
+          tx={tx}
+          lang={t.lang}
+          filter={filter}
+          onChange={setFilter}
+          tags={tagsQ.data ?? []}
+          team={teamQ.data ?? []}
+          pipelines={pipelinesQ.data ?? []}
+          fieldDefs={fieldDefsQ.data ?? []}
+        />
 
         {statusMsg && (
           <div
@@ -1029,21 +1003,36 @@ function ContactsImpl() {
           </div>
         )}
 
+        {data && view === "table" && selected.size > 0 && (
+          <BulkBar
+            tx={tx}
+            lang={t.lang}
+            count={selected.size}
+            totalMatching={data.total}
+            pageAllSelected={contacts.length > 0 && contacts.every((c) => selected.has(c.id))}
+            selectingAll={selectingAll}
+            truncated={truncated}
+            busy={bulkBusy || bulkDeleting || selectingAll}
+            team={teamQ.data ?? []}
+            pipelines={pipelinesQ.data ?? []}
+            manualGroups={manualGroups}
+            error={bulkError}
+            onSelectAllMatching={selectAllMatching}
+            onClear={() => setSelection(new Set<string>())}
+            onTag={() => setBulkTagMode("add")}
+            onRemoveTag={() => setBulkTagMode("remove")}
+            onDelete={() => setDeleteDialog({ stage: "confirm" })}
+            onAction={handleBulkAction}
+          />
+        )}
         {data && view === "table" && (
           <ContactsTable
             tx={tx}
             contacts={contacts}
             selected={selected}
-            setSelected={setSelected}
-            onBulkDelete={onBulkDelete}
-            onBulkTag={onBulkTag}
-            bulkDeleting={bulkDeleting}
+            setSelected={(next) => setSelection(next)}
             onOpenContact={setOpenContactId}
-            manualGroups={manualGroups}
-            onAddToGroup={handleAddToGroup}
-            addToGroupError={addToGroup.error}
             tagColorByName={tagColorByName}
-            lang={t.lang}
           />
         )}
         {data && view === "table" && (
@@ -1064,15 +1053,52 @@ function ContactsImpl() {
       </div>
       )}
 
-      {/* The member-add picker searches the FULL contact list, independent of
-          whatever segment chip / name search is active on the Contacts tab. */}
-      {activeTab === "groups" && <GroupsTab tx={tx} lang={t.lang} contacts={allContacts} />}
+      {activeTab === "audiences" && (
+        <AudiencesTab
+          tx={tx}
+          lang={t.lang}
+          onChanged={() => {
+            refetchSegments();
+            refetch();
+          }}
+        />
+      )}
       {activeTab === "tags" && (
         <TagsTab
           tx={tx}
+          lang={t.lang}
           onCatalogChanged={() => {
             tagsQ.refetch();
+            refetchSegments();
             refetch();
+          }}
+        />
+      )}
+
+      {activeTab === "fields" && canManageFields && (
+        <FieldsTab
+          tx={tx}
+          lang={t.lang}
+          onChanged={() => {
+            void fieldDefsQ.refetch();
+            refetch();
+          }}
+        />
+      )}
+
+      {showImport && (
+        <ImportWizard
+          tx={tx}
+          lang={t.lang}
+          kind="contacts"
+          onClose={(runningId) => {
+            setShowImport(false);
+            if (runningId) setImportWatchId(runningId);
+          }}
+          onImported={() => {
+            setActiveSegmentId(null);
+            refetch();
+            refetchSegments();
           }}
         />
       )}
@@ -1088,39 +1114,93 @@ function ContactsImpl() {
         />
       )}
 
-      {showBulkTag && (
+      {bulkTagMode && (
         <BulkTagModal
           tx={tx}
+          mode={bulkTagMode}
           count={selected.size}
           saving={bulkTagging}
           tags={tagsQ.data ?? []}
-          onClose={() => setShowBulkTag(false)}
+          onClose={() => setBulkTagMode(null)}
           onApply={applyBulkTags}
         />
+      )}
+
+      {pipelineConfirm && (
+        <PipelineConfirmModal
+          tx={tx}
+          count={selected.size}
+          pipelineName={(() => {
+            const pl = (pipelinesQ.data ?? []).find((x) => x.id === pipelineConfirm.pipelineId);
+            return pl ? (t.lang === "ar" ? pl.nameAr || pl.name : pl.name) : "";
+          })()}
+          busy={bulkBusy}
+          onCancel={() => setPipelineConfirm(null)}
+          onConfirm={() => runBulkAction(pipelineConfirm)}
+        />
+      )}
+
+      {deleteDialog && (
+        <Modal
+          onClose={bulkDeleting ? () => {} : () => setDeleteDialog(null)}
+          width={420}
+          label={tx("Delete contacts", "حذف جهات الاتصال")}
+          panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
+        >
+          {deleteDialog.stage === "confirm" ? (
+            <>
+              <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Delete selected contacts?", "حذف جهات الاتصال المحددة؟")}</h3>
+              <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+                {tx(
+                  `${selected.size.toLocaleString()} contact(s) will be deleted, along with their conversations. Contacts with linked tickets or bookings are skipped unless you choose to delete them anyway.`,
+                  `سيتم حذف ${selected.size.toLocaleString("ar-u-nu-latn")} جهة مع محادثاتها. تُتخطى الجهات المرتبطة بتذاكر أو حجوزات ما لم تختر حذفها رغم ذلك.`,
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Some contacts were not deleted", "لم تُحذف بعض الجهات")}</h3>
+              <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+                {tx(
+                  `Deleted ${deleteDialog.deleted}. ${deleteDialog.blocked.length} contact(s) are linked to tickets or bookings and were kept. Delete them anyway? Their conversations and linked records are removed too. This cannot be undone.`,
+                  `تم حذف ${deleteDialog.deleted}. ${deleteDialog.blocked.length} جهة مرتبطة بتذاكر أو حجوزات وتم الإبقاء عليها. هل تريد حذفها رغم ذلك؟ ستُحذف محادثاتها وسجلاتها المرتبطة أيضًا. لا يمكن التراجع.`,
+                )}
+              </div>
+            </>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn ghost" disabled={bulkDeleting} onClick={() => setDeleteDialog(null)}>
+              {deleteDialog.stage === "confirm" ? tx("Cancel", "إلغاء") : tx("Keep them", "إبقاؤها")}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={{ background: "var(--bad)", color: "white", borderColor: "transparent" }}
+              disabled={bulkDeleting}
+              onClick={() =>
+                deleteDialog.stage === "confirm"
+                  ? runDelete(Array.from(selected), false)
+                  : runDelete(deleteDialog.blocked, true)
+              }
+            >
+              {bulkDeleting
+                ? tx("Deleting…", "جارٍ الحذف…")
+                : deleteDialog.stage === "confirm"
+                  ? tx("Delete", "حذف")
+                  : tx("Delete anyway", "حذف رغم ذلك")}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {openContactId && (
         <ContactDetailDrawer
           contactId={openContactId}
           onClose={() => setOpenContactId(null)}
+          onChanged={refetch}
         />
       )}
 
-      {showSegmentManager && (
-        <SegmentManager
-          lang={t.lang}
-          contacts={allContacts}
-          segments={segments}
-          onClose={() => setShowSegmentManager(false)}
-          onChanged={() => {
-            refetchSegments();
-            // If the active segment was just edited (or deleted), refetch the
-            // contacts too so the table matches the new filter / clears if it
-            // was removed.
-            refetch();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -1129,13 +1209,18 @@ function ContactsImpl() {
 
 interface SegmentChipProps {
   label: string;
-  count: number;
+  /** SP-16: null while a smart audience's count is unknown (never shown as 0). */
+  count: number | null;
+  timedOut?: boolean;
+  skipped?: boolean;
+  tx: Tx;
   active: boolean;
   color?: string | null;
   onClick: () => void;
 }
 
-function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps) {
+function SegmentChip({ label, count, timedOut, skipped, tx, active, color, onClick }: SegmentChipProps) {
+  const c = countLabel(count, timedOut, tx, skipped);
   return (
     <button
       onClick={onClick}
@@ -1164,17 +1249,50 @@ function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps)
           }}
         />
       )}
-      {label}
+      <bdi dir="auto">{label}</bdi>
       <span
         className="mono muted"
+        title={c.title}
         style={{
           fontSize: 10,
           color: active ? "var(--accent)" : "var(--ink-3)",
         }}
       >
-        {count.toLocaleString()}
+        {c.short}
       </span>
     </button>
+  );
+}
+
+/* ─── Add-to-pipeline confirm ────────────────────────────────────────── */
+
+function PipelineConfirmModal({ tx, count, pipelineName, busy, onCancel, onConfirm }: {
+  tx: Tx;
+  count: number;
+  pipelineName: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  // The pipeline name is user text: isolate it so its direction can't scramble the sentence.
+  const [before, after] = tx(
+    `Create ${count.toLocaleString()} tickets in {p}? Each new ticket can start automations.`,
+    `إنشاء ${count.toLocaleString("ar-u-nu-latn")} تذكرة في {p}؟ قد تبدأ كل تذكرة جديدة عمليات أتمتة.`,
+  ).split("{p}");
+  return (
+    <Modal onClose={busy ? () => {} : onCancel} width={420} label={tx("Add to pipeline", "إضافة إلى مسار")}
+      panelStyle={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <h3 style={{ margin: 0, fontSize: 15 }}>{tx("Add to pipeline", "إضافة إلى مسار")}</h3>
+      <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.5 }}>
+        {before}<bdi dir="auto">{pipelineName}</bdi>{after}
+      </div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>{tx("Cancel", "إلغاء")}</button>
+        <button type="button" className="btn primary" disabled={busy} onClick={onConfirm}>
+          {busy ? tx("Creating…", "جارٍ الإنشاء…") : tx("Create tickets", "إنشاء التذاكر")}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1182,6 +1300,7 @@ function SegmentChip({ label, count, active, color, onClick }: SegmentChipProps)
 
 interface BulkTagModalProps {
   tx: Tx;
+  mode: "add" | "remove";
   count: number;
   saving: boolean;
   tags: TagRow[];
@@ -1189,7 +1308,7 @@ interface BulkTagModalProps {
   onApply: (selectedNames: string[]) => void;
 }
 
-function BulkTagModal({ tx, count, saving, tags, onClose, onApply }: BulkTagModalProps) {
+function BulkTagModal({ tx, mode, count, saving, tags, onClose, onApply }: BulkTagModalProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [customNames, setCustomNames] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
@@ -1228,16 +1347,15 @@ function BulkTagModal({ tx, count, saving, tags, onClose, onApply }: BulkTagModa
         };
 
   return (
-    <Modal onClose={onClose} width={420} label="Add tags" panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <Modal onClose={onClose} width={420} label={mode === "add" ? tx("Add tags", "إضافة وسوم") : tx("Remove tags", "إزالة وسوم")} panelStyle={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 600 }}>
-            {tx("Add tags", "إضافة وسوم")}
+            {mode === "add" ? tx("Add tags", "إضافة وسوم") : tx("Remove tags", "إزالة وسوم")}
           </div>
           <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-            {tx(
-              `Add tags to ${count} contact${count === 1 ? "" : "s"}.`,
-              `إضافة وسوم إلى ${count} جهة.`,
-            )}
+            {mode === "add"
+              ? tx(`Add tags to ${count} contact${count === 1 ? "" : "s"}.`, `إضافة وسوم إلى ${count} جهة.`)
+              : tx(`Remove tags from ${count} contact${count === 1 ? "" : "s"}.`, `إزالة وسوم من ${count} جهة.`)}
           </div>
         </div>
 
@@ -1297,7 +1415,7 @@ function BulkTagModal({ tx, count, saving, tags, onClose, onApply }: BulkTagModa
           </div>
         </div>
 
-        <div>
+        {mode === "add" && <div>
           <label
             className="mono muted"
             style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.06 }}
@@ -1330,7 +1448,7 @@ function BulkTagModal({ tx, count, saving, tags, onClose, onApply }: BulkTagModa
               outline: "none",
             }}
           />
-        </div>
+        </div>}
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" type="button" onClick={onClose} disabled={saving}>
@@ -1342,7 +1460,7 @@ function BulkTagModal({ tx, count, saving, tags, onClose, onApply }: BulkTagModa
             onClick={() => onApply(Array.from(selected))}
             disabled={!canSubmit}
           >
-            {saving ? tx("Applying…", "جارٍ التطبيق…") : tx("Apply", "تطبيق")}
+            {saving ? tx("Applying…", "جارٍ التطبيق…") : mode === "add" ? tx("Apply", "تطبيق") : tx("Remove", "إزالة")}
           </button>
         </div>
     </Modal>

@@ -106,6 +106,7 @@ export class KnowledgeController {
 @Module({
   controllers: [KnowledgeController, AiSettingsController],
   providers: [KnowledgeService, AiSettingsService, KnowledgeClient],
-  exports: [KnowledgeService, AiSettingsService],
+  // SP-21: the knowledge publisher keeps kewy-ai copies through the client.
+  exports: [KnowledgeService, AiSettingsService, KnowledgeClient],
 })
 export class KnowledgeModule {}

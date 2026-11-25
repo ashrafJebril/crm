@@ -4,6 +4,8 @@ import { ZernioService } from "./zernio.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
+import { makeFakePrisma } from "../channels/test-prisma";
+import { HealthCheckTrigger } from "../channels/health/health-check-trigger";
 
 /**
  * WhatsApp template sends over the Zernio transport.
@@ -105,7 +107,29 @@ describe("ZernioService.sendTemplateInDbConversation", () => {
             ? { pageId: "acc1", platform: "whatsapp", provider: "zernio" }
             : overrides.integration,
         ),
+        findMany: jest.fn().mockResolvedValue([]),
       },
+      // SP-19: the send account comes from the conversation's channel — here
+      // the channel mirrored from the integration above (none when it is null).
+      channel: {
+        findMany: jest.fn().mockResolvedValue(
+          overrides.integration === null
+            ? []
+            : [
+                {
+                  id: "ch1",
+                  workspaceId,
+                  kind: "whatsapp",
+                  provider: (overrides.integration?.provider as string) ?? "zernio",
+                  externalId: "acc1",
+                  status: "active",
+                  isDefault: true,
+                  integrationId: "i1",
+                },
+              ],
+        ),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       message: { create: jest.fn().mockResolvedValue({}) },
     };
     const client = {
@@ -189,11 +213,20 @@ describe("ZernioService.sendTemplateInDbConversation", () => {
   });
 
   it("reports the real reason when WhatsApp is not connected via Zernio", async () => {
-    const { svc } = build({ integration: null });
+    const { svc } = build({ integration: { pageId: "pn", platform: "whatsapp", provider: "meta" } });
 
     await expect(
       svc.sendTemplateInDbConversation(workspaceId, "conv-db", "greetings", "en", []),
     ).rejects.toThrow(/not connected via Zernio/i);
+  });
+
+  it("409 channels.not_connected when no channel resolves for the thread", async () => {
+    const { svc, client } = build({ integration: null });
+
+    await expect(
+      svc.sendTemplateInDbConversation(workspaceId, "conv-db", "greetings", "en", []),
+    ).rejects.toMatchObject({ status: 409, response: { message: "channels.not_connected" } });
+    expect(client.sendTemplateMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -302,5 +335,103 @@ describe("ZernioClient template management", () => {
     respond({ template: null });
 
     await expect(client.whatsappLibraryTemplate("acc1", "nope")).resolves.toBeNull();
+  });
+});
+
+// ─── SP-14 Task 2: whatsapp.template.status_updated (ruling 15) ─────────────
+describe("zernio template status webhook (SP-14)", () => {
+  const build = () => {
+    const prisma = makeFakePrisma({
+      channel: [
+        { id: "chA", workspaceId: "wsA", kind: "whatsapp", provider: "zernio", externalId: "accA", displayName: "A", status: "active", isDefault: true, updatedAt: new Date("2026-01-02") },
+        { id: "chA2", workspaceId: "wsA", kind: "whatsapp", provider: "zernio", externalId: "accA2", displayName: "A2", status: "active", isDefault: false, updatedAt: new Date("2026-01-01") },
+        { id: "chB", workspaceId: "wsB", kind: "whatsapp", provider: "zernio", externalId: "accB", displayName: "B", status: "active", isDefault: true, updatedAt: new Date("2026-01-01") },
+        { id: "chOld", workspaceId: "wsB", kind: "whatsapp", provider: "zernio", externalId: "accGone", displayName: "Old", status: "disconnected", updatedAt: new Date("2026-01-01") },
+      ],
+      template: [
+        { id: "tA", workspaceId: "wsA", name: "promo", lang: "en", status: "approved", metaTemplateId: "m_A", metaRejectionReason: null },
+        { id: "tB", workspaceId: "wsB", name: "promo", lang: "en", status: "approved", metaTemplateId: "m_B", metaRejectionReason: null },
+      ],
+    } as never);
+    const trigger = new HealthCheckTrigger();
+    const checks: Array<[string, string]> = [];
+    trigger.bind(async (ws, id) => void checks.push([ws, id]));
+    const svc = new ZernioService(
+      prisma as never,
+      { emitToWorkspace: jest.fn() } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      trigger,
+    );
+    const status = (id: string) => (prisma.db.template as Array<{ id: string; status: string }>).find((t) => t.id === id)?.status;
+    const evt = (accountId: string, template: Record<string, unknown>) => ({ event: "whatsapp.template.status_updated", account: { accountId }, template });
+    return { prisma, svc, trigger, checks, status, evt };
+  };
+
+  it("paused and disabled map from every source: the Zernio webhook", async () => {
+    const w = build();
+    expect(await w.svc.handleEvent(w.evt("accA", { templateId: "m_A", name: "promo", language: "en_US", status: "PAUSED" }))).toEqual({ ok: true });
+    expect(w.status("tA")).toBe("paused");
+    await w.svc.handleEvent(w.evt("accA", { templateId: "m_A", name: "promo", language: "en_US", status: "DISABLED" }));
+    expect(w.status("tA")).toBe("disabled");
+    await w.svc.handleEvent(w.evt("accA", { templateId: "m_A", status: "REJECTED", reason: "INVALID_FORMAT" }));
+    expect(w.prisma.db.template[0]).toMatchObject({ status: "rejected", metaRejectionReason: "INVALID_FORMAT" });
+    await w.svc.handleEvent(w.evt("accA", { templateId: "m_A", status: "IN_APPEAL" }));
+    expect(w.status("tA")).toBe("pending");
+    await w.svc.handleEvent(w.evt("accA", { templateId: "m_A", status: "APPROVED" }));
+    expect(w.prisma.db.template[0]).toMatchObject({ status: "approved", metaRejectionReason: null });
+    // A status we do not know changes nothing (never defaulted).
+    await w.svc.handleEvent(w.evt("accA", { templateId: "m_A", status: "SOMETHING_NEW" }));
+    expect(w.status("tA")).toBe("approved");
+  });
+
+  it("template webhook is scoped to the owning workspace", async () => {
+    const w = build();
+    // By name only (no id), for workspace A's default number: only A's row changes.
+    await w.svc.handleEvent(w.evt("accA", { name: "promo", language: "en_US", status: "PAUSED" }));
+    expect(w.status("tA")).toBe("paused");
+    expect(w.status("tB")).toBe("approved");
+    // An id of the other workspace's template, sent for A's account, changes nothing in B.
+    await w.svc.handleEvent(w.evt("accA", { templateId: "m_B", name: "other", language: "en", status: "DISABLED" }));
+    expect(w.status("tB")).toBe("approved");
+    // A pause of a copy on a non-default number never rewrites the default-number rows by name.
+    await w.svc.handleEvent(w.evt("accA2", { templateId: "m_A2", name: "promo", language: "en", status: "DISABLED" }));
+    expect(w.status("tA")).toBe("paused");
+    // Unknown and disconnected-only accounts change nothing and check nothing.
+    const before = w.checks.length;
+    await w.svc.handleEvent(w.evt("accX", { templateId: "m_A", status: "DISABLED" }));
+    await w.svc.handleEvent(w.evt("accGone", { templateId: "m_B", status: "DISABLED" }));
+    expect(w.status("tA")).toBe("paused");
+    expect(w.status("tB")).toBe("approved");
+    await w.trigger.idle();
+    expect(w.checks.length).toBe(before);
+  });
+
+  it("each event schedules a webhook check of the number it came from", async () => {
+    const w = build();
+    await w.svc.handleEvent(w.evt("accA2", { templateId: "m_A2", name: "promo", language: "en", status: "PAUSED" }));
+    await w.svc.handleEvent(w.evt("accB", { templateId: "m_B", status: "FLAGGED" }));
+    await w.trigger.idle();
+    expect(w.checks).toEqual([
+      ["wsA", "chA2"],
+      ["wsB", "chB"],
+    ]);
+  });
+
+  it("a check failure never fails the webhook", async () => {
+    const w = build();
+    w.trigger.bind(async () => {
+      throw new Error("boom");
+    });
+    await expect(w.svc.handleEvent(w.evt("accA", { templateId: "m_A", status: "PAUSED" }))).resolves.toEqual({ ok: true });
+    await w.trigger.idle();
   });
 });

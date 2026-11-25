@@ -1,11 +1,13 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 
-/** Drop every cached `/integrations…` query so status cards refetch. */
+/** Drop every cached `/integrations…` and `/channels…` query so status cards
+ *  and the channels hub refetch after a connect. */
 export function invalidateIntegrations(qc: QueryClient): void {
   void qc.invalidateQueries({
     predicate: (q) =>
-      typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/integrations"),
+      typeof q.queryKey[0] === "string" &&
+      ((q.queryKey[0] as string).startsWith("/integrations") || (q.queryKey[0] as string).startsWith("/channels")),
   });
 }
 

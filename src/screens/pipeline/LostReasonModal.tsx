@@ -1,33 +1,73 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/api/client";
 import { Modal } from "@/components/Modal";
 import type { Ticket, Lang } from "@/lib/types";
+import { makeTx } from "@/lib/tx";
+import { usePermissions } from "@/auth/usePermissions";
 
-const REASONS: Array<{ id: string; en: string; ar: string }> = [
-  { id: "price", en: "Price too high", ar: "السعر مرتفع" },
-  { id: "found_cheaper", en: "Found cheaper alternative", ar: "وجد بديلاً أرخص" },
-  { id: "no_response", en: "Customer went silent", ar: "توقف العميل" },
-  { id: "wrong_fit", en: "Wrong product fit", ar: "غير مناسب" },
-  { id: "other", en: "Other", ar: "أخرى" },
-];
-
-interface Props {
-  ticket: Ticket;
-  lang: Lang;
-  onCancel: () => void;
-  onConfirm: (reason: string) => void;
+export interface LostReasonOption {
+  id: string;
+  label: string;
+  labelAr: string;
+  order: number;
 }
 
-export function LostReasonModal({ ticket, lang, onCancel, onConfirm }: Props) {
-  const [selected, setSelected] = useState<string>(REASONS[0].id);
+interface Props {
+  ticket?: Ticket;
+  /** Overrides the default per-ticket heading (bulk use). */
+  heading?: string;
+  lang: Lang;
+  pipelineId: string;
+  onCancel: () => void;
+  onConfirm: (reason: { id: string; label: string }) => void;
+}
+
+export function LostReasonModal({ ticket, heading, lang, pipelineId, onCancel, onConfirm }: Props) {
+  const ar = lang === "ar";
+  const tx = makeTx(lang);
+  const { can } = usePermissions();
+  const q = useQuery<LostReasonOption[]>({
+    queryKey: ["pipelines", pipelineId, "lost-reasons"],
+    queryFn: ({ signal }) => api.get<LostReasonOption[]>(`/pipelines/${pipelineId}/lost-reasons`, signal),
+    staleTime: 0,
+  });
+  const reasons = q.data ?? [];
+  const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    if (selected === null && reasons.length > 0) setSelected(reasons[0].id);
+  }, [reasons, selected]);
+  const chosen = reasons.find((r) => r.id === selected);
 
   return (
     <Modal onClose={onCancel} width={420} label="Lost reason">
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--ink)" }}>
-          {lang === "ar" ? `سبب الخسارة لـ #${ticket.number}` : `Lost reason for #${ticket.number}`}
+          {heading ?? (lang === "ar" ? `سبب الخسارة لـ #${ticket?.number}` : `Lost reason for #${ticket?.number}`)}
         </h3>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {REASONS.map((r) => (
+          {q.isPending ? (
+            <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{ar ? "جارٍ التحميل..." : "Loading..."}</div>
+          ) : q.isError ? (
+            <div style={{ fontSize: 12, color: "var(--bad, #ef4444)" }}>
+              {ar ? "تعذر تحميل أسباب الخسارة" : "Could not load lost reasons"}
+            </div>
+          ) : reasons.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--ink-3)", display: "grid", gap: 6 }}>
+              <span>
+                {tx(
+                  "No lost reasons yet — add them in Settings → Pipelines",
+                  "لا توجد أسباب خسارة بعد — أضفها من الإعدادات ← المسارات",
+                )}
+              </span>
+              {can("pipelines.manage") ? (
+                <a href="#/settings?tab=pipelines" style={{ color: "var(--accent)" }}>
+                  {tx("Open the pipeline editor", "فتح محرر المسارات")}
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+          {reasons.map((r) => (
             <label
               key={r.id}
               style={{
@@ -47,8 +87,8 @@ export function LostReasonModal({ ticket, lang, onCancel, onConfirm }: Props) {
                 checked={selected === r.id}
                 onChange={() => setSelected(r.id)}
               />
-              <span style={{ fontSize: 13, color: "var(--ink)" }}>
-                {lang === "ar" ? r.ar : r.en}
+              <span dir="auto" style={{ fontSize: 13, color: "var(--ink)" }}>
+                {ar ? r.labelAr : r.label}
               </span>
             </label>
           ))}
@@ -70,14 +110,16 @@ export function LostReasonModal({ ticket, lang, onCancel, onConfirm }: Props) {
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(selected)}
+            disabled={!chosen}
+            onClick={() => chosen && onConfirm({ id: chosen.id, label: chosen.label })}
             style={{
               padding: "8px 14px",
               background: "var(--accent)",
               border: 0,
               borderRadius: "var(--r)",
               color: "white",
-              cursor: "pointer",
+              cursor: chosen ? "pointer" : "not-allowed",
+              opacity: chosen ? 1 : 0.5,
             }}
           >
             {lang === "ar" ? "تأكيد" : "Confirm"}

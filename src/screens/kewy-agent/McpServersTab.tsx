@@ -37,7 +37,7 @@ interface CreateServerInput {
   headers?: Record<string, string>;
 }
 
-export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
+export function McpServersTab({ tx, canEdit, canCreate, canDelete }: { tx: Tx; canEdit: boolean; canCreate: boolean; canDelete: boolean }) {
   const listQ = useFetch<LMcpServerList>("/integrations/l/mcp-servers");
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +59,9 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
     api.post(`/integrations/l/mcp-servers/${id}/test`),
   );
 
-  const servers = listQ.data?.servers ?? [];
+  // SP-23 (ruling 9): the legacy list hides the setup-managed kewy_crm server
+  // and the connectors' own proxy servers (managed on the Connectors tab).
+  const servers = (listQ.data?.servers ?? []).filter((s) => s.name !== "kewy_crm" && !s.name.startsWith("kewy_conn_"));
 
   const [form, setForm] = useState<CreateServerInput>({ name: "", description: "", url: "" });
   const [headersText, setHeadersText] = useState("");
@@ -127,7 +129,7 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
         "خوادم MCP عن بُعد يمكن لوكيلك استخدامها لأدوات إضافية.",
       )}
       footer={
-        canEdit && (
+        canCreate && (
           <button type="button" className="btn primary" onClick={() => setShowAdd(true)}>
             <IconPlus w={13} />
             {tx("Add server", "إضافة خادم")}
@@ -179,10 +181,12 @@ export function McpServersTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                     {tx("Test", "اختبار")}
                   </button>
                   <Toggle on={bound.has(server.id)} onChange={(on) => onToggle(server.id, on)} />
-                  <button type="button" className="btn ghost sm" onClick={() => onDelete(server.id)}>
-                    {tx("Delete", "حذف")}
-                  </button>
                 </>
+              )}
+              {canDelete && (
+                <button type="button" className="btn ghost sm" onClick={() => onDelete(server.id)}>
+                  {tx("Delete", "حذف")}
+                </button>
               )}
             </div>
             {result && (

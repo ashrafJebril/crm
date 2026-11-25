@@ -12,6 +12,16 @@
  * checks for what it would create first.
  */
 
+import { ensureDefaultLostReasons } from "../pipelines/default-lost-reasons";
+
+/**
+ * Options for every interactive `$transaction` that wraps seedWorkspaceDefaults.
+ * Prisma's 5 s default is too short over a remote Postgres: the seed is a
+ * handful of round-trips and a ~180 ms RTT used to tip register into
+ * "Transaction already closed".
+ */
+export const WORKSPACE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
 /** The default sales pipeline's stages. `groupKey` is what the inbound-message
  *  automation looks up ("new" on arrival, "contacted" once we reply), so those
  *  two keys must exist for it to work. */
@@ -61,11 +71,15 @@ interface DefaultsClient {
   };
   ticketStage: {
     findMany(args: unknown): Promise<Array<{ key: string }>>;
-    create(args: unknown): Promise<unknown>;
+    createMany(args: unknown): Promise<unknown>;
+  };
+  lostReason: {
+    count(args: unknown): Promise<number>;
+    createMany(args: unknown): Promise<unknown>;
   };
   segment: {
     findMany(args: unknown): Promise<Array<{ name: string }>>;
-    create(args: unknown): Promise<unknown>;
+    createMany(args: unknown): Promise<unknown>;
   };
 }
 
@@ -108,11 +122,10 @@ export async function seedWorkspaceDefaults(
       (s) => s.key,
     ),
   );
-  let stagesCreated = 0;
-  for (const s of DEFAULT_STAGES) {
-    if (haveStages.has(s.key)) continue;
-    await db.ticketStage.create({
-      data: {
+  const newStages = DEFAULT_STAGES.filter((s) => !haveStages.has(s.key));
+  if (newStages.length > 0) {
+    await db.ticketStage.createMany({
+      data: newStages.map((s) => ({
         workspaceId,
         pipelineId: pipeline.id,
         key: s.key,
@@ -124,32 +137,37 @@ export async function seedWorkspaceDefaults(
         slaMinutes: s.slaMinutes,
         isTerminal: s.isTerminal,
         isWon: s.isWon,
-      },
+      })),
     });
-    stagesCreated += 1;
   }
+  const stagesCreated = newStages.length;
+
+  await ensureDefaultLostReasons(db, workspaceId, pipeline.id);
 
   const haveSegments = new Set(
     (await db.segment.findMany({ where: { workspaceId }, select: { name: true } })).map(
       (s) => s.name,
     ),
   );
-  let segmentsCreated = 0;
+  const newSegments: Array<(typeof STARTER_SEGMENTS)[number] | ReturnType<typeof stageSegmentsFor>[number]> = [];
   for (const seg of [...STARTER_SEGMENTS, ...stageSegmentsFor(DEFAULT_STAGES)]) {
     if (haveSegments.has(seg.name)) continue;
-    await db.segment.create({
-      data: {
+    haveSegments.add(seg.name);
+    newSegments.push(seg);
+  }
+  if (newSegments.length > 0) {
+    await db.segment.createMany({
+      data: newSegments.map((seg) => ({
         workspaceId,
         name: seg.name,
         nameAr: seg.nameAr,
         color: seg.color,
         origin: "crm",
         filter: JSON.stringify(seg.filter),
-      },
+      })),
     });
-    haveSegments.add(seg.name);
-    segmentsCreated += 1;
   }
+  const segmentsCreated = newSegments.length;
 
   return { pipelineId: pipeline.id, stagesCreated, segmentsCreated };
 }

@@ -10,7 +10,7 @@ export const qk = {
   stageTickets: (
     pipelineId: string,
     stageId: string,
-    filters?: { ownerId?: string; q?: string },
+    filters?: { qs?: string },
   ) => ["tickets", "stage", pipelineId, stageId, filters ?? {}] as const,
 
   ticket: (id: string) => ["tickets", "detail", id] as const,

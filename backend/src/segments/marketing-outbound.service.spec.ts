@@ -63,6 +63,13 @@ describe('MarketingOutboundService', () => {
     expect(where.AND[1]).toEqual({ hjzClientId: { not: null } });
   });
 
+  it('excludes marketing opt-outs from the audience pushed to HJZ', async () => {
+    await svc.emitSegmentUpserted('ws-1', 'crm-seg-1');
+    const where = prisma.contact.findMany.mock.calls[0][0].where;
+    expect(where.AND).toContainEqual({ marketingOptOut: false });
+    expect(where.AND).toContainEqual({ hjzClientId: { not: null } });
+  });
+
   it('pushes manual groups by membership', async () => {
     prisma.segment.findFirst.mockResolvedValue({
       id: 'grp-1', name: 'Hand-picked', filter: '{}', origin: 'manual', workspaceId: 'ws-1',

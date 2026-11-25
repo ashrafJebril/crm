@@ -1,23 +1,27 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Patch,
-  Post,
-} from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { AppointmentsService } from "./appointments.service";
-import { CreateAppointmentDto, UpdateAppointmentDto } from "./appointments.dto";
+import {
+  CreateAppointmentDto,
+  ListAppointmentsQuery,
+  SearchAppointmentsQuery,
+  UpdateAppointmentDto,
+} from "./appointments.dto";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 
 @Controller("appointments")
 export class AppointmentsController {
   constructor(private readonly svc: AppointmentsService) {}
 
+  /** SP-10: no query params → every booking, as before (ruling 13). */
   @Get()
-  list(@CurrentWorkspace() workspaceId: string) {
-    return this.svc.list(workspaceId);
+  list(@CurrentWorkspace() workspaceId: string, @Query() query: ListAppointmentsQuery) {
+    return this.svc.list(workspaceId, query);
+  }
+
+  /** SP-10 booking search typeahead. Declared before `:id`. */
+  @Get("search")
+  search(@CurrentWorkspace() workspaceId: string, @Query() query: SearchAppointmentsQuery) {
+    return this.svc.search(workspaceId, query.q);
   }
 
   @Get(":id")

@@ -1,17 +1,21 @@
 import { HttpException } from "@nestjs/common";
 import { KnowledgeClient } from "./knowledge.client";
 import { AiSettingsService } from "./ai-settings.service";
+import { makeFakePrisma } from "../channels/test-prisma";
+import { AgentReplyGate, invalidateAgentGate } from "../agent/agent-reply-gate";
 
 const URL_BASE = "http://localhost:4200";
 const SECRET = "test-admin-secret-not-a-real-key";
 
 /** Same helper as knowledge.spec.ts: env set for the duration of `fn`,
  *  including when `fn` is async. */
-function withConfig<T>(fn: () => T): T {
+/** Runs `fn` with kewy-ai configured (the default), or with both variables
+ *  emptied so a developer's local `.env` cannot make "unconfigured" tests call out. */
+function withConfig<T>(fn: () => T, configured = true): T {
   const prevUrl = process.env.KEWY_AI_URL;
   const prevSecret = process.env.KEWY_AI_ADMIN_SECRET;
-  process.env.KEWY_AI_URL = URL_BASE;
-  process.env.KEWY_AI_ADMIN_SECRET = SECRET;
+  process.env.KEWY_AI_URL = configured ? URL_BASE : "";
+  process.env.KEWY_AI_ADMIN_SECRET = configured ? SECRET : "";
   const restore = () => {
     if (prevUrl === undefined) delete process.env.KEWY_AI_URL;
     else process.env.KEWY_AI_URL = prevUrl;
@@ -138,7 +142,8 @@ describe("AiSettingsService — the three states are not conflated", () => {
     stubFetch({ body: { ...CONFIG, apiKeyRef: "vault://should-never-appear", escalationTarget: null } });
     const view = await withConfig(() => svc().get(WS_A));
     expect(Object.keys(view).sort()).toEqual(
-      ["aiEnabled", "autonomyMode", "configured", "dailyCostCapJod", "locale", "personaName"].sort(),
+      // SP-20 adds stoppedLocally (a boolean, nothing secret-shaped).
+      ["aiEnabled", "autonomyMode", "configured", "dailyCostCapJod", "locale", "personaName", "stoppedLocally"].sort(),
     );
     expect(JSON.stringify(view)).not.toContain("vault://");
   });
@@ -312,5 +317,95 @@ describe("AiSettingsService — failure keeps the CRM up", () => {
         expect(JSON.stringify(body)).not.toContain(SECRET);
       }
     });
+  });
+});
+
+// ─── SP-20 (ruling 3): the toggle also writes the CRM-side stop ──────────
+describe("AiSettingsService — the local emergency stop (SP-20)", () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+    jest.restoreAllMocks();
+    invalidateAgentGate();
+  });
+  const world = () => {
+    const prisma = makeFakePrisma({ workspace: [{ id: WS_A, name: "Salon", slug: "s", timezone: "Asia/Riyadh" }] });
+    return { prisma, svc: new AiSettingsService(new KnowledgeClient(), prisma as never) };
+  };
+
+  it("toggle writes the local stop and clears it on enable", async () => {
+    // With kewy-ai configured: the local stop is written AND kewy-ai still gets its call.
+    const { prisma, svc } = world();
+    const { calls } = stubFetch({ bodies: [{ aiEnabled: false, changed: true }, { aiEnabled: true, changed: true }] });
+    await withConfig(() => svc.setEnabled(WS_A, { enabled: false, reason: "Holiday", userId: "u1" }));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/kill-switch");
+    expect(JSON.parse(calls[0].init.body)).toEqual({ aiEnabled: false, reason: "Holiday" });
+    expect(prisma.db.agentSettings[0]).toMatchObject({ stoppedReason: "Holiday", stoppedById: "u1", version: 0 });
+    expect(prisma.db.agentSettings[0].stoppedAt).toBeInstanceOf(Date);
+
+    // The reply gate sees the stop at once (no 30 s cache wait in this process).
+    const gate = new AgentReplyGate(prisma as never);
+    expect(await gate.decide(WS_A, { conversationId: null, contactId: null })).toEqual({ reply: false, reason: "stopped" });
+
+    await withConfig(() => svc.setEnabled(WS_A, { enabled: true, userId: "u1" }));
+    expect(calls).toHaveLength(2);
+    expect(prisma.db.agentSettings[0]).toMatchObject({ stoppedAt: null, stoppedReason: null, stoppedById: null });
+    expect(await gate.decide(WS_A, { conversationId: null, contactId: null })).toEqual({ reply: true, reason: "ok" });
+  });
+
+  it("without kewy-ai config only the local stop changes", () =>
+    withConfig(async () => {
+    const { prisma, svc } = world();
+    const { calls } = stubFetch({ body: {} });
+    const off = await svc.setEnabled(WS_A, { enabled: false, reason: "Closed today", userId: "u1" });
+    expect(calls).toHaveLength(0);
+    expect(off).toEqual({ aiEnabled: false, changed: true, reason: "Closed today" });
+    expect(prisma.db.agentSettings[0].stoppedAt).toBeInstanceOf(Date);
+    const view = await svc.get(WS_A);
+    expect(view).toMatchObject({ configured: false, stoppedLocally: true });
+    // Turning it off twice is not a change.
+    expect(await svc.setEnabled(WS_A, { enabled: false, reason: "Still closed" })).toMatchObject({ changed: false });
+    const on = await svc.setEnabled(WS_A, { enabled: true });
+    expect(on).toEqual({ aiEnabled: true, changed: true });
+    expect((await svc.get(WS_A)).stoppedLocally).toBe(false);
+    expect(calls).toHaveLength(0);
+    }, false));
+
+  it("enabling while kewy-ai fails clears the local stop and returns the upstream failure", async () => {
+    const { prisma, svc } = world();
+    stubFetch({ body: { aiEnabled: false, changed: true } });
+    await withConfig(() => svc.setEnabled(WS_A, { enabled: false, reason: "Holiday", userId: "u1" }));
+    expect(prisma.db.agentSettings[0].stoppedAt).toBeInstanceOf(Date);
+
+    stubFetch({ status: 500, body: { message: "upstream exploded at /srv/x.js:1" } });
+    let err: unknown;
+    await withConfig(async () => {
+      err = await svc.setEnabled(WS_A, { enabled: true, userId: "u1" }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+    });
+    // The owner sees kewy-ai's failure (our structured, scrubbed error)...
+    expect(err).toBeInstanceOf(HttpException);
+    expect(((err as HttpException).getResponse() as { code: string }).code).toBe("AI_ERROR");
+    // ...and the CRM-side stop is cleared: the l path replies again; kewy-ai keeps its own switch until retried.
+    expect(prisma.db.agentSettings[0]).toMatchObject({ stoppedAt: null, stoppedReason: null, stoppedById: null });
+    const gate = new AgentReplyGate(prisma as never);
+    expect(await gate.decide(WS_A, { conversationId: null, contactId: null })).toEqual({ reply: true, reason: "ok" });
+  });
+
+  it("the reason rule still applies before anything is written", async () => {
+    const { prisma, svc } = world();
+    await expect(svc.setEnabled(WS_A, { enabled: false })).rejects.toBeInstanceOf(HttpException);
+    expect(prisma.db.agentSettings ?? []).toHaveLength(0);
+  });
+
+  it("GET adds stoppedLocally and shows the agent off while it holds", async () => {
+    const { prisma, svc } = world();
+    stubFetch({ body: CONFIG });
+    expect(await withConfig(() => svc.get(WS_A))).toMatchObject({ aiEnabled: true, stoppedLocally: false });
+    prisma.db.agentSettings = [{ id: "as", workspaceId: WS_A, stoppedAt: new Date(), excludedTagIds: [], tone: [], version: 0 }];
+    expect(await withConfig(() => svc.get(WS_A))).toMatchObject({ aiEnabled: false, stoppedLocally: true, configured: true });
   });
 });

@@ -1,9 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { qk } from "@/api/queryKeys";
+import { invalidateContactCaches } from "./useBoardData";
+import { mergeCachedTicket, mergeTicket } from "../ticketMerge";
 import type {
   Ticket,
   TicketActivity,
+  TicketCategory,
+  TicketDetail,
+  TicketPriority,
   TicketsListPage,
 } from "@/lib/types";
 
@@ -59,7 +64,10 @@ interface MoveVars {
   toStageId: string;
   pipelineId: string;
   lostReason?: string;
+  lostReasonId?: string;
   optimisticTicket: Ticket; // current ticket snapshot for the optimistic prepend
+  /** Leads won / lost / reopen change the contact: refresh its caches. */
+  invalidateContacts?: boolean;
 }
 
 export function useMoveTicket() {
@@ -69,6 +77,7 @@ export function useMoveTicket() {
       api.post<Ticket>(`/tickets/${v.ticketId}/move`, {
         stageId: v.toStageId,
         lostReason: v.lostReason,
+        lostReasonId: v.lostReasonId,
       }),
     onMutate: async (v) => {
       // Snapshot every stage cache in this pipeline so rollback is complete
@@ -83,7 +92,7 @@ export function useMoveTicket() {
       removeFromAllStages(qc, v.pipelineId, v.ticketId);
       // … then prepend it to the destination stage. Single source of truth.
       patchStageCache(qc, v.pipelineId, v.toStageId, (items) => [
-        { ...v.optimisticTicket, stageId: v.toStageId },
+        { ...v.optimisticTicket, stageId: v.toStageId, enteredStageAt: new Date().toISOString() },
         ...items,
       ]);
 
@@ -93,6 +102,7 @@ export function useMoveTicket() {
       ctx?.snap.forEach(([key, val]) => qc.setQueryData(key, val));
     },
     onSettled: (_data, _err, v) => {
+      if (v.invalidateContacts) invalidateContactCaches(qc);
       qc.invalidateQueries({
         queryKey: ["tickets", "stage", v.pipelineId],
       });
@@ -112,6 +122,9 @@ interface CreateVars {
   value?: number;
   ownerId?: string;
   conversationId?: string;
+  /** SP-09 */
+  priority?: TicketPriority;
+  category?: TicketCategory | null;
 }
 
 export function useCreateTicket() {
@@ -140,6 +153,8 @@ export function useCreateTicketFromConversation() {
       description?: string;
       value?: number;
       ownerId?: string;
+      priority?: TicketPriority;
+      category?: TicketCategory | null;
     }) =>
       api.post<Ticket>(`/tickets/from-conversation/${v.conversationId}`, {
         pipelineId: v.pipelineId,
@@ -148,6 +163,8 @@ export function useCreateTicketFromConversation() {
         description: v.description,
         value: v.value,
         ownerId: v.ownerId,
+        priority: v.priority,
+        category: v.category,
       }),
     onSuccess: (ticket, v) => {
       patchStageCache(qc, v.pipelineId, v.stageId, (items) => [ticket, ...items]);
@@ -164,10 +181,26 @@ export function useUpdateTicket() {
   return useMutation({
     mutationFn: async (v: {
       id: string;
-      patch: { title?: string; description?: string; value?: number; ownerId?: string };
-    }) => api.patch<Ticket>(`/tickets/${v.id}`, v.patch),
-    onSuccess: (ticket) => {
-      qc.setQueryData(qk.ticket(ticket.id), ticket);
+      patch: {
+        title?: string;
+        description?: string;
+        value?: number;
+        ownerId?: string;
+        priority?: TicketPriority;
+        category?: TicketCategory | null;
+      };
+    }) => api.patch<TicketDetail>(`/tickets/${v.id}`, v.patch),
+    onSuccess: (full) => {
+      // The PATCH returns the full ticket (final review M2): fresh activities
+      // (owner/value changes), pipeline, channel and attachmentCount. Only an
+      // existing detail entry is replaced (M1); cards get the row fields only.
+      qc.setQueryData<TicketDetail>(qk.ticket(full.id), (prev) => mergeCachedTicket(prev, full));
+      const { activities: _activities, pipeline: _pipeline, ...ticket } = full;
+      void _activities;
+      void _pipeline;
+      // The table and filtered columns may now sort or filter it differently.
+      void qc.invalidateQueries({ queryKey: ["tickets", "table"] });
+      void qc.invalidateQueries({ queryKey: ["record", "ticket", ticket.id] });
       // Patch every stage cache that might contain it (pipelineId may vary)
       qc.setQueriesData<StageTicketsCache>(
         { queryKey: ["tickets", "stage"] },
@@ -177,7 +210,7 @@ export function useUpdateTicket() {
             ...curr,
             pages: curr.pages.map((p) => ({
               ...p,
-              items: p.items.map((t) => (t.id === ticket.id ? ticket : t)),
+              items: p.items.map((t) => (t.id === ticket.id ? mergeTicket(t, ticket) : t)),
             })),
           };
         },
@@ -196,6 +229,7 @@ export function useAddNote() {
       api.post<TicketActivity>(`/tickets/${v.ticketId}/notes`, { note: v.note }),
     onSuccess: (_a, v) => {
       qc.invalidateQueries({ queryKey: qk.ticket(v.ticketId) });
+      void qc.invalidateQueries({ queryKey: ["record", "ticket", v.ticketId] });
     },
   });
 }

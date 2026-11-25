@@ -1,3 +1,4 @@
+import { NotFoundException } from "@nestjs/common";
 import { TemplatesService } from "./templates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ZernioClient } from "../integrations/zernio.client";
@@ -21,6 +22,8 @@ describe("TemplatesService.list — reconciliation against Meta", () => {
   }) => {
     const local = opts.local ?? [];
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: {
         findFirst: jest.fn().mockResolvedValue(
           opts.accountId === null ? null : { pageId: opts.accountId ?? "acc1", provider: "zernio" },
@@ -208,6 +211,8 @@ describe("TemplatesService.create — real submission only", () => {
 
   const build = (accountId: string | null = "acc1") => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: {
         findFirst: jest
           .fn()
@@ -301,6 +306,7 @@ describe("TemplatesService.create — real submission only", () => {
   it("refuses to invent an approved template when WhatsApp is not connected", async () => {
     const { svc, prisma } = build(null);
 
+    // SP-13 ruling 6: the keyed 409 every marketing action shares.
     await expect(
       svc.create(workspaceId, {
         name: "order_ready",
@@ -308,7 +314,10 @@ describe("TemplatesService.create — real submission only", () => {
         category: "UTILITY",
         body: "hi",
       }),
-    ).rejects.toThrow(/not connected/i);
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { statusCode: 409, message: "campaigns.whatsapp_not_connected", code: "WHATSAPP_NOT_CONNECTED" },
+    });
     expect(prisma.template.create).not.toHaveBeenCalled();
   });
 });
@@ -318,6 +327,8 @@ describe("TemplatesService.create — category translation", () => {
     // Meta retired TRANSACTIONAL and 400s on it, but our seed and older rows
     // still use it — including order_confirmed_v2 in the demo workspace.
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
@@ -347,6 +358,8 @@ describe("TemplatesService.create — category translation", () => {
 describe("TemplatesService.update — edits reach Meta", () => {
   const build = (row: Record<string, unknown>) => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findFirst: jest.fn().mockResolvedValue(row),
@@ -436,6 +449,8 @@ describe("TemplatesService.duplicate", () => {
 describe("TemplatesService.remove", () => {
   const build = (row: Record<string, unknown>, deleteFails = false) => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findFirst: jest.fn().mockResolvedValue(row),
@@ -514,6 +529,8 @@ describe("TemplatesService.list — write only on change", () => {
       buttons: null,
     };
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findMany: jest.fn().mockResolvedValue([stored]),
@@ -547,6 +564,8 @@ describe("TemplatesService.list — write only on change", () => {
 
   it("writes when Meta's verdict has actually changed", async () => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findMany: jest.fn().mockResolvedValue([
@@ -592,6 +611,8 @@ describe("TemplatesService.list — write only on change", () => {
 describe("TemplatesService.create — Zernio's lowercase component contract", () => {
   const build = () => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
@@ -669,6 +690,8 @@ describe("TemplatesService.create — Zernio's lowercase component contract", ()
 describe("TemplatesService.create — Meta requires sample values", () => {
   const build = () => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: { create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })) },
     };
@@ -768,6 +791,8 @@ describe("TemplatesService.create — Meta requires sample values", () => {
 describe("TemplatesService.list — surfaces Meta's rejection reason", () => {
   const build = (meta: Array<Record<string, unknown>>, local: Array<Record<string, unknown>> = []) => {
     const prisma = {
+      // SP-19: no mirrored channel yet, so the legacy Integration row is used.
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
       integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1", provider: "zernio" }) },
       template: {
         findMany: jest.fn().mockResolvedValue(local),
@@ -832,5 +857,311 @@ describe("TemplatesService.list — surfaces Meta's rejection reason", () => {
 
     expect(rows[0].status).toBe("approved");
     expect(rows[0].metaRejectionReason).toBeNull();
+  });
+});
+
+describe("template create with headerMediaId submits header_handle from the library file", () => {
+  const MB = 1024 * 1024;
+  const library = [
+    { id: "img", workspaceId: "ws1", mimeType: "image/jpeg", sizeBytes: 2 * MB, uploadedById: "u" },
+    { id: "bigimg", workspaceId: "ws1", mimeType: "image/png", sizeBytes: 6 * MB, uploadedById: "u" },
+    { id: "pdf", workspaceId: "ws1", mimeType: "application/pdf", sizeBytes: 90 * MB, uploadedById: "u" },
+    { id: "foreign", workspaceId: "ws2", mimeType: "image/jpeg", sizeBytes: 1, uploadedById: "u" },
+  ];
+  const build = (row?: Record<string, unknown>) => {
+    const prisma: any = {
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      template: {
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "t9", ...data })),
+        findFirst: jest.fn().mockResolvedValue(row ?? null),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...row, ...data })),
+      },
+      // SP-13 M1: the header write locks the media row and re-reads it.
+      media: {
+        findFirst: jest.fn(async ({ where }: any) =>
+          library.find((x) => x.id === where.id && x.workspaceId === where.workspaceId) ?? null,
+        ),
+      },
+      $executeRaw: jest.fn(async () => 0),
+    };
+    prisma.$transaction = jest.fn(async (fn: any) => fn(prisma));
+    const client = {
+      createWhatsAppTemplate: jest.fn().mockResolvedValue({ id: "m1", name: "x", status: "PENDING", language: "en" }),
+      updateWhatsAppTemplate: jest.fn().mockResolvedValue({ id: "m1", name: "x", status: "PENDING", language: "en" }),
+    };
+    const media = {
+      get: jest.fn(async (ws: string, id: string) => {
+        const m = library.find((x) => x.id === id && x.workspaceId === ws);
+        if (!m) throw new NotFoundException("Media not found");
+        return m;
+      }),
+      resolveExternalUrl: jest.fn(async (_ws: string, id: string) => `https://cdn.example/${id}?sig`),
+    };
+    const svc = new TemplatesService(
+      prisma as unknown as PrismaService,
+      client as unknown as ZernioClient,
+      media as never,
+    );
+    return { svc, prisma, client, media };
+  };
+  const base = { name: "x", lang: "en", category: "MARKETING", body: "Hi" };
+  const viewer = { userId: "u1" } as never;
+
+  it("submits the library file's link as header_handle and stores headerMediaId (headerContent null)", async () => {
+    const { svc, client, prisma, media } = build();
+    const row = await svc.create("ws1", { ...base, headerType: "image", headerMediaId: "img" }, viewer);
+    expect(media.get).toHaveBeenCalledWith("ws1", "img", viewer);
+    expect(media.resolveExternalUrl).toHaveBeenCalledWith("ws1", "img", 3600);
+    expect(client.createWhatsAppTemplate.mock.calls[0][0].components[0]).toEqual({
+      type: "header",
+      format: "image",
+      example: { header_handle: ["https://cdn.example/img?sig"] },
+    });
+    const data = prisma.template.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ headerType: "image", headerMediaId: "img", headerContent: null });
+    expect(row.headerMediaId).toBe("img");
+  });
+
+  it("a document header takes a PDF up to 100 MB", async () => {
+    const { svc, client } = build();
+    await svc.create("ws1", { ...base, headerType: "document", headerMediaId: "pdf" });
+    expect(client.createWhatsAppTemplate.mock.calls[0][0].components[0]).toMatchObject({ format: "document" });
+  });
+
+  it("a foreign media id -> 404, nothing submitted", async () => {
+    const { svc, client, prisma } = build();
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerMediaId: "foreign" })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(prisma.template.create).not.toHaveBeenCalled();
+  });
+
+  it("a kind mismatch -> 400 templates.header_media_mismatch; text/none headers take no media", async () => {
+    const { svc, client } = build();
+    for (const headerType of ["video", "document", "text", "none"]) {
+      await expect(svc.create("ws1", { ...base, headerType, headerMediaId: "img" })).rejects.toMatchObject({
+        message: "templates.header_media_mismatch",
+      });
+    }
+    await expect(svc.create("ws1", { ...base, headerMediaId: "img" })).rejects.toMatchObject({
+      message: "templates.header_media_mismatch",
+    });
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it("over the WhatsApp header limit -> 400 templates.header_media_too_large {limit}", async () => {
+    const { svc, client } = build();
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerMediaId: "bigimg" })).rejects.toMatchObject({
+      response: { message: "templates.header_media_too_large", limit: 5 * MB },
+    });
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it('headerType "none" sends no header and stores none', async () => {
+    const { svc, client, prisma } = build();
+    await svc.create("ws1", { ...base, headerType: "none", headerContent: "ignored" });
+    expect(client.createWhatsAppTemplate.mock.calls[0][0].components.map((c: any) => c.type)).toEqual(["body"]);
+    expect(prisma.template.create.mock.calls[0][0].data).toMatchObject({
+      headerType: null,
+      headerContent: null,
+      headerMediaId: null,
+    });
+  });
+
+  it("PATCH swaps the header file, resubmits it to Meta and stores the new id", async () => {
+    const existing = {
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "approved", body: "Hi",
+      headerType: "document", headerMediaId: "old", metaTemplateId: "meta-1",
+    };
+    const { svc, client, prisma, media } = build(existing);
+    await svc.update("ws1", "t1", { headerType: "image", headerMediaId: "img" }, viewer);
+    expect(media.get).toHaveBeenCalledWith("ws1", "img", viewer);
+    expect(client.updateWhatsAppTemplate.mock.calls[0][2][0]).toEqual({
+      type: "header",
+      format: "image",
+      example: { header_handle: ["https://cdn.example/img?sig"] },
+    });
+    expect(prisma.template.update.mock.calls[0][0].data).toMatchObject({
+      headerType: "image",
+      headerMediaId: "img",
+      headerContent: null,
+    });
+  });
+
+  it("PATCH to a text or none header clears headerMediaId; a foreign id is 404", async () => {
+    const existing = {
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "local", body: "Hi",
+      headerType: "image", headerMediaId: "img", metaTemplateId: null,
+    };
+    const { svc, prisma } = build(existing);
+    await svc.update("ws1", "t1", { headerType: "none" });
+    expect(prisma.template.update.mock.calls[0][0].data).toMatchObject({ headerType: null, headerMediaId: null, headerContent: null });
+    await svc.update("ws1", "t1", { headerType: "text", headerContent: "Hello" });
+    expect(prisma.template.update.mock.calls[1][0].data).toMatchObject({ headerType: "text", headerMediaId: null, headerContent: "Hello" });
+    await expect(svc.update("ws1", "t1", { headerMediaId: "foreign" })).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("PATCH that leaves the header alone keeps headerMediaId and re-sends the stored file", async () => {
+    const existing = {
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "approved", body: "Hi",
+      headerType: "image", headerMediaId: "img", metaTemplateId: "meta-1",
+    };
+    const { svc, client, prisma } = build(existing);
+    await svc.update("ws1", "t1", { body: "Hello" });
+    expect(client.updateWhatsAppTemplate.mock.calls[0][2][0]).toMatchObject({
+      format: "image",
+      example: { header_handle: ["https://cdn.example/img?sig"] },
+    });
+    expect(prisma.template.update.mock.calls[0][0].data.headerMediaId).toBeUndefined();
+  });
+
+  it("saving a header file takes the media lock in the same transaction as the write", async () => {
+    const { svc, prisma } = build();
+    const order: string[] = [];
+    prisma.$executeRaw.mockImplementation(async (s: TemplateStringsArray, ...v: any[]) => {
+      order.push(`${s.join("?")}|${v.join(",")}`);
+      return 0;
+    });
+    prisma.template.create.mockImplementation(({ data }: any) => {
+      order.push("create");
+      return Promise.resolve({ id: "t9", ...data });
+    });
+    await svc.create("ws1", { ...base, headerType: "image", headerMediaId: "img" });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["SELECT pg_advisory_xact_lock(hashtext(?))|media:img", "create"]);
+  });
+
+  it("a file deleted between the check and the write -> 404, nothing stored", async () => {
+    const { svc, prisma } = build();
+    prisma.media.findFirst.mockResolvedValueOnce(null);
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerMediaId: "img" })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(prisma.template.create).not.toHaveBeenCalled();
+  });
+
+  it("a media header with neither a file nor a sample URL -> 400 templates.header_media_required", async () => {
+    const { svc, client, prisma } = build({
+      id: "t1", name: "x", lang: "en", category: "MARKETING", status: "approved", body: "Hi",
+      headerType: "image", headerMediaId: "img", metaTemplateId: "meta-1",
+    });
+    for (const headerType of ["image", "video", "document"]) {
+      await expect(svc.create("ws1", { ...base, headerType })).rejects.toMatchObject({
+        response: { statusCode: 400, message: "templates.header_media_required" },
+      });
+    }
+    // clearing the file on a media header without switching the type
+    await expect(svc.update("ws1", "t1", { headerMediaId: null })).rejects.toMatchObject({
+      response: { message: "templates.header_media_required" },
+    });
+    expect(client.createWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(client.updateWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(prisma.template.update).not.toHaveBeenCalled();
+    // a legacy sample URL still counts as a sample
+    await expect(svc.create("ws1", { ...base, headerType: "image", headerContent: "https://cdn/x.png" })).resolves.toBeTruthy();
+  });
+});
+
+// ─── SP-14 Task 2: paused / disabled and template quality ───────────────────
+describe("SP-14 template status and quality", () => {
+  const build = (meta: Array<Record<string, unknown>>, local: Array<Record<string, unknown>> = []) => {
+    const prisma = {
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      integration: { findFirst: jest.fn().mockResolvedValue({ pageId: "acc1" }) },
+      template: {
+        findMany: jest.fn().mockResolvedValue(local),
+        update: jest.fn().mockImplementation(({ data }) => Promise.resolve(data)),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve({ id: "new", ...data })),
+      },
+    };
+    const client = { whatsappTemplates: jest.fn().mockResolvedValue(meta) };
+    const svc = new TemplatesService(prisma as unknown as PrismaService, client as unknown as ZernioClient);
+    return { svc, prisma, client };
+  };
+  const m = (name: string, status: string, extra: Record<string, unknown> = {}) => ({
+    id: `meta-${name}`,
+    name,
+    language: "en",
+    status,
+    category: "MARKETING",
+    components: [{ type: "BODY", text: "Hi" }],
+    ...extra,
+  });
+
+  it("paused and disabled map from every source: the Zernio list", async () => {
+    const { svc } = build([
+      m("a", "PAUSED"),
+      m("b", "DISABLED"),
+      m("c", "IN_APPEAL"),
+      m("d", "PENDING_DELETION"),
+      m("e", "APPROVED"),
+      m("f", "REJECTED"),
+      m("g", "SOMETHING_NEW"),
+      m("h", "paused"),
+    ]);
+    const rows = await svc.list("ws1");
+    expect(Object.fromEntries(rows.map((r) => [r.name, r.status]))).toEqual({
+      a: "paused",
+      b: "disabled",
+      c: "pending",
+      d: "pending",
+      e: "approved",
+      f: "rejected",
+      g: "pending",
+      h: "paused",
+    });
+  });
+
+  it("reconcile writes quality: the score, UNKNOWN as NOT_RATED, absent clears it (final review M5)", async () => {
+    const local = [
+      { id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null },
+      { id: "t2", name: "b", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-b", body: "Hi", quality: null },
+      { id: "t3", name: "c", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-c", body: "Hi", quality: "RED" },
+    ];
+    const { svc, prisma } = build(
+      [m("a", "APPROVED", { quality_score: { score: "YELLOW" } }), m("b", "APPROVED", { quality_score: { score: "UNKNOWN" } }), m("c", "APPROVED"), m("n", "APPROVED", { quality_score: { score: "GREEN" } })],
+      local,
+    );
+    const rows = await svc.list("ws1");
+    const by = Object.fromEntries(rows.map((r) => [r.name, r]));
+    expect(by.a.quality).toBe("YELLOW");
+    expect(by.b.quality).toBe("NOT_RATED");
+    // Absent: the provider no longer reports a score, so the old one is cleared (R1: never kept as current).
+    expect(by.c.quality).toBeNull();
+    const updated = prisma.template.update.mock.calls.map((c: any) => c[0].where.id);
+    expect(updated.sort()).toEqual(["t1", "t2", "t3"]);
+    expect(prisma.template.update.mock.calls.find((c: any) => c[0].where.id === "t3")[0].data.quality).toBeNull();
+    expect(prisma.template.create.mock.calls[0][0].data.quality).toBe("GREEN");
+    // Each listed row says where its quality came from and when it was read.
+    expect(by.a.qualitySource).toBe("zernio_passthrough");
+    expect(typeof by.a.qualityReadAt).toBe("string");
+    expect(by.c.qualitySource).toBeNull();
+    expect(by.n.qualitySource).toBe("zernio_passthrough");
+  });
+
+  it("an already-unknown quality with no score is not rewritten", async () => {
+    const local = [{ id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null }];
+    const { svc, prisma } = build([m("a", "APPROVED")], local);
+    await svc.list("ws1");
+    expect(prisma.template.update).not.toHaveBeenCalled();
+  });
+
+  it("a failed list read keeps the stored quality but marks it as not read now", async () => {
+    const local = [{ id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: "GREEN" }];
+    const { svc, client } = build([], local);
+    client.whatsappTemplates.mockRejectedValueOnce(new Error("down"));
+    const rows = await svc.list("ws1");
+    expect(rows[0]).toMatchObject({ quality: "GREEN", qualityReadAt: null });
+  });
+
+  it("reconcileFromList reconciles a list already read, without a Zernio call", async () => {
+    const local = [{ id: "t1", name: "a", lang: "en", category: "MARKETING", status: "approved", uses: 0, metaTemplateId: "meta-a", body: "Hi", quality: null }];
+    const { svc, prisma, client } = build([], local);
+    const rows = await svc.reconcileFromList("ws1", [m("a", "PAUSED", { quality_score: { score: "RED" } })] as never);
+    expect(client.whatsappTemplates).not.toHaveBeenCalled();
+    expect(prisma.template.findMany).toHaveBeenCalledWith({ where: { workspaceId: "ws1" }, orderBy: { createdAt: "desc" } });
+    expect(rows[0]).toMatchObject({ status: "paused", quality: "RED" });
   });
 });

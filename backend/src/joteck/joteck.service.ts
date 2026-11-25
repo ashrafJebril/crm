@@ -194,12 +194,23 @@ export class JoteckService {
     }
     // Kewy pushes the name of the workspace's package (tier) whenever an admin
     // changes it, so the plan shown in the CRM follows Kewy.
+    let pushedPlan: string | null = null;
     if (typeof body.plan === "string") {
       const plan = body.plan.trim();
       if (!plan || plan.length > 60) throw new BadRequestException("plan must be 1-60 characters");
-      data.plan = plan;
+      // SP-28 (R8): Kewy's plan is always remembered; it becomes the plan
+      // unless a super-admin override is in place (cleared from the admin).
+      data.kewyPlan = plan;
+      pushedPlan = plan;
     }
-    const updated = await this.prisma.raw.workspace.update({
+    // SP-28 M3: one transaction. The plan is a conditional write (an override
+    // set mid-push is never overwritten); if the main update fails, the plan
+    // write rolls back with it.
+    const updated = await this.prisma.raw.$transaction(async (tx) => {
+      if (pushedPlan !== null) {
+        await tx.workspace.updateMany({ where: { id, planOverriddenAt: null }, data: { plan: pushedPlan } });
+      }
+      return tx.workspace.update({
       where: { id },
       data,
       select: {
@@ -216,6 +227,7 @@ export class JoteckService {
         enabledModules: true,
         createdAt: true,
       },
+      });
     });
     // A newly linked workspace gets its agent wired to this CRM straight away
     // (tools + prompt), so Kewy AI can book without anyone configuring it.

@@ -5,10 +5,14 @@ import { Public } from "../auth/public.decorator";
 import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { McpAuthGuard } from "./mcp-auth.guard";
 import { McpToolsFactory } from "./mcp-tools.factory";
+import { SkillsService } from "../skills/skills.service";
 
 @Controller()
 export class McpServerController {
-  constructor(private readonly toolsFactory: McpToolsFactory) {}
+  constructor(
+    private readonly toolsFactory: McpToolsFactory,
+    private readonly skills: SkillsService,
+  ) {}
 
   // @Public() bypasses the global per-user AuthGuard; McpAuthGuard is this
   // route's own authentication (a per-workspace bearer token, see Task 6).
@@ -19,7 +23,8 @@ export class McpServerController {
     const server = new MCPServer({
       name: "tkana-crm",
       version: "1.0.0",
-      tools: this.toolsFactory.build(workspaceId),
+      // SP-22: only the tools of this workspace's enabled skills (one indexed query).
+      tools: this.toolsFactory.build(workspaceId, { enabled: await this.skills.enabledFor(workspaceId) }),
     });
     // serverless:true — a fresh MCPServer is built per request (see above),
     // so there is no shared session-transport map across requests for a

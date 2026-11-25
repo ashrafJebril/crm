@@ -1,0 +1,583 @@
+import { CampaignSendService, REFRESH_SWEEP_MAX_PAGES } from "./campaign-send.service";
+import { makeFakePrisma } from "../channels/test-prisma";
+import { RecipientTrackerService } from "./tracking/recipient-tracker.service";
+import { CampaignReplyAttributor } from "./tracking/reply-attributor.service";
+import { freeBudget } from "./sending/launch-test-world";
+
+/** SP-12 Task 1 fix round 1: sweep counters, paging, scheduled tail, cron guard and ordering. */
+
+const NOW = new Date("2026-11-09T12:00:00.000Z");
+const H = 3_600_000;
+const ago = (ms: number) => new Date(NOW.getTime() - ms);
+const phone = (i: number) => `+9627900${String(i).padStart(5, "0")}`;
+
+const campaign = (id: string, over: Record<string, unknown> = {}) => ({
+  id,
+  workspaceId: "ws1",
+  name: id,
+  status: "running",
+  zernioBroadcastId: `b-${id}`,
+  recipientTracking: true,
+  recipientSyncSkip: 0,
+  recipientsSyncedAt: null,
+  launchedAt: ago(H),
+  scheduledAt: null,
+  sent: 0,
+  delivered: 0,
+  read: 0,
+  failed: 0,
+  replied: 0,
+  ...over,
+});
+
+const rows = (campaignId: string, n: number, status = "queued") =>
+  Array.from({ length: n }, (_, i) => ({
+    id: `${campaignId}-r${String(i).padStart(5, "0")}`,
+    workspaceId: "ws1",
+    campaignId,
+    contactId: null,
+    channelId: "chA",
+    phone: phone(i),
+    contactName: null,
+    status,
+    messageId: null,
+    sentAt: null,
+    deliveredAt: null,
+    readAt: null,
+    repliedAt: null,
+    failureCode: null,
+    failureReason: null,
+    createdAt: ago(H),
+    updatedAt: ago(H),
+  }));
+
+const zr = (i: number, status = "delivered") => ({
+  id: `z${i}`,
+  contactId: null,
+  channelId: null,
+  platformIdentifier: phone(i).slice(1),
+  contactName: null,
+  status,
+  messageId: `wamid.${i}`,
+  error: null,
+  errorCode: null,
+  errorExplanation: null,
+  errorTraceId: null,
+  sentAt: ago(30 * 60_000).toISOString(),
+  deliveredAt: ago(29 * 60_000).toISOString(),
+  readAt: null,
+});
+
+/** A Zernio that pages a list of `total` delivered recipients and reports pagination as told. */
+function pagedZernio(total: number, pagination: "none" | "full" = "none") {
+  return jest.fn(async (_b: string, { skip, limit }: { skip: number; limit: number }) => {
+    const recipients = Array.from({ length: Math.max(0, Math.min(limit, total - skip)) }, (_, k) => zr(skip + k));
+    return {
+      recipients,
+      pagination:
+        pagination === "full"
+          ? { total, limit, skip, hasMore: skip + recipients.length < total }
+          : // What the client returns when Zernio sends no pagination block.
+            { total: null, limit, skip, hasMore: null },
+      summary: {},
+    };
+  });
+}
+
+function build(seed: Parameters<typeof makeFakePrisma>[0]) {
+  const prisma = makeFakePrisma(seed);
+  const zernio = {
+    getBroadcast: jest.fn().mockResolvedValue({ status: "sending", recipientCount: 250, sent: 240, delivered: 200, read: 120, failed: 3 }),
+    listBroadcastRecipients: jest.fn(),
+  };
+  const svc = new CampaignSendService(prisma, zernio as never, { isLocked: jest.fn() } as never, new RecipientTrackerService(prisma));
+  // Time is frozen here; the process-wide token bucket would wait on real time.
+  svc.budget = freeBudget().budget;
+  return { prisma, zernio, svc };
+}
+
+beforeEach(() => {
+  jest.useFakeTimers({ now: NOW, doNotFake: ["nextTick", "setImmediate", "queueMicrotask", "setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+  delete process.env.ZERNIO_RECIPIENT_PAGE;
+  delete process.env.RECIPIENT_SYNC_MAX_PAGES;
+});
+afterEach(() => {
+  jest.useRealTimers();
+  delete process.env.ZERNIO_RECIPIENT_PAGE;
+  delete process.env.RECIPIENT_SYNC_MAX_PAGES;
+});
+
+describe("sweep counters (I1)", () => {
+  it("counters are not zeroed before the first full pass", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1")], campaignRecipient: rows("c1", 250) });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(250, "full"));
+    await svc.syncActive();
+    const c = prisma.db.campaign[0];
+    expect(c.recipientsSyncedAt).toBeNull();
+    // Zernio's aggregate counters still apply; the 100 delivered rows never lower them.
+    expect(c).toMatchObject({ sent: 240, delivered: 200, read: 120, failed: 3 });
+    expect(svc.refresh).toBeDefined();
+    // Refresh's own sweep (fix I2) fails here, so its pass does not end either.
+    zernio.listBroadcastRecipients.mockRejectedValue(new Error("timeout"));
+    const refreshed = await svc.refresh("ws1", "c1");
+    expect(refreshed).toMatchObject({ sent: 240, delivered: 200 });
+  });
+
+  it("a paging response without hasMore still pages through 250 rows", async () => {
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1")], campaignRecipient: rows("c1", 250) });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(250, "none"));
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[1].skip)).toEqual([0, 100, 200]);
+    expect(prisma.db.campaignRecipient.every((r: { status: string }) => r.status === "delivered")).toBe(true);
+    const c = prisma.db.campaign[0];
+    expect(c.recipientSyncSkip).toBe(0);
+    expect(c.recipientsSyncedAt).toEqual(NOW);
+    // After the first full pass the counters come from rows.
+    expect(c).toMatchObject({ sent: 250, delivered: 250, read: 0, failed: 0 });
+  });
+
+  it("stops when skip reaches the reported total even if hasMore is missing", async () => {
+    const { zernio, svc, prisma } = build({ campaign: [campaign("c1")], campaignRecipient: rows("c1", 200) });
+    const inner = pagedZernio(200, "none");
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, o: { skip: number; limit: number }) => {
+      const res = await inner(b, o);
+      return { ...res, pagination: { ...res.pagination, total: 200 } };
+    });
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(2);
+    expect(prisma.db.campaign[0].recipientsSyncedAt).toEqual(NOW);
+  });
+
+  it("recount runs after a partial tick", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    // Second pass: the first full pass already happened, so counters come from rows.
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("c1", { recipientsSyncedAt: ago(H), sent: 0, delivered: 0 })],
+      campaignRecipient: rows("c1", 250),
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(250, "full"));
+    await svc.syncActive();
+    const c = prisma.db.campaign[0];
+    expect(c.recipientSyncSkip).toBe(100);
+    expect(c).toMatchObject({ sent: 100, delivered: 100, read: 0 });
+  });
+});
+
+describe("scheduled tail (I2)", () => {
+  it("a campaign scheduled more than 72h ahead is swept for 72h after its scheduled send", async () => {
+    const { zernio, svc } = build({
+      campaign: [campaign("c1", { status: "completed", launchedAt: ago(100 * H), scheduledAt: ago(H) })],
+      campaignRecipient: rows("c1", 1),
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+
+    const old = build({
+      campaign: [campaign("c1", { status: "completed", launchedAt: ago(200 * H), scheduledAt: ago(73 * H) })],
+      campaignRecipient: rows("c1", 1),
+    });
+    await old.svc.syncActive();
+    expect(old.zernio.listBroadcastRecipients).not.toHaveBeenCalled();
+  });
+});
+
+describe("cron ordering, guard and budget (I3)", () => {
+  it("status sync runs for every active campaign before any sweep", async () => {
+    const { zernio, svc } = build({
+      campaign: [campaign("a"), campaign("u", { recipientTracking: false }), campaign("b")],
+      campaignRecipient: [...rows("a", 1), ...rows("b", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(3);
+    const lastStatus = Math.max(...zernio.getBroadcast.mock.invocationCallOrder);
+    const firstSweep = Math.min(...zernio.listBroadcastRecipients.mock.invocationCallOrder);
+    expect(lastStatus).toBeLessThan(firstSweep);
+  });
+
+  it("an overlapping tick is skipped while one is running", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("a")], campaignRecipient: rows("a", 1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, o: { skip: number; limit: number }) => {
+      await gate;
+      return pagedZernio(1, "full")(b, o);
+    });
+    const first = svc.syncActive();
+    await new Promise((r) => setImmediate(r));
+    await svc.syncActive(); // returns at once
+    release();
+    await first;
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1);
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    // The guard is released: a later tick runs again.
+    await svc.syncActive();
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it("RECIPIENT_SYNC_MAX_PAGES is a global budget shared round-robin across campaigns", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "5";
+    process.env.ZERNIO_RECIPIENT_PAGE = "10";
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("big"), campaign("small")],
+      campaignRecipient: [...rows("big", 1000), ...rows("small", 15)],
+    });
+    const big = pagedZernio(1000, "full");
+    const small = pagedZernio(15, "full");
+    zernio.listBroadcastRecipients.mockImplementation((b: string, o: { skip: number; limit: number }) =>
+      b === "b-big" ? big(b, o) : small(b, o),
+    );
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => `${c[0]}@${c[1].skip}`)).toEqual([
+      "b-big@0",
+      "b-small@0",
+      "b-big@10",
+      "b-small@10",
+      "b-big@20",
+    ]);
+    const by = Object.fromEntries(prisma.db.campaign.map((c: any) => [c.id, c]));
+    expect(by.small).toMatchObject({ recipientSyncSkip: 0, recipientsSyncedAt: NOW });
+    expect(by.big).toMatchObject({ recipientSyncSkip: 30, recipientsSyncedAt: null });
+  });
+
+  it("a failing campaign does not stop the others, and keeps its offset", async () => {
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("bad", { recipientSyncSkip: 40 }), campaign("ok")],
+      campaignRecipient: rows("ok", 1),
+    });
+    const ok = pagedZernio(1, "full");
+    zernio.listBroadcastRecipients.mockImplementation((b: string, o: { skip: number; limit: number }) =>
+      b === "b-bad" ? Promise.reject(new Error("timeout")) : ok(b, o),
+    );
+    await svc.syncActive();
+    const by = Object.fromEntries(prisma.db.campaign.map((c: any) => [c.id, c]));
+    expect(by.bad.recipientSyncSkip).toBe(40);
+    expect(by.ok.recipientsSyncedAt).toEqual(NOW);
+  });
+});
+
+describe("fix round 2", () => {
+  it("R1: with a budget of 2 and 3 campaigns, all three are swept across two ticks", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "2";
+    const { zernio, svc } = build({
+      campaign: [campaign("a"), campaign("b"), campaign("c")],
+      campaignRecipient: [...rows("a", 1), ...rows("b", 1), ...rows("c", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    jest.setSystemTime(new Date(NOW.getTime() + 5 * 60_000));
+    await svc.syncActive();
+    const swept = new Set(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[0]));
+    expect([...swept].sort()).toEqual(["b-a", "b-b", "b-c"]);
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(4);
+  });
+
+  it("R1: tail campaigns whose pass completed are swept at most hourly and do not eat the budget", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    const { zernio, svc } = build({
+      campaign: [
+        campaign("t1", { status: "completed", recipientsSyncedAt: ago(10 * 60_000) }),
+        campaign("t2", { status: "completed", recipientsSyncedAt: ago(20 * 60_000) }),
+        campaign("live", { recipientsSyncedAt: ago(5 * 60_000) }),
+      ],
+      campaignRecipient: [...rows("t1", 1), ...rows("t2", 1), ...rows("live", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    // The tail campaigns synced < 1 h ago are not swept; the live one gets the only page.
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[0])).toEqual(["b-live"]);
+
+    // An hour later the tail campaigns are due again (oldest-synced first).
+    jest.setSystemTime(new Date(NOW.getTime() + 61 * 60_000));
+    zernio.listBroadcastRecipients.mockClear();
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[0])).toEqual(["b-t2"]);
+  });
+
+  it("R2: an explicit hasMore:true is trusted even on a short page", async () => {
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1")], campaignRecipient: rows("c1", 100) });
+    zernio.listBroadcastRecipients.mockImplementation(async (_b: string, { skip }: { skip: number }) =>
+      skip === 0
+        ? { recipients: Array.from({ length: 95 }, (_, k) => zr(k)), pagination: { total: 100, limit: 100, skip: 0, hasMore: true }, summary: {} }
+        : { recipients: Array.from({ length: 5 }, (_, k) => zr(95 + k)), pagination: { total: 100, limit: 100, skip, hasMore: false }, summary: {} },
+    );
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => c[1].skip)).toEqual([0, 95]);
+    expect(prisma.db.campaign[0].recipientsSyncedAt).toEqual(NOW);
+    expect(prisma.db.campaignRecipient.every((r: { status: string }) => r.status === "delivered")).toBe(true);
+  });
+
+  it("R3: a pass that covered fewer rows than Campaign.recipients does not end the first pass", async () => {
+    // Zernio silently caps the page at 50 and sends no pagination block.
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1", { recipients: 250 })], campaignRecipient: rows("c1", 250) });
+    zernio.listBroadcastRecipients.mockImplementation(async (_b: string, { skip, limit }: { skip: number; limit: number }) => ({
+      recipients: Array.from({ length: 50 }, (_, k) => zr(skip + k)),
+      pagination: { total: null, limit, skip, hasMore: null },
+      summary: {},
+    }));
+    await svc.syncActive();
+    const c = prisma.db.campaign[0];
+    expect(c.recipientsSyncedAt).toBeNull(); // Zernio's counters stay in use
+    expect(c.recipientSyncSkip).toBe(0); // the pass restarts
+    expect(c).toMatchObject({ sent: 240, delivered: 200, read: 120, failed: 3 });
+  });
+
+  it("R4: a reply marked while a recount is in flight is not lost", async () => {
+    const { prisma, svc } = build({
+      campaign: [campaign("c1", { recipientsSyncedAt: ago(H), replied: 0 })],
+      campaignRecipient: rows("c1", 2, "delivered").map((r) => ({ ...r, sentAt: ago(H) })),
+    });
+    const tracker = new RecipientTrackerService(prisma);
+    const attributor = new CampaignReplyAttributor(prisma, tracker);
+    const realGroupBy = prisma.campaignRecipient.groupBy.getMockImplementation();
+    let raced = false;
+    prisma.campaignRecipient.groupBy.mockImplementation((a: unknown) => {
+      const read = realGroupBy!(a);
+      return {
+        then: async (ok: (v: unknown) => unknown, bad: (e: unknown) => unknown) => {
+          try {
+            const v = await read; // the recount has read its counts…
+            if (!raced) {
+              raced = true; // …then a reply lands before it writes
+              const res = await attributor.onInbound({
+                workspaceId: "ws1",
+                channelId: "chA",
+                contactId: null,
+                phone: phone(0),
+                text: "yes",
+                inboundMessageId: "m1",
+                at: NOW,
+              });
+              expect(res).not.toBeNull();
+            }
+            return ok(v);
+          } catch (e) {
+            return bad(e);
+          }
+        },
+      };
+    });
+    await tracker.recountCampaign("c1");
+    expect(prisma.db.campaignRecipient[0].status).toBe("replied");
+    expect(prisma.db.campaign[0].replied).toBe(1);
+    void svc;
+  });
+});
+
+describe("refresh sweeps the campaign (final review I2)", () => {
+  it("refresh runs applyStats, then sweeps only that campaign, at most REFRESH_SWEEP_MAX_PAGES pages", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1"; // the cron budget does not limit refresh
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("c1"), campaign("other")],
+      campaignRecipient: [...rows("c1", 1000), ...rows("other", 1)],
+    });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1000, "full"));
+    const res = await svc.refresh("ws1", "c1");
+    expect(REFRESH_SWEEP_MAX_PAGES).toBe(5);
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1);
+    expect(Math.max(...zernio.getBroadcast.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...zernio.listBroadcastRecipients.mock.invocationCallOrder),
+    );
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => `${c[0]}@${c[1].skip}`)).toEqual([
+      "b-c1@0",
+      "b-c1@100",
+      "b-c1@200",
+      "b-c1@300",
+      "b-c1@400",
+    ]);
+    const by = Object.fromEntries(prisma.db.campaign.map((c: any) => [c.id, c]));
+    expect(by.c1.recipientSyncSkip).toBe(500);
+    expect(prisma.db.campaignRecipient.filter((r: any) => r.status === "delivered")).toHaveLength(500);
+    // The response is the campaign as stored after the sweep.
+    expect(res).toMatchObject({ id: "c1", recipientSyncSkip: 500 });
+    // The cron continues from refresh's offset (and serves the never-paged campaign first).
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "2";
+    zernio.listBroadcastRecipients.mockClear();
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: any[]) => `${c[0]}@${c[1].skip}`)).toEqual(["b-other@0", "b-c1@500"]);
+  });
+
+  it("refresh lands per-recipient states on a finished campaign whose pass ended recently", async () => {
+    const { prisma, zernio, svc } = build({
+      campaign: [campaign("c1", { status: "completed", recipientsSyncedAt: ago(10 * 60_000) })],
+      campaignRecipient: rows("c1", 3),
+    });
+    zernio.getBroadcast.mockResolvedValue({ status: "completed", sent: 3, delivered: 3, read: 0, failed: 0 });
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(3, "full"));
+    const res = await svc.refresh("ws1", "c1");
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    expect(prisma.db.campaignRecipient.every((r: { status: string }) => r.status === "delivered")).toBe(true);
+    expect(res).toMatchObject({ delivered: 3, recipientsSyncedAt: NOW });
+  });
+
+  it("refresh of an untracked campaign only pulls Zernio's counters", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("c1", { recipientTracking: false })] });
+    const res = await svc.refresh("ws1", "c1");
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1);
+    expect(zernio.listBroadcastRecipients).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ sent: 240, delivered: 200 });
+  });
+
+  it("refresh skips its sweep while a cron tick is running and returns the current state", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("a")], campaignRecipient: rows("a", 1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, o: { skip: number; limit: number }) => {
+      await gate;
+      return pagedZernio(1, "full")(b, o);
+    });
+    const tick = svc.syncActive();
+    await new Promise((r) => setImmediate(r));
+    const res = await svc.refresh("ws1", "a");
+    expect(res).toMatchObject({ id: "a", sent: 240 });
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1); // only the tick's page
+    release();
+    await tick;
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cron tick is skipped while refresh is sweeping, and runs again afterwards", async () => {
+    const { zernio, svc } = build({ campaign: [campaign("a")], campaignRecipient: rows("a", 1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, o: { skip: number; limit: number }) => {
+      await gate;
+      return pagedZernio(1, "full")(b, o);
+    });
+    const refreshing = svc.refresh("ws1", "a");
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    await svc.syncActive(); // returns at once
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(1); // refresh's applyStats only
+    release();
+    await refreshing;
+    expect(zernio.listBroadcastRecipients).toHaveBeenCalledTimes(1);
+    await svc.syncActive();
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failing refresh sweep keeps the offset and still returns the campaign", async () => {
+    const { prisma, zernio, svc } = build({ campaign: [campaign("c1", { recipientSyncSkip: 40 })], campaignRecipient: rows("c1", 1) });
+    zernio.listBroadcastRecipients.mockRejectedValue(new Error("timeout"));
+    const res = await svc.refresh("ws1", "c1");
+    expect(res).toMatchObject({ id: "c1", recipientSyncSkip: 40 });
+    expect(prisma.db.campaign[0].recipientSyncSkip).toBe(40);
+    // The guard is released.
+    zernio.listBroadcastRecipients.mockImplementation(pagedZernio(1, "full"));
+    await svc.syncActive();
+    expect(zernio.getBroadcast).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sweep pages every broadcast of a multi-broadcast campaign and aggregates status", () => {
+  /** An SP-13 campaign with two sent broadcasts of 2 rows each, plus a legacy campaign. */
+  function multiWorld() {
+    const camp = campaign("m1", { sendTransport: "broadcast", zernioBroadcastId: "zb-1", recipients: 4 });
+    const legacy = campaign("old", { recipients: 1 });
+    const part = (id: string, zb: string, stage = "sent") => ({
+      id,
+      workspaceId: "ws1",
+      campaignId: "m1",
+      channelId: "chA",
+      accountId: "acc",
+      partitionKey: id,
+      variables: {},
+      transport: "broadcast",
+      stage,
+      recipientCount: 2,
+      zernioBroadcastId: zb,
+      recipientSyncSkip: 0,
+      recipientsSyncedAt: null,
+      createdAt: ago(H),
+      updatedAt: ago(H),
+    });
+    const { prisma, zernio, svc } = build({
+      campaign: [camp, legacy],
+      campaignRecipient: [...rows("m1", 4), ...rows("old", 1).map((r) => ({ ...r, phone: phone(9) }))],
+      campaignBroadcast: [part("p1", "zb-1"), part("p2", "zb-2"), part("p3", null as unknown as string, "cancelled")],
+    } as never);
+    const byBroadcast: Record<string, number[]> = { "zb-1": [0, 1], "zb-2": [2, 3], "b-old": [9] };
+    zernio.listBroadcastRecipients.mockImplementation(async (b: string, { skip, limit }: { skip: number; limit: number }) => {
+      const list = (byBroadcast[b] ?? []).slice(skip, skip + limit).map((i) => zr(i, "read"));
+      return { recipients: list, pagination: { total: byBroadcast[b]?.length ?? 0, limit, skip, hasMore: skip + list.length < (byBroadcast[b]?.length ?? 0) }, summary: {} };
+    });
+    zernio.getBroadcast.mockImplementation(async (b: string) =>
+      b === "zb-1"
+        ? { status: "completed", recipientCount: 2, sent: 2, delivered: 2, read: 1, failed: 0 }
+        : b === "zb-2"
+          ? { status: "sending", recipientCount: 2, sent: 1, delivered: 1, read: 0, failed: 1 }
+          : { status: "sending", recipientCount: 1, sent: 1, delivered: 0, read: 0, failed: 0 },
+    );
+    return { prisma, zernio, svc };
+  }
+
+  it("reads every broadcast's status and sums the counters until the first pass, then counts from rows", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "1";
+    const { prisma, zernio, svc } = multiWorld();
+    await svc.syncActive();
+    expect(zernio.getBroadcast.mock.calls.map((c: unknown[]) => c[0]).sort()).toEqual(["b-old", "zb-1", "zb-2"]);
+    const m1 = () => prisma.db.campaign.find((c: { id: string }) => c.id === "m1");
+    // completed + sending → still sending (running); counters summed.
+    expect(m1()).toMatchObject({ status: "running", sent: 3, delivered: 3, failed: 1 });
+    // (read may already be raised, never lowered, by a floor recount of a first page.)
+    expect(m1().read).toBeGreaterThanOrEqual(1);
+    expect(m1().recipientsSyncedAt).toBeNull();
+
+    // A budget of 1 page per tick rotates over the legacy campaign and both broadcasts.
+    await svc.syncActive();
+    await svc.syncActive();
+    const paged = zernio.listBroadcastRecipients.mock.calls.map((c: unknown[]) => c[0]);
+    expect([...paged].sort()).toEqual(["b-old", "zb-1", "zb-2"]);
+    // The cancelled partition never had a broadcast: never paged.
+    expect(paged).not.toContain(null);
+
+    const parts = prisma.db.campaignBroadcast;
+    expect(parts.find((p: { id: string }) => p.id === "p1").recipientsSyncedAt).toEqual(NOW);
+    expect(parts.find((p: { id: string }) => p.id === "p2").recipientsSyncedAt).toEqual(NOW);
+    // Every broadcast covered: the campaign's first pass is done; counters now come from the rows (all read).
+    expect(m1().recipientsSyncedAt).toEqual(NOW);
+    expect(m1()).toMatchObject({ sent: 4, delivered: 4, read: 4, failed: 0 });
+    expect(prisma.db.campaignRecipient.filter((r: { campaignId: string; status: string }) => r.campaignId === "m1" && r.status === "read")).toHaveLength(4);
+    // The legacy campaign kept its own single-broadcast state.
+    expect(prisma.db.campaign.find((c: { id: string }) => c.id === "old").recipientsSyncedAt).toEqual(NOW);
+  });
+
+  it("each broadcast resumes from its own offset", async () => {
+    process.env.RECIPIENT_SYNC_MAX_PAGES = "2";
+    process.env.ZERNIO_RECIPIENT_PAGE = "1";
+    const { prisma, zernio, svc } = multiWorld();
+    prisma.db.campaign = prisma.db.campaign.filter((c: { id: string }) => c.id === "m1");
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: unknown[]) => [c[0], (c[1] as { skip: number }).skip]).sort()).toEqual([
+      ["zb-1", 0],
+      ["zb-2", 0],
+    ]);
+    expect(prisma.db.campaignBroadcast.map((p: { recipientSyncSkip: number }) => p.recipientSyncSkip)).toEqual([1, 1, 0]);
+    await svc.syncActive();
+    expect(zernio.listBroadcastRecipients.mock.calls.slice(2).map((c: unknown[]) => [c[0], (c[1] as { skip: number }).skip]).sort()).toEqual([
+      ["zb-1", 1],
+      ["zb-2", 1],
+    ]);
+  });
+
+  it("refresh of a multi-broadcast campaign aggregates and sweeps its broadcasts, bounded", async () => {
+    const { prisma, zernio, svc } = multiWorld();
+    const res = await svc.refresh("ws1", "m1");
+    expect(zernio.listBroadcastRecipients.mock.calls.map((c: unknown[]) => c[0]).sort()).toEqual(["zb-1", "zb-2"]);
+    expect(zernio.listBroadcastRecipients.mock.calls.length).toBeLessThanOrEqual(REFRESH_SWEEP_MAX_PAGES);
+    expect(res).toMatchObject({ id: "m1", status: "running", read: 4 });
+    expect(prisma.db.campaign.find((c: { id: string }) => c.id === "old").recipientsSyncedAt).toBeNull();
+  });
+
+  it("cancel cancels every sent broadcast of a multi-broadcast campaign", async () => {
+    const { prisma, zernio, svc } = multiWorld();
+    (zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast = jest.fn(async () => {});
+    const res = await svc.cancel("ws1", "m1");
+    // zb-1 already completed in Zernio (fix round 1: cancel reads the status first), so only zb-2 is cancelled.
+    expect((zernio as unknown as { cancelBroadcast: jest.Mock }).cancelBroadcast.mock.calls.map((c) => c[0]).sort()).toEqual(["zb-2"]);
+    expect(res.status).toBe("cancelled");
+    expect(prisma.db.campaignBroadcast.map((p: { stage: string }) => p.stage)).toEqual(["cancelled", "cancelled", "cancelled"]);
+  });
+});

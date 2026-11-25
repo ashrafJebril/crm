@@ -47,6 +47,43 @@ model User {
 
   memberships WorkspaceMember[]
   uploadedMedia Media[] @relation("UserMediaUploads")
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+  ownedContacts Contact[] @relation("ContactOwner")
+  assignedActivities Activity[] @relation("ActivityAssignee")
+  notifications Notification[] @relation("UserNotifications")
+  /// SP-15 back-relation.
+  metaAdsConnections MetaAdsConnection[] @relation("MetaAdsConnectedBy")
+  /// SP-09 back-relation.
+  ticketAttachmentsAdded TicketAttachment[] @relation("TicketAttachmentAddedBy")
+  /// SP-10 back-relations.
+  staffResources        StaffResource[] @relation("StaffResourceUser")
+  catalogImportsCreated CatalogImport[] @relation("CatalogImportCreatedBy")
+  /// SP-20 back-relation.
+  agentSandboxThreads AgentSandboxThread[] @relation("UserAgentSandboxThreads")
+  /// SP-18 back-relation.
+  copilotSessions CopilotSession[] @relation("UserCopilotSessions")
+
+  /// SP-26 back-relations.
+  passwordResets        PasswordReset[] @relation("UserPasswordResets")
+  invitationsSent       Invitation[]    @relation("InvitationInvitedBy")
+  invitationsAccepted   Invitation[]    @relation("InvitationAcceptedBy")
+  /// SP-22 back-relation.
+  skillsInstalled       SkillInstall[]  @relation("SkillInstalledBy")
+
+  /// SP-26: TOTP two-factor sign-in. `twoFA` above now means "TOTP enabled".
+  totpSecretEnc      String?   // enc:v1:… (token-crypto); never returned
+  totpPendingEnc     String?   // enrolment in progress
+  totpEnabledAt      DateTime?
+  totpLastStep       Int?      // replay guard (Int fits until year 6053 at 30 s steps)
+  totpRecoveryHashes String[]  @default([])
+  /// SP-26: carried as `sv` in the JWT; bumped to end every session.
+  sessionVersion     Int       @default(0)
+
+  /// SP-23: connectors this user connected.
+  connectorsConnected Connector[] @relation("ConnectorConnectedBy")
+  /// SP-27: API keys and webhook endpoints this user created.
+  apiKeysCreated          ApiKey[]          @relation("ApiKeyCreatedBy")
+  webhookEndpointsCreated WebhookEndpoint[] @relation("WebhookEndpointCreatedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -87,7 +124,21 @@ model Contact {
   appointments  Appointment[]
   tickets       Ticket[]
   notes         Note[]
+  activities    Activity[]
   segmentMembers SegmentMember[]
+  campaignRecipients CampaignRecipient[] @relation("ContactCampaignRecipients")
+  /// SP-15 back-relation: Instant Form submissions matched to this contact.
+  metaLeads MetaLead[] @relation("ContactMetaLeads")
+
+  // Structured name (name stays the display name), email, owner, consent.
+  firstName       String?
+  lastName        String?
+  email           String?
+  marketingOptOut Boolean @default(false)
+  notALead        Boolean @default(false)
+  ownerId         String?
+  owner           User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  fieldValues     CustomFieldValue[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -95,6 +146,46 @@ model Contact {
   @@unique([workspaceId, externalSource, externalId])
   @@unique([workspaceId, hjzClientId])
   @@index([workspaceId])
+  @@index([workspaceId, email])
+  @@index([workspaceId, ownerId])
+  // SP-13: keyset paging of a campaign audience (WHERE workspaceId = ? AND id > ? ORDER BY id).
+  @@index([workspaceId, id])
+  // SP-16: created-date audience rules; also serves the contacts list's createdAt desc order.
+  @@index([workspaceId, createdAt])
+}
+
+model CustomFieldDef {
+  id          String    @id @default(cuid())
+  workspaceId String
+  entity      String    @default("contact")
+  key         String
+  label       String
+  labelAr     String
+  /// text | number | date | select | boolean
+  type        String
+  options     Json?
+  order       Int       @default(0)
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace          @relation("WorkspaceCustomFieldDefs", fields: [workspaceId], references: [id], onDelete: Cascade)
+  values    CustomFieldValue[]
+
+  @@unique([workspaceId, entity, key])
+  @@index([workspaceId])
+}
+
+model CustomFieldValue {
+  defId     String
+  contactId String
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  def     CustomFieldDef @relation(fields: [defId], references: [id], onDelete: Cascade)
+  contact Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([defId, contactId])
+  @@index([contactId])
 }
 
 model Conversation {
@@ -133,6 +224,9 @@ model Conversation {
   resolutionConfidence Float?
   resolutionSentiment  String?
   resolutionSummary    String?
+  /// SP-31: optional extras from the resolution verdict (string arrays).
+  topics               Json?
+  painPoints           Json?
   resolutionRationale  String?
   resolvedAt           DateTime?
   /// The sweep's claim + "judged up to here" marker: due again only once a
@@ -149,11 +243,32 @@ model Conversation {
   // l agent id — set for conversations created by an l agent
   lAgentId String?
 
+  /// Conversation ownership — the agent responsible for the thread (null = unassigned).
+  assigneeId      String?
+  assignee        User?     @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  /// Optimistic-concurrency counter, bumped on every ownership/status change.
+  version         Int       @default(0)
+  escalateReason  String?
+  statusChangedAt DateTime?
+  labels          ConversationLabelLink[]
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceConversations", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
   messages Message[]
+
+  /// SP-19: the Channel (number/account) this thread belongs to. Null for
+  /// rows the backfill could not derive, pre-SP-19 webchat and `l`; readers
+  /// fall back through ChannelResolver.effectiveChannel.
+  channelId  String?
+  channelRef Channel? @relation("ConversationChannel", fields: [channelId], references: [id], onDelete: SetNull)
+
+  /// SP-15: the first ad that started this thread. Set once, never overwritten.
+  adSourceId   String?
+  adSource     AdSource?    @relation("ConversationAdSource", fields: [adSourceId], references: [id], onDelete: SetNull)
+  adReferredAt DateTime?
+  adReferrals  AdReferral[] @relation("ConversationAdReferrals")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -161,6 +276,36 @@ model Conversation {
   @@index([contactId])
   @@index([workspaceId])
   @@index([lConversationId])
+  @@index([workspaceId, assigneeId])
+  @@index([workspaceId, channelId])
+  @@index([workspaceId, adSourceId])
+}
+
+model ConversationLabel {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  /// ink | info | ok | warn | bad | accent | human
+  color       String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace               @relation("WorkspaceConversationLabels", fields: [workspaceId], references: [id], onDelete: Cascade)
+  links     ConversationLabelLink[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model ConversationLabelLink {
+  conversationId String
+  labelId        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  label        ConversationLabel @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, labelId])
+  @@index([labelId])
 }
 
 model Message {
@@ -178,10 +323,21 @@ model Message {
   deliveryStatus   String?   // sent | delivered | read | failed
   deliveryStatusAt DateTime?
 
+  /// SP-31: the customer's latest emoji reaction to this message (one kept).
+  reaction   String?
+  reactionAt DateTime?
+
+  /// SP-11: the member who sent a staff message from the inbox (null for older rows, AI, customers and automations).
+  /// No foreign key and no index (SP-11 ruling 4): a removed member's id stays and reads as "Former member".
+  sentById String?
+
   workspaceId  String
   workspace    Workspace   @relation("WorkspaceMessages", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// SP-15 back-relation: the ad touch this inbound message carried.
+  adReferral AdReferral? @relation("MessageAdReferral")
 
   createdAt DateTime @default(now())
 
@@ -215,18 +371,130 @@ model Appointment {
   hjzSyncAttemptAt DateTime?
   hjzSyncError     String?
 
+  // SP-31: when `status` last changed (set by a DB trigger, so every writer is
+  // covered). Dates the thread's booking_status event; null until a change.
+  statusChangedAt DateTime?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceAppointments", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  activities Activity[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  /// SP-10: catalog links; null for legacy, `main`-created and free-text bookings.
+  serviceId  String?
+  serviceRef Service?       @relation("AppointmentService", fields: [serviceId], references: [id], onDelete: SetNull)
+  resourceId String?
+  resource   StaffResource? @relation("AppointmentResource", fields: [resourceId], references: [id], onDelete: SetNull)
+  /// SP-10: optimistic-concurrency counter (Review Focus 4). `main`'s writes do not bump it.
+  version    Int            @default(0)
 
   @@index([contactId])
   @@index([startAt])
   @@index([workspaceId])
   @@index([hjzSyncPending])
+  @@index([workspaceId, startAt])
+  @@index([workspaceId, resourceId, startAt])
+  @@index([workspaceId, serviceId])
+}
+
+/// SP-10: a bookable service.
+model Service {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceServices", fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  nameAr      String
+  color       String    @default("info") // the StageColor keys: ink | info | ok | warn | bad | accent | human
+  durationMin Int
+  price       Decimal?  @db.Decimal(12, 2)
+  currency    String    @default("SAR")
+  active      Boolean   @default(true)
+  archivedAt  DateTime?
+  order       Int       @default(0)
+  version     Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  staff        StaffService[]
+  appointments Appointment[] @relation("AppointmentService")
+
+  @@index([workspaceId, active])
+}
+
+/// SP-10: a person (or chair/room) that bookings are placed on.
+model StaffResource {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceStaffResources", fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String? // the workspace member, when this resource is one
+  user        User?     @relation("StaffResourceUser", fields: [userId], references: [id], onDelete: SetNull)
+  name        String
+  nameAr      String?
+  role        String? // free label, e.g. "Stylist"
+  color       String    @default("accent")
+  schedule    Json      @default("{}") // WeeklySchedule
+  active      Boolean   @default(true)
+  archivedAt  DateTime?
+  version     Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  services     StaffService[]
+  appointments Appointment[]  @relation("AppointmentResource")
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId, active])
+}
+
+/// SP-10: which services a resource provides.
+model StaffService {
+  resourceId  String
+  resource    StaffResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  serviceId   String
+  service     Service       @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  workspaceId String
+  createdAt   DateTime      @default(now())
+
+  @@id([resourceId, serviceId])
+  @@index([serviceId])
+}
+
+/// SP-10: one catalog import (ruling 1). Not an ImportJob.
+model CatalogImport {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceCatalogImports", fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?     @relation("CatalogImportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  source      String // "paste" | "url" | "file"
+  kind        String // "auto" | "services" | "staff"
+  status      String    @default("extracting") // extracting | review | running | done | failed | cancelled
+  inputText   String? // paste only; cleared when the job leaves review
+  sourceUrl   String?
+  fileMediaId String?
+  fileMedia   Media?    @relation("CatalogImportFile", fields: [fileMediaId], references: [id], onDelete: SetNull)
+  fileName    String?
+  extractedBy String? // "template" | "ai"
+  proposal    Json? // {items: [...]}
+  total       Int       @default(0)
+  processed   Int       @default(0)
+  created     Int       @default(0)
+  skipped     Int       @default(0)
+  failed      Int       @default(0)
+  errors      Json      @default("[]")
+  errorKey    String? // failure key only
+  heartbeatAt DateTime?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, createdAt])
+  @@index([status, heartbeatAt])
 }
 
 model Template {
@@ -234,7 +502,10 @@ model Template {
   name     String
   lang     String // en | ar
   category String // TRANSACTIONAL | UTILITY | MARKETING | AUTHENTICATION
-  status   String // approved | pending | rejected | submitted | failed
+  /// approved | pending | rejected | submitted | failed | local | paused | disabled
+  status   String
+  /// SP-14: Meta template quality (GREEN | YELLOW | RED | NOT_RATED). Null = unknown.
+  quality  String?
   uses     Int    @default(0)
 
   // Meta WhatsApp Cloud API template content (sent to /{wabaId}/message_templates).
@@ -250,6 +521,10 @@ model Template {
   metaRejectionReason String? // populated when Meta sets status=REJECTED
   submittedAt         DateTime?
   reviewedAt          DateTime?
+
+  /// SP-13: the library file chosen as the media header sample (image/video/document).
+  headerMediaId String?
+  headerMedia   Media?  @relation("TemplateHeaderMedia", fields: [headerMediaId], references: [id], onDelete: SetNull)
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceTemplates", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -293,6 +568,14 @@ model Segment {
   externalId      String?
   externalRules   String?
   lastSyncedAt    DateTime?
+  /// SP-16: the rule tree (AudienceRules, v 2). Null = legacy: read `filter` as one `and` group.
+  rules           Json?
+  /// SP-16: optimistic concurrency for the audience editor (PATCH sends it; 409 on mismatch).
+  version         Int       @default(0)
+  /// SP-16: cached member count of a smart audience. Raw-SQL written; never bumps updatedAt.
+  memberCount     Int?
+  /// SP-16: when memberCount was computed.
+  countedAt       DateTime?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceSegments", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -332,11 +615,20 @@ model Pipeline {
   nameAr    String
   isDefault Boolean @default(false)
 
+  // SP-07 pipeline editor
+  version              Int       @default(0) // optimistic-concurrency counter for draft saves
+  archivedAt           DateTime?
+  staleDays            Int?
+  agentCanMove         Boolean   @default(true)
+  assignsConversations Boolean   @default(false)
+  kind                 String    @default("deals") // "deals" | "leads" | "support"
+
   workspaceId String
   workspace   Workspace @relation("WorkspacePipelines", fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  stages   TicketStage[]
-  tickets  Ticket[]
+  stages      TicketStage[]
+  tickets     Ticket[]
+  lostReasons LostReason[]
 
   createdAt DateTime @default(now())
 
@@ -382,26 +674,95 @@ model Ticket {
   value       Float?
   currency    String  @default("SAR")
 
-  lostReason String?
+  lostReason   String? // label snapshot, survives edits/deletes of the LostReason row
+  lostReasonId String?
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   closedAt       DateTime?
   enteredStageAt DateTime  @default(now())
 
+  /// SP-09: "low" | "normal" | "high" | "urgent".
+  priority  String    @default("normal")
+  /// SP-09: a key of TICKET_CATEGORIES; null = not set.
+  category  String?
+  /// SP-09: set by the "ticket_sla_due_at" trigger on stage entry; null = no SLA (or terminal).
+  slaDueAt  DateTime?
+
   workspaceId String
   workspace   Workspace @relation("WorkspaceTickets", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   pipeline   Pipeline         @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
   stage      TicketStage      @relation(fields: [stageId], references: [id])
+  lostReasonRef LostReason?   @relation(fields: [lostReasonId], references: [id], onDelete: SetNull)
   contact    Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
   activities TicketActivity[]
   notes      Note[]
+  followUps  Activity[]
+  attachments TicketAttachment[]
 
   @@unique([pipelineId, number])
   @@index([contactId])
   @@index([stageId])
   @@index([ownerId])
+  @@index([workspaceId])
+  @@index([lostReasonId])
+  @@index([workspaceId, slaDueAt])
+}
+
+/// SP-09: a file on a ticket. The file itself is a Media row (library, storage, sniffing).
+model TicketAttachment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceTicketAttachments", fields: [workspaceId], references: [id], onDelete: Cascade)
+  ticketId    String
+  ticket      Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  mediaId     String
+  media       Media     @relation("MediaTicketAttachments", fields: [mediaId], references: [id], onDelete: Cascade)
+  source      String    // "customer" | "staff"
+  messageId   String?   // the inbound Message that carried a customer file (no FK: messages may be pruned)
+  addedById   String?
+  addedBy     User?     @relation("TicketAttachmentAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@unique([ticketId, mediaId])
+  @@index([workspaceId])
+  @@index([mediaId])
+}
+
+model LostReason {
+  id         String    @id @default(cuid())
+  pipelineId String
+  label      String
+  labelAr    String
+  order      Int       @default(0)
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceLostReasons", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  tickets  Ticket[]
+
+  @@index([pipelineId])
+  @@index([workspaceId])
+}
+
+/// SP-31: per-workspace canned replies, inserted in the composer via /shortcut.
+model SavedReply {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  bodyAr    String?
+  shortcut  String   // [a-z0-9_-]{1,32}, unique per workspace
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceSavedReplies", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, shortcut])
   @@index([workspaceId])
 }
 
@@ -446,8 +807,56 @@ model Integration {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// SP-19: the Channel mirrored from this row (legacy credential link).
+  channel Channel?
+
   @@unique([workspaceId, platform])
   @@index([workspaceId])
+  /// SP-19: inbound routing looks a legacy row up by its account id.
+  @@index([pageId])
+}
+
+/// SP-19: one connected channel (a WhatsApp number, a page, a Telegram bot, a
+/// website chat). The routing source of truth. Each legacy Integration row is
+/// mirrored to exactly one Channel (integrationId), whose credentials stay on
+/// the Integration. The partial unique index "Channel_one_default_per_kind"
+/// (one isDefault per workspace + kind) lives only in the migration SQL.
+model Channel {
+  id                String       @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace    @relation("WorkspaceChannels", fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind              String // whatsapp | telegram | webchat | facebook | instagram | tiktok (others stored verbatim)
+  provider          String // zernio | meta | telegram | native (legacy Integration.provider copied verbatim)
+  externalId        String? // zernio accountId | Meta phone_number_id | Telegram bot id | null for webchat
+  displayName       String
+  phoneNumber       String? // E.164 for WhatsApp, when known
+  status            String       @default("active") // active | pending | needs_attention | disconnected | error
+  statusReason      String?
+  health            Json? // reserved for SP-14; SP-19 leaves it null
+  isDefault         Boolean      @default(false)
+  config            Json? // NON-secret settings only
+  secretsEnc        String? // encryptSecret(JSON) of {accessToken?, botToken?, registrationPin?}; never in a DTO
+  webhookSecretHash String? // sha256 hex of the Telegram secret_token
+  integrationId     String?      @unique
+  integration       Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  lastInboundAt     DateTime?
+  disconnectedAt    DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  /// SP-14: when the last health check finished (any field read). Raw-SQL written.
+  healthCheckedAt   DateTime?
+  /// SP-14: claim token + cooldown + sweep cursor for health checks. Raw-SQL written.
+  healthAttemptedAt DateTime?
+
+  conversations Conversation[] @relation("ConversationChannel")
+  campaigns     Campaign[]     @relation("CampaignSenderChannel")
+  campaignRecipients CampaignRecipient[] @relation("ChannelCampaignRecipients")
+  campaignBroadcasts CampaignBroadcast[] @relation("ChannelCampaignBroadcasts")
+
+  @@unique([workspaceId, provider, externalId])
+  @@index([workspaceId, kind])
+  @@index([provider, externalId])
+  @@index([kind, healthAttemptedAt])
 }
 
 model Campaign {
@@ -480,6 +889,38 @@ model Campaign {
   lastError         String?
   launchedAt        DateTime?
   statsSyncedAt     DateTime?
+  /// SP-19: the WhatsApp channel the broadcast goes out from; it must be an
+  /// active Zernio WhatsApp channel. Null = the default WhatsApp channel.
+  senderChannelId   String?
+  senderChannel     Channel?  @relation("CampaignSenderChannel", fields: [senderChannelId], references: [id], onDelete: SetNull)
+  /// SP-12: true once launch wrote one CampaignRecipient row per audience
+  /// member. False on every campaign launched before SP-12 (aggregate only).
+  recipientTracking  Boolean   @default(false)
+  /// SP-12: last completed pull sweep of Zernio's per-recipient list.
+  recipientsSyncedAt DateTime?
+  /// SP-12: the pull sweep's resume offset (Zernio `skip`).
+  recipientSyncSkip  Int       @default(0)
+  /// SP-12 rows. Named recipientRows: `recipients` is already the Int count.
+  recipientRows      CampaignRecipient[]
+
+  /// SP-13: the sending numbers, in order; [0] is the primary (template copy,
+  /// skipped rows). Empty = legacy: senderChannelId, else the default number.
+  senderChannelIds  String[]  @default([])
+  /// SP-13: {"1": {source, key?, value?, fallback?}, …}. Null on campaigns
+  /// launched before SP-13 (they keep variableMapping).
+  varMap            Json?
+  /// SP-13: optional header file override (library media). Null = the template's sample.
+  headerMediaId     String?
+  headerMedia       Media?    @relation("CampaignHeaderMedia", fields: [headerMediaId], references: [id], onDelete: SetNull)
+  /// SP-13 background launch.
+  launchStage       String?   // planning | sending | done | failed
+  launchHeartbeatAt DateTime?
+  launchAttempts    Int       @default(0)
+  launchedById      String?   // audit string, not a FK (survives the member leaving)
+  planCompletedAt   DateTime?
+  cancelRequestedAt DateTime?
+  sendTransport     String?   // broadcast | direct
+  broadcasts        CampaignBroadcast[]
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceCampaigns", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -488,6 +929,97 @@ model Campaign {
   updatedAt DateTime @updatedAt
 
   @@index([workspaceId])
+  @@index([status, launchHeartbeatAt])
+}
+
+/// SP-13: one Zernio broadcast (or one direct-send batch) of a campaign:
+/// recipients sharing a sender and the same non-native variable values.
+model CampaignBroadcast {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace @relation("WorkspaceCampaignBroadcasts", fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaignId         String
+  campaign           Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  channelId          String?
+  channel            Channel?  @relation("ChannelCampaignBroadcasts", fields: [channelId], references: [id], onDelete: SetNull)
+  /// Zernio account id at plan time (the channel may be renamed or re-pointed later).
+  accountId          String
+  /// sha256 hex of [channelId, ...non-native values]; unique per campaign.
+  partitionKey       String
+  /// Zernio variableMapping for this partition ({"1": {field|custom, customValue?}}).
+  variables          Json
+  transport          String    // broadcast | direct
+  stage              String    @default("pending") // pending | contacts_imported | created | recipients_added | sent | scheduled | cancelled | failed
+  recipientCount     Int       @default(0)
+  importedThroughId  String?
+  addedThroughId     String?
+  createAttemptedAt  DateTime?
+  zernioBroadcastId  String?
+  recipientSyncSkip  Int       @default(0)
+  recipientsSyncedAt DateTime?
+  lastError          String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  recipients         CampaignRecipient[]
+
+  @@unique([campaignId, partitionKey])
+  @@index([workspaceId])
+  @@index([zernioBroadcastId])
+  @@index([channelId])
+}
+
+/// SP-12: one row per audience member per campaign (reachable = queued,
+/// left out = skipped). Status only moves forward; see
+/// src/campaigns/tracking/recipient-status.ts.
+model CampaignRecipient {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation("WorkspaceCampaignRecipients", fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaignId     String
+  campaign       Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  /// Null once the contact is deleted; the row (and the campaign's history) stays.
+  contactId      String?
+  contact        Contact?  @relation("ContactCampaignRecipients", fields: [contactId], references: [id], onDelete: SetNull)
+  /// The sending number. SP-13 splits a campaign over several.
+  channelId      String?
+  channel        Channel?  @relation("ChannelCampaignRecipients", fields: [channelId], references: [id], onDelete: SetNull)
+  /// E.164 (normalizePhone). Null only on skipped rows with no usable number.
+  phone          String?
+  /// Snapshot at launch, for the table and export after a contact is renamed/deleted.
+  contactName    String?
+  status         String    @default("queued") // queued | sent | delivered | read | replied | failed | skipped
+  /// Provider message id (Zernio's id or Meta's wamid, as the provider reports it).
+  messageId      String?
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  repliedAt      DateTime?
+  replyText      String? // <= 1000 chars
+  buttonPayload  String? // <= 256 chars
+  /// The inbound Message.id that attributed the reply (deep link into the thread).
+  replyMessageId String?
+  /// Namespaced: "meta:<n>" | "skip:<reason>" | "provider:unknown". See failure-codes.ts.
+  failureCode    String?
+  /// Provider text (errorExplanation ?? error), one line, <= 300 chars. Never shown unless short.
+  failureReason  String?
+  /// SP-13: the partition (Zernio broadcast or direct batch) this row goes out in.
+  broadcastId     String?
+  broadcast       CampaignBroadcast? @relation(fields: [broadcastId], references: [id], onDelete: SetNull)
+  /// SP-13: the resolved template values (string[]), on queued rows only.
+  templateParams  Json?
+  /// SP-13: direct transport only; set when the send was claimed.
+  sendAttemptedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([campaignId, phone])
+  @@index([campaignId, status, id])
+  @@index([campaignId, id])
+  @@index([workspaceId, messageId])
+  @@index([channelId, phone])
+  @@index([contactId])
+  @@index([broadcastId, status, id])
+  @@index([campaignId, channelId, status])
 }
 
 // ─── Workflows ────────────────────────────────────────────────────────────
@@ -496,7 +1028,10 @@ model Workflow {
   id          String   @id @default(cuid())
   name        String
   status      String   @default("draft") // "draft" | "active"
-  triggerType String   // "contact_created" | "message_received" | "ticket_created" | "ticket_stage_changed" | "schedule" | "webhook"
+  /// "contact_created" | "message_received" | "ticket_created" | "ticket_stage_changed" | "schedule" | "webhook" |
+  /// "appointment_completed" | "sale_completed" | SP-24: "appointment_confirmed" | "appointment_cancelled" |
+  /// "appointment_reminder_due" | "ticket_resolved"
+  triggerType String
   triggerConfig Json   @default("{}")
   steps       Json     @default("{\"entry\": null, \"steps\": {}}")
   webhookSecret   String?
@@ -507,11 +1042,33 @@ model Workflow {
 
   runs WorkflowRun[]
 
+  /// SP-24: "lifecycle.<key>" for a system workflow; null for a user workflow.
+  systemKey           String?
+  lifecycleDeliveries LifecycleDelivery[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([workspaceId, systemKey])
   @@index([workspaceId])
   @@index([workspaceId, triggerType, status])
+}
+
+/// SP-24: one row per lifecycle message occurrence actually started (the double-send claim).
+model LifecycleDelivery {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace @relation("WorkspaceLifecycleDeliveries", fields: [workspaceId], references: [id], onDelete: Cascade)
+  workflowId    String
+  workflow      Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  entityKind    String // "appointment" | "ticket"
+  entityId      String // no FK: the booking/ticket may be deleted later; the claim must outlive it
+  occurrenceKey String
+  runId         String? // the WorkflowRun started (no FK: runs are pruned with the workflow)
+  createdAt     DateTime  @default(now())
+
+  @@unique([workflowId, entityId, occurrenceKey])
+  @@index([workspaceId, createdAt])
 }
 
 model WorkflowRun {
@@ -552,12 +1109,20 @@ model Note {
   ticketId       String?
   body           String
   authorUserId   String?  // FK to User.id, nullable for system-generated notes
+  // Threaded replies: a reply points at its parent note; deleting the parent
+  // deletes the thread.
+  parentId       String?
+  // User ids @mentioned in the body (deduped, validated against membership).
+  mentions       String[] @default([])
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceNotes", fields: [workspaceId], references: [id], onDelete: Cascade)
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
   ticket  Ticket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  parent  Note?   @relation("NoteReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Note[]  @relation("NoteReplies")
+  seenBy  NoteSeen[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -566,6 +1131,54 @@ model Note {
   @@index([conversationId])
   @@index([ticketId])
   @@index([workspaceId])
+  @@index([parentId])
+}
+
+// Read receipts for notes. No workspaceId: reach it only through a
+// workspace-verified Note.
+model NoteSeen {
+  noteId String
+  userId String
+  seenAt DateTime @default(now())
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, userId])
+  @@index([userId])
+}
+
+// In-app notification for one member. `title` holds a stable message key and
+// `body` JSON params, so the UI renders text in the reader's language.
+model Notification {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        String // assignment | mention | activity_due | connector_needs_attention | knowledge_source_failed | campaign_finished | import_finished
+  title       String
+  body        String?
+  recordKind  String? // contact | conversation | ticket | booking | campaign
+  recordId    String?
+  actorId     String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation("WorkspaceNotifications", fields: [workspaceId], references: [id], onDelete: Cascade)
+  user User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, readAt])
+  @@index([workspaceId, userId, createdAt])
+}
+
+model NotificationPreference {
+  workspaceId String
+  userId      String
+  type        String
+  inApp       Boolean @default(true)
+  sound       Boolean @default(true)
+
+  workspace Workspace @relation("WorkspaceNotificationPreferences", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, userId, type])
 }
 
 // ─── Workspaces (tenants) ─────────────────────────────────────────────────
@@ -585,6 +1198,12 @@ model Workspace {
   // Kewy billing: when payment first became due. NULL = paid up. Independent of
   // suspendedAt (admin suspension); locked once older than PAYMENT_GRACE_DAYS.
   paymentDueSince DateTime?
+
+  // SP-28 (R8): a super-admin plan override. While set, Kewy's plan pushes do
+  // not overwrite `plan`; they are kept in `kewyPlan`, which "Clear override"
+  // restores. `kewyPlan` is the last plan Kewy pushed (null = never pushed).
+  planOverriddenAt DateTime?
+  kewyPlan         String?
 
   // HJZ SSO bridge — set on Workspaces that mirror an hjz tenant so we can
   // resolve `hjz tid → tkana workspace` idempotently across SSO exchanges
@@ -656,9 +1275,14 @@ model Workspace {
   kapsoCustomerId String?
 
   members WorkspaceMember[]
+  roles   Role[]            @relation("WorkspaceRoles")
+  importJobs ImportJob[]        @relation("WorkspaceImportJobs")
+  activities Activity[]         @relation("WorkspaceActivities")
 
   contacts          Contact[]          @relation("WorkspaceContacts")
   conversations     Conversation[]     @relation("WorkspaceConversations")
+  conversationLabels ConversationLabel[] @relation("WorkspaceConversationLabels")
+  customFieldDefs   CustomFieldDef[]   @relation("WorkspaceCustomFieldDefs")
   messages          Message[]          @relation("WorkspaceMessages")
   appointments      Appointment[]      @relation("WorkspaceAppointments")
   templates         Template[]         @relation("WorkspaceTemplates")
@@ -667,13 +1291,24 @@ model Workspace {
   campaigns         Campaign[]         @relation("WorkspaceCampaigns")
   pipelines         Pipeline[]         @relation("WorkspacePipelines")
   ticketStages      TicketStage[]      @relation("WorkspaceTicketStages")
+  lostReasons       LostReason[]       @relation("WorkspaceLostReasons")
+  savedReplies      SavedReply[]       @relation("WorkspaceSavedReplies")
   tickets           Ticket[]           @relation("WorkspaceTickets")
+  /// SP-09 back-relation.
+  ticketAttachments TicketAttachment[] @relation("WorkspaceTicketAttachments")
   ticketActivities  TicketActivity[]   @relation("WorkspaceTicketActivities")
   integrations      Integration[]      @relation("WorkspaceIntegrations")
+  channels          Channel[]          @relation("WorkspaceChannels")
+  campaignRecipients CampaignRecipient[] @relation("WorkspaceCampaignRecipients")
+  campaignBroadcasts CampaignBroadcast[] @relation("WorkspaceCampaignBroadcasts")
   notes             Note[]             @relation("WorkspaceNotes")
+  notifications     Notification[]     @relation("WorkspaceNotifications")
+  notificationPreferences NotificationPreference[] @relation("WorkspaceNotificationPreferences")
   media             Media[]            @relation("WorkspaceMedia")
   workflows         Workflow[]         @relation("WorkspaceWorkflows")
   workflowRuns      WorkflowRun[]      @relation("WorkspaceWorkflowRuns")
+  /// SP-24 back-relation.
+  lifecycleDeliveries LifecycleDelivery[] @relation("WorkspaceLifecycleDeliveries")
 
   adsChatSessions       AdsChatSession[]       @relation("WorkspaceAdsChatSessions")
   adsChatMessages       AdsChatMessage[]       @relation("WorkspaceAdsChatMessages")
@@ -681,6 +1316,54 @@ model Workspace {
   adsActionAudits       AdsActionAudit[]       @relation("WorkspaceAdsActionAudits")
   adsWallet             AdsWallet?             @relation("WorkspaceAdsWallet")
   adsWalletTransactions AdsWalletTransaction[] @relation("WorkspaceAdsWalletTransactions")
+
+  /// SP-15: click-to-WhatsApp attribution and Meta Ads.
+  adSources         AdSource[]         @relation("WorkspaceAdSources")
+  adReferrals       AdReferral[]       @relation("WorkspaceAdReferrals")
+  adSpendDaily      AdSpendDaily[]     @relation("WorkspaceAdSpendDaily")
+  metaAdsConnection MetaAdsConnection? @relation("WorkspaceMetaAdsConnection")
+  metaLeads         MetaLead[]         @relation("WorkspaceMetaLeads")
+
+  /// SP-10: bookings catalog and catalog imports.
+  services          Service[]          @relation("WorkspaceServices")
+  staffResources    StaffResource[]    @relation("WorkspaceStaffResources")
+  catalogImports    CatalogImport[]    @relation("WorkspaceCatalogImports")
+
+  /// SP-21: agent knowledge sources.
+  knowledgeSources  KnowledgeSource[]  @relation("WorkspaceKnowledgeSources")
+
+  /// SP-20: agent configuration, sandbox threads and onboarding.
+  agentSettings       AgentSettings?       @relation("WorkspaceAgentSettings")
+  agentSandboxThreads AgentSandboxThread[] @relation("WorkspaceAgentSandboxThreads")
+  /// SP-20: {status: "not_started"|"in_progress"|"skipped"|"done", step, businessName, websiteUrl, websiteSourceId, learnedAt, startedBy, updatedAt}; null = never started (existing workspaces).
+  onboardingState     Json?
+
+  /// SP-18: the in-app copilot's per-member chats.
+  copilotSessions     CopilotSession[]     @relation("WorkspaceCopilotSessions")
+  /// SP-26: email invitations and the audit log.
+  invitations       Invitation[]       @relation("WorkspaceInvitations")
+  auditLogs         AuditLog[]         @relation("WorkspaceAuditLogs")
+
+  /// SP-22: the skills ledger and the agent's tool-call log.
+  skillInstalls     SkillInstall[]     @relation("WorkspaceSkillInstalls")
+  agentToolCalls    AgentToolCall[]    @relation("WorkspaceAgentToolCalls")
+  /// SP-27: organization API keys and outgoing webhooks.
+  apiKeys           ApiKey[]           @relation("WorkspaceApiKeys")
+  webhookEndpoints  WebhookEndpoint[]  @relation("WorkspaceWebhookEndpoints")
+  /// SP-28: usage metering.
+  usageEvents       UsageEvent[]       @relation("WorkspaceUsageEvents")
+
+  /// SP-23: connectors, their proxied calls and the sync-card records.
+  connectors         Connector[]         @relation("WorkspaceConnectors")
+  connectorCalls     ConnectorCall[]     @relation("WorkspaceConnectorCalls")
+  connectorSyncLinks ConnectorSyncLink[] @relation("WorkspaceConnectorSyncLinks")
+  connectorSyncRuns  ConnectorSyncRun[]  @relation("WorkspaceConnectorSyncRuns")
+
+  /// SP-29: the business logo (a Media row with purpose "brand_logo").
+  logoMediaId String?
+  logoMedia   Media?  @relation("WorkspaceLogo", fields: [logoMediaId], references: [id], onDelete: SetNull)
+  /// SP-29: "#rrggbb", lower-case; null = default.
+  brandColor  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -693,9 +1376,18 @@ model WorkspaceMember {
   // Workspace-scoped role, separate from User.role (which is a system-level
   // legacy field). Values: "owner" | "admin" | "agent" | "viewer".
   role        String
+  // SP-25: the member's Role. NULL falls back to the workspace's system role
+  // whose key equals the legacy `role` string above (kept for deployed code).
+  roleId      String?
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  roleRef   Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  /// SP-11: when this member last looked at the working home ("while you were away" starts here).
+  homeSeenAt          DateTime?
+  /// SP-11: the member closed the Day-1 home.
+  homeDay1DismissedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -703,6 +1395,154 @@ model WorkspaceMember {
   @@unique([userId, workspaceId])
   @@index([workspaceId])
   @@index([userId])
+  @@index([roleId])
+}
+
+// SP-25: a workspace role — a resource × action permission matrix plus a
+// conversation visibility. System roles (key = owner|admin|agent|viewer) are
+// seeded per workspace; custom roles have key = NULL.
+model Role {
+  id                     String   @id @default(cuid())
+  workspaceId            String
+  key                    String?  // owner | admin | agent | viewer for system roles; NULL for custom
+  name                   String
+  nameAr                 String
+  isSystem               Boolean  @default(false)
+  permissions            Json     // { [resource]: Action[] }
+  conversationVisibility String   @default("all") // "all" | "assigned"
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  workspace Workspace         @relation("WorkspaceRoles", fields: [workspaceId], references: [id], onDelete: Cascade)
+  members   WorkspaceMember[]
+  /// SP-26 back-relation.
+  invitations Invitation[]    @relation("RoleInvitations")
+
+  @@unique([workspaceId, key])
+  @@unique([workspaceId, name])
+}
+
+// SP-26: an email invitation to join a workspace. Only the sha256 of the emailed
+// token is stored; resend rotates it.
+model Invitation {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation("WorkspaceInvitations", fields: [workspaceId], references: [id], onDelete: Cascade)
+  email        String    // normalised: trimmed, lower-case
+  roleId       String?
+  role         Role?     @relation("RoleInvitations", fields: [roleId], references: [id], onDelete: SetNull)
+  lang         String    @default("ar") // "ar" | "en": email and accept-page language
+  tokenHash    String    @unique // sha256 hex of the emailed token
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  acceptedBy   User?     @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: SetNull)
+  revokedAt    DateTime?
+  invitedById  String?
+  invitedBy    User?     @relation("InvitationInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  sendCount    Int       @default(1)
+  lastSentAt   DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+
+  @@index([workspaceId, email])
+  @@index([email])
+}
+
+// SP-26: the workspace audit log. actorId has no FK: the log outlives the user.
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAuditLogs", fields: [workspaceId], references: [id], onDelete: Cascade)
+  actorId     String?
+  actorKind   String    @default("user") // "user" | "system" | "api_key"
+  action      String
+  targetKind  String    // "member" | "invitation" | "role" | "workspace" | "user"
+  targetId    String?
+  meta        Json?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, action, createdAt])
+}
+
+// SP-26: a password reset request. Only the sha256 of the emailed token is stored.
+model PasswordReset {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation("UserPasswordResets", fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  requestedIp String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// SP-03: a contacts/audience file import. The uploaded file lives in Media
+// (fileMediaId, a plain reference like other media links). createdById is a plain
+// string rather than a User relation: it is an audit reference only, and a job
+// row must survive its creator being removed without an extra SetNull FK.
+model ImportJob {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  createdById     String
+  kind            String    // "contacts" | "audience"
+  status          String    @default("uploaded") // uploaded | previewed | running | done | failed | cancelled
+  fileMediaId     String
+  fileName        String
+  totalRows       Int
+  processed       Int       @default(0)
+  created         Int       @default(0)
+  updated         Int       @default(0)
+  skipped         Int       @default(0)
+  failed          Int       @default(0)
+  duplicateInFile Int       @default(0)
+  errors          Json      @default("[]")
+  mapping         Json?
+  options         Json?
+  heartbeatAt     DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  workspace Workspace @relation("WorkspaceImportJobs", fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([status, heartbeatAt])
+}
+
+// ─── Activities & follow-ups (SP-04) ─────────────────────────────────────
+// kind: follow_up | call | meeting | task | note_log. Open = doneAt null.
+// createdById is an audit string, not a FK (survives the creator leaving).
+model Activity {
+  id          String    @id @default(cuid())
+  workspaceId String
+  kind        String
+  title       String
+  notes       String?
+  dueAt       DateTime?
+  doneAt      DateTime?
+  outcome     String?
+  notifiedAt  DateTime?
+  assigneeId  String?
+  contactId   String?
+  ticketId    String?
+  bookingId   String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace Workspace    @relation("WorkspaceActivities", fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignee  User?        @relation("ActivityAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  contact   Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  ticket    Ticket?      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  booking   Appointment? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, assigneeId, doneAt, dueAt])
+  @@index([workspaceId, contactId])
+  @@index([workspaceId, ticketId])
+  @@index([doneAt, notifiedAt, dueAt])
 }
 
 // ─── Media library ────────────────────────────────────────────────────────
@@ -723,6 +1563,35 @@ model Media {
   uploadedBy    User?    @relation("UserMediaUploads", fields: [uploadedById], references: [id], onDelete: SetNull)
   publicToken          String?   @unique
   publicTokenExpiresAt DateTime?
+
+  /// SP-17: agent-facing details. Null = not described.
+  title            String?
+  /// SP-17: what is visible in the file (accessibility and search).
+  alt              String?
+  /// SP-17: normalised (trimmed, Latin lowercased, deduped), ≤ 20 tags of ≤ 40 chars.
+  tags             String[] @default([])
+  /// SP-17: when the agent should send it. ≤ 500 chars.
+  useWhen          String?
+  /// SP-17: the agent may list and send this file. Off by default.
+  approvedForAgent Boolean  @default(false)
+
+  /// SP-13 back-relations: campaigns and templates using this file as their header.
+  campaignHeaders Campaign[] @relation("CampaignHeaderMedia")
+  templateHeaders Template[] @relation("TemplateHeaderMedia")
+  /// SP-15 back-relation: ad creatives re-hosted into this file.
+  adSources AdSource[] @relation("AdSourceMedia")
+  /// SP-09 back-relation: tickets this file is attached to.
+  ticketAttachments TicketAttachment[] @relation("MediaTicketAttachments")
+  /// SP-10 back-relation: catalog imports read from this file.
+  catalogImports CatalogImport[] @relation("CatalogImportFile")
+  /// SP-21 back-relation: knowledge sources stored in this file (hidden from the library).
+  knowledgeSources KnowledgeSource[] @relation("MediaKnowledgeSources")
+  /// SP-18: files attached to copilot messages (hidden media rows).
+  copilotAttachments CopilotAttachment[] @relation("MediaCopilotAttachments")
+  /// SP-29: null = a library file; "brand_logo" = a workspace logo (hidden from the library list).
+  purpose        String?
+  /// SP-29 back-relation: workspaces using this file as their logo.
+  workspaceLogos Workspace[] @relation("WorkspaceLogo")
 
   createdAt DateTime @default(now())
 
@@ -849,6 +1718,9 @@ model AdsWalletTransaction {
   costBasisUsd    Decimal?  @db.Decimal(24, 14) // indexed mirror of breakdownJson.usdCost
   costBasisJod    Decimal?  @db.Decimal(24, 14) // costBasisUsd × the frozen fx rate
   externalRef     String?   @unique // Stripe checkout session id — webhook idempotency key
+  // SP-28: the usage meter a DEBIT charged ("ads_ai" | "ai_reply" |
+  // "campaign_message"); null for TOPUP / MONTHLY_GRANT / REFUND / ADJUST.
+  meter           String?
 
   workspaceId String
   workspace   Workspace @relation("WorkspaceAdsWalletTransactions", fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -873,4 +1745,645 @@ model SsoNonce {
   expiresAt DateTime
 
   @@index([expiresAt])
+}
+
+// ─── SP-15: click-to-WhatsApp ad attribution and Meta Ads ──────────────────
+
+/// SP-15: one ad (or boosted post) per workspace, from a referral or the spend sync.
+model AdSource {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation("WorkspaceAdSources", fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceId        String // Meta ad id (referral.source_id / insights ad_id)
+  sourceType      String // "ad" | "post" (others verbatim)
+  headline        String?
+  body            String?
+  mediaType       String? // "image" | "video"
+  mediaUrl        String? // Meta's signed creative link as received (expires within days)
+  mediaId         String? // our re-hosted copy (ruling 6)
+  media           Media?    @relation("AdSourceMedia", fields: [mediaId], references: [id], onDelete: SetNull)
+  sourceUrl       String?
+  welcomeText     String?
+  adAccountId     String? // "act_…" once known (Zernio synced attribution or the spend sync)
+  adName          String?
+  adSetName       String?
+  campaignName    String?
+  namesFrom       String? // "zernio" | "meta_sync"; null = no names known
+  firstReferredAt DateTime?
+  lastReferredAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  conversations Conversation[] @relation("ConversationAdSource")
+  referrals     AdReferral[]
+  spend         AdSpendDaily[]
+  leads         MetaLead[]
+
+  @@unique([workspaceId, sourceType, sourceId])
+  @@index([workspaceId, lastReferredAt])
+  @@index([workspaceId, adAccountId])
+}
+
+/// SP-15: one referral-bearing inbound message (a "conversation started" touch).
+model AdReferral {
+  id             String       @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace    @relation("WorkspaceAdReferrals", fields: [workspaceId], references: [id], onDelete: Cascade)
+  adSourceId     String
+  adSource       AdSource     @relation(fields: [adSourceId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation("ConversationAdReferrals", fields: [conversationId], references: [id], onDelete: Cascade)
+  contactId      String
+  channelId      String?
+  messageId      String       @unique // our Message.id; redelivery-safe
+  message        Message      @relation("MessageAdReferral", fields: [messageId], references: [id], onDelete: Cascade)
+  provider       String // "zernio" | "meta"
+  ctwaClid       String? // null when Meta omits it (WhatsApp Status placements)
+  firstTouch     Boolean      @default(false)
+  referredAt     DateTime
+
+  @@index([workspaceId, adSourceId, referredAt])
+  @@index([workspaceId, referredAt])
+  @@index([conversationId])
+}
+
+/// SP-15: Meta-reported spend per ad per account-local day.
+model AdSpendDaily {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAdSpendDaily", fields: [workspaceId], references: [id], onDelete: Cascade)
+  adSourceId  String
+  adSource    AdSource  @relation(fields: [adSourceId], references: [id], onDelete: Cascade)
+  adAccountId String
+  date        DateTime  @db.Date
+  spend       Decimal   @db.Decimal(14, 4)
+  currency    String // ISO 4217, the ad account's
+  syncedAt    DateTime
+
+  @@unique([adSourceId, date])
+  @@index([workspaceId, adAccountId, date])
+}
+
+/// SP-15: one Meta Ads connection per workspace. Token columns never leave the backend.
+model MetaAdsConnection {
+  id                String    @id @default(cuid())
+  workspaceId       String    @unique
+  workspace         Workspace @relation("WorkspaceMetaAdsConnection", fields: [workspaceId], references: [id], onDelete: Cascade)
+  status            String    @default("pending") // pending | active | needs_reconnect | disconnected
+  statusReason      String? // key: token_refused | account_refused | …
+  tokenEnc          String? // encryptSecret(token); roadmap name
+  tokenExpiresAt    DateTime? // null = non-expiring (system-user token)
+  pendingTokenEnc   String?
+  pendingExpiresAt  DateTime?
+  scopes            String? // CSV of granted permissions (from debug/permissions read)
+  adAccountId       String? // "act_…"; roadmap name
+  adAccountName     String?
+  currency          String?
+  timezone          String? // IANA, from timezone_name
+  pageId            String? // roadmap name
+  pageName          String?
+  connectedById     String?
+  connectedBy       User?     @relation("MetaAdsConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+  connectedAt       DateTime?
+  lastSyncedAt      DateTime?
+  lastSyncError     String? // key only
+  syncAttemptedAt   DateTime? // claim token + cadence (raw SQL)
+  spendBackfilledAt DateTime?
+  checkAttemptedAt  DateTime? // check cooldown (raw SQL)
+  leadCheckpoints   Json? // {formId: ISO created_time}
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status, syncAttemptedAt])
+}
+
+/// SP-15: one Instant Form submission (ruling 9).
+model MetaLead {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceMetaLeads", fields: [workspaceId], references: [id], onDelete: Cascade)
+  leadgenId   String
+  formId      String
+  formName    String?
+  pageId      String
+  adId        String?
+  adSourceId  String?
+  adSource    AdSource? @relation(fields: [adSourceId], references: [id], onDelete: SetNull)
+  contactId   String?
+  contact     Contact?  @relation("ContactMetaLeads", fields: [contactId], references: [id], onDelete: Cascade)
+  fieldData   Json // [{name, values: string[]}] verbatim
+  createdTime DateTime // Meta's created_time
+  importedAt  DateTime  @default(now())
+
+  @@unique([workspaceId, leadgenId])
+  @@index([workspaceId, contactId])
+}
+
+/// SP-21: one piece of agent knowledge. Kinds: "content" | "faq" | "guideline" | "file" | "typed_doc" | "website".
+model KnowledgeSource {
+  id                  String          @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace       @relation("WorkspaceKnowledgeSources", fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind                String
+  /// "draft" | "queued" | "processing" | "ready" | "failed" | "paused"
+  status              String          @default("ready")
+  /// an error key of knowledge-errors.ts, never provider text
+  error               String?
+  title               String
+  /// content: TipTap JSON; other kinds null
+  bodyJson            Json?
+  /// derived text (content, guideline), or the FAQ answer
+  body                String?
+  /// faq: the question (title holds it too, trimmed to 200)
+  question            String?
+  order               Int             @default(0)
+  /// file / typed_doc: the stored file
+  mediaId             String?
+  media               Media?          @relation("MediaKnowledgeSources", fields: [mediaId], references: [id], onDelete: SetNull)
+  /// typed_doc: "offers" | "inventory" | "packages"
+  typedKind           String?
+  /// website
+  url                 String?
+  scope               String? // "site" | "path"
+  schedule            String? // "daily" | "weekly" | "monthly" | "manual"
+  nextSyncAt          DateTime?
+  lastSyncAt          DateTime?
+  syncStartedAt       DateTime?
+  refreshRequestedAt  DateTime?
+  consecutiveFailures Int             @default(0)
+  lastRun             Json? // {startedAt, finishedAt, pagesRead, pagesSame, pagesChanged, pagesNew, failed, reason?}
+  /// processing
+  itemCount           Int             @default(0)
+  contentHash         String?
+  leaseUntil          DateTime?
+  /// publishing (ruling 2)
+  upstream            Json? // {kewy?: {docId, truncated?}, l?: {documentId}}
+  publishState        String          @default("none") // "none" | "pending" | "published" | "failed"
+  /// migrated-in rows (ruling 3)
+  legacyRef           String?
+  createdById         String?
+  version             Int             @default(0)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  pages               KnowledgePage[]
+  chunks              KnowledgeChunk[]
+
+  @@unique([workspaceId, legacyRef])
+  @@index([workspaceId, kind, order])
+  @@index([status, nextSyncAt])
+  @@index([mediaId])
+}
+
+/// SP-21: one page of a website source.
+model KnowledgePage {
+  id          String           @id @default(cuid())
+  workspaceId String
+  sourceId    String
+  source      KnowledgeSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  url         String
+  /// normalised key (no scheme, no www, no fragment, no tracking params)
+  urlKey      String
+  /// "synced" | "needs_login" | "blocked" | "removed" | "error" | "capped"
+  state       String
+  httpStatus  Int?
+  title       String?
+  contentHash String?
+  missedRuns  Int              @default(0)
+  lastSeenAt  DateTime?
+  lastReadAt  DateTime?
+  removedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  chunks      KnowledgeChunk[]
+
+  @@unique([sourceId, urlKey])
+  @@index([workspaceId])
+}
+
+/// SP-21: a searchable piece of a source. The FTS index
+/// "KnowledgeChunk_fts_idx" (GIN on to_tsvector('simple', "text")) lives in
+/// the migration only, outside Prisma's model.
+model KnowledgeChunk {
+  id          String          @id @default(cuid())
+  workspaceId String
+  sourceId    String
+  source      KnowledgeSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  pageId      String?
+  page        KnowledgePage?  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  ord         Int
+  /// section heading, sheet name, or null ("General")
+  heading     String?
+  text        String
+  /// typed / sheet rows: the 1-based row number the user sees
+  rowRef      Int?
+  /// offers: end of validity (date only, workspace TZ)
+  validTo     DateTime?       @db.Date
+  createdAt   DateTime        @default(now())
+
+  @@index([workspaceId, sourceId])
+  @@index([pageId])
+}
+
+// ─── SP-20 agent configuration and sandbox ────────────────────────────────
+
+/// SP-20: the workspace's customer-facing agent configuration (local; kewy-ai keeps its own config upstream).
+model AgentSettings {
+  id             String    @id @default(cuid())
+  workspaceId    String    @unique
+  workspace      Workspace @relation("WorkspaceAgentSettings", fields: [workspaceId], references: [id], onDelete: Cascade)
+  nameEn         String?
+  nameAr         String?
+  greeting       String?
+  greetingAr     String?
+  /// subset of AGENT_TONES
+  tone           String[]  @default([])
+  /// "always" | "within" | "outside"
+  hoursMode      String    @default("always")
+  /// SP-10 WeeklySchedule shape {mon:[{from,to}],…}; kept when the mode returns to "always"
+  schedule       Json?
+  /// Tag ids (SP-16 catalog)
+  excludedTagIds String[]  @default([])
+  /// the emergency stop for every platform (ruling 3)
+  stoppedAt      DateTime?
+  stoppedReason  String?
+  stoppedById    String?
+  /// "none" | "pending" | "published" | "failed"
+  publishState   String    @default("none")
+  version        Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+/// SP-20: a member's "Try your agent" thread. Never a Conversation.
+model AgentSandboxThread {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAgentSandboxThreads", fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation("UserAgentSandboxThreads", fields: [userId], references: [id], onDelete: Cascade)
+  /// [{role, text, toolCalls?, sources?, at}] ≤ 40 turns; plus the model transcript for the next turn
+  messages    Json      @default("[]")
+  transcript  Json      @default("[]")
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([expiresAt])
+}
+
+// ─── SP-22 skills gallery ──────────────────────────────────────────────────
+
+/// SP-22: one row per installed (or explicitly disabled default) skill.
+model SkillInstall {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation("WorkspaceSkillInstalls", fields: [workspaceId], references: [id], onDelete: Cascade)
+  skillKey         String
+  installedVersion Int
+  /// "enabled" | "disabled" | "needs_connector" | "needs_attention"
+  status           String    @default("enabled")
+  config           Json      @default("{}")
+  needsConfig      Boolean   @default(false)
+  lastAppliedAt    DateTime?
+  lastError        String?
+  installedById    String?
+  installedBy      User?     @relation("SkillInstalledBy", fields: [installedById], references: [id], onDelete: SetNull)
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([workspaceId, skillKey])
+}
+
+/// SP-22: one row per CRM MCP tool call made by the agent (no arguments, no results).
+model AgentToolCall {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceAgentToolCalls", fields: [workspaceId], references: [id], onDelete: Cascade)
+  tool        String
+  skillKey    String?
+  outcome     String    // "ok" | "error"
+  errorCode   String?
+  durationMs  Int
+  at          DateTime  @default(now())
+
+  @@index([workspaceId, at])
+  @@index([workspaceId, skillKey, at])
+}
+
+// ─── SP-18 in-app copilot ────────────────────────────────────────────────
+
+/// SP-18: one member's copilot chat.
+model CopilotSession {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation("WorkspaceCopilotSessions", fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation("UserCopilotSessions", fields: [userId], references: [id], onDelete: Cascade)
+  /// "aida" today; registry key for future personas
+  persona      String    @default("aida")
+  title        String?
+  /// a turn in flight (lease); null when idle
+  runningUntil DateTime?
+  /// customer-written text or an attachment was read in this session (ruling 5)
+  tainted      Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  messages     CopilotMessage[]
+  actions      CopilotPendingAction[]
+
+  @@index([workspaceId, userId, updatedAt])
+}
+
+/// SP-18: one message of a session. `content` keeps the model transcript blocks (assistant tool_use, tool_result) for the next turn; `text` is what the member sees.
+model CopilotMessage {
+  id          String         @id @default(cuid())
+  workspaceId String
+  sessionId   String
+  session     CopilotSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// "user" | "assistant" | "tool" | "note"
+  role        String
+  text        String         @default("")
+  content     Json?
+  /// [{kind, id, title}]
+  references  Json?
+  /// [{id, fileName, kind}]
+  attachments Json?
+  /// [{kind, …}]
+  sources     Json?
+  pageContext Json?
+  /// {inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, model}
+  usage       Json?
+  createdAt   DateTime       @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([workspaceId])
+}
+
+/// SP-18: a write the copilot proposed; executed only on approval (or by policy, ruling 3).
+model CopilotPendingAction {
+  id          String         @id @default(cuid())
+  workspaceId String
+  sessionId   String
+  session     CopilotSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId      String
+  tool        String
+  argsJson    Json
+  argsHash    String
+  /// the card shown to the member: {title, changes: [{label, before?, after}]}
+  card        Json
+  permission  String
+  /// "PENDING" | "EXECUTING" | "EXECUTED" | "FAILED" | "REJECTED" | "EXPIRED"
+  status      String         @default("PENDING")
+  /// "approved" | "auto" | null
+  decidedBy   String?
+  decidedById String?
+  decidedAt   DateTime?
+  feedback    String?
+  /// "permission_revoked" | "card_outdated" | "declined" | null
+  refusal     String?
+  resultJson  Json?
+  errorKey    String?
+  expiresAt   DateTime
+  createdAt   DateTime       @default(now())
+
+  @@index([workspaceId, userId, status])
+  @@index([sessionId])
+}
+
+/// SP-18: a file attached to a copilot message.
+model CopilotAttachment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  userId      String
+  sessionId   String?
+  mediaId     String?
+  media       Media?    @relation("MediaCopilotAttachments", fields: [mediaId], references: [id], onDelete: SetNull)
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  /// extracted text (documents); null for images
+  text        String?
+  truncated   Boolean   @default(false)
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, userId])
+  @@index([sessionId])
+  @@index([mediaId])
+}
+
+/// SP-18: append-only audit of pending-action transitions.
+model CopilotActionAudit {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actionId    String
+  /// PROPOSED | APPROVED | AUTO_APPLIED | EXECUTED | FAILED | REJECTED | EXPIRED | REFUSED
+  event       String
+  actorId     String?
+  tool        String
+  /// no customer text, no attachment text
+  detail      Json?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, actionId, createdAt])
+}
+
+// ─── SP-23 connectors gallery ─────────────────────────────────────────────────
+
+/// SP-23: one external tool source for the agent.
+model Connector {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation("WorkspaceConnectors", fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider         String    // "calendly" | "hubspot" | "custom" (pipedrive/salla/foodics reserved)
+  name             String
+  /// "oauth" | "headers" | "none"
+  authKind         String
+  /// "pending" | "active" | "needs_reconnect" | "disconnected"
+  status           String    @default("pending")
+  statusReason     String?
+  serverUrl        String
+  /// token-crypto JSON {access_token, refresh_token?, expires_at?, scope?}; null when not connected.
+  tokenEnc         String?
+  tokenExpiresAt   DateTime?
+  tokenVersion     Int       @default(0)
+  refreshFailures  Int       @default(0)
+  lastRefreshAt    DateTime?
+  /// token-crypto JSON of custom secret headers {name: value}.
+  headersEnc       String?
+  /// token-crypto JSON of a dynamically registered OAuth client.
+  oauthClientEnc   String?
+  oauthMeta        Json?
+  oauthPendingEnc  String?
+  oauthPendingExpiresAt DateTime?
+  /// [{name, title?, description, kind: "read"|"write", access: "off"|"read"|"write", inputSchema, removedAt?}]
+  tools            Json      @default("[]")
+  toolsScannedAt   DateTime?
+  accountLabel     String?
+  lServerId        String?
+  agentBound       Boolean   @default(false)
+  proxyTokenPrefix String?   @unique
+  proxyTokenHash   String?
+  /// {calendly?: {enabled, serviceMap, resourceId, cursor}, hubspot?: {enabled, cursor}}
+  sync             Json      @default("{}")
+  connectedById    String?
+  connectedBy      User?     @relation("ConnectorConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+  connectedAt      DateTime?
+  disconnectedAt   DateTime?
+  version          Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  calls            ConnectorCall[]
+  syncLinks        ConnectorSyncLink[]
+  syncRuns         ConnectorSyncRun[]
+
+  @@index([workspaceId, provider])
+  @@index([status, tokenExpiresAt])
+}
+
+/// SP-23: one proxied tool call (no arguments, no results).
+model ConnectorCall {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceConnectorCalls", fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectorId String
+  connector   Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  tool        String
+  kind        String    // "read" | "write"
+  outcome     String    // "ok" | "error" | "refused"
+  errorCode   String?
+  durationMs  Int
+  source      String    @default("agent") // "agent" | "sync" | "probe"
+  at          DateTime  @default(now())
+
+  @@index([connectorId, at])
+  @@index([workspaceId, at])
+}
+
+/// SP-23: an external record a sync card imported (idempotency).
+model ConnectorSyncLink {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceConnectorSyncLinks", fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectorId String
+  connector   Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  kind        String    // "booking" | "contact"
+  externalId  String
+  localId     String    // Appointment.id or Contact.id (no FK: either may be deleted locally)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([connectorId, kind, externalId])
+  @@index([workspaceId])
+}
+
+/// SP-23: one sync card run.
+model ConnectorSyncRun {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceConnectorSyncRuns", fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectorId String
+  connector   Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  kind        String    // "booking" | "contact"
+  added       Int       @default(0)
+  matched     Int       @default(0)
+  failed      Int       @default(0)
+  error       String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  @@index([connectorId, startedAt])
+}
+
+// ─── SP-27 API keys and outgoing webhooks ───────────────────────────────────
+
+/// An organization API key. It acts as its creator, with the creator's
+/// current permissions intersected with `scopes`, and dies with the creator.
+/// Only the sha256 of the full key is stored.
+model ApiKey {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation("WorkspaceApiKeys", fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  prefix      String    @unique // "crm_<12 hex>"
+  hash        String    @unique // sha256 hex of the full key
+  scopes      Json      // {"contacts": ["read","write"], …}
+  createdById String
+  createdBy   User      @relation("ApiKeyCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+/// An outgoing webhook endpoint. The URL is immutable; the signing secret is
+/// encrypted (token-crypto) and shown once.
+model WebhookEndpoint {
+  id                      String            @id @default(cuid())
+  workspaceId             String
+  workspace               Workspace         @relation("WorkspaceWebhookEndpoints", fields: [workspaceId], references: [id], onDelete: Cascade)
+  url                     String
+  description             String?
+  events                  String[]
+  secretEnc               String            // enc:v1:… (token-crypto)
+  previousSecretEnc       String?
+  previousSecretExpiresAt DateTime?
+  active                  Boolean           @default(true)
+  disabledReason          String?           // "manual" | "failing" | "unsafe_url"
+  failingSince            DateTime?
+  createdById             String?
+  createdBy               User?             @relation("WebhookEndpointCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  deliveries              WebhookDelivery[]
+
+  @@index([workspaceId])
+}
+
+/// One event for one endpoint, retried with backoff (6 attempts).
+model WebhookDelivery {
+  id            String          @id @default(cuid())
+  workspaceId   String
+  endpointId    String
+  endpoint      WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  eventId       String
+  event         String
+  payload       Json
+  status        String          @default("pending") // "pending" | "delivered" | "failed"
+  attempts      Int             @default(0)
+  nextAttemptAt DateTime        @default(now())
+  leaseUntil    DateTime?
+  responseCode  Int?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime        @default(now())
+
+  @@unique([endpointId, eventId])
+  @@index([status, nextAttemptAt])
+  @@index([endpointId, createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+/// SP-28: one metered unit of usage (an AI reply, a campaign message, an ads
+/// AI turn). Idempotent per source (`idempotencyKey = meter:sourceKind:sourceId`).
+/// R6: metered, never charged in v1; `walletTxId` names the AdsWalletTransaction
+/// a future charge used (no FK).
+model UsageEvent {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation("WorkspaceUsageEvents", fields: [workspaceId], references: [id], onDelete: Cascade)
+  meter          String // "ai_reply" | "campaign_message" | "ads_ai"
+  qty            Int       @default(1)
+  at             DateTime  @default(now())
+  sourceKind     String
+  sourceId       String
+  idempotencyKey String    @unique
+  walletTxId     String?
+
+  @@index([workspaceId, meter, at])
 }

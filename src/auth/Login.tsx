@@ -3,31 +3,40 @@ import { useAuth } from "./context";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { BrandLogo } from "@/components/BrandLogo";
+import { memberErrorText } from "@/screens/team/memberErrors";
+import { TwoFactorStep } from "./TwoFactorStep";
+
+/** SP-30: the external public site (`VITE_PUBLIC_SITE_URL`), https only; unset → no link. */
+const PUBLIC_SITE_URL = ((): string | null => {
+  const v = String(import.meta.env.VITE_PUBLIC_SITE_URL ?? "").trim();
+  return /^https:\/\/[^\s"'<>]+$/i.test(v) ? v : null;
+})();
 
 type Mode = "login" | "signup";
 
-// When "Remember me" is checked we pre-fill the email AND password next time.
-// NOTE: the password is stored in PLAINTEXT in localStorage — convenient for a
-// demo/dev login, but readable by any script or person with access to this
-// browser (an XSS-theft risk). Do not enable this for real customer accounts.
-// Keep these keys stable.
+// When "Remember me" is checked we pre-fill the EMAIL next time. SP-26
+// ruling 11: the password is never stored (an old plaintext copy is removed
+// on boot by main.tsx, removeRememberedPassword). Keep this key stable.
 const REMEMBER_KEY = "aram.remember.email";
-const REMEMBER_PW_KEY = "aram.remember.password";
 
 export function Login() {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
-  const { login, register } = useAuth();
+  const { login, register, sessionNotice } = useAuth();
+  // SP-26: set when the password was right and two-step verification is on.
+  const [challenge, setChallenge] = useState<string | null>(null);
 
   const [mode, setMode] = useState<Mode>("login");
 
-  // Login state — pre-fill the remembered email + password if present.
-  const remembered =
-    typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_KEY) : null;
-  const rememberedPw =
-    typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_PW_KEY) : null;
+  // Login state — pre-fill the remembered email if present.
+  let remembered: string | null = null;
+  try {
+    remembered = typeof localStorage !== "undefined" ? localStorage.getItem(REMEMBER_KEY) : null;
+  } catch {
+    /* storage blocked */
+  }
   const [loginEmail, setLoginEmail] = useState(remembered ?? "");
-  const [loginPassword, setLoginPassword] = useState(rememberedPw ?? "");
+  const [loginPassword, setLoginPassword] = useState("");
   const [remember, setRemember] = useState<boolean>(remembered !== null);
 
   // Signup state
@@ -44,21 +53,18 @@ export function Login() {
     setSubmitting(true);
     setError(null);
     try {
-      await login(loginEmail.trim(), loginPassword);
-      // Persist (or clear) the remembered email + password based on the checkbox.
+      // Persist (or clear) the remembered email based on the checkbox.
       try {
-        if (remember) {
-          localStorage.setItem(REMEMBER_KEY, loginEmail.trim());
-          localStorage.setItem(REMEMBER_PW_KEY, loginPassword);
-        } else {
-          localStorage.removeItem(REMEMBER_KEY);
-          localStorage.removeItem(REMEMBER_PW_KEY);
-        }
+        if (remember) localStorage.setItem(REMEMBER_KEY, loginEmail.trim());
+        else localStorage.removeItem(REMEMBER_KEY);
       } catch {
         /* localStorage unavailable (privacy mode) — ignore */
       }
+      const res = await login(loginEmail.trim(), loginPassword);
+      setLoginPassword("");
+      if (res) setChallenge(res.challenge);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(err instanceof Error ? memberErrorText(err, tx) : "Login failed");
     } finally {
       setSubmitting(false);
     }
@@ -172,8 +178,15 @@ export function Login() {
           })}
         </div>
 
-        {mode === "login" ? (
+        {challenge ? (
+          <TwoFactorStep challenge={challenge} tx={tx} onRestart={() => setChallenge(null)} />
+        ) : mode === "login" ? (
           <>
+            {sessionNotice === "session_expired" && (
+              <div style={{ marginBottom: 12 }}>
+                <ErrorBanner message={tx("Your session ended because your password or two-step verification changed. Sign in again.", "انتهت جلستك لأن كلمة المرور أو التحقق بخطوتين تغيّر. سجّل الدخول مرة أخرى.")} />
+              </div>
+            )}
             <h1 style={{ margin: "0 0 4px", fontSize: 22, letterSpacing: "-0.02em" }}>
               {tx("Sign in to your workspace", "سجّل الدخول")}
             </h1>
@@ -230,8 +243,11 @@ export function Login() {
                   onChange={(e) => setRemember(e.target.checked)}
                   style={{ width: 15, height: 15, accentColor: "var(--accent)", cursor: "pointer" }}
                 />
-                {tx("Remember me", "تذكّرني")}
+                {tx("Remember my email", "تذكّر بريدي")}
               </label>
+              <a href="#/forgot-password" style={{ fontSize: 13, justifySelf: "start" }}>
+                {tx("Forgot password?", "نسيت كلمة المرور؟")}
+              </a>
 
               {error && <ErrorBanner message={error} />}
 
@@ -355,6 +371,18 @@ export function Login() {
             </form>
           </>
         )}
+        {/* SP-20: the guided signup (account, then the agent setup). */}
+        <div style={{ marginTop: 16, fontSize: 13, textAlign: "center" }} className="muted">
+          {tx("New here?", "جديد هنا؟")} <a href="#/signup">{tx("Create an account and set up your agent", "أنشئ حسابًا وأعدّ وكيلك")}</a>
+        </div>
+        {/* SP-30 (D7, ruling 5): the public website lives elsewhere; linked when configured. */}
+        {PUBLIC_SITE_URL ? (
+          <div style={{ marginTop: 8, fontSize: 13, textAlign: "center" }} className="muted">
+            <a href={PUBLIC_SITE_URL} target="_blank" rel="noopener noreferrer">
+              {tx("Visit our website", "زُر موقعنا الإلكتروني")}
+            </a>
+          </div>
+        ) : null}
         <LegalLinks tx={tx} />
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useFetch } from "@/api/useFetch";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
@@ -6,6 +6,15 @@ import { Avatar } from "@/components/Avatar";
 import { Badge, type BadgeKind } from "@/components/Badge";
 import { NotesPanel } from "@/components/NotesPanel";
 import type { Contact } from "@/lib/types";
+import { ContactDetailsForm } from "./ContactDetailsForm";
+import { ContactRecords } from "./ContactRecords";
+import { CustomFieldsCard } from "./CustomFieldsCard";
+import { DeleteContactDialog } from "./DeleteContactDialog";
+import { usePermissions } from "@/auth/usePermissions";
+import { openRecord } from "@/lib/openRecord";
+import { anotherModalOpen } from "@/lib/modalOpen";
+import { ActivityList } from "@/components/activities/ActivityList";
+import { Timeline } from "@/components/activities/Timeline";
 
 interface RecentConv {
   id: string;
@@ -14,16 +23,6 @@ interface RecentConv {
   lastAt: string;
   unread: number;
   status: string;
-}
-
-interface RecentTicket {
-  id: string;
-  number: number;
-  title: string;
-  value: number | null;
-  currency: string;
-  closedAt: string | null;
-  stage: { label: string; color: string } | null;
 }
 
 interface ContactSummary {
@@ -37,12 +36,24 @@ interface ContactSummary {
     channels: Record<string, number>;
   };
   recentConversations: RecentConv[];
-  recentTickets: RecentTicket[];
+}
+
+interface ContentProps {
+  contactId: string;
+  onClose: () => void;
+  /** Called after the contact was edited or deleted so the list can refresh. */
+  onChanged?: () => void;
+  /** After a delete completes; defaults to onClose. */
+  onDeleted?: () => void;
+  /** Inside the record sheet: the sheet frame supplies the header. */
+  embedded?: boolean;
 }
 
 interface Props {
   contactId: string;
   onClose: () => void;
+  /** Called after the contact was edited or deleted so the list can refresh. */
+  onChanged?: () => void;
 }
 
 const CHANNEL_LABEL: Record<string, { en: string; ar: string }> = {
@@ -61,78 +72,33 @@ const CHANNEL_DOT: Record<string, string> = {
   webchat:   "var(--info)",
 };
 
-const STAGE_COLOR_VAR: Record<string, string> = {
-  ink:    "var(--ink-3)",
-  info:   "var(--info)",
-  ok:     "var(--ok)",
-  warn:   "var(--warn)",
-  bad:    "var(--bad)",
-  accent: "var(--accent)",
-  human:  "var(--info)",
-};
-
 function tagKind(tag: string): BadgeKind {
   if (tag === "VIP") return "warn";
   if (tag === "Hot") return "bad";
   return "";
 }
 
-export function ContactDetailDrawer({ contactId, onClose }: Props) {
+/** The contact detail body (header, details, records, notes, delete). Shared by
+ *  the Contacts drawer and the universal record sheet. */
+export function ContactDetailContent({ contactId, onClose, onChanged, onDeleted, embedded }: ContentProps) {
   const { t } = useTweaks();
   const tx = makeTx(t.lang);
   const isAr = t.lang === "ar";
+  const { can } = usePermissions();
 
   const sumQ = useFetch<ContactSummary>(`/contacts/${contactId}/summary`);
   const s = sumQ.data;
   const c = s?.contact;
+  const [deleting, setDeleting] = useState(false);
+  const [tab, setTab] = useState<"overview" | "timeline">("overview");
 
-  // Close on Esc.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
-  const openInbox = (convId: string): void => {
-    window.location.hash = `#/inbox?conversation=${encodeURIComponent(convId)}`;
-    onClose();
-  };
-  const openPipeline = (): void => {
-    window.location.hash = "#/pipeline";
-    onClose();
-  };
+  // Links open the record in the sheet (pushing history) instead of leaving the screen.
+  const openConversation = (convId: string): void => openRecord("conversation", convId);
+  const openTicket = (ticketId: string): void => openRecord("ticket", ticketId);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="false"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 90,
-        display: "flex",
-        justifyContent: isAr ? "flex-start" : "flex-end",
-        background: "rgba(0,0,0,0.35)",
-        backdropFilter: "blur(2px)",
-      }}
-    >
-      <aside
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(460px, 94vw)",
-          height: "100%",
-          background: "var(--bg-1)",
-          borderLeft: isAr ? 0 : "1px solid var(--line)",
-          borderRight: isAr ? "1px solid var(--line)" : 0,
-          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
+    <>
         {sumQ.loading && !c ? (
           <div style={{ padding: 24, color: "var(--ink-3)", fontSize: 12 }}>
             {tx("Loading…", "جارٍ التحميل…")}
@@ -146,7 +112,7 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
             {/* ── Header ───────────────────────────────────────────────── */}
             <div
               style={{
-                padding: "16px 20px 14px",
+                padding: embedded ? "12px 20px" : "16px 20px 14px",
                 borderBottom: "1px solid var(--line)",
                 background:
                   "linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%)",
@@ -155,12 +121,13 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                 alignItems: "flex-start",
               }}
             >
-              <Avatar
+              {!embedded && <Avatar
                 name={c.name}
                 color={String(150 + (c.id.charCodeAt(1) || 0) * 6)}
                 size="lg"
-              />
+              />}
               <div style={{ flex: 1, minWidth: 0 }}>
+                {!embedded && (<>
                 <div
                   style={{
                     fontSize: 16,
@@ -170,7 +137,7 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                     textOverflow: "ellipsis",
                   }}
                 >
-                  {c.name}
+                  <span dir="auto">{c.name}</span>
                 </div>
                 <div
                   className="mono"
@@ -178,12 +145,13 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                 >
                   {c.phone || "—"}
                 </div>
+                </>)}
                 <div
                   style={{
                     display: "flex",
                     flexWrap: "wrap",
                     gap: 6,
-                    marginTop: 8,
+                    marginTop: embedded ? 0 : 8,
                     fontSize: 11,
                     color: "var(--ink-2)",
                   }}
@@ -212,8 +180,20 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                     ))}
                   </div>
                 )}
+                {(c.marketingOptOut || c.notALead) && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
+                    {c.marketingOptOut && (
+                      <Badge kind="warn">
+                        {tx("Opted out of marketing", "ألغى الاشتراك في التسويق")}
+                      </Badge>
+                    )}
+                    {c.notALead && (
+                      <Badge kind="">{tx("Not a lead", "ليس عميلًا محتملًا")}</Badge>
+                    )}
+                  </div>
+                )}
               </div>
-              <button
+              {!embedded && <button
                 onClick={onClose}
                 aria-label={tx("Close", "إغلاق")}
                 style={{
@@ -236,11 +216,52 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                 }}
               >
                 ×
-              </button>
+              </button>}
+            </div>
+
+            <div role="tablist" style={{ display: "flex", gap: 4, padding: "6px 16px 0", borderBottom: "1px solid var(--line)" }}>
+              {(["overview", "timeline"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === k}
+                  onClick={() => setTab(k)}
+                  style={{
+                    background: "transparent", border: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12,
+                    padding: "6px 10px", color: tab === k ? "var(--ink)" : "var(--ink-3)",
+                    borderBottom: tab === k ? "2px solid var(--accent)" : "2px solid transparent",
+                  }}
+                >
+                  {k === "overview" ? tx("Overview", "نظرة عامة") : tx("Timeline", "الخط الزمني")}
+                </button>
+              ))}
             </div>
 
             {/* ── Scrollable body ──────────────────────────────────────── */}
             <div style={{ overflowY: "auto", flex: 1, padding: "14px 16px 24px" }}>
+              {tab === "timeline" ? (
+                <Timeline contactId={c.id} />
+              ) : (<>
+              <Section label={tx("Activities", "الأنشطة")}>
+                <ActivityList contactId={c.id} />
+              </Section>
+
+              <Section label={tx("Details", "البيانات")}>
+                <ContactDetailsForm
+                  tx={tx}
+                  contact={c}
+                  onSaved={() => {
+                    void sumQ.refetch();
+                    onChanged?.();
+                  }}
+                />
+              </Section>
+
+              <Section label={tx("Custom fields", "الحقول المخصصة")}>
+                <CustomFieldsCard tx={tx} lang={t.lang} contactId={c.id} />
+              </Section>
+
               {/* Stats grid */}
               {s && (
                 <div
@@ -248,6 +269,7 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                     display: "grid",
                     gridTemplateColumns: "repeat(4, 1fr)",
                     gap: 8,
+                    marginTop: 18,
                   }}
                 >
                   <Stat label={tx("Convs", "محادثات")} value={s.stats.conversations} />
@@ -324,7 +346,7 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                     <button
                       key={rc.id}
                       type="button"
-                      onClick={() => openInbox(rc.id)}
+                      onClick={() => openConversation(rc.id)}
                       style={{
                         display: "flex",
                         alignItems: "flex-start",
@@ -428,120 +450,92 @@ export function ContactDetailDrawer({ contactId, onClose }: Props) {
                 })}
               </Section>
 
-              {/* Recent tickets */}
-              <Section
-                label={tx("Recent tickets", "أحدث التذاكر")}
-                empty={
-                  s && s.recentTickets.length === 0
-                    ? tx("No tickets yet.", "لا توجد تذاكر بعد.")
-                    : null
-                }
-              >
-                {s?.recentTickets.map((rt) => {
-                  const accent = rt.stage
-                    ? STAGE_COLOR_VAR[rt.stage.color] ?? "var(--ink-3)"
-                    : "var(--ink-3)";
-                  return (
-                    <button
-                      key={rt.id}
-                      type="button"
-                      onClick={openPipeline}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "10px 10px",
-                        width: "100%",
-                        textAlign: "start",
-                        background: "var(--bg-1)",
-                        border: "1px solid var(--line-soft)",
-                        borderRadius: 8,
-                        cursor: "pointer",
-                        color: "var(--ink)",
-                        fontFamily: "inherit",
-                        position: "relative",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "var(--bg-2)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "var(--bg-1)";
-                      }}
-                    >
-                      <span
-                        aria-hidden
-                        style={{
-                          width: 3,
-                          height: 22,
-                          background: accent,
-                          borderRadius: 2,
-                          flex: "0 0 auto",
-                        }}
-                      />
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "baseline",
-                            gap: 6,
-                          }}
-                        >
-                          <span
-                            className="mono"
-                            style={{
-                              fontSize: 10,
-                              color: "var(--ink-3)",
-                              flex: "0 0 auto",
-                            }}
-                          >
-                            #{String(rt.number).padStart(3, "0")}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 500,
-                              flex: 1,
-                              minWidth: 0,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                          >
-                            {rt.title}
-                          </span>
-                        </span>
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            marginTop: 3,
-                            fontSize: 11,
-                            color: "var(--ink-3)",
-                          }}
-                        >
-                          {rt.stage && (
-                            <span style={{ color: accent }}>{rt.stage.label}</span>
-                          )}
-                          {rt.value !== null && (
-                            <span className="mono">
-                              {rt.currency} {rt.value.toLocaleString()}
-                            </span>
-                          )}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </Section>
+              {/* Tickets + bookings (paged) */}
+              <ContactRecords
+                tx={tx}
+                lang={t.lang}
+                contactId={c.id}
+                onOpenTicket={openTicket}
+              />
 
               {/* Notes */}
               <Section label={tx("Notes", "الملاحظات")}>
                 <NotesPanel contactId={c.id} scope="contact" />
               </Section>
+
+              <div style={{ marginTop: 24, paddingTop: 14, borderTop: "1px solid var(--line-soft)" }}>
+                <button type="button" className="btn danger" onClick={() => setDeleting(true)} disabled={!can("contacts.delete")} title={can("contacts.delete") ? undefined : tx("You don't have permission to do this", "ليست لديك صلاحية للقيام بذلك")}>
+                  {tx("Delete contact", "حذف جهة الاتصال")}
+                </button>
+              </div>
+              </>)}
             </div>
           </>
         )}
+      {deleting && c && (
+        // Stop clicks inside the dialog from reaching the drawer backdrop's onClose.
+        <div onClick={(e) => e.stopPropagation()}>
+        <DeleteContactDialog
+          tx={tx}
+          contactId={c.id}
+          contactName={c.name}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => {
+            setDeleting(false);
+            // Inside the sheet, onDeleted is the single change notification.
+            if (!onDeleted) onChanged?.();
+            (onDeleted ?? onClose)();
+          }}
+        />
+        </div>
+      )}
+    </>
+  );
+}
+
+export function ContactDetailDrawer({ contactId, onClose, onChanged }: Props) {
+  const { t } = useTweaks();
+  const isAr = t.lang === "ar";
+
+  // Close on Esc, unless a dialog (delete confirm) or the record sheet is on top.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !anotherModalOpen(null)) onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="false"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        display: "flex",
+        justifyContent: isAr ? "flex-start" : "flex-end",
+        background: "rgba(0,0,0,0.35)",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <aside
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(460px, 94vw)",
+          height: "100%",
+          background: "var(--bg-1)",
+          borderLeft: isAr ? 0 : "1px solid var(--line)",
+          borderRight: isAr ? "1px solid var(--line)" : 0,
+          boxShadow: "-12px 0 32px rgba(0,0,0,0.35)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <ContactDetailContent contactId={contactId} onClose={onClose} onChanged={onChanged} />
       </aside>
     </div>
   );

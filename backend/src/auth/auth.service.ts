@@ -1,3 +1,5 @@
+import { emailWhere, normalizeEmail, pickByEmail } from "./email";
+import { brandFields } from "../workspaces/workspaces.service";
 import {
   BadRequestException,
   ConflictException,
@@ -5,6 +7,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -29,6 +32,8 @@ import {
   UpdateProfileDto,
 } from "./dto";
 import type { JwtPayload } from "./auth.guard";
+import { TwoFactorService } from "./two-factor.service";
+import { SessionVersionService } from "./session-version.service";
 
 // The user AND their (non-suspended) memberships, in one query.
 const LOGIN_INCLUDE = {
@@ -49,6 +54,8 @@ export class AuthService {
     private readonly workspaces: WorkspacesService,
     private readonly kewy: KewyIdentityClient,
     private readonly kewySync: KewyIdentitySync,
+    private readonly twoFactor: TwoFactorService,
+    private readonly sessions: SessionVersionService,
   ) {}
 
   /**
@@ -57,7 +64,7 @@ export class AuthService {
    * response — is the same in every mode.
    */
   async login(dto: LoginDto, clientIp?: string) {
-    const email = dto.email.toLowerCase().trim();
+    const email = normalizeEmail(dto.email);
     const mode = authSource();
     if (mode === "local") return this.loginLocal(email, dto.password, { backfill: true });
 
@@ -102,7 +109,10 @@ export class AuthService {
   private async loginLocal(email: string, password: string, opts: { backfill: boolean }) {
     // One DB round-trip (user + memberships) plus the bcrypt compare; issue()
     // signs from this row instead of re-fetching.
-    const user = await this.prisma.user.findUnique({ where: { email }, include: LOGIN_INCLUDE });
+    // The normalised row first; then any letter case, so accounts stored before emails were normalised still sign in.
+    const user =
+      (await this.prisma.user.findUnique({ where: { email }, include: LOGIN_INCLUDE })) ??
+      (await this.prisma.user.findFirst({ where: emailWhere(email), include: LOGIN_INCLUDE }));
     // SSO-provisioned users have no local password — they come in via
     // POST /auth/sso/exchange, not this endpoint.
     if (!user || !user.password) throw new UnauthorizedException("Invalid credentials");
@@ -116,14 +126,14 @@ export class AuthService {
   private async loginWithKewy(email: string, auth: KewyAuthResult) {
     const ids = auth.identities.map((i) => i.externalUserId);
     const candidates = await this.prisma.user.findMany({
-      where: { OR: [...(ids.length ? [{ id: { in: ids } }] : []), { email }] },
+      where: { OR: [...(ids.length ? [{ id: { in: ids } }] : []), emailWhere(email)] },
       include: LOGIN_INCLUDE,
     });
     // Prefer a user Kewy itself linked (in identity order), else the email match.
     const byIdentity = ids
       .map((id) => candidates.find((u) => u.id === id))
       .find((u) => u !== undefined);
-    const user = byIdentity ?? candidates.find((u) => u.email === email);
+    const user = byIdentity ?? pickByEmail(candidates, email);
     if (!user) {
       this.logger.warn(`Kewy account ${auth.accountId} has no crm user`);
       throw new UnauthorizedException("Invalid credentials");
@@ -174,6 +184,24 @@ export class AuthService {
     }
   }
 
+  /** SP-26: a fresh session after this user's sessionVersion changed
+   *  (2FA disable), keeping the current workspace when still a member. */
+  async reissue(userId: string, workspaceId?: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const memberships = await this.workspaces.listForUser(userId);
+    const active = workspaceId && memberships.some((m) => m.id === workspaceId) ? workspaceId : null;
+    return this.issue(user, active, memberships);
+  }
+
+  /** SP-26: after POST /auth/2fa/verify, the normal login payload. */
+  async loginAfterTwoFactor(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, include: LOGIN_INCLUDE });
+    if (!user) throw new UnauthorizedException("Invalid credentials");
+    const res = await this.finishLogin(user, { secondFactorDone: true });
+    if ("twoFactorRequired" in res) throw new UnauthorizedException("Invalid credentials"); // unreachable
+    return res;
+  }
+
   private async finishLogin(user: {
     id: string;
     email: string;
@@ -182,6 +210,8 @@ export class AuthService {
     initials: string;
     color: string;
     isSuperAdmin: boolean;
+    twoFA?: boolean;
+    sessionVersion?: number | null;
     memberships: {
       role: string;
       workspace: {
@@ -194,7 +224,12 @@ export class AuthService {
         paymentDueSince?: Date | null;
       };
     }[];
-  }) {
+  }, opts: { secondFactorDone?: boolean } = {}) {
+    // SP-26: a password login with 2FA on returns a challenge, not a session.
+    // (SSO bridges never come through here: ruling 9.)
+    if (user.twoFA === true && !opts.secondFactorDone) {
+      return { twoFactorRequired: true as const, challenge: await this.twoFactor.challengeFor(user) };
+    }
     const memberships = user.memberships.map((m) => ({
       id: m.workspace.id,
       name: m.workspace.name,
@@ -203,9 +238,16 @@ export class AuthService {
       lang: m.workspace.lang,
       plan: m.workspace.plan,
       role: m.role as WorkspaceRole,
+      ...brandFields(m.workspace),
     }));
 
     if (memberships.length === 0) {
+      // SP-26 (ruling 6): someone removed from a workspace, or with a pending
+      // invitation, lands on the no-workspace page instead of in a fresh
+      // empty workspace. (register still auto-creates.)
+      if (await this.expectsNoWorkspace(user.id, user.email)) {
+        return this.issue(user, null, []);
+      }
       // Edge case: user with no workspace memberships. Create one on the fly
       // so they always land somewhere.
       const ws = await this.workspaces.create(
@@ -221,6 +263,7 @@ export class AuthService {
           lang: ws.lang,
           plan: ws.plan,
           role: "owner",
+          ...brandFields(ws),
         },
       ]);
     }
@@ -239,8 +282,48 @@ export class AuthService {
     return this.issue(user, home, memberships);
   }
 
+  /** A pending invitation for this email, or an audit record of the user's
+   *  removal from some workspace (ruling 6). Both tables are unscoped. */
+  private async expectsNoWorkspace(userId: string, email: string): Promise<boolean> {
+    const [pending, removed] = await Promise.all([
+      this.prisma.invitation.findFirst({
+        where: { ...emailWhere(email), acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+        select: { id: true },
+      }),
+      this.prisma.auditLog.findFirst({
+        where: { action: "member.removed", targetKind: "member", targetId: userId },
+        select: { id: true },
+      }),
+    ]);
+    return !!pending || !!removed;
+  }
+
+  /** SP-26: a session for `userId` with `workspaceId` active (after an
+   *  invitation is accepted). */
+  async issueFor(userId: string, workspaceId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const memberships = await this.workspaces.listForUser(userId);
+    return this.issue(user, workspaceId, memberships);
+  }
+
+  /** GET /auth/workspaces/by-slug/:slug (ruling 10): an unknown slug is 404;
+   *  the slug of a workspace the user is not in gives `{ member: false }`
+   *  without its id or name. */
+  async workspaceBySlug(userId: string, slug: string) {
+    const ws = await this.prisma.workspace.findUnique({ where: { slug }, select: { id: true, name: true } });
+    if (!ws) throw new NotFoundException({ statusCode: 404, message: "workspaces.slug_not_found" });
+    const m = await this.prisma.workspaceMember.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId: ws.id } },
+      select: { workspaceId: true },
+    });
+    if (!m || m.workspaceId !== ws.id) return { member: false as const };
+    return { id: ws.id, name: ws.name, member: true as const };
+  }
+
   async register(dto: RegisterDto) {
-    const exists = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    // Stored normalised; a different-case duplicate of an existing account is refused.
+    const email = normalizeEmail(dto.email);
+    const exists = await this.prisma.user.findFirst({ where: emailWhere(email), select: { id: true } });
     if (exists) throw new ConflictException("Email already in use");
     const initials = dto.name
       .split(" ")
@@ -248,22 +331,18 @@ export class AuthService {
       .join("")
       .slice(0, 2)
       .toUpperCase();
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
+    // One transaction: user + workspace + membership + seeded defaults. A
+    // failure anywhere rolls the user back too, so a retry is not a 409.
+    const { workspace: ws, user } = await this.workspaces.createWithNewOwner(
+      { name: dto.workspaceName ?? `${dto.name}'s workspace` },
+      {
+        email,
         password: await bcrypt.hash(dto.password, 10),
         name: dto.name,
         role: dto.role ?? "Agent",
         color: dto.color ?? "200",
         initials,
       },
-    });
-    await this.kewySync.userCreated(user, () =>
-      this.prisma.user.delete({ where: { id: user.id } }),
-    );
-    const ws = await this.workspaces.create(
-      { name: dto.workspaceName ?? `${dto.name}'s workspace` },
-      user.id,
     );
     const memberships = await this.workspaces.listForUser(user.id);
     return this.issue(user, ws.id, memberships);
@@ -312,7 +391,9 @@ export class AuthService {
     return this.shape(updated);
   }
 
-  async changePassword(userId: string, dto: ChangePasswordDto) {
+  /** SP-26: also ends every other session (sessionVersion) and returns a
+   *  fresh token for this one. */
+  async changePassword(userId: string, dto: ChangePasswordDto, workspaceId?: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException("User no longer exists");
     // SSO-provisioned users have no local password — they can't change one via
@@ -329,8 +410,15 @@ export class AuthService {
     const hash = await bcrypt.hash(dto.newPassword, 10);
     // Kewy first: a strict failure leaves the local password unchanged.
     await this.kewySync.passwordChanged(user, hash);
-    await this.prisma.user.update({ where: { id: userId }, data: { password: hash } });
-    return { ok: true };
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hash, ...SessionVersionService.bump() },
+    });
+    this.sessions.bumped(userId);
+    const memberships = await this.workspaces.listForUser(userId);
+    const active = workspaceId && memberships.some((m) => m.id === workspaceId) ? workspaceId : null;
+    const { token } = await this.issue(updated, active, memberships);
+    return { ok: true, token };
   }
 
   /** True when Kewy accepts `password` for exactly this crm user. */
@@ -359,6 +447,7 @@ export class AuthService {
       initials: string;
       color: string;
       isSuperAdmin: boolean;
+      sessionVersion?: number | null;
     },
     workspaceId: string | null,
     workspaces: Awaited<ReturnType<WorkspacesService["listForUser"]>>,
@@ -367,6 +456,8 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      // SP-26 ruling 4: AuthGuard compares this with User.sessionVersion.
+      sv: user.sessionVersion ?? 0,
       ...(workspaceId ? { workspaceId } : {}),
       ...(user.isSuperAdmin ? { isSuperAdmin: true } : {}),
     };
@@ -387,6 +478,7 @@ export class AuthService {
     initials: string;
     color: string;
     isSuperAdmin: boolean;
+    twoFA?: boolean;
   }) {
     return {
       id: u.id,
@@ -396,6 +488,8 @@ export class AuthService {
       initials: u.initials,
       color: u.color,
       isSuperAdmin: u.isSuperAdmin,
+      // SP-26: whether TOTP is on; never the secret or recovery codes.
+      twoFA: u.twoFA === true,
     };
   }
 }

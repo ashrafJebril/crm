@@ -238,6 +238,7 @@ function ProvisionClientModal({ tx, onClose, onCreated }: ProvisionClientModalPr
       onClick={close}
     >
       <div
+        className="dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--bg-1)",

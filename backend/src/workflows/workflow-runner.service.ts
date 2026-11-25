@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PaymentLockService } from "../billing/payment-lock.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -6,10 +6,12 @@ import { AskAgentExecutor } from "./executors/ask-agent.executor";
 import { SendWhatsappExecutor } from "./executors/send-whatsapp.executor";
 import { SendWhatsappTemplateExecutor } from "./executors/send-whatsapp-template.executor";
 import { UpdateDataExecutor } from "./executors/update-data.executor";
+import { NotifyStaffExecutor } from "./executors/notify-staff.executor";
 import { evaluateCondition, interpretYesNo } from "./workflow-condition";
 import {
   AskAgentStep,
   DelayConfig,
+  NotifyStaffStep,
   SendWhatsappStep,
   SendWhatsappTemplateStep,
   Step,
@@ -18,6 +20,11 @@ import {
   UpdateDataStep,
 } from "./workflow-steps";
 import { RunContext } from "./workflow-variables";
+
+export const OPTED_OUT_REASON = "contact opted out of marketing";
+/** SP-24: the recorded skip reasons of a system (lifecycle) workflow run. */
+export const SYSTEM_OPTED_OUT_REASON = "opted_out";
+export const WORKFLOW_INACTIVE_REASON = "workflow_inactive";
 
 @Injectable()
 export class WorkflowRunnerService {
@@ -30,7 +37,19 @@ export class WorkflowRunnerService {
     private readonly updateData: UpdateDataExecutor,
     private readonly paymentLock: PaymentLockService,
     private readonly sendWhatsappTemplate: SendWhatsappTemplateExecutor,
+    @Optional() private readonly notifyStaff?: NotifyStaffExecutor,
   ) {}
+
+  /** SP-24: the run's workflow, when it is a system (lifecycle) workflow. */
+  private async systemWorkflow(workflowId: string | undefined): Promise<{ status: string; systemKey: string } | null> {
+    if (!workflowId) return null;
+    try {
+      const wf = await this.prisma.workflow?.findUnique({ where: { id: workflowId }, select: { status: true, systemKey: true } });
+      return wf?.systemKey ? { status: wf.status, systemKey: wf.systemKey } : null;
+    } catch {
+      return null;
+    }
+  }
 
   async run(runId: string): Promise<void> {
     const run = await this.prisma.workflowRun.findUniqueOrThrow({ where: { id: runId } });
@@ -38,6 +57,8 @@ export class WorkflowRunnerService {
     let context = run.context as unknown as RunContext;
     const result: Record<string, unknown> = { ...(run.result as Record<string, unknown>) };
     let currentId = (run.cursor as unknown as StoredCursor).stepId;
+    const workflowId = (run as { workflowId?: string }).workflowId;
+    const isSystem = !!(await this.systemWorkflow(workflowId));
 
     try {
       while (currentId) {
@@ -78,6 +99,24 @@ export class WorkflowRunnerService {
         }
 
         const isSend = step.type === "send_whatsapp" || step.type === "send_whatsapp_template";
+        // SP-24 gate 6: a system workflow switched off between trigger and
+        // send sends nothing (the toggle wins). Checked at every send.
+        if (isSystem && (isSend || step.type === "notify_staff")) {
+          const wf = await this.systemWorkflow(workflowId);
+          if (!wf || wf.status !== "active") {
+            result[step.id] = { skipped: true, reason: WORKFLOW_INACTIVE_REASON };
+            await this.prisma.workflowRun.update({
+              where: { id: runId },
+              data: {
+                status: "cancelled",
+                completedAt: new Date(),
+                context: context as unknown as Prisma.InputJsonValue,
+                result: result as unknown as Prisma.InputJsonValue,
+              },
+            });
+            return;
+          }
+        }
         if (isSend && (await this.sendsBlocked(run.workspaceId))) {
           // Park, do not fail: same step, same context, due now. The poller
           // skips it while the workspace is locked and resumes it afterwards.
@@ -92,6 +131,16 @@ export class WorkflowRunnerService {
             },
           });
           return;
+        }
+
+        if (step.type === "send_whatsapp_template" && (await this.contactOptedOut(run.workspaceId, context))) {
+          // Templates are marketing sends: honour the contact's opt-out, record
+          // why nothing went out, and carry on with the rest of the workflow.
+          const skipped = { skipped: true, reason: isSystem ? SYSTEM_OPTED_OUT_REASON : OPTED_OUT_REASON };
+          result[step.id] = skipped;
+          context = { ...context, steps: { ...context.steps, [step.id]: skipped } };
+          currentId = step.next ?? null;
+          continue;
         }
 
         const output = await this.executeAction(run.workspaceId, step, context);
@@ -124,6 +173,30 @@ export class WorkflowRunnerService {
     }
   }
 
+  /**
+   * Whether the run's contact opted out of marketing. The contact comes from
+   * the trigger (contact, ticket or appointment payload) or, for message
+   * triggers, from the trigger/ticket conversation.
+   */
+  private async contactOptedOut(workspaceId: string, context: RunContext): Promise<boolean> {
+    const trigger = context.trigger ?? {};
+    const ticket = trigger.ticket as { contactId?: string | null; conversationId?: string | null } | undefined;
+    const contactId =
+      (trigger.contact as { id?: string } | undefined)?.id ??
+      ticket?.contactId ??
+      (trigger.appointment as { contactId?: string } | undefined)?.contactId;
+    const conversationId = (trigger.conversation as { id?: string } | undefined)?.id ?? ticket?.conversationId;
+    const or: Prisma.ContactWhereInput[] = [];
+    if (contactId) or.push({ id: contactId });
+    if (conversationId) or.push({ conversations: { some: { id: conversationId } } });
+    if (!or.length) return false;
+    const hit = await this.prisma.contact.findFirst({
+      where: { workspaceId, marketingOptOut: true, OR: or },
+      select: { id: true },
+    });
+    return !!hit;
+  }
+
   /** Locked, or the lookup failed: either way the message must not go out. */
   private async sendsBlocked(workspaceId: string): Promise<boolean> {
     try {
@@ -136,7 +209,7 @@ export class WorkflowRunnerService {
 
   private async executeAction(
     workspaceId: string,
-    step: SendWhatsappStep | SendWhatsappTemplateStep | AskAgentStep | UpdateDataStep,
+    step: SendWhatsappStep | SendWhatsappTemplateStep | AskAgentStep | UpdateDataStep | NotifyStaffStep,
     context: RunContext,
   ): Promise<Record<string, unknown>> {
     switch (step.type) {
@@ -148,6 +221,9 @@ export class WorkflowRunnerService {
         return this.askAgent.execute(workspaceId, step.config, context);
       case "update_data":
         return this.updateData.execute(workspaceId, step.config, context);
+      case "notify_staff":
+        if (!this.notifyStaff) throw new Error("notify_staff is not available");
+        return this.notifyStaff.execute(workspaceId, step.config, context);
     }
   }
 

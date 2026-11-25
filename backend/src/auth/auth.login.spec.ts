@@ -9,6 +9,12 @@ import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { AuthService } from "./auth.service";
 
+/** SP-26: login may return a 2FA challenge; these specs only cover sessions. */
+type Session = Extract<Awaited<ReturnType<AuthService["login"]>>, { token: string }>;
+type SessionAuth = Omit<AuthService, "login"> & { login: (...a: Parameters<AuthService["login"]>) => Promise<Session> };
+/** SP-26 constructor deps: 2FA challenges and session versions. */
+const sp26Deps = [{ challengeFor: jest.fn() } as never, { invalidate: jest.fn(), bumped: jest.fn() } as never] as const;
+
 const PASSWORD = "secret123";
 const HASH = bcrypt.hashSync(PASSWORD, 4);
 
@@ -72,6 +78,8 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
   const prisma = {
     user: {
       findUnique: jest.fn().mockResolvedValue(user),
+      // Legacy-case fallback of the local check (no other match here).
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue(user ? [user] : []),
       update: jest.fn().mockResolvedValue(user),
     },
@@ -79,9 +87,14 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
       user: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       workspace: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     },
+    // SP-26 (ruling 6): no pending invitation and no removal record by default.
+    invitation: { findFirst: jest.fn().mockResolvedValue(null) },
+    auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   const workspaces = {
     create: jest.fn().mockResolvedValue({ ...workspace, id: "ws-new" }),
+    // SP-26: change-password re-issues a token.
+    listForUser: jest.fn().mockResolvedValue([]),
   };
   const kewy = { authenticate: jest.fn() };
   const kewySync = {
@@ -94,8 +107,9 @@ function setup(mode: string, user: ReturnType<typeof localUser> | null = localUs
     workspaces as never,
     kewy as never,
     kewySync as never,
+    ...sp26Deps,
   );
-  return { svc, prisma, kewy, kewySync, workspaces };
+  return { svc: svc as unknown as SessionAuth, prisma, kewy, kewySync, workspaces };
 }
 
 const dto = { email: " Noor@Example.com ", password: PASSWORD };
@@ -110,7 +124,8 @@ describe("AuthService.login — AUTH_SOURCE=local", () => {
     const res = await svc.login(dto, "1.2.3.4");
     expect(res.user.id).toBe("u1");
     expect(res.activeWorkspaceId).toBe("ws1");
-    expect(res.workspaces).toEqual([{ ...workspace, role: "owner" }]);
+    // SP-29: the workspace DTO carries its branding (none here).
+    expect(res.workspaces).toEqual([{ ...workspace, role: "owner", logoUrl: null, brandColor: null }]);
     expect(typeof res.token).toBe("string");
     expect(kewy.authenticate).not.toHaveBeenCalled();
     expect(kewySync.backfill).toHaveBeenCalledWith(expect.objectContaining({ id: "u1" }));
@@ -276,12 +291,16 @@ describe("AuthService.changePassword dual-write", () => {
     const { svc, prisma, kewySync } = setup("kewy");
     const order: string[] = [];
     kewySync.passwordChanged.mockImplementation(async () => void order.push("kewy"));
-    prisma.user.update.mockImplementation(async () => void order.push("local"));
+    prisma.user.update.mockImplementation(async () => {
+      order.push("local");
+      return localUser();
+    });
     await svc.changePassword("u1", { currentPassword: PASSWORD, newPassword: "new-secret" });
     expect(order).toEqual(["kewy", "local"]);
     const newHash = kewySync.passwordChanged.mock.calls[0][1];
     expect(bcrypt.compareSync("new-secret", newHash)).toBe(true);
-    expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { password: newHash } });
+    // SP-26: the same write also ends every other session.
+    expect(prisma.user.update).toHaveBeenCalledWith({ where: { id: "u1" }, data: { password: newHash, sessionVersion: { increment: 1 } } });
   });
 
   it("keeps the local password when the strict Kewy write fails", async () => {
@@ -340,5 +359,35 @@ describe("AuthService.login: payment lock", () => {
       localUser({ isSuperAdmin: true, memberships: [{ role: "owner", workspace: lockedWs }] }),
     );
     expect((await svc.login(dto)).activeWorkspaceId).toBe("wl");
+  });
+});
+
+describe("email letter case (SP-20 live verification F2)", () => {
+  /** A user table with case-sensitive storage, like the database. */
+  function caseWorld(stored: string) {
+    const ctx = setup("local", localUser({ email: stored }));
+    const row = localUser({ email: stored });
+    ctx.prisma.user.findUnique.mockImplementation(async ({ where }: { where: { email: string } }) => (where.email === row.email ? row : null));
+    ctx.prisma.user.findFirst.mockImplementation(async ({ where }: { where: { email: { equals: string; mode: string } } }) =>
+      where.email.mode === "insensitive" && where.email.equals.toLowerCase() === row.email.toLowerCase() ? row : null,
+    );
+    return ctx;
+  }
+
+  it("a mixed-case sign-up can log in with any case", async () => {
+    // Registered as "X-ownerA@example.com": stored normalised.
+    const { svc } = caseWorld("x-ownera@example.com");
+    for (const email of ["X-ownerA@example.com", "x-ownera@example.com", "  X-OWNERA@EXAMPLE.COM "]) {
+      const res = await svc.login({ email, password: PASSWORD });
+      expect({ email, id: res.user.id }).toEqual({ email, id: "u1" });
+    }
+  });
+
+  it("an account stored before normalisation (upper case) still signs in, with any case", async () => {
+    const { svc, prisma } = caseWorld("X-ownerA@example.com");
+    const res = await svc.login({ email: "x-ownera@example.com", password: PASSWORD });
+    expect(res.user.id).toBe("u1");
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { email: { equals: "x-ownera@example.com", mode: "insensitive" } } }));
+    await expect(svc.login({ email: "nobody@example.com", password: PASSWORD })).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

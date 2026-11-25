@@ -5,27 +5,84 @@ import { getWorkspaceContext } from "./workspace-context";
 const SCOPED_MODELS = new Set([
   "Contact",
   "Conversation",
+  "ConversationLabel",
+  "CustomFieldDef",
   "Message",
   "Appointment",
   "Template",
   "Campaign",
+  "CampaignRecipient",
+  "CampaignBroadcast",
   "Pipeline",
   "TicketStage",
+  "LostReason",
+  "SavedReply",
   "Ticket",
   "TicketActivity",
   "Integration",
+  "Channel",
   "Note",
+  "Notification",
+  "NotificationPreference",
+  "Role",
+  "ImportJob",
+  "Activity",
   "Media",
   "Segment",
   "Tag",
   "Workflow",
   "WorkflowRun",
+  // SP-24
+  "LifecycleDelivery",
   "AdsChatSession",
   "AdsChatMessage",
   "AdsPendingAction",
   "AdsActionAudit",
   "AdsWallet",
   "AdsWalletTransaction",
+  // SP-28
+  "UsageEvent",
+  // SP-15
+  "AdSource",
+  "AdReferral",
+  "AdSpendDaily",
+  "MetaAdsConnection",
+  "MetaLead",
+  // SP-09
+  "TicketAttachment",
+  // SP-10
+  "Service",
+  "StaffResource",
+  "StaffService",
+  "CatalogImport",
+  // SP-21
+  "KnowledgeSource",
+  "KnowledgePage",
+  "KnowledgeChunk",
+  // SP-22
+  "SkillInstall",
+  "AgentToolCall",
+  // SP-23
+  "Connector",
+  "ConnectorCall",
+  "ConnectorSyncLink",
+  "ConnectorSyncRun",
+  // SP-20
+  "AgentSettings",
+  "AgentSandboxThread",
+  // SP-18
+  "CopilotSession",
+  "CopilotMessage",
+  "CopilotPendingAction",
+  "CopilotAttachment",
+  "CopilotActionAudit",
+  // SP-27 (defence in depth): AuthGuard looks a key up by its unique hash
+  // (findUnique, not scoped) before any context exists; the dispatcher and
+  // the retention sweep run without a context; every request-path query
+  // names workspaceId explicitly anyway.
+  "ApiKey",
+  "WebhookEndpoint",
+  "WebhookDelivery",
 ]);
 
 const READ_ACTIONS = new Set([

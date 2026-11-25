@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { TicketsService } from "../tickets/tickets.service";
+import { ensureDefaultLostReasons } from "../pipelines/default-lost-reasons";
 import { SUPPORT_PIPELINE, SUPPORT_STAGES } from "./support-pipeline";
 
 /** No message from either side for this long → the thread is judged. tkana's window. */
@@ -28,7 +29,21 @@ export type Verdict = {
   sentiment: "positive" | "neutral" | "negative";
   summary: string;
   ticket_title: string | null;
+  /** SP-31, optional: short topic labels and customer pain points the agent found. */
+  topics?: string[] | null;
+  pain_points?: string[] | null;
 };
+
+/** Up to 10 trimmed non-empty strings of at most 80 chars, or DbNull when none. */
+function stringList(v: unknown): string[] | typeof Prisma.DbNull {
+  if (!Array.isArray(v)) return Prisma.DbNull;
+  const trimmed = v
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim().slice(0, 80))
+    .filter(Boolean);
+  const out = [...new Set(trimmed)].slice(0, 10);
+  return out.length > 0 ? out : Prisma.DbNull;
+}
 
 const GENUINE = new Set(["resolved", "customer_requested"]);
 const SENDER: Record<string, "customer" | "ai" | "staff"> = { them: "customer", ai: "ai", human: "staff" };
@@ -79,7 +94,8 @@ export class ConversationResolutionService {
       UPDATE "Conversation" c SET
         "resolutionStatus" = NULL, "resolution" = NULL, "resolvedAt" = NULL,
         "resolutionIssue" = NULL, "resolutionConfidence" = NULL, "resolutionSentiment" = NULL,
-        "resolutionSummary" = NULL, "resolutionRationale" = NULL
+        "resolutionSummary" = NULL, "resolutionRationale" = NULL,
+        "topics" = NULL, "painPoints" = NULL
       WHERE c."resolutionStatus" IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM "Message" m
@@ -193,12 +209,22 @@ export class ConversationResolutionService {
         resolutionConfidence: v.confidence,
         resolutionSentiment: v.sentiment,
         resolutionSummary: v.summary?.slice(0, 2000) ?? null,
+        topics: stringList(v.topics),
+        painPoints: stringList(v.pain_points),
         resolutionRationale: v.rationale?.slice(0, 2000) ?? null,
         resolutionError: null,
         resolutionAttempts: 0,
         // Fills the long-unused classifier slot the Inbox already reads.
         ...(issue !== "none" ? { intent: issue } : {}),
-        ...(issue === "escalation" ? { escalated: true } : {}),
+        // Same contract as a human escalation: a reason is always stored and
+        // the optimistic version moves so open clients see a conflict.
+        ...(issue === "escalation"
+          ? {
+              escalated: true,
+              escalateReason: (v.summary || "Escalated by Kewy AI").slice(0, 500),
+              version: { increment: 1 },
+            }
+          : {}),
       },
       select: { id: true, contactId: true, channel: true },
     });
@@ -219,7 +245,12 @@ export class ConversationResolutionService {
     issue: "complaint" | "escalation",
     v: Verdict,
   ): Promise<void> {
-    const { pipelineId, stageId } = await this.supportPipeline(workspaceId);
+    const sp = await this.supportPipeline(workspaceId);
+    if (!sp) {
+      this.log.warn(`support pipeline is archived in workspace ${workspaceId}; skipping ticket for ${conversationId}`);
+      return;
+    }
+    const { pipelineId, stageId } = sp;
     const open = await this.prisma.raw.ticket.findFirst({
       where: { workspaceId, pipelineId, conversationId, closedAt: null },
       select: { id: true },
@@ -238,11 +269,12 @@ export class ConversationResolutionService {
   }
 
   /** The workspace's Support pipeline, created on first use. */
-  async supportPipeline(workspaceId: string): Promise<{ pipelineId: string; stageId: string }> {
+  /** Null when the pipeline has (unexpectedly) been archived: no ticket is created. */
+  async supportPipeline(workspaceId: string): Promise<{ pipelineId: string; stageId: string } | null> {
     const find = () =>
       this.prisma.raw.pipeline.findFirst({
         where: { workspaceId, key: SUPPORT_PIPELINE.key },
-        select: { id: true, stages: { where: { key: "open" }, select: { id: true } } },
+        select: { id: true, archivedAt: true, stages: { orderBy: { order: "asc" }, select: { id: true, key: true, isTerminal: true } } },
       });
     let p = await find();
     if (!p) {
@@ -253,6 +285,7 @@ export class ConversationResolutionService {
             key: SUPPORT_PIPELINE.key,
             name: SUPPORT_PIPELINE.name,
             nameAr: SUPPORT_PIPELINE.nameAr,
+            kind: "support",
             stages: { create: SUPPORT_STAGES.map((s) => ({ ...s, workspaceId })) },
           },
         });
@@ -261,9 +294,13 @@ export class ConversationResolutionService {
         if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
       }
       p = await find();
+      if (p) await ensureDefaultLostReasons(this.prisma.raw as any, workspaceId, p.id);
     }
-    if (!p?.stages[0]) throw new Error("Support pipeline has no open stage");
-    return { pipelineId: p.id, stageId: p.stages[0].id };
+    if (p?.archivedAt) return null;
+    // `open` is protected by the editor, but never throw if it is somehow gone.
+    const stage = p?.stages.find((s) => s.key === "open") ?? p?.stages.find((s) => !s.isTerminal);
+    if (!p || !stage) throw new Error("Support pipeline has no usable stage");
+    return { pipelineId: p.id, stageId: stage.id };
   }
 }
 

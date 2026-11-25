@@ -1,3 +1,4 @@
+import { IsTimezone } from "../common/is-timezone";
 import { IsIn, IsOptional, IsString, MinLength } from "class-validator";
 
 export const WORKSPACE_ROLES = ["owner", "admin", "agent", "viewer"] as const;
@@ -10,6 +11,7 @@ export class CreateWorkspaceDto {
 
   @IsString()
   @IsOptional()
+  @IsTimezone()
   timezone?: string;
 
   @IsString()
@@ -24,11 +26,17 @@ export class UpdateWorkspaceDto {
 
   @IsString()
   @IsOptional()
+  @IsTimezone()
   timezone?: string;
 
   @IsString()
   @IsOptional()
   lang?: string;
+
+  /** SP-29: `#rgb` / `#rrggbb` (stored lower-case `#rrggbb`); null clears. Checked in the service (400 workspaces.invalid_brand_color). */
+  @IsOptional()
+  @IsString()
+  brandColor?: string | null;
 
   // `plan` is deliberately absent: this endpoint is reachable by a workspace
   // owner, and an unvalidated plan field let them self-upgrade. Plan changes
@@ -66,9 +74,16 @@ export class InviteByEmailDto {
   password?: string;
 }
 
+/** Either a legacy system role string or a roleId (system or custom). */
 export class UpdateMemberRoleDto {
+  @IsOptional()
   @IsIn(WORKSPACE_ROLES as unknown as string[])
-  role!: WorkspaceRole;
+  role?: WorkspaceRole;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  roleId?: string;
 }
 
 export class ResetMemberPasswordDto {

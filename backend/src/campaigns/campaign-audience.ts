@@ -21,14 +21,27 @@ export function normalizePhone(raw: string | null | undefined): string | null {
 }
 
 export interface AudienceContact {
+  /** The contact id (SP-12 snapshots it on the recipient row). Always selected at launch. */
+  id?: string;
   name: string;
   phone: string | null;
   lifecycle: string;
+  marketingOptOut?: boolean;
 }
 
 export interface CampaignRecipient {
+  contactId?: string;
   name: string;
   phone: string;
+}
+
+/** SP-12: an audience member left out at launch, written as a `skipped` row. */
+export interface SkippedRecipient {
+  contactId?: string;
+  name: string;
+  /** E.164 when the number was usable, else null. */
+  phone: string | null;
+  reason: "opted_out" | "no_phone";
 }
 
 export interface SkippedCounts {
@@ -40,22 +53,29 @@ export interface SkippedCounts {
 /**
  * Who a campaign can actually reach. "churned" is what an HJZ opt-out or
  * deletion sets, so those contacts never get marketing.
+ *
+ * SP-13: `seen` carries the duplicate-phone set across keyset pages when
+ * the audience is streamed (a fresh set per call by default).
  */
-export function buildRecipients(contacts: AudienceContact[]): {
+export function buildRecipients(contacts: AudienceContact[], seen: Set<string> = new Set<string>()): {
   recipients: CampaignRecipient[];
   skipped: SkippedCounts;
+  /** Opted-out and phoneless members (duplicates get no row, ruling 11). */
+  skippedRows: SkippedRecipient[];
 } {
-  const seen = new Set<string>();
   const recipients: CampaignRecipient[] = [];
+  const skippedRows: SkippedRecipient[] = [];
   const skipped: SkippedCounts = { noPhone: 0, optedOut: 0, duplicate: 0 };
   for (const c of contacts) {
-    if (c.lifecycle === "churned") {
+    const phone = normalizePhone(c.phone);
+    if (c.lifecycle?.toLowerCase() === "churned" || c.marketingOptOut === true) {
       skipped.optedOut++;
+      skippedRows.push({ contactId: c.id, name: c.name, phone, reason: "opted_out" });
       continue;
     }
-    const phone = normalizePhone(c.phone);
     if (!phone) {
       skipped.noPhone++;
+      skippedRows.push({ contactId: c.id, name: c.name, phone: null, reason: "no_phone" });
       continue;
     }
     if (seen.has(phone)) {
@@ -63,9 +83,9 @@ export function buildRecipients(contacts: AudienceContact[]): {
       continue;
     }
     seen.add(phone);
-    recipients.push({ name: c.name.trim() || "Customer", phone });
+    recipients.push({ contactId: c.id, name: c.name.trim() || "Customer", phone });
   }
-  return { recipients, skipped };
+  return { recipients, skipped, skippedRows };
 }
 
 export const totalSkipped = (s: SkippedCounts) => s.noPhone + s.optedOut + s.duplicate;

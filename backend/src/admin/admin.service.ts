@@ -1,15 +1,18 @@
+import { emailWhere, normalizeEmail } from "../auth/email";
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { PlanService } from "../billing/plan.service";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { KewyIdentitySync } from "../kewy-identity/kewy-identity.sync";
 import type { JwtPayload } from "../auth/auth.guard";
-import { seedWorkspaceDefaults } from "../workspaces/workspace-defaults";
+import { seedWorkspaceDefaults, WORKSPACE_TX_OPTIONS } from "../workspaces/workspace-defaults";
 import { ProvisionClientDto, SuspendWorkspaceDto, UpdateWorkspaceAdminDto } from "./admin.dto";
 
 function toSlug(name: string): string {
@@ -35,6 +38,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly kewySync: KewyIdentitySync,
+    @Optional() private readonly plans?: PlanService,
   ) {}
 
   async listWorkspaces() {
@@ -126,7 +130,24 @@ export class AdminService {
 
   async updateWorkspace(id: string, dto: UpdateWorkspaceAdminDto) {
     await this.requireWorkspace(id);
-    return this.prisma.raw.workspace.update({ where: { id }, data: dto });
+    // SP-28 (R8): a super-admin plan is an override; Kewy's later plan pushes
+    // are kept in kewyPlan and do not replace it until the override is cleared.
+    const data = dto.plan !== undefined ? { ...dto, planOverriddenAt: new Date() } : dto;
+    const ws = await this.prisma.raw.workspace.update({ where: { id }, data });
+    if (dto.plan !== undefined) this.plans?.invalidate(id);
+    return ws;
+  }
+
+  /** SP-28 (R8): back to the plan Kewy last pushed (kept if Kewy never pushed one). */
+  async clearPlanOverride(id: string) {
+    const ws = await this.requireWorkspace(id);
+    const current = await this.prisma.raw.workspace.findUnique({ where: { id }, select: { plan: true, kewyPlan: true } });
+    const updated = await this.prisma.raw.workspace.update({
+      where: { id },
+      data: { planOverriddenAt: null, plan: current?.kewyPlan ?? current?.plan ?? (ws as { plan?: string }).plan ?? "free" },
+    });
+    this.plans?.invalidate(id);
+    return updated;
   }
 
   async suspendWorkspace(id: string, dto: SuspendWorkspaceDto) {
@@ -155,6 +176,8 @@ export class AdminService {
       role: admin.role,
       workspaceId,
       impersonating: true,
+      // SP-26: the super-admin's own sessionVersion.
+      sv: admin.sessionVersion ?? 0,
       // intentionally NOT setting isSuperAdmin — impersonation should not
       // carry super-admin powers; super-admin must log back in to exit.
     };
@@ -197,10 +220,11 @@ export class AdminService {
     // one user legitimately spans several workspaces — reuse the row and add a
     // membership rather than rejecting. Previously this threw a 409, which made
     // a second workspace (or any retry) impossible.
+    const ownerEmail = normalizeEmail(dto.ownerEmail);
     const existing = await this.prisma.raw.user.findFirst({
       where: dto.kewyAccountId
-        ? { OR: [{ kewyAccountId: dto.kewyAccountId }, { email: dto.ownerEmail }] }
-        : { email: dto.ownerEmail },
+        ? { OR: [{ kewyAccountId: dto.kewyAccountId }, emailWhere(ownerEmail)] }
+        : emailWhere(ownerEmail),
     });
 
     // The one genuine conflict left: the email belongs to somebody who is
@@ -251,7 +275,7 @@ export class AdminService {
             })
           : await tx.user.create({
               data: {
-                email: dto.ownerEmail,
+                email: ownerEmail,
                 name: dto.ownerName,
                 password: hashed,
                 kewyAccountId: dto.kewyAccountId ?? null,
@@ -295,7 +319,7 @@ export class AdminService {
         };
       },
       // Room for the Kewy call (5s timeout) on top of the seeding.
-      { timeout: 15_000 },
+      { ...WORKSPACE_TX_OPTIONS },
     );
   }
 

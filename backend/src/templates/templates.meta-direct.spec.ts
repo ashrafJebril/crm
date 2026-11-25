@@ -38,15 +38,27 @@ describe("TemplatesService — WhatsApp connected directly to Meta", () => {
 
   const build = (opts: { local?: Array<Record<string, unknown>> } = {}) => {
     const local = opts.local ?? [];
+    // SP-19: the number is a channel. The Meta row carries the WABA in its
+    // config; the Zernio lookup must find nothing for this workspace.
+    const metaChannel = {
+      id: "ch-meta",
+      workspaceId,
+      kind: "whatsapp",
+      provider: "meta",
+      status: "active",
+      isDefault: true,
+      externalId: "phone-1",
+      integrationId: null,
+      secretsEnc: JSON.stringify({ accessToken: TOKEN }),
+      config: { wabaId: WABA },
+    };
     const prisma = {
+      channel: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([metaChannel]),
+      },
       integration: {
-        findFirst: jest.fn().mockResolvedValue({
-          provider: "meta",
-          platform: "whatsapp",
-          pageId: "phone-1",
-          accessToken: TOKEN,
-          raw: JSON.stringify({ wabaId: WABA }),
-        }),
+        findFirst: jest.fn().mockResolvedValue(null),
       },
       template: {
         findMany: jest.fn().mockResolvedValue(local),
@@ -69,6 +81,7 @@ describe("TemplatesService — WhatsApp connected directly to Meta", () => {
     const svc = new TemplatesService(
       prisma as unknown as PrismaService,
       zernio as unknown as ZernioClient,
+      undefined,
       new MetaTemplatesClient(),
     );
     return { svc, prisma, zernio };
@@ -241,10 +254,14 @@ describe("TemplatesService — WhatsApp connected directly to Meta", () => {
 
 describe("TemplatesService — no WhatsApp connection at all", () => {
   it("says WhatsApp is not connected without blaming Zernio", async () => {
-    const prisma = { integration: { findFirst: jest.fn().mockResolvedValue(null) } };
+    const prisma = {
+      channel: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      integration: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
     const svc = new TemplatesService(
       prisma as unknown as PrismaService,
       {} as unknown as ZernioClient,
+      undefined,
       new MetaTemplatesClient(),
     );
 
@@ -252,8 +269,12 @@ describe("TemplatesService — no WhatsApp connection at all", () => {
       .create("ws1", { name: "x", lang: "en", category: "UTILITY", body: "Hi" })
       .catch((e: Error) => e);
 
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/WhatsApp is not connected/);
-    expect((err as Error).message).not.toMatch(/Zernio/);
+    // SP-13 ruling 6: one keyed 409 for every marketing action — the key names
+    // WhatsApp, never the provider behind it.
+    expect(err).toMatchObject({
+      status: 409,
+      response: { message: "campaigns.whatsapp_not_connected" },
+    });
+    expect(JSON.stringify(err)).not.toMatch(/Zernio/i);
   });
 });

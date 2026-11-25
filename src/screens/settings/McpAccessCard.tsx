@@ -18,7 +18,7 @@ interface McpTokenGenerated {
   endpointUrl: string;
 }
 
-export function McpAccessCard({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
+export function McpAccessCard({ tx, canCreate, canDelete }: { tx: Tx; canCreate: boolean; canDelete: boolean }) {
   const statusQ = useFetch<McpTokenStatus>("/integrations/mcp/token/status");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -115,12 +115,14 @@ export function McpAccessCard({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
           )}
         </div>
 
-        {canEdit ? (
+        {canCreate || (canDelete && connected) ? (
           <div style={{ display: "flex", gap: 8 }}>
-            <button type="button" className="btn primary" onClick={onGenerate}>
-              {connected ? tx("Rotate token", "تدوير الرمز") : tx("Generate token", "إنشاء رمز")}
-            </button>
-            {connected && (
+            {canCreate && (
+              <button type="button" className="btn primary" onClick={onGenerate}>
+                {connected ? tx("Rotate token", "تدوير الرمز") : tx("Generate token", "إنشاء رمز")}
+              </button>
+            )}
+            {connected && canDelete && (
               <button type="button" className="btn ghost" onClick={onRevoke}>
                 {tx("Revoke", "إلغاء")}
               </button>

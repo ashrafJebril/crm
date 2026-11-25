@@ -1,0 +1,49 @@
+/* SP-30 calendar layout (ruling 7: layout only).
+   md+   the week grid, scrolling sideways inside its own card when narrow.
+   < md  the day view by default (calendarView.ts); the view tabs scroll in their row.
+   < lg  the appointment panel is a full-height sheet (full width on phones). */
+
+.cal-page { overflow-y: auto; flex: 1; position: relative; }
+.cal-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+.cal-week { overflow-x: auto; overflow-y: hidden; }
+.cal-week-grid { display: grid; grid-template-columns: 60px repeat(7, 1fr); min-inline-size: 640px; }
+.cal-week-body { overflow-y: auto; }
+
+/* Desktop keeps the card clipping as before; narrower screens scroll the day table sideways. */
+.cal-list-card { overflow: hidden; }
+
+.cal-panel {
+  position: fixed;
+  top: 56px;
+  bottom: 0;
+  inset-inline-end: 0;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  z-index: 8;
+}
+
+@media (max-width: 1023.98px) {
+  .cal-list-card { overflow-x: auto; overflow-y: hidden; }
+  .cal-panel {
+    top: 0;
+    z-index: 60;
+    width: auto;
+    inline-size: min(380px, 100vw);
+    padding-block-start: var(--safe-top);
+    padding-block-end: var(--safe-bottom);
+  }
+}
+@media (max-width: 767.98px) {
+  .cal-panel { inline-size: 100vw; border-inline-start: 0 !important; }
+  .cal-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .cal-view-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    max-inline-size: 100%;
+  }
+  .cal-view-tabs::-webkit-scrollbar { display: none; }
+  .cal-view-tabs > * { flex: 0 0 auto; }
+}

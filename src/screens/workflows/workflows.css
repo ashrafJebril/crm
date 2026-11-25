@@ -207,7 +207,7 @@ textarea.wf-input { height: auto; min-height: 96px; padding: 9px 10px; line-heig
 .wf-empty h3 { margin: 0; font-size: 16px; }
 .wf-empty p { margin: 0; max-width: 420px; color: var(--ink-2); font-size: 13px; }
 
-@media (max-width: 1100px) {
+@media (max-width: 1023.98px) {
   .wf-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(360px, 1fr) auto; }
   .wf-inspector { border-inline-start: 0; border-top: 1px solid var(--line-soft); max-height: 55vh; }
 }

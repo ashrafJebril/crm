@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=1440" />
+    <!-- SP-26: token links never leak through the Referer header. -->
+    <meta name="referrer" content="no-referrer" />
     <title>Kewy Marketing</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -21,8 +23,8 @@
   <body>
     <div id="root"></div>
     <div id="fb-root"></div>
-    <script async defer crossorigin="anonymous"
-      src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <!-- The Facebook JS SDK is injected by the channels hub only when the
+         backend reports WhatsApp Embedded Signup as enabled (SP-19). -->
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

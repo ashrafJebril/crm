@@ -1,4 +1,6 @@
-import { HttpException, Injectable } from "@nestjs/common";
+import { HttpException, Injectable, Optional } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { readAgentStop, writeAgentStop } from "../agent/agent-stop";
 import {
   KnowledgeClient,
   type KewyAutonomyMode,
@@ -28,13 +30,25 @@ export interface AiSettingsView {
   dailyCostCapJod: number | null;
   /** False when this deployment never bought the AI module. */
   configured: boolean;
+  /** SP-20 (ruling 3): the CRM-side emergency stop is set. It silences every
+   *  automatic reply path (l and kewy-ai), so `aiEnabled` is false while it holds. */
+  stoppedLocally: boolean;
 }
 
 @Injectable()
 export class AiSettingsService {
-  constructor(private readonly client: KnowledgeClient) {}
+  constructor(
+    private readonly client: KnowledgeClient,
+    // SP-20: the local stop. Optional so hand-built specs without a DB keep working.
+    @Optional() private readonly prisma?: PrismaService,
+  ) {}
+
+  private async stoppedLocally(workspaceId: string): Promise<boolean> {
+    return this.prisma ? readAgentStop(this.prisma, workspaceId) : false;
+  }
 
   async get(workspaceId: string): Promise<AiSettingsView> {
+    const stoppedLocally = await this.stoppedLocally(workspaceId);
     if (!this.client.isConfigured()) {
       // Answer the shape the UI expects rather than a 503, so the tab can say
       // "not set up here" instead of rendering a red error on a deployment
@@ -46,6 +60,7 @@ export class AiSettingsService {
         locale: "en",
         dailyCostCapJod: null,
         configured: false,
+        stoppedLocally,
       };
     }
 
@@ -54,12 +69,13 @@ export class AiSettingsService {
       // killSwitch is an operator-level override that forces the agent off, so
       // the effective answer is the AND of the two. The UI shows one switch;
       // it must not read "on" while nothing is actually being answered.
-      aiEnabled: cfg.aiEnabled && !cfg.killSwitch,
+      aiEnabled: cfg.aiEnabled && !cfg.killSwitch && !stoppedLocally,
       autonomyMode: cfg.autonomyMode,
       personaName: cfg.personaName,
       locale: cfg.locale,
       dailyCostCapJod: cfg.dailyCostCapJod,
       configured: true,
+      stoppedLocally,
     };
   }
 
@@ -73,7 +89,7 @@ export class AiSettingsService {
    */
   async setEnabled(
     workspaceId: string,
-    input: { enabled: boolean; reason?: string },
+    input: { enabled: boolean; reason?: string; userId?: string },
   ): Promise<KewyKillSwitchResult> {
     const reason = input.reason?.trim();
     if (!input.enabled && !reason) {
@@ -85,6 +101,17 @@ export class AiSettingsService {
         },
         400,
       );
+    }
+
+    // SP-20 (ruling 3): the CRM-side stop first, so the gate silences every
+    // automatic reply path even if kewy-ai is unreachable; enabling clears it.
+    if (this.prisma) {
+      const wasStopped = await readAgentStop(this.prisma, workspaceId);
+      await writeAgentStop(this.prisma, workspaceId, { stopped: !input.enabled, reason, userId: input.userId ?? null });
+      // Without kewy-ai only the local stop changes.
+      if (!this.client.isConfigured()) {
+        return { aiEnabled: input.enabled, changed: wasStopped === input.enabled, ...(reason ? { reason } : {}) };
+      }
     }
 
     return this.client.setKillSwitch(tenantIdFor(workspaceId), {

@@ -4,7 +4,7 @@ import type { Tx } from "@/lib/tx";
 import type { WorkflowRun } from "@/lib/types";
 import { Badge } from "@/components/Badge";
 import type { BadgeKind } from "@/components/Badge";
-import { STEP_META } from "./stepMeta";
+import { stepLabel } from "./systemWorkflow";
 
 const STATUS_KIND: Record<WorkflowRun["status"], BadgeKind> = {
   running: "info",
@@ -88,7 +88,7 @@ export function ExecutionsTab({
             {Object.entries(selected.stepsSnapshot.steps).map(([stepId, step]) => (
               <div key={stepId} style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 600 }}>
-                  {tx(STEP_META[step.type].en, STEP_META[step.type].ar)}{" "}
+                  {tx(...stepLabel(step.type))}{" "}
                   <span className="mono muted" style={{ fontWeight: 400 }}>({stepId})</span>
                 </div>
                 <pre style={{ background: "var(--bg-1)", padding: 8, borderRadius: 6, fontSize: 11 }}>

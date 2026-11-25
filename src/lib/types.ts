@@ -8,7 +8,10 @@ export interface Tweaks {
   accent: Accent;
   density: Density;
   lang: Lang;
-  collapsed: boolean;
+  /** SP-30: the remembered rail/full choice on this device (null = the default for the width). */
+  sidebarCollapsed: boolean | null;
+  /** SP-30 ruling 4: the user picked a language on this device (else the workspace lang applies). */
+  langChosen: boolean;
   showAIPersonality: boolean;
 }
 
@@ -21,13 +24,20 @@ export type RouteId =
   | "pipeline"
   | "campaigns"
   | "contacts"
+  | "followups"
   | "workflows"
   | "analytics"
   | "templates"
   | "team"
   | "agent"
   | "settings"
-  | "admin";
+  | "channels"
+  | "ads"
+  | "admin"
+  // SP-20: guided onboarding.
+  | "setup"
+  // SP-18: the member's "Ask Kewy" history.
+  | "copilot";
 
 // ─── Pipeline / Tickets API shapes ────────────────────────────────────────
 
@@ -55,6 +65,12 @@ export interface Pipeline {
   isDefault: boolean;
   stages: TicketStage[];
   _count?: { tickets: number };
+  version?: number;
+  archivedAt?: string | null;
+  staleDays?: number | null;
+  agentCanMove?: boolean;
+  assignsConversations?: boolean;
+  kind?: "deals" | "support" | string;
 }
 
 export interface TicketContact {
@@ -83,6 +99,74 @@ export interface Ticket {
   enteredStageAt: string;
   contact?: TicketContact;
   stage?: TicketStage;
+  /** SP-09: "urgent" | "high" | "normal" | "low"; legacy rows read "normal". */
+  priority?: TicketPriority | string;
+  /** SP-09: a TICKET_CATEGORIES key, null = not set. */
+  category?: TicketCategory | string | null;
+  /** SP-09: set by the database on stage entry; null = no SLA (or terminal). */
+  slaDueAt?: string | null;
+  /** SP-09: derived from the linked conversation; null when none or hidden.
+   *  Absent on realtime payloads (raw rows). */
+  channel?: TicketChannel | null;
+  /** SP-09: files the viewer can open. Absent on realtime payloads. */
+  attachmentCount?: number;
+}
+
+/** SP-09 (mirrors backend/src/tickets/ticket-fields.ts). */
+export type TicketPriority = "urgent" | "high" | "normal" | "low";
+export type TicketCategory =
+  | "general_inquiry"
+  | "complaint"
+  | "service_request"
+  | "payment_problem"
+  | "execution_delay"
+  | "incorrect_data"
+  | "ticket_follow_up"
+  | "data_modification"
+  | "other";
+
+export interface TicketChannel {
+  kind: string;
+  channelId: string | null;
+  displayName: string | null;
+}
+
+/** SP-09: GET /tickets/:id/attachments item. `url` is an API path served with auth. */
+export interface TicketAttachment {
+  id: string;
+  ticketId: string;
+  mediaId: string;
+  source: "customer" | "staff";
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  messageId: string | null;
+  addedBy: { id: string; name: string } | null;
+  createdAt: string;
+  url: string;
+}
+
+/** SP-09: GET /tickets/:id/attachments/candidates item (customer files not yet linked). */
+export interface TicketAttachmentCandidate {
+  mediaId: string;
+  messageId: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  at: string;
+}
+
+/** SP-09: GET /tickets/:id/bookings item. */
+export interface TicketBookingCard {
+  id: string;
+  startAt: string;
+  durationMin: number;
+  status: AppointmentStatus | string;
+  service: string;
+  serviceAr: string;
+  staffId: string | null;
+  source: string;
+  hjzSyncError: string | null;
 }
 
 export interface TicketsListPage {
@@ -109,6 +193,7 @@ export interface TicketDetail extends Ticket {
 export interface TicketsDashboardSummary {
   openValue: number;
   currency: string;
+  /** Whole percent, 0–100 (not a fraction). */
   winRate: number;
   wonCount: number;
   lostCount: number;
@@ -126,6 +211,7 @@ export type ConvChannel =
   | "facebook"
   | "tiktok"
   | "webchat"
+  | "telegram"
   | "l";
 
 export const CHANNEL_LABEL: Record<ConvChannel, string> = {
@@ -134,6 +220,7 @@ export const CHANNEL_LABEL: Record<ConvChannel, string> = {
   facebook:  "Facebook",
   tiktok:    "TikTok",
   webchat:   "Web chat",
+  telegram:  "Telegram",
   l:         "AI Agent",
 };
 
@@ -179,6 +266,78 @@ export interface TeamMember {
   role: string;
   initials: string;
   color: string;
+  email?: string;
+  /** SP-26: TOTP two-step verification on (password sign-in only). */
+  twoFA?: boolean;
+  /** SP-26: when the member joined this workspace (ISO). */
+  joinedAt?: string;
+}
+
+// ─── SP-26: invitations, handover, audit ─────────────────────────────────
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: { id: string; name: string; nameAr: string } | null;
+  status: InvitationStatus;
+  invitedBy: { id: string; name: string } | null;
+  expiresAt: string;
+  lastSentAt: string;
+  sendCount: number;
+  createdAt: string;
+}
+
+export interface InvitationList {
+  items: Invitation[];
+  counts: Record<InvitationStatus | "all", number>;
+}
+
+/** `{invitation, link?}`: `link` only when email is off (shown once). */
+export interface InvitationWrite {
+  invitation: Invitation;
+  link?: string;
+  emailSent: boolean;
+}
+
+export interface OpenWork {
+  conversations: number;
+  tickets: { deals: number; leads: number; support: number };
+  followUps: number;
+  contacts: number;
+  /** Shown, never moved; not part of `total`. */
+  bookings: number;
+  total: number;
+}
+
+export interface HandoverRefusal {
+  reason: "not_member" | "same_user" | "missing_permission";
+  resource?: "conversations" | "tickets" | "contacts";
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  actor: { id: string; name: string } | null;
+  actorKind: string;
+  targetKind: string;
+  targetId: string | null;
+  targetLabel: string | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface AuditPage {
+  items: AuditEntry[];
+  nextCursor: string | null;
+}
+
+export interface ConversationLabel {
+  id: string;
+  name: string;
+  color: "ink" | "info" | "ok" | "warn" | "bad" | "accent" | "human";
+  count: number;
 }
 
 export interface Contact {
@@ -192,6 +351,37 @@ export interface Contact {
   source: string;
   convs: number;
   value: string;
+  firstName?: string;
+  lastName?: string;
+  /** "" when none. */
+  email?: string;
+  ownerId?: string | null;
+  marketingOptOut?: boolean;
+  notALead?: boolean;
+  createdAt?: string;
+}
+
+export type CustomFieldType = "text" | "number" | "date" | "select" | "boolean";
+
+export interface CustomFieldDef {
+  id: string;
+  key: string;
+  label: string;
+  labelAr: string;
+  type: CustomFieldType;
+  options: string[] | null;
+  order: number;
+  archivedAt: string | null;
+}
+
+export interface ContactFieldValue {
+  defId: string;
+  key: string;
+  label: string;
+  labelAr: string;
+  type: CustomFieldType;
+  options: string[] | null;
+  value: string | number | boolean | null;
 }
 
 export type DeliveryStatus = "sent" | "delivered" | "read" | "failed";
@@ -216,6 +406,11 @@ export interface Message {
   metaMessageId?: string | null;
   deliveryStatus?: DeliveryStatus | null;
   deliveryStatusAt?: string | null;
+  /** Message row id (present on thread items). */
+  id?: string;
+  /** SP-31: the customer's latest emoji reaction to this message. */
+  reaction?: string | null;
+  reactionAt?: string | null;
 }
 
 export interface Conversation {
@@ -231,7 +426,13 @@ export interface Conversation {
   lastFrom: "them" | "human" | "ai";
   preview: string;
   channel: ConvChannel;
-  status: "human" | "closed" | "spam";
+  status: "human" | "pending_customer" | "resolved" | "closed" | "spam";
+  assigneeId?: string | null;
+  version?: number;
+  escalateReason?: string | null;
+  statusChangedAt?: string | null;
+  labelIds?: string[];
+  updatedAt?: string;
   intent: string;
   confidence: number;
   escalated?: boolean;
@@ -241,10 +442,22 @@ export interface Conversation {
   resolutionIssue?: "complaint" | "escalation" | "none" | null;
   resolutionSummary?: string | null;
   resolvedAt?: string | null;
+  /** SP-31: AI topics / pain points from the resolution verdict. */
+  topics?: string[] | null;
+  painPoints?: string[] | null;
   messages?: Message[];
-  // WhatsApp-only: backend populates these when channel === "whatsapp".
+  /** The customer's last message (every channel; the wait time, "Oldest waiting"). */
   lastInboundAt?: string | null;
+  /** The newest message either way (the "Newest" sort; `updatedAt` moves on read, assign, label and pin). */
+  lastMessageAt?: string | null;
   waWindowOpen?: boolean;
+  /** SP-19: effective channel (null for l-agent threads) and its provider. */
+  channelId?: string | null;
+  channelProvider?: string | null;
+  /** SP-15: the first ad that started this thread (set once), its time and chip. */
+  adSourceId?: string | null;
+  adReferredAt?: string | null;
+  adSource?: AdSourceChip | null;
 }
 
 export type AppointmentStatus =
@@ -271,13 +484,128 @@ export interface Appointment {
   hjzAppointmentId?: string | null;
   hjzSyncPending?: boolean;
   hjzSyncError?: string | null;
+  /** SP-10: catalog links (null for legacy free-text bookings). */
+  serviceId?: string | null;
+  resourceId?: string | null;
+  /** SP-10: optimistic-concurrency counter; send it back on PATCH. */
+  version?: number;
+  /** SP-10: another open booking of the same staff overlaps this one. */
+  conflict?: boolean;
+  /** SP-10: the staff schedule check in the workspace timezone. */
+  fit?: "ok" | "off_day" | "outside_hours" | "unchecked";
+}
+
+// ─── SP-10 bookings catalog ───────────────────────────────────────────────
+
+export type BookingWeekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export interface ScheduleWindow {
+  from: string; // "HH:MM"
+  to: string; // "HH:MM", 24:00 allowed
+}
+export type WeeklySchedule = Partial<Record<BookingWeekday, ScheduleWindow[]>>;
+
+/** GET /services row (backend ServiceDto). `price` is a decimal string. */
+export interface Service {
+  id: string;
+  name: string;
+  nameAr: string;
+  color: StageColor;
+  durationMin: number;
+  price: string | null;
+  currency: string;
+  active: boolean;
+  archivedAt: string | null;
+  order: number;
+  version: number;
+  staffIds: string[];
+  upcomingCount: number;
+}
+
+/** GET /staff row (backend StaffResourceDto). */
+export interface StaffResource {
+  id: string;
+  userId: string | null;
+  user: { id: string; name: string } | null;
+  name: string;
+  nameAr: string | null;
+  role: string | null;
+  color: StageColor;
+  schedule: WeeklySchedule;
+  scheduleConfigured: boolean;
+  active: boolean;
+  archivedAt: string | null;
+  version: number;
+  serviceIds: string[];
+  upcomingCount: number;
+}
+
+export interface ServiceDeletePreview {
+  bookingCount: number;
+  upcomingCount: number;
+  staffCount: number;
+}
+export interface StaffDeletePreview {
+  bookingCount: number;
+  upcomingCount: number;
+  serviceCount: number;
+}
+export type CatalogDeleteResult = { deleted: true } | { archived: true; bookingCount: number };
+
+export interface ProposalServiceData {
+  name: string;
+  nameAr: string;
+  durationMin: number;
+  durationDefaulted: boolean;
+  price: string | null;
+  currency: string | null;
+  color?: string;
+  description?: string | null;
+}
+export interface ProposalStaffData {
+  name: string;
+  nameAr: string | null;
+  role: string | null;
+  schedule: WeeklySchedule;
+  services: string[];
+}
+export interface ProposalItem {
+  key: string;
+  kind: "service" | "staff";
+  data: ProposalServiceData | ProposalStaffData;
+  duplicateOf: { id: string | null; key?: string; name: string } | null;
+  selected: boolean;
+  error?: { field: string; reason: string };
+}
+
+export type CatalogImportStatus = "extracting" | "review" | "running" | "done" | "failed" | "cancelled";
+
+/** GET /catalog-imports/:id (backend CatalogImportDto). */
+export interface CatalogImport {
+  id: string;
+  source: "paste" | "url" | "file";
+  kind: "auto" | "services" | "staff";
+  status: CatalogImportStatus;
+  extractedBy: "template" | "ai" | null;
+  fileName: string | null;
+  sourceUrl: string | null;
+  total: number;
+  processed: number;
+  created: number;
+  skipped: number;
+  failed: number;
+  errors: { key: string; name: string; reason: string; missing?: string[] }[];
+  errorKey: string | null;
+  items?: ProposalItem[];
+  notes?: { kind: "services" | "staff"; kept: number; dropped: number }[];
+  createdAt: string;
+  finishedAt: string | null;
 }
 
 export interface Campaign {
   id: string;
   name: string;
   /** "paused" only exists on rows from before campaigns could really send. */
-  status: "running" | "scheduled" | "draft" | "completed" | "failed" | "cancelled" | "paused";
+  status: "running" | "scheduled" | "draft" | "completed" | "failed" | "cancelled" | "paused" | "launching";
   audience: string;
   recipients: number;
   sent: number;
@@ -295,6 +623,192 @@ export interface Campaign {
   failed?: number;
   skipped?: number;
   lastError?: string | null;
+  /** SP-19: the WhatsApp channel it goes out from; null = the default number. */
+  senderChannelId?: string | null;
+  /** SP-12: true once launch wrote one recipient row per audience member. */
+  recipientTracking?: boolean;
+  recipientsSyncedAt?: string | null;
+  statsSyncedAt?: string | null;
+  /** SP-13: the sending numbers in order ([0] = primary); [] = legacy senderChannelId, else the default number. */
+  senderChannelIds?: string[];
+  /** SP-13: how each {{n}} is filled; null on campaigns from before SP-13 (they keep variableMapping). */
+  varMap?: VarMap | null;
+  /** SP-13: a library file overriding the template's header sample; null = the template's own file. */
+  headerMediaId?: string | null;
+  /** SP-13 background launch: planning | sending | done | failed. */
+  launchStage?: "planning" | "sending" | "done" | "failed" | null;
+  sendTransport?: "broadcast" | "direct" | null;
+  /** SP-13 (GET /campaigns and GET /campaigns/:id): cancel has something to stop. Also true for a failed or cancelled launch whose broadcasts may still send. */
+  canCancel?: boolean;
+  /** SP-13: cancel was asked for while launching; the runner finishes it. */
+  cancelRequestedAt?: string | null;
+  /** SP-13 (GET /campaigns/:id only): the sending numbers in order; a deleted channel is absent. */
+  senders?: CampaignSender[];
+  /** SP-13 (GET /campaigns and GET /campaigns/:id): non-null only while status is "launching". */
+  launch?: CampaignLaunchProgress | null;
+}
+
+// ─── SP-13 campaign sending ───────────────────────────────────────────────
+
+export type VarField = "name" | "firstName" | "lastName" | "phone" | "email";
+
+/** One template placeholder: a contact field, a custom field, or one fixed value. */
+export type VarSlot =
+  | { source: "field"; key: VarField; fallback?: string }
+  | { source: "custom"; key: string; fallback?: string }
+  | { source: "static"; value: string };
+
+/** `{"1": slot, "2": slot, …}` (backend sending/var-map.ts). */
+export type VarMap = Record<string, VarSlot>;
+
+/** `senders` on GET /campaigns/:id. */
+export interface CampaignSender {
+  channelId: string;
+  displayName: string;
+  phoneNumber: string | null;
+}
+
+export interface SenderOption extends CampaignSender {
+  isDefault: boolean;
+  provider: string;
+  eligible: boolean;
+  reason: null | "provider_meta" | "not_active";
+  /** SP-14 (display only): the number's tier from its health snapshot, or "unknown". */
+  tier?: string;
+  /** SP-14 (display only): the number's quality rating, or "unknown". */
+  quality?: string;
+  healthCheckedAt?: string | null;
+}
+
+/** GET /campaigns/senders */
+export interface SendersResponse {
+  connected: boolean;
+  limit: number;
+  senders: SenderOption[];
+}
+
+export type TransportKind = "broadcast" | "direct" | "too_varied";
+
+/** POST /campaigns/preview */
+export interface CampaignPreviewV2 {
+  connected: boolean;
+  total: number;
+  reachable: number;
+  skipped: { noPhone: number; optedOut: number; duplicate: number; missingValue: number };
+  missingByKey: { source: "field" | "custom"; key: string; label: string; labelAr: string; count: number }[];
+  /** Largest first. */
+  split: { channelId: string; displayName: string; phoneNumber: string | null; recipients: number }[];
+  transport: { kind: TransportKind; partitions: number; limit: number; directLimit: number };
+  /** Channel ids of senders without the approved template. */
+  templateMissing: string[];
+  /** Channel ids whose templates could not be read. */
+  templateCheckFailed?: string[];
+  /** SP-14: senders whose copy of the template is paused or disabled. */
+  templatePaused?: { channelId: string; status: "paused" | "disabled" | string }[];
+  /** Empty without contacts.view (ruling 18). */
+  samples: {
+    contactId: string;
+    name: string | null;
+    rendered: string;
+    values: string[];
+    /** 1-based slot numbers. */
+    usedFallback: number[];
+    skippedFor: { source: "field" | "custom"; key: string } | null;
+  }[];
+  estimate: { usd: number; unpriced: number };
+}
+
+/** `launch` on GET /campaigns/:id while launching. */
+export interface CampaignLaunchProgress {
+  stage: "planning" | "sending" | "done" | "failed" | string;
+  planned: number;
+  partitionsTotal: number;
+  partitionsDone: number;
+  directSent: number;
+}
+
+/** One line of insights.byNumber. */
+export interface NumberTotals {
+  channelId: string | null;
+  displayName: string | null;
+  phoneNumber: string | null;
+  /** The channel was deleted. */
+  unknown: boolean;
+  total: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+  failed: number;
+  skipped: number;
+}
+
+// ─── SP-12 campaign recipients and report ─────────────────────────────────
+
+export type RecipientStatus = "queued" | "sent" | "delivered" | "read" | "replied" | "failed" | "skipped";
+
+export interface CampaignRecipientRow {
+  id: string;
+  contactId: string | null;
+  name: string | null;
+  phone: string | null;
+  status: RecipientStatus;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  repliedAt: string | null;
+  replyText: string | null;
+  buttonPayload: string | null;
+  replyMessageId: string | null;
+  failureCode: string | null;
+  failureTitle: string | null;
+  channel: { id: string; displayName: string; phoneNumber: string | null } | null;
+}
+
+/** GET /campaigns/:id/recipients */
+export interface RecipientsPage {
+  tracked: boolean;
+  items: CampaignRecipientRow[];
+  nextCursor: string | null;
+}
+
+export interface CampaignFunnel {
+  targeted: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+}
+
+export interface ReadTiming {
+  withinHour: number;
+  oneToSix: number;
+  sixToDay: number;
+  afterDay: number;
+}
+
+/** GET /campaigns/:id/insights */
+export interface CampaignInsights {
+  tracked: boolean;
+  total: number;
+  counts: Record<RecipientStatus, number>;
+  funnel: CampaignFunnel;
+  readTiming: ReadTiming;
+  replies: { payload: string | null; label: string | null; count: number }[];
+  failures: { code: string; title: string | null; count: number }[];
+  unrecorded: number;
+  recipientsSyncedAt: string | null;
+  statsSyncedAt: string | null;
+  /** SP-13: per sending number, largest first; [] for untracked campaigns. */
+  byNumber?: NumberTotals[];
+}
+
+/** POST /campaigns/:id/follow-up/* */
+export interface FollowUpResult {
+  added: number;
+  already: number;
+  leftOut: number;
+  groupId?: string;
 }
 
 /** Value for one template placeholder in a campaign broadcast. */
@@ -328,12 +842,21 @@ export interface Template {
   name: string;
   lang: Lang;
   category: "TRANSACTIONAL" | "UTILITY" | "MARKETING" | "AUTHENTICATION";
-  status: "approved" | "pending" | "rejected" | "submitted" | "failed" | "local";
+  /** SP-14: "paused" and "disabled" are Meta's template states (never sendable). */
+  status: "approved" | "pending" | "rejected" | "submitted" | "failed" | "local" | "paused" | "disabled";
+  /** SP-14: Meta template quality (GREEN | YELLOW | RED | NOT_RATED); null = unknown. */
+  quality?: string | null;
+  /** SP-14 final review M5: "zernio_passthrough" when the list just read carried the score. */
+  qualitySource?: "zernio_passthrough" | null;
+  /** SP-14 final review M5: when the list confirming `quality` was read; null = not read now (a stored, previous value). */
+  qualityReadAt?: string | null;
   uses: number;
   body?: string | null;
   footer?: string | null;
   headerType?: string | null;
   headerContent?: string | null;
+  /** SP-13: the library file used as the media header's sample. */
+  headerMediaId?: string | null;
   // Stored as JSON string on the server; the API hands it back unparsed.
   buttons?: string | null;
 }
@@ -356,6 +879,62 @@ export interface SegmentFilter {
  *  hjz = membership snapshot pushed by the HJZ sync (read-only here). */
 export type SegmentOrigin = "crm" | "manual" | "hjz";
 
+// ─── SP-16 smart audience rules (mirror of backend segments/audience-rules.ts) ──
+
+export type RelUnit = "hours" | "days" | "weeks" | "months";
+export interface RelTime {
+  amount: number;
+  unit: RelUnit;
+}
+export type AudienceFieldOp = "eq" | "contains" | "gt" | "lt" | "set" | "unset";
+export type CampaignRuleOp = "received" | "read" | "replied" | "not_replied" | "failed";
+export type FollowUpRuleOp = "open" | "overdue" | "none_open";
+
+export type AudienceRule = (
+  | { field: "tag"; op: "has" | "not_has"; tag: string }
+  | { field: "lifecycle"; op: "in" | "not_in"; values: string[] }
+  | { field: "not_a_lead"; op: "is" | "is_not" }
+  | { field: "last_active"; op: "within" | "more_than"; value: RelTime }
+  | { field: "conversations"; op: "none" | "any" }
+  | { field: "channel"; op: "is" | "is_not"; channel: string }
+  | { field: "group"; op: "in" | "not_in"; segmentId: string }
+  | { field: "created"; op: "within" | "more_than"; value: RelTime }
+  | { field: "created"; op: "before" | "after"; date: string }
+  | { field: "pipeline_stage"; op: "in" | "not_in"; pipelineId: string; stageId?: string }
+  | { field: "custom_field"; op: AudienceFieldOp; defId: string; value?: string }
+  | { field: "campaign"; op: CampaignRuleOp; campaignId: string }
+  | { field: "follow_up"; op: FollowUpRuleOp }
+  | { field: "industry" | "source"; op: "in"; values: string[] }
+  | { field: "name"; op: "contains"; value: string }
+  | { field: "phone"; op: "set" | "unset" }
+  | { field: "stage_key"; op: "in"; keys: string[] }
+) & { missing?: true };
+
+export type AudienceField = AudienceRule["field"];
+export interface AudienceGroup {
+  op: "and" | "or";
+  rules: AudienceNode[];
+}
+export type AudienceNode = AudienceGroup | AudienceRule;
+export type AudienceRules = AudienceGroup & { v: 2 };
+
+export type RuleIssueKind =
+  | "tag_deleted"
+  | "group_missing"
+  | "field_missing"
+  | "pipeline_missing"
+  | "pipeline_archived"
+  | "stage_missing"
+  | "campaign_missing"
+  | "cycle"
+  | "too_deep";
+/** `path` is the child-index path of the rule in the tree. */
+export interface RuleIssue {
+  path: number[];
+  kind: RuleIssueKind;
+}
+
+/** SP-16 `AudienceRow` (backend segments/audience-dto.ts). */
 export interface Segment {
   id: string;
   name: string;
@@ -363,9 +942,64 @@ export interface Segment {
   color: string | null;
   origin: SegmentOrigin;
   filter: SegmentFilter;
-  count: number;
+  /** crm: always a tree (a legacy filter converted); manual/hjz: null. */
+  rules?: AudienceRules | null;
+  rulesSource?: "rules" | "legacy" | null;
+  /** null while unknown: the count timed out (`timedOut`) or is not computed yet. Never read it as 0. */
+  count: number | null;
+  countedAt?: string | null;
+  timedOut?: boolean;
+  /** Not counted in this request (list deadline or a busy pool): "Not counted yet", not "too large". */
+  skipped?: boolean;
+  issues?: RuleIssue[];
+  version?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AudienceRefAudience {
+  id: string;
+  name: string;
+  nameAr: string | null;
+}
+export interface AudienceRefCampaign {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/** `GET /segments/:id`. */
+export interface AudienceDetail extends Segment {
+  references: { audiences: AudienceRefAudience[]; campaigns: AudienceRefCampaign[] };
+}
+
+export interface AudienceContact {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  lifecycle: string;
+}
+
+/** `GET /segments/:id/contacts` and `/candidates`: keyset pages. */
+export interface AudienceContactsPage {
+  items: AudienceContact[];
+  nextCursor: string | null;
+  timedOut: boolean;
+}
+
+/** `POST /segments/preview`. */
+export interface AudiencePreview {
+  count: number | null;
+  timedOut: boolean;
+  skipped?: boolean;
+  sample: { id: string; name: string; phone: string | null }[];
+  issues: RuleIssue[];
+}
+
+/** `GET /tags/:id/references`. */
+export interface TagReferences {
+  audiences: AudienceRefAudience[];
 }
 
 // ─── Tags ─────────────────────────────────────────────────────────────────
@@ -386,8 +1020,88 @@ export interface Note {
   ticketId: string | null;
   body: string;
   authorUserId: string | null;
+  parentId?: string | null;
+  mentions?: string[];
+  replies?: Note[];
+  seenBy?: Array<{ userId: string; seenAt: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface NoteWarning {
+  userId: string;
+  reason: "not_a_member" | "no_access";
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  /** Message KEY (e.g. "assignment.ticket"), localized client-side. */
+  title: string;
+  /** JSON string of message params. */
+  body: string | null;
+  recordKind: string | null;
+  recordId: string | null;
+  readAt?: string | null;
+  createdAt: string;
+  sound?: boolean;
+}
+
+export interface NotificationPreference {
+  type: string;
+  inApp: boolean;
+  sound: boolean;
+}
+
+// ─── SP-22 skills gallery ────────────────────────────────────────────────
+
+export type SkillKey = "booking" | "customer_records" | "photos" | "support_tickets" | "lead_capture" | "calendly_scheduling";
+export type SkillStatus = "not_installed" | "enabled" | "disabled" | "needs_connector" | "needs_attention";
+export type SkillConfigFieldType = "text" | "textarea" | "number" | "select" | "boolean" | "tags";
+
+export interface SkillConfigField {
+  key: string;
+  type: SkillConfigFieldType;
+  labelEn: string;
+  labelAr: string;
+  helpEn?: string;
+  helpAr?: string;
+  required: boolean;
+  default?: unknown;
+  options?: string[];
+  min?: number;
+  max?: number;
+  maxLength?: number;
+}
+
+/** GET /skills row (backend SkillDto). */
+export interface Skill {
+  key: SkillKey;
+  /** The catalog version. */
+  version: number;
+  name: { en: string; ar: string };
+  description: { en: string; ar: string };
+  category: string;
+  tools: { name: string; kind: "read" | "write" }[];
+  requiredConnector: { provider: string; connected: boolean } | null;
+  configFields: SkillConfigField[];
+  installed: boolean;
+  status: SkillStatus;
+  installedVersion: number | null;
+  updateAvailable: boolean;
+  needsConfig: boolean;
+  config: Record<string, unknown>;
+  agents: { slug: string; name: { en: string; ar: string } }[];
+  usage: { calls7d: number; calls30d: number; lastUsedAt: string | null };
+  lastError: string | null;
+  attentionReason: "legacy_edited" | "apply_failed" | null;
+  /** The ledger row's version: what PATCH and update send as `version`. */
+  rowVersion: number;
+}
+
+export interface SkillList {
+  skills: Skill[];
+  agentConnected: boolean;
 }
 
 // ─── Workspaces ───────────────────────────────────────────────────────────
@@ -402,6 +1116,10 @@ export interface Workspace {
   lang: string;
   plan: string;
   role: WorkspaceRole;
+  /** SP-29: relative public URL of the current logo, or null. */
+  logoUrl?: string | null;
+  /** SP-29: `#rrggbb` or null (re-validated before any style uses it). */
+  brandColor?: string | null;
 }
 
 // ─── Admin portal (super-admin views) ─────────────────────────────────────
@@ -492,6 +1210,14 @@ export interface Media {
   height: number | null;
   uploadedById: string | null;
   createdAt: string;
+  /** SP-17: agent-facing details. Null = not described. */
+  title: string | null;
+  alt: string | null;
+  /** Normalised (trimmed, Latin lowercased, deduped), at most 20. */
+  tags: string[];
+  useWhen: string | null;
+  /** The AI agent may list and send this file (list_photos). Off by default. */
+  approvedForAgent: boolean;
 }
 
 // ─── Social publishing ────────────────────────────────────────────────────
@@ -514,7 +1240,13 @@ export type WorkflowTriggerType =
   | "schedule"
   | "webhook"
   | "appointment_completed"
-  | "sale_completed";
+  | "sale_completed"
+  // SP-24: lifecycle events (user workflows may use them too).
+  | "appointment_confirmed"
+  | "appointment_cancelled"
+  | "ticket_resolved"
+  // SP-24: system workflows only (the booking reminder); never offered in the builder.
+  | "appointment_reminder_due";
 
 export type WorkflowStatus = "draft" | "active";
 
@@ -628,6 +1360,8 @@ export interface Workflow {
   triggerConfig: Record<string, unknown>;
   steps: WorkflowStepGraph;
   webhookSecret: string | null;
+  /** SP-24: `lifecycle.<key>` on a system workflow (managed in Automatic messages; locked here). */
+  systemKey?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -642,4 +1376,902 @@ export interface WorkflowRun {
   error: string | null;
   startedAt: string;
   completedAt: string | null;
+}
+
+// ─── Channels hub (SP-19) ─────────────────────────────────────────────────
+
+export type ChannelStatus = "active" | "pending" | "needs_attention" | "disconnected" | "error";
+
+export type VerificationStage = "needs_number" | "awaiting_code" | "needs_registration";
+
+/** Non-secret channel settings, as whitelisted by the backend's `toChannelDto`. */
+export interface ChannelConfig {
+  allowedOrigins?: string[];
+  greeting?: string | null;
+  greetingAr?: string | null;
+  color?: string | null;
+  position?: "start" | "end";
+  askName?: boolean;
+  lang?: "en" | "ar" | null;
+  wabaId?: string;
+  verification?: { stage?: VerificationStage; resendAt?: string; method?: string; verifiedAt?: string } | null;
+  botUsername?: string;
+}
+
+export interface ChannelDto {
+  id: string;
+  /** whatsapp | telegram | webchat | facebook | instagram | tiktok, others verbatim. */
+  kind: string;
+  /** zernio | meta | telegram | native, legacy values verbatim (e.g. kapso). */
+  provider: string;
+  externalId: string | null;
+  displayName: string;
+  phoneNumber: string | null;
+  status: ChannelStatus | string;
+  statusReason: string | null;
+  isDefault: boolean;
+  config: ChannelConfig | null;
+  lastInboundAt: string | null;
+  createdAt: string;
+  conversationCount?: number;
+  /** SP-14: the number's health snapshot (WhatsApp only); null until the first check. */
+  health?: ChannelHealthPublic | null;
+  /** SP-14: when the last check read something. */
+  healthCheckedAt?: string | null;
+  /** SP-14: when the next live check is allowed; null when no cooldown is running. */
+  healthNextCheckAt?: string | null;
+}
+
+// ─── SP-14 number and template health ─────────────────────────────────────
+
+/** Why a health value is "unknown" (null when it is a real value). */
+export type HealthSignalError =
+  | null
+  | "unsupported"
+  | "check_failed"
+  | "permission_denied"
+  | "missing_data"
+  | "missing_credentials";
+
+/** One health field. `value` is the provider value, or the sentinel "unknown". */
+export interface HealthSignal {
+  value: string;
+  checkedAt: string | null;
+  error: HealthSignalError;
+  /** R1: read from a field Zernio passes through from Meta without documenting it. */
+  source?: "zernio_passthrough";
+}
+
+export type HealthFieldName =
+  | "quality"
+  | "tier"
+  | "nameStatus"
+  | "verified"
+  | "codeVerification"
+  | "messaging"
+  | "phoneStatus"
+  | "accountReview";
+
+export interface TemplateSummaryPublic {
+  total: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+  paused: number;
+  disabled: number;
+  lowQuality: number;
+  /** Templates whose quality the provider did not report (absent on snapshots stored before it existed). */
+  qualityUnknown?: number;
+  truncated: boolean;
+}
+
+export interface HealthTemplatesSignal {
+  value: TemplateSummaryPublic | "unknown";
+  checkedAt: string | null;
+  error: HealthSignalError;
+}
+
+export type HealthOverall = "healthy" | "attention" | "critical" | "unknown";
+
+/** `ChannelDto.health` (backend `publicHealth`): no alerts, no template items. */
+export interface ChannelHealthPublic extends Record<HealthFieldName, HealthSignal> {
+  v: 1;
+  provider: "zernio" | "meta";
+  /** The external account this health was read from (the backend hides another account's health). */
+  accountId?: string | null;
+  checkedAt: string | null;
+  trigger: "manual" | "sweep" | "webhook";
+  overall: HealthOverall;
+  templates: HealthTemplatesSignal;
+  issues: string[];
+  /** The previous known value of a field that is unknown now because a read failed. */
+  lastKnown: Partial<Record<HealthFieldName, { value: string; checkedAt: string; source?: "zernio_passthrough" }>>;
+}
+
+/** One template on one number (Meta status UPPERCASE verbatim). */
+export interface NumberTemplateItem {
+  id: string | null;
+  name: string;
+  language: string;
+  status: string;
+  /** GREEN | YELLOW | RED | NOT_RATED | "unknown" */
+  quality: string;
+  category: string | null;
+  source?: "zernio_passthrough";
+}
+
+/** GET /channels/:id/templates */
+export interface ChannelTemplatesResponse {
+  channelId: string;
+  checkedAt: string | null;
+  error: HealthSignalError;
+  truncated: boolean;
+  /** false: no snapshot or an unknown list, so `items` is empty but that is not "no templates". */
+  known: boolean;
+  items: NumberTemplateItem[];
+}
+
+/** GET /templates/:id/health */
+export interface TemplateHealthResponse {
+  template: { id: string; name: string; lang: string; status: string; quality: string | null; reviewedAt: string | null };
+  numbers: {
+    channelId: string;
+    displayName: string;
+    phoneNumber: string | null;
+    provider: string;
+    isDefault: boolean;
+    /** lowercase status, or "missing" / "unknown" */
+    status: string;
+    quality: string;
+    checkedAt: string | null;
+  }[];
+}
+
+export interface ChannelLimits {
+  whatsapp: { used: number; limit: number; plan: string };
+  /** Only present for channels.update holders. */
+  secretsEncryption?: "on" | "off";
+  /** The backend's PUBLIC_BASE_URL origin, for the widget snippet and chat link. */
+  publicBaseUrl?: string;
+}
+
+export interface EmbeddedSignupConfig {
+  enabled: boolean;
+  appId?: string;
+  configId?: string;
+  solutionId?: string;
+  graphVersion: string;
+  reason?: string;
+  /** Env names only, and only for channels.update holders. */
+  missing?: string[];
+}
+
+// ─── SP-15: ad attribution and Meta Ads ───────────────────────────────────
+
+/** The ad chip on a conversation row (`GET /conversations`). */
+export interface AdSourceChip {
+  id: string;
+  /** Meta's ad id (the label of an ad with no name or headline). */
+  sourceId: string;
+  sourceType: string;
+  headline: string | null;
+  adName: string | null;
+  mediaType: string | null;
+  /** `/api/media/<id>/file` once re-hosted, else Meta's (possibly expired) link, else null. */
+  imageUrl: string | null;
+}
+
+/** One ad for the inbox filter (`GET /ad-sources`). */
+export interface AdSourceOption {
+  id: string;
+  label: string;
+  sourceType: string;
+  lastReferredAt: string | null;
+}
+
+/** One ad on the Ads tab (`GET /ad-sources/overview`) or its page (`GET /ad-sources/:id`, with `daily`). */
+export interface AdCard {
+  id: string;
+  sourceId: string;
+  sourceType: string;
+  headline: string | null;
+  body: string | null;
+  adName: string | null;
+  adSetName: string | null;
+  campaignName: string | null;
+  namesFrom: string | null;
+  mediaType: string | null;
+  imageUrl: string | null;
+  sourceUrl: string | null;
+  adAccountId: string | null;
+  firstReferredAt: string | null;
+  lastReferredAt: string | null;
+  /** Conversations started in the range. */
+  started: number;
+  /** null = Unknown (no active connection, another ad account, or days not synced yet). */
+  spend: { amount: number; currency: string } | null;
+  /** null when nothing started or spend is unknown. */
+  costPerConversation: number | null;
+  daily?: { date: string; started: number; spend: number | null }[];
+}
+
+export type MetaAdsStatus = "not_connected" | "pending" | "active" | "needs_reconnect" | "disconnected";
+
+export interface MetaAdsConnectionDto {
+  status: MetaAdsStatus;
+  statusReason: string | null;
+  adAccountId: string | null;
+  adAccountName: string | null;
+  currency: string | null;
+  timezone: string | null;
+  pageId: string | null;
+  pageName: string | null;
+  connectedAt: string | null;
+  connectedBy: { id: string; name: string } | null;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  spendBackfilled: boolean;
+  tokenExpiresAt: string | null;
+  hasPendingLogin: boolean;
+  /** `missing` is present only for connectors.manage holders. */
+  config: { ready: boolean; missing?: string[] };
+}
+
+export interface AdsCurrencyTotal {
+  currency: string;
+  spend: number;
+  started: number;
+  costPerConversation: number | null;
+}
+
+export interface AdsDailyPoint {
+  date: string;
+  started: number;
+  /** null when no connection is active, or the day is outside the synced days. */
+  spend: Record<string, number> | null;
+}
+
+export interface AdsOverview {
+  /** `spendCoverage`: the account days the spend sync has read (null before the first full sync). */
+  range: { from: string; to: string; tz: string; spendCoverage?: { from: string; to: string } | null };
+  connection: MetaAdsConnectionDto | null;
+  totals: { started: number; byCurrency: AdsCurrencyTotal[] };
+  daily: AdsDailyPoint[];
+  ads: AdCard[];
+  totalAds: number;
+  /** Any ad was ever referred (tells "none in this range" from "none yet"). */
+  everReferred?: boolean;
+}
+
+export interface MetaAdsCandidates {
+  adAccounts: { id: string; name: string; currency: string; timezone: string; accountStatus: number | string | null }[];
+  pages: { id: string; name: string }[];
+  scopes?: string[];
+}
+
+export interface AdConversationItem {
+  conversationId: string;
+  contactId: string;
+  contactName: string | null;
+  channelId: string | null;
+  referredAt: string;
+  firstTouch: boolean;
+  status: string;
+  assigneeId: string | null;
+}
+
+// ─── SP-11 insights (mirror of backend/src/insights/insights.dto.ts) ─────────
+
+/** One independently computed block: `unavailable` renders a notice, `forbidden` is hidden. */
+export type Section<T> = { status: "ok"; data: T } | { status: "unavailable" } | { status: "forbidden" };
+
+export interface InsightsRange {
+  /** First local day, inclusive (`YYYY-MM-DD`). */
+  from: string;
+  /** Last local day, inclusive. */
+  to: string;
+  tz: string;
+}
+
+export interface SupportHeadline {
+  conversations: number;
+  decided: number;
+  aiResolved: number;
+  /** Percent, one decimal; null when nothing was decided. */
+  aiResolutionRate: number | null;
+  /** Whole seconds; null without samples. */
+  medianFirstResponseSec: number | null;
+  unanswered: number;
+  medianHandlingSec: number | null;
+  timeSaved: { customerMessages: number; hours: number };
+  ticketShare: number | null;
+}
+
+export interface ResolutionMix {
+  ai: number;
+  human: number;
+  escalated: number;
+  closed: number;
+}
+
+export interface Peaks {
+  /** [dayOfWeek 0=Sunday … 6=Saturday][hour 0–23], workspace-local. */
+  matrix: number[][];
+  byHour: number[];
+}
+
+export interface ByNumberRow {
+  /** null = "Unassigned number". */
+  channelId: string | null;
+  label: string;
+  conversations: number;
+  aiResolutionRate: number | null;
+}
+
+export interface TopicFrictionRow {
+  topic: string;
+  count: number;
+  escalatedShare: number;
+  negativeShare: number;
+}
+
+export interface TeamRow {
+  /** null for the "Former member" and "Unattributed" rows (told apart by `former`). */
+  userId: string | null;
+  name: string;
+  former: boolean;
+  assigned: number;
+  replies: number;
+  medianFirstResponseSec: number | null;
+  resolved: number;
+}
+
+export interface SupportInsights {
+  range: InsightsRange;
+  channelId: string | null;
+  headline: Section<SupportHeadline>;
+  resolutionMix: Section<ResolutionMix>;
+  peaks: Section<Peaks>;
+  byNumber: Section<ByNumberRow[]>;
+  topicFriction: Section<TopicFrictionRow[]>;
+  team: Section<TeamRow[]>;
+  /** Workspace-local day of the start of sender recording (SP-11 migration applied, or workspace creation if later); null = none yet (or unavailable). */
+  attributionSince: string | null;
+}
+
+export type SpeedBucket = "lt_5m" | "5_15m" | "15_60m" | "1_4h" | "4_24h" | "gt_24h" | "not_replied";
+
+/** Without tickets.view only `id` is present. */
+export interface SalesPipelineRef {
+  id: string;
+  name?: string;
+  nameAr?: string;
+  kind?: string;
+}
+
+export interface SalesRepRow {
+  userId: string | null;
+  name: string;
+  former: boolean;
+  leads: number;
+  won: number;
+  lost: number;
+  medianSpeedToReplySec: number | null;
+  followUps: { done: number; overdue: number; dueToday: number };
+}
+
+export interface SalesInsights {
+  range: InsightsRange;
+  pipeline: SalesPipelineRef;
+  headline: Section<{ leads: number; replied: number; medianSpeedToReplySec: number | null; waiting: number; won: number }>;
+  distribution: Section<{ bucket: SpeedBucket | string; count: number }[]>;
+  weekly: Section<{ weekStart: string; leads: number; won: number }[]>;
+  sources: Section<{ kind: string; key: string; id?: string; label: string; leads: number; won: number }[]>;
+  funnel: Section<{ stageId: string; key: string; label: string; labelAr: string; reached: number; isWon: boolean; isTerminal: boolean }[]>;
+  lostReasons: Section<{ reasonId: string | null; label: string; labelAr: string; count: number }[]>;
+  reps: Section<SalesRepRow[]>;
+}
+
+// ─── SP-21 knowledge sources ─────────────────────────────────────────────
+
+export type KnowledgeKind = "content" | "faq" | "guideline" | "file" | "typed_doc" | "website";
+export type KnowledgeStatus = "draft" | "queued" | "processing" | "ready" | "failed" | "paused";
+export type PageState = "synced" | "needs_login" | "blocked" | "removed" | "error" | "capped";
+export type TypedKind = "offers" | "inventory" | "packages";
+export type WebsiteSchedule = "daily" | "weekly" | "monthly" | "manual";
+
+/** `GET /knowledge/sources[/:id]`. */
+export interface KnowledgeSource {
+  id: string;
+  kind: KnowledgeKind;
+  status: KnowledgeStatus;
+  /** An error key (knowledgeErrors.ts), never provider text. */
+  error: string | null;
+  title: string;
+  body?: string | null;
+  bodyJson?: unknown;
+  question?: string | null;
+  order: number;
+  typedKind: TypedKind | null;
+  url: string | null;
+  scope: "site" | "path" | null;
+  schedule: WebsiteSchedule | null;
+  lastSyncAt: string | null;
+  nextSyncAt: string | null;
+  /**
+   * Websites: failed runs in a row (3 → failed). Files and typed docs:
+   * transient retries used (0 or 1). Never show website wording for files.
+   */
+  consecutiveFailures: number;
+  lastRun: {
+    startedAt?: string;
+    finishedAt?: string;
+    pagesRead?: number;
+    pagesSame?: number;
+    pagesChanged?: number;
+    pagesNew?: number;
+    failed?: boolean;
+    reason?: string;
+  } | null;
+  itemCount: number;
+  publishState: "none" | "pending" | "published" | "failed" | string;
+  legacy: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  file: { fileName: string; mimeType: string; sizeBytes: number } | null;
+  pageCounts?: Partial<Record<PageState, number>>;
+}
+
+/** `GET /knowledge/sources/:id/pages`. */
+export interface KnowledgePage {
+  id: string;
+  url: string;
+  title: string | null;
+  state: PageState;
+  httpStatus: number | null;
+  lastReadAt: string | null;
+  removedAt: string | null;
+}
+
+/** `GET /knowledge/sources/:id/preview`: "What your assistant learned". */
+export interface KnowledgePreview {
+  sourceId: string;
+  groups: { heading: string | null; items: { chunkId: string; text: string; rowRef: number | null; url: string | null }[] }[];
+  truncated: boolean;
+}
+
+// ─── SP-24 lifecycle messages (mirror of backend/src/lifecycle/lifecycle.service.ts) ──
+
+export type LifecycleKey =
+  | "booking_confirmed"
+  | "booking_reminder"
+  | "booking_cancelled"
+  | "ticket_opened"
+  | "ticket_resolved"
+  | "ticket_opened_staff"
+  | "new_lead_staff";
+
+export interface TemplateVariant {
+  templateId: string;
+  name: string;
+  language: string;
+  /** Template["status"]: approved | pending | rejected | submitted | failed | local | paused | disabled. */
+  status: string;
+  rejectionReason: string | null;
+  quality: string | null;
+}
+
+export type LifecycleRecipientKind = "customer" | "assignee" | "permitted" | "members";
+
+export interface LifecycleRow {
+  key: LifecycleKey;
+  audience: "customer" | "staff";
+  setUp: boolean;
+  enabled: boolean;
+  workflowId: string | null;
+  recipient: { kind: LifecycleRecipientKind; userIds: string[] };
+  /** booking_reminder only (minutes before the booking). */
+  offsetMinutes: number | null;
+  /** Customer rows only. */
+  variants: { ar: TemplateVariant | null; en: TemplateVariant | null } | null;
+  blockedReason: "template_rejected" | "template_missing" | "whatsapp_not_connected" | "no_approved_template" | null;
+  lastSentAt: string | null;
+  sent30d: number;
+  /** Skipped runs of the last 30 days by reason. */
+  skipped30d: Record<string, number>;
+}
+
+export interface LifecycleList {
+  rows: LifecycleRow[];
+  whatsappConnected: boolean;
+  /** In server memory only: null after a restart until the next Sync. */
+  lastSyncedAt: string | null;
+}
+
+// ─── SP-20 agent settings, sandbox and onboarding ───────────────────────────
+
+export type AgentHoursMode = "always" | "within" | "outside";
+export type AgentPublishState = "none" | "pending" | "published" | "failed";
+
+/** `GET /agent/settings` (backend/src/agent/agent-settings.dto.ts). */
+export interface AgentSettings {
+  nameEn: string | null;
+  nameAr: string | null;
+  greeting: string | null;
+  greetingAr: string | null;
+  tone: string[];
+  hoursMode: AgentHoursMode;
+  schedule: import("@/screens/calendar/schedule").WeeklySchedule | null;
+  excludedTags: { id: string; name: string }[];
+  droppedTagIds: string[];
+  stopped: { at: string; reason: string | null; by: { id: string; name: string } | null } | null;
+  timezone: string;
+  publishState: AgentPublishState;
+  linked: boolean;
+  version: number;
+}
+
+export interface AgentResync {
+  mcpServer: "created" | "already-present" | "not_linked";
+  prompt: "updated" | "already-present" | "not_linked";
+  persona: "updated" | "already-present" | "not_linked";
+}
+
+export interface SandboxToolCall {
+  name: string;
+  simulated: boolean;
+  args?: Record<string, string>;
+  error?: boolean;
+}
+export interface SandboxSource {
+  sourceId: string;
+  title: string;
+  url?: string;
+}
+export interface SandboxTurn {
+  role: "owner" | "agent";
+  text: string;
+  toolCalls?: SandboxToolCall[];
+  sources?: SandboxSource[];
+  at: string;
+}
+export interface SandboxReply {
+  reply: string;
+  replyKind: "answer" | "refusal" | "empty";
+  toolCalls: SandboxToolCall[];
+  sources: SandboxSource[];
+  gate: { wouldReply: boolean; reason: string };
+  turnCount: number;
+}
+export interface SandboxThread {
+  messages: SandboxTurn[];
+  turnCount: number;
+  expiresAt: string | null;
+}
+
+export interface LearnCard {
+  business: { name: string; descriptionEn?: string; descriptionAr?: string };
+  faqs: { question: string; answer: string }[];
+  services: { name: string; nameAr?: string; price?: number; currency?: string; durationMin?: number }[];
+  hours?: import("@/screens/calendar/schedule").WeeklySchedule;
+  sourcePages: string[];
+}
+
+export type OnboardingStatus = "not_started" | "in_progress" | "skipped" | "done";
+export type OnboardingStep = "business" | "website" | "learn" | "try" | "live";
+
+/** `GET /onboarding` (backend/src/agent/onboarding/onboarding.service.ts). */
+export interface OnboardingState {
+  status: OnboardingStatus;
+  step: OnboardingStep;
+  businessName: string | null;
+  websiteUrl: string | null;
+  website: { sourceId: string; status: string; pagesSynced: number } | null;
+  learned: LearnCard | null;
+  hoursApplyEnablesWorkingHours: boolean;
+  stuck: boolean;
+  /** The caller drives this onboarding (others see who does, read-only). */
+  isStarter: boolean;
+  startedByName: string | null;
+  canManage: boolean;
+}
+
+export interface LearnApplyResult {
+  applied: { content: "replaced" | "appended" | "written" | "skipped"; faqsAdded: number; faqsSkipped: number; hours: boolean };
+}
+
+// ─── SP-18 copilot ("Ask Kewy") ───────────────────────────────────────────
+// Shapes of backend/src/copilot/copilot.dto.ts and the stream protocol.
+
+export type CopilotPageKey =
+  | "dashboard"
+  | "inbox"
+  | "conversation"
+  | "contacts"
+  | "contact"
+  | "pipeline"
+  | "ticket"
+  | "calendar"
+  | "booking"
+  | "followups"
+  | "campaigns"
+  | "campaign"
+  | "agent"
+  | "knowledge"
+  | "insights_support"
+  | "insights_sales"
+  | "other";
+/** Alias used by the plan's file list. */
+export type PageKey = CopilotPageKey;
+
+export type CopilotApprovalMode = "manual" | "agent_decides" | "auto";
+export type CopilotRefKind = "contact" | "ticket" | "booking";
+
+export interface CopilotRef {
+  kind: CopilotRefKind;
+  id: string;
+  title?: string;
+}
+
+export interface CopilotPageContext {
+  page: CopilotPageKey;
+  recordKind?: "contact" | "conversation" | "ticket" | "booking" | "campaign";
+  recordId?: string;
+  from?: string;
+  to?: string;
+  channelId?: string;
+  pipelineId?: string;
+}
+
+export interface PendingCard {
+  id: string;
+  tool: string;
+  title: string;
+  changes: { label: string; before?: string; after: string }[];
+  /** PENDING | EXECUTING | EXECUTED | FAILED | REJECTED | EXPIRED */
+  status: string;
+  expiresAt: string;
+  /** permission_revoked | card_outdated | declined | null */
+  refusal: string | null;
+  feedback: string | null;
+  /** FAILED: why ("copilot.action_unknown" when the outcome could not be recorded). */
+  errorKey?: string | null;
+  result?: unknown;
+}
+
+export type CopilotSourceCard =
+  | { kind: "record"; recordKind: string; id: string; title: string }
+  | { kind: "knowledge"; sourceId: string; title: string; url?: string };
+
+export interface CopilotAttachmentInfo {
+  id: string;
+  fileName: string;
+  kind: "document" | "image";
+}
+
+export interface CopilotSession {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+  running: boolean;
+}
+
+export interface CopilotMessage {
+  id: string;
+  /** user | assistant | note */
+  role: string;
+  text: string;
+  references: { kind: string; id: string; title: string }[] | null;
+  attachments: CopilotAttachmentInfo[] | null;
+  sources: CopilotSourceCard[] | null;
+  createdAt: string;
+}
+
+export interface CopilotSessionDetail {
+  id: string;
+  title: string | null;
+  running: boolean;
+  tainted: boolean;
+  messages: CopilotMessage[];
+  actions: PendingCard[];
+}
+
+export interface CopilotSessionPage {
+  items: CopilotSession[];
+  nextCursor: string | null;
+}
+
+/** `POST /copilot/attachments` (backend CopilotAttachmentDto). */
+export interface CopilotUploadedAttachment {
+  id: string;
+  fileName: string;
+  kind: "document" | "image";
+  mimeType: string;
+  sizeBytes: number;
+  truncated: boolean;
+}
+
+/** One stream event (`event:` name + its JSON). */
+export type CopilotEvent =
+  | { event: "session"; data: { sessionId: string; title: string | null } }
+  | { event: "activity"; data: { kind: string; tool?: string; label: string } }
+  | { event: "token"; data: { text: string } }
+  | { event: "confirm"; data: { action: PendingCard } }
+  | { event: "receipt"; data: { action: PendingCard } }
+  | { event: "draft"; data: { conversationId: string; text: string } }
+  | { event: "sources"; data: { items: CopilotSourceCard[] } }
+  | { event: "done"; data: { messageId: string; usage?: { inputTokens: number; outputTokens: number } } }
+  | { event: "error"; data: { code: string } };
+
+// ─── SP-23 connectors gallery (mirror of backend/src/connectors DTOs) ─────────
+
+export type ConnectorStatus = "pending" | "active" | "needs_reconnect" | "disconnected";
+export type ConnectorToolAccess = "off" | "read" | "write";
+
+export interface ConnectorSummary {
+  id: string;
+  provider: string;
+  name: string;
+  status: ConnectorStatus;
+  statusReason: string | null;
+  accountLabel: string | null;
+  agentBound: boolean;
+  toolCounts: { on: number; total: number };
+  connectedAt: string | null;
+  calls7d: number;
+}
+
+export interface ConnectorCard {
+  provider: string;
+  name: { en: string; ar: string };
+  description: { en: string; ar: string };
+  authKind: "oauth" | "headers" | "none" | null;
+  available: boolean;
+  unavailableReason: "not_configured" | "coming_soon" | null;
+  connectors: ConnectorSummary[];
+}
+
+export interface ConnectorTool {
+  name: string;
+  title: string | null;
+  description: string;
+  kind: "read" | "write";
+  access: ConnectorToolAccess;
+  exposed: boolean;
+  removed: boolean;
+  /** Why a re-scan switched it off for safety. */
+  flag: "reclassified" | "description_changed" | "schema_changed" | null;
+  /** Custom connectors: the owner marked it read-only. */
+  ownerRead: boolean;
+}
+
+export interface ConnectorDetail extends ConnectorSummary {
+  serverHost: string;
+  tools: ConnectorTool[];
+  toolsScannedAt: string | null;
+  sync: unknown[];
+  usedBySkills: { key: string; name: { en: string; ar: string } }[];
+  version: number;
+  /** Custom connectors: header names; values are always "••••" (write-only). */
+  headers: { name: string; value: string }[];
+}
+
+export interface ConnectorActivity {
+  calls: { tool: string; kind: string; outcome: "ok" | "error" | "refused"; errorCode: string | null; source: string; at: string }[];
+  counts7d: { tool: string; ok: number; error: number; refused: number }[];
+}
+
+export interface ConnectorRescanResult {
+  detail: ConnectorDetail;
+  added: string[];
+  removed: string[];
+  changed: string[];
+}
+
+// ─── SP-27 API keys and webhooks (mirror of backend api-keys / webhooks DTOs) ──
+
+export type KeyAction = "read" | "write" | "delete" | "admin";
+export type KeyScopes = Partial<Record<string, KeyAction[]>>;
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** `crm_<12 hex>`; the full key is shown once, at create. */
+  prefix: string;
+  scopes: KeyScopes;
+  createdBy: { id: string; name: string } | null;
+  expiresAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  status: "active" | "expired" | "revoked";
+  createdAt: string;
+}
+
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  description: string | null;
+  events: string[];
+  active: boolean;
+  disabledReason: "manual" | "failing" | "unsafe_url" | null;
+  failingSince: string | null;
+  hasPreviousSecret: boolean;
+  createdAt: string;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  eventId: string;
+  event: string;
+  status: "pending" | "delivered" | "failed";
+  attempts: number;
+  responseCode: number | null;
+  lastError: string | null;
+  nextAttemptAt: string;
+  deliveredAt: string | null;
+  createdAt: string;
+  /** Only on GET …/deliveries/:id. */
+  payload?: unknown;
+}
+
+// ─── SP-28 billing, read-only over Kewy data (mirror of backend/src/billing) ──
+
+export type BillingMeter = "ai_reply" | "campaign_message" | "ads_ai";
+export type BillingBanner = "grace" | "low_balance";
+
+export interface BillingStatus {
+  billedBy: "kewy";
+  /** `key` is the CRM plan key, or null for a Kewy package name. */
+  plan: { key: "free" | "starter" | "growth" | "pro" | null; name: string };
+  overridden: boolean;
+  features: string[];
+  payment: { dueSince: string | null; locksAt: string | null; locked: boolean };
+  banners: BillingBanner[];
+  /** Only with billing.view. */
+  wallet?: { balanceJod: string; lowBalance: boolean };
+  usage?: BillingUsageSummary;
+}
+
+export interface BillingUsageSummary {
+  from: string;
+  to: string;
+  meters: { meter: BillingMeter; used: number; allowance: number | null }[];
+}
+
+export interface BillingDailyUsage {
+  meter: BillingMeter;
+  tz: string;
+  days: { day: string; qty: number }[];
+}
+
+export interface BillingLedgerItem {
+  id: string;
+  type: string;
+  meter: BillingMeter | null;
+  amountJod: string;
+  balanceAfterJod: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface BillingLedgerPage {
+  items: BillingLedgerItem[];
+  nextCursor: string | null;
+}
+
+export interface BillingCatalogPlan {
+  key: "free" | "starter" | "growth" | "pro";
+  rank: number;
+  /** Omitted until the user sets them (R3). */
+  priceJod?: { monthly: number | null; annual: number | null };
+  allowances?: Partial<Record<BillingMeter, number>>;
+  limits: { whatsappNumbers: number; seats?: number };
+  features: string[];
+}
+
+export interface BillingCatalog {
+  billedBy: "kewy";
+  plans: BillingCatalogPlan[];
+  features: string[];
 }

@@ -1,20 +1,73 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { Prisma } from "@prisma/client";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { PermissionService } from "../permissions/permission.service";
+import type { Viewer } from "../permissions/visibility";
+import { NotificationsService } from "../notifications/notifications.service";
 import { RealtimeService } from "../realtime/realtime.service";
+import { applyConversationAssignment } from "./assign-conversation";
 import { LOutboundService } from "../integrations/l-outbound.service";
+import { ChannelResolver, pickEffectiveChannel } from "../channels/channel-resolver.service";
+import { ChannelTransportRegistry, type TransportConversation } from "../channels/channel-transport";
+import { channelError } from "../channels/channel-errors";
+import { deliverViaTransport } from "../channels/deliver-via-transport";
+import { ensureLegacyChannels } from "../channels/legacy-mirror";
 import {
   CreateConversationDto,
   CreateMessageDto,
   UpdateConversationDto,
 } from "./conversations.dto";
+import { AD_SOURCE_CHIP_SELECT, toAdSourceChip } from "../ad-attribution/ad-source-chip";
+import { sentByData, staffSenderId } from "./message-sender";
 
 @Injectable()
 export class ConversationsService {
+  private readonly logger = new Logger(ConversationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
     private readonly lOutbound: LOutboundService,
-  ) {}
+    @Optional() private readonly notifications?: NotificationsService,
+    // Absent only in unit tests; the module is @Global in the app.
+    @Optional() private readonly perm?: PermissionService,
+    // SP-19, from the global ChannelsCoreModule (unit specs may omit them).
+    @Optional() channelResolver?: ChannelResolver,
+    @Optional() transports?: ChannelTransportRegistry,
+    // SP-27: the webhook conversation.assigned emit (global EventEmitterModule).
+    @Optional() private readonly events?: EventEmitter2,
+  ) {
+    this.channels = channelResolver ?? new ChannelResolver(prisma);
+    this.transports = transports ?? new ChannelTransportRegistry();
+  }
+
+  private readonly channels: ChannelResolver;
+  private readonly transports: ChannelTransportRegistry;
+  /** workspaceId → when the inbox list last ran the legacy mirror (M4). */
+  private readonly mirroredAt = new Map<string, number>();
+
+  /** The legacy Integration mirror, at most once a minute per workspace: the
+   *  inbound, send and /channels paths mirror on their own, so the list only
+   *  needs to catch rows `main` wrote recently. */
+  private async mirrorLegacyThrottled(workspaceId: string): Promise<void> {
+    const now = Date.now();
+    if (now - (this.mirroredAt.get(workspaceId) ?? 0) < 60_000) return;
+    this.mirroredAt.set(workspaceId, now);
+    await ensureLegacyChannels(this.prisma, workspaceId);
+  }
+
+  /** Which conversations `viewer` may see. No viewer = internal caller. */
+  private scope(workspaceId: string, viewer?: Viewer): Promise<Prisma.ConversationWhereInput> {
+    return this.perm ? this.perm.conversationScope(workspaceId, viewer) : Promise.resolve({});
+  }
 
   private emitActivity(
     workspaceId: string,
@@ -27,53 +80,102 @@ export class ConversationsService {
     });
   }
 
-  async list(workspaceId: string) {
-    const convs = await this.prisma.conversation.findMany({
-      where: { workspaceId },
-      orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-    });
-
-    // 24-hour customer-service window state for WhatsApp conversations only.
-    // Inbox uses it to flip the composer to a template picker when the window
-    // closes. Other channels have different (or no) restrictions — skip the
-    // extra query for them.
-    const waConvIds = convs
-      .filter((c) => c.channel === "whatsapp")
-      .map((c) => c.id);
-    const lastInboundByConv = new Map<string, Date>();
-    if (waConvIds.length > 0) {
-      const grouped = await this.prisma.message.groupBy({
-        by: ["conversationId"],
-        where: {
-          workspaceId,
-          conversationId: { in: waConvIds },
-          from: "them",
-        },
+  /**
+   * SP-19: `filter.channelIds` keeps conversations whose EFFECTIVE channel is
+   * one of them (legacy null-channel rows included). It is ANDed with the
+   * viewer's scope, never replacing it. Every row carries its effective
+   * `channelId` and `channelProvider` (null when none resolves, e.g. `l`).
+   */
+  async list(workspaceId: string, viewer?: Viewer, filter: { channelIds?: string[] } = {}) {
+    const channelIds = (filter.channelIds ?? []).filter(Boolean);
+    // Two waves of round trips instead of four: the viewer's scope and the
+    // (throttled) legacy-channel mirror are independent; then the rows, the
+    // channels and the message times all read in parallel. The mirror still
+    // finishes before anything reads channels or conversations.
+    const [scope] = await Promise.all([this.scope(workspaceId, viewer), this.mirrorLegacyThrottled(workspaceId)]);
+    const where: Prisma.ConversationWhereInput = channelIds.length
+      ? { AND: [{ workspaceId }, scope, { OR: [{ channelId: { in: channelIds } }, { channelId: null }] }] }
+      : { workspaceId, ...scope };
+    const [rows, channels, grouped] = await Promise.all([
+      this.prisma.conversation.findMany({
+        where,
+        orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+        include: { labels: { select: { labelId: true } }, adSource: { select: AD_SOURCE_CHIP_SELECT } },
+      }),
+      this.prisma.channel.findMany({
+        where: { workspaceId },
+        select: { id: true, workspaceId: true, kind: true, provider: true, status: true, isDefault: true, integrationId: true },
+      }),
+      // Per conversation and sender (filtered by the same conversation where,
+      // not by ids, so it need not wait for the rows): see below.
+      this.prisma.message.groupBy({
+        by: ["conversationId", "from"],
+        where: { workspaceId, conversation: { is: where } },
         _max: { createdAt: true },
-      });
-      for (const g of grouped) {
-        if (g._max.createdAt) lastInboundByConv.set(g.conversationId, g._max.createdAt);
-      }
+      }),
+    ]);
+    const wanted = new Set(channelIds);
+    const convs = rows
+      .map((c) => {
+        const eff = pickEffectiveChannel(c, channels);
+        return { ...c, channelId: eff?.id ?? null, channelProvider: eff?.provider ?? null };
+      })
+      .filter((c) => wanted.size === 0 || (c.channelId !== null && wanted.has(c.channelId)));
+
+    // Per conversation, in one grouped query (by conversation and sender):
+    // - `lastInboundAt`, the customer's last message: the inbox's "waiting
+    //   for 2h" and "Oldest waiting" sort, and WhatsApp's 24-hour
+    //   customer-service window (the composer flips to a template picker);
+    // - `lastMessageAt`, the newest message either way: the "Newest" sort.
+    // `updatedAt` moves on read, assign, label and pin, so it can do neither.
+    const lastInboundByConv = new Map<string, Date>();
+    const lastMessageByConv = new Map<string, Date>();
+    for (const g of grouped) {
+      const at = g._max.createdAt;
+      if (!at) continue;
+      if (g.from === "them") lastInboundByConv.set(g.conversationId, at);
+      const prev = lastMessageByConv.get(g.conversationId);
+      if (!prev || at > prev) lastMessageByConv.set(g.conversationId, at);
     }
 
     const WA_WINDOW_MS = 24 * 60 * 60 * 1000;
     const now = Date.now();
-    return convs.map((c) => {
+    return convs.map(({ labels, adSource, ...rest }) => {
+      const lastInboundAt = lastInboundByConv.get(rest.id) ?? null;
+      const lastMessageAt = lastMessageByConv.get(rest.id) ?? null;
+      const c = { ...rest, labelIds: labels.map((l) => l.labelId), adSource: toAdSourceChip(adSource), lastInboundAt, lastMessageAt };
       if (c.channel !== "whatsapp") return c;
-      const lastInboundAt = lastInboundByConv.get(c.id) ?? null;
       const waWindowOpen = lastInboundAt
         ? now - lastInboundAt.getTime() < WA_WINDOW_MS
         : false;
-      return { ...c, lastInboundAt, waWindowOpen };
+      return { ...c, waWindowOpen };
     });
   }
 
-  async get(workspaceId: string, id: string) {
+  async get(workspaceId: string, id: string, viewer?: Viewer) {
+    const scope = await this.scope(workspaceId, viewer);
     const conv = await this.prisma.conversation.findFirst({
-      where: { id, workspaceId },
-      include: { messages: { orderBy: { createdAt: "asc" } } },
+      where: { id, workspaceId, ...scope },
+      include: {
+        messages: { orderBy: { createdAt: "asc" } },
+        labels: { select: { labelId: true } },
+        adSource: { select: AD_SOURCE_CHIP_SELECT },
+      },
     });
     if (!conv) throw new NotFoundException("Conversation not found");
+    const { adSource, ...full } = conv;
+    return { ...this.withWindow(full), adSource: toAdSourceChip(adSource) };
+  }
+
+  private withWindow<
+    T extends {
+      channel: string;
+      messages: { from: string; createdAt: Date }[];
+      labels: { labelId: string }[];
+    },
+  >(full: T) {
+    const { labels, ...rest } = full;
+    const conv = { ...rest, labelIds: labels.map((l) => l.labelId) };
 
     if (conv.channel === "whatsapp") {
       // Walk messages backwards for the most recent inbound. Avoids a second
@@ -109,15 +211,86 @@ export class ConversationsService {
     return conv;
   }
 
-  async update(workspaceId: string, id: string, dto: UpdateConversationDto) {
-    await this.get(workspaceId, id);
-    const conv = await this.prisma.conversation.update({ where: { id }, data: dto });
-    this.emitActivity(workspaceId, conv.channel, conv.id);
-    return conv;
+  async update(
+    workspaceId: string,
+    id: string,
+    dto: UpdateConversationDto,
+    actorId?: string,
+    viewer?: Viewer,
+  ) {
+    const scope = await this.scope(workspaceId, viewer);
+    const row = await this.prisma.conversation.findFirst({
+      where: { id, workspaceId, ...scope },
+      include: { labels: { select: { labelId: true } } },
+    });
+    if (!row) throw new NotFoundException("Conversation not found");
+    // Pure input validation first: no lookups or version checks before it.
+    const data: Prisma.ConversationUncheckedUpdateManyInput = {};
+    if (dto.status !== undefined) data.status = dto.status;
+    if (dto.pinned !== undefined) data.pinned = dto.pinned;
+    if (dto.unread !== undefined) data.unread = dto.unread;
+    if (dto.aiEnabled !== undefined) data.aiEnabled = dto.aiEnabled;
+    if (dto.escalated === true) {
+      const given = dto.escalateReason?.trim();
+      const kept = row.escalated ? row.escalateReason?.trim() : undefined;
+      const reason = given || kept;
+      if (!reason) {
+        throw new BadRequestException("escalateReason is required to escalate");
+      }
+      data.escalated = true;
+      data.escalateReason = reason;
+    } else if (dto.escalated === false) {
+      data.escalated = false;
+      data.escalateReason = null;
+    }
+    if (dto.status !== undefined && dto.status !== row.status) {
+      data.statusChangedAt = new Date();
+    }
+    // version bump + updatedAt preservation (ownership actions must not reorder
+    // the inbox) are applied by applyConversationAssignment.
+
+    if (dto.version !== undefined && dto.version !== row.version) {
+      throw this.conflict(row);
+    }
+    if (typeof dto.assigneeId === "string") {
+      const member = await this.prisma.workspaceMember.findFirst({
+        where: { workspaceId, userId: dto.assigneeId },
+      });
+      if (!member) throw new BadRequestException("assignee is not a member");
+    }
+
+    const { count, fresh } = await applyConversationAssignment(
+      { prisma: this.prisma, realtime: this.realtime, notifications: this.notifications, events: this.events },
+      {
+        workspaceId,
+        conversationId: id,
+        assigneeId: dto.assigneeId,
+        actorId,
+        extraData: data,
+        enforceVersion: row.version,
+        preserveUpdatedAt: true,
+        current: { assigneeId: row.assigneeId, updatedAt: row.updatedAt, version: row.version },
+      },
+    );
+    if (!fresh) throw new NotFoundException("Conversation not found");
+    if (count === 0) throw this.conflict(fresh);
+    return this.mapLabels(fresh);
   }
 
-  async markRead(workspaceId: string, id: string) {
-    const conv = await this.get(workspaceId, id);
+  private mapLabels<T extends { labels: { labelId: string }[] }>(c: T) {
+    const { labels, ...rest } = c;
+    return { ...rest, labelIds: labels.map((l) => l.labelId) };
+  }
+
+  private conflict(current: { labels: { labelId: string }[] }) {
+    return new ConflictException({
+      message: "Conversation changed",
+      current: this.mapLabels(current),
+    });
+  }
+
+  async markRead(workspaceId: string, id: string, viewer?: Viewer) {
+    const conv = await this.get(workspaceId, id, viewer);
     // Raw UPDATE on purpose: the list orders by updatedAt, and Prisma's
     // @updatedAt bumps on every model-level update — so opening a thread
     // (mark-read) would hoist it to the top. Reading must not reorder.
@@ -128,15 +301,15 @@ export class ConversationsService {
     return { ...conv, unread: 0 };
   }
 
-  async remove(workspaceId: string, id: string) {
-    const existing = await this.get(workspaceId, id);
+  async remove(workspaceId: string, id: string, viewer?: Viewer) {
+    const existing = await this.get(workspaceId, id, viewer);
     await this.prisma.conversation.delete({ where: { id } });
     this.emitActivity(workspaceId, existing.channel, id);
     return { ok: true };
   }
 
-  async listMessages(workspaceId: string, conversationId: string) {
-    await this.get(workspaceId, conversationId);
+  async listMessages(workspaceId: string, conversationId: string, viewer?: Viewer) {
+    await this.get(workspaceId, conversationId, viewer);
     return this.prisma.message.findMany({
       where: { conversationId, workspaceId },
       orderBy: { createdAt: "asc" },
@@ -154,8 +327,9 @@ export class ConversationsService {
     workspaceId: string,
     conversationId: string,
     enabled: boolean,
+    viewer?: Viewer,
   ) {
-    await this.get(workspaceId, conversationId); // 404s if not in this workspace
+    await this.get(workspaceId, conversationId, viewer); // 404s if not in this workspace
     return await this.prisma.conversation.update({
       where: { id: conversationId },
       data: { aiEnabled: enabled, aiPausedAt: null },
@@ -167,12 +341,14 @@ export class ConversationsService {
     workspaceId: string,
     conversationId: string,
     dto: CreateMessageDto,
+    viewer?: Viewer,
   ) {
-    const conv = await this.get(workspaceId, conversationId);
+    const conv = await this.get(workspaceId, conversationId, viewer);
     const now = new Date();
     const t = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const message = await this.prisma.message.create({
-      data: { ...dto, conversationId, workspaceId, t },
+      // SP-11: a staff message records its sender (the Team tab).
+      data: { ...dto, conversationId, workspaceId, t, ...(dto.from === "human" ? sentByData(staffSenderId(viewer)) : {}) },
     });
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -201,5 +377,34 @@ export class ConversationsService {
       this.lOutbound.queueReply(workspaceId, conversationId, dto.body);
     }
     return message;
+  }
+
+  /**
+   * SP-19 `POST /conversations/:id/send`: deliver a text reply through the
+   * conversation's channel transport (Telegram — T2, web chat — T3), then
+   * record it once. Hidden conversation → 404 before anything is sent;
+   * disconnected channel → 409 channels.disconnected (never another number).
+   * Zernio and Meta threads keep their dedicated routes: 400
+   * channels.transport_unavailable.
+   */
+  async sendViaChannel(workspaceId: string, conversationId: string, body: string, viewer?: Viewer) {
+    const text = (body ?? "").trim();
+    if (!text) throw new BadRequestException("body is required");
+    const scope = await this.scope(workspaceId, viewer);
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId, ...scope },
+      include: { contact: { select: { id: true, externalId: true, phone: true, name: true } } },
+    });
+    if (!conv) throw new NotFoundException("Conversation not found");
+
+    // SP-22: the transport write is shared with the AI auto-reply.
+    const { message } = await deliverViaTransport(
+      { prisma: this.prisma, realtime: this.realtime, channels: this.channels, transports: this.transports, logger: this.logger },
+      workspaceId,
+      conv,
+      text,
+      { from: "human", extra: sentByData(staffSenderId(viewer)) },
+    );
+    return { ok: true as const, message };
   }
 }

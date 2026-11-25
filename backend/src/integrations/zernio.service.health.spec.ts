@@ -19,6 +19,15 @@ function build(accounts: unknown[] | Error) {
   const prisma = {
     integration: { findMany: jest.fn().mockResolvedValue(rows), upsert: jest.fn().mockResolvedValue({}) },
     workspace: { findUnique: jest.fn().mockResolvedValue({ id: "ws1", zernioProfileId: "prof1" }) },
+    // SP-19: syncAccounts also mirrors every account into a Channel
+    // (covered by src/channels/zernio-mirror.spec.ts).
+    channel: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
   const listAccounts =
     accounts instanceof Error ? jest.fn().mockRejectedValue(accounts) : jest.fn().mockResolvedValue(accounts);

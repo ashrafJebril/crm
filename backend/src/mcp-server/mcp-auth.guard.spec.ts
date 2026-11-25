@@ -27,6 +27,12 @@ describe("McpAuthGuard", () => {
     expect(tokens.findWorkspaceByToken).toHaveBeenCalledWith("mcp_abc_def");
   });
 
+  it("SP-27: refuses an API key without looking it up as an MCP token", async () => {
+    const req = { headers: { authorization: `Bearer crm_${"a".repeat(12)}_${"b".repeat(43)}` } };
+    await expect(guard.canActivate(contextFor(req))).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(tokens.findWorkspaceByToken).not.toHaveBeenCalled();
+  });
+
   it("rejects a missing Authorization header", async () => {
     await expect(guard.canActivate(contextFor({ headers: {} }))).rejects.toBeInstanceOf(UnauthorizedException);
   });

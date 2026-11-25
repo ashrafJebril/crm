@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -12,26 +12,38 @@ import {
 } from "@dnd-kit/core";
 import { StageColumn } from "./StageColumn";
 import { MoveStageMenu } from "./MoveStageMenu";
-import { TicketCardOverlay } from "./TicketCard";
+import { TicketCardOverlay, type LeadAction } from "./TicketCard";
+import { useBulkTickets, useReopenTicket } from "./hooks/useBoardData";
+import { bulkResultText, ticketActionError } from "./boardQuery";
+import { useToast } from "@/components/Toast";
+import { ApiError } from "@/api/client";
+import { makeTx } from "@/lib/tx";
 import { stageColor } from "./stageColors";
 import { useMoveTicket } from "./hooks/useTicketMutations";
+import { usePermissions } from "@/auth/usePermissions";
 import { LostReasonModal } from "./LostReasonModal";
 import type { Pipeline, Ticket, TicketStage, Lang } from "@/lib/types";
 
 interface PipelineBoardProps {
   pipeline: Pipeline & { stages: TicketStage[] };
   lang: Lang;
-  ownerFilter?: string;
-  searchQuery: string;
+  /** Server filter query string (boardQuery.toQuery without sort). */
+  filterQs: string;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
   onCardClick: (ticket: Ticket) => void;
   onOpenConversation: (conversationId: string) => void;
+  /** Final review I1: SLA chips on support pipelines only. */
+  showSla?: boolean;
 }
 
 export function PipelineBoard({
   pipeline,
+  showSla = pipeline.kind === "support",
   lang,
-  ownerFilter,
-  searchQuery,
+  filterQs,
+  selectedIds,
+  onToggleSelect,
   onCardClick,
   onOpenConversation,
 }: PipelineBoardProps) {
@@ -69,6 +81,11 @@ export function PipelineBoard({
   }, []);
 
   const move = useMoveTicket();
+  const { can } = usePermissions();
+  // Managers-only pipelines: without pipelines.update the server answers 403,
+  // so disable the move up front (drag, menu and drop) with an explanation.
+  const moveLocked = pipeline.agentCanMove === false && !can("pipelines.update");
+  const canMove = can("tickets.update") && !moveLocked;
 
   // 6px activation distance so a quick click on the card still fires onClick
   // (drawer) instead of starting a drag.
@@ -76,8 +93,18 @@ export function PipelineBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  const doMove = (ticket: Ticket, toStage: TicketStage) => {
-    if (toStage.id === ticket.stageId) return;
+  const tx = useMemo(() => makeTx(lang), [lang]);
+  const { toast } = useToast();
+  const bulk = useBulkTickets(pipeline.id);
+  const reopen = useReopenTicket();
+  const isLeads = pipeline.kind === "leads";
+  const errText = useCallback(
+    (e: unknown) => ticketActionError(tx, e instanceof ApiError ? e.message : e instanceof Error ? e.message : ""),
+    [tx],
+  );
+
+  const doMove = useCallback((ticket: Ticket, toStage: TicketStage) => {
+    if (!canMove || toStage.id === ticket.stageId) return;
     if (toStage.isTerminal && !toStage.isWon) {
       setPendingLost({ ticket, toStage });
       return;
@@ -88,8 +115,34 @@ export function PipelineBoard({
       toStageId: toStage.id,
       pipelineId: pipeline.id,
       optimisticTicket: ticket,
+      invalidateContacts: isLeads && (toStage.isTerminal || !!ticket.closedAt),
     });
-  };
+  }, [canMove, move.mutate, pipeline.id, isLeads]);
+
+  const handleLeadAction = useCallback((ticket: Ticket, action: LeadAction) => {
+    if (action === "won") {
+      const to = pipeline.stages.find((s) => s.isTerminal && s.isWon);
+      if (to) doMove(ticket, to);
+    } else if (action === "lost") {
+      const to = pipeline.stages.find((s) => s.isTerminal && !s.isWon);
+      if (to) doMove(ticket, to);
+    } else if (moveLocked) {
+      return;
+    } else if (action === "notALead") {
+      bulk.mutate(
+        { ids: [ticket.id], op: "notALead" },
+        {
+          onSuccess: (r) => toast(bulkResultText(tx, r), r.affected > 0 ? "success" : "info"),
+          onError: (e) => toast(errText(e), "error"),
+        },
+      );
+    } else {
+      reopen.mutate(ticket.id, {
+        onSuccess: () => toast(tx("Card reopened", "تمت إعادة فتح البطاقة"), "success"),
+        onError: (e) => toast(errText(e), "error"),
+      });
+    }
+  }, [pipeline.stages, doMove, moveLocked, bulk.mutate, reopen.mutate, toast, tx, errText]);
 
   const handleDragStart = (e: DragStartEvent) => {
     const ticket = e.active.data.current?.ticket as Ticket | undefined;
@@ -126,13 +179,8 @@ export function PipelineBoard({
       onDragCancel={() => setActiveTicket(null)}
     >
       <div
+        className="pl-board"
         style={{
-          display: "flex",
-          gap: 14,
-          padding: "16px 18px",
-          overflowX: "auto",
-          overflowY: "hidden",
-          height: "100%",
           background:
             "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--bg-1) 95%, var(--bg-2)) 0%, var(--bg-1) 70%)",
           scrollbarColor: "var(--line) transparent",
@@ -140,17 +188,22 @@ export function PipelineBoard({
         }}
       >
         {pipeline.stages.map((stage) => (
-          <div key={stage.id} style={{ height: "100%", flex: "0 0 auto" }}>
+          <div key={stage.id} className="pl-board-col">
             <StageColumn
               stage={stage}
               pipelineId={pipeline.id}
               lang={lang}
-              ownerFilter={ownerFilter}
-              searchQuery={searchQuery}
+              filterQs={filterQs}
               boardReady={boardReady}
               onInitialLoaded={reportStageLoaded}
               onCardClick={onCardClick}
               onOpenConversation={onOpenConversation}
+              staleDays={pipeline.staleDays ?? null}
+              showSla={showSla}
+              moveLocked={moveLocked}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
+              onLeadAction={isLeads ? handleLeadAction : undefined}
               onOpenMoveMenu={(ticket, anchorRect) =>
                 setMoveTarget({ ticket, anchorRect })
               }
@@ -189,6 +242,7 @@ export function PipelineBoard({
         <LostReasonModal
           lang={lang}
           ticket={pendingLost.ticket}
+          pipelineId={pipeline.id}
           onCancel={() => setPendingLost(null)}
           onConfirm={(reason) => {
             move.mutate({
@@ -196,8 +250,10 @@ export function PipelineBoard({
               fromStageId: pendingLost.ticket.stageId,
               toStageId: pendingLost.toStage.id,
               pipelineId: pipeline.id,
-              lostReason: reason,
+              lostReason: reason.label,
+              lostReasonId: reason.id,
               optimisticTicket: pendingLost.ticket,
+              invalidateContacts: isLeads,
             });
             setPendingLost(null);
           }}

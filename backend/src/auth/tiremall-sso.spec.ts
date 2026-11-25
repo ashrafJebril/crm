@@ -234,3 +234,26 @@ describe("TiremallSsoService.exchange", () => {
     expect(err.getResponse()).toMatchObject({ code: "PAYMENT_OVERDUE" });
   });
 });
+
+describe("Tiremall SSO and two-step verification (SP-26 ruling 9)", () => {
+  beforeEach(() => {
+    process.env.TIREMALL_SSO_SECRET = SECRET;
+  });
+  afterEach(() => {
+    delete process.env.TIREMALL_SSO_SECRET;
+  });
+
+  it("sso login does not ask for totp, and the session carries sv", async () => {
+    const prisma = makePrisma({
+      user: {
+        upsert: jest.fn().mockResolvedValue({
+          id: "u1", email: "a@tiremall.iq", name: "Ashraf A", role: "Agent", initials: "AA", color: "150",
+          twoFA: true, sessionVersion: 2,
+        }),
+      },
+    });
+    const res = await makeService(prisma).exchange({ token: sign(claims()) });
+    expect(res).not.toHaveProperty("twoFactorRequired");
+    expect(new JwtService({}).decode(res.token)).toMatchObject({ sub: "u1", sv: 2 });
+  });
+});

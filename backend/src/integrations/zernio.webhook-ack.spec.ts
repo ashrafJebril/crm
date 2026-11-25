@@ -17,6 +17,13 @@ describe("ZernioService webhook acknowledgement", () => {
           pageId: "wa-account-1",
         })),
       },
+      // SP-19: the account's channel decides workspace and thread.
+      channel: {
+        findMany: jest.fn(async () => [
+          { id: "ch1", workspaceId: "ws1", kind: "whatsapp", provider: "zernio", externalId: "wa-account-1", status: "active", integrationId: "i1" },
+        ]),
+        updateMany: jest.fn(async () => ({ count: 1 })),
+      },
       message: {
         findFirst: jest.fn(async () => null),
         create: jest.fn(async () => ({ id: "msg-db-1" })),

@@ -1,7 +1,10 @@
 import { WorkflowRunnerService } from "./workflow-runner.service";
 
 describe("WorkflowRunnerService", () => {
-  let prisma: { workflowRun: { findUniqueOrThrow: jest.Mock; update: jest.Mock } };
+  let prisma: {
+    workflowRun: { findUniqueOrThrow: jest.Mock; update: jest.Mock };
+    contact: { findFirst: jest.Mock };
+  };
   let sendWhatsapp: { execute: jest.Mock };
   let askAgent: { execute: jest.Mock };
   let updateData: { execute: jest.Mock };
@@ -25,6 +28,7 @@ describe("WorkflowRunnerService", () => {
         findUniqueOrThrow: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
       },
+      contact: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     sendWhatsapp = { execute: jest.fn().mockResolvedValue({ ok: true, id: "m1" }) };
     askAgent = { execute: jest.fn().mockResolvedValue({ answer: "yes" }) };
@@ -57,6 +61,42 @@ describe("WorkflowRunnerService", () => {
       const done = prisma.workflowRun.update.mock.calls.at(-1)[0].data;
       expect(done.status).toBe("completed");
       expect(done.result.t1).toEqual({ ok: true, id: "t1", conversationId: "conv1" });
+    });
+
+    it("skips the template for a contact who opted out of marketing, and moves on", async () => {
+      prisma.contact.findFirst.mockResolvedValue({ id: "c1" });
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue(
+        baseRun({
+          cursor: { stepId: "t1" },
+          stepsSnapshot: {
+            entry: "t1",
+            steps: {
+              t1: { id: "t1", type: "send_whatsapp_template", config: { name: "promo", language: "en", variables: [] }, next: "u1" },
+              u1: { id: "u1", type: "update_data", config: {} },
+            },
+          },
+        }),
+      );
+      await runner.run("run1");
+      expect(sendTemplate.execute).not.toHaveBeenCalled();
+      const where = prisma.contact.findFirst.mock.calls[0][0].where;
+      expect(where).toMatchObject({ workspaceId: "ws1", marketingOptOut: true });
+      expect(where.OR).toContainEqual({ id: "c1" });
+      const done = prisma.workflowRun.update.mock.calls.at(-1)[0].data;
+      expect(done.status).toBe("completed");
+      expect(done.result.t1).toEqual({ skipped: true, reason: "contact opted out of marketing" });
+      expect(updateData.execute).toHaveBeenCalled();
+    });
+
+    it("finds the contact through the trigger conversation for the opt-out check", async () => {
+      prisma.workflowRun.findUniqueOrThrow.mockResolvedValue({
+        ...templateRun(),
+        context: { trigger: { conversation: { id: "conv9", channel: "whatsapp" } }, steps: {} },
+      });
+      await runner.run("run1");
+      const where = prisma.contact.findFirst.mock.calls[0][0].where;
+      expect(where.OR).toContainEqual({ conversations: { some: { id: "conv9" } } });
+      expect(sendTemplate.execute).toHaveBeenCalled();
     });
 
     it("parks instead of sending while the workspace is payment-locked", async () => {

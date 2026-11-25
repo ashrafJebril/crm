@@ -11,6 +11,7 @@ import { useTweaks } from "@/tweaks/context";
 import { useRoute } from "@/router";
 import { makeTx } from "@/lib/tx";
 import { NAV, isSection, TITLES } from "@/shell/nav";
+import { useShellMode } from "@/shell/shellState";
 import type { Accent, Lang, RouteId, Theme } from "@/lib/types";
 import { useFetch } from "@/api/useFetch";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
@@ -156,7 +157,8 @@ function matches(query: string, ...fields: Array<string | undefined>): boolean {
 const ACCENT_CYCLE: Accent[] = ["green", "indigo", "amber", "magenta"];
 
 export function CommandPalette() {
-  const { t, setTweak } = useTweaks();
+  const { t, setTweak, setLang } = useTweaks();
+  const shell = useShellMode();
   const [, setRoute] = useRoute();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -286,17 +288,17 @@ export function CommandPalette() {
             : tx("Switch to English", "التبديل إلى الإنجليزية"),
         hint: tx("Language", "اللغة"),
         Icon: IconLang,
-        run: () => setTweak("lang", nextLang),
+        run: () => setLang(nextLang),
       },
       {
         id: "qa-sidebar",
         label: tx(
-          t.collapsed ? "Expand sidebar" : "Collapse sidebar",
-          t.collapsed ? "توسيع الشريط الجانبي" : "طي الشريط الجانبي",
+          shell.mode === "rail" ? "Expand sidebar" : shell.mode === "drawer" ? "Menu" : "Collapse sidebar",
+          shell.mode === "rail" ? "توسيع الشريط الجانبي" : shell.mode === "drawer" ? "القائمة" : "طي الشريط الجانبي",
         ),
         hint: tx("Layout", "التخطيط"),
         Icon: IconBolt,
-        run: () => setTweak("collapsed", !t.collapsed),
+        run: () => shell.toggle(),
       },
       {
         id: "qa-accent",
@@ -320,7 +322,7 @@ export function CommandPalette() {
 
     return all.filter((s) => s.items.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, query, searchQ.data, t.lang, t.theme, t.accent, t.collapsed]);
+  }, [open, query, searchQ.data, t.lang, t.theme, t.accent, shell.mode, shell.toggle]);
 
   // Flat list of items for keyboard nav
   const flat = useMemo<CmdItem[]>(

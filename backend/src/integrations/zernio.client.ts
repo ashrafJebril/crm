@@ -218,6 +218,26 @@ export class ZernioClient {
   }
 
   /**
+   * SP-14: the number's health as Zernio reports it
+   * (`GET /whatsapp/number-info?accountId`). Documented: `phone.quality_rating`,
+   * `messaging_limit_tier`, `name_status`, `status` and `health_status`
+   * (Meta's object). `waba` is returned but its sub-fields are undocumented.
+   * Typed defensively: every field optional, a `data` wrapper accepted.
+   */
+  async whatsappNumberInfo(accountId: string): Promise<ZernioNumberInfo> {
+    const res = await this.request<Record<string, unknown> | undefined>("GET", "/whatsapp/number-info", {
+      query: { accountId },
+    });
+    const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+    const body = isObj(res) && !isObj(res.phone) && isObj(res.data) ? res.data : res;
+    if (!isObj(body)) return {};
+    return {
+      ...(isObj(body.phone) ? { phone: body.phone as ZernioNumberInfo["phone"] } : {}),
+      ...(isObj(body.waba) ? { waba: body.waba as ZernioNumberInfo["waba"] } : {}),
+    };
+  }
+
+  /**
    * Create a template. Two modes, per Zernio's spec:
    *  - custom: pass `components` → submitted to Meta, review can take 24h
    *  - library: pass `libraryTemplateName` → pre-approved by Meta, no wait
@@ -619,15 +639,22 @@ export class ZernioClient {
     name: string;
     template: { name: string; language: string };
     variables: ZernioBroadcastVariable[];
+    /**
+     * SP-13: an optional Meta send-shape header component, placed before the
+     * body. The launch runner does not pass one while ruling R8 forces direct
+     * sends for a campaign header override.
+     */
+    headerComponent?: Record<string, unknown>;
   }): Promise<string> {
     const template: Record<string, unknown> = { name: input.template.name, language: input.template.language };
+    const components: Array<Record<string, unknown>> = [];
+    if (input.headerComponent) components.push(input.headerComponent);
     // Absent, not empty: Meta rejects an empty parameters list.
     if (input.variables.length > 0) {
-      template.components = [
-        { type: "body", parameters: input.variables.map((_, i) => ({ type: "text", text: `{{${i + 1}}}` })) },
-      ];
+      components.push({ type: "body", parameters: input.variables.map((_, i) => ({ type: "text", text: `{{${i + 1}}}` })) });
       template.variableMapping = Object.fromEntries(input.variables.map((v, i) => [String(i + 1), v]));
     }
+    if (components.length > 0) template.components = components;
     const res = await this.request<{ broadcast?: { id?: string; _id?: string } }>("POST", "/broadcasts", {
       body: {
         profileId: input.profileId,
@@ -665,6 +692,114 @@ export class ZernioClient {
     await this.request("POST", `/broadcasts/${encodeURIComponent(broadcastId)}/cancel`, {});
   }
 
+  /**
+   * SP-13: a profile's broadcasts, optionally by status (read-only GET
+   * /broadcasts?profileId&status&limit). The launch runner lists drafts to
+   * adopt one it created before a crash (name marker ` · crm:<partitionId>`).
+   */
+  async listBroadcasts(opts: { profileId: string; status?: string; limit?: number }): Promise<ZernioBroadcastSummary[]> {
+    const res = await this.request<{ broadcasts?: unknown; data?: unknown }>("GET", "/broadcasts", {
+      query: { profileId: opts.profileId, status: opts.status, limit: opts.limit != null ? String(opts.limit) : undefined },
+    });
+    const list = Array.isArray(res?.broadcasts) ? res.broadcasts : Array.isArray(res?.data) ? res.data : [];
+    return (list as Array<Record<string, unknown>>).flatMap((b) => {
+      const id = typeof b.id === "string" ? b.id : typeof b._id === "string" ? b._id : null;
+      if (!id) return [];
+      return [{ id, name: typeof b.name === "string" ? b.name : "", status: typeof b.status === "string" ? b.status : "draft" }];
+    });
+  }
+
+  /** SP-13: delete a draft broadcast (cancel during launch). */
+  async deleteBroadcast(broadcastId: string): Promise<void> {
+    await this.request("DELETE", `/broadcasts/${encodeURIComponent(broadcastId)}`, {});
+  }
+
+  /**
+   * SP-13 direct transport: one approved template to one phone, with its own
+   * parameters and optional header media (POST /inbox/conversations). The
+   * `Idempotency-Key` (kept 24 h by Zernio) makes a retry replay the original
+   * response instead of sending a second message.
+   */
+  async sendTemplateToPhone(input: {
+    accountId: string;
+    phone: string;
+    templateName: string;
+    templateLanguage: string;
+    templateParams: string[];
+    headerMedia?: { link: string };
+    idempotencyKey: string;
+  }): Promise<{ messageId: string | null; conversationId: string | null }> {
+    const res = await this.request<{
+      messageId?: string;
+      conversationId?: string;
+      data?: { messageId?: string; conversationId?: string };
+      message?: { id?: string; _id?: string };
+      conversation?: { id?: string; _id?: string };
+    }>("POST", "/inbox/conversations", {
+      headers: { "Idempotency-Key": input.idempotencyKey },
+      body: {
+        accountId: input.accountId,
+        phone: input.phone,
+        templateName: input.templateName,
+        templateLanguage: input.templateLanguage,
+        templateParams: input.templateParams,
+        ...(input.headerMedia ? { headerMedia: input.headerMedia } : {}),
+      },
+    });
+    return {
+      messageId: res?.data?.messageId ?? res?.messageId ?? res?.message?.id ?? res?.message?._id ?? null,
+      conversationId: res?.data?.conversationId ?? res?.conversationId ?? res?.conversation?.id ?? res?.conversation?._id ?? null,
+    };
+  }
+
+  /**
+   * SP-12: one page of a broadcast's per-recipient state (read-only GET
+   * /broadcasts/{id}/recipients?skip&limit&status). Every field is typed
+   * from Zernio's documentation and read defensively: the id scheme of
+   * `messageId` (Zernio's or Meta's wamid), the maximum `limit` and the
+   * ordering are unverified until the Task 4 probe (ruling 1).
+   */
+  async listBroadcastRecipients(
+    broadcastId: string,
+    opts: { skip: number; limit: number; status?: ZernioBroadcastRecipientStatus },
+  ): Promise<ZernioBroadcastRecipientsPage> {
+    const res = await this.request<{
+      recipients?: Array<Record<string, unknown>>;
+      pagination?: { total?: number; limit?: number; skip?: number; hasMore?: boolean };
+      summary?: Record<string, unknown>;
+    }>("GET", `/broadcasts/${encodeURIComponent(broadcastId)}/recipients`, {
+      query: { skip: String(opts.skip), limit: String(opts.limit), status: opts.status },
+    });
+    const s = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+    const recipients: ZernioBroadcastRecipient[] = (Array.isArray(res?.recipients) ? res.recipients : []).map((r) => ({
+      id: s(r.id) ?? s(r._id) ?? "",
+      contactId: s(r.contactId),
+      channelId: s(r.channelId),
+      platformIdentifier: s(r.platformIdentifier) ?? s(r.phone),
+      contactName: s(r.contactName),
+      status: s(r.status) ?? "pending",
+      messageId: s(r.messageId),
+      error: s(r.error),
+      errorCode: typeof r.errorCode === "number" || typeof r.errorCode === "string" ? r.errorCode : null,
+      errorExplanation: s(r.errorExplanation),
+      errorTraceId: s(r.errorTraceId),
+      sentAt: s(r.sentAt),
+      deliveredAt: s(r.deliveredAt),
+      readAt: s(r.readAt),
+    }));
+    const p = res?.pagination ?? {};
+    return {
+      recipients,
+      pagination: {
+        total: typeof p.total === "number" ? p.total : null,
+        limit: typeof p.limit === "number" ? p.limit : opts.limit,
+        skip: typeof p.skip === "number" ? p.skip : opts.skip,
+        hasMore: typeof p.hasMore === "boolean" ? p.hasMore : null,
+      },
+      summary: res?.summary && typeof res.summary === "object" ? res.summary : {},
+    };
+  }
+
   async getBroadcast(broadcastId: string): Promise<ZernioBroadcastStats> {
     const res = await this.request<{
       broadcast?: {
@@ -690,7 +825,7 @@ export class ZernioClient {
   private async request<T>(
     method: string,
     path: string,
-    opts: { query?: Record<string, string | undefined>; body?: unknown },
+    opts: { query?: Record<string, string | undefined>; body?: unknown; headers?: Record<string, string> },
   ): Promise<T> {
     const key = this.requireKey();
     const url = new URL(this.baseUrl + path);
@@ -707,6 +842,7 @@ export class ZernioClient {
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
           Accept: "application/json",
+          ...(opts.headers ?? {}),
         },
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
         signal: AbortSignal.timeout(20_000),
@@ -743,6 +879,11 @@ export class ZernioClient {
           400,
         );
       }
+      // SP-13: a rate limit is typed, with Retry-After, so campaign launch
+      // calls can wait it out and keep their lease (still an HTTP 429).
+      if (res.status === 429) {
+        throw new ZernioRateLimitError(errMsg, parseRetryAfter(res.headers?.get?.("retry-after") ?? null));
+      }
       // Surface client errors (4xx) as-is; collapse upstream 5xx to 502.
       throw new HttpException(errMsg, res.status >= 500 ? 502 : res.status);
     }
@@ -750,7 +891,33 @@ export class ZernioClient {
   }
 }
 
+/** SP-13: Zernio answered 429. `retryAfterMs` is its Retry-After (null when absent). */
+export class ZernioRateLimitError extends HttpException {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message, 429);
+  }
+}
+
+/** Retry-After as milliseconds: delta-seconds or an HTTP date; null when absent or unparseable. */
+export function parseRetryAfter(raw: string | null, now = Date.now()): number | null {
+  if (!raw) return null;
+  const t = raw.trim();
+  if (/^\d+$/.test(t)) return Number(t) * 1000;
+  const at = Date.parse(t);
+  return Number.isFinite(at) ? Math.max(0, at - now) : null;
+}
+
 // ─── Response shapes (partial — the fields we read) ──────────────────────────
+
+/** SP-13: one row of GET /broadcasts. */
+export interface ZernioBroadcastSummary {
+  id: string;
+  name: string;
+  status: string;
+}
 
 export interface ZernioAccount {
   _id: string;
@@ -964,6 +1131,34 @@ export interface ZernioWhatsAppTemplate {
    * duplicates an already-rejected template (both verified live 2026-08-28).
    */
   rejected_reason?: string;
+  /**
+   * SP-14: Meta's template quality, read only when Zernio passes it through
+   * (undocumented, ruling 1). Absent → unknown.
+   */
+  quality_score?: { score?: string };
+}
+
+/** SP-14: GET /whatsapp/number-info. Every field optional (shape unverified live). */
+export interface ZernioNumberInfo {
+  phone?: {
+    id?: string;
+    display_phone_number?: string;
+    verified_name?: string;
+    /** GREEN | YELLOW | RED | UNKNOWN */
+    quality_rating?: string;
+    /** e.g. TIER_250, TIER_1K, TIER_UNLIMITED */
+    messaging_limit_tier?: string;
+    name_status?: string;
+    /** e.g. CONNECTED */
+    status?: string;
+    /** Meta's health_status object; we read `can_send_message` only. */
+    health_status?: { can_send_message?: string; [k: string]: unknown };
+    /** Undocumented; read only when present (ruling 1). */
+    code_verification_status?: string;
+    [k: string]: unknown;
+  };
+  /** Undocumented sub-fields; read only when present (ruling 1). */
+  waba?: { business_verification_status?: string; account_review_status?: string; [k: string]: unknown };
 }
 
 export interface ZernioWhatsAppNumbers {
@@ -981,6 +1176,36 @@ export interface ZernioWhatsAppNumbers {
 export type ZernioBroadcastVariable =
   | { field: "name" | "phone" | "email" | "company" }
   | { field: "custom"; customValue: string };
+
+export type ZernioBroadcastRecipientStatus = "pending" | "sent" | "delivered" | "read" | "failed";
+
+/** One row of GET /broadcasts/{id}/recipients (SP-12). Timestamps are ISO strings. */
+export interface ZernioBroadcastRecipient {
+  id: string;
+  contactId: string | null;
+  channelId: string | null;
+  /** The phone (E.164 with or without '+'). */
+  platformIdentifier: string | null;
+  contactName: string | null;
+  /** pending | sent | delivered | read | failed (unknown values are kept verbatim). */
+  status: string;
+  /** Zernio's id or Meta's wamid; unverified (ruling 1). */
+  messageId: string | null;
+  error: string | null;
+  errorCode: number | string | null;
+  errorExplanation: string | null;
+  errorTraceId: string | null;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+}
+
+export interface ZernioBroadcastRecipientsPage {
+  recipients: ZernioBroadcastRecipient[];
+  /** `total` and `hasMore` are null when Zernio does not report them (the sweep then pages until a short page). */
+  pagination: { total: number | null; limit: number; skip: number; hasMore: boolean | null };
+  summary: Record<string, unknown>;
+}
 
 export interface ZernioBroadcastStats {
   /** draft | scheduled | sending | completed | failed | cancelled */

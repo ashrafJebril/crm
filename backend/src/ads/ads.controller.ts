@@ -9,11 +9,10 @@ import {
   Post,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { CurrentUserId, CurrentWorkspace } from '../common/current-workspace.decorator';
-import { WorkspaceRoles, WorkspaceRolesGuard } from '../common/workspace-roles.guard';
+import { RequirePermission } from '../permissions/require-permission.decorator';
 import { AdsChatSessionService } from './ads-chat-session.service';
 import { AdsPendingActionService } from './ads-pending-action.service';
 import { ADS_PROMPTS, ADS_TIPS } from './ads-prompt-catalog';
@@ -78,13 +77,13 @@ function sseErrorPayload(e: unknown): { code: string; message: string; status?: 
  * Ads Assistant HTTP surface. The global AuthGuard (JWT) already protects every
  * route here — nothing is @Public() in this controller.
  *
- * hjz gated each handler with @RequiresPermission('ads.view' | 'ads.connect');
- * the CRM has no permission catalog, so the mapping is:
- *  - chat / wallet / prompts / sessions → any authenticated workspace member
- *    (hjz's ads.view — "access IS authority", one tier: whoever can open the
- *    assistant can approve its proposals),
- *  - wallet/topup + actions/:id/approve|reject → WorkspaceRolesGuard
- *    ('owner','admin'), the CRM equivalent of hjz's owner-level ads.connect for
+ * hjz gated each handler with @RequiresPermission('ads.view' | 'ads.connect').
+ * Since SP-25 the global PermissionGuard maps them (permission-map.ts):
+ *  - wallet / prompts / sessions → campaigns.view; chat → campaigns.create,
+ *  - wallet/topup → billing.update and actions/:id/approve|reject →
+ *    campaigns.manage, via @RequirePermission below. Both are held by exactly
+ *    the owner and admin system roles — the former @WorkspaceRoles('owner',
+ *    'admin'), the CRM equivalent of hjz's owner-level ads.connect for
  *    money/write paths.
  *
  * Every handler takes @CurrentWorkspace() even where the body never reads it:
@@ -181,10 +180,9 @@ export class AdsController {
   }
 
   // Owner-level: spending money. hjz used ads.connect (NOT ads.view) — the CRM
-  // equivalent is the owner/admin workspace role.
+  // equivalent is billing.update (owner/admin system roles).
   @Post('wallet/topup')
-  @UseGuards(WorkspaceRolesGuard)
-  @WorkspaceRoles('owner', 'admin')
+  @RequirePermission('billing', 'update')
   async topup(@CurrentWorkspace() workspaceId: string, @Body() body: PostAdsTopupDto) {
     // STRUCTURAL rules ported from postAdsTopupRequestSchema, which ran in hjz's
     // request pipe. class-validator has no decimals check, so they run here:
@@ -235,16 +233,15 @@ export class AdsController {
   // approval IS this authenticated POST, so any "approved" flag a client or the
   // model might supply is ignored by construction. hjz gated this with ads.view —
   // access IS authority (Feras 2026-07-17): whoever can open the assistant can
-  // approve its proposals. The CRM tightens that to owner/admin because it has no
-  // per-permission catalog and the coarsest honest equivalent of "can spend the
-  // workspace's ad budget" is the same role that can top the wallet up. Executed
+  // approve its proposals. The CRM tightens that to campaigns.manage (owner/admin
+  // system roles): "can spend the workspace's ad budget" is the same tier that
+  // can top the wallet up. Executed
   // exactly once, idempotent by id, inside AdsPendingActionService. On first
   // execution the outcome is appended to the proposing chat session as a new
   // assistant message — only on 'executed', so an idempotent replay can't
   // duplicate it.
   @Post('actions/:id/approve')
-  @UseGuards(WorkspaceRolesGuard)
-  @WorkspaceRoles('owner', 'admin')
+  @RequirePermission('campaigns', 'manage')
   async approveAction(
     @CurrentWorkspace() _workspaceId: string,
     @CurrentUserId() userId: string,
@@ -265,8 +262,7 @@ export class AdsController {
   // the thread (and Salma, next turn) knows the proposal was declined instead of
   // silently pending forever.
   @Post('actions/:id/reject')
-  @UseGuards(WorkspaceRolesGuard)
-  @WorkspaceRoles('owner', 'admin')
+  @RequirePermission('campaigns', 'manage')
   async rejectAction(
     @CurrentWorkspace() _workspaceId: string,
     @CurrentUserId() userId: string,

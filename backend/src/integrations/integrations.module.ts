@@ -18,6 +18,7 @@ import { HjzWebhooksService } from "./hjz-webhooks.service";
 import { LWebhooksController } from "./l-webhooks.controller";
 import { LWebhooksService } from "./l-webhooks.service";
 import { LAgentService } from "./l-agent.service";
+import { AgentAutoReplyService } from "./agent-auto-reply.service";
 import { LAgentSetupService } from "./l-agent-setup.service";
 import { LConfigController } from "./l-config.controller";
 import { LJoteckClient } from "./l-joteck.client";
@@ -35,9 +36,12 @@ import { MediaModule } from "../media/media.module";
 import { RealtimeModule } from "../realtime/realtime.module";
 import { TicketsModule } from "../tickets/tickets.module";
 import { WorkspacesModule } from "../workspaces/workspaces.module";
+import { CampaignTrackingModule } from "../campaigns/tracking/campaign-tracking.module";
+import { AdAttributionModule } from "../ad-attribution/ad-attribution.module";
+import { AgentReplyGate } from "../agent/agent-reply-gate";
 
 @Module({
-  imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule],
+  imports: [MediaModule, RealtimeModule, TicketsModule, WorkspacesModule, CampaignTrackingModule, AdAttributionModule],
   controllers: [
     FacebookController,
     InstagramController,
@@ -55,6 +59,8 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     AiReplyController,
   ],
   providers: [
+    // SP-22: Telegram/web-chat auto-reply (registers with the global inbound sink).
+    AgentAutoReplyService,
     FacebookService,
     InstagramService,
     WhatsAppService,
@@ -75,6 +81,8 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     TiremallWebhooksService,
     AiBridgeService,
     AiHandoffService,
+    // SP-20: every automatic reply path asks the gate first.
+    AgentReplyGate,
   ],
   exports: [
     FacebookService,
@@ -87,6 +95,12 @@ import { WorkspacesModule } from "../workspaces/workspaces.module";
     LAgentService,
     LAgentSetupService,
     McpTokenService,
+    // SP-21: deleting a migrated l document with its knowledge source.
+    LKnowledgeService,
+    // SP-20: the sandbox (Task 2) shows the gate decision.
+    AgentReplyGate,
+    // SP-23: connectors register their proxy as an l MCP server.
+    LMcpService,
   ],
 })
 export class IntegrationsModule {}
