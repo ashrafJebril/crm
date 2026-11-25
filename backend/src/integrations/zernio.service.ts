@@ -1631,6 +1631,34 @@ export class ZernioService {
       await this.ingestInbound(payload);
       return { ok: true };
     }
+    /**
+     * Zernio finished pulling a page's own (natively-created) posts.
+     *
+     * The Social feed reads `GET /analytics`, which serves only what Zernio
+     * has ALREADY synced — and hitting it merely *triggers* the sync rather
+     * than waiting for it. So a post made directly in Instagram is genuinely
+     * absent from the response that went looking for it, and the feed shows a
+     * correct-but-stale list until something refetches.
+     *
+     * Verified in production 2026-11-25: both `/analytics` and
+     * `/external-posts` returned the same 6 posts, newest from the day
+     * before, while a post made that morning was in neither.
+     *
+     * This event is Zernio telling us it has caught up, so nudge the feed.
+     */
+    if (type === "analytics.synced") {
+      const profileId =
+        payload.data?.profileId ?? payload.account?.profileId ?? payload.profileId;
+      if (profileId) {
+        const ws = await this.prisma.workspace.findFirst({
+          where: { zernioProfileId: profileId },
+          select: { id: true },
+        });
+        if (ws) this.realtime.emitToWorkspace(ws.id, "social.updated", {});
+        else this.log.debug(`analytics.synced for unknown profile ${profileId}`);
+      }
+      return { ok: true };
+    }
     if (type === "account.connected" || type === "account.disconnected") {
       const profileId = payload.data?.profileId ?? payload.account?.profileId;
       if (profileId) {
@@ -2259,6 +2287,9 @@ function compactAge(d: Date): string {
 export interface ZernioWebhookEvent {
   type?: string;
   event?: string;
+  /** `analytics.synced` — the exact envelope is undocumented, so the handler
+   *  checks `data.profileId`, `account.profileId` and this root field. */
+  profileId?: string;
   message?: {
     id?: string;                 // Zernio's message id — what status events reference
     conversationId?: string;

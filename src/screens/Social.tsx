@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
+import { useRealtime } from "@/api/useRealtime";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
 import { PhotoSlot } from "@/components/PhotoSlot";
@@ -273,6 +274,36 @@ function SocialImpl() {
 
   const liveIgQ = useFetch<LiveIgPost[]>(
     igConnected ? "/integrations/zernio/posts?platform=instagram" : null,
+  );
+
+  /**
+   * Refresh both feeds.
+   *
+   * The feed is only ever as fresh as Zernio's sync of a page's OWN posts: a
+   * post made directly in Instagram is absent from Zernio until it catches up
+   * (confirmed in production 2026-11-25 — Zernio's own endpoints were a day
+   * behind a post made that morning). So the feed can be right and look wrong,
+   * and the user needs a way to ask again.
+   */
+  const refreshFeeds = () => {
+    void zernioStatusQ.refetch();
+    if (fbConnected) void liveFbQ.refetch();
+    if (igConnected) void liveIgQ.refetch();
+    setScheduledRefresh((n) => n + 1);
+  };
+
+  // The backend emits this when Zernio reports `analytics.synced`, i.e. it has
+  // finished pulling posts created outside the CRM. Pick them up without
+  // making the user guess when to reload.
+  useRealtime("social.updated", () => refreshFeeds());
+
+  /** The accounts actually connected, for the page subtitle. */
+  const connectedNames = useMemo(
+    () =>
+      (zernioStatusQ.data?.accounts ?? [])
+        .map((a) => a.name)
+        .filter((n): n is string => !!n),
+    [zernioStatusQ.data],
   );
 
   // Until the status request answers, connection is unknown, not "off" —
@@ -623,12 +654,32 @@ function SocialImpl() {
     >
       <PageHeader
         title={tx("Social", "التواصل الاجتماعي")}
-        subtitle={tx(
-          "Posts and comments across Samemha's channels",
-          "المنشورات والتعليقات على قنوات صممها",
-        )}
+        // Was hardcoded to a former tenant's name ("Samemha"), which showed on
+        // every workspace regardless of what was connected. Name the accounts
+        // actually linked instead.
+        subtitle={
+          connectedNames.length
+            ? tx(
+                `Posts and comments across ${connectedNames.join(" and ")}`,
+                `المنشورات والتعليقات على ${connectedNames.join(" و ")}`,
+              )
+            : tx(
+                "Posts and comments across your connected channels",
+                "المنشورات والتعليقات على قنواتك المرتبطة",
+              )
+        }
         actions={
           <>
+            <button
+              className="btn"
+              onClick={refreshFeeds}
+              title={tx(
+                "Posts made directly on Instagram or Facebook appear once Zernio syncs them.",
+                "المنشورات المضافة مباشرة من إنستغرام أو فيسبوك تظهر بعد أن يزامنها Zernio.",
+              )}
+            >
+              {tx("Refresh", "تحديث")}
+            </button>
             <button className="btn primary" onClick={() => setComposeOpen(true)}>
               <IconBolt w={13} />
               {tx("Compose", "إنشاء منشور")}
