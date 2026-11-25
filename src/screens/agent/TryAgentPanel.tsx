@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFetch } from "@/api/useFetch";
-import type { SandboxReply, SandboxTurn } from "@/lib/types";
+import type { SandboxEngine, SandboxReply, SandboxThread, SandboxTurn } from "@/lib/types";
 import type { Tx } from "@/lib/tx";
 import { ErrorRow, inputStyle } from "@/screens/settings/form";
 import { SANDBOX_PATH, resetSandbox, sendSandboxMessage } from "./agentApi";
@@ -126,9 +126,32 @@ function AgentTurn({ turn, tx, gate }: { turn: SandboxTurn; tx: Tx; gate?: Sandb
   );
 }
 
+/**
+ * What the owner is talking to. A workspace linked to the agent platform tries
+ * the real agent (nothing saved, writes refused); otherwise it is a preview
+ * that may answer a little differently. Until the server says which, the
+ * preview wording stands: it promises the least.
+ */
+export function SandboxNotice({ engine, tx }: { engine: SandboxEngine | undefined; tx: Tx }) {
+  return (
+    <div style={{ border: "1px solid var(--line-soft)", borderRadius: 10, padding: "8px 12px", fontSize: 12, background: "var(--bg-1)" }}>
+      {engine === "live"
+        ? tx(
+            "Test run on your live agent. Nothing is saved and no customer is messaged; bookings and changes are only described.",
+            "تجربة على وكيلك الفعلي. لا يُحفظ شيء ولا تُرسل أي رسالة لعميل؛ الحجوزات والتغييرات توصف فقط.",
+          )
+        : tx(
+            "Preview: replies may differ slightly from the live agent. Nothing is saved and no customer is messaged; bookings and changes are only described.",
+            "معاينة: قد تختلف الردود قليلًا عن الوكيل الفعلي. لا يُحفظ شيء ولا تُرسل أي رسالة لعميل؛ الحجوزات والتغييرات توصف فقط.",
+          )}
+    </div>
+  );
+}
+
 export function TryAgentPanel({ tx, canUse }: { tx: Tx; canUse: boolean }) {
-  const q = useFetch<{ messages: SandboxTurn[]; turnCount: number; expiresAt: string | null }>(canUse ? SANDBOX_PATH : null);
+  const q = useFetch<SandboxThread>(canUse ? SANDBOX_PATH : null);
   const [turns, setTurns] = useState<SandboxTurn[]>([]);
+  const [engine, setEngine] = useState<SandboxEngine | undefined>(undefined);
   const [lastGate, setLastGate] = useState<SandboxReply["gate"] | undefined>(undefined);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -136,7 +159,10 @@ export function TryAgentPanel({ tx, canUse }: { tx: Tx; canUse: boolean }) {
   const bottom = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (q.data) setTurns(q.data.messages);
+    if (q.data) {
+      setTurns(q.data.messages);
+      setEngine(q.data.engine);
+    }
   }, [q.data]);
   useEffect(() => bottom.current?.scrollIntoView?.({ block: "end" }), [turns.length]);
 
@@ -155,6 +181,7 @@ export function TryAgentPanel({ tx, canUse }: { tx: Tx; canUse: boolean }) {
     try {
       const r = await sendSandboxMessage(message);
       setLastGate(r.gate);
+      setEngine(r.engine);
       setTurns((t) => [...t, { role: "agent", text: r.reply, toolCalls: r.toolCalls, sources: r.sources, at: new Date().toISOString() }]);
     } catch (e) {
       // The message goes back to the composer; the optimistic bubble is removed.
@@ -181,12 +208,7 @@ export function TryAgentPanel({ tx, canUse }: { tx: Tx; canUse: boolean }) {
   const lastAgent = turns.length ? turns.length - 1 : -1;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 760 }}>
-      <div style={{ border: "1px solid var(--line-soft)", borderRadius: 10, padding: "8px 12px", fontSize: 12, background: "var(--bg-1)" }}>
-        {tx(
-          "Preview: replies may differ slightly from the live agent. Nothing is saved and no customer is messaged; bookings and changes are only described.",
-          "معاينة: قد تختلف الردود قليلًا عن الوكيل الفعلي. لا يُحفظ شيء ولا تُرسل أي رسالة لعميل؛ الحجوزات والتغييرات توصف فقط.",
-        )}
-      </div>
+      <SandboxNotice engine={engine} tx={tx} />
       <div
         role="log"
         aria-live="polite"

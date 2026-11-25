@@ -2,7 +2,9 @@ import { ForbiddenException, Injectable, Logger, Optional } from "@nestjs/common
 import { UsageService } from "../billing/usage.service";
 import * as crypto from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import type { LMessageWebhookDto } from "./l-webhooks.dto";
+import { RealtimeService } from "../realtime/realtime.service";
+import { AgentReplyGate } from "../agent/agent-reply-gate";
+import { L_MESSAGE_RECEIVED, type LMessageWebhookDto, type LShouldReplyDto } from "./l-webhooks.dto";
 
 @Injectable()
 export class LWebhooksService {
@@ -10,8 +12,56 @@ export class LWebhooksService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly gate: AgentReplyGate,
+    private readonly realtime: RealtimeService,
     @Optional() private readonly usage?: UsageService,
   ) {}
+
+  /** The CRM workspace linked to an l workspace, or null. */
+  private async workspaceFor(lWorkspaceId: string): Promise<{ id: string } | null> {
+    // Raw SQL: Prisma types may not carry lWorkspaceId until regenerated.
+    const result = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "Workspace" WHERE "lWorkspaceId" = ${lWorkspaceId}
+    `;
+    return result[0] ?? null;
+  }
+
+  /**
+   * Whether the agent may answer this turn of a chat that started on l: the
+   * same gate every other automatic reply asks (stop, the conversation's AI
+   * switch, excluded tags, working hours).
+   *
+   * A workspace that is not linked here is not ours to gate: yes. A failure
+   * to decide fails closed, as for every other path (the gate logs it); l
+   * itself fails open only when it cannot reach us at all.
+   */
+  async shouldReply(body: LShouldReplyDto): Promise<{ reply: boolean }> {
+    const workspace = await this.workspaceFor(body.workspaceId);
+    if (!workspace) return { reply: true };
+
+    const conv = await this.prisma.$queryRaw<{ id: string; contactId: string }[]>`
+      SELECT id, "contactId" FROM "Conversation"
+      WHERE "lConversationId" = ${body.conversationId}
+      AND "workspaceId" = ${workspace.id}
+      LIMIT 1
+    `;
+    // The first turn of a chat has no conversation here yet; the contact may
+    // already exist from an earlier chat, and its tags still count.
+    const contactId =
+      conv[0]?.contactId ??
+      (
+        await this.prisma.contact.findUnique({
+          where: {
+            workspaceId_externalSource_externalId: { workspaceId: workspace.id, externalSource: "l", externalId: body.userId },
+          },
+          select: { id: true },
+        })
+      )?.id ??
+      null;
+
+    const reply = await this.gate.allows(workspace.id, { conversationId: conv[0]?.id ?? null, contactId }, "l_origin");
+    return { reply };
+  }
 
   verifySecret(provided: string | undefined): void {
     const expected = process.env.L_WEBHOOK_SECRET;
@@ -29,13 +79,10 @@ export class LWebhooksService {
 
   async handle(body: LMessageWebhookDto): Promise<{ ok: true }> {
     const { data } = body;
+    // A customer message our gate held for a person, rather than an answer.
+    const fromCustomer = body.event === L_MESSAGE_RECEIVED;
 
-    // Resolve l workspace ID → crm workspace ID via raw SQL query
-    // (Prisma types won't have lWorkspaceId until client is regenerated)
-    const result = await this.prisma.$queryRaw<{ id: string }[]>`
-      SELECT id FROM "Workspace" WHERE "lWorkspaceId" = ${data.workspaceId}
-    `;
-    const workspace = result[0];
+    const workspace = await this.workspaceFor(data.workspaceId);
 
     if (!workspace) {
       this.logger.warn(
@@ -81,7 +128,12 @@ export class LWebhooksService {
     if (existingConversation) {
       await this.prisma.conversation.update({
         where: { id: existingConversation.id },
-        data: { lastAt: data.timestamp, preview: data.message },
+        data: {
+          lastAt: data.timestamp,
+          preview: data.message,
+          // A held customer message waits for a person: count it as unread.
+          ...(fromCustomer ? { lastFrom: "them", unread: { increment: 1 } } : {}),
+        },
       });
       conversation = existingConversation;
     } else {
@@ -91,7 +143,8 @@ export class LWebhooksService {
           workspaceId: workspace.id,
           channel: "l",
           lastAt: data.timestamp,
-          lastFrom: "ai",
+          lastFrom: fromCustomer ? "them" : "ai",
+          ...(fromCustomer ? { unread: 1 } : {}),
           preview: data.message,
           status: "human",
           intent: "",
@@ -112,16 +165,24 @@ export class LWebhooksService {
       data: {
         conversationId: conversation.id,
         workspaceId: workspace.id,
-        from: "ai",
         t: new Date(data.timestamp).toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
         }),
         body: data.message,
-        agent: data.agentId,
+        ...(fromCustomer ? { from: "them" } : { from: "ai", agent: data.agentId }),
         attach: data.imageUrl ?? null,
       },
     });
+
+    if (fromCustomer) {
+      // Someone has to answer it, and the inbox is already open: tell it.
+      this.realtime.emitToWorkspace(workspace.id, "inbox.activity", {
+        channel: "l",
+        conversationId: conversation.id,
+      });
+      return { ok: true };
+    }
 
     // SP-28: meter the AI reply (once per message; never fails the webhook).
     await this.usage?.record(workspace.id, { meter: "ai_reply", sourceKind: "message", sourceId: msg.id });

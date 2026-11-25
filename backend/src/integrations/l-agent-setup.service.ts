@@ -9,7 +9,8 @@ import { composeSkillPrompt, defaultEnabled, enabledFromStates, loadSkillRows, r
 import { SKILL_CATALOG, type SkillCatalog, type SkillKey } from "../skills/skill-catalog";
 
 // l requires ^[a-z][a-z0-9_]*$ for MCP server names.
-const CRM_MCP_SERVER_NAME = "kewy_crm";
+/** The name our MCP server is registered under on l; l prefixes its tools with it. */
+export const CRM_MCP_SERVER_NAME = "kewy_crm";
 // SP-22: the booking, photos and booking-slots sections are now the
 // `booking` and `photos` skills' prompts (skills/skill-catalog.ts), written as
 // delimited `kewy-skill` blocks; the constants are re-exported here for the
