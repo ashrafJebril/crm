@@ -25,6 +25,10 @@ function editorDoc(schema: Schema, build: (s: Schema) => PMNode): JSONContent {
 describe("content editor JSON against the backend validator", () => {
   const schema = getSchema(knowledgeExtensions());
 
+  // 20s, not the 5s default: this one dynamically imports the backend's
+  // validator, which takes ~3s on an idle machine and tips over the default
+  // whenever the suite runs alongside anything else (it has failed twice
+  // that way). The budget is module loading, not what is asserted.
   it("the editor's link, headings, lists and marks pass the backend's tiptapToText", async () => {
     const tiptapToText = await backendTiptapToText();
     const link = (href: string) => schema.marks.link.create({ href });
@@ -63,7 +67,7 @@ describe("content editor JSON against the backend validator", () => {
     // The pre-save sanitizer leaves a valid document unchanged and valid.
     expect(sanitizeDoc(json)).toEqual(json);
     expect(() => tiptapToText(sanitizeDoc(json))).not.toThrow();
-  });
+  }, 20_000);
 
   it("the schema has only what the backend accepts", () => {
     expect(Object.keys(schema.nodes).sort()).toEqual(["bulletList", "doc", "hardBreak", "heading", "listItem", "orderedList", "paragraph", "text"].sort());

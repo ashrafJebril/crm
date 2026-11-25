@@ -8,7 +8,10 @@ import { ChannelTransportRegistry } from "./channel-transport";
  * dedicated send routes, so `sendText` answers transport_unavailable exactly
  * as an unregistered provider did. Its only job is the `reconnect` hook
  * behind `POST /channels/:id/reconnect` (ZernioService.reconnectChannel).
- * No `disconnect` hook: a hub disconnect leaves the account at Zernio.
+ *
+ * The `disconnect` hook makes a hub disconnect real at Zernio for the social
+ * platforms, instead of only marking our row — see
+ * ZernioService.disconnectAccountAtZernio for why WhatsApp is excluded.
  */
 @Injectable()
 export class ZernioChannelTransport implements OnModuleInit {
@@ -24,6 +27,7 @@ export class ZernioChannelTransport implements OnModuleInit {
       sendText: async () => {
         throw channelError("channels.transport_unavailable", { provider: "zernio" });
       },
+      disconnect: (channel) => this.zernio.disconnectAccountAtZernio(channel),
       reconnect: (channel) => this.zernio.reconnectChannel(channel),
     });
   }

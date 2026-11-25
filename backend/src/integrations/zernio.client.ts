@@ -623,6 +623,25 @@ export class ZernioClient {
     );
   }
 
+  /**
+   * Disconnect and remove a connected account at Zernio.
+   *
+   * `DELETE /v1/accounts/{accountId}` — documented as "Disconnects and removes
+   * a connected account, and fires account.disconnected with disconnectionType
+   * intentional".
+   *
+   * NOT a soft disable. Zernio holds the account for a ONE HOUR grace window
+   * (7 days for a WhatsApp Business number Meta had already disconnected),
+   * during which reconnecting restores the same accountId and its scheduled
+   * posts. After that it is deleted permanently and remaining scheduled posts
+   * are cancelled. Zernio documents no reversible "disable" — PUT only accepts
+   * username, displayName, xCapabilities and metaAdsSyncEnabled — so this is
+   * the only way to make a disconnect real on their side.
+   */
+  async disconnectAccount(accountId: string): Promise<void> {
+    await this.request<unknown>("DELETE", `/accounts/${encodeURIComponent(accountId)}`, {});
+  }
+
   // ─── Comment automations (comment → private DM) ──────────────────────────
   //
   // Zernio's "comment-to-DM" product. It owns the keyword matching, Meta's
