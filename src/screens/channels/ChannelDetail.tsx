@@ -21,6 +21,7 @@ import { Banner, ConfirmDialog, ErrorText, KindMark, fieldInput, fieldLabel } fr
 import { ChatPageLink } from "./ChatPageLink";
 import { LandlineVerificationCard } from "./LandlineVerificationCard";
 import { WebchatSettingsForm } from "./WebchatSettingsForm";
+import { CommentAutoReplyForm, supportsCommentAutoReply } from "./CommentAutoReplyForm";
 import { WidgetSnippetDialog } from "./WidgetSnippetDialog";
 import { NumberHealthSection } from "./health/NumberHealthSection";
 import { hasNumberHealth } from "./health/healthModel";
@@ -292,6 +293,13 @@ export function ChannelDetail({
               }}
             />
           </div>
+        )}
+
+        {/* Comment auto-reply (Instagram/Facebook on Zernio). Lives here
+            rather than on the Integrations tab because the rule is scoped to
+            ONE connected account, which is exactly what this page is. */}
+        {supportsCommentAutoReply(channel) && !disconnected && (
+          <CommentAutoReplyForm channel={channel} tx={tx} canEdit={perms.canUpdate} />
         )}
 
         {/* SP-14 number health (WhatsApp on Zernio or Meta) */}

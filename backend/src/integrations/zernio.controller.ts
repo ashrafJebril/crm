@@ -11,7 +11,17 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { Type } from "class-transformer";
-import { IsArray, IsOptional, IsString, ValidateNested } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  ValidateNested,
+} from "class-validator";
 import { TemplateHeaderDto } from "./whatsapp.dto";
 import { AiHandoffService } from "./ai-handoff.service";
 import { ZernioService } from "./zernio.service";
@@ -55,6 +65,20 @@ class ZernioCommentReplyDto {
 class ZernioPostCommentDto {
   @IsString() message!: string;
   @IsString() accountId!: string;
+}
+
+/** Comment auto-reply rule. Saving this NEVER starts anything — the rule only
+ *  reaches Zernio when it is explicitly enabled. */
+class CommentRuleDto {
+  @IsString() accountId!: string;
+  @IsArray() @IsString({ each: true }) keywords!: string[];
+  @IsString() dmMessage!: string;
+  @IsOptional() @IsIn(["contains", "word", "exact"]) matchMode?: "contains" | "word" | "exact";
+  @IsOptional() @IsString() platformPostId?: string | null;
+  @IsOptional() @IsString() commentReply?: string | null;
+  @IsOptional() @IsBoolean() replyOncePerPerson?: boolean;
+  @IsOptional() @IsInt() @Min(0) @Max(86400) dmDelaySeconds?: number;
+  @IsOptional() @IsBoolean() handoffToAgent?: boolean;
 }
 
 @Controller()
@@ -131,6 +155,39 @@ export class ZernioController {
     @Query("accountId") accountId?: string,
   ) {
     return this.zernio.deleteComment(workspaceId, id, accountId);
+  }
+
+  // ── Comment auto-reply ───────────────────────────────────────────────────
+  //
+  // Save and enable are deliberately SEPARATE routes. Saving is free; enabling
+  // creates an automation at Zernio that starts DMing real people and keeps
+  // running independently of this app, so it must be its own explicit act.
+
+  @Get("integrations/zernio/comment-rules")
+  commentRules(@CurrentWorkspace() workspaceId: string) {
+    return this.zernio.listCommentRules(workspaceId);
+  }
+
+  @Post("integrations/zernio/comment-rules")
+  saveCommentRule(@CurrentWorkspace() workspaceId: string, @Body() dto: CommentRuleDto) {
+    return this.zernio.saveCommentRule(workspaceId, dto);
+  }
+
+  @Post("integrations/zernio/comment-rules/:id/enable")
+  @HttpCode(200)
+  enableCommentRule(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.zernio.enableCommentRule(workspaceId, id);
+  }
+
+  @Post("integrations/zernio/comment-rules/:id/disable")
+  @HttpCode(200)
+  disableCommentRule(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.zernio.disableCommentRule(workspaceId, id);
+  }
+
+  @Delete("integrations/zernio/comment-rules/:id")
+  deleteCommentRule(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
+    return this.zernio.deleteCommentRule(workspaceId, id);
   }
 
   @Get("integrations/zernio/conversations")
