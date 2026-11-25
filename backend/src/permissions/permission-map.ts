@@ -422,6 +422,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "DELETE /integrations/instagram/posts/:mediaId": "campaigns.delete",
   "PATCH /integrations/instagram/posts/:mediaId": "campaigns.update",
   "GET /integrations/zernio/posts": "campaigns.view",
+  // Import progress shown on the same Social feed tabs as the posts above.
+  "GET /integrations/zernio/import-status": "campaigns.view",
   "POST /ads/chat": "campaigns.create",
   "GET /ads/chat/sessions": "campaigns.view",
   "GET /ads/chat/sessions/:id": "campaigns.view",
