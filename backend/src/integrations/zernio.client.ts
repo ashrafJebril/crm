@@ -598,6 +598,111 @@ export class ZernioClient {
     );
   }
 
+  // ─── Comment automations (comment → private DM) ──────────────────────────
+  //
+  // Zernio's "comment-to-DM" product. It owns the keyword matching, Meta's
+  // Private Reply, the optional public reply, the 7-day window, dedupe and
+  // retries — we only configure it. That is why there is no private-reply
+  // method on this client: Meta's private reply is reachable (for Facebook,
+  // ONLY reachable) through an automation, not as a direct call.
+  //
+  // The automation RUNS AT ZERNIO. Creating one starts sending DMs to real
+  // people and it keeps going whether or not this app is up.
+
+  /**
+   * Create a comment automation and start it (`isActive: true`).
+   *
+   * Documented at https://docs.zernio.com/comment-automations/create-comment-automation.
+   * Two behaviours of Zernio's that the caller must not forget:
+   *  - it answers ONLY comments posted while the automation is active, so
+   *    pre-existing comments on a post are never picked up;
+   *  - omitting `platformPostId` makes it account-wide, which watches the 5
+   *    newest posts rather than everything.
+   */
+  async createCommentAutomation(body: {
+    profileId: string;
+    accountId: string;
+    name: string;
+    keywords: string[];
+    dmMessage: string;
+    matchMode?: "contains" | "word" | "exact";
+    platformPostId?: string;
+    commentReply?: string;
+    repeatPolicy?: { mode: "once" | "every_comment" };
+    dmDelaySeconds?: number;
+  }): Promise<{ id: string | null; isActive: boolean }> {
+    const res = await this.request<{
+      automation?: { _id?: string; id?: string; isActive?: boolean };
+      _id?: string;
+      id?: string;
+    }>("POST", "/comment-automations", {
+      body: {
+        profileId: body.profileId,
+        accountId: body.accountId,
+        name: body.name,
+        trigger: "comment",
+        keywords: body.keywords,
+        matchMode: body.matchMode ?? "contains",
+        dmMessage: body.dmMessage,
+        // Absent, not present-and-null: Zernio validates these when present.
+        ...(body.platformPostId ? { platformPostId: body.platformPostId } : {}),
+        ...(body.commentReply ? { commentReply: body.commentReply } : {}),
+        ...(body.dmDelaySeconds ? { dmDelaySeconds: body.dmDelaySeconds } : {}),
+        repeatPolicy: body.repeatPolicy ?? { mode: "once" },
+        isActive: true,
+      },
+    });
+    const id = res.automation?._id ?? res.automation?.id ?? res._id ?? res.id ?? null;
+    return { id, isActive: res.automation?.isActive ?? true };
+  }
+
+  /** List this profile's automations, with Zernio's own counters. */
+  async listCommentAutomations(profileId?: string): Promise<ZernioCommentAutomation[]> {
+    const res = await this.request<{ automations?: ZernioCommentAutomation[] }>(
+      "GET",
+      "/comment-automations",
+      { query: { profileId } },
+    );
+    return res.automations ?? [];
+  }
+
+  /**
+   * Turn an automation on or off, or edit it.
+   *
+   * ⚠ UNDOCUMENTED. Zernio publishes only create and list. This endpoint was
+   * found by probing the live API: Zernio answers a missing ROUTE with
+   * `{"code":"endpoint_not_found"}` but a missing ROW with
+   * `{"error":"Automation not found"}`, and `PATCH /comment-automations/{id}`
+   * answers the latter — so the route is real, just unpublished. `DELETE` on
+   * the same path behaves the same way; `/disable`, `/deactivate`, `/pause`
+   * and `/status` do not exist at all. See
+   * `spikes/zernio/spike.mjs ca:probe-disable` and the design doc.
+   *
+   * Undocumented means unversioned: if this ever starts 404ing with
+   * `endpoint_not_found`, fall back to `deleteCommentAutomation` + re-create
+   * (ZernioService.disableCommentRule already does this automatically).
+   */
+  async updateCommentAutomation(
+    automationId: string,
+    patch: { isActive?: boolean; keywords?: string[]; dmMessage?: string; commentReply?: string },
+  ): Promise<{ isActive: boolean | null }> {
+    const res = await this.request<{ automation?: { isActive?: boolean } }>(
+      "PATCH",
+      `/comment-automations/${encodeURIComponent(automationId)}`,
+      { body: patch },
+    );
+    return { isActive: res.automation?.isActive ?? null };
+  }
+
+  /** Remove an automation outright. Also undocumented — see above. */
+  async deleteCommentAutomation(automationId: string): Promise<void> {
+    await this.request<unknown>(
+      "DELETE",
+      `/comment-automations/${encodeURIComponent(automationId)}`,
+      {},
+    );
+  }
+
   // ─── WhatsApp ────────────────────────────────────────────────────────────
 
   async whatsappNumbers(profileId: string): Promise<ZernioWhatsAppNumbers> {
@@ -1045,6 +1150,30 @@ export interface ZernioFollowerStatsResponse {
   stats?: Record<string, Array<{ date?: string; followers?: number }>>;
   dateRange?: { from?: string; to?: string };
   granularity?: string;
+}
+
+/** A comment automation as `GET /comment-automations` returns it. The live
+ *  response envelope is `{ success: true, automations: [...] }` (probed
+ *  2026-11-25). `stats` is Zernio's own counter set — we never compute it. */
+export interface ZernioCommentAutomation {
+  _id?: string;
+  id?: string;
+  name?: string;
+  accountId?: string;
+  platform?: string;
+  isActive?: boolean;
+  keywords?: string[];
+  matchMode?: string;
+  platformPostId?: string;
+  dmMessage?: string;
+  commentReply?: string;
+  createdAt?: string;
+  stats?: {
+    dmsSent?: number;
+    dmsFailed?: number;
+    linkClicks?: number;
+    uniqueContacts?: number;
+  };
 }
 
 /** A POST, with its aggregate comment count — the actual shape returned by

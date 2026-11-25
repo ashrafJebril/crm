@@ -2,7 +2,9 @@
 
 **Date:** 2026-11-25
 **Branch:** `feat/comment-auto-reply`
-**Status:** design — step 1 (the spike) is in progress; the build is gated on its result.
+**Status:** built. The spike settled the blocking question (see below) and the
+feature is implemented — schema, client, service, routes, UI and tests. The one
+thing still unproven end to end is noted under "What is still unproven".
 
 ---
 
@@ -172,7 +174,21 @@ front half only.
 
 ## The design
 
-### UI — one card on Settings → Integrations, below `ZernioCard`
+### UI — a section on the channel's own page in the Channels hub
+
+**Changed during the build (2026-11-25).** The design said "Settings →
+Integrations, below `ZernioCard`". That was wrong about the current app:
+`ZernioCard` is no longer rendered on the Integrations tab at all. SP-19 moved
+every channel to a Channels hub, and the Integrations tab now shows only a
+"Channels moved" pointer plus the MCP card.
+
+So the form lives in `ChannelDetail` (`src/screens/channels/`), shown for a
+`provider="zernio"` channel of kind `instagram` or `facebook` that is not
+disconnected — beside the website-chat settings and number-health sections,
+which follow the same per-kind pattern. This is a better fit than the original
+plan anyway: the rule is scoped to ONE connected account, and that page *is* one
+connected account, which is also why the table is keyed `(workspaceId,
+accountId)`.
 
 Five states, in the order an operator hits them:
 
@@ -254,6 +270,27 @@ justifies building it in the CRM instead of using Business Suite.
    *Assumption until answered: one rule per workspace.*
 3. **If `PATCH` turns out to reject `isActive`** — disable by `DELETE` and
    re-create on re-enable (my pick; costs the counters), or hold for Zernio?
+
+## What was actually built
+
+| Piece | Where |
+|---|---|
+| `CommentAutoReply`, `CommentLead` models + migration | `backend/prisma/schema.prisma`, `migrations/20261125120000_comment_auto_reply` |
+| Tenancy registration (both models are workspace-scoped) | `backend/src/common/prisma-tenancy.ts`, `backend/src/prisma/prisma.service.ts` |
+| `createCommentAutomation`, `listCommentAutomations`, `updateCommentAutomation`, `deleteCommentAutomation` | `backend/src/integrations/zernio.client.ts` |
+| `listCommentRules`, `saveCommentRule`, `enableCommentRule`, `disableCommentRule`, `deleteCommentRule` | `backend/src/integrations/zernio.service.ts` |
+| `comment.received` handling, `linkCommentLead`, `armAgentForCommentLead` | `backend/src/integrations/zernio.service.ts` |
+| Five routes under `integrations/zernio/comment-rules` | `backend/src/integrations/zernio.controller.ts` |
+| The form, with the switch, the confirm dialog and the stats | `src/screens/channels/CommentAutoReplyForm.tsx` |
+| 28 tests | `zernio.service.comment-rules.spec.ts`, `zernio.service.comment-leads.spec.ts` |
+
+Two behaviours worth knowing when reading the code:
+
+- **Saving never touches Zernio.** Only `enable` does. The operator can redraft
+  the message as often as they like without a single DM going out.
+- **Editing a live rule re-creates the automation**, because Zernio fixes the
+  keywords and the message at creation time. An edit that only wrote our row
+  would leave the old DM going out — the UI warns about the few-second gap.
 
 ## Risks
 
