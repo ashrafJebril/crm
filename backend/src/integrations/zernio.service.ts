@@ -293,6 +293,56 @@ export class ZernioService {
     });
   }
 
+  /**
+   * Platforms whose Zernio account we remove when the user disconnects the
+   * channel in the hub.
+   *
+   * Every platform, WhatsApp included — a product decision taken knowingly on
+   * 2026-11-25: a disconnect in our hub that leaves the account live at Zernio
+   * is worse than one that bites, because customers believe they have stopped
+   * something they have not.
+   *
+   * Know what this costs before widening or narrowing it. Zernio's disconnect
+   * is a HARD DELETE after a one-hour grace window (7 days for a WhatsApp
+   * number Meta had already disconnected), and they document no reversible
+   * disable — PUT accepts only username, displayName, xCapabilities and
+   * metaAdsSyncEnabled. For WhatsApp specifically, a number bought through
+   * Zernio bills monthly and "can only be connected on the profile it was
+   * bought for"; their docs do NOT say whether deleting releases the number,
+   * cancels the WABA, or what re-provisioning costs. The hub's confirm dialog
+   * therefore spells the risk out for WhatsApp (disconnectConfirmBody).
+   */
+  private static readonly ZERNIO_HARD_DISCONNECT = new Set([
+    "facebook",
+    "instagram",
+    "tiktok",
+    "whatsapp",
+  ]);
+
+  /**
+   * Make a hub disconnect real at Zernio.
+   *
+   * Until now a hub disconnect only marked our row: the account stayed
+   * connected at Zernio, which surprised people ("I disconnected it, why is it
+   * still linked?") and meant reconnecting never re-ran Zernio's
+   * freshly-connected backfill of existing posts.
+   *
+   * Best effort on purpose — this is called from the transport's teardown hook,
+   * which already swallows failures. Our row is disconnected either way; the
+   * worst case is the pre-existing behaviour.
+   */
+  async disconnectAccountAtZernio(channel: Channel): Promise<void> {
+    const kind = channel.kind?.toLowerCase() ?? "";
+    if (!ZernioService.ZERNIO_HARD_DISCONNECT.has(kind)) {
+      this.log.log(`hub disconnect of ${kind} channel ${channel.id}: left connected at Zernio by policy`);
+      return;
+    }
+    if (!channel.externalId || !this.client.isConfigured()) return;
+    await this.client.disconnectAccount(channel.externalId);
+    this.healthCache.clear();
+    this.log.log(`disconnected zernio account ${channel.externalId} (${kind})`);
+  }
+
   /** A held Zernio WhatsApp channel that is not healthy-active: the connect
    *  link is its re-auth, not a new number. A user's hub disconnect is not. */
   private async zernioWhatsappNeedsReconnect(workspaceId: string): Promise<boolean> {
@@ -2052,6 +2102,36 @@ export class ZernioService {
     });
   }
 
+  /**
+   * The workspace a social webhook belongs to.
+   *
+   * Zernio places the identifiers differently per event family, and several of
+   * these envelopes are only partly documented, so try every known spot rather
+   * than guessing one: the account id (`post.external.*` carries
+   * `account.accountId`, and that maps to a Channel), then the profile id
+   * (`profiles[]` on the newer events, `data.profileId` / `account.profileId`
+   * / a root field on the older ones). Guessing one placement and silently
+   * doing nothing is how the feed went stale in the first place.
+   */
+  private async workspaceForSocialEvent(payload: ZernioWebhookEvent): Promise<string | null> {
+    const accountId = payload.account?.accountId ?? payload.account?.id;
+    if (accountId) {
+      const ch = await this.channels.forInbound("zernio", accountId);
+      if (ch) return ch.workspaceId;
+    }
+    const profileId =
+      payload.profiles?.find((p) => p?.id)?.id ??
+      payload.data?.profileId ??
+      payload.account?.profileId ??
+      payload.profileId;
+    if (!profileId) return null;
+    const ws = await this.prisma.workspace.findFirst({
+      where: { zernioProfileId: profileId },
+      select: { id: true },
+    });
+    return ws?.id ?? null;
+  }
+
   // ─── Inbound webhook ─────────────────────────────────────────────────────
 
   async handleEvent(payload: ZernioWebhookEvent) {
@@ -2088,17 +2168,32 @@ export class ZernioService {
      *
      * This event is Zernio telling us it has caught up, so nudge the feed.
      */
+    /**
+     * `post.external.*` — a post written natively on the platform (not through
+     * us) was detected, changed, or removed by Zernio's roughly-hourly sync of
+     * native posts. On a freshly connected account the "created" event fires
+     * once for EVERY existing post, which is the backfill.
+     *
+     * This is the event the Social feed actually wants. `analytics.synced`
+     * (below) was the first signal wired up, but Zernio's docs are explicit
+     * that it reports an analytics cycle and "concerns analytics, not whether
+     * native posts are detected" — so it only correlated with new posts by
+     * luck. These three say exactly what happened.
+     */
+    if (
+      type === "post.external.created" ||
+      type === "post.external.updated" ||
+      type === "post.external.deleted"
+    ) {
+      const ws = await this.workspaceForSocialEvent(payload);
+      if (ws) this.realtime.emitToWorkspace(ws, "social.updated", {});
+      else this.log.debug(`${type} for an account/profile no workspace owns`);
+      return { ok: true };
+    }
     if (type === "analytics.synced") {
-      const profileId =
-        payload.data?.profileId ?? payload.account?.profileId ?? payload.profileId;
-      if (profileId) {
-        const ws = await this.prisma.workspace.findFirst({
-          where: { zernioProfileId: profileId },
-          select: { id: true },
-        });
-        if (ws) this.realtime.emitToWorkspace(ws.id, "social.updated", {});
-        else this.log.debug(`analytics.synced for unknown profile ${profileId}`);
-      }
+      const ws = await this.workspaceForSocialEvent(payload);
+      if (ws) this.realtime.emitToWorkspace(ws, "social.updated", {});
+      else this.log.debug("analytics.synced for an account/profile no workspace owns");
       return { ok: true };
     }
     if (type === "account.connected" || type === "account.disconnected") {
@@ -2744,6 +2839,8 @@ export interface ZernioWebhookEvent {
   /** `analytics.synced` — the exact envelope is undocumented, so the handler
    *  checks `data.profileId`, `account.profileId` and this root field. */
   profileId?: string;
+  /** `post.external.*` and the newer social events carry the profile here. */
+  profiles?: Array<{ id?: string; externalId?: string | null }>;
   message?: {
     id?: string;                 // Zernio's message id — what status events reference
     conversationId?: string;
@@ -2804,9 +2901,17 @@ export interface ZernioWebhookEvent {
       isDarkPost?: boolean;      // Facebook — unpublished ad creative
     } | null;
   };
-  /** comment.received: the post the comment landed on. */
+  /**
+   * The post an event is about:
+   *  - `comment.received`: the post the comment landed on;
+   *  - `post.external.*`: the natively-authored post Zernio's sync detected,
+   *    where `source` is always "external", `id` is the platform-native post
+   *    id, and `deletedAt` is the detection time on the deleted event.
+   */
   post?: {
     id?: string | null;
+    source?: string;
+    deletedAt?: string;
     platformPostId?: string;
     content?: string | null;
     permalink?: string | null;

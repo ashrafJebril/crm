@@ -131,6 +131,23 @@ export function channelLabels(list: LabelSource[]): Map<string, string> {
  * (R9: inbound lands in its threads), only replies are refused.
  */
 export function disconnectConfirmBody(c: Pick<ChannelDto, "provider" | "kind">, tx: Tx): string {
+  // A Zernio disconnect is no longer only ours: it removes the account at
+  // Zernio too (a hard delete after a one-hour grace window), so reconnecting
+  // means authorising again. For WhatsApp that can reach a number the customer
+  // pays for monthly, and Zernio does not document whether deleting releases
+  // it — so say so plainly rather than let someone find out by clicking.
+  if (c.provider === "zernio" && c.kind === "whatsapp") {
+    return tx(
+      "This disconnects the number from Zernio as well, not just here. Conversation history stays in the inbox, but the number stops working immediately and you may have to set it up again — if it was bought through Zernio, getting it back is not guaranteed.",
+      "هذا يفصل الرقم من Zernio أيضًا وليس من هنا فقط. يبقى سجل المحادثات في صندوق الرسائل، لكن يتوقف الرقم فورًا وقد تحتاج إلى إعداده من جديد — وإذا كان مشترى عبر Zernio فاستعادته غير مضمونة.",
+    );
+  }
+  if (c.provider === "zernio") {
+    return tx(
+      "This disconnects the account from Zernio as well, not just here. Conversation history stays in the inbox, but new messages stop arriving and you will need to authorise the account again to reconnect it.",
+      "هذا يفصل الحساب من Zernio أيضًا وليس من هنا فقط. يبقى سجل المحادثات في صندوق الرسائل، لكن تتوقف الرسائل الجديدة وستحتاج إلى تفويض الحساب من جديد لإعادة ربطه.",
+    );
+  }
   if (c.provider === "telegram" || c.provider === "native" || c.kind === "webchat") {
     return tx(
       "Conversation history stays in the inbox, but new messages stop arriving and replies from this channel are blocked until you reconnect it. Nothing is sent from another number instead.",

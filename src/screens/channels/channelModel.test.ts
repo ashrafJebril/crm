@@ -330,13 +330,29 @@ describe("channelLabels (SP-19 I1)", () => {
 
 describe("disconnectConfirmBody (SP-19 m2)", () => {
   const tx = (en: string, ar: string) => `${en}|${ar}`;
-  it("Zernio and Meta numbers: replies blocked, incoming may still arrive (EN/AR)", () => {
-    for (const provider of ["zernio", "meta"]) {
-      const [en, ar] = disconnectConfirmBody(ch({ provider, kind: "whatsapp" }), tx).split("|");
-      expect(en).toMatch(/Replies from this number will be blocked; incoming messages may still arrive/);
-      expect(en).not.toMatch(/stop arriving/);
-      expect(ar).toMatch(ARABIC);
-    }
+  it("Meta numbers: replies blocked, incoming may still arrive (EN/AR)", () => {
+    // Meta's disconnect is still only ours, so the old wording still holds.
+    const [en, ar] = disconnectConfirmBody(ch({ provider: "meta", kind: "whatsapp" }), tx).split("|");
+    expect(en).toMatch(/Replies from this number will be blocked; incoming messages may still arrive/);
+    expect(en).not.toMatch(/stop arriving/);
+    expect(ar).toMatch(ARABIC);
+  });
+  it("Zernio: says the account is disconnected at Zernio too (EN/AR)", () => {
+    // A Zernio disconnect is now a real removal upstream, so the dialog must
+    // not keep implying the channel merely goes quiet on our side.
+    const [en, ar] = disconnectConfirmBody(ch({ provider: "zernio", kind: "instagram" }), tx).split("|");
+    expect(en).toMatch(/disconnects the account from Zernio as well/);
+    expect(en).toMatch(/authorise the account again/);
+    expect(ar).toMatch(ARABIC);
+  });
+  it("Zernio WhatsApp: warns the number itself may not come back (EN/AR)", () => {
+    // Zernio deletes the account after a one-hour grace window and does not
+    // document whether a bought number is released. Someone clicking this
+    // deserves to know that before, not after.
+    const [en, ar] = disconnectConfirmBody(ch({ provider: "zernio", kind: "whatsapp" }), tx).split("|");
+    expect(en).toMatch(/disconnects the number from Zernio as well/);
+    expect(en).toMatch(/not guaranteed/);
+    expect(ar).toMatch(ARABIC);
   });
   it("Telegram and web chat keep the stop-arriving text", () => {
     for (const c of [ch({ provider: "telegram", kind: "telegram" }), ch({ provider: "native", kind: "webchat" })]) {
