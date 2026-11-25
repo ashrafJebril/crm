@@ -154,6 +154,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "GET /webhooks/meta": "public",
   "POST /webhooks/meta": "public",
   "POST /webhooks/l/messages": "public",
+  "POST /webhooks/l/should-reply": "public",
   "POST /webhooks/tiremall/customers": "public",
   "POST /webhooks/workflows/:workflowId": "public",
   "POST /mcp/v1": "public",

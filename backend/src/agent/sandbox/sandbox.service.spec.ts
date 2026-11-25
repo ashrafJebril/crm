@@ -309,9 +309,9 @@ describe("SandboxService", () => {
     const w = sandboxWorld();
     await withKey(() => w.sandbox.send(WS, MEMBER, "hi"));
     expect((await w.sandbox.get(WS, MEMBER)).turnCount).toBe(1);
-    expect(await w.sandbox.get(WS, "u2")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
-    expect(await w.sandbox.get("ws2", MEMBER)).toEqual({ messages: [], turnCount: 0, expiresAt: null });
-    expect(await w.sandbox.get(WS, MEMBER, new Date(Date.now() + 25 * 60 * 60 * 1000))).toEqual({ messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get(WS, "u2")).toEqual({ engine: "preview", messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get("ws2", MEMBER)).toEqual({ engine: "preview", messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get(WS, MEMBER, new Date(Date.now() + 25 * 60 * 60 * 1000))).toEqual({ engine: "preview", messages: [], turnCount: 0, expiresAt: null });
     await w.sandbox.reset(WS, MEMBER);
     expect(w.prisma.db.agentSandboxThread).toHaveLength(0);
   });
@@ -334,5 +334,92 @@ describe("SandboxService", () => {
     expect(out.gate).toEqual({ wouldReply: false, reason: "stopped" });
     expect(out.reply).toBe("Hello!");
     expect(w.ai.calls[0].messages[w.ai.calls[0].messages.length - 1].content).toContain("would NOT answer a real customer now (the agent is stopped)");
+  });
+});
+
+describe("SandboxService on the live l agent", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function liveWorld(result: unknown, opts: { linked?: boolean } = {}) {
+    const lAgent = {
+      isLinked: jest.fn().mockResolvedValue(opts.linked ?? true),
+      tryTurn: jest.fn(async () => {
+        if (result instanceof Error) throw result;
+        return opts.linked === false ? null : result;
+      }),
+    };
+    return { ...sandboxWorld({ lAgent }), lAgent };
+  }
+
+  it("answers on the real agent, keeps nothing but the thread, and maps l's tool calls", async () => {
+    const w = liveWorld({
+      answer: "Booked (not saved).",
+      citations: ["hours.md", "hours.md"],
+      toolCalls: [
+        { name: "kewy_crm_find_slots", args: { date: "2026-11-26" } },
+        { name: "kewy_crm_create_appointment", args: { contactId: "c1" } },
+        { name: "search_knowledge_base", args: { query: "hours" } },
+      ],
+    });
+    const before = counts(w.prisma);
+
+    const out = await w.sandbox.send(WS, MEMBER, "book me tomorrow");
+
+    expect(out.engine).toBe("live");
+    expect(out.reply).toBe("Booked (not saved).");
+    expect(out.toolCalls.map((c) => [c.name, c.simulated])).toEqual([
+      ["find_slots", false],
+      ["create_appointment", true],
+      ["search_knowledge_base", false],
+    ]);
+    expect(out.sources).toEqual([{ sourceId: "hours.md", title: "hours.md" }]);
+    expect(out.turnCount).toBe(1);
+    // Claude was never asked; only the member's thread changed.
+    expect(w.ai.create).not.toHaveBeenCalled();
+    const after = counts(w.prisma);
+    const changed = Object.keys({ ...before, ...after }).filter((k) => (before[k] ?? 0) !== (after[k] ?? 0));
+    expect(changed).toEqual(["agentSandboxThread"]);
+  });
+
+  it("sends the earlier turns as l history", async () => {
+    const w = liveWorld({ answer: "ok", citations: [], toolCalls: [] });
+    await w.sandbox.send(WS, MEMBER, "first");
+    await w.sandbox.send(WS, MEMBER, "second");
+
+    const second = (w.lAgent.tryTurn.mock.calls as any[])[1][1];
+    expect(second.message).toBe("second");
+    expect(second.history).toEqual([
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ok" },
+    ]);
+  });
+
+  it("does not need a Claude key on the live path", async () => {
+    const w = liveWorld({ answer: "hi", citations: [], toolCalls: [] });
+    const prev = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      await expect(w.sandbox.send(WS, MEMBER, "hello")).resolves.toMatchObject({ engine: "live" });
+    } finally {
+      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev;
+    }
+  });
+
+  it("reports a failed live turn instead of falling back to the preview", async () => {
+    const { LTryTurnError } = await import("../../integrations/l-agent.service");
+    const w = liveWorld(new LTryTurnError("l returned 502"));
+    await expectKey(w.sandbox.send(WS, MEMBER, "hello"), 502, "agent.ai_failed");
+  });
+
+  it("previews on Claude when the workspace is not linked", async () => {
+    const w = liveWorld(null, { linked: false });
+    const out = await withKey(() => w.sandbox.send(WS, MEMBER, "hello"));
+    expect(out.engine).toBe("preview");
+    await expect(w.sandbox.get(WS, MEMBER)).resolves.toMatchObject({ engine: "preview" });
+  });
+
+  it("tells the panel which engine answers", async () => {
+    const w = liveWorld({ answer: "hi", citations: [], toolCalls: [] });
+    await expect(w.sandbox.get(WS, MEMBER)).resolves.toMatchObject({ engine: "live", messages: [] });
   });
 });

@@ -2,6 +2,13 @@
  * SP-20 "Try your agent" (ruling 2): a CRM-side preview of the customer
  * agent on Claude, for owners and admins (`agent.update`, ruling 9).
  *
+ * A workspace linked to l is tried on the real agent instead (`engine:
+ * "live"`): each turn is an l `dry_run` with this thread as its history, so
+ * the live prompt, knowledge and tools answer, nothing is stored on l, and
+ * every write is refused by our MCP server and connector proxy (they see
+ * `X-Kewy-Dry-Run: 1`). Reads there run as the workspace's agent, not with
+ * the member's own permissions. Everything below describes the preview.
+ *
  *  - Same prompt (the live l prompt when linked, else our CRM sections; the
  *    latest persona and guidelines; a fixed preview notice), same CRM tools
  *    in sandbox mode (deny by default: only SANDBOX_READ_TOOLS execute; every
@@ -33,7 +40,8 @@ import { ClaudeService } from "../../ai/claude.service";
 import { ClaudeFailure } from "../../ai/claude-errors";
 import { McpToolsFactory } from "../../mcp-server/mcp-tools.factory";
 import { SkillsService } from "../../skills/skills.service";
-import { LAgentSetupService, crmPromptSections } from "../../integrations/l-agent-setup.service";
+import { CRM_MCP_SERVER_NAME, LAgentSetupService, crmPromptSections } from "../../integrations/l-agent-setup.service";
+import { LAgentService, LTryTurnError, type LTryTurn } from "../../integrations/l-agent.service";
 import { GUIDELINES_BLOCK } from "../../knowledge-sources/knowledge-publisher";
 import { SlidingWindowLimiter } from "../../common/rate-limit";
 import {
@@ -93,7 +101,11 @@ export interface SandboxTurn {
   sources?: SandboxSource[];
   at: string;
 }
+/** "live": the real l agent answered (a dry run); "preview": the CRM-side preview on Claude. */
+export type SandboxEngine = "live" | "preview";
+
 export interface SandboxReplyDto {
+  engine: SandboxEngine;
   reply: string;
   /** "answer"; or a fixed bilingual reply: "refusal" (the model declined) or "empty" (it ended with no text). */
   replyKind: "answer" | "refusal" | "empty";
@@ -103,6 +115,7 @@ export interface SandboxReplyDto {
   turnCount: number;
 }
 export interface SandboxThreadDto {
+  engine: SandboxEngine;
   messages: SandboxTurn[];
   turnCount: number;
   expiresAt: string | null;
@@ -156,6 +169,23 @@ export function sourcesFrom(result: unknown, into: Map<string, SandboxSource>): 
   }
 }
 
+/** l's MCP prefix for our own tools: `kewy_crm_find_slots` is our `find_slots`. */
+const CRM_TOOL_PREFIX = `${CRM_MCP_SERVER_NAME}_`;
+
+/**
+ * l's tool calls as the panel shows them. Our own tools lose l's prefix and
+ * are marked simulated by the same policy our MCP server applied to them in
+ * the dry run. Anything else (a connector, an l HTTP tool, l's knowledge
+ * search) keeps its name; its writes were refused on the far side.
+ */
+export function liveToolCalls(calls: LTryTurn["toolCalls"]): SandboxToolCall[] {
+  return calls.map((c) => {
+    const ours = c.name.startsWith(CRM_TOOL_PREFIX);
+    const name = ours ? c.name.slice(CRM_TOOL_PREFIX.length) : c.name;
+    return { name, simulated: ours && !isSandboxReadTool(name), args: displayArgs(c.args) };
+  });
+}
+
 function recap(turns: SandboxTurn[]): string {
   const last = turns.slice(-12);
   if (!last.length) return "";
@@ -179,6 +209,8 @@ export class SandboxService {
     @Optional() private readonly perm?: PermissionService,
     // SP-22: the sandbox offers the same tools as the live agent (enabled skills).
     @Optional() private readonly skills?: SkillsService,
+    // A linked workspace is tried on its real l agent (a dry run).
+    @Optional() private readonly lAgent?: LAgentService,
   ) {
     this.limiter = new SlidingWindowLimiter({ limit: SANDBOX_RATE.turns, windowMs: SANDBOX_RATE.windowMs });
   }
@@ -191,11 +223,15 @@ export class SandboxService {
     return row;
   }
 
+  private async engine(workspaceId: string): Promise<SandboxEngine> {
+    return this.lAgent && (await this.lAgent.isLinked(workspaceId)) ? "live" : "preview";
+  }
+
   async get(workspaceId: string, userId: string, now = new Date()): Promise<SandboxThreadDto> {
-    const row = await this.thread(workspaceId, userId, now);
-    if (!row) return { messages: [], turnCount: 0, expiresAt: null };
+    const [row, engine] = await Promise.all([this.thread(workspaceId, userId, now), this.engine(workspaceId)]);
+    if (!row) return { engine, messages: [], turnCount: 0, expiresAt: null };
     const messages = readTurns(row.messages);
-    return { messages, turnCount: countTurns(messages), expiresAt: row.expiresAt.toISOString() };
+    return { engine, messages, turnCount: countTurns(messages), expiresAt: row.expiresAt.toISOString() };
   }
 
   async reset(workspaceId: string, userId: string): Promise<{ ok: true }> {
@@ -250,10 +286,13 @@ export class SandboxService {
     if (!message || message.length > SANDBOX_MESSAGE_MAX) throw agentError("agent.message_invalid", { max: SANDBOX_MESSAGE_MAX });
     const hit = this.limiter.hit(`${workspaceId}:${userId}`);
     if (!hit.ok) throw agentError("agent.sandbox_rate", { retryAfterSeconds: hit.retryAfterSec });
-    if (!this.claude.available()) throw agentError("agent.ai_unavailable");
 
     const row = await this.thread(workspaceId, userId, now);
     const turns = readTurns(row?.messages);
+    const live = await this.sendLive(workspaceId, userId, message, turns, now);
+    if (live) return live;
+    if (!this.claude.available()) throw agentError("agent.ai_unavailable");
+
     const enabled = this.skills ? await this.skills.enabledFor(workspaceId) : undefined;
     const tools = this.tools.build(workspaceId, { mode: "sandbox", enabled }) as unknown as Record<string, SandboxableTool>;
     const defs = toolDefinitions(tools);
@@ -263,10 +302,7 @@ export class SandboxService {
     const fresh = !stored || stored.key !== key || stored.turns >= SANDBOX_MAX_TURNS;
     const transcript = fresh ? emptyTranscript(key) : stored;
 
-    const gate = await this.gate
-      .decide(workspaceId, { conversationId: null, contactId: null, now })
-      .then((d) => ({ wouldReply: d.reply, reason: d.reason as string }))
-      .catch(() => ({ wouldReply: false, reason: "unknown" }));
+    const gate = await this.gateFor(workspaceId, now);
     const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId }, select: { timezone: true } });
     const note = turnNote({ now, tz: ws?.timezone ?? "Asia/Riyadh", gate });
     const model = this.claude.model(SANDBOX_MODEL_ENV);
@@ -337,21 +373,35 @@ export class SandboxService {
       throw e;
     }
 
-    const at = now.toISOString();
     const sourceList = [...sources.values()];
+    const nextTranscript: Transcript = { key, turns: transcript.turns + 1, messages };
+    const turnCount = await this.save(workspaceId, userId, turns, { message, reply, toolCalls, sources: sourceList }, nextTranscript, now);
+    return { engine: "preview", reply, replyKind, toolCalls, sources: sourceList, gate, turnCount };
+  }
+
+  /** Appends one owner/agent exchange to the member's thread; returns the turn count. */
+  private async save(
+    workspaceId: string,
+    userId: string,
+    turns: SandboxTurn[],
+    turn: { message: string; reply: string; toolCalls: SandboxToolCall[]; sources: SandboxSource[] },
+    transcript: Transcript,
+    now: Date,
+  ): Promise<number> {
+    const at = now.toISOString();
+    const { toolCalls, sources } = turn;
     const nextTurns = keepLastTurns(
       [
         ...turns,
-        { role: "owner", text: message, at },
-        { role: "agent", text: reply, at, ...(toolCalls.length ? { toolCalls } : {}), ...(sourceList.length ? { sources: sourceList } : {}) },
+        { role: "owner", text: turn.message, at },
+        { role: "agent", text: turn.reply, at, ...(toolCalls.length ? { toolCalls } : {}), ...(sources.length ? { sources } : {}) },
       ],
       SANDBOX_MAX_TURNS,
     );
-    const nextTranscript: Transcript = { key, turns: transcript.turns + 1, messages };
     const expiresAt = new Date(now.getTime() + SANDBOX_TTL_MS);
     const data = {
       messages: nextTurns as unknown as object,
-      transcript: nextTranscript as unknown as object,
+      transcript: transcript as unknown as object,
       expiresAt,
     };
     await this.prisma.agentSandboxThread.upsert({
@@ -359,7 +409,55 @@ export class SandboxService {
       create: { workspaceId, userId, ...data },
       update: data,
     });
-    return { reply, replyKind, toolCalls, sources: sourceList, gate, turnCount: countTurns(nextTurns) };
+    return countTurns(nextTurns);
+  }
+
+  private async gateFor(workspaceId: string, now: Date): Promise<SandboxReplyDto["gate"]> {
+    return this.gate
+      .decide(workspaceId, { conversationId: null, contactId: null, now })
+      .then((d) => ({ wouldReply: d.reply, reason: d.reason as string }))
+      .catch(() => ({ wouldReply: false, reason: "unknown" }));
+  }
+
+  /**
+   * One turn on the real l agent, or null when the workspace is not linked
+   * (the caller previews on Claude). The thread is the history l replays;
+   * l keeps nothing. A failure is `agent.ai_failed`, never a silent switch
+   * to the preview: the owner asked to try the real agent.
+   */
+  private async sendLive(
+    workspaceId: string,
+    userId: string,
+    message: string,
+    turns: SandboxTurn[],
+    now: Date,
+  ): Promise<SandboxReplyDto | null> {
+    if (!this.lAgent) return null;
+    let result: LTryTurn | null;
+    try {
+      result = await this.lAgent.tryTurn(workspaceId, {
+        message,
+        history: turns.map((t) => ({ role: t.role === "owner" ? "user" : "assistant", content: t.text })),
+        timeoutMs: SANDBOX_TIMEOUT_MS,
+      });
+    } catch (e) {
+      if (!(e instanceof LTryTurnError)) throw e;
+      this.log.warn(`sandbox: the live agent did not answer for workspace ${workspaceId}: ${e.message}`);
+      throw agentError("agent.ai_failed");
+    }
+    if (!result) return null;
+
+    const answer = result.answer.trim();
+    const reply = answer || PREVIEW_EMPTY_REPLY;
+    const replyKind: SandboxReplyDto["replyKind"] = answer ? "answer" : "empty";
+    const toolCalls = liveToolCalls(result.toolCalls);
+    // l cites by document name; there is no id or link to offer.
+    const sources: SandboxSource[] = [...new Set(result.citations)].map((c) => ({ sourceId: c, title: c.slice(0, 200) }));
+    const gate = await this.gateFor(workspaceId, now);
+    // The preview's model transcript does not apply to l: start it over, so
+    // a later preview turn (the workspace unlinked) begins from a recap.
+    const turnCount = await this.save(workspaceId, userId, turns, { message, reply, toolCalls, sources }, emptyTranscript(""), now);
+    return { engine: "live", reply, replyKind, toolCalls, sources, gate, turnCount };
   }
 
   private async runTool(

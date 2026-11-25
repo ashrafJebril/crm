@@ -83,7 +83,7 @@ export function invalidateAgentGate(workspaceId?: string): void {
   else CACHE.delete(workspaceId);
 }
 
-export type GatePath = "l_auto_reply" | "zernio_bridge" | "meta_bridge";
+export type GatePath = "l_auto_reply" | "zernio_bridge" | "meta_bridge" | "l_origin";
 
 @Injectable()
 export class AgentReplyGate {

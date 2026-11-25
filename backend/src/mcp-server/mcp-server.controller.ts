@@ -6,6 +6,7 @@ import { CurrentWorkspace } from "../common/current-workspace.decorator";
 import { McpAuthGuard } from "./mcp-auth.guard";
 import { McpToolsFactory } from "./mcp-tools.factory";
 import { SkillsService } from "../skills/skills.service";
+import { isDryRun, L_DRY_RUN_HEADER } from "../common/dry-run";
 
 @Controller()
 export class McpServerController {
@@ -20,11 +21,15 @@ export class McpServerController {
   @UseGuards(McpAuthGuard)
   @Post("mcp/v1")
   async handle(@Req() req: Request, @Res() res: Response, @CurrentWorkspace() workspaceId: string): Promise<void> {
+    // A test turn from l (`dry_run`, the "Try your agent" panel) gets the
+    // sandbox tools: reads run, every write returns a "NOT saved" mock, and
+    // nothing is written to the usage log.
+    const mode = isDryRun(req.headers[L_DRY_RUN_HEADER]) ? "sandbox" : "live";
     const server = new MCPServer({
       name: "tkana-crm",
       version: "1.0.0",
       // SP-22: only the tools of this workspace's enabled skills (one indexed query).
-      tools: this.toolsFactory.build(workspaceId, { enabled: await this.skills.enabledFor(workspaceId) }),
+      tools: this.toolsFactory.build(workspaceId, { mode, enabled: await this.skills.enabledFor(workspaceId) }),
     });
     // serverless:true — a fresh MCPServer is built per request (see above),
     // so there is no shared session-transport map across requests for a

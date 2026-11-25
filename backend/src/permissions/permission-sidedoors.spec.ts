@@ -1129,8 +1129,8 @@ describe("SP-20 sandbox", () => {
     await withKey(() => w.sandbox.send("ws1", "u1", "my private test"));
     expect((await w.sandbox.get("ws1", "u1")).messages[0].text).toBe("my private test");
     // Another member of the same workspace, and the same member in another workspace: nothing.
-    expect(await w.sandbox.get("ws1", "u2")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
-    expect(await w.sandbox.get("ws2", "u1")).toEqual({ messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get("ws1", "u2")).toEqual({ engine: "preview", messages: [], turnCount: 0, expiresAt: null });
+    expect(await w.sandbox.get("ws2", "u1")).toEqual({ engine: "preview", messages: [], turnCount: 0, expiresAt: null });
     // Their reset never touches it, and their turn starts their own thread.
     await w.sandbox.reset("ws1", "u2");
     await withKey(() => w.sandbox.send("ws1", "u2", "hello"));

@@ -1936,7 +1936,11 @@ export interface SandboxTurn {
   sources?: SandboxSource[];
   at: string;
 }
+/** "live": the real agent answered (a test run on l); "preview": the CRM-side preview. */
+export type SandboxEngine = "live" | "preview";
+
 export interface SandboxReply {
+  engine: SandboxEngine;
   reply: string;
   replyKind: "answer" | "refusal" | "empty";
   toolCalls: SandboxToolCall[];
@@ -1945,6 +1949,7 @@ export interface SandboxReply {
   turnCount: number;
 }
 export interface SandboxThread {
+  engine: SandboxEngine;
   messages: SandboxTurn[];
   turnCount: number;
   expiresAt: string | null;
