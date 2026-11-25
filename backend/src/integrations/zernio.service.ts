@@ -19,6 +19,7 @@ import { MediaService } from "../media/media.service";
 import { inboundAttachmentMime } from "./inbound-attachment";
 import { agentImageDecision } from "../media/agent-photo";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
+import { importStatus as computeImportStatus, NOT_CONNECTED, PlatformImportStatus } from "./zernio-import";
 import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
@@ -447,6 +448,45 @@ export class ZernioService {
   }
 
   // ─── Reading posts + comments (Social feed) ──────────────────────────────
+
+  /**
+   * Per-platform progress of Zernio's first backfill of a newly connected
+   * account's existing posts (see zernio-import.ts for why it's time-based).
+   * Reads the account list fresh (not the 5-min health cache) so a just-made
+   * connection shows up on the next poll.
+   */
+  async importStatus(workspaceId: string): Promise<Record<"facebook" | "instagram", PlatformImportStatus>> {
+    const out = { facebook: NOT_CONNECTED, instagram: NOT_CONNECTED };
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId || !this.client.isConfigured()) return out;
+    const accounts = await this.client.listAccounts(profileId);
+    const now = Date.now();
+    await Promise.all(
+      (["facebook", "instagram"] as const).map(async (platform) => {
+        const acct = accounts.find((a) => a.platform === platform && a.isActive !== false);
+        if (!acct) return;
+        let sync: { total: number | null; lastSync: string | null; syncTriggered: boolean } = {
+          total: null,
+          lastSync: null,
+          syncTriggered: false,
+        };
+        try {
+          sync = await this.client.getSyncInfo(profileId, platform);
+        } catch (e) {
+          this.log.warn(`importStatus ws=${workspaceId} ${platform}: ${(e as Error).message}`);
+        }
+        out[platform] = computeImportStatus({
+          connectedAt: acct.createdAt,
+          postCount: sync.total,
+          lastSync: sync.lastSync,
+          syncTriggered: sync.syncTriggered,
+          now,
+        });
+      }),
+    );
+    return out;
+  }
+
 
   async listPosts(workspaceId: string, platform?: string) {
     const profileId = await this.getProfileId(workspaceId);

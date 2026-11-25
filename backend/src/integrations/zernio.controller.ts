@@ -119,6 +119,11 @@ export class ZernioController {
     return this.zernio.whatsappNumbers(workspaceId);
   }
 
+  @Get("integrations/zernio/import-status")
+  importStatus(@CurrentWorkspace() workspaceId: string) {
+    return this.zernio.importStatus(workspaceId);
+  }
+
   @Get("integrations/zernio/posts")
   posts(@CurrentWorkspace() workspaceId: string, @Query("platform") platform?: string) {
     return this.zernio.listPosts(workspaceId, platform);

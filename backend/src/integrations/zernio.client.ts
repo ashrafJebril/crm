@@ -405,6 +405,31 @@ export class ZernioClient {
     }
   }
 
+  /** Sync bookkeeping for a profile's feed: one /analytics row is enough to
+   *  read the `overview` (lastSync, dataStaleness) and the window's total
+   *  post count from `pagination`. Like every /analytics hit, this also
+   *  nudges Zernio to sync stale accounts (`syncTriggered` says if it did). */
+  async getSyncInfo(
+    profileId: string,
+    platform: string,
+  ): Promise<{ total: number; lastSync: string | null; syncTriggered: boolean }> {
+    const to = new Date();
+    const from = new Date(to.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const res = await this.request<{
+      posts?: unknown[];
+      pagination?: { total?: number };
+      overview?: { lastSync?: string | null; dataStaleness?: { syncTriggered?: boolean } };
+    }>("GET", "/analytics", {
+      query: { profileId, platform, fromDate: iso(from), toDate: iso(to), limit: "1", page: "1" },
+    });
+    return {
+      total: res.pagination?.total ?? res.posts?.length ?? 0,
+      lastSync: res.overview?.lastSync ?? null,
+      syncTriggered: res.overview?.dataStaleness?.syncTriggered === true,
+    };
+  }
+
   /** Posts CREATED through Zernio (drafts/scheduled/published) — unlike the
    *  /analytics feed, this is where the scheduled queue lives. */
   async listCreatedPosts(profileId: string): Promise<ZernioPost[]> {
@@ -1034,6 +1059,8 @@ export interface ZernioAccount {
   isActive?: boolean;
   /** Zernio's own flag that the account's sign-in has to be redone. */
   needsReconnection?: boolean;
+  /** When the account was connected to Zernio (ISO). */
+  createdAt?: string;
   metadata?: unknown;
 }
 
