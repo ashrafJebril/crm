@@ -317,13 +317,31 @@ function SocialImpl() {
   useRealtime("social.updated", () => refreshFeeds());
 
   /** The accounts actually connected, for the page subtitle. */
+  /**
+   * The accounts actually connected, for the page subtitle.
+   *
+   * Deduplicated: a workspace commonly connects Instagram, Facebook and
+   * WhatsApp all under the same brand name, and listing it three times read as
+   * "across Kewy and Kewy and Kewy".
+   */
   const connectedNames = useMemo(
     () =>
-      (zernioStatusQ.data?.accounts ?? [])
-        .map((a) => a.name)
-        .filter((n): n is string => !!n),
+      [
+        ...new Set(
+          (zernioStatusQ.data?.accounts ?? [])
+            .map((a) => a.name?.trim())
+            .filter((n): n is string => !!n),
+        ),
+      ].slice(0, 3),
     [zernioStatusQ.data],
   );
+
+  /** "A", "A and B", "A, B and C" — with the list separator the language uses. */
+  const joinNames = (names: string[], and: string, comma: string) => {
+    if (names.length <= 1) return names[0] ?? "";
+    const last = names[names.length - 1];
+    return `${names.slice(0, -1).join(comma)} ${and} ${last}`;
+  };
 
   // Until the status request answers, connection is unknown, not "off" —
   // otherwise every cold load flashes "not connected" and 0 posts.
@@ -679,8 +697,8 @@ function SocialImpl() {
         subtitle={
           connectedNames.length
             ? tx(
-                `Posts and comments across ${connectedNames.join(" and ")}`,
-                `المنشورات والتعليقات على ${connectedNames.join(" و ")}`,
+                `Posts and comments across ${joinNames(connectedNames, "and", ", ")}`,
+                `المنشورات والتعليقات على ${joinNames(connectedNames, "و", "، ")}`,
               )
             : tx(
                 "Posts and comments across your connected channels",
