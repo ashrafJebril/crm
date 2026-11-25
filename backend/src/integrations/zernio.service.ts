@@ -19,6 +19,7 @@ import { MediaService } from "../media/media.service";
 import { inboundAttachmentMime } from "./inbound-attachment";
 import { agentImageDecision } from "../media/agent-photo";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
+import { importStatus as computeImportStatus, NOT_CONNECTED, PlatformImportStatus } from "./zernio-import";
 import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
@@ -448,6 +449,45 @@ export class ZernioService {
 
   // ─── Reading posts + comments (Social feed) ──────────────────────────────
 
+  /**
+   * Per-platform progress of Zernio's first backfill of a newly connected
+   * account's existing posts (see zernio-import.ts for why it's time-based).
+   * Reads the account list fresh (not the 5-min health cache) so a just-made
+   * connection shows up on the next poll.
+   */
+  async importStatus(workspaceId: string): Promise<Record<"facebook" | "instagram", PlatformImportStatus>> {
+    const out = { facebook: NOT_CONNECTED, instagram: NOT_CONNECTED };
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId || !this.client.isConfigured()) return out;
+    const accounts = await this.client.listAccounts(profileId);
+    const now = Date.now();
+    await Promise.all(
+      (["facebook", "instagram"] as const).map(async (platform) => {
+        const acct = accounts.find((a) => a.platform === platform && a.isActive !== false);
+        if (!acct) return;
+        let sync: { total: number | null; lastSync: string | null; syncTriggered: boolean } = {
+          total: null,
+          lastSync: null,
+          syncTriggered: false,
+        };
+        try {
+          sync = await this.client.getSyncInfo(profileId, platform);
+        } catch (e) {
+          this.log.warn(`importStatus ws=${workspaceId} ${platform}: ${(e as Error).message}`);
+        }
+        out[platform] = computeImportStatus({
+          connectedAt: acct.createdAt,
+          postCount: sync.total,
+          lastSync: sync.lastSync,
+          syncTriggered: sync.syncTriggered,
+          now,
+        });
+      }),
+    );
+    return out;
+  }
+
+
   async listPosts(workspaceId: string, platform?: string) {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) return [];
@@ -633,6 +673,380 @@ export class ZernioService {
     const comment = await this.findCommentInWorkspace(workspaceId, commentId);
     await this.client.deleteComment(comment.postId, accountId ?? comment.accountId, commentId);
     return { ok: true as const };
+  }
+
+  // ─── Comment auto-reply (comment → private DM) ───────────────────────────
+  //
+  // The rule is configured here but RUNS AT ZERNIO. Enabling creates a comment
+  // automation that Zernio executes itself; it keeps sending DMs whether or
+  // not this app is up, so `CommentAutoReply.automationId` is the only handle
+  // we have on it and losing the row orphans a live automation.
+  //
+  // Private reply is Instagram/Facebook only — Zernio's platform matrix states
+  // TikTok, Threads, LinkedIn and YouTube can reply publicly but have no
+  // private reply at all.
+  private static readonly PRIVATE_REPLY_PLATFORMS = new Set(["instagram", "facebook"]);
+
+  /** Shape the card reads: our stored config plus Zernio's live truth. */
+  private async decorateRule(rule: {
+    id: string;
+    platform: string;
+    accountId: string;
+    automationId: string | null;
+    keywords: string;
+    matchMode: string;
+    platformPostId: string | null;
+    dmMessage: string;
+    commentReply: string | null;
+    replyOncePerPerson: boolean;
+    dmDelaySeconds: number;
+    handoffToAgent: boolean;
+    enabled: boolean;
+    enabledAt: Date | null;
+    disabledAt: Date | null;
+  }) {
+    let keywords: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(rule.keywords);
+      if (Array.isArray(parsed)) keywords = parsed.filter((k): k is string => typeof k === "string");
+    } catch {
+      // A hand-edited row shouldn't 500 the settings page.
+      keywords = [];
+    }
+    return {
+      id: rule.id,
+      platform: rule.platform,
+      accountId: rule.accountId,
+      keywords,
+      matchMode: rule.matchMode,
+      platformPostId: rule.platformPostId,
+      dmMessage: rule.dmMessage,
+      commentReply: rule.commentReply,
+      replyOncePerPerson: rule.replyOncePerPerson,
+      dmDelaySeconds: rule.dmDelaySeconds,
+      handoffToAgent: rule.handoffToAgent,
+      enabled: rule.enabled,
+      enabledAt: rule.enabledAt,
+      disabledAt: rule.disabledAt,
+      automationId: rule.automationId,
+    };
+  }
+
+  /**
+   * The card's read. Our rows carry the config; Zernio carries whether the
+   * automation is really running and its counters, so we ask Zernio and let
+   * its answer win over our `enabled` flag when they disagree — a rule can be
+   * switched off in Zernio's own dashboard without us hearing about it.
+   */
+  async listCommentRules(workspaceId: string) {
+    const rows = await this.prisma.commentAutoReply.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "asc" },
+    });
+    const rules = await Promise.all(rows.map((r) => this.decorateRule(r)));
+    if (!rules.length) return { rules: [], stats: {} as Record<string, unknown> };
+
+    const profileId = await this.getProfileId(workspaceId);
+    const stats: Record<string, unknown> = {};
+    if (profileId && this.client.isConfigured()) {
+      try {
+        const live = await this.client.listCommentAutomations(profileId);
+        const byId = new Map(live.map((a) => [a._id ?? a.id ?? "", a]));
+        for (const rule of rules) {
+          const a = rule.automationId ? byId.get(rule.automationId) : undefined;
+          // No automation at Zernio = not running, whatever our flag says.
+          rule.enabled = a ? a.isActive !== false : false;
+          if (a?.stats) stats[rule.id] = a.stats;
+        }
+      } catch (e) {
+        // Zernio being unreachable must not blank the settings page — show
+        // our own last-known state and let the card say it couldn't refresh.
+        this.log.warn(`Could not refresh comment automations: ${(e as Error).message}`);
+        return { rules, stats, stale: true as const };
+      }
+    }
+    return { rules, stats };
+  }
+
+  /**
+   * Create or update the rule for one account. Saving NEVER touches Zernio —
+   * only `enableCommentRule` does. That split is deliberate: the operator can
+   * draft and re-draft the message without a single DM going out.
+   *
+   * Editing a rule that is already live re-creates the automation, because
+   * Zernio's keyword/message fields are set at creation. There is a short gap
+   * where no comment is answered; the card warns about it.
+   */
+  async saveCommentRule(
+    workspaceId: string,
+    input: {
+      accountId: string;
+      keywords: string[];
+      dmMessage: string;
+      matchMode?: string;
+      platformPostId?: string | null;
+      commentReply?: string | null;
+      replyOncePerPerson?: boolean;
+      dmDelaySeconds?: number;
+      handoffToAgent?: boolean;
+    },
+  ) {
+    const own = await this.ownAccount(workspaceId, input.accountId);
+    if (!own) throw new NotFoundException("Account not found in this workspace");
+    if (!ZernioService.PRIVATE_REPLY_PLATFORMS.has(own.platform)) {
+      throw new BadRequestException(
+        `${own.platform} has no private reply to a comment — only Instagram and Facebook do`,
+      );
+    }
+    const keywords = input.keywords.map((k) => k.trim()).filter(Boolean);
+    if (!keywords.length) throw new BadRequestException("At least one keyword is required");
+    if (!input.dmMessage.trim()) throw new BadRequestException("The private message is required");
+    const matchMode = input.matchMode ?? "contains";
+    if (!["contains", "word", "exact"].includes(matchMode)) {
+      throw new BadRequestException(`Unknown match mode "${matchMode}"`);
+    }
+
+    const data = {
+      platform: own.platform,
+      keywords: JSON.stringify(keywords),
+      matchMode,
+      platformPostId: input.platformPostId ?? null,
+      dmMessage: input.dmMessage.trim(),
+      commentReply: input.commentReply?.trim() || null,
+      replyOncePerPerson: input.replyOncePerPerson ?? true,
+      dmDelaySeconds: input.dmDelaySeconds ?? 0,
+      handoffToAgent: input.handoffToAgent ?? true,
+    };
+    const existing = await this.prisma.commentAutoReply.findUnique({
+      where: { workspaceId_accountId: { workspaceId, accountId: input.accountId } },
+    });
+    const saved = await this.prisma.commentAutoReply.upsert({
+      where: { workspaceId_accountId: { workspaceId, accountId: input.accountId } },
+      create: { workspaceId, accountId: input.accountId, ...data },
+      update: data,
+    });
+
+    // Live rules carry their config INSIDE the Zernio automation, so an edit
+    // has to be pushed there or the DM people receive stays the old one.
+    if (existing?.enabled && existing.automationId) {
+      await this.disableCommentRule(workspaceId, saved.id);
+      return this.enableCommentRule(workspaceId, saved.id);
+    }
+    return this.decorateRule(saved);
+  }
+
+  private async requireRule(workspaceId: string, ruleId: string) {
+    const rule = await this.prisma.commentAutoReply.findFirst({
+      where: { id: ruleId, workspaceId },
+    });
+    if (!rule) throw new NotFoundException("Comment auto-reply rule not found");
+    return rule;
+  }
+
+  /**
+   * Switch the rule on: create the automation at Zernio.
+   *
+   * This is the moment real DMs start going out, so it re-checks account
+   * ownership even though saving did — the account could have been
+   * disconnected in between.
+   */
+  async enableCommentRule(workspaceId: string, ruleId: string) {
+    const rule = await this.requireRule(workspaceId, ruleId);
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId) throw new BadRequestException("Zernio is not connected");
+    await this.assertOwnAccount(workspaceId, rule.accountId);
+
+    // Already running — don't create a second automation for the same rule.
+    if (rule.enabled && rule.automationId) return this.decorateRule(rule);
+
+    let keywords: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(rule.keywords);
+      if (Array.isArray(parsed)) keywords = parsed.filter((k): k is string => typeof k === "string");
+    } catch {
+      keywords = [];
+    }
+    if (!keywords.length) throw new BadRequestException("At least one keyword is required");
+
+    const created = await this.client.createCommentAutomation({
+      profileId,
+      accountId: rule.accountId,
+      name: `aram:${rule.id}`,
+      keywords,
+      matchMode: rule.matchMode as "contains" | "word" | "exact",
+      dmMessage: rule.dmMessage,
+      platformPostId: rule.platformPostId ?? undefined,
+      commentReply: rule.commentReply ?? undefined,
+      dmDelaySeconds: rule.dmDelaySeconds || undefined,
+      repeatPolicy: { mode: rule.replyOncePerPerson ? "once" : "every_comment" },
+    });
+    if (!created.id) {
+      // We have no handle on it, so we could never switch it off again.
+      throw new HttpException("Zernio did not return an automation id", 502);
+    }
+
+    const updated = await this.prisma.commentAutoReply.update({
+      where: { id: rule.id },
+      data: { automationId: created.id, enabled: true, enabledAt: new Date(), disabledAt: null },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "comment-rules.updated", {});
+    return this.decorateRule(updated);
+  }
+
+  /**
+   * Switch the rule off.
+   *
+   * Tries `PATCH {isActive:false}` first and falls back to `DELETE` — both are
+   * undocumented endpoints found by probing (see ZernioClient). The fallback
+   * matters: if Zernio ever drops PATCH, deleting still stops the DMs, which
+   * is the part that must not fail. Re-enabling then creates a fresh
+   * automation, which costs the counters but nothing else.
+   *
+   * Our row is only marked disabled once Zernio has actually confirmed it. A
+   * failure here must surface, not be swallowed — an operator who is told
+   * "off" while DMs keep going is the whole thing we are guarding against.
+   */
+  async disableCommentRule(workspaceId: string, ruleId: string) {
+    const rule = await this.requireRule(workspaceId, ruleId);
+    if (!rule.automationId) {
+      const updated = await this.prisma.commentAutoReply.update({
+        where: { id: rule.id },
+        data: { enabled: false, disabledAt: new Date() },
+      });
+      return this.decorateRule(updated);
+    }
+
+    let stopped = false;
+    try {
+      await this.client.updateCommentAutomation(rule.automationId, { isActive: false });
+      stopped = true;
+    } catch (e) {
+      this.log.warn(
+        `PATCH could not deactivate automation ${rule.automationId}, falling back to DELETE: ${(e as Error).message}`,
+      );
+      await this.client.deleteCommentAutomation(rule.automationId);
+      stopped = true;
+    }
+    if (!stopped) throw new HttpException("Could not stop the automation at Zernio", 502);
+
+    const updated = await this.prisma.commentAutoReply.update({
+      where: { id: rule.id },
+      // automationId is cleared: after a DELETE it points at nothing, and
+      // after a PATCH we re-create on the next enable anyway, so keeping it
+      // would risk re-enabling a stale id.
+      data: { enabled: false, disabledAt: new Date(), automationId: null },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "comment-rules.updated", {});
+    return this.decorateRule(updated);
+  }
+
+  /** Remove the rule entirely — stopping it at Zernio first. */
+  async deleteCommentRule(workspaceId: string, ruleId: string) {
+    const rule = await this.requireRule(workspaceId, ruleId);
+    if (rule.automationId) await this.disableCommentRule(workspaceId, ruleId);
+    await this.prisma.commentAutoReply.delete({ where: { id: rule.id } });
+    this.realtime.emitToWorkspace(workspaceId, "comment-rules.updated", {});
+    return { ok: true as const };
+  }
+
+  /**
+   * Record a comment that arrived on a tracked post, for lead attribution.
+   *
+   * `comment.received` fires for EVERY comment, not just ones that matched a
+   * keyword — Zernio does the matching privately inside the automation and
+   * never tells us which comments it answered. So this stores the comment and
+   * the ad it came from; the link to a contact happens later, if and when the
+   * person replies to the DM (see linkCommentLead).
+   */
+  private async ingestComment(evt: ZernioWebhookEvent) {
+    const c = evt.comment;
+    const authorId = c?.author?.id;
+    const commentId = c?.id;
+    if (!c || !authorId || !commentId) return { ok: true as const, ignored: true as const };
+
+    const accountId = evt.account?.accountId ?? evt.account?.id;
+    const ch = accountId ? await this.channels.forInbound("zernio", accountId) : null;
+    if (!ch) {
+      this.log.warn(`comment.received for unknown zernio accountId=${accountId}`);
+      return { ok: true as const, ignored: true as const };
+    }
+
+    const platform = (c.platform ?? evt.account?.platform ?? ch.kind).toLowerCase();
+    await this.prisma.commentLead.upsert({
+      // Zernio delivers at-least-once; the unique key makes redelivery a no-op.
+      where: { workspaceId_commentId: { workspaceId: ch.workspaceId, commentId } },
+      create: {
+        workspaceId: ch.workspaceId,
+        platform,
+        accountId: accountId ?? null,
+        commentId,
+        authorId: String(authorId),
+        authorName: c.author?.name ?? c.author?.username ?? null,
+        text: c.text ?? null,
+        postId: c.postId ?? evt.post?.id ?? null,
+        platformPostId: c.platformPostId ?? evt.post?.platformPostId ?? null,
+        permalink: evt.post?.permalink ?? null,
+        adId: c.ad?.id ?? null,
+        adTitle: c.ad?.title ?? null,
+        isDarkPost: c.ad?.isDarkPost ?? null,
+      },
+      update: {},
+    });
+    return { ok: true as const };
+  }
+
+  /**
+   * Attach a lead to the contact it became, once that person replies.
+   *
+   * The commenter's platform user id in `comment.received` is the same id that
+   * arrives as the conversation participant on `message.received`, which is
+   * the whole mechanism — no matching on names or text. Best-effort by design:
+   * attribution is never worth losing an inbound message over.
+   */
+  private async linkCommentLead(
+    workspaceId: string,
+    platform: string,
+    authorId: string,
+    contactId: string,
+  ): Promise<boolean> {
+    try {
+      const res = await this.prisma.commentLead.updateMany({
+        where: { workspaceId, platform, authorId, contactId: null },
+        data: { contactId, linkedAt: new Date() },
+      });
+      return (res?.count ?? 0) > 0;
+    } catch (e) {
+      this.log.warn(`Could not link comment lead for ${authorId}: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Turn AI mode on for a thread that a comment lead just opened, when the
+   * rule for that account asks for it.
+   *
+   * Without this the card's "hand over to the AI agent" switch would be
+   * decorative — the agent reply path only looks at `conv.aiEnabled`. Guarded
+   * and best-effort: attribution must never cost us an inbound message.
+   */
+  private async armAgentForCommentLead(
+    workspaceId: string,
+    accountId: string,
+    conversationId: string,
+  ) {
+    try {
+      const rule = await this.prisma.commentAutoReply.findUnique({
+        where: { workspaceId_accountId: { workspaceId, accountId } },
+        select: { handoffToAgent: true },
+      });
+      if (!rule?.handoffToAgent) return;
+      await this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { aiEnabled: true },
+      });
+    } catch (e) {
+      this.log.warn(`Could not arm the agent for comment lead: ${(e as Error).message}`);
+    }
   }
 
   // ─── Scheduled posts (created through Zernio) ─────────────────────────────
@@ -1631,6 +2045,19 @@ export class ZernioService {
       await this.ingestInbound(payload);
       return { ok: true };
     }
+    // Lead attribution for comment auto-reply. Zernio's automation sends the
+    // private reply itself — we are only recording which post, and which ad,
+    // the commenter came from. Never let this fail the webhook: Zernio retries
+    // for ~51 hours, and a redelivery storm over an attribution row is worse
+    // than a missing row.
+    if (type === "comment.received") {
+      try {
+        return await this.ingestComment(payload);
+      } catch (e) {
+        this.log.warn(`comment.received ingest failed: ${(e as Error).message}`);
+        return { ok: true as const };
+      }
+    }
     /**
      * Zernio finished pulling a page's own (natively-created) posts.
      *
@@ -1871,6 +2298,13 @@ export class ZernioService {
       }
     }
 
+    // Comment auto-reply attribution: if this person commented before, this is
+    // the moment their lead becomes a contact. Only on inbound — our own
+    // outbound echo says nothing about who they are.
+    const fromComment = isOutbound
+      ? false
+      : await this.linkCommentLead(workspaceId, channel, participantId, contact.id);
+
     // Zernio's conversation id — persisted so replies can address the provider
     // conversation directly instead of re-listing on every send.
     const zernioConvId = evt.conversation?.id ?? evt.message?.conversationId ?? null;
@@ -1899,6 +2333,11 @@ export class ZernioService {
           externalId: zernioConvId,
         },
       });
+      // "Hand over to the AI agent" on the comment rule is only honest if it
+      // actually arms the thread this lead opened — the agent reply path keys
+      // off conv.aiEnabled. Only on a NEW conversation: an existing thread's
+      // AI mode is the operator's choice and a comment must not flip it.
+      if (fromComment) await this.armAgentForCommentLead(workspaceId, accountId, conv.id);
     } else {
       await this.prisma.conversation.update({
         where: { id: conv.id },
@@ -2317,6 +2756,46 @@ export interface ZernioWebhookEvent {
   };
   /** SP-15: CTWA attribution at the payload root (as Zernio's docs place it). */
   metadata?: { referral?: unknown; ad?: unknown; [k: string]: unknown } | null;
+  /**
+   * comment.received — a new comment on a tracked post. Used for comment
+   * auto-reply ATTRIBUTION only: Zernio's automation decides privately which
+   * comments to answer and never tells us, so this event is not a trigger, it
+   * is the record of where a lead came from.
+   *
+   * Shape from https://docs.zernio.com/webhooks/inbox/comment-received.
+   * `ad` is present only on comments left on paid content, which is how
+   * "which ad produced this lead" is answerable at all.
+   */
+  comment?: {
+    id?: string;
+    postId?: string;             // Zernio's post id — null if not published through Zernio
+    platformPostId?: string;
+    platform?: string;
+    text?: string | null;
+    author?: {
+      id?: string;               // the SAME id that arrives as conversation.participantId
+      username?: string;
+      name?: string;
+      isOwnAccount?: boolean;
+    };
+    createdAt?: string;
+    isReply?: boolean;
+    parentCommentId?: string | null;
+    ad?: {
+      id?: string;
+      title?: string;            // Instagram only — never set on Facebook
+      originalMediaId?: string;
+      promotionStatus?: string;  // Facebook
+      isDarkPost?: boolean;      // Facebook — unpublished ad creative
+    } | null;
+  };
+  /** comment.received: the post the comment landed on. */
+  post?: {
+    id?: string | null;
+    platformPostId?: string;
+    content?: string | null;
+    permalink?: string | null;
+  };
   /** reaction.received: the emoji and the message it targets (empty emoji = removed). */
   reaction?: {
     emoji?: string | null;

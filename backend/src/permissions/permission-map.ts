@@ -422,6 +422,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "DELETE /integrations/instagram/posts/:mediaId": "campaigns.delete",
   "PATCH /integrations/instagram/posts/:mediaId": "campaigns.update",
   "GET /integrations/zernio/posts": "campaigns.view",
+  // Import progress shown on the same Social feed tabs as the posts above.
+  "GET /integrations/zernio/import-status": "campaigns.view",
   "POST /ads/chat": "campaigns.create",
   "GET /ads/chat/sessions": "campaigns.view",
   "GET /ads/chat/sessions/:id": "campaigns.view",
@@ -603,6 +605,14 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /integrations/zernio/sync": "channels.update",
   "GET /integrations/zernio/whatsapp/numbers": "channels.view",
   "POST /integrations/zernio/backfill": "channels.update",
+  // Comment auto-reply. Reading the rule is a channel read; enabling it
+  // starts outbound messaging from that channel, so it needs the same
+  // permission as changing the channel itself rather than a view right.
+  "GET /integrations/zernio/comment-rules": "channels.view",
+  "POST /integrations/zernio/comment-rules": "channels.update",
+  "POST /integrations/zernio/comment-rules/:id/enable": "channels.update",
+  "POST /integrations/zernio/comment-rules/:id/disable": "channels.update",
+  "DELETE /integrations/zernio/comment-rules/:id": "channels.update",
   "DELETE /integrations/zernio/:platform": "channels.delete",
   // SP-19 channels hub
   "GET /channels": "channels.view",

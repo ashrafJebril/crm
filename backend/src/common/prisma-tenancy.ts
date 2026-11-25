@@ -83,6 +83,9 @@ const SCOPED_MODELS = new Set([
   "ApiKey",
   "WebhookEndpoint",
   "WebhookDelivery",
+  // Comment auto-reply: the rule, and the comment leads it attributes.
+  "CommentAutoReply",
+  "CommentLead",
 ]);
 
 const READ_ACTIONS = new Set([

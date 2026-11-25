@@ -1,32 +1,33 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { lazyScreen, ScreenErrorBoundary } from "@/lib/lazyScreen";
 import { confirmLeave } from "@/lib/leaveGuard";
 import { routeHash } from "@/lib/langParam";
 import type { RouteId } from "@/lib/types";
 
 // Each screen is its own chunk — initial load only ships shell + Dashboard.
 const screens: Record<RouteId, React.LazyExoticComponent<React.ComponentType>> = {
-  dashboard: lazy(() => import("@/screens/Dashboard")),
-  inbox: lazy(() => import("@/screens/Inbox")),
-  calendar: lazy(() => import("@/screens/Calendar")),
-  social: lazy(() => import("@/screens/Social")),
-  campaigns: lazy(() => import("@/screens/Campaigns")),
-  pipeline: lazy(() => import("@/screens/pipeline/PipelinePage")),
-  workflows: lazy(() => import("@/screens/workflows/WorkflowsPage")),
-  contacts: lazy(() => import("@/screens/Contacts")),
-  followups: lazy(() => import("@/screens/FollowUps")),
-  analytics: lazy(() => import("@/screens/Analytics")),
-  templates: lazy(() => import("@/screens/Templates")),
-  media: lazy(() => import("@/screens/Media")),
-  team: lazy(() => import("@/screens/Team")),
-  agent: lazy(() => import("@/screens/KewyAgent")),
-  settings: lazy(() => import("@/screens/Settings")),
-  channels: lazy(() => import("@/screens/channels/ChannelsPage")),
-  ads: lazy(() => import("@/screens/ads/AdsPage")),
-  admin: lazy(() => import("@/screens/Admin")),
+  dashboard: lazyScreen(() => import("@/screens/Dashboard")),
+  inbox: lazyScreen(() => import("@/screens/Inbox")),
+  calendar: lazyScreen(() => import("@/screens/Calendar")),
+  social: lazyScreen(() => import("@/screens/Social")),
+  campaigns: lazyScreen(() => import("@/screens/Campaigns")),
+  pipeline: lazyScreen(() => import("@/screens/pipeline/PipelinePage")),
+  workflows: lazyScreen(() => import("@/screens/workflows/WorkflowsPage")),
+  contacts: lazyScreen(() => import("@/screens/Contacts")),
+  followups: lazyScreen(() => import("@/screens/FollowUps")),
+  analytics: lazyScreen(() => import("@/screens/Analytics")),
+  templates: lazyScreen(() => import("@/screens/Templates")),
+  media: lazyScreen(() => import("@/screens/Media")),
+  team: lazyScreen(() => import("@/screens/Team")),
+  agent: lazyScreen(() => import("@/screens/KewyAgent")),
+  settings: lazyScreen(() => import("@/screens/Settings")),
+  channels: lazyScreen(() => import("@/screens/channels/ChannelsPage")),
+  ads: lazyScreen(() => import("@/screens/ads/AdsPage")),
+  admin: lazyScreen(() => import("@/screens/Admin")),
   // SP-20: guided onboarding (signup and the "Continue setup" cards link here).
-  setup: lazy(() => import("@/screens/setup/SetupPage")),
+  setup: lazyScreen(() => import("@/screens/setup/SetupPage")),
   // SP-18: the member's own copilot chats (reached from the drawer).
-  copilot: lazy(() => import("@/screens/copilot/CopilotHistory")),
+  copilot: lazyScreen(() => import("@/screens/copilot/CopilotHistory")),
 };
 
 export const VALID_ROUTES = new Set<RouteId>(Object.keys(screens) as RouteId[]);
@@ -78,9 +79,52 @@ export function useRoute(): [RouteId, (r: RouteId) => void] {
 export function ScreenSlot({ route }: { route: RouteId }) {
   const Screen = screens[route];
   return (
-    <Suspense fallback={<ScreenLoader />}>
-      <Screen />
-    </Suspense>
+    // Keyed by route so a failed screen does not keep the boundary tripped
+    // after the user navigates somewhere else.
+    <ScreenErrorBoundary key={route} fallback={(retry) => <ScreenError onRetry={retry} />}>
+      <Suspense fallback={<ScreenLoader />}>
+        <Screen />
+      </Suspense>
+    </ScreenErrorBoundary>
+  );
+}
+
+/**
+ * Shown when a screen fails to render. Before this existed the app had no
+ * error boundary at all, so the same failure produced a blank white page with
+ * no way back except the browser's reload button.
+ */
+function ScreenError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "grid",
+        placeItems: "center",
+        padding: 24,
+        textAlign: "center",
+      }}
+    >
+      <div style={{ display: "grid", gap: 12, maxWidth: 360 }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>This screen didn’t load</div>
+        <div style={{ fontSize: 13, color: "var(--ink-2)" }}>
+          It’s usually a new version being released while this tab was open.
+          Reloading picks it up.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          <button type="button" className="btn" onClick={onRetry}>
+            Try again
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

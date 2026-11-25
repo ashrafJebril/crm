@@ -120,6 +120,12 @@ export class PrismaService implements OnModuleDestroy {
   get apiKey() { return this.client.apiKey; }
   /** SP-28: usage metering (tenant-scoped). */
   get usageEvent() { return this.client.usageEvent; }
+  /** Comment auto-reply: the rule the settings card edits. The automation
+   *  itself lives at Zernio — this row only records what it was configured
+   *  with and which automation id is ours. */
+  get commentAutoReply() { return this.client.commentAutoReply; }
+  /** Lead attribution for comment auto-reply (which reel, which ad). */
+  get commentLead() { return this.client.commentLead; }
   get webhookEndpoint() { return this.client.webhookEndpoint; }
   get webhookDelivery() { return this.client.webhookDelivery; }
 

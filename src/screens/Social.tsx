@@ -8,6 +8,8 @@ import { Avatar } from "@/components/Avatar";
 import { PhotoSlot } from "@/components/PhotoSlot";
 import { CommentSkeleton, PostCardSkeleton } from "@/components/Skeleton";
 import { feedState, isFeedPending, type FeedState } from "./social/feedState";
+import { IMPORT_POLL_MS, type ImportStatusResponse } from "./social/importProgress";
+import { ImportBanner } from "./social/ImportBanner";
 import {
   IconBolt,
   IconCheckCircle,
@@ -221,12 +223,28 @@ function SocialImpl() {
   const zernioAccount = (p: string) =>
     zernioStatusQ.data?.accounts?.find((a) => a.platform === p);
 
+  // Zernio backfills a newly connected account's existing posts over ~90 min.
+  // While that runs, poll the status and that platform's feed so posts appear
+  // without a refresh, and show progress instead of "no posts".
+  const hasZernioAccount = (zernioStatusQ.data?.accounts?.length ?? 0) > 0;
+  const [importPolling, setImportPolling] = useState(false);
+  const importQ = useFetch<ImportStatusResponse>(
+    hasZernioAccount ? "/integrations/zernio/import-status" : null,
+    { pollMs: importPolling ? IMPORT_POLL_MS : 0 },
+  );
+  const fbImporting = importQ.data?.facebook?.importing === true;
+  const igImporting = importQ.data?.instagram?.importing === true;
+  useEffect(() => {
+    setImportPolling(fbImporting || igImporting);
+  }, [fbImporting, igImporting]);
+
   const fbConnected = !!zernioAccount("facebook");
   const fbPageName = zernioAccount("facebook")?.name ?? undefined;
   const isFbLive = platform === "facebook" && fbConnected;
 
   const liveFbQ = useFetch<LiveFbPost[]>(
     fbConnected ? "/integrations/zernio/posts?platform=facebook" : null,
+    { pollMs: fbImporting ? IMPORT_POLL_MS : 0 },
   );
 
   // Set of post IDs that came from the live feed (for source-of-truth checks).
@@ -274,6 +292,7 @@ function SocialImpl() {
 
   const liveIgQ = useFetch<LiveIgPost[]>(
     igConnected ? "/integrations/zernio/posts?platform=instagram" : null,
+    { pollMs: igImporting ? IMPORT_POLL_MS : 0 },
   );
 
   /**
@@ -817,6 +836,14 @@ function SocialImpl() {
               )}
             </div>
           )}
+          {(platform === "facebook" || platform === "instagram") && (
+            <ImportBanner
+              status={importQ.data?.[platform]}
+              platformLabel={PLATFORM_LABEL[platform]}
+              postsShown={feed.length}
+              tx={tx}
+            />
+          )}
           <div
             style={{
               flex: 1,
@@ -859,10 +886,14 @@ function SocialImpl() {
                         ? tx("Couldn't load posts", "تعذّر تحميل المنشورات")
                         : platform === "facebook" && !fbConnected
                       ? tx("Facebook isn't connected yet", "فيسبوك غير مرتبط")
+                      : platform === "facebook" && fbImporting
+                        ? tx("Importing your Facebook posts…", "جارٍ استيراد منشورات فيسبوك…")
                       : platform === "facebook"
                         ? tx("No posts on this page yet", "لا توجد منشورات على هذه الصفحة")
                         : platform === "instagram" && !igConnected
                           ? tx("Instagram isn't connected yet", "إنستغرام غير مرتبط")
+                          : platform === "instagram" && igImporting
+                            ? tx("Importing your Instagram posts…", "جارٍ استيراد منشورات إنستغرام…")
                           : platform === "instagram"
                             ? tx("No posts on this account yet", "لا توجد منشورات على هذا الحساب")
                             : tx("TikTok coming soon", "تيك توك قريبًا")}
@@ -882,7 +913,10 @@ function SocialImpl() {
                           )
                         : platform === "tiktok"
                           ? tx("We'll add live feeds for this channel.", "سنضيف الموجز الحي قريبًا.")
-                          : tx("Publish a post to see it here.", "انشر منشورًا ليظهر هنا.")}
+                          : (platform === "facebook" && fbImporting) ||
+                              (platform === "instagram" && igImporting)
+                            ? tx("They'll appear here automatically.", "ستظهر هنا تلقائيًا.")
+                            : tx("Publish a post to see it here.", "انشر منشورًا ليظهر هنا.")}
                   </div>
                 </div>
               )}

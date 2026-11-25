@@ -202,6 +202,7 @@ export const UNDOCUMENTED_KEY_ROUTES: { reason: string; routes: string[] }[] = [
       "POST /integrations/instagram/posts",
       "DELETE /integrations/instagram/posts/:mediaId",
       "PATCH /integrations/instagram/posts/:mediaId",
+      "GET /integrations/zernio/import-status",
       "GET /integrations/zernio/posts",
       "POST /ads/chat",
       "GET /ads/chat/sessions",
