@@ -319,6 +319,19 @@ export class ZernioService {
    */
   async syncAccounts(
     workspaceId: string,
+    /**
+     * The platform the customer has just authorised through Zernio's hosted
+     * OAuth, when this sync is the redirect landing rather than a routine
+     * reconcile.
+     *
+     * It matters because a channel the user disconnected in the hub carries
+     * `disconnected_by_user`, which a sync deliberately never revives (R9) —
+     * otherwise a background reconcile would undo their choice. But completing
+     * the OAuth flow IS the explicit connect that `revival()` contemplates, so
+     * without this the account comes back from Zernio healthy, the toast says
+     * "connected", and the channel silently stays in Disconnected forever.
+     */
+    opts: { connectedPlatform?: string } = {},
   ): Promise<{ connected: Array<{ platform: string; accountId: string; name: string | null }> }> {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) return { connected: [] };
@@ -395,7 +408,9 @@ export class ZernioService {
     // disconnected. Each Integration's own channel follows it in place first
     // (re-auth onto a new account, Meta→Zernio switch), so existing threads
     // keep replying; a fresh link (reconnect) reactivates it.
-    await mirrorZernioAccounts(this.prisma, workspaceId, accounts, primaries);
+    await mirrorZernioAccounts(this.prisma, workspaceId, accounts, primaries, {
+      explicitPlatform: opts.connectedPlatform?.toLowerCase(),
+    });
 
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {});
     this.realtime.emitToWorkspace(workspaceId, "channels.updated", {});

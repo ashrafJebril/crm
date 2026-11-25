@@ -55,6 +55,15 @@ export async function mirrorZernioAccounts(
   workspaceId: string,
   accounts: ZernioAccount[],
   primaries: IntegrationLike[],
+  opts: {
+    /**
+     * The platform the customer has just authorised through hosted OAuth, if
+     * this sync is that redirect landing. Its accounts are revived even from
+     * `disconnected_by_user`, because finishing the OAuth flow is the
+     * "explicit connect" `revival()` allows — see the step-2 comment.
+     */
+    explicitPlatform?: string;
+  } = {},
 ): Promise<void> {
   const valid = (accounts ?? []).filter((a): a is ZernioAccount => !!a?._id && !!a.platform);
   const listed = new Map(valid.map((a) => [a._id, a]));
@@ -129,7 +138,16 @@ export async function mirrorZernioAccounts(
     // A listed account comes back: revivable reasons, and a `merged` slot
     // (its account returned after the merge — it becomes its own active
     // channel again; threads merged earlier stay with the Integration's).
-    const back = REVIVABLE_REASONS.has(row.statusReason ?? "") || row.statusReason === MERGED;
+    //
+    // Plus the platform the customer has just re-authorised, which revives
+    // even `disconnected_by_user`. A routine sync must never undo a hub
+    // disconnect (R9), but completing the OAuth flow is a deliberate act by
+    // the same user: without this, "Add channel → Facebook" returned a
+    // healthy account, toasted "connected", and left the row sitting in
+    // Disconnected with no way back except the hub's Reconnect button.
+    const explicit = !!opts.explicitPlatform && kind === opts.explicitPlatform;
+    const back =
+      explicit || REVIVABLE_REASONS.has(row.statusReason ?? "") || row.statusReason === MERGED;
     if (row.status === "disconnected" && !back) continue;
     // The name is the user's once created (a hub rename survives every sync,
     // like Meta's finish()): follow Zernio's name only while the row still

@@ -72,7 +72,11 @@ export function ZernioRedirectCapture() {
     const reconnectId = takeZernioReconnect();
 
     api
-      .post<SyncResult>("/integrations/zernio/sync")
+      // Tell the backend WHICH platform was just authorised: that makes this
+      // an explicit connect, so a channel the user had disconnected in the hub
+      // is revived instead of staying in Disconnected after a successful
+      // "Add channel" flow.
+      .post<SyncResult>("/integrations/zernio/sync", platform ? { platform } : {})
       .then((res) => {
         // Integration status queries carry a 30s staleTime, and the Dashboard
         // pre-warms them — so by now the cache may already hold a pre-connect

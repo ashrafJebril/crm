@@ -98,6 +98,72 @@ describe("zernio sync mirrors every account and disconnects missing ones", () =>
     expect(prisma.db.channel[0].status).toBe("disconnected");
   });
 
+  /**
+   * Reported from production 2026-11-25: a user disconnected Facebook in the
+   * hub, reconnected it through "Add channel", got a "Facebook connected"
+   * toast — and the channel stayed under Disconnected. Zernio listed the
+   * account as active the whole time (same account id, needsReconnection
+   * false), so only our mirror was holding it down: a sync refuses to revive
+   * `disconnected_by_user`, and the OAuth landing went through that same
+   * generic sync with no way to say "the user just authorised this".
+   */
+  const userDisconnectedFb = () => ({
+    channel: [
+      {
+        id: "fb",
+        workspaceId: "ws1",
+        kind: "facebook",
+        provider: "zernio",
+        externalId: "acc-FB",
+        displayName: "FB",
+        status: "disconnected",
+        statusReason: "disconnected_by_user",
+        isDefault: false,
+        integrationId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ],
+  });
+
+  it("revives a user-disconnected channel when its platform was just authorised", async () => {
+    const prisma = makeFakePrisma(userDisconnectedFb());
+    await mirrorZernioAccounts(prisma, "ws1", [acc("acc-FB", "facebook")], [], {
+      explicitPlatform: "facebook",
+    });
+    expect(prisma.db.channel[0]).toMatchObject({ status: "active", statusReason: null });
+  });
+
+  it("revives only the platform that was authorised", async () => {
+    // Connecting Facebook must not quietly undo a WhatsApp disconnect.
+    const base = userDisconnectedFb();
+    base.channel.push({
+      ...base.channel[0],
+      id: "wa",
+      kind: "whatsapp",
+      externalId: "acc-WA",
+      displayName: "WA",
+    });
+    const prisma = makeFakePrisma(base);
+    await mirrorZernioAccounts(
+      prisma,
+      "ws1",
+      [acc("acc-FB", "facebook"), acc("acc-WA", "whatsapp")],
+      [],
+      { explicitPlatform: "facebook" },
+    );
+    const byId = Object.fromEntries(prisma.db.channel.map((c: { id: string }) => [c.id, c]));
+    expect(byId.fb).toMatchObject({ status: "active" });
+    expect(byId.wa).toMatchObject({ status: "disconnected", statusReason: "disconnected_by_user" });
+  });
+
+  it("still refuses to revive on a routine sync", async () => {
+    // R9 unchanged: a background reconcile must never undo a hub disconnect.
+    const prisma = makeFakePrisma(userDisconnectedFb());
+    await mirrorZernioAccounts(prisma, "ws1", [acc("acc-FB", "facebook")], []);
+    expect(prisma.db.channel[0]).toMatchObject({ status: "disconnected" });
+  });
+
   it("never touches another workspace's channels", async () => {
     const prisma = makeFakePrisma({
       channel: [
