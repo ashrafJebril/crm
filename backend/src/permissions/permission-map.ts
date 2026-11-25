@@ -586,6 +586,12 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /integrations/facebook/select-page": "channels.update",
   "GET /integrations/instagram/status": "channels.view",
   "POST /integrations/instagram/sync": "channels.update",
+  // Tech Provider: which popup connect buttons the channels hub may show.
+  "GET /integrations/meta/config": "channels.view",
+  // Meta app callbacks — signed by Meta, verified in the handler, never a session.
+  "POST /meta/deauthorize": "public",
+  "POST /meta/data-deletion": "public",
+  "GET /meta/data-deletion/status": "public",
   "GET /integrations/whatsapp/status": "channels.view",
   "POST /integrations/whatsapp/connect": "channels.create",
   "POST /integrations/whatsapp/connect-by-token": "channels.create",

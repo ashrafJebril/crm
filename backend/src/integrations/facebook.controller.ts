@@ -20,6 +20,7 @@ import { CurrentViewer, CurrentWorkspace } from "../common/current-workspace.dec
 import { PermissionService } from "../permissions/permission.service";
 import type { Viewer } from "../permissions/visibility";
 import { Public } from "../auth/public.decorator";
+import { techProviderEnabled } from "../common/meta-app";
 
 const OAUTH_SCOPES = [
   "pages_show_list",
@@ -63,13 +64,23 @@ export class FacebookController {
     }
     const nonce = randomBytes(16).toString("hex");
     const state = this.jwt.sign(
-      { workspaceId, nonce, purpose: "fb_oauth" },
+      {
+        workspaceId,
+        nonce,
+        purpose: "fb_oauth",
+        lfb: techProviderEnabled() && !!process.env.META_FB_CONFIG_ID,
+      },
       { expiresIn: "10m" },
     );
+    // Tech Provider: Facebook Login for Business — permissions live in the
+    // login configuration (config_id) set up in the Meta dashboard. Until the
+    // switch is on, keep the classic scope-based dialog exactly as before.
+    const configId = process.env.META_FB_CONFIG_ID;
+    const useLoginForBusiness = techProviderEnabled() && !!configId;
     const params = new URLSearchParams({
       client_id: appId,
       redirect_uri: this.callbackUrl(),
-      scope: OAUTH_SCOPES,
+      ...(useLoginForBusiness ? { config_id: configId! } : { scope: OAUTH_SCOPES }),
       response_type: "code",
       state,
     });
@@ -104,12 +115,14 @@ export class FacebookController {
     }
 
     let workspaceId: string;
+    let viaLoginForBusiness = false;
     try {
-      const payload = this.jwt.verify<{ workspaceId: string; purpose: string }>(state);
+      const payload = this.jwt.verify<{ workspaceId: string; purpose: string; lfb?: boolean }>(state);
       if (payload.purpose !== "fb_oauth" || !payload.workspaceId) {
         throw new Error("Bad state payload");
       }
       workspaceId = payload.workspaceId;
+      viaLoginForBusiness = payload.lfb === true;
     } catch (e) {
       this.log.warn(`State verification failed: ${(e as Error).message}`);
       return redirectWithStatus({ fb: "error", msg: "Invalid OAuth state" });
@@ -117,7 +130,9 @@ export class FacebookController {
 
     try {
       const userToken = await this.fb.exchangeCodeForUserToken(code, this.callbackUrl());
-      await this.fb.connect(workspaceId, userToken);
+      await this.fb.connect(workspaceId, userToken, {
+        connectedVia: viaLoginForBusiness ? "login_for_business" : "oauth",
+      });
       return redirectWithStatus({ fb: "connected" });
     } catch (e) {
       this.log.error(`OAuth callback failed: ${(e as Error).message}`);

@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   HttpException,
   Injectable,
   Logger,
@@ -12,6 +14,8 @@ import { normalizeReaction } from "./message-reaction";
 import { PrismaService } from "../prisma/prisma.service";
 import { redactUrl } from "../common/redact-url";
 import { decryptSecret } from "../common/token-crypto";
+import { techProviderEnabled, whatsappApp } from "../common/meta-app";
+import { toChannelDto } from "../channels/channel-dto";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
@@ -39,6 +43,9 @@ import { normalizeTemplateQuality } from "../channels/health/health-model";
 import { sentByData } from "../conversations/message-sender";
 import { AgentReplyGate } from "../agent/agent-reply-gate";
 
+/** Internal connect input: popup connects don't use a per-row verify token. */
+type WaConnectInput = Omit<ConnectWhatsAppDto, "verifyToken"> & { verifyToken?: string };
+
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 interface WaPhoneInfo {
@@ -47,8 +54,16 @@ interface WaPhoneInfo {
   verified_name?: string;
 }
 
+type WaMessage = NonNullable<WebhookEntryChangeValue["messages"]>[number];
+
 interface WebhookEntryChangeValue {
   messaging_product?: string;
+  // Coexistence: messages the business typed in the WhatsApp Business app.
+  message_echoes?: Array<WaMessage & { to: string }>;
+  // Coexistence: chat history imported right after onboarding.
+  history?: Array<{
+    threads?: Array<{ id: string; messages?: Array<WaMessage & { to?: string }> }>;
+  }>;
   metadata?: {
     display_phone_number?: string;
     phone_number_id: string;
@@ -175,6 +190,10 @@ const LANG_TO_META: Record<"en" | "ar", string> = {
 export type ConnectErrorStyle = "legacy" | "keys";
 export interface ConnectOptions {
   errorStyle?: ConnectErrorStyle;
+  /** How the number was connected ("coexistence", "embedded_signup", …). */
+  connectedVia?: string;
+  /** Meta's app-scoped user id, which the data-deletion callback matches on. */
+  metaUserId?: string | null;
 }
 
 @Injectable()
@@ -240,10 +259,13 @@ export class WhatsAppService {
   }
 
   /**
-   * The old embedded-signup route (`POST /integrations/whatsapp/oauth/exchange`).
-   * SP-19 T4: delegates to `EmbeddedSignupService` (config check, plan limit,
-   * code exchange, WABA subscribe, register, channel-aware attach) and
-   * returns its ChannelDto. The popup's `phoneNumberId` + `wabaId` arrive
+   * The Tech Provider popup route (`POST /integrations/whatsapp/oauth/exchange`),
+   * off until META_TECH_PROVIDER_ENABLED is on. `cloud` delegates to
+   * `EmbeddedSignupService` (SP-19 T4: config check, plan limit, code
+   * exchange, WABA subscribe, register, channel-aware attach) and returns its
+   * ChannelDto; `coexistence` connects a number already live on the WhatsApp
+   * Business app, which Meta registers itself, and asks Meta for the contact
+   * and history sync. The popup's `phoneNumberId` + `wabaId` arrive
    * out-of-band via window.message.
    */
   async embeddedSignupExchange(
@@ -251,13 +273,104 @@ export class WhatsAppService {
     code: string,
     phoneNumberId: string,
     wabaId: string,
+    metaUserId?: string,
+    mode: "cloud" | "coexistence" = "cloud",
   ) {
+    // Popup connect is a Tech Provider feature — refuse until Meta approves us
+    // and the owner flips META_TECH_PROVIDER_ENABLED.
+    if (!techProviderEnabled()) {
+      throw new ForbiddenException("Connect with Meta is not enabled yet");
+    }
+    await this.assertNotZernio(workspaceId);
+
+    if (mode === "coexistence") {
+      const { appId, appSecret } = whatsappApp();
+      if (!appId || !appSecret) {
+        throw new BadRequestException("META_APP_ID / META_APP_SECRET not configured");
+      }
+      // Embedded Signup codes are exchanged WITHOUT a redirect_uri (the popup
+      // flow has none). The result is a business-integration system-user token
+      // scoped to the WABA the customer just picked.
+      const tokenUrl =
+        `${GRAPH}/oauth/access_token?client_id=${appId}` +
+        `&client_secret=${appSecret}` +
+        `&code=${encodeURIComponent(code)}`;
+      const tokenRes = await this.fetchJson<{ access_token: string }>(tokenUrl, { method: "GET" });
+      if (!tokenRes.access_token) {
+        throw new BadRequestException("Meta did not return an access token");
+      }
+      const token = tokenRes.access_token;
+
+      // Coexistence: the number is already live on the WhatsApp Business app
+      // and Meta registers it during the popup. Calling /register would fail,
+      // and no PIN is ours to keep.
+      const result = await this.connect(
+        workspaceId,
+        { phoneNumberId, wabaId, accessToken: token },
+        { connectedVia: "coexistence", metaUserId: metaUserId ?? null },
+      );
+      // Meta only allows these within 24h of onboarding. Contacts and chat
+      // history then arrive on the webhook (smb_app_state_sync / history).
+      const sync = await this.startCoexistenceSync(phoneNumberId, token);
+      // The channels hub expects the connected channel, like the cloud path.
+      const row = await this.prisma.channel.findFirst({ where: { id: result.channelId, workspaceId } });
+      return {
+        ...(row ? toChannelDto(row) : {}),
+        ...result,
+        phoneRegistered: true,
+        coexistence: true,
+        syncStarted: sync,
+      };
+    }
+
+    // SP-19 T4: the Cloud API path is the signup service's (config check, plan
+    // limit, code exchange, WABA subscribe, register, channel-aware attach).
     return this.embeddedSignup.signup(workspaceId, {
       code,
       phoneNumberId,
       wabaId,
+      metaUserId: metaUserId ?? null,
       signupEvent: phoneNumberId ? "FINISH" : "FINISH_ONLY_WABA",
     });
+  }
+
+  /** POST /{phone}/smb_app_data for contacts, then history. Best-effort. */
+  private async startCoexistenceSync(
+    phoneNumberId: string,
+    token: string,
+  ): Promise<{ contacts: boolean; history: boolean }> {
+    const run = async (sync_type: string) => {
+      try {
+        await this.graphPost(`/${phoneNumberId}/smb_app_data`, token, {
+          messaging_product: "whatsapp",
+          sync_type,
+        });
+        return true;
+      } catch (e) {
+        this.log.warn(`coexistence ${sync_type} failed for phone=${phoneNumberId}: ${(e as Error).message}`);
+        return false;
+      }
+    };
+    const contacts = await run("smb_app_state_sync");
+    const history = await run("history");
+    return { contacts, history };
+  }
+
+  /**
+   * A workspace has one WhatsApp row. If Zernio owns it, a Meta connect would
+   * overwrite it and break Zernio sends/campaigns — refuse instead. Moving a
+   * Zernio customer over is a separate migration.
+   */
+  private async assertNotZernio(workspaceId: string) {
+    const row = await this.prisma.integration.findFirst({
+      where: { workspaceId, platform: "whatsapp", provider: "zernio" },
+      select: { id: true },
+    });
+    if (row) {
+      throw new ConflictException(
+        "WhatsApp is connected through Zernio for this workspace. Disconnect it there first.",
+      );
+    }
   }
 
   /**
@@ -330,8 +443,7 @@ export class WhatsAppService {
     // it. debug_token's granular_scopes carries the WABA id under
     // `whatsapp_business_management` / `whatsapp_business_messaging`'s
     // target_ids array.
-    const appId = process.env.META_APP_ID_WA ?? process.env.META_APP_ID;
-    const appSecret = process.env.META_APP_SECRET_WA ?? process.env.META_APP_SECRET;
+    const { appId, appSecret } = whatsappApp();
     if (appId && appSecret) {
       interface GranularScope {
         scope: string;
@@ -522,9 +634,10 @@ export class WhatsAppService {
    * it in place, and a DIFFERENT number is added as its own channel (token in
    * `secretsEnc`) instead of overwriting the first. A number that takes a new
    * slot needs room under the plan limit (409 channels.limit_reached, checked
-   * before Meta is called).
+   * before Meta is called). A Zernio number in the same workspace keeps its
+   * own channel — SP-19 rows never overwrite each other.
    */
-  async connect(workspaceId: string, dto: ConnectWhatsAppDto, opts: ConnectOptions = {}) {
+  async connect(workspaceId: string, dto: WaConnectInput, opts: ConnectOptions = {}) {
     await ensureLegacyChannels(this.prisma, workspaceId);
     if (await addsWhatsappSlot(this.prisma, workspaceId, dto.phoneNumberId)) {
       await assertWhatsappCapacity(this.prisma, workspaceId);
@@ -562,7 +675,18 @@ export class WhatsAppService {
       status: "active",
       statusReason: null,
       verification: null,
-      verifyToken: dto.verifyToken,
+      // A popup connect brings no verify token; the row still gets one (the
+      // app-level META_VERIFY_TOKEN answers the handshake either way).
+      verifyToken: dto.verifyToken ?? `aram-wa-${randomBytes(6).toString("hex")}`,
+      // Meta's data-deletion callback matches on `metaUserId` (R: compliance).
+      ...(opts.connectedVia || opts.metaUserId !== undefined
+        ? {
+            provenance: {
+              ...(opts.connectedVia ? { connectedVia: opts.connectedVia } : {}),
+              ...(opts.metaUserId !== undefined ? { metaUserId: opts.metaUserId } : {}),
+            },
+          }
+        : {}),
     });
     this.realtime.emitToWorkspace?.(workspaceId, "channels.updated", { channelId: channel.id });
 
@@ -1089,6 +1213,21 @@ export class WhatsAppService {
           continue;
         }
         const workspaceId = ch.workspaceId;
+        // Coexistence: echoes of messages sent from the phone, and imported
+        // history. Stored without unread bumps, pipeline tickets or AI.
+        for (const echo of v.message_echoes ?? []) {
+          await this.ingestFromPhone(ch, echo.to, echo, "human", false);
+          processed += 1;
+        }
+        for (const chunk of v.history ?? []) {
+          for (const thread of chunk.threads ?? []) {
+            for (const m of thread.messages ?? []) {
+              await this.ingestFromPhone(ch, thread.id, m, m.from === thread.id ? "them" : "human", true);
+              processed += 1;
+            }
+          }
+        }
+
         const messages = v.messages ?? [];
         const profileByWaId = new Map<string, string | undefined>();
         for (const c of v.contacts ?? []) {
@@ -1335,6 +1474,88 @@ export class WhatsAppService {
     if (!meta) return "en";
     if (meta.startsWith("ar")) return "ar";
     return "en";
+  }
+
+  /**
+   * Store a coexistence message that didn't arrive as a normal inbound:
+   * an echo of what the business typed on the phone, or imported history.
+   * Deduped by wamid; never bumps unread, opens tickets or wakes the AI.
+   */
+  private async ingestFromPhone(
+    channel: Pick<Channel, "id" | "workspaceId">,
+    customerWaId: string,
+    msg: WaMessage,
+    from: "them" | "human",
+    historical: boolean,
+  ) {
+    const workspaceId = channel.workspaceId;
+    if (!customerWaId) return;
+    if (msg.id) {
+      const seen = await this.prisma.message.findFirst({
+        where: { workspaceId, metaMessageId: msg.id },
+        select: { id: true },
+      });
+      if (seen) return;
+    }
+    const contact = await this.prisma.contact.upsert({
+      where: {
+        workspaceId_externalSource_externalId: { workspaceId, externalSource: "whatsapp", externalId: customerWaId },
+      },
+      create: {
+        workspaceId,
+        name: `WhatsApp ${this.maskPhone(customerWaId)}`,
+        phone: `+${customerWaId}`,
+        industry: "whatsapp",
+        lifecycle: "lead",
+        source: "whatsapp",
+        lastSeen: historical ? "—" : "now",
+        externalSource: "whatsapp",
+        externalId: customerWaId,
+      },
+      update: {},
+    });
+    const body = this.extractBody(msg) || `[${msg.type} message]`;
+    // SP-19: (workspace, contact, channelId) — an echo or an imported message
+    // belongs on the same thread as a live message from this number, and the
+    // reply goes back out through it.
+    let conv = await this.channels.findOrAdoptConversation(workspaceId, contact.id, {
+      id: channel.id,
+      kind: "whatsapp",
+    });
+    if (!conv) {
+      conv = await this.prisma.conversation.create({
+        data: {
+          workspaceId,
+          contactId: contact.id,
+          channelId: channel.id,
+          unread: 0,
+          pinned: false,
+          lastAt: historical ? "—" : "now",
+          lastFrom: from,
+          preview: body.slice(0, 140),
+          channel: "whatsapp",
+          status: "human",
+          intent: "—",
+          confidence: 0,
+        },
+      });
+    } else if (!historical) {
+      await this.prisma.conversation.update({
+        where: { id: conv.id },
+        data: { preview: body.slice(0, 140), lastAt: "now", lastFrom: from },
+      });
+    }
+    const ts = Number(msg.timestamp) * 1000;
+    const d = Number.isFinite(ts) ? new Date(ts) : new Date();
+    const t = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    await this.prisma.message.create({
+      data: { workspaceId, conversationId: conv.id, from, body, t, metaMessageId: msg.id ?? null },
+    });
+    this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
+      channel: "whatsapp",
+      channelId: channel.id,
+      conversationId: conv.id,
+    });
   }
 
   private async ingestInbound(

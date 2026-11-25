@@ -24,7 +24,9 @@ primary_region = "fra"
   NODE_ENV = "production"
   PORT = "8080"
   META_GRAPH_VERSION = "v21.0"
-  META_APP_ID = "2203796510457334"
+  # Tech Provider app "Kewy Marketing" (business Balawi Ads). The previous main
+  # app was 2203796510457334; its secret lives on as META_APP_SECRET_LEGACY.
+  META_APP_ID = "1733639664328456"
   META_APP_ID_WA = "1245753357432458"
   BACKEND_PUBLIC_URL = "https://api-marketing.kewy.ai"
   # Backend origin used to build public media/webhook URLs (media, social, zernio,
@@ -81,7 +83,8 @@ primary_region = "fra"
 # Secrets — set with `fly secrets set -a kewy-marketing-api KEY=value` (never in this file):
 #   DATABASE_URL          (set automatically by `fly postgres attach`)
 #   JWT_SECRET            (must be >= 32 chars — the app refuses to boot otherwise)
-#   META_APP_SECRET, META_APP_SECRET_WA, META_VERIFY_TOKEN
+#   META_APP_SECRET, META_APP_SECRET_WA, META_APP_SECRET_LEGACY, META_VERIFY_TOKEN
+#   META_TECH_PROVIDER_ENABLED, META_FB_CONFIG_ID, META_WA_CONFIG_ID
 #   OPENAI_API_KEY
 #   TOKEN_ENC_KEY
 #   ZERNIO_API_KEY, ZERNIO_BASE_URL, ZERNIO_WEBHOOK_SECRET, ZERNIO_REDIRECT_BASE

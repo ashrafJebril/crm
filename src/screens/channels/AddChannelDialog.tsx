@@ -8,6 +8,8 @@ import { channelErrorCopy, channelErrorText } from "./channelErrors";
 import { kindLabel, limitState } from "./channelModel";
 import { Banner, ErrorText, KindMark, LabeledField, fieldInput } from "./channelUi";
 import { EmbeddedSignupButton } from "./EmbeddedSignupButton";
+import { WhatsAppPopupConnect, useMetaConfig } from "@/screens/settings/MetaConnect";
+import { popupAvailable } from "@/screens/settings/metaConnectLogic";
 import { NumberLimitNotice } from "./NumberLimitNotice";
 import { TelegramConnectForm } from "./TelegramConnectForm";
 import { WhatsAppManualForm } from "./WhatsAppManualForm";
@@ -44,6 +46,10 @@ export function AddChannelDialog({
   const [step, setStep] = useState<Step>("pick");
   const zernio = useZernioConnect(tx);
   const atLimit = limitState(limits) === "at_limit";
+  // Tech Provider coexistence: offered only once the backend switch is on and
+  // WhatsApp is not already running through Zernio for this workspace.
+  const metaCfg = useMetaConfig();
+  const waPopup = popupAvailable(metaCfg.data, "whatsapp");
   const title = tx("Add a channel", "إضافة قناة");
 
   const back = (
@@ -140,6 +146,11 @@ export function AddChannelDialog({
               </div>
               <EmbeddedSignupButton config={esConfig} tx={tx} canSeeConfig={canSeeConfig} disabled={atLimit} onConnected={onConnected} />
             </Section>
+            {waPopup && (
+              <Section title={tx("Already using the WhatsApp Business app", "تستخدم تطبيق واتساب للأعمال بالفعل")}>
+                <WhatsAppPopupConnect cfg={metaCfg.data!} tx={tx} only="coexistence" disabled={atLimit} onConnected={onConnected} />
+              </Section>
+            )}
             <Section title={tx("Through Zernio", "عبر Zernio")}>{zernioPanel("whatsapp")}</Section>
             <Section title={tx("With an access token", "برمز وصول")} collapsible tx={tx}>
               <WhatsAppManualForm tx={tx} disabled={atLimit} onConnected={onConnected} />

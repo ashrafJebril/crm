@@ -27,6 +27,7 @@ import type { Viewer } from "../permissions/visibility";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { MediaModule } from "../media/media.module";
 import { TemplatesService } from "./templates.service";
+import { MetaTemplatesClient } from "../integrations/meta-templates.client";
 
 const CATEGORIES = ["TRANSACTIONAL", "UTILITY", "MARKETING", "AUTHENTICATION"] as const;
 // SP-13: "none" removes the header.
@@ -190,7 +191,7 @@ class TemplatesController {
   // SP-13: MediaModule for header files (MediaService.get with the viewer).
   imports: [IntegrationsModule, MediaModule],
   controllers: [TemplatesController],
-  providers: [TemplatesService],
+  providers: [TemplatesService, MetaTemplatesClient],
   // SP-14: the health sweep reconciles the default number's rows from the list it read.
   exports: [TemplatesService],
 })

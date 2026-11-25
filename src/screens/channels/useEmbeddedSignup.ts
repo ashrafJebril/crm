@@ -16,7 +16,7 @@ declare global {
     FB?: {
       init: (opts: { appId: string; cookie?: boolean; xfbml?: boolean; autoLogAppEvents?: boolean; version: string }) => void;
       login: (
-        cb: (resp: { authResponse?: { code?: string; accessToken?: string } | null }) => void,
+        cb: (resp: { authResponse?: { code?: string; accessToken?: string; userID?: string } | null; status?: string }) => void,
         opts: {
           config_id: string;
           response_type?: string;

@@ -10,6 +10,8 @@ import { IconGlobe, IconCheck, IconX, IconArrow } from "@/icons";
 import { ErrorRow, SettingsCard, StatusToast } from "./form";
 import { McpAccessCard } from "./McpAccessCard";
 import { useConnectFlow } from "@/embed/useConnectFlow";
+import { useMetaConfig } from "./MetaConnect";
+import { popupAvailable } from "./metaConnectLogic";
 
 // Facebook/Instagram now connect through Zernio instead of our own Meta app —
 // no App Review, no Tester enrollment. The legacy Meta-app cards are kept in
@@ -39,6 +41,10 @@ export function IntegrationsTab() {
   // changes so each card refetches /integrations/*/status for the new tenant
   // instead of showing the previous workspace's connected state.
   const wsKey = activeWorkspace?.id ?? "none";
+  // Tech Provider: once the switch is on, our own Meta FB/IG cards come back
+  // for workspaces that don't already have Facebook through Zernio.
+  const metaCfg = useMetaConfig();
+  const showMetaFb = SHOW_META_LEGACY || popupAvailable(metaCfg.data, "facebook");
 
   return (
     <>
@@ -47,8 +53,8 @@ export function IntegrationsTab() {
       {canView && <ChannelsMovedCard tx={tx} />}
 
       {/* Legacy Meta-app FB/IG cards — dormant, kept for rollback (see flag). */}
-      {SHOW_META_LEGACY && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} canConnect={canConnect} canDisconnect={canDisconnect} />}
-      {SHOW_META_LEGACY && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
+      {showMetaFb && <FacebookCard key={`fb-${wsKey}`} tx={tx} canEdit={canEdit} canConnect={canConnect} canDisconnect={canDisconnect} />}
+      {showMetaFb && <InstagramCard key={`ig-${wsKey}`} tx={tx} />}
 
       <McpAccessCard key={`mcp-${wsKey}`} tx={tx} canCreate={canCreateKey} canDelete={canDeleteKey} />
     </>

@@ -10,6 +10,11 @@ setup (system-user token from the customer's own Business Manager).
 > offboarding, connect the replacement platform (or deregister the number)
 > **before** disconnecting tkana — never leave a number orphaned.
 
+> **Tech Provider popup (coming):** once Meta approves the app and
+> `META_TECH_PROVIDER_ENABLED=true`, customers click **Connect with Meta** and
+> do it themselves — no call, no token. Everything below stays valid as the
+> **backup** path. See `docs/meta-tech-provider-setup.md`.
+
 ---
 
 ## 1 · Onboarding a customer (no App Review needed)

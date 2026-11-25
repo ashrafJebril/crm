@@ -16,6 +16,7 @@ import { MetaWebhookSignatureGuard } from "../common/meta-webhook-signature.guar
 import {
   ConnectByTokenDto,
   ConnectWhatsAppDto,
+  EmbeddedSignupDto,
   SendWhatsAppDto,
   SendWhatsAppTemplateDto,
   TestSendWhatsAppDto,
@@ -64,13 +65,15 @@ export class WhatsAppController {
   @Post("integrations/whatsapp/oauth/exchange")
   embeddedSignup(
     @CurrentWorkspace() workspaceId: string,
-    @Body() dto: { code: string; phoneNumberId: string; wabaId: string },
+    @Body() dto: EmbeddedSignupDto,
   ) {
     return this.wa.embeddedSignupExchange(
       workspaceId,
       dto.code,
       dto.phoneNumberId,
       dto.wabaId,
+      dto.metaUserId,
+      dto.mode ?? "cloud",
     );
   }
 

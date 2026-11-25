@@ -129,6 +129,12 @@ export interface AttachMetaNumberInput {
   verification: Verification | null;
   /** Written into a NEW legacy Integration's raw (webhook verify token). */
   verifyToken?: string;
+  /**
+   * How the number was connected, and Meta's app-scoped user id. Kept on the
+   * legacy Integration's `raw` (where `MetaComplianceService` matches on
+   * `metaUserId`) and on the channel's config.
+   */
+  provenance?: Record<string, unknown>;
 }
 
 export interface AttachMetaNumberResult {
@@ -162,6 +168,7 @@ export async function attachMetaNumber(
       expiresAt: null,
       raw: JSON.stringify({
         ...prevRaw,
+        ...(a.provenance ?? {}),
         wabaId: a.wabaId,
         verifyToken: a.verifyToken ?? prevRaw.verifyToken,
         displayPhoneNumber: a.displayPhoneNumber,
@@ -235,7 +242,10 @@ async function finish(
     status: a.status,
     statusReason: a.statusReason,
     disconnectedAt: null,
-    config: withVerification({ ...objectConfig(row.config), wabaId: a.wabaId }, a.verification) as Prisma.InputJsonValue,
+    config: withVerification(
+      { ...objectConfig(row.config), ...(a.provenance ?? {}), wabaId: a.wabaId },
+      a.verification,
+    ) as Prisma.InputJsonValue,
   };
   const e164 = toE164(a.displayPhoneNumber);
   if (e164) data.phoneNumber = e164;

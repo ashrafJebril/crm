@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsArray, IsNotEmpty, IsOptional, IsString, MinLength, ValidateNested } from "class-validator";
+import { IsArray, IsIn, IsNotEmpty, IsOptional, IsString, MinLength, ValidateNested } from "class-validator";
 
 export class ConnectWhatsAppDto {
   // Meta-issued phone-number id (NOT the phone number itself). Found under
@@ -28,6 +28,34 @@ export class ConnectWhatsAppDto {
   @IsOptional()
   @IsString()
   displayPhoneNumber?: string;
+}
+
+/** Result of Meta's Embedded Signup popup (code from FB.login, ids from the
+ *  WA_EMBEDDED_SIGNUP window message, userID from authResponse). */
+export class EmbeddedSignupDto {
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phoneNumberId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  wabaId!: string;
+
+  // App-scoped Facebook user id of whoever completed the popup. Lets the
+  // deauthorize / data-deletion callbacks find this connection.
+  @IsOptional()
+  @IsString()
+  metaUserId?: string;
+
+  // "coexistence" = the number stays on the WhatsApp Business app on the
+  // phone (Meta's QR-code flow); "cloud" = a fresh Cloud API number.
+  @IsOptional()
+  @IsIn(["cloud", "coexistence"])
+  mode?: "cloud" | "coexistence";
 }
 
 export class ConnectByTokenDto {

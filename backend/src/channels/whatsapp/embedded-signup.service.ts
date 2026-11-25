@@ -9,6 +9,7 @@ import { assertWhatsappCapacity } from "../channel-limits";
 import { encryptChannelSecrets, secretsEncryptionEnabled } from "../channel-credentials";
 import { ensureDefaultPerKind, ensureLegacyChannels } from "../legacy-mirror";
 import { graphVersion, MetaGraphClient, MetaGraphError } from "./meta-graph.client";
+import { techProviderEnabled, whatsappApp } from "../../common/meta-app";
 import {
   addsWhatsappSlot,
   assertSecretsStorable,
@@ -46,15 +47,23 @@ export interface EmbeddedSignupInput {
   phoneNumberId?: string;
   signupEvent?: SignupEvent;
   displayName?: string;
+  /** Meta's app-scoped user id from the popup; the data-deletion callback matches on it. */
+  metaUserId?: string | null;
 }
 
 const env = (k: string) => (process.env[k] ?? "").trim();
 
-/** The Meta app settings, from env only — nothing is invented (R1). */
+/**
+ * The Meta app settings, from env only — nothing is invented (R1). Which app
+ * is `whatsappApp()`'s decision, so the Tech Provider switch moves this path
+ * onto the single app with every other WhatsApp path at once (a code issued
+ * for one app cannot be exchanged with the other).
+ */
 function metaApp() {
+  const app = whatsappApp();
   return {
-    appId: env("META_APP_ID_WA") || env("META_APP_ID"),
-    appSecret: env("META_APP_SECRET_WA") || env("META_APP_SECRET"),
+    appId: (app.appId ?? "").trim(),
+    appSecret: (app.appSecret ?? "").trim(),
     configId: env("META_WA_CONFIG_ID"),
     solutionId: env("META_WA_SOLUTION_ID"),
   };
@@ -62,8 +71,9 @@ function metaApp() {
 
 /**
  * Whether the embedded signup can run (R1). It needs the WhatsApp app id and
- * secret (`META_APP_ID_WA`/`META_APP_SECRET_WA`, falling back to
- * `META_APP_ID`/`META_APP_SECRET`) and the Login-for-Business configuration
+ * secret — `META_APP_ID_WA`/`META_APP_SECRET_WA` falling back to
+ * `META_APP_ID`/`META_APP_SECRET`, or the main app alone once
+ * `META_TECH_PROVIDER_ENABLED` is on — and the Login-for-Business configuration
  * `META_WA_CONFIG_ID`; `META_WA_SOLUTION_ID` is optional. In production it
  * also needs `TOKEN_ENC_KEY` (R5: new channel secrets are never stored in
  * plaintext there). The app secret is never returned.
@@ -72,8 +82,11 @@ export function embeddedSignupConfig(opts: { includeMissing: boolean }): Embedde
   const app = metaApp();
   const version = graphVersion();
   const missing: string[] = [];
-  if (!app.appId) missing.push("META_APP_ID_WA");
-  if (!app.appSecret) missing.push("META_APP_SECRET_WA");
+  // Name the variables that app actually reads, so the hint is actionable.
+  const idVar = techProviderEnabled() ? "META_APP_ID" : "META_APP_ID_WA";
+  const secretVar = techProviderEnabled() ? "META_APP_SECRET" : "META_APP_SECRET_WA";
+  if (!app.appId) missing.push(idVar);
+  if (!app.appSecret) missing.push(secretVar);
   if (!app.configId) missing.push("META_WA_CONFIG_ID");
   if (missing.length) {
     return {
@@ -192,7 +205,7 @@ export class EmbeddedSignupService {
     const soleNumber = !withNumber && !input.signupEvent ? await this.soleCloudNumber(wabaId, token) : null;
 
     const row = withNumber || soleNumber
-      ? await this.attachNumber(workspaceId, { token, wabaId, phoneNumberId: (phoneNumberId ?? soleNumber)!, subscribed, displayName: input.displayName })
+      ? await this.attachNumber(workspaceId, { token, wabaId, phoneNumberId: (phoneNumberId ?? soleNumber)!, subscribed, displayName: input.displayName, metaUserId: input.metaUserId ?? null })
       : await this.pendingNumber(workspaceId, { token, wabaId, subscribed, reuse: reuse ?? (await this.pendingFor(workspaceId, wabaId)), displayName: input.displayName });
 
     this.realtime.emitToWorkspace(workspaceId, "channels.updated", { channelId: row.id });
@@ -213,7 +226,7 @@ export class EmbeddedSignupService {
   /** 4. FINISH with a number: read it, register it, attach it. */
   private async attachNumber(
     workspaceId: string,
-    a: { token: string; wabaId: string; phoneNumberId: string; subscribed: boolean; displayName?: string },
+    a: { token: string; wabaId: string; phoneNumberId: string; subscribed: boolean; displayName?: string; metaUserId?: string | null },
   ): Promise<Channel> {
     let info;
     try {
@@ -263,6 +276,7 @@ export class EmbeddedSignupService {
       verification,
       // Only used when this becomes the legacy Integration (Meta webhook handshake).
       verifyToken: `aram-wa-${randomBytes(6).toString("hex")}`,
+      provenance: { connectedVia: "embedded_signup", metaUserId: a.metaUserId ?? null },
     });
     return channel;
   }

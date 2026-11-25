@@ -4,6 +4,9 @@ import { channelError } from "./channel-errors";
 import { whatsappLimit } from "./channel-limits";
 import { ensureLegacyChannels } from "./legacy-mirror";
 import { asChannelHealth, UNKNOWN, type ChannelHealth } from "./health/health-model";
+import { credentialsFor } from "./channel-credentials";
+import { decryptSecret } from "../common/token-crypto";
+import { NOT_META, objectConfig } from "./whatsapp/meta-number";
 
 /**
  * SP-13 fix round 1 (M3): the one "connected" rule. A WhatsApp channel
@@ -258,4 +261,67 @@ export async function campaignSenderOptions(
     limit: Math.min(CAMPAIGN_SENDERS_MAX, whatsappLimit(ws?.plan ?? "free")),
     senders,
   };
+}
+
+/** SP-19 + direct-Meta templates: the WABA credentials of a Meta number. */
+export interface MetaWhatsappCredentials {
+  /** null for a legacy Integration-only number (no channel mirrored yet). */
+  channelId: string | null;
+  token: string;
+  wabaId: string;
+}
+
+/**
+ * The workspace's default Meta (non-Zernio) WhatsApp number, with the token
+ * and WABA id its templates are read and written through. Default first, then
+ * the most recently updated connected number; a legacy Integration-linked row
+ * takes its token from the Integration (`credentialsFor`). Returns null when
+ * the workspace has no connected Meta number, or that number carries no
+ * usable token / WABA id.
+ */
+export async function defaultMetaWhatsappCredentials(
+  prisma: PrismaService,
+  workspaceId: string,
+): Promise<MetaWhatsappCredentials | null> {
+  const rows = await prisma.channel.findMany({
+    where: {
+      workspaceId,
+      kind: "whatsapp",
+      provider: { notIn: [...NOT_META] },
+      status: { in: [...CONNECTED_CHANNEL_STATUSES] },
+    },
+    orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
+  });
+  for (const ch of rows) {
+    const wabaId = objectConfig(ch.config).wabaId;
+    if (typeof wabaId !== "string" || !wabaId) continue;
+    const creds = await credentialsFor(prisma, ch);
+    if (!creds.accessToken) continue;
+    return { channelId: ch.id, token: creds.accessToken, wabaId };
+  }
+
+  // Same fallback as the Zernio lookup: a number `main` connected that has no
+  // channel yet is still the workspace's number. Once it has one, the channel
+  // decides (R9), so a mirrored row is never reached this way.
+  const integ = await prisma.integration.findFirst({
+    where: { workspaceId, platform: "whatsapp", provider: { notIn: [...NOT_META] } },
+  });
+  if (!integ?.pageId || !integ.accessToken) return null;
+  const mirrored = await prisma.channel.findFirst({
+    where: { workspaceId, OR: [{ integrationId: integ.id }, { provider: integ.provider, externalId: integ.pageId }] },
+    select: { id: true },
+  });
+  if (mirrored) return null;
+  const wabaId = parseRawWabaId(integ.raw);
+  const token = decryptSecret(integ.accessToken);
+  return wabaId && token ? { channelId: null, token, wabaId } : null;
+}
+
+function parseRawWabaId(raw: string | null | undefined): string | null {
+  try {
+    const parsed = raw ? (JSON.parse(raw) as { wabaId?: unknown }) : null;
+    return typeof parsed?.wabaId === "string" && parsed.wabaId ? parsed.wabaId : null;
+  } catch {
+    return null;
+  }
 }
