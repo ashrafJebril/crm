@@ -57,6 +57,11 @@ class ZernioDbSendTemplateDto {
   @IsOptional() @ValidateNested() @Type(() => TemplateHeaderDto) header?: TemplateHeaderDto;
 }
 
+/** Body of the post-OAuth reconcile. */
+class ZernioSyncDto {
+  @IsOptional() @IsString() platform?: string;
+}
+
 class ZernioCommentReplyDto {
   @IsString() message!: string;
   @IsOptional() @IsString() accountId?: string;
@@ -108,10 +113,12 @@ export class ZernioController {
     });
   }
 
-  /** Reconcile connected accounts (called by the frontend after the redirect). */
+  /** Reconcile connected accounts (called by the frontend after the redirect).
+   *  `platform` is set when this is the hosted-OAuth landing, which counts as
+   *  an explicit connect and so may revive a hub-disconnected channel. */
   @Post("integrations/zernio/sync")
-  sync(@CurrentWorkspace() workspaceId: string) {
-    return this.zernio.syncAccounts(workspaceId);
+  sync(@CurrentWorkspace() workspaceId: string, @Body() dto?: ZernioSyncDto) {
+    return this.zernio.syncAccounts(workspaceId, { connectedPlatform: dto?.platform });
   }
 
   @Get("integrations/zernio/whatsapp/numbers")
