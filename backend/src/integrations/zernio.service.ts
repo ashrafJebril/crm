@@ -294,6 +294,59 @@ export class ZernioService {
   }
 
   /**
+   * Pull each connected account's native posts from the platform now.
+   *
+   * Backs the Social feed's Refresh. Without it Refresh only re-reads what
+   * Zernio had already synced, which is why a Facebook Page sat at zero posts
+   * for six hours in production while the Page plainly had nine — Zernio's
+   * background sync refreshes an account at most every ~90 minutes and had
+   * evidently not managed it at all. One on-demand call returned all nine.
+   *
+   * Per account, so one failing platform cannot deny the others: a dead
+   * account answers 401/409 and we move on rather than failing the whole
+   * refresh. `skipped` is Zernio's ~15s debounce, not an error.
+   */
+  async syncExternalPosts(workspaceId: string) {
+    const profileId = await this.getProfileId(workspaceId);
+    if (!profileId || !this.client.isConfigured()) return { synced: [] as const, ok: false as const };
+
+    // The workspace's own accounts only — the Zernio API key is global, so
+    // this list is the tenancy boundary, exactly as elsewhere.
+    const channels = await this.prisma.channel.findMany({
+      where: { workspaceId, provider: "zernio", status: { not: "disconnected" } },
+      select: { externalId: true, kind: true },
+    });
+    const targets = channels.filter(
+      (c): c is { externalId: string; kind: string } =>
+        !!c.externalId && c.kind?.toLowerCase() !== "whatsapp",
+    );
+
+    const synced = await Promise.all(
+      targets.map(async (c) => {
+        try {
+          const r = await this.client.syncExternalPosts(c.externalId);
+          return { platform: c.kind, accountId: c.externalId, ...r, error: null as string | null };
+        } catch (e) {
+          const message = (e as Error).message ?? "sync failed";
+          this.log.warn(`external post sync failed for ${c.kind} ${c.externalId}: ${message}`);
+          return {
+            platform: c.kind,
+            accountId: c.externalId,
+            postsFound: 0,
+            postsSynced: 0,
+            skipped: false,
+            error: message,
+          };
+        }
+      }),
+    );
+    if (synced.some((r) => r.postsSynced > 0)) {
+      this.realtime.emitToWorkspace(workspaceId, "social.updated", {});
+    }
+    return { ok: true as const, synced };
+  }
+
+  /**
    * Platforms whose Zernio account we remove when the user disconnects the
    * channel in the hub.
    *

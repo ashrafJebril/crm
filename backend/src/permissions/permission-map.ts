@@ -422,6 +422,9 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /integrations/instagram/posts": "campaigns.create",
   "DELETE /integrations/instagram/posts/:mediaId": "campaigns.delete",
   "PATCH /integrations/instagram/posts/:mediaId": "campaigns.update",
+  // Pulls the latest native posts from the platform on demand (Refresh on
+  // the Social feed). A read of the connected accounts, not a change to them.
+  "POST /integrations/zernio/sync-external-posts": "campaigns.view",
   "GET /integrations/zernio/posts": "campaigns.view",
   // Import progress shown on the same Social feed tabs as the posts above.
   "GET /integrations/zernio/import-status": "campaigns.view",

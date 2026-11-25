@@ -624,6 +624,35 @@ export class ZernioClient {
   }
 
   /**
+   * Fetch an account's latest native posts from the platform, on demand.
+   *
+   * `POST /v1/posts/sync-external`. This is the difference between a Refresh
+   * button that works and one that only re-reads a stale cache: Zernio's
+   * BACKGROUND sync refreshes an account "at most every ~90 minutes", and in
+   * production it left a Facebook Page on zero posts for six hours while the
+   * Page visibly had nine. One call to this returned `postsFound: 9,
+   * postsSynced: 9` instantly.
+   *
+   * Synchronous — the posts are readable straight afterwards. Debounced per
+   * account at ~15s; inside that window Zernio skips the live fetch and
+   * answers `skipped: true`, which is not an error.
+   */
+  async syncExternalPosts(accountId: string): Promise<{
+    postsFound: number;
+    postsSynced: number;
+    skipped: boolean;
+  }> {
+    const res = await this.request<{
+      synced?: { postsFound?: number; postsSynced?: number; skipped?: boolean };
+    }>("POST", "/posts/sync-external", { body: { accountId } });
+    return {
+      postsFound: res.synced?.postsFound ?? 0,
+      postsSynced: res.synced?.postsSynced ?? 0,
+      skipped: res.synced?.skipped ?? false,
+    };
+  }
+
+  /**
    * Disconnect and remove a connected account at Zernio.
    *
    * `DELETE /v1/accounts/{accountId}` — documented as "Disconnects and removes

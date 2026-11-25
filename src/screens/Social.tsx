@@ -304,17 +304,40 @@ function SocialImpl() {
    * behind a post made that morning). So the feed can be right and look wrong,
    * and the user needs a way to ask again.
    */
-  const refreshFeeds = () => {
+  const [refreshing, setRefreshing] = useState(false);
+  const refetchFeeds = () => {
     void zernioStatusQ.refetch();
     if (fbConnected) void liveFbQ.refetch();
     if (igConnected) void liveIgQ.refetch();
     setScheduledRefresh((n) => n + 1);
   };
 
+  /**
+   * Refresh asks Zernio to pull from the platform FIRST, then re-reads.
+   *
+   * Re-reading alone is close to useless: Zernio's background sync refreshes
+   * an account at most every ~90 minutes, and in production a Facebook Page
+   * sat at zero posts for six hours while the Page plainly had nine. The
+   * on-demand sync returned all nine instantly.
+   */
+  const refreshFeeds = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await api.post("/integrations/zernio/sync-external-posts", {});
+    } catch {
+      // Still re-read: the sync is the bonus, the refetch is the floor.
+    } finally {
+      refetchFeeds();
+      setRefreshing(false);
+    }
+  };
+
   // The backend emits this when Zernio reports `analytics.synced`, i.e. it has
   // finished pulling posts created outside the CRM. Pick them up without
   // making the user guess when to reload.
-  useRealtime("social.updated", () => refreshFeeds());
+  // A webhook already means Zernio has the posts, so only re-read.
+  useRealtime("social.updated", () => refetchFeeds());
 
   /** The accounts actually connected, for the page subtitle. */
   /**
@@ -709,13 +732,14 @@ function SocialImpl() {
           <>
             <button
               className="btn"
-              onClick={refreshFeeds}
+              disabled={refreshing}
+              onClick={() => void refreshFeeds()}
               title={tx(
                 "Posts made directly on Instagram or Facebook appear once Zernio syncs them.",
                 "المنشورات المضافة مباشرة من إنستغرام أو فيسبوك تظهر بعد أن يزامنها Zernio.",
               )}
             >
-              {tx("Refresh", "تحديث")}
+              {refreshing ? tx("Refreshing…", "جارٍ التحديث…") : tx("Refresh", "تحديث")}
             </button>
             <button className="btn primary" onClick={() => setComposeOpen(true)}>
               <IconBolt w={13} />

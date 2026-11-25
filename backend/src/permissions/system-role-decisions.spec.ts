@@ -128,6 +128,11 @@ const VIEWER_SAFE_NON_GET = new Set([
   // Copies a thread's existing provider history into our DB so a viewer who may
   // read the thread can see it; it adds no new content (conversations.view).
   "POST /integrations/zernio/db-conversations/:id/import-history",
+  // Same shape: pulls the account's EXISTING posts from the platform into
+  // Zernio so a viewer who may read the Social feed sees them. It creates no
+  // content — the posts are already public on the platform — and Zernio
+  // debounces it per account (campaigns.view).
+  "POST /integrations/zernio/sync-external-posts",
 ]);
 
 describe("system-role decision table", () => {
