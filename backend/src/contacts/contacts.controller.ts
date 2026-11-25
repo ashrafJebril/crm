@@ -15,6 +15,28 @@ export class ContactsController {
     return this.svc.list(workspaceId, { segmentId });
   }
 
+  /** Paged table data. Declared before :id so "page" isn't read as an id. */
+  @Get("page")
+  page(
+    @CurrentWorkspace() workspaceId: string,
+    @Query("segmentId") segmentId?: string,
+    @Query("q") q?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    return this.svc.listPage(workspaceId, {
+      segmentId: segmentId || undefined,
+      q,
+      page: Number(page ?? 1),
+      pageSize: Number(pageSize ?? 50),
+    });
+  }
+
+  @Get("stats")
+  stats(@CurrentWorkspace() workspaceId: string) {
+    return this.svc.stats(workspaceId);
+  }
+
   @Get(":id")
   get(@CurrentWorkspace() workspaceId: string, @Param("id") id: string) {
     return this.svc.get(workspaceId, id);
