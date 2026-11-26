@@ -131,6 +131,14 @@ export class ZernioController {
     return this.zernio.importStatus(workspaceId);
   }
 
+  /** Pull each connected account's native posts from the platform now, then
+   *  the client refetches. Backs the Social feed's Refresh button. */
+  @Post("integrations/zernio/sync-external-posts")
+  @HttpCode(200)
+  syncExternalPosts(@CurrentWorkspace() workspaceId: string) {
+    return this.zernio.syncExternalPosts(workspaceId);
+  }
+
   /** Instagram's audio library for the Reel composer (Facebook-Login only). */
   @Get("integrations/zernio/instagram/audio")
   instagramAudio(
