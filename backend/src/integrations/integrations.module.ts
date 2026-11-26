@@ -97,7 +97,8 @@ import { AgentReplyGate } from "../agent/agent-reply-gate";
     McpTokenService,
     // SP-21: deleting a migrated l document with its knowledge source.
     LKnowledgeService,
-    // The knowledge screens resolve the agent whose guidelines they edit.
+    // The knowledge screens call l's knowledge API and resolve the agent whose guidelines they edit.
+    LJoteckClient,
     LAgentResolverService,
     // SP-20: the sandbox (Task 2) shows the gate decision.
     AgentReplyGate,
