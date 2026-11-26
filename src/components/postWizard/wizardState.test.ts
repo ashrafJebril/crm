@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emptyState, retarget, blockedReason, publishBody } from "./wizardState";
+import { emptyState, retarget, blockedReason, publishBody, activeSettings } from "./wizardState";
 
 const tx = (en: string) => en;
 
@@ -135,5 +135,73 @@ describe("publishBody", () => {
   it("sends a Facebook draft flag", () => {
     const s = { ...emptyState("facebook"), mediaIds: ["m1"], asDraft: true };
     expect(publishBody(s).facebook).toMatchObject({ draft: true });
+  });
+});
+
+describe("activeSettings — what you are about to publish", () => {
+  // A Reel went out with comments off and the only way to find out was to
+  // open Instagram. These assert the wizard says so first.
+  it("is empty when nothing was changed", () => {
+    expect(activeSettings(emptyState("instagram"), tx)).toEqual([]);
+  });
+
+  it("names comments-off, and marks it as costing something", () => {
+    const s = { ...emptyState("instagram"), options: { commentsOff: true } };
+    const found = activeSettings(s, tx).find((x) => x.key === "commentsOff");
+    expect(found?.label).toMatch(/comments off/i);
+    expect(found?.warn).toBe(true);
+  });
+
+  it("stays quiet when comments were left alone", () => {
+    const s = { ...emptyState("instagram"), options: { commentsOff: undefined } };
+    expect(activeSettings(s, tx).some((x) => x.key === "commentsOff")).toBe(false);
+  });
+
+  it("reports the AI label, which rides along unnoticed", () => {
+    const s = { ...emptyState("instagram"), options: { aiLabel: true } };
+    expect(activeSettings(s, tx).some((x) => x.key === "aiLabel")).toBe(true);
+  });
+
+  it("only mentions shareToFeed when it was turned OFF", () => {
+    const base = { ...emptyState("instagram"), kind: "reel" as const };
+    expect(activeSettings({ ...base, options: {} }, tx).some((x) => x.key === "shareToFeed")).toBe(false);
+    const off = activeSettings({ ...base, options: { shareToFeed: false } }, tx).find((x) => x.key === "shareToFeed");
+    expect(off?.warn).toBe(true);
+  });
+
+  it("counts the things that come in multiples", () => {
+    const s = {
+      ...emptyState("instagram"),
+      options: { tagPeople: [{ username: "ada" }, { username: "bob" }], collaborators: ["x"] },
+    };
+    const labels = activeSettings(s, tx).map((x) => x.label);
+    expect(labels).toContain("2 tagged");
+    expect(labels).toContain("1 collaborators");
+  });
+
+  it("counts alt text from the media it belongs to", () => {
+    const s = {
+      ...emptyState("instagram"),
+      mediaIds: ["a", "b"],
+      altTexts: { a: "a cup", b: "   " },
+    };
+    expect(activeSettings(s, tx).find((x) => x.key === "altText")?.label).toBe("Alt text on 1");
+  });
+
+  it("never announces a setting this platform cannot apply", () => {
+    // retarget prunes these, but a stale value must not be reported as live.
+    const s = { ...emptyState("facebook"), options: { commentsOff: true, location: "123" } };
+    expect(activeSettings(s, tx)).toEqual([]);
+  });
+
+  it("puts the costly settings last, where the eye lands before the button", () => {
+    const s = {
+      ...emptyState("instagram"),
+      kind: "reel" as const,
+      options: { commentsOff: true, aiLabel: true, firstComment: "hi" },
+    };
+    const list = activeSettings(s, tx);
+    expect(list[list.length - 1].key).toBe("commentsOff");
+    expect(list.filter((x) => x.warn).length).toBe(1);
   });
 });

@@ -108,6 +108,74 @@ export function canReach(state: WizardState, step: Step, tx: (en: string, ar: st
   return true;
 }
 
+/** One setting that is actually in force on this post. */
+export interface ActiveSetting {
+  key: OptionKey | "altText";
+  label: string;
+  /** Reduces who sees the post or how they can respond — worth a second look
+   *  before publishing, not just a quiet line in a list. */
+  warn?: boolean;
+}
+
+/**
+ * Everything the user has turned on, in the words they'd recognise.
+ *
+ * This exists because a Reel went out with comments off and nobody could tell
+ * until they opened Instagram. The wizard asked for the setting five steps
+ * earlier, below the fold, and then never mentioned it again — so the only
+ * feedback was the published post. Settings that cost you reach or replies
+ * are marked `warn` so they read as a decision rather than a detail.
+ *
+ * Only options the current platform and kind actually support are listed: a
+ * stale value pruned by `retarget` must not be announced as if it were live.
+ */
+export function activeSettings(
+  state: WizardState,
+  tx: (en: string, ar: string) => string,
+): ActiveSetting[] {
+  const o = state.options;
+  const out: ActiveSetting[] = [];
+  const on = (key: OptionKey) => capability(state.platform, state.kind, key).supported;
+  const add = (key: ActiveSetting["key"], label: string, warn?: boolean) =>
+    out.push({ key, label, ...(warn ? { warn: true } : {}) });
+
+  if (on("altText")) {
+    const n = state.mediaIds.filter((id) => state.altTexts[id]?.trim()).length;
+    if (n) add("altText", tx(`Alt text on ${n}`, `نص بديل على ${n}`));
+  }
+  if (on("location") && o.location) add("location", tx("Location", "موقع"));
+  if (on("tagPeople")) {
+    const t = o.tagPeople as unknown[] | undefined;
+    if (t?.length) add("tagPeople", tx(`${t.length} tagged`, `${t.length} إشارة`));
+  }
+  if (on("collaborators")) {
+    const c = o.collaborators as string[] | undefined;
+    if (c?.length) add("collaborators", tx(`${c.length} collaborators`, `${c.length} متعاونين`));
+  }
+  if (on("reelTitle") && o.reelTitle) add("reelTitle", tx("Title set", "عنوان محدد"));
+  if (on("aiLabel") && o.aiLabel === true) add("aiLabel", tx("AI label", "وسم ذكاء اصطناعي"));
+  if (on("audioTrack") && o.audioTrack) add("audioTrack", tx("Music", "موسيقى"));
+  if (on("audioName") && o.audioName) add("audioName", tx("Audio renamed", "اسم صوت مخصص"));
+  if (on("cover") && o.cover) add("cover", tx("Custom cover", "غلاف مخصص"));
+  if (on("subtitles")) {
+    const s = o.subtitles as unknown[] | undefined;
+    if (s?.length) add("subtitles", tx("Subtitles", "ترجمات"));
+  }
+  if (on("firstComment") && o.firstComment) add("firstComment", tx("First comment", "تعليق أول"));
+
+  // The ones that cost something.
+  if (on("shareToFeed") && o.shareToFeed === false)
+    add("shareToFeed", tx("Not on profile feed", "لا يظهر في الملف الشخصي"), true);
+  if (on("trialReel") && o.trialReel)
+    add("trialReel", tx("Trial reel — non-followers only", "ريل تجريبي — لغير المتابعين"), true);
+  if (on("geoRestriction") && o.geoRestriction)
+    add("geoRestriction", tx("Geo-restricted", "مقيّد جغرافياً"), true);
+  if (on("commentsOff") && o.commentsOff === true)
+    add("commentsOff", tx("Comments off", "التعليقات مغلقة"), true);
+
+  return out;
+}
+
 /** The request body for POST /social/publish. */
 export interface PublishBody {
   content: string;
