@@ -48,6 +48,8 @@ interface LiveFbComment {
   id: string;
   author: string;
   authorId?: string;
+  authorUsername?: string | null;
+  authorAvatar?: string | null;
   body: string;
   likes: number;
   at: string;
@@ -481,7 +483,10 @@ function SocialImpl() {
     const mapped: SocialComment[] = list.map((c) => ({
       id: c.id,
       author: c.author,
-      authorHandle: makeHandle(c.author),
+      // The platform's own handle when it gives one; guessing from the
+      // display name only works while the two happen to match.
+      authorHandle: c.authorUsername ? `@${c.authorUsername}` : makeHandle(c.author),
+      authorAvatar: c.authorAvatar ?? null,
       body: c.body,
       likes: c.likes,
       at: formatCompactDate(c.at),
@@ -1260,7 +1265,7 @@ function SocialImpl() {
                       key={c.id}
                       style={{ display: "flex", gap: 10, alignItems: "flex-start" }}
                     >
-                      <Avatar name={c.author} color="200" size="sm" />
+                      <Avatar name={c.author} src={c.authorAvatar} color="200" size="sm" />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div
                           style={{

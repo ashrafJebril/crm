@@ -236,6 +236,8 @@ export interface SocialComment {
   id: string;
   author: string;
   authorHandle: string;
+  /** Platform CDN picture. Null or expired falls back to initials. */
+  authorAvatar?: string | null;
   body: string;
   bodyAr?: string;
   likes: number;
