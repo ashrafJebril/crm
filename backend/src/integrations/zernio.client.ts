@@ -1355,7 +1355,16 @@ export interface ZernioPostComment {
   id?: string;
   message?: string;
   createdTime?: string;
-  from?: { id?: string; name?: string; username?: string; isOwner?: boolean };
+  /** `picture` is the commenter's avatar URL on the platform CDN. It was
+   *  missing from this type, so the feed drew initials for everyone even
+   *  though Zernio had been sending the real picture all along. */
+  from?: {
+    id?: string;
+    name?: string;
+    username?: string;
+    picture?: string | null;
+    isOwner?: boolean;
+  };
   likeCount?: number;
   replyCount?: number;
   platform?: string;

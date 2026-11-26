@@ -678,6 +678,10 @@ export class ZernioService {
               postId,
               platform: post.platform ?? c.platform ?? null,
               author: c.from?.name ?? c.from?.username ?? "User",
+              // The handle was guessed from the display name, which only
+              // works while the two match. Instagram gives us the real one.
+              authorUsername: c.from?.username ?? null,
+              authorAvatar: c.from?.picture ?? null,
               body: c.message ?? "",
               likes: c.likeCount ?? 0,
               at: c.createdTime ?? null,

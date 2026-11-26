@@ -1,9 +1,13 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 
 interface AvatarProps {
   name?: string;
   size?: "" | "sm" | "lg" | "xl";
   color?: string;
+  /** Picture URL from the platform. Initials are kept underneath and show
+   *  again if it fails: these are third-party CDN links that expire, and a
+   *  blank circle is worse than the letters we had. */
+  src?: string | null;
 }
 
 function hash(s: string) {
@@ -12,7 +16,8 @@ function hash(s: string) {
   return h;
 }
 
-function AvatarImpl({ name = "?", size = "", color }: AvatarProps) {
+function AvatarImpl({ name = "?", size = "", color, src }: AvatarProps) {
+  const [broken, setBroken] = useState(false);
   const initials = name
     .split(" ")
     .map((s) => s[0] ?? "")
@@ -27,9 +32,26 @@ function AvatarImpl({ name = "?", size = "", color }: AvatarProps) {
       style={{
         background: `oklch(0.32 0.06 ${hue})`,
         color: `oklch(0.92 0.06 ${hue})`,
+        position: "relative",
+        overflow: "hidden",
       }}
     >
       {initials}
+      {src && !broken && (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          // Meta's CDN refuses some requests that carry a referrer.
+          referrerPolicy="no-referrer"
+          onError={() => setBroken(true)}
+          style={{
+            position: "absolute", inset: 0, width: "100%", height: "100%",
+            objectFit: "cover", display: "block",
+          }}
+        />
+      )}
     </span>
   );
 }
