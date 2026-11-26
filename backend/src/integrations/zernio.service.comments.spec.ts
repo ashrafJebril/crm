@@ -218,10 +218,7 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
         postId: "p1",
         platform: "facebook",
         author: "Jane Doe",
-        // Null here because this fixture's `from` carries neither. Zernio
-        // returns a real username, and a `picture` that Meta leaves null for
-        // every commenter — carried through regardless so it works the day
-        // it is populated.
+        // The comment carries no handle or picture here.
         authorUsername: null,
         authorAvatar: null,
         body: "great post!",
