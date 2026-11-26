@@ -422,6 +422,9 @@ export const ROUTE_PERMISSIONS: Record<string, RouteRule> = {
   "POST /integrations/instagram/posts": "campaigns.create",
   "DELETE /integrations/instagram/posts/:mediaId": "campaigns.delete",
   "PATCH /integrations/instagram/posts/:mediaId": "campaigns.update",
+  // Composer helpers: Instagram's audio library and remaining publish quota.
+  "GET /integrations/zernio/instagram/audio": "campaigns.view",
+  "GET /integrations/zernio/instagram/publishing-limit": "campaigns.view",
   "GET /integrations/zernio/posts": "campaigns.view",
   // Import progress shown on the same Social feed tabs as the posts above.
   "GET /integrations/zernio/import-status": "campaigns.view",

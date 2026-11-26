@@ -131,6 +131,22 @@ export class ZernioController {
     return this.zernio.importStatus(workspaceId);
   }
 
+  /** Instagram's audio library for the Reel composer (Facebook-Login only). */
+  @Get("integrations/zernio/instagram/audio")
+  instagramAudio(
+    @CurrentWorkspace() workspaceId: string,
+    @Query("q") q?: string,
+    @Query("audioType") audioType?: "music" | "original_sound",
+  ) {
+    return this.zernio.searchInstagramAudio(workspaceId, { q, audioType });
+  }
+
+  /** Posts left in Instagram's rolling 24-hour publishing window. */
+  @Get("integrations/zernio/instagram/publishing-limit")
+  instagramPublishingLimit(@CurrentWorkspace() workspaceId: string) {
+    return this.zernio.instagramPublishingLimit(workspaceId);
+  }
+
   @Get("integrations/zernio/posts")
   posts(@CurrentWorkspace() workspaceId: string, @Query("platform") platform?: string) {
     return this.zernio.listPosts(workspaceId, platform);

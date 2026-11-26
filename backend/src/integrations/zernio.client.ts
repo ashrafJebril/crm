@@ -344,6 +344,9 @@ export class ZernioClient {
     content: string;
     platforms: Array<{ platform: string; accountId: string; platformSpecificData?: unknown }>;
     mediaUrls?: string[];
+    /** Zernio's richer media shape, needed for per-item fields like altText.
+     *  Send this OR mediaUrls, never both. */
+    mediaItems?: Array<{ url: string; altText?: string }>;
     publishNow?: boolean;
     scheduledFor?: string; // ISO 8601 — when set, wins over publishNow
     timezone?: string;     // IANA name, e.g. "Asia/Riyadh"
@@ -640,6 +643,59 @@ export class ZernioClient {
    */
   async disconnectAccount(accountId: string): Promise<void> {
     await this.request<unknown>("DELETE", `/accounts/${encodeURIComponent(accountId)}`, {});
+  }
+
+  // ─── Instagram publishing helpers ────────────────────────────────────────
+
+  /**
+   * Search Instagram's audio library for a Reel.
+   *
+   * Omit `q` for trending. The library holds only tracks licensed for
+   * third-party publishing, so it is smaller than what the Instagram app
+   * offers — a track a customer can pick in the app may simply not be here,
+   * and the UI should say so rather than look broken.
+   *
+   * Requires the account to be connected with Facebook Login; an
+   * Instagram-Login account answers 400
+   * `instagram_audio_requires_facebook_login`.
+   */
+  async searchInstagramAudio(
+    accountId: string,
+    opts: { q?: string; audioType?: "music" | "original_sound" } = {},
+  ): Promise<ZernioAudioTrack[]> {
+    const res = await this.request<{ audio?: ZernioAudioTrack[]; data?: ZernioAudioTrack[] }>(
+      "GET",
+      `/accounts/${encodeURIComponent(accountId)}/instagram/audio`,
+      // audioType is REQUIRED despite reading as optional in the docs: omitting
+      // it answers 400 invalid_field_value, live-verified 2026-11-26. Default
+      // to music, which is what a composer wants.
+      { query: { q: opts.q, audioType: opts.audioType ?? "music" } },
+    );
+    return res.audio ?? res.data ?? [];
+  }
+
+  /**
+   * How many posts this Instagram account may still publish in the rolling
+   * 24-hour window.
+   *
+   * Read it rather than hardcoding a number: Zernio warns that Meta's
+   * documented limit and the live value disagree, and the live one wins.
+   */
+  async instagramPublishingLimit(accountId: string): Promise<{
+    quotaUsage: number | null;
+    quotaTotal: number | null;
+    quotaDurationSeconds: number | null;
+  }> {
+    const res = await this.request<{
+      quotaUsage?: number;
+      quotaTotal?: number;
+      quotaDurationSeconds?: number;
+    }>("GET", `/accounts/${encodeURIComponent(accountId)}/instagram/publishing-limit`, {});
+    return {
+      quotaUsage: res.quotaUsage ?? null,
+      quotaTotal: res.quotaTotal ?? null,
+      quotaDurationSeconds: res.quotaDurationSeconds ?? null,
+    };
   }
 
   // ─── Comment automations (comment → private DM) ──────────────────────────
@@ -1196,6 +1252,17 @@ export interface ZernioFollowerStatsResponse {
   stats?: Record<string, Array<{ date?: string; followers?: number }>>;
   dateRange?: { from?: string; to?: string };
   granularity?: string;
+}
+
+/** A track from Instagram's audio library (`searchInstagramAudio`). */
+export interface ZernioAudioTrack {
+  id?: string;
+  audioId?: string;
+  title?: string;
+  artist?: string;
+  durationMs?: number;
+  coverUrl?: string;
+  previewUrl?: string;
 }
 
 /** A comment automation as `GET /comment-automations` returns it. The live

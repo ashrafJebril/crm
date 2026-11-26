@@ -31,6 +31,8 @@ export class SocialService {
           content: dto.content,
           platforms: dto.channels,
           mediaIds: dto.mediaIds,
+          altTexts: dto.altTexts,
+          instagram: dto.instagram,
           scheduledFor: dto.scheduledFor,
           timezone: dto.timezone,
         },
