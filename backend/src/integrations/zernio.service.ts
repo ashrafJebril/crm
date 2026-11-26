@@ -18,7 +18,12 @@ import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
 import { inboundAttachmentMime } from "./inbound-attachment";
 import { agentImageDecision } from "../media/agent-photo";
-import { ZernioClient, ZernioAccount, ZernioAnalyticsRow } from "./zernio.client";
+import { ZernioClient, ZernioAccount, ZernioAnalyticsRow, ZernioAudioTrack } from "./zernio.client";
+import {
+  assertInstagramOptions,
+  instagramPlatformData,
+  type InstagramOptions,
+} from "./instagram-post-options";
 import { importStatus as computeImportStatus, NOT_CONNECTED, PlatformImportStatus } from "./zernio-import";
 import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
@@ -791,6 +796,68 @@ export class ZernioService {
     const comment = await this.findCommentInWorkspace(workspaceId, commentId);
     await this.client.deleteComment(comment.postId, accountId ?? comment.accountId, commentId);
     return { ok: true as const };
+  }
+
+  // ─── Instagram publishing helpers ────────────────────────────────────────
+
+  /** The workspace's own Instagram account id, or null. Every Instagram
+   *  helper below goes through this, so none can be aimed at another
+   *  tenant's account — the Zernio API key is global. */
+  private async ownInstagramAccountId(workspaceId: string): Promise<string | null> {
+    const ch = await this.prisma.channel.findFirst({
+      where: {
+        workspaceId,
+        provider: "zernio",
+        kind: "instagram",
+        status: { not: "disconnected" },
+      },
+      select: { externalId: true },
+    });
+    return ch?.externalId ?? null;
+  }
+
+  /**
+   * Instagram's audio library, for the Reel composer.
+   *
+   * Facebook-Login accounts only. An Instagram-Login account answers 400
+   * `instagram_audio_requires_facebook_login`, which is reported as
+   * `unavailable` rather than thrown: the composer should hide the music step,
+   * not fail to open.
+   *
+   * This is not hypothetical — the live `kewy_ai` account is Instagram-Login
+   * and answers exactly that (verified 2026-11-26). Fixing it means
+   * reconnecting the account with the "Facebook" method, so the composer has
+   * to degrade gracefully in the meantime.
+   */
+  async searchInstagramAudio(
+    workspaceId: string,
+    opts: { q?: string; audioType?: "music" | "original_sound" } = {},
+  ): Promise<{ tracks: ZernioAudioTrack[]; unavailable: string | null }> {
+    const accountId = await this.ownInstagramAccountId(workspaceId);
+    if (!accountId) throw new BadRequestException("Instagram is not connected");
+    try {
+      return { tracks: await this.client.searchInstagramAudio(accountId, opts), unavailable: null };
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      if (/facebook_login|requires_facebook/i.test(msg)) {
+        return {
+          tracks: [],
+          unavailable: "instagram_audio_requires_facebook_login",
+        };
+      }
+      throw e;
+    }
+  }
+
+  /** Remaining posts in Instagram's rolling 24-hour window, for the composer
+   *  to warn before a publish is refused with a 429. */
+  async instagramPublishingLimit(workspaceId: string) {
+    const accountId = await this.ownInstagramAccountId(workspaceId);
+    if (!accountId) throw new BadRequestException("Instagram is not connected");
+    const q = await this.client.instagramPublishingLimit(accountId);
+    const remaining =
+      q.quotaTotal !== null && q.quotaUsage !== null ? Math.max(q.quotaTotal - q.quotaUsage, 0) : null;
+    return { ...q, remaining };
   }
 
   // ─── Comment auto-reply (comment → private DM) ───────────────────────────
@@ -2094,6 +2161,10 @@ export class ZernioService {
       content: string;
       platforms: string[];
       mediaIds?: string[];
+      /** Positionally matched to mediaIds; images only, Instagram-side. */
+      altTexts?: string[];
+      /** Instagram's own options, forwarded as platformSpecificData. */
+      instagram?: InstagramOptions;
       scheduledFor?: string;
       timezone?: string;
     },
@@ -2146,10 +2217,34 @@ export class ZernioService {
         );
       }
     }
+    const ig = input.instagram;
+    if (ig) assertInstagramOptions(ig, mediaUrls.length);
+
+    // Alt text is per ITEM, so it needs Zernio's `mediaItems` shape rather
+    // than the flat `mediaUrls` this has always sent. Only switch when there
+    // is alt text to carry: `mediaUrls` is the shape every existing post has
+    // published with, and nothing is worth risking that for a field nobody
+    // set. Revisit once `mediaItems` has published live. (2026-11-26)
+    const altTexts = input.altTexts ?? [];
+    const useItems = altTexts.some((t) => t?.trim());
+    const mediaItems = useItems
+      ? mediaUrls.map((url, i) => ({
+          url,
+          ...(altTexts[i]?.trim() ? { altText: altTexts[i].trim().slice(0, 1000) } : {}),
+        }))
+      : undefined;
+
     return this.client.createPost({
       content: input.content,
-      platforms,
-      mediaUrls: mediaUrls.length ? mediaUrls : undefined,
+      platforms: platforms.map((p) =>
+        // Instagram's options ride on its own platform entry; the other
+        // channels must not receive them.
+        ig && p.platform.toLowerCase() === "instagram"
+          ? { ...p, platformSpecificData: instagramPlatformData(ig) }
+          : p,
+      ),
+      mediaUrls: !useItems && mediaUrls.length ? mediaUrls : undefined,
+      mediaItems,
       scheduledFor: input.scheduledFor,
       timezone: input.timezone,
     });

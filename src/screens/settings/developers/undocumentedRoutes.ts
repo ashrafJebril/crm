@@ -204,6 +204,8 @@ export const UNDOCUMENTED_KEY_ROUTES: { reason: string; routes: string[] }[] = [
       "PATCH /integrations/instagram/posts/:mediaId",
       "GET /integrations/zernio/import-status",
       "POST /integrations/zernio/sync-external-posts",
+      "GET /integrations/zernio/instagram/audio",
+      "GET /integrations/zernio/instagram/publishing-limit",
       "GET /integrations/zernio/posts",
       "POST /ads/chat",
       "GET /ads/chat/sessions",
