@@ -11,7 +11,7 @@ import { SchedulePicker } from "@/components/SchedulePicker";
 import { IconBolt, IconCheck, IconPlus, IconX } from "@/icons";
 import type { Media } from "@/lib/types";
 import { capability, mediaLimits, visibleOptions, type OptionKey, type Platform, type PostKind } from "./capabilities";
-import { STEPS, blockedReason, emptyState, publishBody, retarget, type Step, type WizardState } from "./wizardState";
+import { STEPS, activeSettings, blockedReason, emptyState, publishBody, retarget, type Step, type WizardState } from "./wizardState";
 
 interface ZernioStatus {
   accounts?: { platform: string; name?: string | null }[];
@@ -753,6 +753,52 @@ function PreviewStep({ state, media, tx, accountName }: { state: WizardState; me
       <span style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
         {tx("Approximate. The platform decides final cropping.", "تقريبي. المنصة تحدد القص النهائي.")}
       </span>
+      <SettingsSummary state={state} tx={tx} />
+    </div>
+  );
+}
+
+/**
+ * What is actually switched on, shown where it can still be changed.
+ *
+ * Without this the Details step was the last and only mention of a setting:
+ * someone ticks "Turn off comments" while looking around, publishes four
+ * steps later, and finds out from Instagram.
+ */
+function SettingsSummary({ state, tx }: { state: WizardState; tx: Tx }) {
+  const items = activeSettings(state, tx);
+  if (!items.length) return null;
+  const costly = items.filter((i) => i.warn);
+  return (
+    <div style={{ width: "100%", maxWidth: 420, display: "grid", gap: 8 }}>
+      <span style={{ fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+        {tx("Settings on this post", "إعدادات هذا المنشور")}
+      </span>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {items.map((i) => (
+          <span
+            key={i.key}
+            style={{
+              fontSize: 12, padding: "3px 9px", borderRadius: 999,
+              border: `1px solid ${i.warn ? "var(--warn)" : "var(--line)"}`,
+              color: i.warn ? "var(--warn)" : "var(--ink-2)",
+              background: i.warn ? "transparent" : "var(--bg-2)",
+            }}
+          >
+            {i.label}
+          </span>
+        ))}
+      </div>
+      {costly.length > 0 && (
+        <span style={{ fontSize: 11.5, color: "var(--ink-3)", lineHeight: 1.5 }}>
+          {costly.some((c) => c.key === "commentsOff")
+            ? tx(
+                "Comments are off, so nobody can reply to this post — and replies are where leads come from. Go back to Details to turn them on.",
+                "التعليقات مغلقة، فلن يتمكن أحد من الرد على هذا المنشور — والردود هي مصدر العملاء. ارجع إلى التفاصيل لتفعيلها.",
+              )
+            : tx("Highlighted settings limit who sees this post.", "الإعدادات المميزة تحدّ من وصول المنشور.")}
+        </span>
+      )}
     </div>
   );
 }
@@ -804,6 +850,9 @@ function ShareStep({ state, setState, tx }: { state: WizardState; setState: (s: 
       {state.scheduledFor && (
         <SchedulePicker value={state.scheduledFor} onChange={(d) => setState({ ...state, scheduledFor: d })} tx={tx} />
       )}
+      {/* Repeated here on purpose: this is the step with the Post button, and
+          it is the last chance to notice comments are off. */}
+      <SettingsSummary state={state} tx={tx} />
     </div>
   );
 }
