@@ -3,17 +3,13 @@ import { getSchema, type JSONContent } from "@tiptap/core";
 import type { Node as PMNode, Schema } from "@tiptap/pm/model";
 import { badLinks, knowledgeExtensions, safeLink, sanitizeDoc, upgradePastedLinks } from "./contentDoc";
 
-/**
- * The backend validator, loaded at run time from its own file (a dynamic
- * import with a computed path, so the app's type-check never compiles backend
- * code; vitest transpiles it and resolves @nestjs from backend/node_modules).
+/*
+ * The content is checked on l (kewy-ai, app/knowledge/content.py). Its test
+ * tests/knowledge/test_crm_editor_docs.py holds the documents built here
+ * (fixtures/crm_editor_docs.json): the full one passes, and the http-link and
+ * `title` ones are refused until sanitizeDoc cleans them. Change these
+ * documents there too.
  */
-const BACKEND_CONTENT = "../../../backend/src/knowledge-sources/knowledge-content.ts";
-type TiptapToText = (doc: unknown) => string;
-async function backendTiptapToText(): Promise<TiptapToText> {
-  const mod = (await import(/* @vite-ignore */ BACKEND_CONTENT)) as { tiptapToText: TiptapToText };
-  return mod.tiptapToText;
-}
 
 /** Build a document through the editor's real schema (what `editor.getJSON()` returns is `doc.toJSON()`). */
 function editorDoc(schema: Schema, build: (s: Schema) => PMNode): JSONContent {
@@ -22,15 +18,10 @@ function editorDoc(schema: Schema, build: (s: Schema) => PMNode): JSONContent {
   return doc.toJSON() as JSONContent;
 }
 
-describe("content editor JSON against the backend validator", () => {
+describe("content editor JSON for the content validator on l", () => {
   const schema = getSchema(knowledgeExtensions());
 
-  // 20s, not the 5s default: this one dynamically imports the backend's
-  // validator, which takes ~3s on an idle machine and tips over the default
-  // whenever the suite runs alongside anything else (it has failed twice
-  // that way). The budget is module loading, not what is asserted.
-  it("the editor's link, headings, lists and marks pass the backend's tiptapToText", async () => {
-    const tiptapToText = await backendTiptapToText();
+  it("the editor's link, headings, lists and marks serialize as the validator expects", () => {
     const link = (href: string) => schema.marks.link.create({ href });
     const json = editorDoc(schema, (s) =>
       s.node("doc", null, [
@@ -59,15 +50,10 @@ describe("content editor JSON against the backend validator", () => {
     const linkMark = JSON.stringify(json).match(/"type":"link","attrs":\{[^}]*\}/)?.[0] ?? "";
     expect(linkMark).toContain('"href":"https://example.com/book"');
     expect(linkMark).not.toContain("title");
-    const text = tiptapToText(json);
-    expect(text).toContain("# About us");
-    expect(text).toContain("our site (https://example.com/book)");
-    expect(text).toContain("- Haircut");
-    expect(text).toContain("1. Book");
-    // The pre-save sanitizer leaves a valid document unchanged and valid.
+    // The pre-save sanitizer leaves a valid document unchanged.
     expect(sanitizeDoc(json)).toEqual(json);
-    expect(() => tiptapToText(sanitizeDoc(json))).not.toThrow();
-  }, 20_000);
+    expect(badLinks(json)).toEqual([]);
+  });
 
   it("the schema has only what the backend accepts", () => {
     expect(Object.keys(schema.nodes).sort()).toEqual(["bulletList", "doc", "hardBreak", "heading", "listItem", "orderedList", "paragraph", "text"].sort());
@@ -75,8 +61,7 @@ describe("content editor JSON against the backend validator", () => {
     expect(Object.keys(schema.marks.link.spec.attrs ?? {}).sort()).toEqual(["class", "href", "rel", "target"]);
   });
 
-  it("http links never reach the backend: refused, upgraded on paste, or dropped before saving", async () => {
-    const tiptapToText = await backendTiptapToText();
+  it("http links never reach the validator: refused, upgraded on paste, or dropped before saving", () => {
     expect(safeLink("http://example.com")).toBeNull();
     expect(safeLink("example.com")).toBe("https://example.com/");
     expect(safeLink("mailto:a@b.co")).toBe("mailto:a@b.co");
@@ -89,16 +74,15 @@ describe("content editor JSON against the backend validator", () => {
       s.node("doc", null, [s.node("paragraph", null, [s.text("old link", [s.marks.link.create({ href: "http://old.example" })])])]),
     );
     expect(badLinks(withHttp)).toEqual(["http://old.example"]);
-    expect(() => tiptapToText(withHttp)).toThrow();
     const clean = sanitizeDoc(withHttp);
     expect(badLinks(clean)).toEqual([]);
-    expect(tiptapToText(clean)).toBe("old link");
+    expect(clean).toEqual({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "old link" }] }] });
     // Unknown attributes (a `title` from an older editor) are dropped too.
     const titled: JSONContent = {
       type: "doc",
       content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "https://a.example/", title: null, target: "_blank" } }] }] }],
     };
-    expect(() => tiptapToText(titled)).toThrow();
-    expect(() => tiptapToText(sanitizeDoc(titled))).not.toThrow();
+    const mark = (sanitizeDoc(titled).content?.[0].content?.[0].marks ?? [])[0];
+    expect(Object.keys(mark?.attrs ?? {})).not.toContain("title");
   });
 });

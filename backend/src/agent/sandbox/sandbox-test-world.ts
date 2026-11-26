@@ -124,7 +124,9 @@ export function sandboxWorld(
   const realtime = { emitToWorkspace: jest.fn() };
   const events = { emit: jest.fn() };
   const gate = new AgentReplyGate(prisma);
-  const sandbox = new SandboxService(prisma, ai.claude, svc.factory, gate, lSetup, opts.perm as never, undefined, opts.lAgent as never);
+  // The agent's guidelines, as l returns them.
+  const knowledge = { getGuidelines: jest.fn(async () => (prisma.db.knowledgeSource ?? []).find((s: any) => s.workspaceId === WS && s.kind === "guideline") ?? null) };
+  const sandbox = new SandboxService(prisma, ai.claude, svc.factory, gate, lSetup, opts.perm as never, undefined, opts.lAgent as never, knowledge as never);
   return { prisma, sandbox, ai, lClient, zernioClient, kewyBridge, realtime, events, gate, ...svc };
 }
 

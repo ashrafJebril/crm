@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { useFetch } from "@/api/useFetch";
 import { useAuth } from "@/auth/context";
 import { NO_PERMISSION_AR, NO_PERMISSION_EN, usePermissions } from "@/auth/usePermissions";
 import type { Tx } from "@/lib/tx";
@@ -7,6 +8,7 @@ import { ContentEditor } from "./ContentEditor";
 import { FaqsEditor } from "./FaqsEditor";
 import { FilesPanel } from "./FilesPanel";
 import { GuidelinesEditor } from "./GuidelinesEditor";
+import { SOURCES_PATH, type SourceList } from "./knowledgeApi";
 import { WebsitesPanel } from "./WebsitesPanel";
 
 export type KnowledgeTabId = "content" | "faqs" | "guidelines" | "files" | "websites" | "photos";
@@ -22,8 +24,8 @@ export const KNOWLEDGE_TABS: { id: KnowledgeTabId; en: string; ar: string }[] = 
 
 /**
  * SP-21 the Knowledge page (inside the Kewy agent screen): the business's own
- * knowledge, stored in the CRM. Shown whether or not the workspace is linked
- * to an l agent. Viewing needs knowledge.view; adding knowledge.create,
+ * knowledge, kept on the agent platform (l) with the workspace's agent. A
+ * workspace whose agent is off sees a note to turn it on first. Viewing needs knowledge.view; adding knowledge.create,
  * editing knowledge.update, deleting knowledge.delete (hidden actions are not
  * rendered). Leaving an editor with unsaved changes asks first.
  */
@@ -34,6 +36,8 @@ export function KnowledgePage({ tx, lang }: { tx: Tx; lang: "en" | "ar" }) {
   const [tab, setTab] = useState<KnowledgeTabId>("content");
   const [dirty, setDirty] = useState(false);
   const onDirtyChange = useCallback((d: boolean) => setDirty(d), []);
+  const all = useFetch<SourceList>(can("knowledge.view") ? SOURCES_PATH : null);
+  const agentOff = all.data?.agentOn === false;
 
   if (!can("knowledge.view")) {
     return (
@@ -56,6 +60,14 @@ export function KnowledgePage({ tx, lang }: { tx: Tx; lang: "en" | "ar" }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {agentOff && (
+        <div role="status" className="card" style={{ padding: 12, fontSize: 13 }}>
+          {tx(
+            "Turn on your AI agent to add knowledge. The agent keeps everything here, and reads it when it answers your customers.",
+            "شغّل وكيل الذكاء الاصطناعي لإضافة المعرفة. يحتفظ الوكيل بكل ما هنا، ويرجع إليه عند الرد على عملائك.",
+          )}
+        </div>
+      )}
       <div role="tablist" aria-label={tx("Knowledge", "المعرفة")} style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {KNOWLEDGE_TABS.map((t) => (
           <button

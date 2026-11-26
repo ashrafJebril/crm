@@ -2,7 +2,7 @@
 import { ForbiddenException, HttpException } from "@nestjs/common";
 import { ClaudeService } from "../../ai/claude.service";
 import { fakeClaude } from "../../ai/claude-test-fake";
-import { knowledgeWorld, A } from "../../knowledge-sources/knowledge-test-world";
+import { knowledgeWorld, A } from "../../knowledge-sources/l-knowledge.fake";
 import { knowledgeError } from "../../knowledge-sources/knowledge-errors";
 import { LEARN_PAGES_MAX } from "../agent-constants";
 import { AgentSettingsService } from "../agent-settings.service";
@@ -36,13 +36,13 @@ function world(learnReply: unknown = LEARNED) {
   const k = knowledgeWorld();
   const db = k.db as any;
   db.workspace[0].onboardingState = null;
-  const site = { id: "src-site", workspaceId: A, kind: "website", status: "ready", title: "salon.example", url: "https://salon.example/", scope: "site", createdAt: new Date() };
+  const site = { id: "src-site", workspaceId: A, kind: "website", status: "ready", title: "salon.example", url: "https://salon.example/", scope: "site" };
   const websites = {
     create: jest.fn(async (_ws: string, _u: string, body: { url: string }) => {
       db.knowledgeSource.push({ ...site, url: body.url });
       return { id: site.id, url: body.url };
     }),
-    check: jest.fn(async (url: string) => ({ ok: true, normalizedUrl: url, host: "salon.example", robotsAllowed: true, sitemapPages: null })),
+    check: jest.fn(async (_ws: string, url: string) => ({ ok: true, normalizedUrl: url, host: "salon.example", robotsAllowed: true, sitemapPages: null })),
   };
   const perm = { viewerCan: jest.fn(async (_ws: string, v: { userId: string }, p: string) => (GRANTS[v.userId] ?? []).includes(p)) };
   const fake = fakeClaude({ content: [{ type: "text", text: JSON.stringify(learnReply) }] } as any);

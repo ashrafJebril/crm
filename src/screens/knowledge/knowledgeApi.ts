@@ -2,7 +2,7 @@ import { api } from "@/api/client";
 import { saveBlob } from "@/screens/contacts/import/importApi";
 import type { KnowledgeSource, TypedKind, WebsiteSchedule } from "@/lib/types";
 
-/** SP-21 knowledge routes (backend/src/knowledge-sources). */
+/** SP-21 knowledge routes (backend/src/knowledge-sources, which keeps the knowledge on l). */
 
 export const SOURCES_PATH = "/knowledge/sources";
 export const sourcesPath = (kind?: KnowledgeSource["kind"]) => (kind ? `${SOURCES_PATH}?kind=${kind}` : SOURCES_PATH);
@@ -15,7 +15,8 @@ export const pagesPath = (id: string, state?: string, cursor?: string) => {
   return `${SOURCES_PATH}/${encodeURIComponent(id)}/pages${s ? `?${s}` : ""}`;
 };
 
-export type SourceList = { items: KnowledgeSource[] };
+/** `agentOn: false`: the workspace's AI agent is off, so it has no knowledge yet. */
+export type SourceList = { items: KnowledgeSource[]; agentOn?: boolean };
 
 export const putContent = (bodyJson: unknown, version: number) => api.put<KnowledgeSource>("/knowledge/content", { bodyJson, version });
 export const putGuidelines = (body: string, version: number) => api.put<KnowledgeSource>("/knowledge/guidelines", { body, version });

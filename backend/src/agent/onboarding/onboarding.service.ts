@@ -115,13 +115,10 @@ export class OnboardingService {
         : null;
     let website: OnboardingDto["website"] = null;
     if (state?.websiteSourceId) {
-      const src = await this.prisma.knowledgeSource.findFirst({
-        where: { id: state.websiteSourceId, workspaceId, kind: "website" },
-        select: { id: true, status: true },
-      });
-      if (src) {
-        const pagesSynced = await this.prisma.knowledgePage.count({ where: { workspaceId, sourceId: src.id, state: "synced" } });
-        website = { sourceId: src.id, status: src.status, pagesSynced };
+      // The website source lives on l; gone (or the agent off) shows no website.
+      const src = await this.knowledge.get(workspaceId, state.websiteSourceId).catch(() => null);
+      if (src && src.kind === "website") {
+        website = { sourceId: src.id, status: src.status, pagesSynced: src.pageCounts?.synced ?? 0 };
       }
     }
     return {
@@ -176,11 +173,9 @@ export class OnboardingService {
     } catch (e) {
       if (errKey(e) !== "knowledge.website_exists") throw e;
       // The same site is already a knowledge source: reuse it.
-      const checked = await this.websites.check(body.url);
-      const existing = await this.prisma.knowledgeSource.findFirst({
-        where: { workspaceId, kind: "website", url: checked.normalizedUrl },
-        select: { id: true, url: true },
-      });
+      const checked = await this.websites.check(workspaceId, body.url);
+      const { items } = await this.knowledge.list(workspaceId, { kind: "website" });
+      const existing = items.find((w) => w.url === checked.normalizedUrl);
       if (!existing) throw e;
       sourceId = existing.id;
       url = existing.url ?? checked.normalizedUrl;
@@ -192,35 +187,27 @@ export class OnboardingService {
     return this.get(workspaceId, viewer);
   }
 
-  /** The crawled pages of the onboarding website, home page first. */
+  /** The read pages of the onboarding website (from l's preview), home page first. */
   private async pages(workspaceId: string, sourceId: string): Promise<LearnPage[]> {
-    const src = await this.prisma.knowledgeSource.findFirst({ where: { id: sourceId, workspaceId, kind: "website" }, select: { url: true } });
-    if (!src) return [];
-    const pages = await this.prisma.knowledgePage.findMany({
-      where: { workspaceId, sourceId, state: "synced" },
-      select: { id: true, url: true },
-    });
+    const src = await this.knowledge.get(workspaceId, sourceId).catch(() => null);
+    if (!src || src.kind !== "website") return [];
+    const preview = await this.knowledge.preview(workspaceId, sourceId);
+    const byUrl = new Map<string, string[]>();
+    for (const g of preview.groups) {
+      for (const it of g.items) {
+        if (!it.url) continue;
+        const lines = byUrl.get(it.url) ?? [];
+        lines.push(g.heading ? `${g.heading}\n${it.text}` : it.text);
+        byUrl.set(it.url, lines);
+      }
+    }
     const home = src.url ?? "";
-    pages.sort((a, b) => {
-      const ah = a.url === home ? 0 : 1;
-      const bh = b.url === home ? 0 : 1;
-      return ah - bh || a.url.length - b.url.length || a.url.localeCompare(b.url);
+    const urls = [...byUrl.keys()].sort((a, b) => {
+      const ah = a === home ? 0 : 1;
+      const bh = b === home ? 0 : 1;
+      return ah - bh || a.length - b.length || a.localeCompare(b);
     });
-    const chosen = pages.slice(0, LEARN_PAGES_MAX);
-    if (!chosen.length) return [];
-    const chunks = await this.prisma.knowledgeChunk.findMany({
-      where: { workspaceId, sourceId, pageId: { in: chosen.map((p) => p.id) } },
-      select: { pageId: true, ord: true, heading: true, text: true },
-      orderBy: { ord: "asc" },
-    });
-    return chosen.map((p) => ({
-      url: p.url,
-      text: chunks
-        .filter((c) => c.pageId === p.id)
-        .sort((a, b) => a.ord - b.ord)
-        .map((c) => (c.heading ? `${c.heading}\n${c.text}` : c.text))
-        .join("\n"),
-    }));
+    return urls.slice(0, LEARN_PAGES_MAX).map((url) => ({ url, text: (byUrl.get(url) ?? []).join("\n") }));
   }
 
   /** Build the "What I learned" card. Writes nothing but the card itself. */
@@ -261,11 +248,7 @@ export class OnboardingService {
 
     let content: ApplyResult["applied"]["content"] = "skipped";
     if (description !== "skip" && hasDescription) {
-      const cur = await this.prisma.knowledgeSource.findFirst({
-        where: { workspaceId, kind: "content" },
-        orderBy: { createdAt: "asc" },
-        select: { bodyJson: true, body: true, version: true },
-      });
+      const cur = (await this.knowledge.list(workspaceId, { kind: "content" })).items[0];
       const existing = (cur?.bodyJson as { content?: unknown[] } | null)?.content;
       const empty = !cur || !(cur.body ?? "").trim() || !Array.isArray(existing) || existing.length === 0;
       const nodes =

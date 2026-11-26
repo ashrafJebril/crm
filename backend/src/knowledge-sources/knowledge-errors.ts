@@ -27,6 +27,11 @@ export const KNOWLEDGE_ERROR_STATUS = {
   "knowledge.website_exists": 409,
   "knowledge.syncing": 409,
   "knowledge.cooldown": 409, // {retryAfterSeconds}
+  // The knowledge lives on l: these come from there (or from l-knowledge.ts).
+  "knowledge.template_invalid": 400,
+  "knowledge.agent_unknown": 400,
+  "knowledge.agent_off": 409,
+  "knowledge.storage_unavailable": 503,
 } as const;
 
 export type KnowledgeErrorKey = keyof typeof KNOWLEDGE_ERROR_STATUS;
