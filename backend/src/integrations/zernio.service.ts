@@ -844,7 +844,10 @@ export class ZernioService {
       return { tracks: await this.client.searchInstagramAudio(accountId, opts), unavailable: null };
     } catch (e) {
       const msg = (e as Error).message ?? "";
-      if (/facebook_login|requires_facebook/i.test(msg)) {
+      // Zernio answers with prose ("requires an account connected via Facebook
+      // Login"), not the error code, so matching the code alone never fired
+      // and the 400 reached the browser as a dead, unexplained field.
+      if (/facebook[\s_-]*login|requires_facebook/i.test(msg)) {
         return {
           tracks: [],
           unavailable: "instagram_audio_requires_facebook_login",
@@ -2215,37 +2218,44 @@ export class ZernioService {
     // Zernio fetches media by URL at post-creation time. Spaces media gets a
     // signed Spaces URL (reachable from anywhere); legacy local-disk media
     // keeps the short-lived token URL through publicBaseUrl.
-    const mediaUrls: string[] = [];
+    //
+    // `type` and `mimeType` are sent explicitly because neither of our URLs
+    // carries a file extension (`/api/media/<id>/public?token=…`, and the
+    // Spaces link is signed), so Zernio has nothing to infer the kind from.
+    const files: { url: string; type: "image" | "video"; mimeType: string; filename: string }[] = [];
     for (const mediaId of input.mediaIds ?? []) {
       const row = await this.media.get(workspaceId, mediaId);
-      if (row.storageKind === "spaces") {
-        mediaUrls.push(await this.media.resolveExternalUrl(workspaceId, mediaId));
-      } else {
-        const token = await this.media.mintPublicToken(workspaceId, mediaId);
-        mediaUrls.push(
-          `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${token}`,
-        );
-      }
+      const url =
+        row.storageKind === "spaces"
+          ? await this.media.resolveExternalUrl(workspaceId, mediaId)
+          : `${publicBaseUrl.replace(/\/+$/, "")}/api/media/${mediaId}/public?token=${await this.media.mintPublicToken(workspaceId, mediaId)}`;
+      files.push({
+        url,
+        type: row.mimeType?.startsWith("video") ? "video" : "image",
+        mimeType: row.mimeType ?? "application/octet-stream",
+        filename: row.fileName ?? mediaId,
+      });
     }
     const ig = input.instagram;
-    if (ig) assertInstagramOptions(ig, mediaUrls.length);
+    if (ig) assertInstagramOptions(ig, files.length);
     const fb = input.facebook;
-    if (fb) assertFacebookOptions(fb, mediaUrls.length);
+    if (fb) assertFacebookOptions(fb, files.length);
 
-    // Alt text is per ITEM, so it needs Zernio's `mediaItems` shape rather
-    // than the flat `mediaUrls` this has always sent. Only switch when there
-    // is alt text to carry: `mediaUrls` is the shape every existing post has
-    // published with, and nothing is worth risking that for a field nobody
-    // set. Revisit once `mediaItems` has published live. (2026-11-26)
+    // `mediaItems` is the ONLY media field POST /posts accepts. `mediaUrls`
+    // is not in its schema at all — it exists on the Ads and SMS bodies — so
+    // the flat array this used to send was dropped on the floor and the post
+    // arrived with no media. Instagram then refused it outright ("Instagram
+    // posts require media content"), which is how this surfaced; Facebook
+    // would have quietly published the caption alone.
+    // Verified against zernio.com/openapi.json, 2026-11-26.
     const altTexts = input.altTexts ?? [];
     // Subtitles are per item too, and like altText they live on the MEDIA
     // item rather than platformSpecificData — shared across platforms, so one
     // SRT reaches Facebook, YouTube, LinkedIn and X at once.
     const subs = input.subtitleUrls ?? [];
-    const useItems = altTexts.some((t) => t?.trim()) || subs.some((u) => u?.length);
-    const mediaItems = useItems
-      ? mediaUrls.map((url, i) => ({
-          url,
+    const mediaItems = files.length
+      ? files.map((f, i) => ({
+          ...f,
           ...(altTexts[i]?.trim() ? { altText: altTexts[i].trim().slice(0, 1000) } : {}),
           ...(subs[i]?.length ? { subtitles: subs[i] } : {}),
         }))
@@ -2265,7 +2275,6 @@ export class ZernioService {
         }
         return p;
       }),
-      mediaUrls: !useItems && mediaUrls.length ? mediaUrls : undefined,
       mediaItems,
       scheduledFor: input.scheduledFor,
       timezone: input.timezone,

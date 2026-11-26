@@ -27,7 +27,12 @@ function build() {
     channel: { findMany: jest.fn().mockResolvedValue([]) },
   };
   const media: any = {
-    get: jest.fn(async (_ws: string, id: string) => ({ storageKind: "spaces", id })),
+    get: jest.fn(async (_ws: string, id: string) => ({
+      storageKind: "spaces",
+      id,
+      mimeType: id.startsWith("v") ? "video/mp4" : "image/jpeg",
+      fileName: `${id}.jpg`,
+    })),
     resolveExternalUrl: jest.fn(async (_ws: string, id: string) => `https://cdn.test/${id}.jpg`),
     mintPublicToken: jest.fn(),
   };
@@ -76,31 +81,51 @@ describe("ZernioService.publish — Instagram options", () => {
   });
 
   describe("media shape", () => {
-    it("keeps the proven mediaUrls shape when there is no alt text", async () => {
-      // Every post ever published went out as mediaUrls. Switching shapes for
-      // posts that gain nothing from it would risk that for no reason.
+    // `mediaItems` is the only media field POST /posts accepts. The flat
+    // `mediaUrls` array this used to send is not in that schema — it belongs
+    // to the Ads and SMS bodies — so Zernio dropped it and the post arrived
+    // with no media at all. Instagram rejected those outright; Facebook would
+    // have published the caption by itself. Confirmed live 2026-11-26.
+    it("never sends mediaUrls, which POST /posts does not accept", async () => {
       const { svc, client } = build();
       await publish(svc, { mediaIds: ["m1", "m2"] });
-      const body = client.createPost.mock.calls[0][0];
-      expect(body.mediaUrls).toEqual(["https://cdn.test/m1.jpg", "https://cdn.test/m2.jpg"]);
-      expect(body.mediaItems).toBeUndefined();
+      expect(client.createPost.mock.calls[0][0].mediaUrls).toBeUndefined();
     });
 
-    it("switches to mediaItems only when alt text is actually set", async () => {
+    it("attaches every item as mediaItems, with no alt text needed", async () => {
+      const { svc, client } = build();
+      await publish(svc, { mediaIds: ["m1", "m2"] });
+      expect(client.createPost.mock.calls[0][0].mediaItems).toEqual([
+        { url: "https://cdn.test/m1.jpg", type: "image", mimeType: "image/jpeg", filename: "m1.jpg" },
+        { url: "https://cdn.test/m2.jpg", type: "image", mimeType: "image/jpeg", filename: "m2.jpg" },
+      ]);
+    });
+
+    it("names the kind, because our URLs carry no file extension", async () => {
+      // `/api/media/<id>/public?token=…` and the signed Spaces link both end
+      // without one, so Zernio has nothing to infer image-vs-video from.
+      const { svc, client } = build();
+      await publish(svc, { mediaIds: ["v1"] });
+      expect(client.createPost.mock.calls[0][0].mediaItems[0]).toMatchObject({
+        type: "video",
+        mimeType: "video/mp4",
+      });
+    });
+
+    it("carries alt text on the item it belongs to", async () => {
       const { svc, client } = build();
       await publish(svc, { mediaIds: ["m1", "m2"], altTexts: ["", "a cup of coffee"] });
-      const body = client.createPost.mock.calls[0][0];
-      expect(body.mediaUrls).toBeUndefined();
-      expect(body.mediaItems).toEqual([
-        { url: "https://cdn.test/m1.jpg" },
-        { url: "https://cdn.test/m2.jpg", altText: "a cup of coffee" },
-      ]);
+      const items = client.createPost.mock.calls[0][0].mediaItems;
+      expect(items[0].altText).toBeUndefined();
+      expect(items[1].altText).toBe("a cup of coffee");
     });
 
     it("ignores whitespace-only alt text", async () => {
       const { svc, client } = build();
       await publish(svc, { mediaIds: ["m1"], altTexts: ["   "] });
-      expect(client.createPost.mock.calls[0][0].mediaUrls).toHaveLength(1);
+      const items = client.createPost.mock.calls[0][0].mediaItems;
+      expect(items).toHaveLength(1);
+      expect(items[0].altText).toBeUndefined();
     });
   });
 

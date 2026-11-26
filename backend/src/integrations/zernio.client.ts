@@ -343,10 +343,17 @@ export class ZernioClient {
   async createPost(body: {
     content: string;
     platforms: Array<{ platform: string; accountId: string; platformSpecificData?: unknown }>;
-    mediaUrls?: string[];
-    /** Zernio's richer media shape, needed for per-item fields like altText.
-     *  Send this OR mediaUrls, never both. */
-    mediaItems?: Array<{ url: string; altText?: string }>;
+    /** The ONLY media field POST /posts accepts. There is no `mediaUrls` on
+     *  this body — that field belongs to the Ads and SMS endpoints, and
+     *  sending it here attaches nothing. */
+    mediaItems?: Array<{
+      url: string;
+      type?: "image" | "video" | "gif" | "document";
+      mimeType?: string;
+      filename?: string;
+      altText?: string;
+      subtitles?: string[];
+    }>;
     publishNow?: boolean;
     scheduledFor?: string; // ISO 8601 — when set, wins over publishNow
     timezone?: string;     // IANA name, e.g. "Asia/Riyadh"

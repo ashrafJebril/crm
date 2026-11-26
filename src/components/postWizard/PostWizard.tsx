@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useFetch } from "@/api/useFetch";
-import { api } from "@/api/client";
+import { api, API_BASE, tokenStore } from "@/api/client";
+import { AuthorizedImage } from "@/components/AuthorizedImage";
+import { AuthorizedVideo } from "@/components/AuthorizedVideo";
 import { uploadMedia } from "@/api/uploadMedia";
 import { mediaErrorText } from "@/components/media/mediaErrors";
 import { SchedulePicker } from "@/components/SchedulePicker";
@@ -77,7 +79,20 @@ export function PostWizard({
     setBusy(true);
     setError(null);
     try {
-      await api.post("/social/publish", publishBody(state));
+      // /social/publish answers 200 even when the publish failed: the outcome
+      // is per channel in the body. Awaiting the request alone and calling it
+      // done reported "Posted" over a post that never existed.
+      const res = await api.post<Record<string, { ok: boolean; error?: string }>>(
+        "/social/publish",
+        publishBody(state),
+      );
+      const failed = Object.entries(res ?? {}).filter(([, r]) => r && !r.ok);
+      if (failed.length) {
+        setError(
+          failed.map(([ch, r]) => `${ch}: ${r.error ?? tx("failed", "فشل")}`).join(" · "),
+        );
+        return;
+      }
       setDone(true);
       onPosted?.();
     } catch (e) {
@@ -131,7 +146,13 @@ export function PostWizard({
         {!done && (
           <footer style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderTop: "1px solid var(--line-soft)", flexWrap: "wrap" }}>
             {blocked && <span style={{ fontSize: 12, color: "var(--warn)" }}>{blocked}</span>}
-            {error && <span style={{ fontSize: 12, color: "var(--bad)" }}>{error}</span>}
+            {/* Takes the full row: a Zernio refusal is a sentence, not a word,
+                and squeezed beside the buttons it was unreadable. */}
+            {error && (
+              <span role="alert" style={{ flexBasis: "100%", fontSize: 12, color: "var(--bad)", lineHeight: 1.45 }}>
+                {error}
+              </span>
+            )}
             <span style={{ flex: 1 }} />
             {step !== "type" && (
               <button type="button" className="btn" onClick={() => go(-1)} disabled={busy}>
@@ -317,8 +338,9 @@ function MediaStep({
         ) : (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {media.map((m, i) => (
-              <div key={m.id} style={{ position: "relative", width: 96 }}>
-                <Thumb media={m} />
+              <div key={m.id} style={{ position: "relative", width: 150 }}>
+                {/* Playable here, so a video can be checked before it goes out. */}
+                <Thumb media={m} size={150} play />
                 <div style={{ display: "flex", gap: 2, marginBlockStart: 4 }}>
                   <button type="button" className="btn ghost sm" onClick={() => move(i, i - 1)} disabled={i === 0} aria-label={tx("Move earlier", "تقديم")}>‹</button>
                   <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ink-3)" }}>{i + 1}</span>
@@ -357,11 +379,41 @@ function MediaStep({
   );
 }
 
-function Thumb({ media }: { media: Media }) {
+/**
+ * A real thumbnail, not a filename.
+ *
+ * `play` renders a video with its controls so it can be watched before the
+ * post goes out — the whole point of a preview. Library tiles pass it false:
+ * they are buttons, and a video swallowing the click would make them
+ * unselectable.
+ */
+function Thumb({ media, size = 96, play = false }: { media: Media; size?: number; play?: boolean }) {
   const isVideo = media.mimeType?.startsWith("video");
+  const url = `${API_BASE}/media/${media.id}/file`;
+  const token = tokenStore.get();
   return (
-    <div style={{ width: 96, height: 96, borderRadius: 8, border: "1px solid var(--line)", background: "var(--bg-2)", display: "grid", placeItems: "center", overflow: "hidden", fontSize: 10, color: "var(--ink-3)" }}>
-      {isVideo ? "▶ video" : media.fileName?.slice(0, 14)}
+    <div
+      style={{
+        width: size, height: size, borderRadius: 8, border: "1px solid var(--line)",
+        background: "var(--bg-2)", overflow: "hidden", position: "relative",
+      }}
+    >
+      {isVideo ? (
+        <AuthorizedVideo url={url} token={token} controls={play} />
+      ) : (
+        <AuthorizedImage url={url} alt={media.alt ?? media.fileName} token={token} retryable={false} />
+      )}
+      {isVideo && !play && (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute", inset: 0, display: "grid", placeItems: "center",
+            fontSize: 20, color: "#fff", textShadow: "0 1px 3px rgba(0,0,0,.6)", pointerEvents: "none",
+          }}
+        >
+          ▶
+        </span>
+      )}
     </div>
   );
 }
@@ -590,17 +642,28 @@ function TrialReel({ value, set, tx }: { value?: { graduationStrategy?: string }
 
 function AudioPicker({ state, set, tx }: { state: WizardState; set: (k: OptionKey, v: unknown) => void; tx: Tx }) {
   const [q, setQ] = useState("");
+  // Debounced: typing fired one request per keystroke, and against an account
+  // that cannot use the catalog every one of them was a 400.
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(q), 350);
+    return () => clearTimeout(id);
+  }, [q]);
+
   const audioQ = useFetch<{ tracks: { audioId?: string; id?: string; title?: string; artist?: string }[]; unavailable: string | null }>(
-    `/integrations/zernio/instagram/audio${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    `/integrations/zernio/instagram/audio${query ? `?q=${encodeURIComponent(query)}` : ""}`,
   );
   const chosen = state.options.audioTrack as { audioId?: string } | undefined;
 
-  if (audioQ.data?.unavailable) {
+  // Either the backend names the reason, or the request itself failed. Both
+  // mean the same thing to the user, and an empty search box explains none of
+  // it — which is exactly how this looked before.
+  if (audioQ.data?.unavailable || audioQ.error) {
     return (
       <Note tx={tx} tone="warn">
         {tx(
-          "Music needs this Instagram account connected with Facebook Login. Reconnect it in Channels to use the audio library.",
-          "الموسيقى تتطلب ربط حساب إنستغرام عبر تسجيل دخول فيسبوك. أعد ربطه من صفحة القنوات.",
+          "Music needs this Instagram account connected with Facebook Login. It is currently connected with Instagram Login, so the audio catalogue is closed to it. Reconnect it in Channels, choosing Facebook, to pick a track.",
+          "الموسيقى تتطلب ربط حساب إنستغرام عبر تسجيل دخول فيسبوك. الحساب مرتبط حالياً عبر تسجيل دخول إنستغرام، لذلك لا يمكن الوصول إلى مكتبة الصوت. أعد ربطه من صفحة القنوات مختاراً فيسبوك لاختيار مقطع.",
         )}
       </Note>
     );
@@ -647,6 +710,7 @@ function Unavailable({ platform, kind, tx }: { platform: Platform; kind: PostKin
 /* ── 4. Preview ──────────────────────────────────────────────────────── */
 
 function PreviewStep({ state, media, tx, accountName }: { state: WizardState; media: Media[]; tx: Tx; accountName: (p: string) => string }) {
+  const [frame, setFrame] = useState(0);
   const vertical = state.kind !== "post";
   const captionOk = capability(state.platform, state.kind, "caption").supported;
   const text = state.content.trim();
@@ -659,8 +723,25 @@ function PreviewStep({ state, media, tx, accountName }: { state: WizardState; me
           <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--accent-soft)" }} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>{accountName(state.platform)}</span>
         </div>
-        <div style={{ aspectRatio: vertical ? "9 / 16" : "1 / 1", background: "var(--bg-3)", display: "grid", placeItems: "center", color: "var(--ink-4)", fontSize: 12 }}>
-          {media.length ? tx(`${media.length} item(s)`, `${media.length} عنصر`) : tx("No media", "بدون ملفات")}
+        {/* The actual media, not a count of it. A preview that says "1 item(s)"
+            tells you nothing about what you are about to publish. */}
+        <div style={{ aspectRatio: vertical ? "9 / 16" : "1 / 1", background: "var(--bg-3)", position: "relative", overflow: "hidden" }}>
+          {media.length ? (
+            <PreviewMedia media={media[frame]} />
+          ) : (
+            <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--ink-4)", fontSize: 12 }}>
+              {tx("No media", "بدون ملفات")}
+            </div>
+          )}
+          {media.length > 1 && (
+            <>
+              <PageDot side="start" disabled={frame === 0} onClick={() => setFrame((f) => f - 1)} label={tx("Previous", "السابق")} />
+              <PageDot side="end" disabled={frame === media.length - 1} onClick={() => setFrame((f) => f + 1)} label={tx("Next", "التالي")} />
+              <span style={{ position: "absolute", insetBlockStart: 8, insetInlineEnd: 8, background: "rgba(0,0,0,.6)", color: "#fff", borderRadius: 999, padding: "2px 8px", fontSize: 11 }}>
+                {frame + 1}/{media.length}
+              </span>
+            </>
+          )}
         </div>
         {captionOk && text && (
           <p dir="auto" style={{ margin: 0, padding: 10, fontSize: 13, lineHeight: 1.5 }}>
@@ -673,6 +754,35 @@ function PreviewStep({ state, media, tx, accountName }: { state: WizardState; me
         {tx("Approximate. The platform decides final cropping.", "تقريبي. المنصة تحدد القص النهائي.")}
       </span>
     </div>
+  );
+}
+
+/** One media item, filling the preview frame. Video keeps its controls. */
+function PreviewMedia({ media }: { media: Media }) {
+  const token = tokenStore.get();
+  const url = `${API_BASE}/media/${media.id}/file`;
+  if (media.mimeType?.startsWith("video")) {
+    return <AuthorizedVideo url={url} token={token} style={{ objectFit: "cover" }} />;
+  }
+  return <AuthorizedImage url={url} alt={media.alt ?? media.fileName} token={token} retryable={false} />;
+}
+
+function PageDot({ side, disabled, onClick, label }: { side: "start" | "end"; disabled: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      style={{
+        position: "absolute", insetBlockStart: "50%", transform: "translateY(-50%)",
+        [side === "start" ? "insetInlineStart" : "insetInlineEnd"]: 8,
+        width: 26, height: 26, borderRadius: "50%", border: "none", cursor: disabled ? "default" : "pointer",
+        background: "rgba(0,0,0,.55)", color: "#fff", opacity: disabled ? 0.3 : 1, fontSize: 13, lineHeight: 1,
+      }}
+    >
+      {side === "start" ? "‹" : "›"}
+    </button>
   );
 }
 
