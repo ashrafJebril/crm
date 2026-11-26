@@ -25,7 +25,20 @@ import { PrismaService } from "../prisma/prisma.service";
 import { MediaService } from "../media/media.service";
 import { familyOfMime, sniffFamily, SNIFF_BYTES } from "../media/sniff";
 import { ImportFileError, parseFile } from "../imports/parse-file";
-import { defaultPdfText, type PdfTextFn } from "../knowledge-sources/knowledge-extract";
+
+export type PdfTextFn = (buffer: Buffer) => Promise<{ text: string; numpages: number }>;
+
+/**
+ * `pdf-parse` loaded lazily from its library file (its index runs a
+ * self-test when required directly). The bytes are copied first: a small
+ * pooled Buffer has a non-zero byteOffset, which pdf.js misreads.
+ */
+export const defaultPdfText: PdfTextFn = async (buffer) => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const pdf = require("pdf-parse/lib/pdf-parse.js") as (b: Uint8Array) => Promise<{ text: string; numpages: number }>;
+  const r = await pdf(new Uint8Array(buffer));
+  return { text: r.text ?? "", numpages: r.numpages ?? 0 };
+};
 import {
   ATTACH_DOC_MAX_BYTES,
   ATTACH_IMAGE_MAX_BYTES,

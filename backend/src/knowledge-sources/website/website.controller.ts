@@ -13,8 +13,8 @@ export class WebsiteController {
   constructor(private readonly websites: WebsitesService) {}
 
   @Post("check")
-  check(@Body() body: CheckWebsiteDto) {
-    return this.websites.check(body.url);
+  check(@CurrentWorkspace() ws: string, @Body() body: CheckWebsiteDto) {
+    return this.websites.check(ws, body.url);
   }
 
   @Post()

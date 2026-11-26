@@ -80,6 +80,16 @@ export const KNOWLEDGE_ERROR_COPY: Record<string, CopyFn> = {
     `يمكنك إضافة ${num(x.limit, WEBSITE_MAX_SOURCES)} مواقع كحد أقصى.`,
   ],
   "knowledge.not_found": () => ["This knowledge source no longer exists.", "مصدر المعرفة هذا لم يعد موجودًا."],
+  "knowledge.agent_off": () => [
+    "Turn on your AI agent first. Its knowledge is kept with the agent.",
+    "شغّل وكيل الذكاء الاصطناعي أولًا. تُحفظ المعرفة مع الوكيل.",
+  ],
+  "knowledge.storage_unavailable": () => [
+    "Files can't be stored right now. Try again later.",
+    "لا يمكن حفظ الملفات الآن. حاول مرة أخرى لاحقًا.",
+  ],
+  "knowledge.template_invalid": () => ["This spreadsheet type isn't set up correctly.", "نوع جدول البيانات هذا غير مُعدّ بشكل صحيح."],
+  "knowledge.agent_unknown": () => ["This agent no longer exists.", "هذا الوكيل لم يعد موجودًا."],
   "knowledge.version_conflict": () => [
     "Someone else saved this. Reload to see their version.",
     "حفظ شخص آخر هذا المحتوى. أعد التحميل لرؤية نسخته.",

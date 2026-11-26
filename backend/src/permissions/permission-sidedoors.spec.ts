@@ -1030,41 +1030,34 @@ describe("SP-11 working home", () => {
   });
 });
 
-describe("SP-21 knowledge files", () => {
+describe("knowledge on l stays inside the workspace", () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const kw = require("../knowledge-sources/knowledge-test-world") as typeof import("../knowledge-sources/knowledge-test-world");
+  const kw = require("../knowledge-sources/l-knowledge.fake") as typeof import("../knowledge-sources/l-knowledge.fake");
 
-  it("knowledge file of another workspace is 404", async () => {
+  it("a source of another workspace is 404, and each workspace calls only its own l workspace", async () => {
     const w = kw.knowledgeWorld();
-    const { items } = await w.svc.uploadFiles(kw.A, "uOwner", [kw.pdf()]);
+    w.db.workspace.push({ id: "wsC", name: "C", slug: "c", timezone: "Asia/Riyadh", lWorkspaceId: "lC" });
+    const { items } = await w.svc.uploadFiles(kw.A, "uOwner", [{ buffer: Buffer.from("%PDF-1.4"), originalname: "menu.pdf", mimetype: "application/pdf", size: 8 }]);
     const id = items[0].id;
-    const mediaId = w.db.knowledgeSource[0].mediaId as string;
-    const res = { setHeader: jest.fn(), send: jest.fn(), sendFile: jest.fn() } as never;
+    const res = { setHeader: jest.fn(), send: jest.fn() } as never;
     const notFound = { status: 404, body: { statusCode: 404, message: "knowledge.not_found" } };
-    expect(await kw.failure(w.svc.sendFile(kw.B, id, res))).toEqual(notFound);
-    expect(await kw.failure(w.svc.get(kw.B, id))).toEqual(notFound);
-    expect(await kw.failure(w.svc.remove(kw.B, id))).toEqual(notFound);
-    // The stored file is not reachable from the other workspace through media either.
-    await expect(w.media.get(kw.B, mediaId)).rejects.toThrow(NotFoundException);
+    expect(await kw.failure(w.svc.sendFile("wsC", id, res))).toEqual(notFound);
+    expect(await kw.failure(w.svc.get("wsC", id))).toEqual(notFound);
+    expect(await kw.failure(w.svc.remove("wsC", id))).toEqual(notFound);
     expect(w.db.knowledgeSource).toHaveLength(1);
+    const bases = w.l.call.mock.calls.map((c: any[]) => [c[0].lWorkspaceId, c[1]]);
+    expect(bases.filter(([lw]: string[]) => lw === "lC").map(([, path]: string[]) => path)).toEqual([`/sources/${id}`, `/sources/${id}`]);
   });
 
-  it("media delete refuses a knowledge file", async () => {
+  it("a workspace whose AI agent is off sees nothing and changes nothing", async () => {
     const w = kw.knowledgeWorld();
-    const { items } = await w.svc.uploadFiles(kw.A, "uOwner", [kw.pdf()]);
-    const mediaId = w.db.knowledgeSource[0].mediaId as string;
-    const e = await kw.failure(w.media.remove(kw.A, mediaId));
-    expect(e).toEqual({
-      status: 409,
-      body: { statusCode: 409, message: "media.in_use", templates: [], campaigns: [], tickets: [], knowledge: [{ id: items[0].id, title: "menu.pdf" }] },
-    });
-    expect(w.db.media).toHaveLength(1);
-    expect(w.storage.delete).not.toHaveBeenCalled();
-    // The check and the delete run under the media lock.
-    const locks = w.prisma.$executeRaw.mock.calls.map((c: any[]) => `${c[0].join("?")}|${c.slice(1).join(",")}`);
-    expect(locks.some((l: string) => l.includes("pg_advisory_xact_lock") && l.endsWith(`|media:${mediaId}`))).toBe(true);
-    // And the library never lists it.
-    expect((await w.media.listPage(kw.A, undefined, { kind: "all" })).items).toEqual([]);
+    await w.svc.createFaq(kw.A, "uOwner", { question: "Parking?", answer: "Free" });
+    expect(await w.svc.list(kw.B)).toEqual({ items: [], agentOn: false });
+    expect(await w.search.search(kw.B, "parking")).toEqual([]);
+    const off = { status: 409, body: { statusCode: 409, message: "knowledge.agent_off" } };
+    expect(await kw.failure(w.svc.createFaq(kw.B, "uOwner", { question: "Q", answer: "A" }))).toEqual(off);
+    expect(await kw.failure(w.svc.get(kw.B, w.db.knowledgeSource[0].id))).toEqual(off);
+    expect(w.db.knowledgeSource).toHaveLength(1);
   });
 });
 

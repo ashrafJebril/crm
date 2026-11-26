@@ -7,11 +7,17 @@ import {
 } from "@nestjs/common";
 
 interface JoteckRequestOpts {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   formData?: FormData;
   /** SP-20: abort the call after this many ms (a 502 like any unreachable call). */
   timeoutMs?: number;
+  /**
+   * Pass l's own error body through when its `message` starts with this
+   * prefix (e.g. "knowledge."): those are user-facing keys the screens
+   * translate, not provider detail.
+   */
+  passErrors?: string;
 }
 
 /**
@@ -33,6 +39,24 @@ export class LJoteckClient {
   }
 
   async request<T>(path: string, opts: JoteckRequestOpts = {}): Promise<T> {
+    const res = await this.send(path, opts);
+    if (res.status === 204) return undefined as T;
+    const raw = await res.text();
+    return (raw ? safeJson(raw) : undefined) as T;
+  }
+
+  /** Like `request`, for a binary body (a stored file). */
+  async requestRaw(path: string, opts: JoteckRequestOpts = {}): Promise<{ data: Buffer; contentType: string | null; disposition: string | null }> {
+    const res = await this.send(path, opts);
+    return {
+      data: Buffer.from(await res.arrayBuffer()),
+      contentType: res.headers.get("content-type"),
+      disposition: res.headers.get("content-disposition"),
+    };
+  }
+
+  /** The call. An error status throws, so what returns is ok. */
+  private async send(path: string, opts: JoteckRequestOpts): Promise<Response> {
     const baseUrl = process.env.L_API_URL;
     const secret = process.env.L_JOTECK_SECRET;
     if (!baseUrl || !secret) {
@@ -64,12 +88,10 @@ export class LJoteckClient {
       throw new BadGatewayException("Could not reach the Kewy AI platform");
     }
 
-    if (res.status === 204) return undefined as T;
-
+    if (res.ok) return res;
     const raw = await res.text();
     const data: unknown = raw ? safeJson(raw) : undefined;
-
-    if (!res.ok) {
+    {
       const detail = isRecord(data) && typeof data.detail === "string" ? data.detail : undefined;
       this.logger.warn(
         `l platform returned ${res.status} for ${url}${detail ? `: ${detail}` : ""}`,
@@ -82,12 +104,14 @@ export class LJoteckClient {
       // attached = session expired" logout hook (src/api/client.ts), logging
       // out a user over a platform misconfiguration. Remap to 502 instead.
       const status = res.status === 401 || res.status === 403 ? 502 : res.status;
+      if (opts.passErrors && status === res.status && isRecord(data) && typeof data.message === "string" && data.message.startsWith(opts.passErrors)) {
+        throw new HttpException(data, status);
+      }
 
       // Per spec: don't leak upstream error detail to the browser — log it
       // server-side (above) and surface a generic message instead.
       throw new HttpException("Kewy AI platform returned an error", status);
     }
-    return data as T;
   }
 }
 

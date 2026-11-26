@@ -42,7 +42,10 @@ import { McpToolsFactory } from "../../mcp-server/mcp-tools.factory";
 import { SkillsService } from "../../skills/skills.service";
 import { CRM_MCP_SERVER_NAME, LAgentSetupService, crmPromptSections } from "../../integrations/l-agent-setup.service";
 import { LAgentService, LTryTurnError, type LTryTurn } from "../../integrations/l-agent.service";
-import { GUIDELINES_BLOCK } from "../../knowledge-sources/knowledge-publisher";
+import { KnowledgeSourcesService } from "../../knowledge-sources/knowledge-sources.service";
+
+/** The sandbox prompt block that holds the agent's guidelines (stored on l). */
+const GUIDELINES_BLOCK = "guidelines";
 import { SlidingWindowLimiter } from "../../common/rate-limit";
 import {
   SANDBOX_MAX_ITERATIONS,
@@ -211,6 +214,8 @@ export class SandboxService {
     @Optional() private readonly skills?: SkillsService,
     // A linked workspace is tried on its real l agent (a dry run).
     @Optional() private readonly lAgent?: LAgentService,
+    // The agent's guidelines (on l) for the preview prompt.
+    @Optional() private readonly knowledge?: KnowledgeSourcesService,
   ) {
     this.limiter = new SlidingWindowLimiter({ limit: SANDBOX_RATE.turns, windowMs: SANDBOX_RATE.windowMs });
   }
@@ -266,7 +271,7 @@ export class SandboxService {
     const [live, settings, guidelines] = await Promise.all([
       this.livePrompt(workspaceId),
       this.prisma.agentSettings.findUnique({ where: { workspaceId } }),
-      this.prisma.knowledgeSource.findFirst({ where: { workspaceId, kind: "guideline" }, orderBy: { createdAt: "asc" }, select: { body: true } }),
+      this.knowledge ? this.knowledge.getGuidelines(workspaceId).catch(() => null) : Promise.resolve(null),
     ]);
     return composeSandboxSystem({
       live,
