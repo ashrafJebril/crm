@@ -259,6 +259,10 @@ export interface SocialPost {
   likes: number;
   shares: number;
   views?: number;       // tiktok-style
+  /** The platform's own comment total. `comments` holds only the ones
+   *  fetched for the open post, so counting that array reports 0 for every
+   *  other post — which is what the insights panel used to do. */
+  commentCount?: number;
   comments: SocialComment[];
 }
 

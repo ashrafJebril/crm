@@ -275,6 +275,7 @@ function SocialImpl() {
       postedAt: formatCompactDate(p.createdAt),
       likes: p.likes,
       shares: p.shares,
+      commentCount: p.comments,
       comments: [],
     }));
   }, [liveFbQ.data, fbPageName]);
@@ -412,6 +413,7 @@ function SocialImpl() {
       postedAt: formatCompactDate(p.createdAt ?? ""),
       likes: p.likes,
       shares: p.shares,
+      commentCount: p.comments,
       comments: [],
     }));
   }, [liveIgQ.data, igUsername]);
@@ -585,7 +587,9 @@ function SocialImpl() {
     let topPost: SocialPost | null = null;
     for (const p of posts) {
       likes += p.likes;
-      comments += p.comments.length;
+      // `comments` is only filled for the post that is open, so summing it
+      // reported 0 across a feed that plainly had comments on it.
+      comments += p.commentCount ?? p.comments.length;
       if (!topPost || p.likes > topPost.likes) topPost = p;
     }
     return {
@@ -1136,7 +1140,7 @@ function SocialImpl() {
                       ↗ {formatCount(post.shares)}
                     </span>
                     <span title={tx("Comments", "تعليقات")}>
-                      💬 {liveComments.length}
+                      💬 {formatCount(liveComments.length || post.commentCount || 0)}
                     </span>
                     {post.platform === "tiktok" && post.views !== undefined && (
                       <span
@@ -1683,7 +1687,7 @@ function SocialImpl() {
               >
                 <span>❤︎ {formatCount(insights.topPost.likes)}</span>
                 <span>↗ {formatCount(insights.topPost.shares)}</span>
-                <span>💬 {insights.topPost.comments.length}</span>
+                <span>💬 {formatCount(insights.topPost.commentCount ?? insights.topPost.comments.length)}</span>
               </div>
               <button
                 type="button"
