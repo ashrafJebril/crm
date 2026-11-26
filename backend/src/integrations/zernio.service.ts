@@ -620,7 +620,10 @@ export class ZernioService {
     const profileId = await this.getProfileId(workspaceId);
     if (!profileId) return [];
     const p = platform?.toLowerCase();
-    const posts = await this.client.listPosts(profileId, p);
+    // Scope to the account when we know which one, because Zernio leaves a
+    // just-synced post out of a profileId+platform query (see listPosts).
+    const accountId = p ? ((await this.accountIdFor(workspaceId, p)) ?? undefined) : undefined;
+    const posts = await this.client.listPosts({ profileId, accountId });
     return posts
       .filter((post) => {
         if (!p) return true;
@@ -777,7 +780,7 @@ export class ZernioService {
     // endpoint addresses the platform's NATIVE post id (spike-verified:
     // platforms[].platformPostId). Resolve via the raw feed row — which
     // doubles as the own-feed tenancy check.
-    const raw = (await this.client.listPosts(profileId)).find(
+    const raw = (await this.client.listPosts({ profileId })).find(
       (p) => (p._id ?? p.id) === postId,
     );
     if (!raw) throw new NotFoundException("Post not found");
@@ -808,6 +811,15 @@ export class ZernioService {
   /** The workspace's own Instagram account id, or null. Every Instagram
    *  helper below goes through this, so none can be aimed at another
    *  tenant's account — the Zernio API key is global. */
+  /** The connected Zernio account id for one platform, or null. */
+  private async accountIdFor(workspaceId: string, kind: string): Promise<string | null> {
+    const ch = await this.prisma.channel.findFirst({
+      where: { workspaceId, provider: "zernio", kind, status: { not: "disconnected" } },
+      select: { externalId: true },
+    });
+    return ch?.externalId ?? null;
+  }
+
   private async ownInstagramAccountId(workspaceId: string): Promise<string | null> {
     const ch = await this.prisma.channel.findFirst({
       where: {
