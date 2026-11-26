@@ -218,6 +218,9 @@ describe("ZernioService listComments (genuine per-post comment shape)", () => {
         postId: "p1",
         platform: "facebook",
         author: "Jane Doe",
+        // The comment carries no handle or picture here.
+        authorUsername: null,
+        authorAvatar: null,
         body: "great post!",
         likes: 3,
         at: "2026-01-01T00:00:00Z",
