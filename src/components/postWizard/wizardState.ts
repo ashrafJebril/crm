@@ -109,7 +109,20 @@ export function canReach(state: WizardState, step: Step, tx: (en: string, ar: st
 }
 
 /** The request body for POST /social/publish. */
-export function publishBody(state: WizardState) {
+export interface PublishBody {
+  content: string;
+  mediaIds?: string[];
+  altTexts?: string[];
+  channels: Platform[];
+  scheduledFor?: string;
+  timezone?: string;
+  /** Only one of these is ever set — whichever platform was chosen. Both are
+   * declared so callers can read either without narrowing a union first. */
+  instagram?: Record<string, unknown>;
+  facebook?: Record<string, unknown>;
+}
+
+export function publishBody(state: WizardState): PublishBody {
   const o = state.options;
   const pick = <T,>(key: OptionKey): T | undefined =>
     capability(state.platform, state.kind, key).supported ? (o[key] as T) : undefined;
