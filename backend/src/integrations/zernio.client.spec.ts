@@ -300,10 +300,15 @@ describe("ZernioClient.listPosts window + pagination", () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    await client.listPosts("prof1", "facebook");
+    await client.listPosts({ profileId: "prof1", accountId: "acc-fb" });
 
     const url = String(fetchMock.mock.calls[0][0]);
-    expect(url).toContain("platform=facebook");
+    // Scoped by account, and `platform` is never sent: Zernio drops a
+    // just-synced post from a profileId+platform query (measured 2026-11-26,
+    // a published Reel was missing from the feed). The caller filters.
+    expect(url).toContain("accountId=acc-fb");
+    expect(url).not.toContain("platform=");
+    expect(url).not.toContain("profileId=");
     expect(url).toContain("limit=100");
     const from = new URL(url).searchParams.get("fromDate");
     const to = new URL(url).searchParams.get("toDate");
@@ -341,7 +346,7 @@ describe("ZernioClient.listPosts window + pagination", () => {
       });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const posts = await client.listPosts("prof1");
+    const posts = await client.listPosts({ profileId: "prof1" });
 
     expect(posts.map((p) => p._id)).toEqual(["p1", "p2"]);
     expect(fetchMock).toHaveBeenCalledTimes(2);

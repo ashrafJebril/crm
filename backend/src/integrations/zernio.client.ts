@@ -381,7 +381,8 @@ export class ZernioClient {
    *  post because everything older fell outside the silent default). 365 days
    *  is Zernio's documented maximum range; pages are walked like getAnalytics
    *  so a busy year isn't cut at the first 100 posts. */
-  async listPosts(profileId: string, platform?: string): Promise<ZernioPost[]> {
+  async listPosts(scope: { profileId: string; accountId?: string }): Promise<ZernioPost[]> {
+    const { profileId, accountId } = scope;
     const to = new Date();
     const from = new Date(to.getTime() - 365 * 24 * 60 * 60 * 1000);
     const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -392,21 +393,24 @@ export class ZernioClient {
         posts?: ZernioPost[];
         pagination?: { page?: number; pages?: number; total?: number };
       }>("GET", "/analytics", {
-        query: {
-          profileId,
-          platform,
-          fromDate: iso(from),
-          toDate: iso(to),
-          limit: "100",
-          page: String(page),
-        },
+        // `profileId` + `platform` is a combination Zernio answers wrongly:
+        // a freshly synced post is left out of it while the same window
+        // returns it under `profileId` alone or under `accountId`. Measured
+        // 2026-11-26 — a published Reel was missing from the feed for hours:
+        //   profileId + platform=instagram -> 7 posts, newest Nov 25
+        //   accountId  + platform=instagram -> 8 posts, newest Nov 26 13:03
+        // So an account scopes the query when we know it, and `platform` is
+        // never paired with a bare profileId; the caller filters instead.
+        query: accountId
+          ? { accountId, fromDate: iso(from), toDate: iso(to), limit: "100", page: String(page) }
+          : { profileId, fromDate: iso(from), toDate: iso(to), limit: "100", page: String(page) },
       });
       posts.push(...(res.posts ?? []));
       const pages = res.pagination?.pages ?? 1;
       if (page >= pages || page >= ZernioClient.ANALYTICS_MAX_PAGES) {
         if (pages > ZernioClient.ANALYTICS_MAX_PAGES) {
           this.log.warn(
-            `listPosts: profile ${profileId} has ${pages} pages in the window; feed is best-effort over the first ${ZernioClient.ANALYTICS_MAX_PAGES * 100} posts`,
+            `listPosts: ${accountId ?? profileId} has ${pages} pages in the window; feed is best-effort over the first ${ZernioClient.ANALYTICS_MAX_PAGES * 100} posts`,
           );
         }
         return posts;
