@@ -24,6 +24,11 @@ import {
   instagramPlatformData,
   type InstagramOptions,
 } from "./instagram-post-options";
+import {
+  assertFacebookOptions,
+  facebookPlatformData,
+  type FacebookOptions,
+} from "./facebook-post-options";
 import { importStatus as computeImportStatus, NOT_CONNECTED, PlatformImportStatus } from "./zernio-import";
 import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
@@ -2161,10 +2166,15 @@ export class ZernioService {
       content: string;
       platforms: string[];
       mediaIds?: string[];
-      /** Positionally matched to mediaIds; images only, Instagram-side. */
+      /** Positionally matched to mediaIds. Applied on Instagram feed images,
+       *  Facebook, Threads, X, LinkedIn, Bluesky and Pinterest. */
       altTexts?: string[];
+      /** Per-item SRT/WebVTT subtitle URLs, positionally matched to mediaIds. */
+      subtitleUrls?: string[][];
       /** Instagram's own options, forwarded as platformSpecificData. */
       instagram?: InstagramOptions;
+      /** Facebook's own options, forwarded as platformSpecificData. */
+      facebook?: FacebookOptions;
       scheduledFor?: string;
       timezone?: string;
     },
@@ -2219,6 +2229,8 @@ export class ZernioService {
     }
     const ig = input.instagram;
     if (ig) assertInstagramOptions(ig, mediaUrls.length);
+    const fb = input.facebook;
+    if (fb) assertFacebookOptions(fb, mediaUrls.length);
 
     // Alt text is per ITEM, so it needs Zernio's `mediaItems` shape rather
     // than the flat `mediaUrls` this has always sent. Only switch when there
@@ -2226,23 +2238,33 @@ export class ZernioService {
     // published with, and nothing is worth risking that for a field nobody
     // set. Revisit once `mediaItems` has published live. (2026-11-26)
     const altTexts = input.altTexts ?? [];
-    const useItems = altTexts.some((t) => t?.trim());
+    // Subtitles are per item too, and like altText they live on the MEDIA
+    // item rather than platformSpecificData — shared across platforms, so one
+    // SRT reaches Facebook, YouTube, LinkedIn and X at once.
+    const subs = input.subtitleUrls ?? [];
+    const useItems = altTexts.some((t) => t?.trim()) || subs.some((u) => u?.length);
     const mediaItems = useItems
       ? mediaUrls.map((url, i) => ({
           url,
           ...(altTexts[i]?.trim() ? { altText: altTexts[i].trim().slice(0, 1000) } : {}),
+          ...(subs[i]?.length ? { subtitles: subs[i] } : {}),
         }))
       : undefined;
 
     return this.client.createPost({
       content: input.content,
-      platforms: platforms.map((p) =>
-        // Instagram's options ride on its own platform entry; the other
-        // channels must not receive them.
-        ig && p.platform.toLowerCase() === "instagram"
-          ? { ...p, platformSpecificData: instagramPlatformData(ig) }
-          : p,
-      ),
+      platforms: platforms.map((p) => {
+        // Each platform's options ride on its OWN entry; the others must not
+        // receive them.
+        const kind = p.platform.toLowerCase();
+        if (ig && kind === "instagram") {
+          return { ...p, platformSpecificData: instagramPlatformData(ig) };
+        }
+        if (fb && kind === "facebook") {
+          return { ...p, platformSpecificData: facebookPlatformData(fb) };
+        }
+        return p;
+      }),
       mediaUrls: !useItems && mediaUrls.length ? mediaUrls : undefined,
       mediaItems,
       scheduledFor: input.scheduledFor,

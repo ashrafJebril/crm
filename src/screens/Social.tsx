@@ -3,6 +3,7 @@ import { useTweaks } from "@/tweaks/context";
 import { makeTx } from "@/lib/tx";
 import { useAuth } from "@/auth/context";
 import { useRealtime } from "@/api/useRealtime";
+import { PostWizard } from "@/components/postWizard/PostWizard";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar } from "@/components/Avatar";
 import { PhotoSlot } from "@/components/PhotoSlot";
@@ -198,6 +199,7 @@ function SocialImpl() {
   const [sortMode, setSortMode] = useState<SortMode>("top");
   const [draft, setDraft] = useState<string>("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [scheduledRefresh, setScheduledRefresh] = useState(0);
   const [view, setView] = useState<"feed" | "calendar">("feed");
 
@@ -741,9 +743,12 @@ function SocialImpl() {
             >
               {refreshing ? tx("Refreshing…", "جارٍ التحديث…") : tx("Refresh", "تحديث")}
             </button>
+            <button className="btn" onClick={() => setWizardOpen(true)}>
+              {tx("New post", "منشور جديد")}
+            </button>
             <button className="btn primary" onClick={() => setComposeOpen(true)}>
               <IconBolt w={13} />
-              {tx("Compose", "إنشاء منشور")}
+              {tx("Quick post", "منشور سريع")}
             </button>
           </>
         }
@@ -1733,6 +1738,14 @@ function SocialImpl() {
           .insights-panel { display: none; }
         }
       `}</style>
+
+      <PostWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onPosted={() => {
+          refetchFeeds();
+        }}
+      />
 
       <ComposeModal
         open={composeOpen}

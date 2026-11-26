@@ -116,6 +116,35 @@ export class InstagramOptionsDto {
   @IsOptional() @IsBoolean() muteAudio?: boolean;
 }
 
+/**
+ * Facebook Page options, verified against Zernio's OpenAPI `FacebookPlatformData`
+ * schema. Location, tagging people and CTA buttons are absent because they are
+ * not in that schema and unknown keys are not forwarded.
+ *
+ * Alt text, SRT captions and video covers are NOT here on purpose — they live
+ * on the media item (`altTexts`, `subtitles`, `thumbnail`), shared across
+ * platforms.
+ */
+export class FacebookGeoDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(25) @IsString({ each: true })
+  countries!: string[];
+}
+
+export class FacebookOptionsDto {
+  @IsOptional() @IsIn(["story", "reel"]) contentType?: "story" | "reel";
+  /** Reel only. */
+  @IsOptional() @IsString() @MaxLength(255) title?: string;
+  @IsOptional() @IsString() @MaxLength(8000) firstComment?: string;
+  /** Only labels Reels and video Stories; accepted-and-ignored elsewhere. */
+  @IsOptional() @IsBoolean() isAiGenerated?: boolean;
+  @IsOptional() @IsString() pageId?: string;
+  @IsOptional() @ValidateNested() @Type(() => FacebookGeoDto) geoRestriction?: FacebookGeoDto;
+  /** Numeric Page IDs, Reels only, max 10. */
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) collaborators?: string[];
+  /** Facebook's own draft state in Publishing Tools. */
+  @IsOptional() @IsBoolean() draft?: boolean;
+}
+
 export class PublishDto {
   @IsString()
   @MinLength(1)
@@ -133,9 +162,18 @@ export class PublishDto {
   @IsOptional() @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @MaxLength(1000, { each: true })
   altTexts?: string[];
 
+  /** Subtitle tracks per media item, positionally matched to `mediaIds`.
+   *  SRT or WebVTT URLs; Facebook takes every track up to 200 KB each. */
+  @IsOptional() @IsArray() @ArrayMaxSize(20)
+  subtitleUrls?: string[][];
+
   /** Instagram-only options. Ignored for the other channels. */
   @IsOptional() @ValidateNested() @Type(() => InstagramOptionsDto)
   instagram?: InstagramOptionsDto;
+
+  /** Facebook-only options. Ignored for the other channels. */
+  @IsOptional() @ValidateNested() @Type(() => FacebookOptionsDto)
+  facebook?: FacebookOptionsDto;
 
   @IsArray()
   @ArrayMinSize(1)

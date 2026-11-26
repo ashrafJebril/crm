@@ -33,6 +33,7 @@ export class SocialService {
           mediaIds: dto.mediaIds,
           altTexts: dto.altTexts,
           instagram: dto.instagram,
+          facebook: dto.facebook,
           scheduledFor: dto.scheduledFor,
           timezone: dto.timezone,
         },
