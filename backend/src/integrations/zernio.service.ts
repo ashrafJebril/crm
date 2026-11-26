@@ -2502,7 +2502,13 @@ export class ZernioService {
     // for replies the business types in the Instagram/WhatsApp APP directly,
     // via message.sent with no matching DB row. Both must be persisted, or the
     // thread shows only the customer's half.
-    const isOutbound = evt.message?.direction === "outgoing";
+    // A DM Zernio sent on our behalf is outbound even when `direction` is
+    // absent: a comment automation's Private Reply arrived with no direction
+    // at all and was filed as if the customer had written it.
+    const isOutbound =
+      evt.message?.direction === "outgoing" ||
+      !!evt.message?.sentVia ||
+      !!evt.message?.automationId;
     const from = isOutbound ? "human" : "them";
 
     // SP-19: the account's Channel decides the workspace AND the thread, so
@@ -2521,9 +2527,22 @@ export class ZernioService {
     const attachment = evt.message?.attachments?.[0];
     // Media-only messages arrive with text: null. Label by attachment type
     // rather than the old catch-all "[whatsapp message]" placeholder.
+    const body = (evt.message?.text ?? evt.message?.message)?.trim();
     const text =
-      evt.message?.text?.trim() ||
-      (attachment ? `[${attachment.type ?? "attachment"}]` : `[${channel} message]`);
+      body || (attachment ? `[${attachment.type ?? "attachment"}]` : `[${channel} message]`);
+
+    // An event with no body, no attachment and no id says nothing and cannot
+    // be deduplicated. Three of these were stored as inbound Instagram
+    // messages reading "[instagram message]", each a ghost of the comment
+    // automation's own DM arriving seconds after the real record — so the
+    // thread showed the customer saying something they never said. Nothing is
+    // lost by dropping it: there was no content to keep.
+    if (!body && !attachment && !externalMsgId) {
+      this.log.warn(
+        `Zernio ${channel} event with no body, attachment or id — ignored (conv=${evt.conversation?.id ?? "?"})`,
+      );
+      return;
+    }
     // On outbound messages `sender` is the BUSINESS account — the customer is
     // only identified by the conversation's participant fields.
     const participantId = String(
@@ -3043,6 +3062,16 @@ export interface ZernioWebhookEvent {
     platformMessageId?: string;  // Meta's id
     direction?: "incoming" | "outgoing" | string;
     text?: string | null;        // null on media-only messages
+    /** Zernio's REST message objects carry the body under `message`, not
+     *  `text` (dumped live 2026-11-26 from
+     *  GET /inbox/conversations/{id}/messages). Some webhook deliveries use
+     *  the same shape, so both are read. */
+    message?: string | null;
+    /** Set when Zernio itself produced the DM — a comment automation,
+     *  workflow, broadcast or sequence. Present means the message went OUT,
+     *  whatever `direction` says. */
+    sentVia?: string | null;
+    automationId?: string | null;
     attachments?: Array<{
       type?: string;             // image | video | audio | document
       url?: string;              // absolute, behind Zernio's bearer auth
