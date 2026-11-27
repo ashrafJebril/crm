@@ -1238,7 +1238,16 @@ export interface ZernioPost {
   publishedAt?: string;
   scheduledFor?: string;
   createdAt?: string;
-  analytics?: { likes?: number; comments?: number; shares?: number; views?: number; reach?: number };
+  analytics?: {
+    likes?: number;
+    comments?: number;
+    shares?: number;
+    views?: number;
+    /** The same count as `views`, and the only one of the two Facebook fills
+     *  for photo and link posts (see listPosts' mapping in zernio.service). */
+    impressions?: number;
+    reach?: number;
+  };
   likeCount?: number;
   commentCount?: number;
   shareCount?: number;

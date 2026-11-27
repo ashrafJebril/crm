@@ -647,12 +647,24 @@ export class ZernioService {
         comments: post.analytics?.comments ?? post.commentCount ?? 0,
         shares: post.analytics?.shares ?? post.shareCount ?? 0,
         // Reach and views come back on the same analytics row the feed
-        // already fetches, so showing them costs no extra request. Null
-        // rather than 0 when absent: Facebook returns zeros across the board
-        // for a page whose insights we cannot read, and "0 views" under a
-        // post that plainly had some is a lie the UI should not tell.
-        views: post.analytics?.views ?? null,
-        reach: post.analytics?.reach ?? null,
+        // already fetches, so showing them costs no extra request.
+        //
+        // `views` and `impressions` are one quantity under two names, and
+        // which one is filled depends on the platform (measured live
+        // 2026-11-27, 10 Facebook + 7 Instagram posts):
+        //   instagram, every media type -> views === impressions
+        //   facebook video              -> views === impressions
+        //   facebook photo/link         -> views 0, impressions populated
+        // So a bare `views` showed nothing under every Facebook photo while
+        // Zernio was reporting 45, 47, 29 impressions for them. `||` and not
+        // `??` because Facebook sends a real 0 there, not an absent field.
+        //
+        // Null rather than 0 when BOTH are absent or zero: a post whose
+        // insights have not synced yet carries zeros across the board, and
+        // "0 views" under a post that plainly had some is a lie the UI
+        // should not tell. The badge is hidden instead.
+        views: post.analytics?.views || post.analytics?.impressions || null,
+        reach: post.analytics?.reach || null,
         permalink: post.platformPostUrl ?? post.permalink ?? post.url ?? null,
       }));
   }

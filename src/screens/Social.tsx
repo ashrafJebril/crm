@@ -1179,8 +1179,9 @@ function SocialImpl() {
                       💬 {formatCount(liveComments.length || post.commentCount || 0)}
                     </span>
                     {/* Shown wherever the platform reports a figure. Hidden
-                        at 0: Facebook returns zeros for a page whose insights
-                        we cannot read, and "0 views" would be a lie. */}
+                        at 0, which means insights have not synced for that
+                        post yet — "0 views" under a post that plainly had
+                        some would be a lie. */}
                     {!!post.views && (
                       <span
                         style={{ marginInlineStart: "auto" }}
