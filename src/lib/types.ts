@@ -258,7 +258,12 @@ export interface SocialPost {
   postedAt: string;
   likes: number;
   shares: number;
-  views?: number;       // tiktok-style
+  /** Plays for a video or Reel, impressions for a feed post. Null when the
+   *  platform gives us no figure — not 0, which would read as "nobody saw
+   *  this" under a post that plainly had views. */
+  views?: number | null;
+  /** Distinct accounts reached. Null when unavailable, same reasoning. */
+  reach?: number | null;
   /** The platform's own comment total. `comments` holds only the ones
    *  fetched for the open post, so counting that array reports 0 for every
    *  other post — which is what the insights panel used to do. */

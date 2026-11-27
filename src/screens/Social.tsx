@@ -42,6 +42,8 @@ interface LiveFbPost {
   likes: number;
   comments: number;
   shares: number;
+  views?: number | null;
+  reach?: number | null;
 }
 
 interface LiveFbComment {
@@ -55,6 +57,28 @@ interface LiveFbComment {
   at: string;
   replyCount: number;
   accountId?: string | null;
+}
+
+/** One number in the insights column. */
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        border: "1px solid var(--line-soft)",
+        borderRadius: 10,
+        padding: 12,
+        background: "var(--bg)",
+      }}
+    >
+      <div
+        className="mono muted"
+        style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.06 }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 600, marginTop: 4 }}>{value}</div>
+    </div>
+  );
 }
 
 /* ── Inline platform glyphs ──────────────────────────────────────────────── */
@@ -276,6 +300,8 @@ function SocialImpl() {
       likes: p.likes,
       shares: p.shares,
       commentCount: p.comments,
+      views: p.views ?? null,
+      reach: p.reach ?? null,
       comments: [],
     }));
   }, [liveFbQ.data, fbPageName]);
@@ -291,6 +317,8 @@ function SocialImpl() {
     likes: number;
     comments: number;
     shares: number;
+    views?: number | null;
+    reach?: number | null;
   }
   const igConnected = !!zernioAccount("instagram");
   const igUsername = zernioAccount("instagram")?.name ?? undefined;
@@ -414,6 +442,8 @@ function SocialImpl() {
       likes: p.likes,
       shares: p.shares,
       commentCount: p.comments,
+      views: p.views ?? null,
+      reach: p.reach ?? null,
       comments: [],
     }));
   }, [liveIgQ.data, igUsername]);
@@ -584,18 +614,24 @@ function SocialImpl() {
     const posts = feed;
     let likes = 0;
     let comments = 0;
+    let views = 0;
+    let reach = 0;
     let topPost: SocialPost | null = null;
     for (const p of posts) {
       likes += p.likes;
       // `comments` is only filled for the post that is open, so summing it
       // reported 0 across a feed that plainly had comments on it.
       comments += p.commentCount ?? p.comments.length;
+      views += p.views ?? 0;
+      reach += p.reach ?? 0;
       if (!topPost || p.likes > topPost.likes) topPost = p;
     }
     return {
       posts: posts.length,
       likes,
       comments,
+      views,
+      reach,
       topPost,
     };
   }, [feed]);
@@ -1142,12 +1178,20 @@ function SocialImpl() {
                     <span title={tx("Comments", "تعليقات")}>
                       💬 {formatCount(liveComments.length || post.commentCount || 0)}
                     </span>
-                    {post.platform === "tiktok" && post.views !== undefined && (
+                    {/* Shown wherever the platform reports a figure. Hidden
+                        at 0: Facebook returns zeros for a page whose insights
+                        we cannot read, and "0 views" would be a lie. */}
+                    {!!post.views && (
                       <span
                         style={{ marginInlineStart: "auto" }}
                         title={tx("Views", "مشاهدات")}
                       >
                         ▶ {formatCount(post.views)}
+                      </span>
+                    )}
+                    {!!post.reach && (
+                      <span title={tx("Accounts reached", "حسابات وصلها")}>
+                        ◎ {formatCount(post.reach)}
                       </span>
                     )}
                   </div>
@@ -1616,7 +1660,7 @@ function SocialImpl() {
                 borderRadius: 10,
                 padding: 12,
                 background: "var(--bg)",
-                gridColumn: "1 / -1",
+                gridColumn: insights.views ? "auto" : "1 / -1",
               }}
             >
               <div
@@ -1633,6 +1677,15 @@ function SocialImpl() {
                 {formatCount(insights.comments)}
               </div>
             </div>
+            {/* Only where the platform actually reports them. Facebook returns
+                zeros for a page whose insights we cannot read, and an empty
+                Views tile would look like a failure rather than an absence. */}
+            {!!insights.views && (
+              <Stat label={tx("Views", "مشاهدات")} value={formatCount(insights.views)} />
+            )}
+            {!!insights.reach && (
+              <Stat label={tx("Reached", "الوصول")} value={formatCount(insights.reach)} />
+            )}
           </div>
 
           {insights.topPost && (
