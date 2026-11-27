@@ -646,6 +646,13 @@ export class ZernioService {
         likes: post.analytics?.likes ?? post.likeCount ?? 0,
         comments: post.analytics?.comments ?? post.commentCount ?? 0,
         shares: post.analytics?.shares ?? post.shareCount ?? 0,
+        // Reach and views come back on the same analytics row the feed
+        // already fetches, so showing them costs no extra request. Null
+        // rather than 0 when absent: Facebook returns zeros across the board
+        // for a page whose insights we cannot read, and "0 views" under a
+        // post that plainly had some is a lie the UI should not tell.
+        views: post.analytics?.views ?? null,
+        reach: post.analytics?.reach ?? null,
         permalink: post.platformPostUrl ?? post.permalink ?? post.url ?? null,
       }));
   }

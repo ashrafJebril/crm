@@ -1238,7 +1238,7 @@ export interface ZernioPost {
   publishedAt?: string;
   scheduledFor?: string;
   createdAt?: string;
-  analytics?: { likes?: number; comments?: number; shares?: number };
+  analytics?: { likes?: number; comments?: number; shares?: number; views?: number; reach?: number };
   likeCount?: number;
   commentCount?: number;
   shareCount?: number;
