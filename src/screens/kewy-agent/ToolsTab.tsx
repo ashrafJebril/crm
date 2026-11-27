@@ -6,6 +6,7 @@ import { SettingsCard, Field, ErrorRow, inputStyle } from "@/screens/settings/fo
 import { Modal } from "@/components/Modal";
 import { Toggle } from "@/components/Toggle";
 import { IconPlus, IconBolt } from "@/icons";
+import { parseToolJson, type JsonField } from "./toolJson";
 
 interface LTool {
   id: string;
@@ -28,7 +29,12 @@ interface CreateToolInput {
   description: string;
   method: string;
   url_template: string;
+  headers?: Record<string, string>;
+  body_template?: Record<string, unknown>;
+  param_descriptions?: Record<string, string>;
 }
+
+const EMPTY_JSON: Record<JsonField, string> = { headers: "", body_template: "", param_descriptions: "" };
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -53,11 +59,30 @@ export function ToolsTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
     url_template: "",
   });
 
+  // Optional JSON boxes, kept as typed until Create.
+  const [json, setJson] = useState<Record<JsonField, string>>(EMPTY_JSON);
+
   async function onCreate() {
     setError(null);
+    const parsed = parseToolJson(json);
+    if (!parsed.ok) {
+      setError(
+        {
+          headers: tx("Headers must be a JSON object of text values.", "الترويسات لازم تكون كائن JSON قيمه نصوص."),
+          body_template: tx("Body template must be a JSON object.", "قالب الطلب لازم يكون كائن JSON."),
+          param_descriptions: tx(
+            "Parameter descriptions must be a JSON object of text values.",
+            "وصف المعاملات لازم يكون كائن JSON قيمه نصوص.",
+          ),
+        }[parsed.field],
+      );
+      return;
+    }
+    const { ok: _ok, ...extra } = parsed;
     try {
-      await createMut.mutate(form);
+      await createMut.mutate({ ...form, ...extra });
       setForm({ name: "", description: "", method: "GET", url_template: "" });
+      setJson(EMPTY_JSON);
       setShowAdd(false);
       listQ.refetch();
     } catch (err) {
@@ -185,6 +210,46 @@ export function ToolsTab({ tx, canEdit }: { tx: Tx; canEdit: boolean }) {
                 value={form.url_template}
                 onChange={(e) => setForm({ ...form, url_template: e.target.value })}
                 style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+              />
+            </Field>
+            <Field
+              label={tx("Headers (optional)", "الترويسات (اختياري)")}
+              hint={tx("JSON. Sent with every call; not shown again after saving.", "JSON. بتنبعت مع كل طلب، وما بتنعرض بعد الحفظ.")}
+            >
+              <textarea
+                value={json.headers}
+                onChange={(e) => setJson({ ...json, headers: e.target.value })}
+                placeholder='{"x-api-key": "…"}'
+                rows={2}
+                spellCheck={false}
+                autoComplete="off"
+                style={{ ...inputStyle, fontFamily: "var(--font-mono)", resize: "vertical" }}
+              />
+            </Field>
+            <Field
+              label={tx("Body template (optional)", "قالب الطلب (اختياري)")}
+              hint={tx("JSON sent as the request body. {name} becomes a parameter, like in the URL.", "JSON بينبعت كجسم الطلب. {name} بيصير معامل، متل الرابط.")}
+            >
+              <textarea
+                value={json.body_template}
+                onChange={(e) => setJson({ ...json, body_template: e.target.value })}
+                placeholder='{"city": "{city}"}'
+                rows={4}
+                spellCheck={false}
+                style={{ ...inputStyle, fontFamily: "var(--font-mono)", resize: "vertical" }}
+              />
+            </Field>
+            <Field
+              label={tx("Parameter descriptions (optional)", "وصف المعاملات (اختياري)")}
+              hint={tx("JSON: what the agent should put in each parameter.", "JSON: شو لازم يحط الوكيل بكل معامل.")}
+            >
+              <textarea
+                value={json.param_descriptions}
+                onChange={(e) => setJson({ ...json, param_descriptions: e.target.value })}
+                placeholder='{"city": "City name in English"}'
+                rows={3}
+                spellCheck={false}
+                style={{ ...inputStyle, fontFamily: "var(--font-mono)", resize: "vertical" }}
               />
             </Field>
             <ErrorRow message={error} />
