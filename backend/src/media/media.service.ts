@@ -9,6 +9,7 @@ import { sendResolved, type ResolvedServe } from "./serve-headers";
 import { randomBytes } from "node:crypto";
 import { mediaError } from "./media-errors";
 import { familyOfMime, MIME_OF_FAMILY, sniffFamily, SNIFF_BYTES } from "./sniff";
+import { inboundMedia } from "../integrations/inbound-attachment";
 import { PrismaService } from "../prisma/prisma.service";
 import { MEDIA_STORAGE } from "./storage/storage.provider";
 import { LocalStorage } from "./storage/local-storage";
@@ -44,6 +45,9 @@ const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024; // 10 MB (import files)
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB
 export const MAX_VIDEO_BYTES = 300 * 1024 * 1024; // 300 MB — IG's ceiling; FB/TikTok allow more
 export const MAX_PDF_BYTES = 100 * 1024 * 1024; // 100 MB — WhatsApp's document maximum
+export const MAX_INBOUND_AUDIO_BYTES = 25 * 1024 * 1024; // 25 MB — WhatsApp caps audio at 16 MB
+/** Voice notes and documents a customer sent: stored, played in the inbox, never listed in the library. */
+export const CHAT_ATTACHMENT_PURPOSE = "chat_attachment";
 
 /** SP-21: knowledge files (stored as Media rows hidden from the library, ruling 9). */
 export const KNOWLEDGE_FILE_MIMES = new Set([
@@ -590,6 +594,49 @@ export class MediaService {
         storedPath: key,
         storageKind: this.storage.kind,
         uploadedById: null,
+      },
+    });
+  }
+
+  /**
+   * Store a file a customer sent in a chat: an image, a video, a voice note or
+   * a document. The type comes from the bytes (`inboundMedia`); anything else
+   * is refused. Voice notes and documents are kept out of the media library
+   * (purpose "chat_attachment"); images and videos stay in it as before.
+   */
+  async ingestInboundAttachment(input: {
+    workspaceId: string;
+    buffer: Buffer;
+    attachmentType?: string;
+    declaredMimes: Array<string | undefined>;
+    fileName: string;
+  }) {
+    const found = inboundMedia(input.buffer.subarray(0, SNIFF_BYTES), input.attachmentType, ...input.declaredMimes);
+    if (!found) throw mediaError("media.type_mismatch");
+    const limit = {
+      image: MAX_IMAGE_BYTES,
+      video: MAX_VIDEO_BYTES,
+      audio: MAX_INBOUND_AUDIO_BYTES,
+      file: MAX_PDF_BYTES,
+    }[found.kind];
+    if (input.buffer.length > limit) throw mediaError("media.too_large", { limit });
+    const { key } = await this.storage.put({
+      workspaceId: input.workspaceId,
+      buffer: input.buffer,
+      mimeType: found.mimeType,
+      originalFilename: input.fileName,
+    });
+    const libraryKind = found.kind === "image" || found.kind === "video";
+    return this.prisma.media.create({
+      data: {
+        workspaceId: input.workspaceId,
+        fileName: input.fileName,
+        mimeType: found.mimeType,
+        sizeBytes: input.buffer.length,
+        storedPath: key,
+        storageKind: this.storage.kind,
+        uploadedById: null,
+        ...(libraryKind ? {} : { purpose: CHAT_ATTACHMENT_PURPOSE }),
       },
     });
   }

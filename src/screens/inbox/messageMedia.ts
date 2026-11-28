@@ -5,11 +5,15 @@
  */
 export type PlaceholderKind = "image" | "video" | "audio" | "file" | "attachment";
 
-const PLACEHOLDER = /^\[(image|video|audio|file|attachment)\]$/i;
+const PLACEHOLDER = /^\[(image|video|audio|file|attachment|document|sticker)\]$/i;
+/** Providers name some kinds differently: a "document" is a file, a "sticker" an image. */
+const ALIAS: Record<string, PlaceholderKind> = { document: "file", sticker: "image" };
 
 export function placeholderKind(body: string | null | undefined): PlaceholderKind | null {
   const m = PLACEHOLDER.exec(String(body ?? "").trim());
-  return m ? (m[1].toLowerCase() as PlaceholderKind) : null;
+  if (!m) return null;
+  const k = m[1].toLowerCase();
+  return ALIAS[k] ?? (k as PlaceholderKind);
 }
 
 type Tx = (en: string, ar: string) => string;
@@ -38,7 +42,29 @@ export function messageBodyView(
   return { text: "", missing: missing[kind] };
 }
 
-/** A fetched attachment blob plays as video rather than rendering as an image. */
-export function isVideoType(type: string | null | undefined): boolean {
-  return String(type ?? "").toLowerCase().startsWith("video/");
+
+/** How a fetched attachment blob is shown: played, listened to, opened as a file, or as an image. */
+export type AttachmentView = "image" | "video" | "audio" | "file";
+
+export function attachmentView(type: string | null | undefined): AttachmentView {
+  const t = String(type ?? "").toLowerCase();
+  if (t.startsWith("video/")) return "video";
+  if (t.startsWith("audio/")) return "audio";
+  if (t.startsWith("image/")) return "image";
+  return "file";
+}
+
+/** A short name for a file chip: "PDF", "Word", … */
+export function fileLabel(type: string | null | undefined, tx: Tx): string {
+  const t = String(type ?? "").toLowerCase();
+  if (t === "application/pdf") return "PDF";
+  if (t.includes("wordprocessingml")) return "Word";
+  if (t.includes("spreadsheetml")) return "Excel";
+  if (t.includes("presentationml")) return "PowerPoint";
+  return tx("File", "ملف");
+}
+
+/** PDFs open in the browser's own viewer; other files download. */
+export function opensInBrowser(type: string | null | undefined): boolean {
+  return String(type ?? "").toLowerCase() === "application/pdf";
 }

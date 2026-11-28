@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isVideoType, messageBodyView, placeholderKind } from "./messageMedia";
+import { attachmentView, fileLabel, messageBodyView, opensInBrowser, placeholderKind } from "./messageMedia";
 
 const en = (e: string) => e;
 const ar = (_e: string, a: string) => a;
@@ -32,12 +32,33 @@ describe("messageBodyView", () => {
   });
 });
 
-describe("isVideoType", () => {
-  it("is true only for video/* types", () => {
-    expect(isVideoType("video/mp4")).toBe(true);
-    expect(isVideoType("Video/QuickTime")).toBe(true);
-    expect(isVideoType("image/png")).toBe(false);
-    expect(isVideoType("")).toBe(false);
-    expect(isVideoType(undefined)).toBe(false);
+describe("attachmentView", () => {
+  it("plays video and audio, shows images, and treats the rest as files", () => {
+    expect(attachmentView("Video/QuickTime")).toBe("video");
+    expect(attachmentView("audio/ogg")).toBe("audio");
+    expect(attachmentView("audio/mp4")).toBe("audio");
+    expect(attachmentView("image/png")).toBe("image");
+    expect(attachmentView("application/pdf")).toBe("file");
+    expect(attachmentView("")).toBe("file");
+    expect(attachmentView(undefined)).toBe("file");
+  });
+});
+
+describe("fileLabel and opensInBrowser", () => {
+  const tx = (en: string) => en;
+  it("names common documents and opens only PDFs in the browser", () => {
+    expect(fileLabel("application/pdf", tx)).toBe("PDF");
+    expect(fileLabel("application/vnd.openxmlformats-officedocument.wordprocessingml.document", tx)).toBe("Word");
+    expect(fileLabel("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", tx)).toBe("Excel");
+    expect(fileLabel("application/zip", tx)).toBe("File");
+    expect(opensInBrowser("application/pdf")).toBe(true);
+    expect(opensInBrowser("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).toBe(false);
+  });
+});
+
+describe("placeholderKind aliases", () => {
+  it("reads Zernio's document and sticker kinds", () => {
+    expect(placeholderKind("[document]")).toBe("file");
+    expect(placeholderKind("[sticker]")).toBe("image");
   });
 });

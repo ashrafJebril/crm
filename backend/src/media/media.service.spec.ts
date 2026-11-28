@@ -535,3 +535,47 @@ describe("media in use cannot be deleted", () => {
     await expect(lockMediaForReference(tx as never, "other", "m1")).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe("ingestInboundAttachment", () => {
+  const build = () => {
+    const storage = { kind: "local", put: jest.fn().mockResolvedValue({ key: "k" }), getSignedUrl: jest.fn(), delete: jest.fn() };
+    const prisma = { media: { create: jest.fn(({ data }) => Promise.resolve({ id: "m1", ...data })) } };
+    return { svc: new MediaService(prisma as never, storage as never), storage, prisma };
+  };
+  const OGG = Buffer.concat([Buffer.from("OggS"), Buffer.alloc(12)]);
+
+  it("stores a voice note out of the library", async () => {
+    const { svc, storage } = build();
+    const row = await svc.ingestInboundAttachment({ workspaceId: "ws", buffer: OGG, attachmentType: "audio", declaredMimes: ["audio/ogg"], fileName: "a" });
+    expect(row).toMatchObject({ mimeType: "audio/ogg", purpose: "chat_attachment", uploadedById: null });
+    expect(storage.put).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "audio/ogg" }));
+  });
+
+  it("keeps images and videos in the library, as before", async () => {
+    const { svc } = build();
+    const img = await svc.ingestInboundAttachment({ workspaceId: "ws", buffer: PNG, attachmentType: "image", declaredMimes: [], fileName: "a" });
+    expect(img.mimeType).toBe("image/png");
+    expect("purpose" in img).toBe(false);
+    const vid = await svc.ingestInboundAttachment({ workspaceId: "ws", buffer: MP4, attachmentType: "video", declaredMimes: [], fileName: "a" });
+    expect(vid.mimeType).toBe("video/mp4");
+  });
+
+  it("stores a PDF as a chat file", async () => {
+    const { svc } = build();
+    const row = await svc.ingestInboundAttachment({ workspaceId: "ws", buffer: PDF, attachmentType: "document", declaredMimes: [], fileName: "a" });
+    expect(row).toMatchObject({ mimeType: "application/pdf", purpose: "chat_attachment" });
+  });
+
+  it("refuses unknown bytes and caps voice notes at 25 MB", async () => {
+    const { svc, storage } = build();
+    expect((await errOf(svc.ingestInboundAttachment({ workspaceId: "ws", buffer: HTML, attachmentType: "image", declaredMimes: ["image/jpeg"], fileName: "a" }))).getResponse()).toMatchObject({
+      message: "media.type_mismatch",
+    });
+    const big = Buffer.concat([OGG, Buffer.alloc(25 * 1024 * 1024)]);
+    expect((await errOf(svc.ingestInboundAttachment({ workspaceId: "ws", buffer: big, attachmentType: "audio", declaredMimes: [], fileName: "a" }))).getResponse()).toMatchObject({
+      message: "media.too_large",
+      limit: 25 * 1024 * 1024,
+    });
+    expect(storage.put).not.toHaveBeenCalled();
+  });
+});
