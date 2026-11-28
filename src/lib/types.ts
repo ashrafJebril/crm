@@ -409,6 +409,8 @@ export interface Message {
   createdAt?: string;
   body: string;
   attach?: string;
+  /** What the AI heard in a customer's voice note (filled in after the agent reads it). */
+  transcript?: string | null;
   /**
    * Who/what produced an outbound message, e.g. "kewy-ai (shadow)". The shadow
    * suffix means the reply was logged for review and never delivered.

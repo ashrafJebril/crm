@@ -32,7 +32,7 @@ import { importStatus as computeImportStatus, NOT_CONNECTED, PlatformImportStatu
 import { accountHealth } from "./zernio-account-health";
 import { AiBridgeService } from "./ai-bridge.service";
 import { PipelineAutomationService } from "../tickets/pipeline-automation.service";
-import { LAgentService } from "./l-agent.service";
+import { LAgentService, type LAttachment, type LMediaResult } from "./l-agent.service";
 import { WORKFLOW_TRIGGER_EVENT, WorkflowTriggerEvent } from "../workflows/workflow-events";
 import { ChannelResolver } from "../channels/channel-resolver.service";
 import { INTEGRATION_REMOVED, mirrorZernioAccounts, USER_DISCONNECTED } from "../channels/zernio-mirror";
@@ -2714,12 +2714,14 @@ export class ZernioService {
         ...(isOutbound ? { deliveryStatus: "sent", deliveryStatusAt: new Date() } : {}),
       },
     });
+    // The files the agent reads with this turn: each stored message row and its media.
+    const agentMedia: AgentMedia[] = attachMediaId && created?.id ? [{ messageId: created.id, mediaId: attachMediaId }] : [];
     // A message may carry several files (an album, a photo plus a voice note):
     // each extra one becomes its own bubble right after, so none is lost. Only
-    // the first message drives the AI, the pipeline and the workflows.
+    // the first message drives the pipeline and the workflows; the agent reads every file.
     for (const [i, extra] of (evt.message?.attachments ?? []).slice(1).entries()) {
       const mediaId = await this.rehostAttachment(workspaceId, channel, extra, `${externalMsgId ?? Date.now()}-${i + 2}`);
-      await this.prisma.message.create({
+      const extraRow = await this.prisma.message.create({
         data: {
           workspaceId,
           conversationId: conv.id,
@@ -2731,6 +2733,7 @@ export class ZernioService {
           ...(isOutbound ? { deliveryStatus: "sent", deliveryStatusAt: new Date() } : {}),
         },
       });
+      if (mediaId && extraRow?.id) agentMedia.push({ messageId: extraRow.id, mediaId });
     }
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel,
@@ -2784,7 +2787,7 @@ export class ZernioService {
     // a human has taken it over (aiPausedAt), same as the kewy-ai path below.
     // An escalated thread gets no auto-reply either (as on Telegram/web chat).
     if (!isOutbound && conv.aiEnabled && !conv.aiPausedAt && !conv.escalated && this.lAgent.enabled) {
-      this.queueAgentReply(workspaceId, conv.id, text, contact.id);
+      this.queueAgentReply(workspaceId, conv.id, text, contact.id, { media: agentMedia, ownText: body ?? "" });
     }
     // Lifecycle automation (never throws): a customer message opens a ticket
     // in 'new' unless one is already open; ANY outbound human message — from
@@ -2967,6 +2970,70 @@ export class ZernioService {
   }
 
   /**
+   * The URLs l fetches the customer's files from. Spaces media is a signed
+   * Spaces URL (no redirect: l does not follow one); local-disk media the
+   * short-lived public-token route. A file that cannot be addressed is left
+   * out — it costs that file, never the reply.
+   */
+  private async agentAttachments(
+    workspaceId: string,
+    media: AgentMedia[],
+  ): Promise<Array<AgentMedia & { attachment: LAttachment }>> {
+    const out: Array<AgentMedia & { attachment: LAttachment }> = [];
+    for (const m of media) {
+      try {
+        const row = await this.media.get(workspaceId, m.mediaId);
+        let url: string;
+        if (row.storageKind === "spaces") {
+          url = await this.media.resolveExternalUrl(workspaceId, m.mediaId);
+        } else {
+          const base = (process.env.PUBLIC_BASE_URL ?? process.env.APP_BASE_URL ?? "").replace(/\/+$/, "");
+          if (!base) throw new Error("no PUBLIC_BASE_URL");
+          url = `${base}/api/media/${m.mediaId}/public?token=${await this.media.mintPublicToken(workspaceId, m.mediaId)}`;
+        }
+        out.push({ ...m, attachment: { url, mimeType: row.mimeType, kind: mediaKind(row.mimeType) } });
+      } catch (err) {
+        this.log.warn(
+          `agent attachment skipped: media ${m.mediaId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Keep what l read each file as: a voice note's transcript goes on its
+   * message row so staff can read it under the player. Returns true when a
+   * person should take the thread (a video, or a file l could not read).
+   */
+  private async recordMediaResults(
+    workspaceId: string,
+    conversationId: string,
+    sent: Array<AgentMedia & { attachment: LAttachment }>,
+    results: LMediaResult[] | undefined,
+  ): Promise<boolean> {
+    if (!sent.length) return false;
+    let needsPerson = false;
+    let stored = false;
+    for (const [i, s] of sent.entries()) {
+      const r = results?.[i];
+      if (!r || !r.handled) {
+        needsPerson = true;
+        continue;
+      }
+      if (s.attachment.kind === "audio" && r.text) {
+        await this.prisma.message.updateMany({
+          where: { id: s.messageId, workspaceId },
+          data: { transcript: r.text.slice(0, 10_000) },
+        });
+        stored = true;
+      }
+    }
+    if (stored) this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { conversationId });
+    return needsPerson;
+  }
+
+  /**
    * Answer an inbound customer message with the workspace's l agent and send
    * that answer back out on the conversation's own channel.
    *
@@ -2979,6 +3046,8 @@ export class ZernioService {
     conversationId: string,
     inbound: string,
     contactId: string | null = null,
+    /** The customer's files, and their own words without the "[audio]" placeholder. */
+    files: { media: AgentMedia[]; ownText: string } = { media: [], ownText: inbound },
   ): void {
     void (async () => {
       // Locked workspaces get no automatic replies. The inbound message is
@@ -2987,11 +3056,16 @@ export class ZernioService {
       // SP-20: the reply gate (emergency stop, conversation, excluded tag,
       // working hours). A gate failure means no reply (it logs once).
       if (this.replyGate && !(await this.replyGate.allows(workspaceId, { conversationId, contactId }, "l_auto_reply"))) return;
+      // With files, l gets the customer's own words (maybe none) and the files
+      // to read. If no file could be handed over, the placeholder goes as before.
+      const attached = await this.agentAttachments(workspaceId, files.media);
       const result = await this.lAgent.ask(workspaceId, {
         externalId: conversationId,
-        message: inbound,
+        message: attached.length ? files.ownText : inbound,
+        ...(attached.length ? { attachments: attached.map((a) => a.attachment) } : {}),
       });
       if (!result) return;
+      const needsPerson = await this.recordMediaResults(workspaceId, conversationId, attached, result.media);
 
       // SP-17 (ruling 2): our own media URL is sent only while it is still an
       // approved agent photo of this workspace; a photo hidden after the
@@ -3060,6 +3134,16 @@ export class ZernioService {
       if (sent?.messageId) {
         await this.usage?.record(workspaceId, { meter: "ai_reply", sourceKind: "message", sourceId: sent.messageId });
       }
+      // A video, or a file the agent could not read: the reply told the
+      // customer the team will check it, so hand the thread to a person and
+      // stop auto-replies (same as the agent's own escalation).
+      if (needsPerson) {
+        await this.prisma.conversation.update({
+          where: { id: conversationId },
+          data: { escalated: true, aiPausedAt: new Date() },
+        });
+        this.realtime.emitToWorkspace(workspaceId, "inbox.activity", { conversationId, escalated: true });
+      }
     })().catch((err) => {
       this.log.error(
         `l auto-reply failed for conversation ${conversationId}`,
@@ -3067,6 +3151,17 @@ export class ZernioService {
       );
     });
   }
+}
+
+/** A customer file stored with an inbound message, for the agent to read. */
+type AgentMedia = { messageId: string; mediaId: string };
+
+/** The kind l reads a stored file as, from its (sniffed) type. */
+export function mediaKind(mimeType: string): LAttachment["kind"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "file";
 }
 
 /** "now" / "5m" / "3h" / "26d" — matches the strings the Inbox list renders. */

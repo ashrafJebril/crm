@@ -316,6 +316,8 @@ model Message {
   body           String
   agent          String?
   attach         String?
+  /// What the AI heard in a customer's voice note (from l). Null for anything else.
+  transcript     String?
 
   // Meta's wamid (WhatsApp) / Graph mid (Messenger). Set on outbound so we can
   // match incoming delivery-status webhooks back to the right Message row.
