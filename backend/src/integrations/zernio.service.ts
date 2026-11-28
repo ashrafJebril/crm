@@ -16,7 +16,6 @@ import { UsageService } from "../billing/usage.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RealtimeService } from "../realtime/realtime.service";
 import { MediaService } from "../media/media.service";
-import { inboundAttachmentMime } from "./inbound-attachment";
 import { agentImageDecision } from "../media/agent-photo";
 import { ZernioClient, ZernioAccount, ZernioAnalyticsRow, ZernioAudioTrack } from "./zernio.client";
 import {
@@ -2039,20 +2038,8 @@ export class ZernioService {
 
       if (attachment?.url) {
         let attach: string | null = null;
-        try {
-          const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
-          const media = await this.media.ingestBuffer({
-            workspaceId,
-            buffer,
-            mimeType: inboundAttachmentMime(attachment.type, attachment.payload?.mimeType, mimeType),
-            allowVideo: true,
-            fileName: `${channel}-${attachment.payload?.id ?? mid ?? "media"}`,
-          });
-          attach = media.id;
-          out.attachmentsSaved++;
-        } catch (e) {
-          this.log.warn(`History attachment failed: ${(e as Error).message}`);
-        }
+        attach = await this.rehostAttachment(workspaceId, channel, attachment, mid ?? "media");
+        if (attach) out.attachmentsSaved++;
         await this.prisma.message.create({ data: { ...row, attach } });
         out.inserted++;
       } else {
@@ -2510,6 +2497,35 @@ export class ZernioService {
    * realtime. Field names match the real webhook payload captured off the
    * tunnel — see ZernioWebhookEvent.
    */
+  /**
+   * Download a Zernio attachment (their URL needs our bearer token) and store
+   * it as our own file: image, video, voice note or document, typed from its
+   * bytes. Never throws: a failed download leaves the message with its
+   * placeholder text, which the inbox labels honestly.
+   */
+  private async rehostAttachment(
+    workspaceId: string,
+    channel: string,
+    attachment: { type?: string; url?: string; payload?: { id?: string; mimeType?: string } },
+    fallbackId: string,
+  ): Promise<string | null> {
+    if (!attachment.url) return null;
+    try {
+      const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
+      const media = await this.media.ingestInboundAttachment({
+        workspaceId,
+        buffer,
+        attachmentType: attachment.type,
+        declaredMimes: [attachment.payload?.mimeType, mimeType],
+        fileName: `${channel}-${attachment.payload?.id ?? fallbackId}`,
+      });
+      return media.id;
+    } catch (e) {
+      this.log.warn(`Zernio attachment download failed (${attachment.type}): ${(e as Error).message}`);
+      return null;
+    }
+  }
+
   private async ingestInbound(evt: ZernioWebhookEvent) {
     const accountId = evt.account?.accountId ?? evt.account?.id;
     if (!accountId) {
@@ -2592,24 +2608,9 @@ export class ZernioService {
     // a Media row, then hand the Inbox our own id. Deliberately after the
     // dedupe check so at-least-once redeliveries don't re-download.
     // A failure here must not lose the message: fall through with attach=null.
-    let attachMediaId: string | null = null;
-    if (attachment?.url) {
-      try {
-        const { buffer, mimeType } = await this.client.downloadMedia(attachment.url);
-        const media = await this.media.ingestBuffer({
-          workspaceId,
-          buffer,
-          mimeType: inboundAttachmentMime(attachment.type, attachment.payload?.mimeType, mimeType),
-          allowVideo: true,
-          fileName: `${channel}-${attachment.payload?.id ?? Date.now()}`,
-        });
-        attachMediaId = media.id;
-      } catch (e) {
-        this.log.warn(
-          `Zernio attachment download failed (${attachment.type}): ${(e as Error).message}`,
-        );
-      }
-    }
+    const attachMediaId = attachment
+      ? await this.rehostAttachment(workspaceId, channel, attachment, String(Date.now()))
+      : null;
 
     const contact = await this.prisma.contact.upsert({
       where: {
@@ -2713,6 +2714,24 @@ export class ZernioService {
         ...(isOutbound ? { deliveryStatus: "sent", deliveryStatusAt: new Date() } : {}),
       },
     });
+    // A message may carry several files (an album, a photo plus a voice note):
+    // each extra one becomes its own bubble right after, so none is lost. Only
+    // the first message drives the AI, the pipeline and the workflows.
+    for (const [i, extra] of (evt.message?.attachments ?? []).slice(1).entries()) {
+      const mediaId = await this.rehostAttachment(workspaceId, channel, extra, `${externalMsgId ?? Date.now()}-${i + 2}`);
+      await this.prisma.message.create({
+        data: {
+          workspaceId,
+          conversationId: conv.id,
+          from,
+          body: `[${extra.type ?? "attachment"}]`,
+          t,
+          attach: mediaId,
+          metaMessageId: externalMsgId ? `${externalMsgId}#${i + 2}` : null,
+          ...(isOutbound ? { deliveryStatus: "sent", deliveryStatusAt: new Date() } : {}),
+        },
+      });
+    }
     this.realtime.emitToWorkspace(workspaceId, "inbox.activity", {
       channel,
       channelId,

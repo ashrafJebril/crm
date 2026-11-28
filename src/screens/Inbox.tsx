@@ -85,7 +85,7 @@ import {
   markReadAndPatch, threadFor,
 } from "./inbox/inboxCache";
 import { PANE_CONV_PARAM, PANE_DETAILS_PARAM, PANE_STATE_KEY, detailsAsSheet, inboxPane, paneFromHash } from "./inbox/inboxPane";
-import { isVideoType, messageBodyView } from "./inbox/messageMedia";
+import { attachmentView, fileLabel, messageBodyView, opensInBrowser, type AttachmentView } from "./inbox/messageMedia";
 import { FollowUpButton } from "./inbox/FollowUpButton";
 import { followUpContactId } from "./inbox/followUpGate";
 import { useDialogFocus } from "@/lib/useDialogFocus";
@@ -2105,8 +2105,11 @@ function InboxMediaImage({
   token: string | null;
   alt: string;
 }) {
+  const { t } = useTweaks();
+  const tx = makeTx(t.lang);
   const [src, setSrc] = useState<string | null>(null);
-  const [isVideo, setIsVideo] = useState<boolean>(false);
+  const [view, setView] = useState<AttachmentView>("image");
+  const [type, setType] = useState<string>("");
   const [zoomed, setZoomed] = useState<boolean>(false);
   useEffect(() => {
     let cancelled = false;
@@ -2116,7 +2119,8 @@ function InboxMediaImage({
       .then((b) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(b);
-        setIsVideo(isVideoType(b.type));
+        setView(attachmentView(b.type));
+        setType(b.type);
         setSrc(objectUrl);
       })
       .catch(() => {
@@ -2145,7 +2149,31 @@ function InboxMediaImage({
       </div>
     );
   }
-  if (isVideo) {
+  if (view === "audio") {
+    return (
+      <audio
+        src={src}
+        controls
+        preload="metadata"
+        aria-label={tx("Voice message", "رسالة صوتية")}
+        style={{ width: 260, maxWidth: "100%", display: "block" }}
+      />
+    );
+  }
+  if (view === "file") {
+    const label = fileLabel(type, tx);
+    return (
+      <a
+        href={src}
+        {...(opensInBrowser(type) ? { target: "_blank", rel: "noopener noreferrer" } : { download: `${label}` })}
+        className="btn"
+        style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 260 }}
+      >
+        📎 {label} · {opensInBrowser(type) ? tx("Open", "فتح") : tx("Download", "تنزيل")}
+      </a>
+    );
+  }
+  if (view === "video") {
     return (
       <video
         src={src}
