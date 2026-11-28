@@ -34,6 +34,11 @@ export class LTryTurnError extends Error {}
 const TRY_HISTORY_MAX = 50;
 const TRY_TEXT_MAX = 8_000;
 
+/** A customer file handed to l: a short-lived URL it can fetch. */
+export type LAttachment = { url: string; mimeType: string; kind: "image" | "audio" | "video" | "file" };
+/** What l read a file as: a voice note's transcript, an image's description. handled=false → a person should look. */
+export type LMediaResult = { kind: string; text: string | null; handled: boolean };
+
 @Injectable()
 export class LAgentService {
   private readonly logger = new Logger(LAgentService.name);
@@ -129,8 +134,14 @@ export class LAgentService {
 
   async ask(
     workspaceId: string,
-    opts: { externalId: string; message: string; sessionId?: string | null },
-  ): Promise<{ answer: string; imageUrl?: string } | null> {
+    opts: {
+      externalId: string;
+      message: string;
+      sessionId?: string | null;
+      /** Files the customer sent with this message; l reads them into text (voice → transcript). */
+      attachments?: LAttachment[];
+    },
+  ): Promise<{ answer: string; imageUrl?: string; media?: LMediaResult[] } | null> {
     const baseUrl = process.env.L_API_URL;
     if (!baseUrl) return null;
 
@@ -159,6 +170,9 @@ export class LAgentService {
         body: JSON.stringify({
           external_id: opts.externalId,
           message: opts.message,
+          ...(opts.attachments?.length
+            ? { attachments: opts.attachments.map((a) => ({ url: a.url, mime_type: a.mimeType, kind: a.kind })) }
+            : {}),
           // Present only for threads that already exist on the l side. Absent,
           // l finds-or-creates its own conversation keyed by external_id —
           // which is what a social thread wants: one stable l conversation per
@@ -172,13 +186,22 @@ export class LAgentService {
         this.logger.warn(`l returned ${res.status} for conversation ${opts.externalId}`);
         return null;
       }
-      const payload = (await res.json()) as { answer?: unknown; image_url?: unknown };
+      const payload = (await res.json()) as { answer?: unknown; image_url?: unknown; media?: unknown };
       if (typeof payload.answer !== "string" || payload.answer.length === 0) {
         this.logger.warn(`l returned no answer for conversation ${opts.externalId}`);
         return null;
       }
       const imageUrl = typeof payload.image_url === "string" ? payload.image_url : undefined;
-      return { answer: payload.answer, imageUrl };
+      const media = Array.isArray(payload.media)
+        ? payload.media
+            .filter((m): m is { kind: unknown; text?: unknown; handled?: unknown } => !!m && typeof m === "object")
+            .map((m) => ({
+              kind: String(m.kind),
+              text: typeof m.text === "string" ? m.text : null,
+              handled: m.handled === true,
+            }))
+        : undefined;
+      return { answer: payload.answer, imageUrl, ...(media ? { media } : {}) };
     } catch (err) {
       this.logger.warn(
         `Could not reach l for conversation ${opts.externalId}: ` +

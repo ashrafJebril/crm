@@ -1226,6 +1226,15 @@ function Bubble({ m }: BubbleProps) {
             bodyView.text
           )}
           {m.attach && <MessageAttachment value={m.attach} />}
+          {m.transcript && (
+            <div
+              dir="auto"
+              title={tx("What the AI heard in this voice message", "ما سمعه الذكاء الاصطناعي في هذه الرسالة الصوتية")}
+              style={{ marginTop: 6, fontSize: 12, fontStyle: "italic", color: "var(--ink-2)", maxWidth: 260, whiteSpace: "pre-wrap" }}
+            >
+              📝 {m.transcript}
+            </div>
+          )}
         </div>
         {m.reaction && (
           <div
